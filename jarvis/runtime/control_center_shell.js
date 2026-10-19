@@ -35,8 +35,6 @@
      hôte pas encore déclaré serait listé avec la slice qui le déclarera
      (`slice`) ; l'aperçu de capture l'est depuis la Slice 05. */
   const CONTROL_HOSTS=Object.freeze([
-    Object.freeze({selector:'#boardsHud',zone:'top-left'}),
-    Object.freeze({selector:'.topbar>.state',zone:'top-left'}),
     Object.freeze({selector:'.dock',zone:'top-right'}),
     Object.freeze({selector:'#bgPills',zone:'bottom-centre'}),
     Object.freeze({selector:'.live-banner',zone:'top-centre'}),
@@ -46,23 +44,25 @@
     Object.freeze({selector:'#barehandsPalette',zone:'left-edge'}),
     Object.freeze({selector:'#toolWheel',zone:'left-edge'}),
     Object.freeze({selector:'#presentationRail',zone:'right',createdBy:'control_center_presentation_rail.js'}),
-    Object.freeze({selector:'#interactionModeHud',zone:'bottom-left'}),
+    Object.freeze({selector:'#boardsHud',zone:'bottom-left'}),
     Object.freeze({selector:'#boardDropTray',zone:'bottom-centre'}),
-    Object.freeze({selector:'#recIndicators',zone:'bottom-centre'}),
-    Object.freeze({selector:'#hiddenEye',zone:'bottom-centre'}),
+    Object.freeze({selector:'#recIndicators',zone:'top-left'}),
     Object.freeze({selector:'#chatTab',zone:'bottom-right'}),
     Object.freeze({selector:'#screenshotPreview',zone:'left-low'}),
   ]);
   /* Zones de la coque (docs/06 §9). `right` : le rail actif de l'espace de
      travail (Slice 07), sous les panneaux latéraux qui s'ouvrent par-dessus. */
   const ZONES=Object.freeze({
-    'top-left':'ligne d’état : Board, voix, agent',
-    'top-right':'lanceur global : Conversation, Agents, Errors, Réglages, « Plus d’outils » (Slice 08)',
+    /* Libre au repos depuis la Slice 02 de jarvis-board-ui-wheel-dossier-refactor
+       (ni sélecteur de Board, ni état permanent) ; depuis la Slice 04, les
+       indicateurs d'enregistrement s'y posent tant qu'une capture est ouverte. */
+    'top-left':'indicateurs d’enregistrement (REC, audio) tant qu’une capture est ouverte ; vide au repos',
+    'top-right':'lanceur global : Conversation, Agents, Errors, « Plus d’outils » (Réglages y est replié, refonte S04)',
     'top-centre':'bandeau GPT-Live (transitoire)',
-    'left-edge':'ancre et roue d’outils (Sélection, Vidéo, Capture d’écran, Audio)',
+    'left-edge':'ancre et roue d’outils (JARVIS, Sélection, Dossier, Capture, Paramètres)',
     'left-low':'aperçu de la dernière capture d’écran (Slice 05), au-dessus du contexte bas-gauche',
-    'bottom-left':'zone de contexte : mode d’interaction, notes de la scène',
-    'bottom-centre':'centre d’état (Slice 06) : indicateurs de capture, pastilles d’arrière-plan, œil des objets masqués ; plateau de dépôt au-dessus',
+    'bottom-left':'zone de contexte : carte Board (type, titre, bascule, présence de la voix), notes de la scène',
+    'bottom-centre':'centre d’état (Slice 06) : pastilles d’arrière-plan ; plateau de dépôt au-dessus',
     'bottom-right':'onglet Chat',
     'right':'rail actif de l’espace de travail (#presentationRail, Slice 07) ; panneaux latéraux par-dessus',
     'centre':'Board / scène',
@@ -72,17 +72,16 @@
      valeurs responsives sous `max-width`. */
   const TOKENS=Object.freeze({
     '--shell-gutter':'18px',
-    '--shell-top-h':'40px',
     '--shell-bottom':'18px',
     '--shell-status-h':'44px',
     '--shell-control':'34px',
-    '--shell-launcher-w':'194px',
+    '--shell-launcher-w':'154px',
     '--shell-panel-top':'64px',
     '--shell-panel-w':'500px',
     '--shell-panel-bottom':'68px',
     '--shell-rail-w':'300px',
     '--shell-anchor-w':'14px',
-    '--shell-wheel-r':'200px',
+    '--shell-wheel-r':'224px',
     '--shell-wedge-min':'48px',
     '--shell-icon':'20px',
     '--shell-icon-sm':'15px',
@@ -111,8 +110,20 @@
   /* Sous `prefers-reduced-motion: reduce`, ces durées valent 0 ms. */
   const MOTION_TOKENS=Object.freeze(['--shell-dur-fast','--shell-dur']);
 
+  /* Surfaces exclusives (jarvis-board-ui-wheel-dossier-refactor, Slice 03) :
+     jamais deux ouvertes ensemble. Chacune annonce son ouverture et sa
+     fermeture par cet événement de `document` (`detail: {id, open}`) et se
+     ferme quand une autre s'ouvre. Pas d'état ici : chaque surface tient le
+     sien. Les modules gardent une copie de repli du nom, identique (testé). */
+  const EXCLUSIVE_EVENT='jarvis:shell-exclusive';
+  const EXCLUSIVE_SURFACES=Object.freeze({
+    'tool-wheel':'#toolWheel[data-open] (control_center_tool_wheel.js)',
+    'board-panel':'#boardsPanel (control_center_boards.js)',
+  });
+
   const api=Object.freeze({
     CONTROL_ATTRIBUTE,CONTROL_SELECTOR,CONTROL_HOSTS,ZONES,TOKENS,RESPONSIVE_TOKENS,MOTION_TOKENS,
+    EXCLUSIVE_EVENT,EXCLUSIVE_SURFACES,
   });
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(typeof window==='undefined'||typeof document==='undefined')return;

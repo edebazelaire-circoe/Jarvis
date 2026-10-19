@@ -366,7 +366,8 @@ def test_les_modules_sont_servis_dans_l_ordre_et_l_hote_des_indicateurs_est_decl
     order = [html.index(m) for m in (CAPTURE_RAIL_SCRIPT_MARKER, TOOL_WHEEL_SCRIPT_MARKER,
                                      CAPTURE_WHEEL_SCRIPT_MARKER, INPUT_ARBITRATION_SCRIPT_MARKER)]
     assert order == sorted(order), "contrôleur, roue, vues de capture, puis Sélection"
-    assert re.search(r'<div id="recIndicators" data-shell-control hidden></div>', html)
+    # QA S04 B1 : vivant pendant une lecture Variantes (`data-keep-live="run"`, rang 9150 sous `jvx-run`).
+    assert re.search(r'<div id="recIndicators" data-shell-control data-keep-live="run" hidden></div>', html)
     # L'ancien rail de gauche n'est plus déclaré : ses commandes sont dans la roue.
     assert 'id="captureRail"' not in html
     assert '<div id="toolWheel" data-shell-control hidden></div>' in html
@@ -396,17 +397,22 @@ def test_la_scene_mesure_les_indicateurs_et_la_roue_comme_des_commandes():
     assert "SHELL.CONTROL_SELECTOR" in page
     shell = (RUNTIME / "control_center_shell.js").read_text(encoding="utf-8")
     assert "const CONTROL_SELECTOR=`[${CONTROL_ATTRIBUTE}],#sceneLayer>.sc-status`" in shell
-    assert "selector:'#recIndicators',zone:'bottom-centre'" in shell
+    # Slice 04 de jarvis-board-ui-wheel-dossier-refactor : les indicateurs sont au haut-gauche.
+    assert "selector:'#recIndicators',zone:'top-left'" in shell
     assert "#captureRail" not in shell
 
 
-def test_les_indicateurs_sont_au_rang_du_centre_d_etat(tmp_path):
+def test_les_indicateurs_sont_au_haut_gauche_au_rang_du_centre_d_etat(tmp_path):
     html = PAGE_HTML.read_text(encoding="utf-8")
-    # Slice 06 : dans le centre d'état du bas, à gauche des pastilles, au même rang.
-    assert re.search(r"#recIndicators\{position:relative;z-index:40;", html)
-    assert "@shell-layer 40: #recIndicators, #bgPills, #hiddenEye" in html
+    # Slice 04 de jarvis-board-ui-wheel-dossier-refactor (docs/06 › E) : hors du centre d'état, en haut à
+    # gauche, à la gouttière ; même rang 40 que les pastilles ; plus de colonne au bord droit.
+    assert re.search(r"#recIndicators\{position:absolute;z-index:40;left:var\(--shell-gutter\);top:var\(--shell-gutter\);", html)
+    assert "@shell-layer 40: #recIndicators, #bgPills\n" in html
     centre = html[html.index('<div class="status-centre" id="statusCentre">'):]
-    assert centre.index('id="recIndicators"') < centre.index('id="bgPills"') < centre.index('id="hiddenEye"')
+    centre = centre[:centre.index('<section class="panel"')]
+    assert 'id="recIndicators"' not in centre and 'id="bgPills"' in centre and 'id="hiddenEye"' not in centre
+    assert html.index('<div id="recIndicators"') < html.index('id="statusCentre"')
+    assert "--ri-note-h" not in html and "#recIndicators{position:fixed" not in html
     source = VIEWS.read_text(encoding="utf-8")
     style = source[source.index("const STYLE=`"):source.index("/* ------------------------------------------------- le bloc navigateur")]
     assert "z-index" not in style, "le rang vit dans la page et au registre, pas dans la feuille du module"
@@ -1042,10 +1048,10 @@ def test_le_sous_arc_ne_propose_que_des_cibles_reelles_et_l_entree_unique_le_dit
     assert v["single"] == [["target", "Écran principal — seule cible disponible", "default", False]]
     assert v["shot"] == [["target", "Écran principal", "default", False], ["target", "Écran 2", "display2", False]]
     # Un écran qui enregistre : son arrêt en tête, sa cible non proposée une seconde fois.
-    assert v["recording"] == [["stop", "Arrêter — écran principal", "jcap_screen", False],
+    assert v["recording"] == [["stop", "Arrêter", "jcap_screen", False],
                               ["target", "Écran principal", "default", True], ["target", "Écran 2", "display2", False]]
     # Statut perdu : l'arrêt reste offert, aucun démarrage.
-    assert v["lost"] == [["stop", "Arrêter — écran principal", "jcap_screen", False],
+    assert v["lost"] == [["stop", "Arrêter", "jcap_screen", False],
                          ["target", "Écran principal", "default", True], ["target", "Écran 2", "display2", True]]
     assert v["failed"] == [["none", "Cibles illisibles", None, True]]
     assert v["none"] == [["none", "Aucune cible", None, True]]
@@ -1142,3 +1148,33 @@ def test_un_arret_en_attente_pendant_la_perte_n_est_pas_coche(tmp_path):
     """)
     assert v["lost"] == ["stopping", {"tone": "wait", "text": "arrêt…", "checked": False}]
     assert v["live"] == ["stopping", {"tone": "wait", "text": "arrêt…", "checked": True}]
+
+
+# ------------------------------------------------------------ catégorie Capture (refonte S03 de la roue)
+
+
+def test_la_categorie_capture_porte_ses_trois_canaux_et_leur_somme(tmp_path):
+    v = run(tmp_path, """
+      const live={tone:null,text:'en cours',checked:true},err={tone:'error',text:'échec (source_unavailable)',checked:false};
+      out({category:V.CATEGORY,order:V.WEDGES.map(w=>[w.slot,w.control,w.label]),
+        idle:V.categoryStatusOf({screenshot:null,video:{checked:false},audio:{checked:false}}),
+        audio:V.categoryStatusOf({screenshot:null,video:{checked:false},audio:live}),
+        both:V.categoryStatusOf({screenshot:null,video:err,audio:live}),
+        unknown:V.categoryStatusOf({video:{tone:'unknown',text:'état inconnu',checked:false},audio:{tone:'wait',text:'démarrage…'}}),
+        items:{idle:V.channelItemOf(V.WEDGES[1],{checked:false}),live:V.channelItemOf(V.WEDGES[2],live),
+          shot:V.channelItemOf(V.WEDGES[0],null),err:V.channelItemOf(V.WEDGES[1],err)}})""")
+    assert v["category"] == "capture"
+    # Ordre du sous-menu (docs/06 › E) ; l'identifiant d'entrée garde le nom du canal.
+    # Slice 04 : chaque entrée dit ce qu'elle fait (docs/06 › E).
+    assert v["order"] == [["screenshot", "screenshot", "Capture d’écran"], ["video", "screen", "Enregistrer l’écran"],
+                          ["audio", "audio", "Enregistrer l’audio"]]
+    assert v["idle"] is None  # rien à dire au repos : aucun point, aucune phrase
+    assert v["audio"] == {"tone": None, "live": True, "text": "Audio : en cours"}
+    assert v["both"] == {"tone": "error", "live": True, "text": "Écran : échec (source_unavailable) · Audio : en cours"}
+    assert v["unknown"]["tone"] == "unknown"  # l'inconnu prime sur l'attente
+    items = v["items"]
+    assert items["idle"] == {"id": "video", "icon": "video", "label": "Enregistrer l’écran", "note": "vidéo de l’écran",
+                             "toggle": True, "checked": False}
+    assert items["live"]["checked"] is True and items["live"]["tone"] == "busy" and items["live"]["note"] == "en cours"
+    assert "checked" not in items["shot"] and items["shot"]["note"] == "une image de l’écran"  # ponctuelle : pas une case
+    assert items["err"]["tone"] == "error" and items["err"]["checked"] is False

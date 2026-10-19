@@ -12,9 +12,13 @@ Ce que fait cette Slice :
 - lecture/création/édition/archivage, avec les gardes du domaine ;
 - `ensure_default()` : migration idempotente de l'état mono-espace vers le
   Board `default` (06 section H), clé « table vide » ;
-- **mode d'interaction par Board** (06 section F) : un abonné de
-  `InteractionModeService` écrit chaque changement sur le Board actif, et le
-  démarrage de Core réapplique le mode du Board actif (`source="board_restore"`).
+- **mode d'interaction dérivé du type** (D01, `docs/boards.md` › *Board type*) :
+  le démarrage de Core (`source="board_restore"`) et chaque bascule
+  (`source="board_switch"`) demandent à `InteractionModeService` le mode que
+  désigne le type du Board actif (`board_kind_mode`, comportement
+  `behaving_interaction_mode` : un Board Réunion se comporte en assistant).
+  Aucun mode n'est stocké sur un Board et rien ne l'y écrit ; le type, lui, est
+  fixé à la création (`board_kind_immutable`).
 
 **Board actif (V1).** Il n'y a pas de pointeur séparé : le Board actif est
 `active_board_id` de la Session ouverte (`jarvis_sessions`, persistée), et
@@ -23,13 +27,19 @@ Slice 03, Core ouvre une Session à chaque démarrage sur le dernier Board actif
 (`jarvis/core/session_manager.py`). Un second pointeur serait une deuxième
 vérité ; celui-ci est celle que 03/04b écrivent.
 
-**Reprise du réglage historique.** Le Control Center rejoue toujours sa
-préférence globale quand Core est à la révision 0 (`control_center.py`,
-sources `startup` / `core_restart`). Ce rejeu n'est plus qu'une entrée de
-migration : sur un Board jamais réglé (`unset`) il est adopté une fois
-(origine `migrated`) ; sur un Board déjà réglé il ne l'écrase pas, et Core
-réapplique le mode du Board. `save_retry` n'est pas un rejeu : c'est le clic
-de l'utilisateur livré en retard, traité comme un choix.
+**Aucun autre écrivain du mode (Slice 01b).** `POST /v1/interaction-mode`
+refuse toute demande (`interaction_mode_derived`), le Control Center, le
+réglage MCP et le HUD n'écrivent plus rien. Le seul autre écrivain est une
+lecture du Presentation Studio (`source="presentation_studio_run"`, en
+processus), transitoire : elle restaure le mode d'avant, c'est-à-dire celui du
+type du Board, et une bascule pendant la lecture l'emporte (`foreign_change`).
+Une bascule vers le Board **déjà actif** (`switch_noop`, par le protocole ou
+`board_switch` du cerveau ; le contrôle Boards de la page n'en envoie pas)
+réapplique quand même le mode de son type (`source="board_switch"`,
+idempotent : rien ne bouge s'il est déjà en vigueur). C'est une reprise de plus
+quand une restauration du Studio a échoué (`mode_restore_failed`) ; le prix,
+assumé, est qu'elle arrête une lecture du Studio qui tenait un mode transitoire
+sur ce Board.
 
 **Bascule de Board (Slice 04b, `switch`).** Transaction sous
 `SpeechAuthority.lock` (le même que la nouvelle Session de `SessionManager`) :
@@ -38,8 +48,8 @@ de l'utilisateur livré en retard, traité comme un choix.
 2. liaison du couple `(Session, Board)` retrouvée ou créée (`binding_for`) ;
 3. `host.activate(cible)` (`POST /api/agent/bindings/activate`) ; échec :
    `board_activation_failed`, **rien** n'est écrit ;
-4. mode du Board cible appliqué (`source="board_switch"`), le mode par défaut
-   (assistant) pour un Board `unset` ; échec :
+4. mode dérivé du type du Board cible appliqué (`source="board_switch"`) ;
+   un Board Réunion n'est jamais refusé (comportement assistant) ; échec :
    l'ancienne liaison est réactivée sur l'hôte, `board_switch_rolled_back` ;
 5. `commit_switch` : Session (Board actif, visités), liaisons (promotion,
    rétrogradation), Board (`last_opened_at`) en **une** transaction ; échec :
@@ -59,16 +69,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from jarvis.core.interaction_mode import InteractionModeService, InteractionModeState
+from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.speech_authority import BOARD_SWITCHED, BOARD_VOICE_BINDING_CHANGED, SpeechAuthority
 from jarvis.domain._checks import preview
-from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode, InteractionModeError
-from jarvis.domain.presentation_studio_roles import TRANSIENT_MODE_SOURCES
+from jarvis.domain.interaction_mode import InteractionMode, InteractionModeError, behaving_interaction_mode
 from jarvis.domain.v2 import ProtocolEnvelope, utc_now
 from jarvis.domain.workspace_board import (
-    DEFAULT_BOARD_ID, Board, BoardConversationBinding, BoardError, BoardErrorCode, BoardKind, BoardStatus,
-    InteractionModeOrigin, JarvisSession, SceneRef,
-    adopt_legacy_interaction_mode, archive_board, create_board, default_board, set_interaction_mode, update_board,
+    DEFAULT_BOARD_ID, LEGACY_EMPTY_BOARD_KIND, Board, BoardConversationBinding, BoardError, BoardErrorCode,
+    BoardKind, BoardStatus, JarvisSession, SceneRef,
+    archive_board, board_kind_mode, create_board, default_board, parse_board_kind_input, update_board,
 )
 from jarvis.ports.v2 import DiagnosticSink
 from jarvis.ports.workspace_board import HOST_UNCHANGED, HOST_UNKNOWN, BoardActivation, BoardBrainHost, BoardRepository
@@ -76,25 +85,22 @@ from jarvis.ports.workspace_board import HOST_UNCHANGED, HOST_UNKNOWN, BoardActi
 if TYPE_CHECKING:  # import circulaire à l'exécution : SessionManager dépend de BoardService
     from jarvis.core.session_manager import SessionManager
 
-#: Sources de `InteractionModeService.request` émises par le rejeu global du
-#: Control Center : entrée de migration, pas un choix (voir l'en-tête).
-LEGACY_REPLAY_SOURCES = frozenset({"startup", "core_restart"})
-#: Sources émises par ce service lui-même : le mode vient déjà du Board.
+#: Sources de `InteractionModeService.request` émises par ce service : le mode
+#: dérivé du type du Board actif, au démarrage de Core et à chaque bascule.
 BOARD_RESTORE_SOURCE = "board_restore"
 BOARD_SWITCH_SOURCE = "board_switch"
-BOARD_SOURCES = frozenset({BOARD_RESTORE_SOURCE, BOARD_SWITCH_SOURCE})
-#: Sources d'un mode **temporaire** (un run du Studio de présentation, Slice 01c) : appliqués, jamais
-#: enregistrés comme préférence du Board. Un Core redémarré en plein run rejoue donc la préférence, pas le temporaire.
-NON_PERSISTED_SOURCES = BOARD_SOURCES | TRANSIENT_MODE_SOURCES
 
-#: Champs éditables d'un Board par `create` / `update` (routes, MCP, UI). Le
-#: mode d'interaction n'y est pas : il change par `/v1/interaction-mode`, que
-#: Core applique et que l'abonné enregistre sur le Board actif. `board_kind`
-#: y est : simple métadonnée, il ne change jamais le mode.
+#: Champs éditables d'un Board par `update` (routes, MCP, UI). Ni mode (dérivé
+#: du type), ni type : `board_kind` est fixé à la création et un `PATCH` qui le
+#: porte est refusé `board_kind_immutable` (D02).
 EDITABLE_FIELDS = frozenset({
-    "title", "board_kind", "context_summary", "task_refs", "artifact_refs", "project_refs", "scene_ref",
-    "runtime_metadata",
+    "title", "context_summary", "task_refs", "artifact_refs", "project_refs", "scene_ref", "runtime_metadata",
 })
+#: Champs de `create` : les éditables, plus le type (défaut `assistant`).
+CREATE_FIELDS = EDITABLE_FIELDS | {"board_kind"}
+#: Statut du comportement d'un Board Réunion, dit dans les traces de mode :
+#: valide et ouvrable, comportement assistant tant que la réunion n'existe pas.
+MEETING_PLANNED = "meeting_planned"
 
 _TRACE_EXCEPTION_CHARS = 200
 
@@ -198,16 +204,21 @@ def _invalid(message: str) -> BoardError:
     return BoardError(BoardErrorCode.INVALID_BOARD, message)
 
 
-def parse_board_edits(payload: object, *, require_title: bool) -> dict[str, Any]:
-    """Corps JSON -> arguments de `update_board`. Strict : champ inconnu ou mal typé = `invalid_board`.
+def parse_board_edits(payload: object, *, require_title: bool, allowed: frozenset[str] = EDITABLE_FIELDS) -> dict[str, Any]:
+    """Corps JSON -> arguments de `create_board` / `update_board`. Strict : champ inconnu ou mal typé = `invalid_board`.
 
     Les valeurs elles-mêmes (longueurs, bornes) sont vérifiées par le domaine
-    à la construction du Board ; ici seulement la forme du fil.
+    à la construction du Board ; ici seulement la forme du fil. `board_kind`
+    hors de `allowed` (une édition) : `board_kind_immutable`, pas un champ inconnu.
     """
 
     if not isinstance(payload, dict):
         raise _invalid("board request must be a JSON object")
-    unknown = sorted(str(key)[:40] for key in payload if key not in EDITABLE_FIELDS)
+    if "board_kind" in payload and "board_kind" not in allowed:
+        raise BoardError(BoardErrorCode.BOARD_KIND_IMMUTABLE,
+                         "board_kind is fixed when the board is created and cannot be changed; "
+                         "create a new board of the wanted type instead")
+    unknown = sorted(str(key)[:40] for key in payload if key not in allowed)
     if unknown:
         raise _invalid(f"unknown board fields: {unknown[:5]}")
     if require_title and "title" not in payload:
@@ -228,10 +239,8 @@ def parse_board_edits(payload: object, *, require_title: bool) -> dict[str, Any]
                 raise _invalid("runtime_metadata must be an object")
             edits[name] = value
         elif name == "board_kind":
-            # Valeur interne exacte (`empty`, `meeting`, `presentation`), comme le décodage.
-            if not isinstance(value, str) or value not in {kind.value for kind in BoardKind}:
-                raise _invalid(f"board_kind must be one of {[kind.value for kind in BoardKind]}, got {preview(value)}")
-            edits[name] = BoardKind(value)
+            # Valeur interne exacte ; `empty` : alias déprécié d'`assistant`, jamais stocké.
+            edits[name] = parse_board_kind_input(value)
         elif name == "title":
             if not isinstance(value, str):
                 raise BoardError(BoardErrorCode.INVALID_TITLE, "title must be a string")
@@ -259,10 +268,8 @@ class BoardService:
         self._diagnostics = diagnostics
         self._clock = clock
         # Lecture-modification-écriture d'un Board : deux éditions concurrentes
-        # (route + abonné de mode) ne s'écrasent pas l'une l'autre.
+        # (route, MCP) ne s'écrasent pas l'une l'autre.
         self._lock = asyncio.Lock()
-        self._pending: set[asyncio.Task[None]] = set()
-        self._listening = False
         # Transitions (Slice 04b), câblées par `configure_transitions` : la
         # bascule a besoin des Sessions, qui dépendent de ce service.
         self._sessions: SessionManager | None = None
@@ -276,34 +283,15 @@ class BoardService:
         """Au démarrage de Core, après `state.initialize()` et avant toute route.
 
         Lève seulement si la base refuse (Core ne démarre pas sur une base
-        illisible) ; un mode de Board que Core refuse est journalisé, pas levé.
+        illisible) ; un mode que Core refuse est journalisé, pas levé.
         Core appelle `ensure_default()` lui-même, avant d'ouvrir la Session
-        (Slice 03 : le mode restauré est celui du Board de cette Session), puis
-        `start(ensure_default=False)`.
+        (Slice 03 : le mode restauré est celui du type du Board de cette
+        Session), puis `start(ensure_default=False)`.
         """
 
         if ensure_default:
             await self.ensure_default()
         await self.restore_interaction_mode()
-        if not self._listening:
-            # Après la restauration : l'application du mode du Board ne se
-            # réécrit pas sur lui-même.
-            # `with_unchanged` : un choix explicite du mode déjà effectif est
-            # aussi enregistré sur le Board actif (QA Slice 04b, S1).
-            self._modes.add_listener(self._on_mode_changed, with_state=True, with_unchanged=True)
-            self._listening = True
-
-    async def stop(self) -> None:
-        """Se désabonner du mode, puis laisser finir les écritures en vol, avant la fermeture de la base."""
-
-        if self._listening:
-            self._modes.remove_listener(self._on_mode_changed)
-            self._listening = False
-        await self.drain()
-
-    async def drain(self) -> None:
-        while self._pending:
-            await asyncio.gather(*tuple(self._pending), return_exceptions=True)
 
     # ------------------------------------------------------------ migration
 
@@ -312,9 +300,9 @@ class BoardService:
 
         Rend vrai si cet appel l'a créé. Clé « table vide », tenue dans une
         seule transaction : un second démarrage, ou deux démarrages concurrents
-        sur le même fichier, n'insèrent jamais deux fois. Le Board naît
-        `unset` : le mode global historique sera adopté par le rejeu du Control
-        Center (`_on_mode_changed`), une seule fois. Des Boards existent sans
+        sur le même fichier, n'insèrent jamais deux fois. Le Board naît de type
+        `assistant` (le réglage global historique n'est pas repris : un Board
+        jamais réglé se comportait déjà en assistant). Des Boards existent sans
         `default` : rien n'est inventé, c'est dit ; `get_active()` le dira
         ensuite par `board_not_found` tant qu'aucune Session ne désigne un Board.
         """
@@ -351,19 +339,31 @@ class BoardService:
     # ------------------------------------------------------------ écriture
 
     async def create(self, payload: object) -> Board:
-        edits = parse_board_edits(payload, require_title=True)
+        edits = parse_board_edits(payload, require_title=True, allowed=CREATE_FIELDS)
         now = self._clock()
         title = edits.pop("title")
-        board = create_board(title, now=now)
+        board = create_board(title, now=now, board_kind=edits.pop("board_kind", BoardKind.ASSISTANT))
         if edits:
             board = update_board(board, now=now, **edits)
         async with self._lock:
             await self._repo.save_board(board)
-        self._trace("core.board.created", "Board créé", data={"board_id": board.board_id})
+        data: dict[str, Any] = {"board_id": board.board_id, "board_kind": board.board_kind.value}
+        if isinstance(payload, dict) and payload.get("board_kind") == LEGACY_EMPTY_BOARD_KIND:
+            data["deprecated_kind"] = LEGACY_EMPTY_BOARD_KIND
+        self._trace("core.board.created", "Board créé", data=data)
         return board
 
     async def update(self, board_id: str, payload: object) -> Board:
-        edits = parse_board_edits(payload, require_title=False)
+        try:
+            edits = parse_board_edits(payload, require_title=False)
+        except BoardError as exc:
+            if exc.code is BoardErrorCode.BOARD_KIND_IMMUTABLE:
+                # Refus attendu d'un client hérité (ancien écran, ancien outil) : warning, pas un défaut de Core.
+                self._trace("core.board.kind_change_refused", "Type de Board non modifiable : rien n'a été écrit",
+                            level="warning", data={"code": exc.code.value, "board_id": str(board_id)[:80],
+                                                   "requested_kind": _bounded_raw(payload.get("board_kind"))
+                                                   if isinstance(payload, dict) else None})
+            raise
         async with self._lock:
             board = update_board(await self.get(board_id), now=self._clock(), **edits)
             await self._repo.save_board(board)
@@ -384,11 +384,10 @@ class BoardService:
     # ------------------------------------------------------------ mode d'interaction
 
     async def restore_interaction_mode(self) -> None:
-        """Réappliquer le mode du Board actif au démarrage de Core. Ne lève pas pour un refus de mode.
+        """Appliquer le mode dérivé du type du Board actif au démarrage de Core. Ne lève pas pour un refus.
 
-        Board `unset` : rien n'est demandé, Core reste au défaut à la
-        révision 0, et c'est précisément ce qui arme le rejeu du Control
-        Center, donc la migration unique du réglage historique.
+        Toujours demandé, quel que soit le type : c'est ce qui annule, à chaque
+        démarrage, un mode vivant changé par un écrivain hérité (voir l'en-tête).
         """
 
         try:
@@ -398,87 +397,38 @@ class BoardService:
                         f"Mode du Board actif non restauré : {exc}", level="error",
                         data={"code": exc.code.value})
             return
-        if board.interaction_mode_origin is InteractionModeOrigin.UNSET:
-            self._trace("core.board.interaction_mode.restore_skipped",
-                        "Mode du Board jamais réglé : le réglage historique sera repris",
-                        data={"board_id": board.board_id})
-            return
-        await self._apply_board_mode(board, source=BOARD_RESTORE_SOURCE)
-
-    async def _apply_board_mode(self, board: Board, *, source: str) -> None:
         try:
-            state, disposition = await self._modes.request(board.interaction_mode.value, source=source)
+            await self._request_board_mode(board, source=BOARD_RESTORE_SOURCE)
+        except InteractionModeError:
+            return  # argued: already traced as `apply_failed` by `_request_board_mode`; Core keeps its mode
+
+    @staticmethod
+    def board_mode(board: Board) -> InteractionMode:
+        """Mode dont le comportement tourne pour ce Board : celui de son type ; Réunion -> assistant."""
+
+        return behaving_interaction_mode(board_kind_mode(board.board_kind))
+
+    async def _request_board_mode(self, board: Board, *, source: str) -> None:
+        """Demander à `InteractionModeService` le mode du type de `board`. Un refus est tracé puis levé."""
+
+        mode = self.board_mode(board)
+        try:
+            state, disposition = await self._modes.request(mode.value, source=source)
         except InteractionModeError as exc:
             self._trace("core.board.interaction_mode.apply_failed",
                         f"Mode du Board {board.board_id} refusé par Core : {exc}", level="error",
-                        data={"board_id": board.board_id, "code": exc.code, "mode": board.interaction_mode.value,
-                              "source": source})
-            return
-        self._trace("core.board.interaction_mode.applied", f"Mode du Board appliqué ({source})",
-                    data={"board_id": board.board_id, "mode": state.mode.value, "revision": state.revision,
-                          "disposition": disposition.value, "source": source})
-
-    def _on_mode_changed(self, state: InteractionModeState) -> None:
-        """Abonné synchrone de `InteractionModeService` (`with_state=True`) : l'écriture part en tâche.
-
-        Le mode et sa source viennent de l'état du changement lui-même, pas de
-        l'état courant du service. Les tâches s'exécutent dans l'ordre des
-        changements (verrou FIFO) ; `drain()` les attend.
-        """
-
-        task = asyncio.get_running_loop().create_task(
-            self._persist_mode(state.mode, state.source), name="jarvis-board-mode-persist")
-        self._pending.add(task)
-        task.add_done_callback(self._pending.discard)
-
-    async def _persist_mode(self, mode: InteractionMode, source: str) -> None:
-        """Tâche de fond d'un changement de mode. Ne lève jamais : tout échec est une ligne `persist_failed`.
-
-        Personne n'attend cette tâche pour lire son exception (`drain()`
-        l'avale avec `return_exceptions=True`) : sans ce filet, une panne
-        imprévue (`sqlite3` non converti, bogue) disparaîtrait sans trace.
-        """
-
-        if source in NON_PERSISTED_SOURCES:
-            return
-        try:
-            await self._write_mode(mode, source)
-        except Exception as exc:  # noqa: BLE001 - capture: background task, the trace below is the only record
-            # Le mode effectif reste appliqué ; seul son enregistrement sur le
-            # Board est perdu, et c'est ce que dit cette ligne, avec la cause réelle.
-            code = getattr(exc, "code", None)
-            self._trace("core.board.interaction_mode.persist_failed",
-                        f"Mode non enregistré sur le Board : {type(exc).__name__}: {str(exc)[:_TRACE_EXCEPTION_CHARS]}",
-                        level="error",
-                        data={"code": str(code) if code is not None else "board_store_failed",
-                              "exception_type": type(exc).__name__, "mode": mode.value, "source": source})
-
-    async def _write_mode(self, mode: InteractionMode, source: str) -> None:
-        reassert: Board | None = None
-        async with self._lock:
-            board = await self.get_active()
-            now = self._clock()
-            if source in LEGACY_REPLAY_SOURCES:
-                if board.interaction_mode_origin is InteractionModeOrigin.UNSET:
-                    await self._repo.save_board(adopt_legacy_interaction_mode(board, mode, now=now))
-                    self._trace("core.board.interaction_mode.migrated",
-                                "Réglage de mode historique repris sur le Board",
-                                data={"board_id": board.board_id, "mode": mode.value, "source": source})
-                elif board.interaction_mode is not mode:
-                    reassert = board
-            elif not (board.interaction_mode is mode
-                      and board.interaction_mode_origin is InteractionModeOrigin.USER):
-                await self._repo.save_board(set_interaction_mode(board, mode, now=now))
-                self._trace("core.board.interaction_mode.persisted", "Mode enregistré sur le Board actif",
-                            data={"board_id": board.board_id, "mode": mode.value, "source": source})
-        if reassert is not None:
-            # Hors du verrou : la demande notifie cet abonné, dont la tâche
-            # (source board_restore) prend le verrou pour ne rien écrire.
-            self._trace("core.board.interaction_mode.legacy_replay_overridden",
-                        "Rejeu du réglage global ignoré : le Board a déjà son mode", level="warning",
-                        data={"board_id": reassert.board_id, "board_mode": reassert.interaction_mode.value,
-                              "replayed_mode": mode.value, "source": source})
-            await self._apply_board_mode(reassert, source=BOARD_RESTORE_SOURCE)
+                        data={"board_id": board.board_id, "code": exc.code, "mode": mode.value,
+                              "board_kind": board.board_kind.value, "source": source})
+            raise
+        data: dict[str, Any] = {"board_id": board.board_id, "board_kind": board.board_kind.value,
+                                "mode": state.mode.value, "revision": state.revision,
+                                "disposition": disposition.value, "source": source}
+        message = f"Mode du type de Board appliqué ({source})"
+        if board.board_kind is BoardKind.MEETING:
+            # Réunion n'a pas encore de comportement : c'est dit, jamais refusé (pas de bascule annulée).
+            data["status"] = MEETING_PLANNED
+            message = f"Board Réunion : comportement réunion pas encore disponible, assistant appliqué ({source})"
+        self._trace("core.board.interaction_mode.applied", message, data=data)
 
     # ------------------------------------------------------------ bascule (Slice 04b)
 
@@ -498,8 +448,6 @@ class BoardService:
             raise RuntimeError("board switch is not configured (configure_transitions)")
         if not isinstance(board_id, str) or not board_id:
             raise BoardError(BoardErrorCode.INVALID_BOARD, "board_id must be a non-empty string")
-        # Les écritures de mode en vol atterrissent sur le Board qu'elles visaient.
-        await self.drain()
         async with self._authority.lock:
             return await self._switch_locked(board_id, origin=origin)
 
@@ -512,8 +460,15 @@ class BoardService:
         if board.status is BoardStatus.ARCHIVED:
             raise BoardError(BoardErrorCode.BOARD_ARCHIVED, f"board {board.board_id} is archived")
         if board.board_id == session.active_board_id:
-            self._trace("core.board.switch_noop", "Bascule vers le Board déjà actif : rien à faire",
-                        data={"board_id": board.board_id, "origin": origin})
+            # Le mode du type est réappliqué (en-tête, *Aucun autre écrivain du mode*) : c'est
+            # la reprise d'une restauration du Studio ratée ; idempotent sinon.
+            try:
+                await self._request_board_mode(board, source=BOARD_SWITCH_SOURCE)
+            except InteractionModeError:
+                pass  # argued: traced at error level as `apply_failed`; a no-op switch has nothing to roll back
+            self._trace("core.board.switch_noop", "Bascule vers le Board déjà actif : mode de son type réappliqué",
+                        data={"board_id": board.board_id, "origin": origin,
+                              "mode": self._modes.state.mode.value, "mode_source": self._modes.state.source})
             return SwitchResult(session, previous, board, previous.board_id, changed=False)
         target = await sessions.binding_for(session.jarvis_session_id, board.board_id)
         self._trace("core.board.switch_started", "Bascule de Board demandée",
@@ -531,10 +486,10 @@ class BoardService:
                     await restore_on_host(self._host, previous, self._trace, step="switch_activation")
                 raise
         host = self._host if activation is not None else None
-        # 4. Mode du Board cible.
+        # 4. Mode dérivé du type du Board cible (Réunion : assistant, jamais refusé).
         previous_mode = self._modes.state.mode
         try:
-            await self._apply_switch_mode(board)
+            await self._request_board_mode(board, source=BOARD_SWITCH_SOURCE)
         except InteractionModeError as exc:
             await restore_on_host(host, previous, self._trace, step="switch_mode")
             raise self._rolled_back(board, previous, "mode", exc) from exc
@@ -567,31 +522,6 @@ class BoardService:
             ))
         await publish_voice_binding(self._events, binding, reason="board_switch")
         return SwitchResult(session, binding, await self.get(board.board_id), previous.board_id, changed=True)
-
-    async def _apply_switch_mode(self, board: Board) -> None:
-        """Mode du Board cible, strict (un refus lève).
-
-        Board `unset` (jamais réglé) : le mode **par défaut** est appliqué, pas
-        le mode du Board quitté — chaque Board est déterministe (QA Slice 04b,
-        S1). Rien n'est écrit sur le Board : il reste `unset` jusqu'au premier
-        choix de l'utilisateur. Le démarrage de Core, lui, garde `unset` au
-        défaut à la révision 0 (`restore_interaction_mode`) pour la migration.
-        """
-
-        unset = board.interaction_mode_origin is InteractionModeOrigin.UNSET
-        mode = DEFAULT_INTERACTION_MODE if unset else board.interaction_mode
-        try:
-            state, disposition = await self._modes.request(mode.value, source=BOARD_SWITCH_SOURCE)
-        except InteractionModeError as exc:
-            self._trace("core.board.interaction_mode.apply_failed",
-                        f"Mode du Board {board.board_id} refusé par Core : {exc}", level="error",
-                        data={"board_id": board.board_id, "code": exc.code, "mode": mode.value,
-                              "source": BOARD_SWITCH_SOURCE})
-            raise
-        self._trace("core.board.interaction_mode.applied", f"Mode du Board appliqué ({BOARD_SWITCH_SOURCE})",
-                    data={"board_id": board.board_id, "mode": state.mode.value, "revision": state.revision,
-                          "disposition": disposition.value, "source": BOARD_SWITCH_SOURCE,
-                          "board_mode_origin": board.interaction_mode_origin.value})
 
     async def _restore_mode(self, mode: InteractionMode) -> None:
         """Rétablir le mode d'avant une bascule annulée. Ne lève pas : un refus est tracé."""
@@ -655,3 +585,11 @@ class BoardService:
             self._diagnostics.emit(kind, message, level=level, data=dict(data or {}))
         except Exception:  # noqa: BLE001 - intentional: an unavailable journal must not break a Board write
             pass
+
+
+def _bounded_raw(value: object) -> object:
+    """Valeur brute bornée pour une trace (Slice 08, polish S01a : `preview` citait une chaîne, `"'presentation'"`)."""
+
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:64]

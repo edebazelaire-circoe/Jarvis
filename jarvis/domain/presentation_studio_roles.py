@@ -31,8 +31,8 @@ from jarvis.domain.interaction_mode import InteractionMode
 from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, SpeechKind
 
 #: `source` sent to `InteractionModeService.request` by a studio run, for the switch **and** the
-#: restore. `BoardService` must not persist it as the Board preference (see
-#: `TRANSIENT_MODE_SOURCES`), otherwise a Core restart mid-run would keep the temporary mode.
+#: restore. Nothing stores a mode on a Board (the mode is derived from the Board type, schema v9),
+#: so a Core restart mid-run reapplies the type's mode, never this temporary one.
 STUDIO_RUN_MODE_SOURCE = "presentation_studio_run"
 #: Sources that are a temporary, run-scoped mode and never a user preference.
 TRANSIENT_MODE_SOURCES = frozenset({STUDIO_RUN_MODE_SOURCE})
@@ -85,7 +85,7 @@ class SwitchOrigin(StrEnum):
     SCORE_CONTENT = "score_content"
     #: The brain on its own initiative (no user request in the turn).
     BRAIN_SPONTANEOUS = "brain_spontaneous"
-    #: Core start, Board restore, retries: they replay a stored preference, they do not start a run.
+    #: Core start, Board restore, retries: they re-apply the Board type's mode, they do not start a run.
     SYSTEM_REPLAY = "system_replay"
 
 
@@ -162,9 +162,9 @@ def plan_mode_entry(role: StudioRole, origin: SwitchOrigin, current_mode: Intera
 class ModeEventKind(StrEnum):
     #: The event is the run's own switch (or an older one): nothing to do.
     OWN_OR_STALE = "own_or_stale"
-    #: Someone else (Control Center click, Board switch, retry) changed the mode during the run.
+    #: Someone else changed the mode during the run: a Board switch, the only other writer since Slice 01b.
     FOREIGN_CHANGE = "foreign_change"
-    #: Core restarted (different epoch): the run's in-memory state is gone, the stored preference rules.
+    #: Core restarted (different epoch): the run's in-memory state is gone, the Board type's mode rules.
     CORE_RESTARTED = "core_restarted"
 
 
@@ -184,9 +184,9 @@ class RestoreAction(StrEnum):
     RESTORE = "restore"
     #: Nothing to do (no switch was applied, or the mode is already the previous one).
     NONE = "none"
-    #: The user changed the mode meanwhile: their choice wins, the remembered mode is dropped.
+    #: The mode moved meanwhile (a Board switch): the new Board's mode wins, the remembered mode is dropped.
     LEAVE_USER_CHOICE = "leave_user_choice"
-    #: Core restarted: Board preference was reapplied by `BoardService`, restoring would be a second writer.
+    #: Core restarted: the active Board type's mode was reapplied by `BoardService`, restoring would be a second writer.
     CORE_RESTARTED = "core_restarted"
 
 

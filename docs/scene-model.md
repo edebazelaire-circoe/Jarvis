@@ -86,17 +86,28 @@ is `rejected_authority` (`runtime_composition`).
   orbital UI Slice 06 (D9) a **view preference** of the browser can show hidden
   objects as **ghosts**: `showHidden` in `JarvisSceneView`
   (`control_center_scene_view.js`, stored in `jarvis.scene.view`, never sent to
-  Core, like `showEphemeral`), toggled by the eye `#hiddenEye` of the status
-  centre. `JarvisSceneLayout.viewModel(..., {showHidden:true})` emits every
+  Core, like `showEphemeral`). There is no eye in the shell any more (D06,
+  Slice 02 of the wheel/dossier refactor): since Slice 06 the toggle is the
+  wheel › **Sélection › « Masqués (N) » › « Voir en fantômes »**,
+  next to « Tout réafficher (N) » and the hidden list (the count lives only in
+  that submenu). A stored `showHidden: true` draws its ghosts as long as the
+  wheel is installed (it can turn them off); without the wheel nothing could,
+  so no ghost is drawn and `scene.hidden_view_withheld` is journaled once.
+  `JarvisSceneLayout.viewModel(..., {showHidden:true})` emits every
   hidden object **that has a stored geometry** with `ghost: true` at that place
   (dimmed, dashed, accessible name suffixed « masqué »), still counted in
   `hidden`; a ghost is never placed by the resolver, never an obstacle, never
   the end of a link and never committed. Its only action is « Réafficher » =
-  one `set_visibility visible`. The eye never rewrites `visibility`: bulk
-  rewriting would lose which objects the user hid. A hidden object without
-  geometry has no ghost and stays in the eye's list (« Tout réafficher »).
-  Contract of the eye: [control-center-shell.md](control-center-shell.md) ›
-  *Status centre*.
+  one `set_visibility visible`. The ghost view never rewrites `visibility`:
+  bulk rewriting would lose which objects the user hid. « Tout réafficher »
+  does, canonically, as **one** `patch_selection {visibility: visible}` (the
+  brain's `scene_update_many` with `select.visibility = hidden` is the same
+  operation). A hidden object without geometry has no ghost and stays in the
+  list. **Hidden is never Dossier**: Masquer writes nothing durable, and
+  « Ranger dans le Dossier » is a different gesture ([dossier.md](dossier.md) ›
+  *Ranger*). Contract of the submenu:
+  [scene-selection-batch.md](scene-selection-batch.md) › *Selection actions
+  (wheel)*.
 - **Archived** = out of the active scene, kept for history. `brain` and `user`
   both archive (19/09/2026: the brain has exactly the user's hand, decision 14
   lifted). Archiving removes the object from `SceneSnapshot.objects`,
@@ -132,6 +143,36 @@ id again is a `duplicate`.
   id would be accepted. Conversely, while the tombstone lives, an id cannot be
   reused: the brain must choose a fresh id for a new object after the user
   archived an old one.
+
+### Archive purge
+
+Archived objects are counted (`archived` of `scene_inspect`) until the user asks
+for a **definitive purge** (2026-10-18): « vire tous les trucs archivés, je veux
+vraiment que tout soit supprimé ». Two steps, `jarvis/domain/scene_purge.py`:
+
+1. **Plan** (writes nothing): which tombstones and how many `scene_history`
+   rows would go, which stay and why, and a confirmation token valid 10 minutes.
+2. **Purge** (token + `confirmed: true`): Core re-plans under its command lock;
+   the token must describe exactly that plan (same scene, same Core run, same
+   purged ids, same history count), otherwise `confirmation_stale` and nothing
+   is deleted. It then backs up the whole `scene.sqlite3` next to itself
+   (`scene.sqlite3.purge-<UTC>.bak`; if that fails, nothing is deleted), deletes
+   the purged tombstones and every history row whose id keeps no tombstone, and
+   advances the revision by one without a patch (readers resync from the
+   snapshot).
+
+What stays: active objects, pinned ones included, and every relation are not
+touched. Archived ids the **runtime still tracks** (a sub-agent or job Core's
+work state still knows, see `SceneProjector.retained_archive_ids`) keep their
+tombstone and their history: removing it would let the next observation of that
+work recreate the star the user archived. They become purgeable once the runtime
+has forgotten them. Right after a Core start the projection cannot tell yet (its
+work state restarts empty and producers have not re-reported): the plan is
+refused `runtime_settling` for `restart_grace_s`.
+
+A purged id is free again, like an evicted one: a new object may reuse it. The
+purge is definitive for the scene; only the backup file can bring the data back
+(by hand, Core stopped).
 
 ## Commands
 
@@ -577,6 +618,24 @@ Brain tools: `source_path` on `scene_create_object` / `scene_update_object`
 2 000 characters (domain bound) with a visible cut note; binary files are
 announced; a missing file is announced after a second check 0.5 s later; a bound object's summary written by hand is overwritten at
 the next file change.
+
+## Dossier references
+
+`payload.registry_artifact_id` (optional `jart_…` id, wire key emitted only when
+set, same rule as `source_path`: payloads are JSON, so no storage migration)
+binds a representation to a **registry Artifact** — its durable source in the
+Board's Dossier ([dossier.md](dossier.md)). It is not a `kind=artifact` scene
+object. The domain checks the id's shape only (`check_prefixed_id`), never its
+existence; Core's `DossierService` sets it (« Afficher sur le Board ») and reads
+it (`Ranger` links instead of copying). No brain tool writes it; `scene_get`
+returns it when set, and `scene_update_object` keeps it (`_merged_payload`).
+Together with `source_path` inside a Board's memory, it is how the Dossier
+resolves the durable backing of a scene object; any other content object is
+materialized once by `Ranger`.
+
+**Compatibility.** `ScenePayload.from_payload` refuses unknown keys
+(`check_wire_keys`): a Core from before this key cannot load a scene whose
+active objects carry it. Rollback steps: [dossier.md](dossier.md) › *Rollback*.
 
 ## Markdown in the payload
 

@@ -205,6 +205,25 @@ class SceneBatchResult(ToolResult):
     scene_changed: str = None  # type: ignore[assignment]
 
 
+class ScenePurgeArchivedResult(ToolResult):
+    """`scene_purge_archived` : `step=plan` (rien d'effacé, jeton à rendre) ou `step=purged` (fait, sauvegarde d'abord).
+
+    `archived` / `history_rows` : pierres tombales et lignes d'historique qui partiraient (plan) ou parties (purged) ;
+    `kept` : ids archivés gardés parce que le runtime les suit encore (`kept_ids`, au plus 20 cités).
+    """
+
+    step: Literal["plan", "purged"]
+    revision: int
+    archived: int
+    history_rows: int
+    kept: int
+    kept_ids: list[str] = None  # type: ignore[assignment]
+    confirmation: str = None  # type: ignore[assignment]
+    expires_in_s: int = None  # type: ignore[assignment]
+    backup_path: str = None  # type: ignore[assignment]
+    note: str = None  # type: ignore[assignment]
+
+
 # ------------------------------------------------------------------ réglages
 
 class SettingValue(ToolResult):
@@ -237,7 +256,8 @@ class SettingsSetResult(ToolResult):
 # (`workspace_boards.py`, serveur `jarvis-workspace`) : l'écran d'un Board, sans
 # `scene_ref` ni `runtime_metadata` qui appartiennent au runtime. Ordre = ordre du dict construit.
 
-BoardKindValue = Literal["empty", "meeting", "presentation"]
+#: Type fixé du Board (`BoardKind`, schéma v9).
+BoardKindValue = Literal["assistant", "presentation", "meeting"]
 
 
 class BoardSummary(ToolResult):
@@ -249,7 +269,6 @@ class BoardSummary(ToolResult):
     status: Literal["active", "archived"]
     #: Le Board actif de la Session : celui où la conversation et la voix sont.
     active: bool
-    interaction_mode: str
     last_opened_at: str | None
 
 
@@ -268,7 +287,6 @@ class BoardResult(ToolResult):
     board_kind: BoardKindValue
     status: Literal["active", "archived"]
     active: bool
-    interaction_mode: str
     last_opened_at: str | None
     context_summary: str
     task_refs: list[str]
@@ -860,6 +878,76 @@ class BoardArtifactLinkResult(ToolResult):
     linked: bool
     #: Faux : déjà dans l'état demandé (aucune ligne d'activité).
     changed: bool
+
+
+# ------------------------------------------------------------------ Dossier (wheel-dossier-refactor, Slice 05)
+# `jarvis-workspace` : formes de `/api/workspace/boards/{id}/dossier*` et `/api/dossier/navigation/commands`
+# (`docs/dossier.md`). Vue humaine seulement : jamais un chemin absolu, jamais le détail « avancé ».
+
+
+class DossierEntryItem(ToolResult):
+    entry_id: str
+    kind: str
+    title: str
+    #: text | media | link | none : comment l'entrée s'ouvre (`board_memory_read`, `artifact_get`).
+    open: str
+    modified_at: str | None
+    size: int | None = None
+    preview: str | None = None
+    provenance: str = None  # type: ignore[assignment]
+
+
+class DossierListResult(ToolResult):
+    """`dossier_list` : mémoire du Board et Artifacts liés, `summary.md` d'abord puis les plus récents."""
+
+    board_id: str
+    writable: bool
+    entries: list[DossierEntryItem]
+    total: int
+    truncated: bool
+    memory_error: str = None  # type: ignore[assignment]
+
+
+class DossierRangerItem(ToolResult):
+    object_id: str
+    #: stored (mis en Dossier) | refused | rangeable (dry_run : Ranger le garderait).
+    status: Literal["stored", "refused", "rangeable"]
+    backing: str | None
+    entry_id: str | None
+    action: str = None  # type: ignore[assignment]
+    archived: bool = None  # type: ignore[assignment]
+    code: str = None  # type: ignore[assignment]
+    message: str = None  # type: ignore[assignment]
+
+
+class DossierRangerResult(ToolResult):
+    """`dossier_ranger` : par objet ; un refus laisse l'objet sur le Board."""
+
+    board_id: str
+    dry_run: bool
+    stored: int
+    refused: int
+    results: list[DossierRangerItem]
+
+
+class DossierPresentResult(ToolResult):
+    board_id: str
+    entry_id: str
+    object_id: str
+    #: Faux : une représentation de la même source était déjà là, réutilisée.
+    created: bool
+    representation: str
+
+
+class DossierViewResult(ToolResult):
+    """`dossier_view` : le reçu de la page, jamais une supposition."""
+
+    board_id: str
+    entry_id: str
+    state: Literal["opened", "refused"]
+    code: str = None  # type: ignore[assignment]
+    reason: str = None  # type: ignore[assignment]
+    explanation: str
 
 
 # ------------------------------------------------------------------ violation du contrat de sortie

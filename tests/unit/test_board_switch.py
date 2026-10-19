@@ -18,9 +18,9 @@ from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.session_manager import SessionManager
 from jarvis.core.speech_authority import BOARD_SWITCHED, BOARD_VOICE_BINDING_CHANGED, SpeechAuthority
 from jarvis.core.v2_services import ConversationService
-from jarvis.domain.interaction_mode import InteractionMode
+from jarvis.domain.interaction_mode import InteractionMode, InteractionModeError
 from jarvis.domain.workspace_board import (
-    DEFAULT_BOARD_ID, BoardError, BoardErrorCode, BrainLifecycle, archive_board, set_interaction_mode,
+    DEFAULT_BOARD_ID, BoardError, BoardErrorCode, BoardKind, BrainLifecycle, archive_board,
 )
 from jarvis.ports.workspace_board import HOST_UNCHANGED, HOST_UNKNOWN, BoardActivation
 
@@ -105,7 +105,6 @@ async def world(tmp_path):
     try:
         yield world
     finally:
-        await boards.stop()
         await state.close()
 
 
@@ -226,10 +225,14 @@ async def test_an_uncertain_host_failure_restores_the_previous_brain(world):
     assert "core.board.host_restored" in world.journal.kinds()
 
 
-async def test_mode_failure_rolls_back_host_and_commits_nothing(world):
-    board = await world.boards.create({"title": "Réunion"})
-    # Mode réservé (jamais activable en V1) : Core refuse de l'appliquer.
-    await world.repo.save_board(set_interaction_mode(board, InteractionMode.MEETING, now=T0 + timedelta(days=1)))
+async def test_mode_failure_rolls_back_host_and_commits_nothing(world, monkeypatch):
+    board = await world.boards.create({"title": "Présentation", "board_kind": "presentation"})
+
+    async def refuse(mode, *, source):
+        raise InteractionModeError("interaction_mode_unknown", "refusé par le test")
+
+    # Le mode dérivé n'est jamais refusé en pratique (Réunion -> assistant) : la panne est forcée.
+    monkeypatch.setattr(world.modes, "request", refuse)
     before = await snapshot(world)
     before_authority = world.authority.binding
     previous = before_authority
@@ -250,8 +253,7 @@ async def test_mode_failure_rolls_back_host_and_commits_nothing(world):
 
 
 async def test_commit_failure_restores_host_and_mode(world, monkeypatch):
-    board = await world.boards.create({"title": "Présentation"})
-    await world.repo.save_board(set_interaction_mode(board, InteractionMode.PRESENTATION, now=T0 + timedelta(days=1)))
+    board = await world.boards.create({"title": "Présentation", "board_kind": "presentation"})
     before = await snapshot(world)
     before_authority = world.authority.binding
 
@@ -273,50 +275,57 @@ async def test_commit_failure_restores_host_and_mode(world, monkeypatch):
     assert world.bus.events == []
 
 
-async def test_switch_applies_the_board_mode_as_board_switch_and_does_not_rewrite_it(world):
-    board = await world.boards.create({"title": "Présentation"})
-    await world.repo.save_board(set_interaction_mode(board, InteractionMode.PRESENTATION, now=T0 + timedelta(days=1)))
+async def test_switch_applies_the_mode_of_the_target_board_type_and_writes_no_mode(world):
+    board = await world.boards.create({"title": "Présentation", "board_kind": "presentation"})
     await world.boards.switch(board.board_id)
-    await world.boards.drain()
-    assert world.modes.state.mode is InteractionMode.PRESENTATION
-    assert world.modes.state.source == "board_switch"
-    # Le Board de départ (`unset`) n'a pas reçu ce mode.
-    assert (await world.boards.get(DEFAULT_BOARD_ID)).interaction_mode is InteractionMode.ASSISTANT
-
-
-async def test_choosing_the_mode_already_active_records_it_on_the_board(world):
-    """QA Slice 04b, S1 : sans cet enregistrement, A restait `unset` et gardait le mode de B au retour."""
-
-    bus = world.modes._events
-    await world.modes.request("assistant", source="user")          # déjà le mode effectif
-    await world.boards.drain()
-    a = await world.boards.get(DEFAULT_BOARD_ID)
-    assert (a.interaction_mode, a.interaction_mode_origin.value) == (InteractionMode.ASSISTANT, "user")
-    assert bus.events == []                                          # rien n'a changé : aucun évènement
-
-    b = await world.boards.create({"title": "Présentation"})
-    await world.repo.save_board(set_interaction_mode(b, InteractionMode.PRESENTATION, now=T0 + timedelta(days=1)))
-    await world.boards.switch(b.board_id)
-    assert world.modes.mode is InteractionMode.PRESENTATION
+    assert (world.modes.state.mode, world.modes.state.source) == (InteractionMode.PRESENTATION, "board_switch")
+    stored = await world.repo.get_board(board.board_id)
+    assert stored.board_kind is BoardKind.PRESENTATION and "interaction_mode" not in stored.to_payload()
     await world.boards.switch(DEFAULT_BOARD_ID)
+    assert (world.modes.state.mode, world.modes.state.source) == (InteractionMode.ASSISTANT, "board_switch")
+
+
+async def test_switching_to_a_meeting_board_succeeds_with_the_assistant_behaviour_said(world):
+    """Réunion : Board valide et ouvrable ; pas de comportement réunion inventé, jamais de bascule annulée."""
+
+    board = await world.boards.create({"title": "Réunion", "board_kind": "meeting"})
+    result = await world.boards.switch(board.board_id)
+    assert result.changed and (await world.sessions.current()).session.active_board_id == board.board_id
     assert world.modes.mode is InteractionMode.ASSISTANT
+    applied = [data for kind, _, data in world.journal.lines if kind == "core.board.interaction_mode.applied"][-1]
+    assert (applied["board_kind"], applied["status"], applied["source"]) == ("meeting", "meeting_planned", "board_switch")
+    assert "core.board.switch_rolled_back" not in world.journal.kinds()
 
 
-async def test_switching_to_an_unset_board_applies_the_default_mode_not_the_previous_one(world):
-    await world.modes.request("presentation", source="user")
-    await world.boards.drain()
+async def test_a_transient_studio_mode_does_not_survive_a_switch_and_is_not_stored(world):
+    """Slice 01b : le seul écrivain hors `BoardService` est une lecture du Studio, transitoire ; une bascule la défait."""
+
+    await world.modes.request("presentation", source="presentation_studio_run")
     b = await world.boards.create({"title": "Neuf"})
-    assert b.interaction_mode_origin.value == "unset"
-
     await world.boards.switch(b.board_id)
-    await world.boards.drain()
-
-    assert world.modes.mode is InteractionMode.ASSISTANT
-    assert world.modes.state.source == "board_switch"
-    assert (await world.boards.get(b.board_id)).interaction_mode_origin.value == "unset"   # rien écrit
-    assert (await world.boards.get(DEFAULT_BOARD_ID)).interaction_mode is InteractionMode.PRESENTATION
+    assert (world.modes.mode, world.modes.state.source) == (InteractionMode.ASSISTANT, "board_switch")
+    await world.modes.request("presentation", source="presentation_studio_run")
     await world.boards.switch(DEFAULT_BOARD_ID)
-    assert world.modes.mode is InteractionMode.PRESENTATION
+    assert world.modes.mode is InteractionMode.ASSISTANT  # `default` est Assistant : rien n'a été retenu
+    for board_id in (DEFAULT_BOARD_ID, b.board_id):
+        assert (await world.repo.get_board(board_id)).board_kind is BoardKind.ASSISTANT
+
+
+async def test_a_switch_to_the_active_board_reapplies_its_type_mode_without_touching_anything_else(world):
+    """QA 01a (étape 8 de 01b) : `switch_noop` réapplique le mode du type (reprise d'une restauration du Studio ratée)."""
+
+    await world.modes.request("presentation", source="presentation_studio_run")  # restauration jamais faite
+    before = await snapshot(world)
+    result = await world.boards.switch(DEFAULT_BOARD_ID)
+    assert not result.changed
+    assert (world.modes.mode, world.modes.state.source) == (InteractionMode.ASSISTANT, "board_switch")
+    assert await snapshot(world) == before and world.host.calls == []
+    noop = [data for kind, _, data in world.journal.lines if kind == "core.board.switch_noop"][-1]
+    assert (noop["mode"], noop["mode_source"]) == ("assistant", "board_switch")
+    # Idempotent : une seconde bascule vers le même Board ne fait plus rien bouger.
+    revision = world.modes.revision
+    await world.boards.switch(DEFAULT_BOARD_ID)
+    assert world.modes.revision == revision
 
 
 # ------------------------------------------------------------------ nouvelle Session

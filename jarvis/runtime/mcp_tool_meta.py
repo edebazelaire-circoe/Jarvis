@@ -188,6 +188,15 @@ DISPLAY = ServerMeta(
             ui_surface="scene", reversibility="irreversible", preconditions=_OBJ_PRE, choice_providers=_ON_IDS,
             parameter_rules=(*_SELECTOR_RULES, _READ_FIRST_RULE),
             output_notes=(_BATCH_NOTE, "cascade_ids : signaux runtime emportés avec leur étoile")),
+        # Purge définitive (2026-10-18) : hors Tool Brain (pas de ui_surface) ; deux temps, jeton de Core.
+        "scene_purge_archived": ToolMeta(
+            "Purger les archivés (définitif)", "destructive", False, "single_request", "structured",
+            parameter_rules=("sans argument : plan et jeton, rien d'effacé",
+                             "confirmation (jeton du plan) + confirmed=true après le oui de l'utilisateur : sauvegarde "
+                             "de scene.sqlite3 puis purge",
+                             "jeton périmé (10 min) ou ensemble changé : confirmation_stale, replanifier"),
+            output_notes=("ids suivis par le runtime gardés (kept) : leur étoile ne renaît pas",
+                          "backup_path : sauvegarde écrite avant toute suppression")),
         "scene_pin": ToolMeta(
             "Épingler ou désépingler", "write", True, "atomic_batch", "structured",
             ui_surface="scene", reversibility="reversible", preconditions=_OBJ_PRE, choice_providers=_ON_IDS,
@@ -462,6 +471,27 @@ WORKSPACE = ServerMeta(
             "Lier ou délier un Artifact", "write", True, "single_request", "structured",
             parameter_rules=(_NAMED_BOARD_RULE, "linked=false : retire le lien"),
             output_notes=("changed=false : déjà dans cet état (aucune ligne d'activité)",)),
+        # Dossier (wheel-dossier-refactor, Slice 05, `docs/dossier.md`) : projection de la mémoire et des
+        # Artifacts liés, Ranger, Afficher sur le Board, ouvrir à l'écran. Pas des opérations d'interface
+        # du Tool Brain (`ui_surface` nul, comme la mémoire) : elles passent par Core.
+        "dossier_list": ToolMeta(
+            "Lire le Dossier d'un Board", "read", True, "none", "structured",
+            parameter_rules=(_NAMED_BOARD_RULE, "since : date ISO avec fuseau"),
+            output_notes=("≤ 50 entrées, summary.md d'abord puis les plus récentes ; truncated au-delà",)),
+        "dossier_ranger": ToolMeta(
+            "Ranger des objets dans le Dossier", "write", True, "single_request", "structured",
+            parameter_rules=("board_id = le Board actif (dossier_board_not_active sinon)", "≤ 20 object_ids",
+                             "dry_run=true : rien n'est écrit"),
+            output_notes=("par objet : stored (archived dit s'il a quitté le Board) ou refused (code, message) ; "
+                          "un refus laisse l'objet affiché",)),
+        "dossier_present": ToolMeta(
+            "Afficher une entrée sur le Board", "write", True, "single_request", "structured",
+            parameter_rules=("board_id = le Board actif", "entry_id de dossier_list"),
+            output_notes=("created=false : la représentation de la même source est réutilisée",)),
+        "dossier_view": ToolMeta(
+            "Ouvrir une entrée du Dossier à l'écran", "write", True, "single_request", "structured",
+            parameter_rules=("entry_id de dossier_list",),
+            output_notes=("state = reçu de la page ; no_visible_page : aucune page n'a répondu",)),
     },
 )
 
@@ -557,9 +587,14 @@ PRESENTATION = ServerMeta(
                              "rail_* : demande d'écran, relire inspect target rail"),
             output_notes=(_SILENT_NOTE, "mode : windowed, fullscreen_armed ou fullscreen, constaté par la page")),
         "presentation_library": ToolMeta(
-            "Rail : masquer, archiver, renommer", "destructive", True, "single_request", "untyped",
-            parameter_rules=(_IDS_RULE, "archive : confirmed=true après le oui de l'utilisateur (restaurable, rien n'est supprimé)", "rename exige title"),
-            output_notes=(_SILENT_NOTE, "hidden / archived : l'état persistant après l'opération")),
+            "Rail : masquer, archiver, renommer, purger", "destructive", False, "single_request", "untyped",
+            parameter_rules=(_IDS_RULE, "archive : confirmed=true après le oui de l'utilisateur (restaurable, rien n'est supprimé)", "rename exige title",
+                             "purge (irréversible) : un premier appel sans confirmation rend le plan et le jeton, rien n'est supprimé ; après le oui "
+                             "de l'utilisateur, purge avec confirmation et confirmed=true ; seules les archivées partent, sauvegarde d'abord"),
+            output_notes=(_SILENT_NOTE, "hidden / archived : l'état persistant après l'opération",
+                          "purge : purged, deleted (comptes), backup (dossier de la sauvegarde, relatif à la racine de données)"),
+            # purge efface pour de bon (sauvegarde gardée, restauration manuelle seulement) : l'outil est classé au plus fort de ses ops
+            reversibility="irreversible"),
         "presentation_play": ToolMeta(
             "Lire, répéter, naviguer", "write", False, "single_request", "untyped",
             parameter_rules=(_IDS_RULE, "goto : exactement un de item_id, scene_id, position", "reveal / hide : anchor_id",

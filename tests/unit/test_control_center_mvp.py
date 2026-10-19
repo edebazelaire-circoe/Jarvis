@@ -71,18 +71,21 @@ def test_runtime_journal_tail_limit(tmp_path):
 def test_control_center_keeps_pointer_visible_and_explains_configured_voice_toggle():
     html = CONTROL_CENTER_HTML.read_text(encoding="utf-8")
     assert "pointer-events:none;cursor:default" in html
-    # Orbital UI Slice 06 (D8) : plus de capsule `#voiceHint` au bas-centre ; la
-    # touche d'éveil reste découvrable dans la ligne d'état (description
-    # accessible + infobulle), mise à jour par chaque statut.
-    assert "F9 · DÉMARRER" in html
-    assert 'class="state" data-shell-control title="F9 · DÉMARRER" aria-description="F9 · DÉMARRER"' in html
+    # Orbital UI Slice 06 (D8) : plus de capsule `#voiceHint` au bas-centre. Slice 02 de
+    # jarvis-board-ui-wheel-dossier-refactor (D05) : plus de ligne d'état non plus ; la
+    # touche d'éveil, mise à jour par chaque statut, se lit dans le sous-menu JARVIS de la
+    # roue depuis la Slice 04 (`control_center_jarvis_wheel.js`, `wakeHintOf`).
+    assert 'id="wakeHint"' not in html
+    assert 'class="state"' not in html
     assert "voiceHint" not in html and "voicehint" not in html
-    assert "setWakeHint(online?(" in html and "setWakeHint('VOICE HORS LIGNE')" in html
+    assert "JarvisRuntimeWheel.gate(s)" in html and "JarvisRuntimeWheel.statusLost()" in html
+    wheel = (CONTROL_CENTER_HTML.parent / "control_center_jarvis_wheel.js").read_text(encoding="utf-8")
+    assert "`${k} · DÉMARRER`" in wheel and "`${k} · VOICE HORS LIGNE`" in wheel
     # Under server VAD the key never means "send" while a turn is open: it can
     # only cancel. The "send" wording is kept for the manual turn mode.
-    assert "s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`" in html
-    assert "`${k} · ANNULER`" in html
-    assert "`${k} · INTERROMPRE`" in html
+    assert "facts.turnMode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`" in wheel
+    assert "`${k} · ANNULER`" in wheel
+    assert "`${k} · INTERROMPRE`" in wheel
     assert "persistence==='audio_input_device'" in html
     assert "persistence==='audio_output_device'" in html
     assert "Tester micro + sortie" in html
@@ -115,7 +118,8 @@ def test_background_notifications_are_round_pills_in_the_main_interface_not_a_to
     # sous Cosmos comme au circuit imprimé.
     assert ".bgpills{position:relative;z-index:40;" in html
     centre = html[html.index('<div class="status-centre" id="statusCentre">'):]
-    assert centre.index('id="bgPills"') < centre.index('id="hiddenEye"') < centre.index('id="panel"')
+    # L'œil permanent des objets masqués est retiré (Slice 02 de jarvis-board-ui-wheel-dossier-refactor, D06).
+    assert centre.index('id="bgPills"') < centre.index('id="panel"') and 'id="hiddenEye"' not in centre
     work = CONTROL_CENTER_HTML.with_name("control_center_work.js").read_text(encoding="utf-8")
     assert 'html[data-jarvis-theme="cosmos"] .bgpills{' not in work
 

@@ -110,7 +110,7 @@ ever enters a descriptor.
 | --- | --- | --- |
 | `general` | Général | overview tab: servers, counts, availability, context budget, policies. Hosts cross-domain tools: `jarvis-tools` `list_tools` + `call_tool` *(plugin amendment, implemented by Slice 04)*; every other native tool belongs to a domain |
 | `scene` | Étoiles / Scène | all `jarvis-display` tools |
-| `settings` | Réglages | `settings_describe`, `settings_get`, `settings_set` (`jarvis-console`) |
+| `settings` | Réglages | `settings_describe`, `settings_get`, `settings_set` (`jarvis-console`). The interaction mode is **not** a setting (Slice 01b of `jarvis-board-ui-wheel-dossier-refactor`): no `interaction_mode` item or `interaction` category is listed, and `settings_set("interaction_mode", …)` is refused before any request with `interaction_mode_derived` (the shared sentence plus « board_switch … board_create avec board_kind ») and journalled `settings.tool_refused`; the mode follows the active Board's type ([../interaction-mode.md](../interaction-mode.md)) |
 | `workspace` | Boards et mémoire | the twenty `jarvis-workspace` tools (§10.12): the nine Board/Session tools (§10.9, moved from `jarvis-console`), Session history, Board inspection, Board memory, Board-artifact links, plus the five `jarvis-memory` tools (§10.16: memory and knowledge search, read, propose) |
 | `presentation` | Présentations | the fourteen `jarvis-presentation` tools (§10.15): inspect, explorer and full screen, playback, semantic edits, undo, variants, comparison, composition, templates, drafting, native scene source (`presentation_source`, native-studio-playback-fix Slice 13: read, write, preview; 20 888 B measured, budget 21 000 B, declared surface 113 700 B); master-project Slice 07: `presentation_inspect` variant names the `master` block, 20 896 B measured (declared surface 113 686 B), budgets unchanged |
 | `capture` | Captures et preuves | the nine `jarvis-capture` tools (§10.11): Contexts, recordings, screenshots, evidence search and transcript reads |
@@ -338,6 +338,7 @@ intent → one tool; one call → one Core command (reads: none).
 | 7 | `scene_update_many` | hide / show / fold / label / layer / recategorise **a set**, incl. « réaffiche tout » (`select {visibility: hidden}`, `visibility: visible`) | `patch_selection` | write / atomic_batch | yes | atomic; absorbs `scene_set_visibility` `scope=all_hidden`; bound 512; `confirm` guard kept |
 | 8 | `scene_move` | « déplace la constellation / ces objets vers la gauche » | `translate_selection` | write / atomic_batch | **no** (relative) | **new**: `select`\|`object_ids`, `dx`, `dy`, `pin?`; returns requested vs effective delta |
 | 9 | `scene_archive` | « supprime / archive » one or many | `archive_selection` | destructive / atomic_batch | yes (second call: `unchanged`) | atomic; bound 512 |
+| 9b | `scene_purge_archived` | « supprime vraiment les archivés » (2026-10-18) | none: `POST /v1/scene/archived/purge-plan`, then `/purge` with the plan's token and `confirmed: true` | destructive / single_request | no | plan → token; purge → counts, kept ids, `backup_path`; not delegated to the Tool Brain |
 | 10 | `scene_pin` | pin / unpin one or many | `pin_selection` / `unpin_selection` | write / atomic_batch | yes | atomic; bound 512 |
 | 11 | `scene_link` | relate two objects | `link` | write / single_command | yes (derived id → `duplicate`) | typed result |
 | 12 | `scene_unlink` | remove a relation | `unlink` | write / single_command | yes | typed result |
@@ -941,8 +942,12 @@ Claude Code 2.1.282, 2026-09-25, isolated Core/Control Center, evidence in
 
 > **Moved (board-memory-workspace-inspector, Slice 06, §10.12).** These nine
 > tools now live on `jarvis-workspace` with the same names and semantics
-> (`board_kind` added to `board_create` / `board_update` and to every Board
-> result); `console_boards.py` became `workspace_boards.py` (`BoardTools`,
+> (`board_kind` added to `board_create` and to every Board result; since the
+> fixed Board type, Slice 01a of `jarvis-board-ui-wheel-dossier-refactor`,
+> `board_update` no longer takes it and Board results no longer carry
+> `interaction_mode`; since Slice 01b `board_switch` / `board_create` with `board_kind` are
+> how the brain changes the interaction mode, « passe en mode présentation » included);
+> `console_boards.py` became `workspace_boards.py` (`BoardTools`,
 > `WorkspaceToolError`), and no alias is left on `jarvis-console`. The facts
 > below are kept as the record of their design.
 
@@ -967,10 +972,10 @@ three settings tools (registration order = `mcp_tool_meta.CONSOLE`), logic in
 | `session_new` | `GET /api/sessions/current`, then `POST /api/sessions/new {origin:"brain", expected_session_id}` | write / no | `SessionNewResult {status: applied \| scheduled \| unknown, closed_session_id, board_id, jarvis_session_id?, merged, note}` |
 
 Writes are `single_request`, reads `none`; all `structured`. `BoardResult` is
-the Board as the screen shows it: `board_id, title, status, active,
-interaction_mode, last_opened_at, context_summary, task_refs, artifact_refs,
-project_refs, updated_at` (no `scene_ref`, `runtime_metadata`,
-`interaction_mode_origin`: runtime fields). No low-level voice, brain-binding
+the Board as the screen shows it: `board_id, title, board_kind, status, active,
+last_opened_at, context_summary, task_refs, artifact_refs, project_refs,
+updated_at` (no `scene_ref`, `runtime_metadata`: runtime fields; no mode: it is
+derived from `board_kind`, [../boards.md](../boards.md) › *Board type*). No low-level voice, brain-binding
 or speech-authority tool, and `origin` is never a model argument.
 
 - **Input schemas.** `board_id` pattern `^(default|board_[A-Za-z0-9_-]+)$`
@@ -1204,7 +1209,7 @@ rules, the per-Board lock and the ledger. Mutations send `origin: "brain"`.
 
 | Tool | Route(s) | Class / idempotent | Result (`mcp_results`) |
 | --- | --- | --- | --- |
-| `board_list` … `session_new` (9) | §10.9 (`/api/boards*`, `/api/sessions*`) | §10.9 | §10.9, `board_kind` added to `BoardSummary` / `BoardResult` |
+| `board_list` … `session_new` (9) | §10.9 (`/api/boards*`, `/api/sessions*`) | §10.9 | §10.9, `board_kind` (`assistant` \| `presentation` \| `meeting`) in `BoardSummary` / `BoardResult`; `board_create` takes it, `board_update` never does (a fixed type). A `board_update` call carrying `board_kind` is refused by the server's argument guard **before** anything is sent, with the coded refusal `board_kind_immutable` and its sentence (`workspace_boards.ERROR_SENTENCES`: create another Board, then switch), not the generic « Arguments inconnus »; the same code from Core (`PATCH` from another client) maps to the same sentence |
 | `session_list` | `GET /api/workspace/sessions?limit≤20&cursor` | read / yes | `SessionListResult {sessions[{jarvis_session_id, status, started_at, ended_at, active_board_id, visited_board_ids ≤ 20}], next_cursor?}` |
 | `session_get` | `GET /api/workspace/sessions/{id}` | read / yes | `SessionGetResult {…, boards[≤ 20 {board_id, title?, board_kind?, status?, active, visited, binding?, missing?}], boards_total, contexts[newest ≤ 10], contexts_total, active_context_id, problems[codes], speech_authority_board_id? (open only)}` |
 | `board_inspect` | `GET /api/workspace/boards/{id}` | read / yes | `BoardInspectResult {board_id, title, board_kind, status, active, created_at, last_opened_at, sessions[≤ 10 {jarvis_session_id, session_status, lifecycle, active_in_session, created_at, last_active_at}], sessions_truncated, linked_artifacts, legacy_artifact_refs[≤ 10], memory {exists, entries?, files?, bytes?, truncated?, summary_md?, error?}}` |
@@ -1229,7 +1234,8 @@ replaces the provisional `workspace_inspect` of R5: Session relations are
 - **Shared schema pieces** (one definition, reused): `BoardId` (pattern
   `^(default|board_[A-Za-z0-9_-]+)$`, ≤ 80), `MemoryPath` (1..240),
   `Cursor` (≤ 400), `SessionId` (`jsess_…`), `ArtifactId` (`jart_…`), `Kind`
-  (pattern `^(empty|meeting|presentation)$`, **deliberately not an enum**:
+  (pattern `^(assistant|presentation|meeting)$`, `board_create` only,
+  **deliberately not an enum**:
   `list_tools` indexes enum values, and `meeting` put `board_create` /
   `board_update` ahead of the calendar tools for « réunion », « rendez-vous »
   — recall@3 of `test_tool_relevance` fell to 0.88; the pattern stays strict
@@ -1435,3 +1441,68 @@ vidéo et confirme ; la vidéo entière de la variante (ou la scène à l'écran
 `unknown` is an unreadable state, never « disponible ». Budgets unchanged (`tests/unit/test_mcp_catalog.py`). **Slice 09 (release)**: the real
 trace create → whole-video export → voice edit → re-export → incompatible refusal was rerun on the release head (run `trace-t2`,
 claude-sonnet-5-5, USD 0.92, 0 refusals; the handoff's `slices/09-release-and-human-acceptance/evidence/trace-t2/`).
+
+### 10.18 Wheel-dossier-refactor, Slice 05 — Dossier tools on `jarvis-workspace`
+
+Handoff `tasks/jarvis-board-ui-wheel-dossier-refactor/`. Contract of the
+semantics, routes and codes: [../dossier.md](../dossier.md). Four tools appended
+to `jarvis-workspace` (§10.12), after `board_artifact_link`, category
+`workspace`, all `structured`, **no `ui_surface`** (like the memory tools: they
+are documentary operations served by Core, not Tool Brain UI operations). A
+facade as the rest of the server: Core's `DossierService` owns every rule;
+writes send `origin: "brain"`.
+
+| Tool | Route(s) | Class / idempotent | Result (`mcp_results`) |
+| --- | --- | --- | --- |
+| `dossier_list` | `GET /api/workspace/boards/{id}/dossier?limit≤50&since` | read / yes | `DossierListResult {board_id, writable, entries[{entry_id, kind, title, open, modified_at, size?, preview?, provenance?}], total, truncated, memory_error?}` — the human view only (no `path`, no `advanced`) |
+| `dossier_ranger` | `POST …/dossier/ranger {object_ids ≤ 20, origin: brain}`; `dry_run=true`: `GET …/dossier/backing?object_id=…` | write / yes | `DossierRangerResult {board_id, dry_run, stored, refused, results[{object_id, status: stored\|refused\|rangeable, backing, entry_id, action?, archived?, code?, message?}]}` |
+| `dossier_present` | `POST …/dossier/present {entry_id, representation, origin: brain}` | write / yes | `DossierPresentResult {board_id, entry_id, object_id, created, representation}` |
+| `dossier_view` | `GET …/dossier/entry?id=` then `POST /api/dossier/navigation/commands {board_id, entry_id}` | write / yes | `DossierViewResult {board_id, entry_id, state: opened\|refused, code?, reason?, explanation}` — the page's receipt, never assumed |
+
+(`…` = `/api/workspace/boards/{board_id}`.) `dossier_ranger` is `write`, not
+`destructive`: it removes a representation only after its durable source is
+confirmed, and never deletes durable content. Schema pieces: `BoardId`
+(§10.12), `EntryId` (pattern `^(memory:.+|artifact:jart_[a-z0-9_-]+)$`, ≤ 260;
+Core revalidates), `representation` `window|capsule|point`. Refusals: the
+§10.12 format with the new vouvoyées sentences of
+`workspace_boards.ERROR_SENTENCES` (`dossier_board_not_active`,
+`dossier_entry_not_found`, `dossier_entry_invalid`, `scene_unavailable`,
+`no_visible_page`, `command_expired`, `command_busy`); per-object refusals of
+`dossier_ranger` are results, not tool errors, each with its own sentence (and
+the object's precise `reason`). `dossier_ranger dry_run=true` answers
+`refused dossier_board_not_active` for every object when the Board is not the
+displayed one, exactly where the real Ranger would refuse 409 (Slice 06, QA S05
+polish 8); the tool schema is unchanged. **Slice 08:** `dossier_view` refused
+`command_busy` (another opening in flight on the page channel) waits 0.6 s and
+retries, twice at most (`DOSSIER_VIEW_BUSY_RETRIES`, journal `board.tool`
+`attempt`); beyond that the coded refusal is returned.
+
+**Slice 07 (2026-10-18).** `dossier_view` now really opens the entry: the
+full-screen Dossier of the Control Center page (`control_center_dossier.js`)
+takes the command and answers `opened` (the entry is shown, checked in its
+DOM) or `refused` with `board_not_displayed`, `entry_not_found` or
+`dossier_unavailable` (Variantes covers the screen, Board unknown, page
+error), or `edit_in_progress` (QA S07: an unsaved edit in the Dossier would be
+lost — another Board, or 8 edited tabs; nothing opened, the draft kept); a named
+refusal comes back with its own `ERROR_SENTENCES` sentence as `explanation`. It
+sends the page the `entry_id` Core resolved (file name as stored, QA S05
+polish 5). Two `dossier_view` calls within 30 s are shown side by side.
+Descriptions sharpened for routing (« Montrer … à l'écran » for `dossier_view`,
+« Poser … sur le Board ; pour la montrer à lire : dossier_view » for
+`dossier_present`), within the existing budgets (`test_mcp_catalog.py`
+green); the `no_visible_page` sentence no longer lets the brain promise a
+later reopening (« rien ne l'ouvrira de soi-même »).
+
+**Context cost** (2026-10-18): `dossier_list` 649 B, `dossier_ranger` 771 B,
+`dossier_present` 665 B, `dossier_view` 536 B (+2 621 B):
+`jarvis-workspace` **16 417 B** (budget `WORKSPACE_CONTEXT_BUDGET_BYTES` raised
+14 500 -> 16 700), declared surface **116 259 B** (budget
+`DECLARED_CONTEXT_BUDGET_BYTES` raised 113 700 -> 116 500, this server only).
+Written reason: without them the brain merges `board_memory_tree` and
+`board_artifacts` itself, cannot Ranger (durability then removal is a Core
+semantic, not two tool calls) and cannot show an entry without copying its
+content. Server instructions unchanged (894 B, budget 950 B). Tests:
+`tests/unit/test_dossier_mcp.py` (real MCP session -> real Control Center ->
+Core: human view, dry run, origin brain in the ledger, codes, a simulated page
+answering `dossier_view`, `no_visible_page`), `tests/unit/test_mcp_catalog.py`
+(order, classes, budgets).

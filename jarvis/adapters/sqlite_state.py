@@ -28,7 +28,8 @@ T = TypeVar("T")
 #: v6 (2026-10-01): Artifact registry, provenance and Session activity ledger (`docs/artifacts.md`).
 #: v7 (2026-10-01): capture owner (`docs/capture.md`).
 #: v8 (2026-10-02): Board-artifact links (`docs/artifacts.md` › *Board links*).
-_SCHEMA_VERSION = 8
+#: v9 (2026-10-17): fixed Board type, data only (`docs/boards.md` › *Board type*, *Persistence*).
+_SCHEMA_VERSION = 9
 
 #: Envelope ids with a partial index `(<id>, sequence)`; mirrors
 #: `conversation_event_store.LOOKUP_FIELDS` (checked by the store tests).
@@ -36,8 +37,11 @@ _CONVERSATION_EVENT_LOOKUP_COLUMNS = ("session_id", "turn_id", "correlation_id",
                                       "speech_id", "outcome_id", "span_id")
 
 #: Forward-only migrations, one transaction each, keyed by the version they
-#: produce. Additive only: an older binary refuses the newer file ("newer than
-#: supported") instead of misreading it. Contract: `docs/conversation-events.md`.
+#: produce, always run after the `<db>.v<N>.bak` copy. DDL steps are additive;
+#: a step may also rewrite JSON payloads (v9, the first one) because the version
+#: bump makes an older binary refuse the newer file ("newer than supported")
+#: instead of misreading it. A published step is never rewritten.
+#: Contract: `docs/conversation-events.md` › *Migration*.
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     2: (
         # AUTOINCREMENT: a sequence is never reused, even after the highest row
@@ -272,6 +276,42 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         "CREATE INDEX IF NOT EXISTS idx_board_artifact_links_board_time ON board_artifact_links(board_id, linked_at, "
         "artifact_id)",
     ),
+    9: (
+        # Fixed Board type (handoff board-ui-wheel-dossier-refactor, Slice 01a,
+        # D01-D03, D22). Data only, no DDL: `board_kind` becomes
+        # `assistant|presentation|meeting` and the per-Board mode keys
+        # `interaction_mode` / `interaction_mode_origin` leave the payload (the
+        # mode is now derived from the type). The bump is deliberate: a v8
+        # binary would crash decoding `assistant`, it refuses the file instead.
+        # Normalization (D22): an explicit `presentation`/`meeting` kind wins
+        # (even over a user-chosen `assistant` mode, human decision Q1); an
+        # `empty`/absent kind takes a `presentation`/`meeting` mode the user
+        # chose (origin `user` or `migrated`) once; anything else is
+        # `assistant` (an `unset` Board already behaved as assistant). Only rows
+        # that still carry legacy data are touched, so a re-run changes nothing.
+        # Never repaired here, left exactly as is (the strict decoder keeps
+        # reporting them): a payload that is not a JSON object, a kind that is
+        # not a string of the v8 contract, and a present `interaction_mode` /
+        # `interaction_mode_origin` outside its v8 values (`7`, `"Presentation"`,
+        # `null`): the v8 code refused those rows already.
+        """UPDATE work_boards SET data = json_remove(json_set(data, '$.board_kind', CASE
+                WHEN json_extract(data, '$.board_kind') IN ('assistant', 'presentation', 'meeting')
+                    THEN json_extract(data, '$.board_kind')
+                WHEN json_extract(data, '$.interaction_mode_origin') IN ('user', 'migrated')
+                     AND json_extract(data, '$.interaction_mode') IN ('presentation', 'meeting')
+                    THEN json_extract(data, '$.interaction_mode')
+                ELSE 'assistant' END), '$.interaction_mode', '$.interaction_mode_origin')
+            WHERE json_valid(data) AND json_type(data) = 'object'
+              AND (json_type(data, '$.board_kind') IS NULL
+                   OR json_extract(data, '$.board_kind') IN ('empty', 'assistant', 'presentation', 'meeting'))
+              AND (json_type(data, '$.interaction_mode') IS NULL
+                   OR json_extract(data, '$.interaction_mode') IN ('assistant', 'presentation', 'meeting'))
+              AND (json_type(data, '$.interaction_mode_origin') IS NULL
+                   OR json_extract(data, '$.interaction_mode_origin') IN ('unset', 'migrated', 'user'))
+              AND (json_type(data, '$.board_kind') IS NULL OR json_extract(data, '$.board_kind') = 'empty'
+                   OR json_type(data, '$.interaction_mode') IS NOT NULL
+                   OR json_type(data, '$.interaction_mode_origin') IS NOT NULL)""",
+    ),
 }
 
 
@@ -352,6 +392,10 @@ class SQLiteStateRepository:
         self.path = Path(path).resolve()
         self._lock = asyncio.Lock()
         self._conn: sqlite3.Connection | None = None
+        #: Steps applied by the last `initialize()`: `{from, to, rows}` (rows changed by the step, 0 for pure DDL).
+        #: Core journals one `core.state.migrated` line per step (Slice 08 of the wheel/Dossier refactor: the v9
+        #: data step left no diagnostic, only the `.v8.bak` and the version row told).
+        self.migrations_applied: list[dict[str, int]] = []
 
     async def initialize(self) -> None:
         async with self._lock:
@@ -434,7 +478,7 @@ class SQLiteStateRepository:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_one_unresolved_live_session
                 ON live_sessions((1)) WHERE state <> 'stopped';
             ''')
-            self._migrate(conn, version)
+            self.migrations_applied = self._migrate(conn, version)
             quick = conn.execute("PRAGMA quick_check").fetchone()
             if not quick or quick[0] != "ok":
                 raise RuntimeError(f"state DB quick_check failed: {quick[0] if quick else 'unknown'}")
@@ -449,25 +493,33 @@ class SQLiteStateRepository:
         self._conn = conn
 
     @staticmethod
-    def _migrate(conn: sqlite3.Connection, version: int) -> None:
+    def _migrate(conn: sqlite3.Connection, version: int) -> list[dict[str, int]]:
         """Apply each pending migration atomically (DDL + version bump in one transaction).
 
         A crash mid-migration rolls the step back and the next start retries it.
         The version is re-read under the write lock, so a concurrent initializer
-        (another process on the same file) cannot apply a step twice.
+        (another process on the same file) cannot apply a step twice. Returns the
+        steps really applied, `{from, to, rows}`: `rows` counts the rows the
+        step's statements changed (the version bump excluded).
         """
+        applied: list[dict[str, int]] = []
         for target in range(version + 1, _SCHEMA_VERSION + 1):
             conn.execute("BEGIN IMMEDIATE")
             try:
                 current = int(conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()[0])
                 if current < target:
+                    rows = 0
                     for statement in _MIGRATIONS[target]:
-                        conn.execute(statement)
+                        # `rowcount` of a data statement; -1 for DDL (counted 0). Only the connection's
+                        # `execute` is used, as before (callers may pass a thin connection proxy).
+                        rows += max(conn.execute(statement).rowcount, 0)
                     conn.execute("UPDATE schema_version SET version=?", (target,))
+                    applied.append({"from": current, "to": target, "rows": rows})
                 conn.execute("COMMIT")
             except BaseException as exc:
                 rollback_after_failure(conn, exc)
                 raise
+        return applied
 
     def _backup_before_migration(self, conn: sqlite3.Connection, version: int) -> None:
         """One-time online copy of an existing DB to `<db>.v<version>.bak` before migrating it.
@@ -486,6 +538,9 @@ class SQLiteStateRepository:
             copy = sqlite3.connect(partial)
             try:
                 conn.backup(copy)
+                # The copy inherits WAL mode from the live file; a plain read would then add `-wal` / `-shm`
+                # beside the backup. A rollback copy is a single self-contained file (Slice 08 polish).
+                copy.execute("PRAGMA journal_mode=DELETE")
             finally:
                 copy.close()
             partial.replace(target)
@@ -497,6 +552,42 @@ class SQLiteStateRepository:
             raise RuntimeError(
                 f"state DB schema {version} -> {_SCHEMA_VERSION}: pre-migration backup to {target.name} failed, "
                 f"migration aborted and database unchanged: {type(exc).__name__}: {exc}") from exc
+
+    async def backup_to(self, target: Path) -> None:
+        """Consistent online copy of the live DB to `target` (a new file), through the sqlite3 backup API, never a file copy
+        (the DB is in WAL mode: a file copy can miss committed pages still in `-wal`). Used before an explicit deletion (purge of
+        archived presentations) so the deleted rows stay recoverable.
+
+        Runs under the repository lock (no write interleaves). The copy is written to `<target>.partial`, switched to a single
+        self-contained file (`journal_mode=DELETE`), checked (`PRAGMA quick_check` must say `ok`), then renamed: a failure never
+        leaves a `target` that looks valid. An existing `target` is never overwritten (`FileExistsError`).
+        """
+        target = Path(target)
+        if target.exists():
+            raise FileExistsError(target.name)
+        partial = target.with_name(target.name + ".partial")
+
+        def copy_now(conn: sqlite3.Connection) -> None:
+            partial.unlink(missing_ok=True)
+            copy = sqlite3.connect(partial)
+            try:
+                conn.backup(copy)
+                copy.execute("PRAGMA journal_mode=DELETE").fetchone()
+                (verdict,) = copy.execute("PRAGMA quick_check").fetchone()
+                if verdict != "ok":
+                    raise sqlite3.DatabaseError(f"backup copy failed quick_check: {verdict}")
+            finally:
+                copy.close()
+
+        try:
+            await self.run_serialized(copy_now)
+            partial.replace(target)
+        except BaseException:
+            try:
+                partial.unlink(missing_ok=True)
+            except OSError:
+                pass  # intentional: a stray .partial is never mistaken for a backup (its name says so); the error below is what counts
+            raise
 
     async def run_serialized(self, fn: Callable[[sqlite3.Connection], T]) -> T:
         """Adapter seam for sibling SQLite adapters sharing this file and connection.

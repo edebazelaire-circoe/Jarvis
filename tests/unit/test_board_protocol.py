@@ -46,7 +46,7 @@ async def test_list_and_active_start_with_the_default_board(stack):
     assert listing["active_board_id"] == DEFAULT_BOARD_ID
     active = await client.active_board()
     assert active["active"] is True and active["board"]["board_id"] == DEFAULT_BOARD_ID
-    assert active["board"]["interaction_mode_origin"] == "unset"
+    assert active["board"]["board_kind"] == "assistant" and "interaction_mode" not in active["board"]
 
 
 async def test_create_get_update_archive_round_trip(stack):
@@ -117,30 +117,36 @@ async def test_a_damaged_row_is_a_500_with_its_own_code(stack):
     assert "work_boards row 'default'" in body["error"]["message"]
 
 
-async def test_a_mode_change_over_the_protocol_lands_on_the_active_board(stack):
-    core, client, _ = stack
-    await client.set_interaction_mode("presentation", source="control_center")
-    await core.boards.drain()
-    board = (await client.active_board())["board"]
-    assert (board["interaction_mode"], board["interaction_mode_origin"]) == ("presentation", "user")
+async def test_a_mode_change_over_the_protocol_is_refused_and_nothing_moves(stack):
+    """Slice 01b : `POST /v1/interaction-mode` refuse toute demande ; ni le mode vivant ni le Board ne bougent."""
 
-
-async def test_board_kind_travels_over_http_and_never_touches_the_interaction_mode(stack):
     core, client, base = stack
+    before = (await client.active_board())["board"]
+    status, body = await _raw("POST", base + "/v1/interaction-mode",
+                              json={"mode": "presentation", "source": "control_center"})
+    assert status == 409 and body["error"]["code"] == "interaction_mode_derived"
+    board = (await client.active_board())["board"]
+    assert board == before and "interaction_mode" not in board and board["board_kind"] == "assistant"
+    assert core.interaction_mode.mode.value == "assistant" and core.interaction_mode.revision == 0
+
+
+async def test_board_kind_is_chosen_on_create_and_a_patch_carrying_it_is_refused(stack):
+    _, client, base = stack
     status, body = await _raw("POST", base + "/v1/boards", json={"title": "Réunion", "board_kind": "meeting"})
     assert status == 201 and body["board"]["board_kind"] == "meeting"
-    status, body = await _raw("POST", base + "/v1/boards", json={"title": "Sans nature"})
-    assert status == 201 and body["board"]["board_kind"] == "empty"
+    meeting_id = body["board"]["board_id"]
+    status, body = await _raw("POST", base + "/v1/boards", json={"title": "Sans type"})
+    assert status == 201 and body["board"]["board_kind"] == "assistant"
+    status, body = await _raw("POST", base + "/v1/boards", json={"title": "Ancien", "board_kind": "empty"})
+    assert status == 201 and body["board"]["board_kind"] == "assistant"  # alias déprécié, jamais stocké
 
-    await client.set_interaction_mode("presentation", source="control_center")
-    await core.boards.drain()
-    status, body = await _raw("PATCH", base + f"/v1/boards/{DEFAULT_BOARD_ID}", json={"board_kind": "meeting"})
+    for kind in ("presentation", "meeting", "Meeting", None):
+        status, body = await _raw("PATCH", base + f"/v1/boards/{meeting_id}", json={"board_kind": kind})
+        assert status == 409 and body["error"]["code"] == "board_kind_immutable", (kind, body)
+        assert "cannot be changed" in body["error"]["message"]
+    status, body = await _raw("PATCH", base + f"/v1/boards/{meeting_id}", json={"title": "Réunion 2"})
     assert status == 200 and body["board"]["board_kind"] == "meeting"
-    assert (body["board"]["interaction_mode"], body["board"]["interaction_mode_origin"]) == ("presentation", "user")
-
-    for invalid in ("Meeting", "réunion", "", None, 1):
-        status, body = await _raw("PATCH", base + f"/v1/boards/{DEFAULT_BOARD_ID}", json={"board_kind": invalid})
+    for invalid in ("Meeting", "réunion", "", None, 1, "unknown"):
+        status, body = await _raw("POST", base + "/v1/boards", json={"title": "x", "board_kind": invalid})
         assert status == 400 and body["error"]["code"] == "invalid_board", (invalid, body)
-    status, body = await _raw("POST", base + "/v1/boards", json={"title": "x", "board_kind": "unknown"})
-    assert status == 400 and body["error"]["code"] == "invalid_board"
-    assert (await client.get_board(DEFAULT_BOARD_ID))["board"]["board_kind"] == "meeting"
+    assert (await client.get_board(meeting_id))["board"]["board_kind"] == "meeting"

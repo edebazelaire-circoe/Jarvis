@@ -55,7 +55,7 @@ const JarvisWorkspaceCore=(function(){
   /* ----------------------------------------------------------- vocabulaire
      Miroir des énumérations du domaine. Une valeur inconnue s'affiche telle
      quelle, jamais maquillée en une valeur connue. */
-  const BOARD_KINDS=Object.freeze({empty:'Générique',meeting:'Réunion',presentation:'Présentation'});
+  const BOARD_KINDS=Object.freeze({assistant:'Assistant',presentation:'Présentation',meeting:'Réunion'});
   const LIFECYCLES=Object.freeze({
     foreground:{label:'Premier plan',tone:'on',means:'CLI vivant : reçoit les tours, seule autorité de parole.'},
     background_running:{label:'En fond',tone:'warn',means:'CLI vivant gardé pour ses sous-agents : aucun tour, aucune parole.'},
@@ -150,8 +150,8 @@ const JarvisWorkspaceCore=(function(){
     return `<span class="chip${tone?' '+tone:''}"${title?` title="${esc(title)}"`:''}>${esc(label)}</span>`;
   }
   function kindChip(kind){
-    const k=String(kind||'empty');
-    return chip(BOARD_KINDS[k]||k,k==='empty'?'':'on',`board_kind : ${k}`);
+    const k=String(kind||'assistant');
+    return chip(BOARD_KINDS[k]||k,k==='assistant'?'':'on',`board_kind : ${k}`);
   }
   function lifecycleChip(value){
     const known=LIFECYCLES[value];
@@ -321,7 +321,7 @@ const JarvisWorkspaceCore=(function(){
     };
   }
 
-  /* Le Board d'après la liste lue (titre, nature, archivage). */
+  /* Le Board d'après la liste lue (titre, type, archivage). */
   function boardsOf(S){return list(S.boards.data&&S.boards.data.boards)}
   function boardById(S,id){return boardsOf(S).find(b=>b.board_id===id)||null}
   function titleOf(S,id,fallback){const b=boardById(S,id);return (b&&b.title)||fallback||id||'—'}
@@ -1066,7 +1066,7 @@ const JarvisWorkspaceCore=(function(){
         +`<td>${b.binding?lifecycleChip(b.binding.lifecycle):'<span class="wsp-none">—</span>'}</td><td>${code(b.binding&&b.binding.conversation_id)}</td></tr>`).join('');
       return problemsHtml(detail.problems)
         +`<div class="wsp-facts">${fact('Session courante',sessionBody)}${fact('Board actif',boardBody,' is-current')}${fact('Context actif',contextBody)}${fact('Liaison au premier plan',bindingBody)}</div>`
-        +`<section class="wsp-sect"><h4>Boards de cette Session</h4>${rows?`<div class="wsp-scroll"><table class="catalog-table wsp-table"><thead><tr><th>Board</th><th>Nature</th><th>Rôle</th><th>Agent</th><th>Conversation</th></tr></thead><tbody>${rows}</tbody></table></div>`:'<p class="wsp-none">Aucun Board.</p>'}</section>`
+        +`<section class="wsp-sect"><h4>Boards de cette Session</h4>${rows?`<div class="wsp-scroll"><table class="catalog-table wsp-table"><thead><tr><th>Board</th><th>Type</th><th>Rôle</th><th>Agent</th><th>Conversation</th></tr></thead><tbody>${rows}</tbody></table></div>`:'<p class="wsp-none">Aucun Board.</p>'}</section>`
         +'<p class="hint">Tout ici est lu sur le serveur, jamais supposé. « Actualiser » relit tout.</p>';
     });
   }
@@ -1139,7 +1139,7 @@ const JarvisWorkspaceCore=(function(){
         +`<dt>Contenu</dt><dd>${m.error?`<span class="wsp-bad">${esc(m.message||m.error)}</span>`:m.exists?`${plural(Number(m.files)||0,'fichier','fichiers')}, ${plural(Number(m.directories)||0,'dossier','dossiers')}, ${formatBytes(m.bytes)}${m.truncated?' (comptage borné)':''}`:'pas encore de mémoire'}</dd>`
         +`<dt>summary.md</dt><dd>${m.summary&&m.summary.present?`présent, ${formatBytes(m.summary.size)}, modifié ${formatWhen(m.summary.modified_at)}`:'absent'}</dd>`
         +`<dt>Artefacts liés</dt><dd>${Number(d.artifacts&&d.artifacts.linked)||0}</dd>`
-        +`<dt>Créé</dt><dd>${when(b.created_at)}</dd><dt>Modifié</dt><dd>${when(b.updated_at)}</dd><dt>Mode</dt><dd>${code(b.interaction_mode)}</dd></dl>`
+        +`<dt>Créé</dt><dd>${when(b.created_at)}</dd><dt>Modifié</dt><dd>${when(b.updated_at)}</dd></dl>`
         +`<div class="wsp-actions">${btn('goto',{view:'memory',board:b.board_id},'Ouvrir la mémoire')}${btn('goto',{view:'artifacts',scope:'board',id:b.board_id},'Artefacts liés')}${btn('goto',{view:'relations',scope:'board',id:b.board_id},'Relations')}${switchButtonHtml(S,b)}</div>`
         +`<section class="wsp-sect"><h4>Liaisons dans les Sessions <span class="wsp-n">${list(d.sessions&&d.sessions.items).length}</span></h4>`
         +(bindings?`<div class="wsp-scroll"><table class="catalog-table wsp-table"><thead><tr><th>Session</th><th>État</th><th>Agent</th><th>Conversation</th><th>CLI</th><th>Session d’agent</th><th>Actif dans la Session</th></tr></thead><tbody>${bindings}</tbody></table></div>`:'<p class="wsp-none">Jamais lié à une Session.</p>')

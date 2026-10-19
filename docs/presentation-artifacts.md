@@ -81,7 +81,10 @@ Rules worth stating twice:
 - **A terminal Artifact is never edited.** Its source moving on never touches it (tests assert byte-equal rows after edits); a re-render or re-freeze
   is a new Artifact. Only `enrichment` stays open, as for every Artifact.
 - **Deleting is the registry's own rule**: a snapshot with renders is refused (`artifact_has_dependents`) unless the user explicitly cascades;
-  nothing is deleted automatically. Deleting the *source* never deletes snapshots: their lineage stays readable (`source: {"exists": false}`).
+  nothing is deleted automatically. The one way a *source* is deleted is the explicit purge of **archived** presentations
+  ([presentation-studio.md](presentation-studio.md#purge-definitive-des-archivees)): it takes the source's snapshots and their renders with it
+  (`ArtifactService.delete(cascade=True)`, origin `presentation_purge`), after copying their folders and a consistent `jarvis.sqlite3` into
+  `backups/purge-presentations-<timestamp>/`. A snapshot whose source vanished any other way keeps a readable lineage (`source: {"exists": false}`).
 - **Artifact kinds are closed (now 13)**: `presentation_snapshot`, `presentation_video`, `presentation_still`, `presentation_pdf` were added with the
   relation kind `rendered_from`; no migration (no SQL `CHECK` on either column, `jarvis.sqlite3` stays v8). `upload` (chat
   attachments, [chat.md](chat.md)) and `link` (URL dropped on a Board, never fetched) joined later, still without migration.

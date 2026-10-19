@@ -1,0 +1,38 @@
+{
+  "project_name": "Jarvis",
+  "slug": "jarvis-board-ui-wheel-dossier-refactor",
+  "title": "Jarvis Board UI — radial wheel refactor, fixed Board types, Board switcher and Dossier workspace",
+  "planning_date": "2026-10-17",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "reference_branch": "main",
+  "reference_commit_observed": "cd5dfa47c53e6d8c7baa39892a5f0ffbe225bef5",
+  "entrypoint": "slices/TODO.md",
+  "task_type": "waived",
+  "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_SLICE00_READINESS",
+  "visual_references": [
+    "assets/current-ui-before.png",
+    "assets/style-reference-radial-ui.png"
+  ],
+  "planning_basis": [
+    "Current Control Center shell and orbital wheel merged on main on 2026-10-17",
+    "Human design discussion captured in grill-session.md",
+    "Canonical contracts inspected at planning time: Boards, interaction mode, capture, scene, workspace memory"
+  ],
+  "implementation_status": "ready_for_dispatch",
+  "readiness": {
+    "decision": "READY",
+    "date": "2026-10-17",
+    "audited_head": "2fb66040",
+    "origin_main": "cd5dfa47c53e6d8c7baa39892a5f0ffbe225bef5",
+    "audit": "docs/08-readiness-audit.md",
+    "slices_split": [
+      "01 -> 01a (01-board-type-contract-migration) + 01b (01b-derived-interaction-mode)"
+    ],
+    "open_human_questions": [],
+    "agent0_decisions": [
+      "Q1: Board 'Jarvis PRESENTATION' becomes Présentation (D22 rule 1, D01); the Human may still revert",
+      "Q2: worktree eph left intact, its 13 uncommitted files kept and cited by the follow-up Issue",
+      "Q3: still-valid orbital-ui checks folded into Slice 09"
+    ]
+  }
+}

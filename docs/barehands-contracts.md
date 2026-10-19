@@ -214,7 +214,12 @@ calcule ni jeton, ni survol, ni clic ; `ACTIVE` suit chaque image.
 
 ### Le sélecteur de cycle de vie visible par l'utilisateur
 
-**Le contrôle de la barre du haut est la surface canonique du cycle de vie.**
+**Le contrôle de cycle de vie est la surface canonique du cycle de vie.** Depuis la
+refonte roue/Dossier (Slice 03), tant que la roue d'outils est affichée (le défaut),
+ce contrôle est caché et c'est la roue, catégorie **Sélection** (Souris / Bare Hands,
+puis Bare Hands › Veille), qui le pilote par la même porte (`selectMethod`,
+`control-center-shell.md` › *Selection method*) ; ce qui suit décrit le contrôle
+lui-même, visible roue masquée.
 `control_center_barehands_hud.js` dessine, en haut à gauche de l'écran
 principal, un bouton carré de 64 px à icône de main en trait, et ouvre au clic
 un sélecteur visuel à trois pastilles — le **même** motif de main, dans ses
@@ -298,7 +303,7 @@ le parcours séparé cesse d'être une destination, la calibration enseigne
 (décision 17).
 
 Le menu n'est pas fabriqué par le module : `control_center.html` en possède un
-seul, partagé (`.ctxmenu`, rang 80, au-dessus du sélecteur de mode qui est à 36),
+seul, partagé (`.ctxmenu`, rang 80, au-dessus des sélecteurs qui sont à 36 ; le sélecteur de mode qui y était a été retiré par la Slice 02 de jarvis-board-ui-wheel-dossier-refactor),
 et ce contrôle en devient un consommateur de plus par son point d'échappement
 `run(act)`. `showMenu` et `closeMenu` sont **injectés** comme la surface et
 l'horloge ; absents, le clic droit refuse sous `barehands_hud_menu_missing` et
@@ -1906,9 +1911,11 @@ chargement.
 **Les commandes de capture ne sont pas des outils** (session-context-recording,
 Slice 10, décisions D14/D15). Capture d'écran, enregistrement audio et
 enregistrement d'écran ont vécu dans un rail **frère** de la palette
-(`#captureRail`) ; depuis la Slice 04 de l'orbital UI ce sont les secteurs
-Vidéo, Capture d'écran et Audio de la roue d'outils, plus les indicateurs
-persistants `#recIndicators` (`control_center_capture_wheel.js`, sur le
+(`#captureRail`) ; depuis la Slice 04 de l'orbital UI ce sont des commandes
+de la roue d'outils (depuis la refonte roue/dossier, les lignes Capture
+d'écran, Enregistrer l'écran et Enregistrer l'audio de sa catégorie Capture),
+plus les indicateurs `#recIndicators`, au haut-gauche tant qu'un
+enregistrement est ouvert (`control_center_capture_wheel.js`, sur le
 contrôleur `control_center_capture_rail.js`). Rien n'en entre dans `TOOL`,
 `describeTools()`, `#barehandsPaletteStrip` ni `data-bh-tool` : un outil est
 un choix **exclusif** tenu par les réglages, une capture un canal
@@ -6845,7 +6852,7 @@ l'**UX de la calibration**.
 
 | Surface | Ce qu'on y fait | Où |
 |---|---|---|
-| Contrôle de cycle de vie | allumer, endormir, activer, éteindre | contrôle autonome à **icône de main**, en haut à gauche, hors du dock |
+| Contrôle de cycle de vie | allumer, endormir, activer, éteindre | roue › **Sélection** (Souris / Bare Hands, Veille) ; roue masquée : contrôle autonome à **icône de main**, en haut à gauche, hors du dock |
 | Palette d'outils | choisir Pointeur / Main / Sélection, en un clic | bande verticale **fixe** au bord gauche, sous la main |
 | Actions rapides | Réglages, Calibration, Aide · Gestes, Diagnostic | **clic droit** sur le contrôle de cycle de vie |
 | Réglages | configurer — et rien d'autre | onglet Expérimental, ouvert depuis les actions rapides |

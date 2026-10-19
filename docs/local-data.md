@@ -80,7 +80,10 @@ les migrations que Core applique au démarrage :
 
 - `jarvis.sqlite3` : `_MIGRATIONS` et `_SCHEMA_VERSION` dans
   `jarvis/adapters/sqlite_state.py`. Sauvegarde `jarvis.sqlite3.v<N>.bak` avant
-  la première étape (voir `docs/state-model.md`, procédure de retour arrière) ;
+  la première étape (voir `docs/state-model.md`, procédure de retour arrière),
+  écrite en `journal_mode=DELETE` (une lecture n'ajoute ni `-wal` ni `-shm`) ;
+  Core journalise une ligne `core.state.migrated` par étape appliquée (de, vers,
+  lignes changées) ;
 - `scene.sqlite3` : même mécanisme dans `jarvis/adapters/sqlite_scene.py`.
   Sauvegarde `scene.sqlite3.v<N>.bak`.
 
@@ -116,6 +119,13 @@ sur `.v7.bak` restaurée, même Session
 d'un coup en v7 et ne reçoit qu'**une** sauvegarde, `jarvis.sqlite3.v4.bak` ;
 ce `main` refuse ensuite la base v7 sans la toucher. Retour arrière mesuré :
 [session-context-capture.md](session-context-capture.md#schema-migration-and-rollback).
+v9 (2026-10-17) : type de Board fixé, **données seules** (aucun DDL, première
+migration qui réécrit des payloads) : chaque Board reçoit son `board_kind`
+définitif (`assistant`, `presentation` ou `meeting`) et perd ses clés de mode
+`interaction_mode` / `interaction_mode_origin` ; sauvegarde
+`jarvis.sqlite3.v8.bak`. Le code v8 refuse ensuite la base
+(`state DB schema 9 is newer than supported 8`). Règles et retour arrière :
+[boards.md](boards.md#persistence).
 
 Le schéma de chaque version est figé dans `tests/schema/<base>.v<N>.sql`.
 `tests/unit/test_schema_migrations.py` échoue dès qu'un DDL change sans
@@ -252,7 +262,9 @@ porte d'édition de base. Adaptateur : `jarvis/adapters/file_prefab_library.py`.
   jamais détruits, jamais relus par le catalogue) ; son numéro reste pris et ne
   sera jamais réattribué. Pour restaurer une version, Core arrêté, remettre le
   dossier sous `prefabs/<prefab_id>/<version>/`. `.archive/` fait partie de la
-  sauvegarde de `prefabs/`. Les prefabs de l'utilisateur et les bases ne sont
+  sauvegarde de `prefabs/`. Seule exception à « jamais détruits » : la purge définitive d'une Presentation archivée
+  efface ses propres sources `presentation-studio.p<12 hex>.*` (catalogue et `.archive/`), après les avoir copiées dans
+  `backups/purge-presentations-<horodatage>/prefabs/` ; les sources `presentation-studio.rm-*` (partageables) ne sont jamais purgées. Les prefabs de l'utilisateur et les bases ne sont
   jamais archivés ([prefabs.md](prefabs.md#retention-of-studio-scene-sources)) ;
 - **aucune autre rétention automatique** ; une sauvegarde de la racine doit inclure
   `prefabs/` : une scène restaurée sans elle garde des fenêtres dont la
@@ -277,8 +289,9 @@ seule maison de la source éditable : elle n'est jamais déplacée ni copiée da
 `artifacts/`. Ses copies figées (snapshot) et leurs rendus (MP4, image, PDF) sont
 des Artifacts : fichiers sous `artifacts/<artifact_id>/` (chemin relatif au
 `payload_ref`, jamais absolu), lignes dans `jarvis.sqlite3` (schéma inchangé,
-v8). Supprimer une Presentation ne supprime pas ses snapshots ; supprimer un
-snapshot ne touche pas la source ([presentation-artifacts.md](presentation-artifacts.md)).
+v8). Supprimer un snapshot ne touche pas la source ([presentation-artifacts.md](presentation-artifacts.md)).
+La seule suppression d'une Presentation est la **purge définitive des archivées** (ci-dessous) : elle emporte ses
+snapshots et leurs rendus, après les avoir sauvegardés.
 Le `snapshot.zip` (Slice 09) est autonome : source exacte de chaque pin, documents, et copie des éléments de Board
 référencés ; aucun chemin de la machine, rien lu hors du paquet à la réouverture
 ([paquet](presentation-artifacts.md#snapshot-package-slice-09), [références vivantes](presentation-live-refs.md)).
@@ -288,8 +301,8 @@ référencés ; aucun chemin de la machine, rien lu hors du paquet à la réouve
   brutal laisse l'ancien texte entier ou le nouveau entier. Une Presentation
   neuve se construit dans `presentations/.staging-<16 hex>/` puis le dossier est
   renommé : jamais un dossier sans `presentation.json`. Les restes
-  (`.staging-*`, `*.<8 hex>.tmp`) sont retirés au démarrage de Core
-  (`core.presentation_studio.swept`) ; rien d'autre n'est jamais supprimé ;
+  (`.staging-*`, `*.<8 hex>.tmp`, et le `.purging-<16 hex>` d'une purge interrompue, déjà sauvegardé) sont retirés au
+  démarrage de Core (`core.presentation_studio.swept`) ; rien d'autre n'est supprimé, hors la purge définitive ;
 - chaque document porte `schema` et `schema_version` ; Core refuse un document
   d'une version plus récente que la sienne (`presentation_studio_unsupported_schema_version`)
   et ne le réécrit jamais ;
@@ -320,6 +333,15 @@ référencés ; aucun chemin de la machine, rien lu hors du paquet à la réouve
   supprimer) les fichiers de variante ou les documents liés que le manifeste ne nomme pas
   (`core.presentation_studio.reconciled`, `reconcile_orphans`). Procédure à la main :
   [OPERATIONS.md](OPERATIONS.md#variantes-du-studio--archive-restauration-et-reprise) ;
+- **purge définitive des archivées** (demande explicite de l'utilisateur, jamais automatique) : un plan d'abord (rien
+  n'est écrit), puis, avec le jeton du plan et le oui de l'utilisateur, Core **sauvegarde** dans
+  `backups/purge-presentations-<horodatage UTC>/` les dossiers des Presentations archivées, leurs sources de scène
+  `presentation-studio.p<12 hex>.*` (`prefabs/` et `prefabs/.archive/`), les dossiers de leurs Artifacts dérivés et une copie
+  cohérente de `jarvis.sqlite3` (API sqlite3 backup, jamais une copie de fichier : la base est en WAL), puis efface tout cela ;
+  si la sauvegarde échoue, rien n'est effacé. Une Presentation non archivée n'est jamais purgée. `backups/` n'est jamais vidé
+  par JARVIS : retirer une sauvegarde est une décision humaine. Restaurer :
+  [OPERATIONS.md](OPERATIONS.md#purge-définitive-des-présentations-archivées) ;
+  contrat : [presentation-studio.md](presentation-studio.md#purge-definitive-des-archivees) ;
 - **aucune rétention automatique** ; l'état de lecture et les identifiants d'objets
   de la scène n'y sont jamais écrits (mémoire de Core seulement). Depuis native-studio-playback-fix Slice 09, une lecture
   se montre dans Variantes sur une surface **en mémoire** et n'écrit plus aucun objet de la scène ni aucun registre.
@@ -337,7 +359,7 @@ référencés ; aucun chemin de la machine, rien lu hors du paquet à la réouve
   lecture). Une scène dont `last_valid_pin` n'est pas `null` a un pin **pas encore vu monter** : ne pas la
   « corriger » à la main, le premier rapport de montage de la page la confirme ou la ramène en arrière. Les
   sources de scène sont des prefabs `presentation-studio.p<12 hex>.s<12 hex>` dans `prefabs/` ; Core archive
-  (déplace, ne supprime jamais) vers `prefabs/.archive/` celles que rien n'épingle, et seulement quand l'index
+  (déplace, ne supprime jamais, hors purge définitive de leur Presentation archivée) vers `prefabs/.archive/` celles que rien n'épingle, et seulement quand l'index
   des épinglages est complet ([prefabs.md](prefabs.md#retention-of-studio-scene-sources))
 
 - **Modèles de présentation (Slice 20, Remotion Slice 19)** : `presentation_templates/ptp_<12 hex>.json`, un fichier JSON par modèle,

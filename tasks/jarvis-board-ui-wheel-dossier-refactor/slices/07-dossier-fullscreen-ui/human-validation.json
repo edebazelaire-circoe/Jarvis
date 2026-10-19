@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HVAL-07-01",
+      "when": "After automated Dossier browser/runtime/trace validation passes",
+      "instruction": "Open Dossier from the wheel, manually find and open a report and an image, compare two items, edit a supported note, then ask Jarvis to open another named document and to put one document on the Board.",
+      "acceptance": "The interface feels like a human working environment; Jarvis navigation is visible and predictable; edits and Board presentations affect the same canonical content rather than creating mystery copies."
+    }
+  ]
+}

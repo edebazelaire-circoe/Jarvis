@@ -49,6 +49,18 @@ const READ=`(()=>{
       disabled:b.getAttribute('aria-disabled'),badge:badge&&!badge.hidden?(badge.getAttribute('data-tw-tone')+':'+badge.textContent):null,
       dotBorder:getComputedStyle(b.querySelector('.tw-dot')).borderTopColor};
   }
+  /* Refonte S03 : Vidéo, Capture d'écran et Audio sont des entrées de l'arbre de Capture ; ce qu'en dit
+     chaque canal (relu sur JarvisCaptureViews) se lit ici comme avant, sous leur ancien nom de secteur. */
+  const V=window.JarvisCaptureViews;
+  const names={video:'Vidéo',screenshot:'Capture d’écran',audio:'Audio'};
+  const channels=V&&typeof V.channels==='function'?V.channels():{};
+  for(const [slot,label] of Object.entries(names)){
+    const st=channels[slot]||null,checked=st&&typeof st.checked==='boolean'?st.checked:(slot==='screenshot'?null:false);
+    wedges[slot]={role:checked===null?'menuitem':'menuitemcheckbox',checked:checked===null?null:String(checked),
+      label:st&&st.text?label+' — '+st.text:label,disabled:null,
+      badge:st&&(st.tone==='error'||st.tone==='unknown')?st.tone+':'+(st.tone==='error'?'!':'?'):st&&st.tone==='wait'?'wait:':null,
+      dotBorder:null};
+  }
   const items=[...document.querySelectorAll('#toolWheel .tw-item')].map(b=>({id:b.dataset.twItem||null,text:b.textContent,
     label:b.getAttribute('aria-label')||b.textContent,role:b.getAttribute('role'),disabled:b.getAttribute('aria-disabled'),
     tone:b.getAttribute('data-tw-tone'),tabindex:b.getAttribute('tabindex'),box:box(b)}));
@@ -83,7 +95,7 @@ const READ=`(()=>{
       controls:Object.fromEntries(Object.entries(view.controls).map(([k,c])=>[k,{state:c.state,action:c.action,pressed:c.pressed,
         captureId:c.captureId,timer:c.timer,captures:(c.captures||[]).map(x=>({id:x.captureId,device:x.device,state:x.state,timer:x.timer}))}])),
       shot:view.shot?{artifact:view.shot.artifact,capture:view.shot.capture&&view.shot.capture.capture_id,device:view.shot.device}:null}:null,
-    boxes:{modeBtn:box(q('#interactionModeButton')),eye:shown(q('#hiddenEye'))?box(q('#hiddenEye')):null,chat:box(q('#chatTab')),
+    boxes:{boardCard:box(q('#boardsButton')),chat:box(q('#chatTab')),
       pills:shown(q('#bgPills'))?box(q('#bgPills')):null,dock:box(q('.dock')),tray:shown(q('#boardDropTray'))?box(q('#boardDropTray')):null,
       scene:shown(q('#sceneLayer>.sc-status'))?box(q('#sceneLayer>.sc-status')):null},
     bareHands:{hud:shown(q('#barehandsHud')),palette:shown(q('#barehandsPalette'))},

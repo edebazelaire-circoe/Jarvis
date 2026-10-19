@@ -12,7 +12,7 @@ choisit seulement **ce que le modèle lit** (vues compactes et bornées).
 
 **Pourquoi un serveur à part** (R5) : `jarvis-console` mélangeait réglages et
 espaces de travail. Les neuf outils Board/Session y ont été **déplacés** (mêmes
-noms, mêmes sémantiques, `board_kind` en plus ; aucun alias laissé) ; la
+noms, mêmes sémantiques, `board_kind` en plus à la création ; aucun alias laissé) ; la
 console ne garde que `settings_*`.
 
 **Inspecter n'active rien.** Les lectures (`session_list`, `session_get`,
@@ -37,6 +37,7 @@ d'un Artifact : `artifact_get` de `jarvis-capture`, pas de doublon ici).
 
 # Pas de `from __future__ import annotations` : FastMCP lit les annotations des
 # outils définis dans `build_server`, à l'exécution.
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -51,7 +52,7 @@ from jarvis.runtime.capture_mcp import artifact_item
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.mcp_tool_meta import tool_annotations, tool_names
 from jarvis.runtime.settings_mcp import ConsoleMcpTarget
-from jarvis.runtime.workspace_boards import BRAIN_ORIGIN, READ_TIMEOUT_S, BoardTools, transport_failure
+from jarvis.runtime.workspace_boards import BRAIN_ORIGIN, ERROR_SENTENCES, READ_TIMEOUT_S, BoardTools, transport_failure
 
 SERVER_NAME = "jarvis-workspace"
 CONFIG_FILE_NAME = "workspace-mcp.json"
@@ -68,8 +69,8 @@ DISK_TIMEOUT_S = 35.0
 BOARD_ID_PATTERN = r"^(default|board_[A-Za-z0-9_-]+)$"
 MAX_BOARD_ID_CHARS = 80
 SESSION_ID_PATTERN = r"^jsess_[A-Za-z0-9_-]+$"
-#: `BoardKind` (`workspace_board.py`) : empty (défaut), meeting, presentation.
-BOARD_KIND_PATTERN = r"^(empty|meeting|presentation)$"
+#: `BoardKind` (`workspace_board.py`) : assistant (défaut), presentation, meeting. Création seulement.
+BOARD_KIND_PATTERN = r"^(assistant|presentation|meeting)$"
 ARTIFACT_ID_PATTERN = r"^jart_[a-z0-9_-]+$"
 #: Chemin relatif à `memory/` (`BoardMemoryPath`, 240 caractères au plus) ; Core le valide en entier.
 MAX_MEMORY_PATH_CHARS = 240
@@ -93,9 +94,25 @@ MAX_SEARCH_QUERY_CHARS = 200
 #: 256 Kio par écriture côté Core (`MAX_MEMORY_IO_BYTES`) : au plus autant de caractères ici, Core compte les octets.
 MAX_WRITE_CHARS = 256 * 1024
 
+#: Dossier (wheel-dossier-refactor, Slice 05) : entrées par appel, objets par Ranger.
+MAX_DOSSIER_LIST = 50
+DEFAULT_DOSSIER_LIST = 20
+MAX_DOSSIER_OBJECTS = 20
+#: `memory:<chemin>` ou `artifact:<jart_…>` (`jarvis/domain/dossier.py`) ; Core le valide en entier.
+ENTRY_ID_PATTERN = r"^(memory:.+|artifact:jart_[a-z0-9_-]+)$"
+MAX_ENTRY_ID_CHARS = 260
+DOSSIER_ROUTE = "/api/dossier/navigation/commands"
+#: Le canal attend la page 5 s (`dossier_navigation.DELIVERY_DEADLINE_S`) : un peu plus.
+NAVIGATION_TIMEOUT_S = 8.0
+
 #: `truncated: true` d'une recherche : une borne a arrêté le parcours, l'absence de résultat ne prouve rien.
 SEARCH_INCOMPLETE_NOTE = ("Recherche incomplète : une borne a arrêté le parcours (fichiers ou octets). "
                           "Ne conclus pas « rien trouvé » ; affine path.")
+
+
+#: `dossier_view` refusé `command_busy` (une autre ouverture en vol) : nouveaux essais et attente entre eux.
+DOSSIER_VIEW_BUSY_RETRIES = 2
+DOSSIER_VIEW_BUSY_WAIT_S = 0.6
 
 
 class WorkspaceToolError(Exception):
@@ -267,7 +284,7 @@ class WorkspaceTools:
         artifacts = body.get("artifacts") if isinstance(body.get("artifacts"), Mapping) else {}
         result = {
             "board_id": board.get("board_id"), "title": board.get("title"),
-            "board_kind": board.get("board_kind") or "empty", "status": board.get("status"),
+            "board_kind": board.get("board_kind") or "assistant", "status": board.get("status"),
             "active": bool(body.get("active")), "created_at": board.get("created_at"),
             "last_opened_at": board.get("last_opened_at"),
             "sessions": [{"jarvis_session_id": item.get("jarvis_session_id"),
@@ -384,9 +401,109 @@ class WorkspaceTools:
         return {"board_id": board_id, "artifact_id": artifact_id, "linked": linked, "changed": changed}
 
 
+    # ------------------------------------------------------------ Dossier (wheel-dossier-refactor, Slice 05)
+
+    async def dossier_list(self, board_id: str, *, limit: int = DEFAULT_DOSSIER_LIST,
+                           since: str | None = None) -> dict[str, Any]:
+        route = _board_route(board_id) + "/dossier"
+        body = await self._send("dossier_list", "GET", route, timeout_s=DISK_TIMEOUT_S,
+                                params=_drop_none({"limit": str(limit), "since": since}))
+        board = self._shape("dossier_list", route, body.get("board"), dict)
+        entries = [{"entry_id": item.get("entry_id"), "kind": item.get("kind"), "title": item.get("title"),
+                    "open": item.get("open"), "modified_at": item.get("modified_at"),
+                    **_drop_none({"size": item.get("size"), "preview": item.get("preview"),
+                                  "provenance": item.get("provenance")})}
+                   for item in self._shape("dossier_list", route, body.get("entries"), list)
+                   if isinstance(item, Mapping)]
+        sources = body.get("sources") if isinstance(body.get("sources"), Mapping) else {}
+        memory = sources.get("memory") if isinstance(sources.get("memory"), Mapping) else {}
+        self._done("dossier_list", f"{len(entries)} entrée(s)", board_id=board_id, count=len(entries))
+        return _drop_none({"board_id": board_id, "writable": bool(board.get("writable")), "entries": entries,
+                           "total": int(body.get("total") or 0), "truncated": bool(body.get("truncated")),
+                           "memory_error": memory.get("error")})
+
+    @staticmethod
+    def _ranger_item(item: Mapping[str, Any], status: Any) -> dict[str, Any]:
+        return {"object_id": item.get("object_id"), "status": status, "backing": item.get("backing"),
+                "entry_id": item.get("entry_id"),
+                **_drop_none({"action": item.get("action"), "archived": item.get("archived"),
+                              "code": item.get("code"), "message": item.get("message")})}
+
+    async def dossier_ranger(self, board_id: str, object_ids: list[str], *, dry_run: bool = False) -> dict[str, Any]:
+        if dry_run:
+            route = _board_route(board_id) + "/dossier/backing"
+            body = await self._send("dossier_ranger", "GET", route,
+                                    params=[("object_id", object_id) for object_id in object_ids])
+            results = [self._ranger_item(item, "rangeable" if item.get("rangeable") else "refused")
+                       for item in self._shape("dossier_ranger", route, body.get("objects"), list)
+                       if isinstance(item, Mapping)]
+            if body.get("board_active") is False:
+                # Ranger refuserait tout (409) : l'aperçu ne promet aucun « rangeable » (Slice 06, polish S05 8).
+                for item in results:
+                    if item["status"] == "rangeable":
+                        item.update(status="refused", code=str(body.get("board_code") or "dossier_board_not_active"),
+                                    message=str(body.get("board_message") or ""))
+            refused = sum(1 for item in results if item["status"] == "refused")
+            self._done("dossier_ranger", f"aperçu : {len(results) - refused} rangeable(s)", board_id=board_id,
+                       dry_run=True, count=len(results))
+            return {"board_id": board_id, "dry_run": True, "stored": 0, "refused": refused, "results": results}
+        route = _board_route(board_id) + "/dossier/ranger"
+        body = await self._send("dossier_ranger", "POST", route, timeout_s=DISK_TIMEOUT_S,
+                                payload={"object_ids": object_ids, "origin": BRAIN_ORIGIN})
+        results = [self._ranger_item(item, item.get("status"))
+                   for item in self._shape("dossier_ranger", route, body.get("results"), list)
+                   if isinstance(item, Mapping)]
+        self._done("dossier_ranger", f"{body.get('stored')} rangé(s), {body.get('refused')} refusé(s)",
+                   board_id=board_id, stored=body.get("stored"), refused=body.get("refused"))
+        return {"board_id": board_id, "dry_run": False, "stored": int(body.get("stored") or 0),
+                "refused": int(body.get("refused") or 0), "results": results}
+
+    async def dossier_present(self, board_id: str, entry_id: str, *, representation: str = "window") -> dict[str, Any]:
+        route = _board_route(board_id) + "/dossier/present"
+        body = await self._send("dossier_present", "POST", route,
+                                payload={"entry_id": entry_id, "representation": representation,
+                                         "origin": BRAIN_ORIGIN})
+        self._done("dossier_present", "créée" if body.get("created") else "réutilisée", board_id=board_id,
+                   created=body.get("created"))
+        return {"board_id": board_id, "entry_id": body.get("entry_id"), "object_id": body.get("object_id"),
+                "created": bool(body.get("created")), "representation": body.get("representation")}
+
+    async def dossier_view(self, board_id: str, entry_id: str) -> dict[str, Any]:
+        # L'entrée existe dans CE Dossier (refus codé de Core sinon) avant de déranger l'écran.
+        found = await self._send("dossier_view", "GET", _board_route(board_id) + "/dossier/entry",
+                                 params={"id": entry_id})
+        # L'identifiant tel que Core le résout (casse du fichier sur disque) : la page l'ouvre sous ce nom (QA S05, polish 5).
+        entry = found.get("entry") if isinstance(found, dict) else None
+        if isinstance(entry, dict) and isinstance(entry.get("entry_id"), str):
+            entry_id = entry["entry_id"]
+        # Deux `dossier_view` en parallèle se croisaient sur le canal (une commande à la fois : 409 `command_busy`).
+        # La première dure quelques centaines de millisecondes : on attend puis on réessaie, deux fois au plus
+        # (Slice 08, polish S07 2) ; au-delà, le refus codé part tel quel.
+        for attempt in range(DOSSIER_VIEW_BUSY_RETRIES + 1):
+            try:
+                body = await self._send("dossier_view", "POST", DOSSIER_ROUTE, timeout_s=NAVIGATION_TIMEOUT_S,
+                                        payload={"board_id": board_id, "entry_id": entry_id})
+                break
+            except WorkspaceToolError as exc:
+                if exc.code != "command_busy" or attempt == DOSSIER_VIEW_BUSY_RETRIES:
+                    raise
+                self._emit("board.tool", "dossier_view : canal occupé, nouvel essai", level="info",
+                           data={"tool": "dossier_view", "code": "command_busy", "attempt": attempt + 1})
+                await asyncio.sleep(DOSSIER_VIEW_BUSY_WAIT_S)
+        state = body.get("state")
+        self._done("dossier_view", str(state), board_id=board_id, state=state, code=body.get("code"))
+        # Un refus nommé de la page (edit_in_progress…) porte sa propre phrase, que l'agent peut redire telle quelle.
+        explanation = body.get("explanation")
+        if state == "refused" and body.get("code") in ERROR_SENTENCES:
+            explanation = ERROR_SENTENCES[body["code"]]
+        return {"board_id": board_id, "entry_id": entry_id, "state": state,
+                **_drop_none({"code": body.get("code"), "reason": body.get("reason")}),
+                "explanation": explanation}
+
+
 _SERVER_INSTRUCTIONS = (
     "Boards, Sessions et mémoire des Boards de JARVIS, tenus par le cœur : les gestes de l'interface. Un Board est "
-    "un espace de travail durable (titre, nature, résumé, références, dossier mémoire). board_switch y déplace la "
+    "un espace de travail durable (titre, type fixé à la création, résumé, références, dossier mémoire). board_switch y déplace la "
     "conversation et la voix ; session_new ouvre une nouvelle conversation sur le même Board. Pendant ton tour, ces "
     "deux-là partent à la fin du tour (status scheduled) : dis la note rendue, une phrase courte, sans dire que "
     "c'est fait. Pour regarder un autre Board ou un ancien (archivé compris) : board_inspect, board_memory_*, "
@@ -413,7 +530,8 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
     )
     from jarvis.runtime.mcp_results import (
         OUTPUT_CONTRACT_MESSAGE, BoardArtifactLinkResult, BoardArtifactsResult, BoardInspectResult, BoardListResult,
-        BoardResult, BoardSwitchResult, MemoryDeleteResult, MemoryMoveResult, MemoryReadResult, MemorySearchResult,
+        BoardResult, BoardSwitchResult, DossierListResult, DossierViewResult, DossierPresentResult,
+        DossierRangerResult, MemoryDeleteResult, MemoryMoveResult, MemoryReadResult, MemorySearchResult,
         MemoryTreeResult, MemoryWriteResult, SessionCurrentResult, SessionGetResult, SessionListResult,
         SessionNewResult, output_contract_fields,
     )
@@ -435,6 +553,9 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
 
         async def call_tool(self, name: str, arguments: dict[str, Any]):  # noqa: ANN201 - type de FastMCP
             known = {tool.name: tool for tool in await self.list_tools()}
+            if name == "board_update" and "board_kind" in (arguments or {}):
+                # Le type ne change jamais (D02) : la vraie raison, pas « argument inconnu ».
+                raise ToolError(str(ws.boards.kind_change_refused((arguments or {}).get("board_id"))))
             if name in known:
                 allowed = set(known[name].inputSchema.get("properties", {}))
                 unknown = sorted(set(arguments or {}) - allowed)
@@ -469,7 +590,8 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
     # Motif plutôt qu'enum, délibérément : `list_tools` (jarvis-tools) indexe les valeurs d'un enum, et
     # `meeting` y faisait passer board_create / board_update devant les outils d'agenda pour « réunion »,
     # « rendez-vous » (recall@3 de `test_tool_relevance` 0,88 < 0,90). Le motif reste strict ; Core revalide.
-    Kind = Annotated[str, Field(pattern=BOARD_KIND_PATTERN, description="Nature du Board, simple étiquette.")]
+    Kind = Annotated[str, Field(pattern=BOARD_KIND_PATTERN, description=(
+        "Type du Board, choisi à la création et jamais modifié ensuite (défaut assistant)."))]
     Summary = Annotated[str, Field(max_length=MAX_CONTEXT_SUMMARY_CHARS, description=(
         f"Résumé du contexte du Board ({MAX_CONTEXT_SUMMARY_CHARS} caractères au plus) : de quoi il s'agit, où on "
         "en est. Il accompagne chaque tour de ce Board ; condense plutôt que tronquer."))]
@@ -498,7 +620,7 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "board_get"))
     async def board_get(board_id: BoardId) -> BoardResult:
-        """Lire un Board : titre, nature, résumé de contexte, références, mode d'interaction, s'il est actif."""
+        """Lire un Board : titre, type, résumé de contexte, références, s'il est actif."""
         return await ws.boards.get_board(board_id)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "board_get_active"))
@@ -528,18 +650,18 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
     async def board_update(
         board_id: BoardId,
         title: Title | None = None,
-        board_kind: Kind | None = None,
         context_summary: Summary | None = None,
         task_refs: Refs | None = None,
         artifact_refs: Refs | None = None,
         project_refs: Refs | None = None,
     ) -> BoardResult:
-        """Modifier un Board : renommer, réécrire son résumé de contexte, remplacer ses références ou sa nature.
+        """Modifier un Board : renommer, réécrire son résumé de contexte, remplacer ses références.
 
         Au moins un champ. Une liste de références remplace la précédente en entier : relis le Board
-        (board_get) pour y ajouter un élément. Un Board archivé ne se modifie plus.
+        (board_get) pour y ajouter un élément. Un Board archivé ne se modifie plus. Le type ne change
+        jamais : pour un autre type, crée un autre Board (board_create).
         """
-        return await ws.boards.update_board(board_id, title=title, board_kind=board_kind,
+        return await ws.boards.update_board(board_id, title=title,
                                             context_summary=context_summary, task_refs=task_refs,
                                             artifact_refs=artifact_refs, project_refs=project_refs)
 
@@ -677,6 +799,49 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
     ) -> BoardArtifactLinkResult:
         """Lier un Artifact à un Board (ou retirer le lien)."""
         return await ws.artifact_link(board_id, artifact_id, linked=linked)
+
+    # ------------------------------------------------------------ Dossier (wheel-dossier-refactor, Slice 05)
+
+    EntryId = Annotated[str, Field(pattern=ENTRY_ID_PATTERN, max_length=MAX_ENTRY_ID_CHARS,
+                                   description="entry_id rendu par dossier_list.")]
+
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "dossier_list"))
+    async def dossier_list(
+        board_id: BoardId,
+        limit: Annotated[int, Field(ge=1, le=MAX_DOSSIER_LIST)] = DEFAULT_DOSSIER_LIST,
+        since: Annotated[str | None, Field(max_length=40, description=(
+            "Date ISO avec fuseau : seulement ce qui a changé depuis."))] = None,
+    ) -> DossierListResult:
+        """Le Dossier d'un Board, comme l'humain le voit : sa mémoire et ses Artifacts liés, une entrée par source."""
+        return await ws.dossier_list(board_id, limit=limit, since=since)
+
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "dossier_ranger"))
+    async def dossier_ranger(
+        board_id: BoardId,
+        object_ids: Annotated[list[Annotated[str, Field(min_length=1, max_length=128)]], Field(
+            min_length=1, max_length=MAX_DOSSIER_OBJECTS, description="Ids rendus par scene_inspect.")],
+        dry_run: Annotated[bool, Field(description="Seulement dire ce que Ranger ferait.")] = False,
+    ) -> DossierRangerResult:
+        """Ranger des objets du Board dans son Dossier : contenu gardé d'abord, puis retiré du Board.
+
+        Pas « masquer » : masquer ne range rien. Pas « retirer du Board » : c'est scene_archive. Un refus laisse
+        l'objet en place.
+        """
+        return await ws.dossier_ranger(board_id, object_ids, dry_run=dry_run)
+
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "dossier_present"))
+    async def dossier_present(
+        board_id: BoardId,
+        entry_id: EntryId,
+        representation: Literal["window", "capsule", "point"] = "window",
+    ) -> DossierPresentResult:
+        """Poser une entrée du Dossier sur le Board, même source. Pour la montrer à lire : dossier_view."""
+        return await ws.dossier_present(board_id, entry_id, representation=representation)
+
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "dossier_view"))
+    async def dossier_view(board_id: BoardId, entry_id: EntryId) -> DossierViewResult:
+        """Montrer une entrée du Dossier à l'écran (une par appel, deux côte à côte) ; rend le reçu de la page."""
+        return await ws.dossier_view(board_id, entry_id)
 
     return mcp
 

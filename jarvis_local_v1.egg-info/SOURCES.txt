@@ -314,7 +314,6 @@ jarvis/runtime/front_brain_hints.py
 jarvis/runtime/front_brain_sidecar.py
 jarvis/runtime/health.py
 jarvis/runtime/interaction_mode_observer.py
-jarvis/runtime/interaction_mode_settings.py
 jarvis/runtime/interaction_mode_view.py
 jarvis/runtime/journal.py
 jarvis/runtime/live_delegation.py

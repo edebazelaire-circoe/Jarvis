@@ -266,7 +266,7 @@ Counts and the per-chunk commands are in
 | --- | --- | --- |
 | Interaction-mode vocabulary, output disposition, the seven-row policy matrix | PASS | Slices 01/07. The matrix is data and its two implications are checked over every row at construction. |
 | Live mode control plane, no Voice restart on a mode change | PASS automated **and** in a running system | Slice 02 ran a real Core + Control Center over 6 Core lives and 16 mode requests; `configuration_id` is byte-identical across all three modes and no `voice.switch.*` line ever appeared. |
-| Control Center mode selector | PASS automated **and** in a real browser | Slice 03, headless Chrome over the DevTools Protocol: real layout, a frozen mid-flight write, 51 screenshots. |
+| Control Center mode selector | PASS automated **and** in a real browser | Slice 03, headless Chrome over the DevTools Protocol: real layout, a frozen mid-flight write, 51 screenshots. **Superseded (Slice 01b of `jarvis-board-ui-wheel-dossier-refactor`):** the mode follows the active Board's type; the selector was first made display-only, then **removed** (Slice 02 of that refactor: the bottom-left Board card shows the type, no screen chooses a mode; `docs/interaction-mode.md`). |
 | Session working set and transcript tail, retired on a mode change | PASS | Slice 04. |
 | Single microphone owner in PRESENTATION, counted | PASS automated | Slices 05/11. The ownership registry counts all eight openers (the SIMPLE openWakeWord detector, `wakeword_openwakeword`, included); entering suspends the SIMPLE wake stack before opening the hub, and a second owner makes activation refuse rather than open a second stream. **No real microphone was opened at any point.** |
 | Continuous ambient ingestion | PASS automated | Slice 06, against the real hub, the real segmenter and the real store, with a fake device and a fake transcription provider. **No real transcription provider was called.** |
@@ -301,11 +301,12 @@ owner; wake word and manual key separately), **SPEECH** (silence on visual
 commands on the live continuous architecture) and **PRIORITY** (an addressed
 turn stays responsive under ambient load and running preparations).
 
-1. **Start in SIMPLE and change nothing.** One wake, one question, one answer.
+1. **Start on an Assistant Board (SIMPLE) and change nothing.** One wake, one question, one answer.
    This is the D14 baseline: anything that behaves differently from last week
    is a regression, and it is the first thing to judge.
-2. **Switch to PRESENTATION in the Control Center.** Expect: the selector turns
-   over without Voice restarting, and `runtime/trace.jsonl` shows
+2. **Switch to a Présentation Board in the Control Center** (Boards control, top
+   left; create one first if needed). Expect: the bottom-left mode display turns
+   over to PRESENTATION without Voice restarting, and `runtime/trace.jsonl` shows
    `presentation.runtime.entered` with `physical_input_owners: 1`. If it shows
    `entry_failed`, stop and record the code: no further result is meaningful.
 3. **Say nothing to JARVIS and talk to the room for two minutes.** Expect:

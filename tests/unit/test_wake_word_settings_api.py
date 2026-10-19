@@ -1,4 +1,4 @@
-"""Route `/api/wake-word` : même forme que `/api/interaction-mode`, un seul magasin."""
+"""Route `/api/wake-word` : un bloc de réglages, un seul magasin, une écriture stricte."""
 
 from __future__ import annotations
 

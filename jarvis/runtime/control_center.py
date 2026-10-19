@@ -66,9 +66,12 @@ from jarvis.runtime.catalog_view import CatalogViewService, ProviderCatalogSnaps
 from jarvis.runtime.claude_local import DEFAULT_PERMISSION_MODE, PERMISSION_MODES, ClaudeLocalAgent, normalize_permission_mode
 from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
-from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode
-from jarvis.runtime import interaction_mode_settings, wake_word_settings
-from jarvis.runtime.interaction_mode_view import CoreInteractionModeView, InteractionModeUnavailable
+from jarvis.core.interaction_mode import supported_modes
+from jarvis.domain.interaction_mode import (
+    DEFAULT_INTERACTION_MODE, INTERACTION_MODE_DERIVED, INTERACTION_MODE_DERIVED_MESSAGE, InteractionMode,
+)
+from jarvis.runtime import wake_word_settings
+from jarvis.runtime.interaction_mode_view import CoreInteractionModeView
 from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
 from jarvis.runtime import mcp_catalog
 from jarvis.runtime.model_catalog import CatalogError, ModelCatalog, filter_by_role
@@ -126,6 +129,7 @@ from jarvis.runtime.presentation_studio_relay import (
     GUARDED_PREFIXES as STUDIO_GUARDED_PREFIXES, PresentationStudioRelayRoutes,
 )
 from jarvis.runtime.presentation_studio_explorer_commands import PresentationStudioExplorerRoutes
+from jarvis.runtime.dossier_navigation import GUARDED_PREFIXES as DOSSIER_GUARDED_PREFIXES, PAGE_TOKEN_MARKER as DOSSIER_PAGE_TOKEN_MARKER, DossierNavigationRoutes
 from jarvis.runtime.presentation_studio_turn import AddressedTurnTracker
 from jarvis.runtime.memory_relay import MEMORY_BRAIN_GUARDED_PREFIXES, MemoryBrainRelayRoutes
 from jarvis.runtime.workspace_relay import GUARDED_PREFIXES as WORKSPACE_GUARDED_PREFIXES, WorkspaceRelayRoutes
@@ -133,7 +137,7 @@ from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
 from jarvis.runtime.presentation_render_relay import PresentationRenderRelayRoutes
 from jarvis.runtime.remotion_studio_relay import GUARDED_PREFIXES as REMOTION_STUDIO_GUARDED_PREFIXES, RemotionStudioRelayRoutes
-from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, InteractionModeOrigin
+from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, BoardKind, board_kind_mode
 from jarvis.runtime.work_view import CORE_UNREACHABLE, NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.protocol import scene_wire
 from jarvis.protocol.client import CoreProtocolError
@@ -305,7 +309,7 @@ READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_RO
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
                        MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES, *MEMORY_BRAIN_GUARDED_PREFIXES,
                        *PREFAB_GUARDED_PREFIXES, *REMOTION_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES,
-                       *REMOTION_STUDIO_GUARDED_PREFIXES, *CHAT_GUARDED_PREFIXES)
+                       *REMOTION_STUDIO_GUARDED_PREFIXES, *CHAT_GUARDED_PREFIXES, *DOSSIER_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -429,22 +433,6 @@ SETTINGS_ERROR_CODE_HEADER = "X-Jarvis-Error-Code"
 BAREHANDS_FAILURE_CODE = re.compile(r"[a-z][a-z_]{0,63}")
 BAREHANDS_FAILURE_TEXT_LIMIT = 4000
 
-#: Délai avant qu'un rattrapage de mode d'interaction puisse être réarmé. Le
-#: statut bat chaque seconde ; sans ce répit, un Core joignable qui refuse
-#: produirait une tentative d'écriture par battement de page.
-INTERACTION_MODE_REPLAY_BACKOFF_S = 30.0
-
-#: Longueur maximale d'une valeur brute recopiée dans le journal. Même borne
-#: que celle des autres émetteurs de cette surface : un réglage trafiqué ne
-#: doit pas pouvoir remplir `trace.jsonl`.
-MAX_JOURNALLED_VALUE_CHARS = 64
-
-
-def _short(value: object) -> str | None:
-    """Valeur brute bornée pour le journal, ou `None` s'il n'y en avait pas."""
-
-    return None if value is None else str(value)[:MAX_JOURNALLED_VALUE_CHARS]
-
 #: Coque du Control Center (jarvis-board-orbital-ui-workspace-rail, Slice 01) :
 #: zones, jetons et `CONTROL_SELECTOR` partagés (`window.JarvisShell`), sans état.
 #: Inséré en premier : la scène et le rail de capture le lisent. Contrat :
@@ -524,8 +512,8 @@ BAREHANDS_BENCHMARK_UI_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_BENCHMARK_U
 #: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
 BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
 BAREHANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_JS__*/"
-#: Contrôle de cycle de vie Bare Hands de la barre du haut : bouton carré à
-#: icône de main en haut à gauche et sélecteur visuel OFF/VEILLE/ACTIF
+#: Contrôle de cycle de vie Bare Hands : bouton carré à icône de main et
+#: sélecteur visuel OFF/VEILLE/ACTIF, cachés tant que la roue est là (Sélection › Bare Hands)
 #: (`window.JarvisBarehandsHud`). Inséré APRÈS le pointeur, qui pose
 #: `window.JarvisBarehands` **et** la couture de diffusion du cycle de vie
 #: (`openLifecycleSeam`) à laquelle ce contrôle s'abonne : sans elle il ne
@@ -607,20 +595,6 @@ STUDIO_INSPECTOR_WIDGETS_SCRIPT_FILE = "control_center_presentation_studio_inspe
 STUDIO_INSPECTOR_WIDGETS_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_WIDGETS_JS__*/"
 STUDIO_INSPECTOR_SCRIPT_FILE = "control_center_presentation_studio_inspector.js"
 STUDIO_INSPECTOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_JS__*/"
-#: Contrôle de mode d'interaction du bas-gauche (Slice 03 de
-#: `jarvis-presentation-interaction-mode`) : bouton d'état compact montrant le
-#: mode **en vigueur** (SIMPLE / PRESENTATION) et sélecteur à trois choix, où
-#: REUNION est annoncé et réservé. Contrairement aux modules Bare Hands, il ne
-#: dépend d'aucun autre module de page : sa seule source est le bloc
-#: `interaction_mode` de `GET /api/status`, que `refreshStatus` lui remet une
-#: fois par seconde (`gate`), et `statusLost` quand ce sondage tombe. Il n'a
-#: donc pas d'ordre d'insertion à respecter vis-à-vis des autres scripts — il
-#: lit `api` et `refreshStatus`, deux déclarations de fonction remontées du même
-#: `<script>`. Son bloc navigateur **refuse de se dessiner** sous un nom
-#: cherchable si son emplacement manque, et rattrape ce refus pour ne pas
-#: emporter les autres modules avec lui.
-INTERACTION_MODE_SCRIPT_FILE = "control_center_interaction_mode.js"
-INTERACTION_MODE_SCRIPT_MARKER = "/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/"
 #: Contrôleur de capture (session-context-recording Slice 10 ; découpé en
 #: orbital-ui Slice 04) : capture d'écran, enregistrement audio et
 #: enregistrement d'écran. Sa seule vérité est `GET /api/captures/status`
@@ -638,12 +612,29 @@ CAPTURE_RAIL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CAPTURE_RAIL_JS__*/"
 #: Contrat : `docs/control-center-shell.md` › Roue d'outils. Refus rattrapé.
 TOOL_WHEEL_SCRIPT_FILE = "control_center_tool_wheel.js"
 TOOL_WHEEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_TOOL_WHEEL_JS__*/"
-#: Vues de capture (orbital-ui Slice 04, D6) : secteurs Vidéo / Capture d'écran /
-#: Audio de la roue, sous-arcs des cibles réelles, indicateurs persistants
-#: `#recIndicators` (rang 40). Lit le contrôleur et la roue : inséré APRÈS eux.
+#: Vues de capture (orbital-ui Slice 04, D6) : catégorie Capture de la roue (Capture
+#: d'écran / Enregistrer l'écran / Enregistrer l'audio dans son arbre), listes des cibles
+#: réelles, indicateurs transitoires `#recIndicators` (rang 40, haut-gauche). Lit le contrôleur et la roue : inséré APRÈS eux.
 #: Contrat : `docs/capture.md` › Interface. Refus d'installation rattrapé.
 CAPTURE_WHEEL_SCRIPT_FILE = "control_center_capture_wheel.js"
 CAPTURE_WHEEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CAPTURE_WHEEL_JS__*/"
+#: Catégories JARVIS et Paramètres de la roue (jarvis-board-ui-wheel-dossier-refactor,
+#: Slice 04) : l'état de la voix, de la touche d'éveil, de l'agent et des sous-agents,
+#: lu sur le seul battement `/api/status` de la page (`JarvisRuntimeWheel.gate`) ; aucune
+#: commande inventée (aucune route ne met Voice en veille). Paramètres ouvre les réglages
+#: par onglet. Lit la roue : inséré APRÈS elle. Contrat : `docs/control-center-shell.md` ›
+#: Tool wheel. Refus d'installation rattrapé.
+JARVIS_WHEEL_SCRIPT_FILE = "control_center_jarvis_wheel.js"
+JARVIS_WHEEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_JARVIS_WHEEL_JS__*/"
+#: Dossier plein écran du Board (jarvis-board-ui-wheel-dossier-refactor, Slice 07) : logique pure
+#: (`control_center_dossier_core.js`, exécutée par node) puis la vue (`control_center_dossier.js`) :
+#: organisation, lecture, édition par `memory/write` (`expected_sha256`), Afficher sur le Board par
+#: `…/dossier/present`, ouverture par Jarvis sur `/api/dossier/navigation/commands` (jeton de page).
+#: APRÈS la roue, qu'elle branche. Contrat : `docs/dossier.md` › Full-screen Dossier (UI).
+DOSSIER_CORE_SCRIPT_FILE = "control_center_dossier_core.js"
+DOSSIER_CORE_SCRIPT_MARKER = "/*__CONTROL_CENTER_DOSSIER_CORE_JS__*/"
+DOSSIER_SCRIPT_FILE = "control_center_dossier.js"
+DOSSIER_SCRIPT_MARKER = "/*__CONTROL_CENTER_DOSSIER_JS__*/"
 #: Sélection Souris / Bare Hands et reprise de la main par la souris
 #: (jarvis-board-orbital-ui-workspace-rail, Slice 03, D5) : projection du cycle
 #: de vie Bare Hands sur le secteur Sélection de la roue, sous-arc Souris /
@@ -658,19 +649,22 @@ INPUT_ARBITRATION_SCRIPT_MARKER = "/*__CONTROL_CENTER_INPUT_ARBITRATION_JS__*/"
 #: `jarvis-presentation-interaction-mode`) : une carte discrète, posée en bas de
 #: la pile d'infusions existante, pour une contradiction vérifiée. Il lit le
 #: bloc `background.attention` de `GET /api/status` — donc le même battement à
-#: 1 Hz que le contrôle de mode, et aucun second sondage — et il arbitre le
+#: 1 Hz que la carte Board, et aucun second sondage — et il arbitre le
 #: signal sonore entre onglets pour que `bgCue` ne sonne qu'une fois.
 #:
-#: Il ne dépend d'aucun autre module de page. Comme le contrôle de mode, il
+#: Il ne dépend d'aucun autre module de page. Comme la carte Board, il
 #: refuse de s'installer sous un nom cherchable si la pile d'infusions manque,
 #: et **rattrape ce refus** : la page servie concatène tous ses modules dans un
 #: seul `<script>`, et une levée qui remonterait emporterait les autres.
-#: Contrôle Boards du haut-droit (handoff `jarvis-board-session-context-runtime`,
-#: Slice 06) : titre du Board actif toujours visible, liste, bascule, création,
-#: renommage, archivage, nouvelle Session. Il suit le bloc `boards` de
-#: `GET /api/status` (`gate` / `statusLost`, comme le contrôle de mode) et
-#: n'appelle que `/api/boards*` / `/api/sessions*`. Deux emplacements déclarés
-#: dans la page (`#boardsHud`, `#boardsPanel`) ; refus d'installation rattrapé.
+#: Carte Board du bas-gauche (handoff `jarvis-board-session-context-runtime`,
+#: Slice 06 ; déplacée du haut-gauche par la Slice 02 de
+#: `jarvis-board-ui-wheel-dossier-refactor`, qui y a aussi déménagé la ligne de
+#: séance PRESENTATION du contrôle de mode retiré) : type et titre du Board actif
+#: toujours visibles, liste, bascule, création (type fixé), renommage, archivage,
+#: nouvelle Session. Il suit les blocs `boards`, `interaction_mode` et
+#: `presentation` de `GET /api/status` (`gate` / `statusLost`) et n'appelle que
+#: `/api/boards*` / `/api/sessions*`. Deux emplacements déclarés dans la page
+#: (`#boardsHud`, `#boardsPanel`) ; refus d'installation rattrapé.
 BOARDS_SCRIPT_FILE = "control_center_boards.js"
 BOARDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BOARDS_JS__*/"
 PRESENTATION_ATTENTION_SCRIPT_FILE = "control_center_presentation_attention.js"
@@ -1283,19 +1277,13 @@ class ControlCenter:
         # `/api/scene*` répondent « non configuré ».
         self.scene_view = scene_view
         # Mode d'interaction : Core en possède la valeur effective vivante,
-        # ce Control Center en possède la préférence enregistrée (Slice 02).
-        # Absente, la vue répond « non configuré » et l'écran affiche le
-        # réglage enregistré en le nommant comme tel, jamais comme la vérité.
+        # dérivée du type du Board actif ; ce Control Center la lit pour
+        # l'afficher et n'écrit rien (Slice 01b). Absente, la vue répond « non
+        # configuré » et l'écran affiche un repli nommé, jamais comme la vérité.
         self.interaction_mode_view = interaction_mode_view or CoreInteractionModeView(None, journal=self.journal)
-        # Une seule ligne par processus pour une préférence écrite par une
-        # version inconnue : `GET /api/interaction-mode` part à chaque sondage.
-        self._interaction_mode_foreign_reported = False
         self._wake_word_unreadable_reported = False
-        # Rattrapage armé par le statut, exécuté hors du chemin de lecture :
-        # une écriture n'a rien à faire sur le battement de la page.
-        self._interaction_mode_replay: asyncio.Task[None] | None = None
-        # Un avertissement par cause par minute : un Core qui refuse pour
-        # toujours ne doit pas écrire une ligne par seconde.
+        # Un avertissement par cause par minute : un Board actif illisible à
+        # chaque battement ne doit pas écrire une ligne par seconde.
         self._interaction_mode_reports = ReportThrottle()
         # Acteurs refusés : un avertissement par valeur par minute, avec le
         # nombre d'occurrences tues (une page en boucle ne remplit pas la trace).
@@ -1388,12 +1376,8 @@ class ControlCenter:
         #: Dernier `(agent_cli, agent_session_id)` rapporté à Core, par liaison.
         self._binding_reports: dict[tuple[str, str], tuple[str, str | None]] = {}
         self._session_tasks: set[asyncio.Task[None]] = set()
-        # Core a déjà répondu `GET /v1/boards/active` dans cette vie : le mode
-        # d'interaction appartient au Board, plus à la préférence globale.
-        self._core_has_boards = False
         # Core répond 404 texte à `/v1/boards/active` : sans Boards pour cette vie.
         self._core_boards_unsupported = False
-        self._replay_retired_reported = False
         # Tours `/api/agent/ask` en vol (Slice 04b) : une bascule ou une
         # nouvelle Session demandée par le cerveau pendant son tour attend sa fin.
         self._asks_in_flight = 0
@@ -1454,6 +1438,8 @@ class ControlCenter:
         self.studio_authoring_routes = PresentationStudioAuthoringRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Explorateur de variantes (Slice 18) : canal de commandes (ouvrir / fermer par la voix ou un agent) + miroir d'etat de la page.
         self.studio_explorer = PresentationStudioExplorerRoutes(journal=self.journal)
+        # Dossier (wheel-dossier-refactor, Slice 05) : canal agent -> page pour ouvrir une entrée ; la page (Slice 07) rend le reçu.
+        self.dossier_navigation = DossierNavigationRoutes(journal=self.journal)
         # Tour adresse de l'utilisateur en vol (Slice 21) : l'origine d'un demarrage de lecture par le cerveau vient de LA, jamais d'un argument.
         self.studio_turn = AddressedTurnTracker()
         self._apply_agent_settings(settings)
@@ -1496,11 +1482,9 @@ class ControlCenter:
             web.post("/api/self-dev/deploy", self.self_dev_deploy),
             web.get("/api/shortcuts", self.get_shortcuts),
             web.post("/api/shortcuts", self.save_shortcuts),
-            # Mode d'interaction (Slice 02). Route **dédiée**, hors de
-            # `/api/settings` : elle s'applique à chaud, elle ne doit pas
-            # dépendre de la validité des réglages de voix, et surtout elle
-            # ne doit jamais traverser `_apply_voice`, dont la première
-            # branche supprime `voice_architecture` (constat G1).
+            # Mode d'interaction : lecture seule (Slice 01b). Le `POST` reste pour
+            # qu'une page ou un outil d'une version antérieure lise un refus
+            # nommé (409 `interaction_mode_derived`) plutôt qu'un 405.
             web.get("/api/interaction-mode", self.get_interaction_mode),
             web.post("/api/interaction-mode", self.save_interaction_mode),
             web.get("/api/wake-word", self.get_wake_word),
@@ -1577,6 +1561,7 @@ class ControlCenter:
             *self.studio_upgrades_routes.routes(),
             *self.studio_authoring_routes.routes(),
             *self.studio_explorer.routes(),
+            *self.dossier_navigation.routes(),
             *self.studio_turn.routes(),
             web.get("/api/background", self.background_events),
             web.post("/api/background/ack", self.background_ack),
@@ -2250,19 +2235,6 @@ class ControlCenter:
             self.work_ingress.start()
         if self.conversation_events is not None:
             self.conversation_events.start()
-        # Réconciliation du mode d'interaction (Slice 02). Deux temps, et
-        # **aucun des deux n'attend le réseau** : un Core qui accepte le TCP
-        # puis se tait retarderait sinon le démarrage du Control Center de
-        # plusieurs secondes, ce qui est exactement ce qu'un réglage n'a pas le
-        # droit de faire.
-        #
-        # 1. dire tout de suite, et localement, si le réglage enregistré n'est
-        #    pas celui qui s'appliquera (illisible, ou réservé) ;
-        # 2. armer le rejeu vers Core en tâche de fond. Core peut démarrer
-        #    après nous : l'échec est journalisé, jamais levé, et `/api/status`
-        #    réarme dès qu'un Core neuf (révision 0) répond.
-        self.report_interaction_mode_preference(self._settings(), source="startup")
-        self._schedule_interaction_mode_replay("startup")
         try:
             await self.agent.start()
         except RuntimeError as exc:
@@ -2280,15 +2252,12 @@ class ControlCenter:
         self.barehands_commands.close()
         self.fullscreen.close()
         self.studio_explorer.close()
+        self.dossier_navigation.close()
         self.barehands_calibration.close()
         self._calibration_event_next = None
         analysis, self._calibration_event_task = self._calibration_event_task, None
         if analysis is not None and not analysis.done():
             analysis.cancel()
-        replay, self._interaction_mode_replay = self._interaction_mode_replay, None
-        if replay is not None and not replay.done():
-            # Elle dort peut-être son délai de reprise : l'arrêt ne l'attend pas.
-            replay.cancel()
         for task in tuple(self._session_tasks):
             task.cancel()
         await asyncio.gather(*self._session_tasks, return_exceptions=True)
@@ -2454,10 +2423,6 @@ class ControlCenter:
             page.with_name(STUDIO_INSPECTOR_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
-            INTERACTION_MODE_SCRIPT_MARKER,
-            page.with_name(INTERACTION_MODE_SCRIPT_FILE).read_text(encoding="utf-8"),
-        )
-        html = html.replace(
             CAPTURE_RAIL_SCRIPT_MARKER,
             page.with_name(CAPTURE_RAIL_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
@@ -2470,9 +2435,18 @@ class ControlCenter:
             page.with_name(CAPTURE_WHEEL_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
+            JARVIS_WHEEL_SCRIPT_MARKER,
+            page.with_name(JARVIS_WHEEL_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
             INPUT_ARBITRATION_SCRIPT_MARKER,
             page.with_name(INPUT_ARBITRATION_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
+        for marker, file_name in ((DOSSIER_CORE_SCRIPT_MARKER, DOSSIER_CORE_SCRIPT_FILE),
+                                  (DOSSIER_SCRIPT_MARKER, DOSSIER_SCRIPT_FILE)):
+            html = html.replace(marker, page.with_name(file_name).read_text(encoding="utf-8"))
+        # Remis AVEC la page, une fois la vue du Dossier insérée (Slice 07) : ses reçus de navigation l'exigent.
+        html = html.replace(DOSSIER_PAGE_TOKEN_MARKER, self.dossier_navigation.broker.page_token)
         html = html.replace(
             BOARDS_SCRIPT_MARKER,
             page.with_name(BOARDS_SCRIPT_FILE).read_text(encoding="utf-8"),
@@ -2602,7 +2576,7 @@ class ControlCenter:
         # et sert au mode d'interaction comme au bloc `boards` (Slice 06).
         async def mode_and_boards() -> tuple[dict[str, Any], dict[str, Any]]:
             active = await self._read_active_board()
-            return await self._interaction_mode_status(settings, active=active), self._boards_status(active)
+            return await self._interaction_mode_status(active), self._boards_status(active)
 
         live, (interaction_mode, boards) = await asyncio.gather(
             self._live_status(settings, voice_online=voice_online),
@@ -2635,12 +2609,13 @@ class ControlCenter:
             # permanente dans la page pour apprendre un booléen (constat F1 :
             # `/api/status` ne portait aucun champ Bare Hands).
             "barehands": {"enabled": bool(barehands.load(settings)["enabled"])},
-            # Mode d'interaction (Slice 02) : la valeur **effective** que Core
-            # tient, sa révision, et la préférence enregistrée à côté. Les deux
-            # sont nommées séparément parce qu'elles divergent sur exactement un
-            # cas — un `meeting` enregistré, réservé et donc jamais effectif —
-            # et que n'en publier qu'une ferait disparaître REUNION de l'écran
-            # (Décision 02) ou ferait croire qu'il se comporte (Décision 14).
+            # Mode d'interaction (Slice 01b) : la valeur **effective** que Core
+            # tient, sa révision, et le mode que désigne le type du Board actif
+            # (`board_mode`). Les deux sont nommés séparément parce qu'ils
+            # divergent : un Board Réunion (réservé, jamais effectif), une
+            # lecture du Studio en cours (transitoire). N'en publier qu'un ferait
+            # disparaître REUNION de l'écran (Décision 02) ou ferait croire qu'il
+            # se comporte (Décision 14). Lecture seule.
             "interaction_mode": interaction_mode,
             # Relevé PRESENTATION de Voice (handoff presentation-interaction-mode,
             # Slice 10, P7) : scalaires seulement, `null` quand Voice ne bat
@@ -2651,6 +2626,9 @@ class ControlCenter:
             # une bascule faite par la voix ou par MCP s'affiche au battement
             # suivant. Voir `_boards_status`.
             "boards": boards,
+            # Une ouverture du Dossier demandée par Jarvis attend une page (Slice 08 de la refonte roue/Dossier) :
+            # la page la relève d'un GET court au lieu de tenir un long-poll.
+            "dossier_navigation": self.dossier_navigation.broker.status_block(),
             # Bornes que la page affiche (Slice 08, reprise QA) : délai réel de
             # l'arrêt d'un job à travers ce Control Center, `null` sans Core.
             "scene_limits": {
@@ -2661,55 +2639,31 @@ class ControlCenter:
             "conversation_events": self._conversation_event_counters(),
         })
 
-    async def _interaction_mode_status(self, settings: dict[str, Any], *,
-                                       active: _ActiveBoardRead | None = None) -> dict[str, Any]:
-        """Mode effectif + préférence + modes annoncés, pour `/api/status`.
+    async def _interaction_mode_status(self, active: _ActiveBoardRead | None = None) -> dict[str, Any]:
+        """Mode effectif + mode du type du Board actif + modes annoncés, pour `/api/status`.
 
-        **Lecture seule.** Le sondage bat chaque seconde et porte tout
-        l'affichage de la page : il ne lève pas, et il n'écrit pas non plus.
-        Une écriture sur ce chemin rejouait la préférence vers Core à chaque
-        battement tant qu'elle échouait, et remplissait le journal d'un
-        avertissement par seconde. Le rattrapage est armé ici mais exécuté
-        **à côté**, par `_schedule_interaction_mode_replay`.
+        **Lecture seule**, sans écriture d'aucune sorte : le mode suit le type du
+        Board actif (Slice 01b), Core l'applique lui-même au démarrage et à
+        chaque bascule. Le sondage bat chaque seconde et porte tout l'affichage
+        de la page : il ne lève pas.
 
-        Core injoignable, la vue rend le repli local **nommé**
-        (`source: "settings"`, `core_reachable: false`, un `error.code`), jamais
-        une valeur présentée comme vivante.
+        - `board_mode` / `board_mode_label` : le mode que désigne le type du
+          Board actif (`board_kind_mode`, Réunion compris), `null` quand le
+          Board actif n'est pas lisible (dit par `_read_active_board`) ;
+        - Core injoignable : la vue rend le repli local **nommé** (`source:
+          "local"`, `core_reachable: false`, un `error.code`), le comportement
+          de `board_mode` quand il est connu, jamais une valeur présentée comme
+          vivante.
         """
 
-        stored = await self._board_stored_mode(active) or interaction_mode_settings.load(settings)
-        live = await self.interaction_mode_view.read(stored)
-        # Révision 0 sur un Core joignable = il n'a jamais entendu parler de la
-        # préférence (démarré après nous, ou redémarré). Le rattrapage part en
-        # tâche de fond ; ce battement-ci rend ce que Core dit aujourd'hui.
-        if live["core_reachable"] and live["revision"] == 0:
-            self._schedule_interaction_mode_replay("core_restart")
+        board_mode = await self._board_mode(active)
+        live = await self.interaction_mode_view.read(board_mode or DEFAULT_INTERACTION_MODE)
         return {
             **live,
-            "stored": stored.value,
-            "stored_label": stored.label,
-            # Catalogue constant : `supported_modes()` directement, plutôt que
-            # `describe()`, qui relirait `inspect` + `load` + `behaving` à
-            # chaque seconde pour en extraire une valeur qui ne change jamais.
-            "modes": interaction_mode_settings.supported_modes(),
+            "board_mode": board_mode.value if board_mode is not None else None,
+            "board_mode_label": board_mode.label if board_mode is not None else None,
+            "modes": supported_modes(),
         }
-
-    def _schedule_interaction_mode_replay(self, source: str) -> None:
-        """Armer un rattrapage hors du chemin de lecture, au plus un à la fois.
-
-        Le sondage ne peut pas attendre une écriture, et un Core qui refuse
-        pour toujours ne doit pas produire une tentative par seconde. Une seule
-        tâche vit à la fois, et elle s'octroie un délai avant de réessayer.
-        """
-
-        if self._interaction_mode_replay is not None and not self._interaction_mode_replay.done():
-            return
-        if interaction_mode_settings.behaving(self._settings()) is DEFAULT_INTERACTION_MODE:
-            # Rien à rejouer : Core est déjà en mode assistant à la révision 0.
-            return
-        self._interaction_mode_replay = asyncio.create_task(
-            self._replay_interaction_mode(source), name="jarvis-interaction-mode-replay",
-        )
 
     async def _read_active_board(self) -> _ActiveBoardRead:
         """`GET /v1/boards/active`, une fois par battement de `/api/status`. Ne lève pas.
@@ -2747,27 +2701,35 @@ class ControlCenter:
             return _ActiveBoardRead(None, {"code": "http_error", "message": "Core answered without a board"}, True)
         return _ActiveBoardRead(board, None, True)
 
-    async def _board_stored_mode(self, active: _ActiveBoardRead | None = None) -> InteractionMode | None:
-        """Mode enregistré sur le Board actif de Core, quand ce Board l'a choisi (reprise QA 04a, S3).
+    @staticmethod
+    def _board_kind_of(board: object) -> BoardKind | None:
+        """Type d'un Board lu chez Core (`board_kind`), `None` s'il est absent ou hors contrat."""
 
-        Depuis les Boards, la préférence vit sur le Board : l'afficher depuis le
-        réglage global montrait une divergence « CHOISI » périmée après chaque
-        changement. `None` : Core sans Boards (retenu pour la vie du processus),
-        Board `unset` (le réglage global reste l'entrée de migration), ou lecture
-        en échec (dit, limité ; le battement suivant réessaie). Ne lève pas.
-        `active` : la lecture déjà faite par ce battement (`status`), sinon relue.
+        kind = board.get("board_kind") if isinstance(board, dict) else None
+        return BoardKind(kind) if kind in {item.value for item in BoardKind} else None
+
+    async def _board_mode(self, active: _ActiveBoardRead | None = None) -> InteractionMode | None:
+        """Mode que désigne le type du Board actif de Core (`board_kind_mode`, `docs/boards.md` › *Board type*).
+
+        Le Board ne stocke pas de mode : son type le désigne (Réunion compris,
+        affiché tel quel). `None` : Core sans Boards (retenu pour la vie du
+        processus), lecture en échec (dit, limité ; le battement suivant
+        réessaie) ou type hors contrat (dit, limité, `invalid_board_snapshot`).
+        Ne lève pas. `active` : la lecture déjà faite par ce battement (`status`), sinon relue.
         """
 
         if active is None:
             active = await self._read_active_board()
-        board = active.board
-        if board is None or board.get("interaction_mode_origin") in (None, InteractionModeOrigin.UNSET.value):
+        if active.board is None:
             return None
-        self._core_has_boards = True
-        try:
-            return InteractionMode(board.get("interaction_mode"))
-        except ValueError:
-            return None  # argued: an out-of-contract Board is reported by `_core_boards_own_interaction_mode`
+        kind = self._board_kind_of(active.board)
+        if kind is None:
+            self._report_interaction_mode(
+                "interaction.mode.board_unknown", "Board actif de Core hors contrat (type du Board absent ou inconnu)",
+                level="warning", data={"code": "invalid_board_snapshot"},
+            )
+            return None
+        return board_kind_mode(kind)
 
     def _boards_status(self, active: _ActiveBoardRead) -> dict[str, Any]:
         """Bloc `boards` de `/api/status` (handoff board-session, Slice 06). Ne lève pas, n'écrit rien.
@@ -2797,162 +2759,10 @@ class ControlCenter:
             "error": active.error,
         }
 
-    async def _core_boards_own_interaction_mode(self) -> bool | None:
-        """Le mode d'interaction appartient-il au Board actif de Core ? (Slice 04a, reprise QA Slice 02)
-
-        - `False` : Core sans Boards (pas de transport, 404 texte), ou Board
-          actif encore `unset` : la préférence globale est l'entrée de migration
-          et se rejoue (une fois : Core la marque `migrated`) ;
-        - `True` : le Board a son mode (`migrated`/`user`) : plus de rejeu, plus
-          d'écriture de la préférence globale — sinon chaque redémarrage de Core
-          fait basculer le mode vivant deux fois ;
-        - `None` : indéterminé (Core injoignable, réponse hors contrat).
-        """
-
-        if self.sessions is None:
-            return False
-        try:
-            payload = await asyncio.wait_for(self.sessions.active_board(), timeout=5.0)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - dit (limité), puis décidé par l'appelant
-            if is_unsupported(exc):
-                return False
-            self._report_interaction_mode(
-                "interaction.mode.board_unknown",
-                f"Board actif de Core illisible : {type(exc).__name__}: {str(exc)[:160]}",
-                level="warning",
-                data={"code": getattr(exc, "code", None) or CORE_UNREACHABLE, "status": getattr(exc, "status", None)},
-            )
-            return None
-        board = payload.get("board") if isinstance(payload, dict) else None
-        origin = board.get("interaction_mode_origin") if isinstance(board, dict) else None
-        if origin not in {item.value for item in InteractionModeOrigin}:
-            self._report_interaction_mode(
-                "interaction.mode.board_unknown", "Board actif de Core hors contrat (origine du mode absente)",
-                level="warning", data={"code": "invalid_board_snapshot"},
-            )
-            return None
-        self._core_has_boards = True
-        return origin != InteractionModeOrigin.UNSET.value
-
-    async def _replay_interaction_mode(self, source: str) -> None:
-        try:
-            owned = await self._core_boards_own_interaction_mode()
-            if owned is None:
-                # Indéterminé : ne rien rejouer plutôt que risquer une bascule ;
-                # le prochain sondage réarmera.
-                pass
-            elif owned:
-                if not self._replay_retired_reported:
-                    # Une fois par processus : le sondage réarme ce chemin toutes les 30 s.
-                    self._replay_retired_reported = True
-                    self.journal.emit(
-                        "interaction.mode.replay_retired",
-                        "Le Board actif porte son mode d'interaction : préférence globale non rejouée",
-                        data={"source": source},
-                    )
-            else:
-                await self._reconcile_interaction_mode(self._settings(), source=source)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - une tâche de fond ne remonte nulle part
-            self.journal.emit(
-                "interaction.mode.reconcile_failed",
-                f"Rattrapage du mode d'interaction interrompu : {type(exc).__name__}: {exc}",
-                level="error", data={"code": "interaction_mode_replay_failed", "source": source},
-            )
-        # Délai avant qu'un prochain sondage puisse en armer un autre : sans
-        # lui, un Core joignable mais qui refuse produirait une tentative par
-        # battement de page.
-        await asyncio.sleep(INTERACTION_MODE_REPLAY_BACKOFF_S)
-
-    async def _reconcile_interaction_mode(
-        self, settings: dict[str, Any], *, source: str, fallback: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Rejouer la préférence enregistrée vers Core. Ne bloque jamais, ne lève jamais.
-
-        Le démarrage l'appelle une fois ; le statut arme un rattrapage quand un
-        Core neuf apparaît. La valeur envoyée est la lecture de
-        **comportement** : un `meeting` enregistré reste affiché, mais on ne
-        demande jamais à Core un mode qui n'a aucun comportement — il le
-        refuserait, à juste titre.
-
-        C'est aussi **ici** que se dit un réglage illisible. Core ne voit jamais
-        la valeur brute du disque (elle est normalisée avant de partir), donc
-        c'est le propriétaire de la persistance qui doit nommer la perte :
-        sinon « démarré en SIMPLE » et « son réglage était illisible » laissent
-        exactement la même trace.
-        """
-
-        behaving = interaction_mode_settings.behaving(settings)
-        stored = interaction_mode_settings.load(settings)
-        self.report_interaction_mode_preference(settings, source=source)
-        try:
-            live = await self.interaction_mode_view.request(behaving, source=source)
-        except InteractionModeUnavailable as exc:
-            self._report_interaction_mode(
-                "interaction.mode.reconcile_failed",
-                f"Mode d'interaction {behaving.label} non appliqué à Core ({source}) : {exc}",
-                level="warning",
-                data={"code": exc.code, "mode": behaving.value, "source": source},
-            )
-            return fallback if fallback is not None else await self.interaction_mode_view.read(stored)
-        self.journal.emit(
-            "interaction.mode.reconciled",
-            f"Mode d'interaction {behaving.label} rejoué vers Core ({source})",
-            data={"mode": behaving.value, "revision": live["revision"], "source": source},
-        )
-        return live
-
-    def report_interaction_mode_preference(self, settings: dict[str, Any], *, source: str) -> None:
-        """Dire qu'un réglage enregistré n'est pas celui qui va s'appliquer.
-
-        Core ne voit jamais la valeur brute du disque : le Control Center la lit
-        et la normalise avant de la lui demander. C'est donc **ici**, chez le
-        propriétaire de la persistance, que la perte se nomme — sinon
-        « démarré en SIMPLE » et « son réglage était illisible » laissent
-        exactement la même trace, et la seconde est une panne.
-
-        Purement local, sans E/S : le démarrage peut l'appeler avant même de
-        savoir si Core existe, et il le fait, parce qu'un réglage abîmé doit se
-        voir même quand il n'y a rien à rejouer.
-        """
-
-        seen = interaction_mode_settings.inspect(settings)
-        stored = interaction_mode_settings.load(settings)
-        behaving = interaction_mode_settings.behaving(settings)
-        # Les deux branches nomment **ce qui était enregistré**. Sans cela,
-        # `fromage` et `gruyere` laissaient la même ligne, et la seule façon de
-        # les distinguer était `GET /api/interaction-mode`, que rien n'appelle
-        # avant la Slice 03. Une valeur de mode est un jeton court choisi par
-        # l'opérateur, pas du contenu utilisateur — et elle est bornée comme
-        # partout ailleurs ici, pour qu'un fichier trafiqué ne remplisse pas le
-        # journal.
-        stored_value = _short(seen["stored_value"])
-        if seen["invalid_value"] or seen["unreadable"]:
-            self._report_interaction_mode(
-                "interaction.mode.defaulted",
-                "Préférence de mode d'interaction illisible "
-                f"({stored_value!r}) : mode SIMPLE appliqué",
-                level="warning",
-                data={"code": "interaction_mode_unreadable", "source": source,
-                      "stored_value": stored_value,
-                      "stored_schema_version": seen["stored_schema_version"]},
-            )
-        elif stored is not behaving:
-            self._report_interaction_mode(
-                "interaction.mode.defaulted",
-                f"Le mode {stored.label} est enregistré mais n'a aucun comportement : mode SIMPLE appliqué",
-                level="warning",
-                data={"code": "interaction_mode_not_implemented", "source": source,
-                      "mode": stored.value, "stored_value": stored_value},
-            )
-
     def _report_interaction_mode(self, kind: str, message: str, *, level: str, data: dict[str, Any]) -> None:
         """Au plus une ligne par cause et par fenêtre, avec le nombre de tues.
 
-        Le rattrapage repasse tant que Core refuse. Le même `ReportThrottle`
+        Le statut relit le Board actif chaque seconde. Le même `ReportThrottle`
         que les acteurs de scène refusés sert ici : la panne reste visible, la
         trace reste lisible.
         """
@@ -3978,12 +3788,6 @@ class ControlCenter:
             # outils d'affichage du cerveau à son prochain démarrage ; `stored`
             # et `env` disent ce que l'onglet Expérimental doit expliquer.
             "scene": describe_scene_gate(settings),
-            # Mode d'interaction (Slice 02) : la **préférence** enregistrée, sa
-            # version de schéma et les modes annoncés. La valeur effective
-            # vivante n'est pas ici — elle appartient à Core et voyage par
-            # `/api/status`, qui bat chaque seconde ; la recopier dans un GET
-            # de réglages en ferait une seconde vérité périmée.
-            "interaction_mode": interaction_mode_settings.describe(settings),
             "audio": {
                 "input_device": settings.get("audio_input_device", ""),
                 "output_device": settings.get("audio_output_device", ""),
@@ -4029,7 +3833,7 @@ class ControlCenter:
     def _report_wake_word_unreadable(self, seen: dict) -> None:
         """Une ligne par processus quand le bloc est illisible (défauts appliqués).
 
-        Même règle qu'`/api/interaction-mode` : la lecture est fréquente, le
+        La lecture est fréquente : le
         diagnostic complet reste dans la réponse (`problems`, `unreadable`).
         Code stable seulement : jamais un contenu du fichier.
         """
@@ -4049,7 +3853,7 @@ class ControlCenter:
     async def save_wake_word(self, request: web.Request) -> web.Response:
         """Enregistrer le bloc `wake_word` (écriture stricte, un seul magasin).
 
-        Route dédiée, comme `/api/interaction-mode`, et par `_write_settings`
+        Route dédiée, et par `_write_settings`
         (atomique, secrets préservés). Voice ne relit les réglages qu'au
         démarrage : la réponse dit « redémarrage de Voice requis ». Aucun
         micro n'est ouvert ici.
@@ -4078,156 +3882,42 @@ class ControlCenter:
 
     # ------------------------------------------------- Barehands (mode test)
 
-    # --------------------------------------------- mode d'interaction (Slice 02)
+    # --------------------------------------------- mode d'interaction (Slice 01b : lecture seule)
 
     async def get_interaction_mode(self, request: web.Request) -> web.Response:
-        """La préférence enregistrée, la valeur effective de Core, et les modes annoncés.
+        """Le même bloc que `/api/status.interaction_mode` : effectif, mode du type du Board, modes annoncés.
 
-        Les trois ensemble, et nommés : un écran qui ne verrait que la
-        préférence mentirait pendant qu'un autre processus change le mode, et
-        un écran qui ne verrait que la valeur effective perdrait ``REUNION``
-        dès que l'utilisateur l'aurait choisi.
+        Lecture seule. Le mode suit le type du Board actif ; il n'existe plus de
+        préférence enregistrée à publier (la clé `interaction_mode` d'un ancien
+        `control-center-settings.json` reste dans le fichier, ni lue ni écrite).
         """
 
         del request
-        settings = self._settings()
-        seen = interaction_mode_settings.inspect(settings)
-        if seen["unreadable"] and not self._interaction_mode_foreign_reported:
-            # Une préférence écrite par un Jarvis plus récent ne s'applique pas
-            # — c'est le bon choix — mais elle ne doit pas se taire. La lecture
-            # est fréquente, donc une ligne par processus ; ce qui reste visible
-            # est dans la réponse (`unreadable`, `stored_value`) et ne s'épuise pas.
-            self._interaction_mode_foreign_reported = True
-            self.journal.emit(
-                "interaction.mode.foreign_version",
-                "Préférence de mode d'interaction écrite par une version plus récente (schéma "
-                f"{seen['stored_schema_version']}) : non appliquée, gardée telle quelle ; "
-                "le mode assistant s'applique en attendant",
-                level="warning",
-                data={"code": "interaction_mode_stored_version_unreadable",
-                      "stored_schema_version": seen["stored_schema_version"],
-                      "schema_version": interaction_mode_settings.SCHEMA_VERSION},
-            )
-        return web.json_response({
-            **interaction_mode_settings.describe(settings),
-            "effective": await self.interaction_mode_view.read(interaction_mode_settings.load(settings)),
-        })
+        return web.json_response(await self._interaction_mode_status())
 
     async def save_interaction_mode(self, request: web.Request) -> web.Response:
-        """Choisir le mode d'interaction : enregistrer la préférence, puis l'appliquer à chaud.
+        """Refuser tout choix de mode : 409 `interaction_mode_derived`, journalisé, rien d'écrit ni de demandé.
 
-        Route dédiée, hors de `/api/settings` : elle s'applique immédiatement et
-        ne dépend pas de la validité du reste des réglages. Elle ne traverse
-        **jamais** `_apply_voice`, dont la première branche supprime
-        `voice_architecture` : le mode est un axe à part, et un basculement de
-        compatibilité vocale ne doit pas l'emporter (constat G1).
-
-        **Aucun redémarrage de Voice** (Décision D15) : rien ici ne recalcule
-        `VoiceComposition.configuration_id` ni n'écrit sur `VoiceSwitchBus`.
-        Couper l'audio au milieu d'une présentation serait la pire panne que
-        cette fonctionnalité pourrait introduire.
-
-        L'ordre est délibéré : on enregistre **avant** de demander. Si Core est
-        injoignable, le choix de l'utilisateur survit et sera rejoué au prochain
-        démarrage ou dès que Core reparaît — et la réponse dit, en 503, que le
-        mode est enregistré mais pas encore appliqué, au lieu de laisser croire
-        qu'une présentation est armée.
+        Le mode suit le type du Board actif (Slice 01b de
+        `jarvis-board-ui-wheel-dossier-refactor`) : ni le réglage global ni Core
+        ne sont touchés. La phrase française dit quoi faire à la place (ouvrir
+        ou créer un Board du bon type) ; le code stable voyage dans l'en-tête,
+        comme pour les autres refus de réglage de cette page.
         """
 
         try:
             payload = await request.json()
         except ValueError:
-            payload = None
-        current = self._settings()
-        before = interaction_mode_settings.load(current)
+            payload = None  # argued: the refusal does not depend on the body; a malformed one is refused the same way
         requested = payload.get("mode") if isinstance(payload, dict) else None
         self.journal.emit(
-            "interaction.mode.requested", "Changement de mode d'interaction demandé",
-            data={"requested": str(requested)[:64] if requested is not None else None,
-                  "previous": before.value},
+            "interaction.mode.refused", "Choix du mode d'interaction refusé : le mode suit le type du Board actif",
+            level="warning",
+            data={"code": INTERACTION_MODE_DERIVED,
+                  "requested": str(requested)[:64] if requested is not None else None},
         )
-        try:
-            mode = interaction_mode_settings.apply(current, payload)
-        except interaction_mode_settings.InteractionModeSettingsError as exc:
-            self.journal.emit(
-                "interaction.mode.refused", f"Mode d'interaction refusé : {exc.code}",
-                level="warning", data={"code": exc.code, "requested": str(requested)[:64]},
-            )
-            # Un mode annoncé mais sans comportement est un conflit, pas une
-            # requête malformée : l'écran doit pouvoir les distinguer sans lire
-            # le texte. Le code stable, lui, voyage dans l'en-tête dans les deux cas.
-            error = (web.HTTPConflict if exc.code == "interaction_mode_not_implemented" else web.HTTPBadRequest)
-            raise error(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
-        # Slice 04a : un Core à Boards garde le mode sur le Board actif (son
-        # écouteur l'y enregistre, origine `user`). La préférence globale n'est
-        # plus écrite : elle ne sert plus que d'entrée de migration.
-        # Boards déjà vus dans cette vie : pas d'aller-retour (jusqu'à 5 s) avant d'appliquer.
-        owned = True if self._core_has_boards else await self._core_boards_own_interaction_mode()
-        board_owned = owned is not False and (owned is True or self._core_has_boards)
-        if not board_owned:
-            self._write_settings(current)
-        state = {
-            **interaction_mode_settings.describe(current),
-            "effective": None,
-        }
-        try:
-            live = await self.interaction_mode_view.request(mode, source="control_center")
-        except InteractionModeUnavailable as exc:
-            # Deux échecs très différents arrivaient ici par la même porte. Une
-            # panne de transport sera rattrapée ; un **refus** de Core (version
-            # décalée qui répond 400) ne le sera jamais, et promettre « il sera
-            # repris » ferait attendre l'utilisateur pour rien — pendant que le
-            # rattrapage réessaierait en boucle une demande déjà refusée.
-            retryable = exc.code in {CORE_UNREACHABLE, NOT_CONFIGURED} and not board_owned
-            self.journal.emit(
-                "interaction.mode.not_applied",
-                f"Mode {mode.label} enregistré mais non appliqué : {exc}",
-                level="error",
-                data={"code": exc.code, "mode": mode.value, "previous": before.value,
-                      "retryable": retryable},
-            )
-            if retryable:
-                self._schedule_interaction_mode_replay("save_retry")
-            # **Le corps de la réponse est lu par un humain, dans un bandeau.**
-            # Y interpoler `exc` y déversait la phrase d'aiohttp telle quelle —
-            # « Cannot connect to host 127.77.0.1:56456 ssl:default […] » —,
-            # c'est-à-dire un détail de transport et un port de bouclage interne
-            # à quelqu'un qui veut seulement savoir si son choix est perdu. La
-            # cause réelle n'est pas effacée pour autant : elle est juste au
-            # dessus, dans `interaction.mode.not_applied`, avec le code stable,
-            # qui est l'endroit où l'on diagnostique. Le code voyage aussi dans
-            # l'en-tête, donc l'écran garde de quoi distinguer les deux cas sans
-            # lire cette phrase.
-            raise web.HTTPServiceUnavailable(
-                text=(
-                    f"Mode {mode.label} non enregistré : le Board actif le garde, et Core ne l’a pas pris. "
-                    "Réessayez quand Core répond."
-                    if board_owned else
-                    f"Mode {mode.label} enregistré. "
-                    + ("Jarvis ne joint pas Core pour l’appliquer tout de suite ; "
-                       "il le fera dès que Core répondra."
-                       if retryable else
-                       "Core a refusé de l’appliquer : il ne sera pas réessayé tel quel.")
-                ),
-                headers={SETTINGS_ERROR_CODE_HEADER: exc.code},
-            ) from exc
-        # Une réécriture qui ne change rien n'est **pas** un changement de mode,
-        # et elle ne doit pas se compter comme tel : qui filtre `.applied` pour
-        # savoir combien de fois le mode a bougé aurait lu un nombre faux. Le
-        # verdict vient de Core (`disposition`), pas d'une comparaison de deux
-        # préférences locales — elles peuvent différer de l'état vivant. Sans
-        # verdict (Core plus ancien), on retombe sur la comparaison locale.
-        disposition = live.get("disposition")
-        changed = disposition == "applied" if disposition is not None else before is not mode
-        self.journal.emit(
-            "interaction.mode.applied" if changed else "interaction.mode.unchanged",
-            f"Mode d'interaction {before.label} → {mode.label}" if changed
-            else f"Mode d'interaction réenregistré sur {mode.label}, inchangé",
-            data={"mode": mode.value, "previous": before.value, "revision": live["revision"],
-                  "changed": changed, "disposition": disposition},
-        )
-        state["effective"] = live
-        return web.json_response(state)
+        raise web.HTTPConflict(text=INTERACTION_MODE_DERIVED_MESSAGE,
+                               headers={SETTINGS_ERROR_CODE_HEADER: INTERACTION_MODE_DERIVED})
 
     async def get_barehands(self, request: web.Request) -> web.Response:
         del request
@@ -6613,7 +6303,10 @@ class ControlCenter:
         if isinstance(context, dict) and load_scene_gate(settings)["enabled"]:
             # Seulement quand `jarvis-display` est déclaré au CLI : sans scène, aucun outil d'écran à présenter.
             view = tool_brain_view(self.runtime_root)
-            context = {**context, "tool_brain": tool_brain_brief_block(view.ownership, fallback=view.fallback)}
+            from jarvis.runtime.tool_brain_guardrails import read_recent_refusals
+
+            context = {**context, "tool_brain": tool_brain_brief_block(
+                view.ownership, fallback=view.fallback, guard_refusals=read_recent_refusals(self.runtime_root))}
         # Toujours par le composeur : sans contexte ni comportement il rend le texte
         # tel quel, sauf si le tour déclare la passerelle (couche outils, E20).
         from jarvis.runtime.prompt_overrides import prompt_override_document

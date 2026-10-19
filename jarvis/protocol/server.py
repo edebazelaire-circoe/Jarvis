@@ -9,6 +9,7 @@ from aiohttp import web
 
 from jarvis.core.v2_app import JarvisCoreApplication
 from jarvis.domain.scene import SceneActor, SceneCommand
+from jarvis.domain.scene_purge import ScenePurgeCode, ScenePurgeError
 from jarvis.domain.conversation_event_ingest import (
     MAX_CONVERSATION_EVENT_BATCH_BODY_BYTES, decode_conversation_event_batch, encode_append_results,
 )
@@ -23,9 +24,7 @@ from jarvis.core.conversation_event_query import ConversationEventBusyError
 from jarvis.domain.conversation_event_store import ConversationEventStoreError
 from jarvis.domain.conversation_transcript import TranscriptTooLargeError
 from jarvis.domain.conversation_events import MAX_CONTENT_CHARS, ConversationEventError
-from jarvis.domain.interaction_mode import InteractionModeError
 from jarvis.domain.brain_context import BrainPresentationContext
-from jarvis.core.interaction_mode import supported_modes
 from jarvis.domain.v2 import PROTOCOL_VERSION, AddressingDecision, BrainTurnInput, BrainTurnSource, TurnKind, jsonable
 from jarvis.domain.work_state import WorkObservationBatch
 from jarvis.core.session_manager import DEFAULT_HISTORY_LIMIT as DEFAULT_SESSION_HISTORY_LIMIT
@@ -214,7 +213,7 @@ class LocalProtocolServer:
             web.post("/v1/work/observations", self.ingest_work_observations),
             web.get("/v1/work/snapshot", self.work_snapshot),
             web.get("/v1/interaction-mode", self.interaction_mode),
-            web.post("/v1/interaction-mode", self.set_interaction_mode),
+            web.post("/v1/interaction-mode", self.refuse_interaction_mode_request),
             # Canal vocal et état du Chat (jarvis-unified-chat-and-board-drop, Slice 04, `docs/chat.md`).
             web.post("/v1/voice/channel/report", self.voice_channel_report),
             web.post("/v1/voice/channel/disable", self.voice_channel_disable),
@@ -255,6 +254,9 @@ class LocalProtocolServer:
             web.get("/v1/scene/snapshot", self.scene_snapshot),
             web.get("/v1/scene/patches", self.scene_patches),
             web.post("/v1/scene/commands", self.scene_command),
+            # Purge définitive des objets archivés (2026-10-18) : plan + jeton, puis exécution confirmée.
+            web.post("/v1/scene/archived/purge-plan", self.scene_purge_plan),
+            web.post("/v1/scene/archived/purge", self.scene_purge),
             web.post("/v1/scene/captures", self.scene_capture),
             web.put("/v1/scene/captures/{capture_id}", self.scene_capture_upload),
             web.post("/v1/conversation-events", self.ingest_conversation_events),
@@ -1109,37 +1111,24 @@ class LocalProtocolServer:
         del request
         return web.json_response(self.core.interaction_mode.snapshot())
 
-    async def set_interaction_mode(self, request: web.Request) -> web.Response:
-        """Demander un mode. Refus bruyants, à code stable, jamais de repli.
+    async def refuse_interaction_mode_request(self, request: web.Request) -> web.Response:
+        """Refuser **toute** demande de mode : 409 ``interaction_mode_derived``, tracé, rien de changé.
 
-        `interaction_mode_not_implemented` (REUNION) est un 409 : la demande est
-        bien formée et le mode existe, c'est son comportement qui n'existe pas.
-        Une valeur qui n'est pas un mode reste un 400.
-
-        **Ce chemin ne touche pas la composition vocale** (Décision D15) :
-        aucun `configuration_id` n'est recalculé, aucun redémarrage de Voice
-        n'est demandé. Voice apprend le changement par `interaction.mode.changed`
-        sur `/v1/events`.
+        Le mode suit le type du Board actif (Slice 01b de
+        `jarvis-board-ui-wheel-dossier-refactor`, `docs/interaction-mode.md` ›
+        *Control plane*). Aucune origine n'est admise, ``presentation_studio_run``
+        comprise : le Studio appelle `InteractionModeService.request` en
+        processus et ne passe jamais par HTTP. La route reste pour qu'un client
+        d'une version plus ancienne lise un refus nommé plutôt qu'un 404 ou un 405.
         """
 
-        payload = await request.json()
-        if not isinstance(payload, dict):
-            raise ValueError("interaction mode request must be an object")
-        unknown = set(payload) - {"mode", "source"}
-        if unknown:
-            raise ValueError(f"unexpected fields: {', '.join(sorted(unknown))}")
-        source = _optional_text(payload.get("source"), "source") or "protocol"
         try:
-            state, disposition = await self.core.interaction_mode.request(payload.get("mode"), source=source)
-        except InteractionModeError as exc:
-            status = 409 if exc.code == "interaction_mode_not_implemented" else 400
-            return web.json_response({"error": {"code": exc.code, "message": str(exc)}}, status=status)
-        # Construit depuis **l'état de cet appel**, pas depuis un instantané
-        # relu : mélanger un mode relu et la révision de cet appel-ci peut
-        # rendre un couple `(mode, revision)` qui n'a jamais existé, et tout ce
-        # module repose sur le fait qu'une révision ordonne des observations.
-        return web.json_response({**state.to_payload(), "modes": supported_modes(),
-                                  "disposition": disposition.value})
+            payload = await request.json()
+        except ValueError:
+            payload = None  # argued: the refusal does not depend on the body; a malformed one is refused the same way
+        body = payload if isinstance(payload, dict) else {}
+        exc = self.core.interaction_mode.refuse_external_request(body.get("mode"), source=body.get("source"))
+        return web.json_response({"error": {"code": exc.code, "message": str(exc)}}, status=409)
 
     # ------------------------------------------------------------ Canal vocal et Chat (Slice 04)
 
@@ -1698,6 +1687,75 @@ class LocalProtocolServer:
         except SceneStoreError as exc:
             return self._scene_failure(exc)
         return web.json_response(scene_wire.command_body(update, epoch=scene.epoch), dumps=scene_wire.compact_json)
+
+    # ------------------------------------------------------------ purge des archivés (2026-10-18)
+
+    async def _purge_request(self, request: web.Request, keys: frozenset[str]) -> tuple[dict | None, web.Response | None]:
+        if request.query:
+            raise ValueError("unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, scene_wire.MAX_PURGE_REQUEST_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return None, web.json_response(scene_wire.error_body(scene_wire.PAYLOAD_TOO_LARGE, "purge request too large"),
+                                           status=413)
+        body = loads_strict_json(raw, invalid_message="invalid purge request JSON")
+        if not isinstance(body, dict) or set(body) != keys or body["schema_version"] != 1:
+            raise ValueError(f"purge request must be exactly {sorted(keys)} with schema_version 1")
+        if body["actor"] not in (SceneActor.BRAIN.value, SceneActor.USER.value):
+            if body["actor"] == SceneActor.RUNTIME.value:
+                return None, web.json_response(
+                    scene_wire.error_body(scene_wire.SCENE_ACTOR_FORBIDDEN, "actor runtime never purges the scene"), status=403,
+                )
+            raise ValueError("actor must be brain or user")
+        return body, None
+
+    @staticmethod
+    def _purge_refusal(exc: ScenePurgeError) -> web.Response:
+        status = 503 if exc.code is ScenePurgeCode.BACKUP_FAILED else 409
+        extra = {"retry_after_s": round(exc.retry_after_s, 1)} if exc.retry_after_s is not None else {}
+        return web.json_response(scene_wire.error_body(exc.code.value, exc.message, **extra), status=status)
+
+    async def scene_purge_plan(self, request: web.Request) -> web.Response:
+        """`{schema_version: 1, actor}` -> ce qu'une purge des archivés effacerait, et le jeton pour l'exécuter. N'écrit rien.
+
+        200 `{scene_id, epoch, revision, purgeable{archived_ids, history_rows}, kept{archived_ids, history_rows, ids,
+        reason}, confirmation, expires_at, ttl_s}` (`confirmation: null` : rien à purger). 409 `runtime_settling`
+        (Core vient de démarrer) ; 403 pour `runtime` ; 503 scène non servie.
+        """
+
+        body, refused = await self._purge_request(request, frozenset({"schema_version", "actor"}))
+        if refused is not None:
+            return refused
+        scene = self.core.scene
+        try:
+            offer = await scene.plan_archive_purge(actor=SceneActor(body["actor"]))
+        except ScenePurgeError as exc:
+            return self._purge_refusal(exc)
+        except SceneStoreError as exc:
+            return self._scene_failure(exc)
+        return web.json_response(offer.to_payload(epoch=scene.epoch))
+
+    async def scene_purge(self, request: web.Request) -> web.Response:
+        """`{schema_version: 1, actor, confirmation, confirmed: true}` -> purge définitive, sauvegarde de la base d'abord.
+
+        200 `{scene_id, epoch, revision, purged{archived_ids, history_rows}, kept{…}, backup_path, compacted}`. 400 sans
+        `confirmed: true` ; 409 `confirmation_required` / `confirmation_stale` / `runtime_settling` ; 503
+        `purge_backup_failed` (rien d'effacé) ou scène non servie. Aucun refus n'efface quoi que ce soit.
+        """
+
+        body, refused = await self._purge_request(request, frozenset({"schema_version", "actor", "confirmation", "confirmed"}))
+        if refused is not None:
+            return refused
+        if body["confirmed"] is not True:
+            raise ValueError("a purge runs only with confirmed: true, after the user said yes to the plan")
+        scene = self.core.scene
+        try:
+            result = await scene.purge_archived(confirmation=body["confirmation"], actor=SceneActor(body["actor"]))
+        except ScenePurgeError as exc:
+            return self._purge_refusal(exc)
+        except SceneStoreError as exc:
+            return self._scene_failure(exc)
+        return web.json_response(result.to_payload(epoch=scene.epoch))
 
     # ------------------------------------------------------------ capture (Slice 09, partie 2)
 

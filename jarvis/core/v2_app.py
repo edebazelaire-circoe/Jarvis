@@ -23,6 +23,7 @@ from jarvis.adapters.board_memory_store import FileBoardMemoryStore
 from jarvis.adapters.file_prefab_library import FilePrefabLibrary, FilePrefabRuntime
 from jarvis.adapters.file_presentation_studio_stage_ledger import FileStageLedger
 from jarvis.adapters.file_presentation_studio_store import FilePresentationStudioStore
+from jarvis.adapters.file_purge_backups import FilePurgeBackups
 from jarvis.adapters.file_presentation_template_store import FilePresentationTemplateStore
 from jarvis.adapters.sqlite_board_artifact_links import SQLiteBoardArtifactLinks
 from jarvis.adapters.artifact_payloads import FileArtifactPayloads
@@ -36,6 +37,7 @@ from jarvis.domain.uploads import upload_bounds
 from jarvis.core.capture_service import CaptureAssociation, CaptureService, NoCaptureSources
 from jarvis.core.recording_transcriber import RecordingTranscriber
 from jarvis.core.capture_api import CaptureApi
+from jarvis.core.dossier_service import DossierService
 from jarvis.core.workspace_service import WorkspaceService
 from jarvis.core.context_catchup import build_catchup
 from jarvis.core.context_enrichment import ContextEnrichmentWorker
@@ -102,6 +104,7 @@ from jarvis.core.presentation_studio_run_surface import RunSurface
 from jarvis.core.presentation_studio_stage import LegacyStageReclaimer, StageLedger
 from jarvis.core.presentation_studio_variant_events import StudioVariantEvents
 from jarvis.core.presentation_studio_variants import PresentationStudioVariants
+from jarvis.core.presentation_studio_purge import PresentationPurge
 from jarvis.core.presentation_studio_rail import PresentationRail
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
@@ -175,10 +178,9 @@ class JarvisCoreApplication:
         # Mode d'interaction (handoff jarvis-presentation-interaction-mode,
         # Slice 02) : Core possède la valeur effective vivante et sa révision.
         # Le service reste en mémoire : un mode effectif est un fait de cette
-        # vie du processus. La préférence enregistrée vit sur le Board actif
-        # (handoff board-session, Slice 02, `self.boards` ci-dessous) ; le
-        # rejeu global du Control Center n'est plus qu'une entrée de
-        # migration. Décision D15 : il
+        # vie du processus, dérivé du type du Board actif (`self.boards`
+        # ci-dessous, `docs/boards.md` › *Board type*) ; aucune demande venue de
+        # l'extérieur de Core n'est prise (Slice 01b). Décision D15 : il
         # n'entre **pas** dans `VoiceComposition.configuration_id`, donc un
         # passage SIMPLE ⇄ PRESENTATION ne redémarre jamais Voice ; le
         # changement voyage par `interaction.mode.changed` sur `/v1/events`.
@@ -479,6 +481,12 @@ class JarvisCoreApplication:
         # confirmé par l'hôte ou retour arrière. La scène vivante est aussi une source de pins : un cadre que l'hôte peut recharger
         # n'est jamais archivé sous lui.
         self.studio_pins.bind_scene(self.scene)
+        # Dossier du Board (handoff jarvis-board-ui-wheel-dossier-refactor, Slice 05) : projection de la mémoire et
+        # des Artifacts liés, Ranger et « Afficher sur le Board » ; ne possède rien (`docs/dossier.md`).
+        self.dossier = DossierService(
+            workspace=self.workspace, boards=SQLiteBoardRepository(self.state), artifacts=self.artifacts,
+            links=self.board_artifact_links, memory=FileBoardMemoryStore(root), scene=self.scene, data_root=root,
+            diagnostics=diagnostics)
         self.prefab_drafts = PrefabDraftCoalescer(self.prefabs, quiet_s=STUDIO_RELOAD_QUIET_S,
                                                   max_wait_s=STUDIO_RELOAD_MAX_WAIT_S, diagnostics=diagnostics)
         # Surface de lecture de Variantes (native-studio-playback-fix Slice 09) : une lecture se montre DANS Variantes, en mémoire ;
@@ -572,6 +580,22 @@ class JarvisCoreApplication:
         # Pins : une source par magasin (undo 08 ; variantes vivantes et archivees 16 par `rebuild` ; scene vivante et surface de
         # lecture de Variantes, liees plus haut ; retenues en vol du rechargement).
         self.studio_pins.add_source("undo", self.presentation_studio_history.pins)
+        # Purge definitive des presentations ARCHIVEES (demande explicite de l'utilisateur, plan + jeton + oui) : sauvegarde complete
+        # sous `<data_root>/backups/purge-presentations-<horodatage>/` (dossiers, sources de scene, Artifacts, copie coherente de
+        # jarvis.sqlite3), puis effacement ; chaque etat en memoire qui nomme la presentation l'oublie ensuite.
+        self.presentation_studio_purge = PresentationPurge(self.presentation_studio, backups=FilePurgeBackups(root))
+        self.presentation_studio_purge.bind_artifacts(self.artifacts, self.state.backup_to)
+        self.presentation_studio_purge.bind_prefabs(self.prefabs)
+        self.presentation_studio_purge.bind_playback(self.presentation_studio_playback)
+        for name, hook in (("variants", self.presentation_studio_variants.drop_presentation),
+                           ("pins", self.studio_pins.forget_presentation),
+                           ("rail", self.presentation_studio_rail.forget),
+                           ("compare", self.presentation_studio_compare.forget),
+                           ("reload", self.presentation_studio_reload.forget_presentation),
+                           ("stage", self.studio_stage.unbind),
+                           ("edit", self.presentation_studio_edit.forget_presentation),
+                           ("engine_choice", self.presentation_studio.forget_presentation)):
+            self.presentation_studio_purge.add_forget_hook(name, hook)
         # Projection runtime (Slice 04) : chaque sous-agent et chaque job
         # deviennent des étoiles sans tour du cerveau. Seul écrivain `runtime`
         # de la scène ; abonné tolérant de `core.work.updated`, il se
@@ -588,6 +612,8 @@ class JarvisCoreApplication:
             work=self.work_state, scene=self.scene, events=self.events, diagnostics=diagnostics,
             restart_grace_s=scene_restart_grace_s, job_outcomes=self.jobs.observe_persisted_outcomes,
         )
+        # Purge des archivés : ce que la projection peut encore écrire garde sa pierre tombale (sinon l'étoile renaîtrait).
+        self.scene.attach_archive_retention(self.scene_projector.retained_archive_ids)
         # Fenêtres liées à un fichier (`ScenePayload.source_path`) : le résumé
         # suit le fichier, sans tour du cerveau.
         self.scene_file_watcher = SceneFileWatcher(self.scene, diagnostics=diagnostics, notifier_factory=file_change_notifier_factory)
@@ -699,6 +725,12 @@ class JarvisCoreApplication:
             return
         try:
             await self.state.initialize()
+            # Une ligne par étape de migration appliquée (de, vers, lignes changées) : la seule trace, avec la
+            # sauvegarde `.v<N>.bak`, qu'une base a migré (Slice 08 de la refonte roue/Dossier).
+            for step in getattr(self.state, "migrations_applied", None) or []:
+                self._diagnostics.emit("core.state.migrated",
+                                       f"jarvis.sqlite3 migrée de v{step['from']} à v{step['to']} ({step['rows']} lignes changées)",
+                                       data=dict(step))
             # Worker d'embeddings de l'index sémantique (s'il existe) : tâche de fond, ne lève pas, ne bloque pas.
             await self.memory.start()
             # Before any route or task can admit a turn: repair user events a
@@ -1158,8 +1190,6 @@ class JarvisCoreApplication:
         # allonger ce chemin-là) : vidange bornée, le reste est compté et tracé.
         # Après la scène : fichier distinct, aucun des deux n'écrit dans l'autre.
         await self.conversation_event_emitter.stop()
-        # Écritures de mode sur le Board encore en vol : finies avant la fermeture.
-        await self.boards.stop()
         # Le worker d'embeddings s'arrête : un index dérivé ne retient rien de durable.
         await self.memory.stop()
         # Aucune écriture de plugin en vol à la fermeture ; connexions fermées ≤ 5 s (Slice 03).

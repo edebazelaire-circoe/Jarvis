@@ -42,9 +42,9 @@ SHELL_DOC = ROOT / "docs" / "control-center-shell.md"
 COSMOS = 'html[data-jarvis-theme="cosmos"]'
 #: Surfaces de la coque dont un thème ne peut pas changer la place ni le rang.
 SHELL_SURFACES = (
-    ".topbar", ".state", "#boardsHud", ".dock", ".bgpills", "#bgPills", ".panel", ".live-banner",
+    "#boardsHud", ".dock", ".bgpills", "#bgPills", ".panel", ".live-banner",
     ".voicehint", ".chat-tab", ".board-drop-tray", "#boardsPanel", ".toasts", "#toolWheel",
-    "#interactionModeHud", "#barehandsHud", "#barehandsPalette", "#recIndicators", "#presentationRail",
+    "#barehandsHud", "#barehandsPalette", "#recIndicators", "#presentationRail",
 )
 GEOMETRY_PROPERTIES = (
     "position", "top", "right", "bottom", "left", "inset", "z-index", "transform", "width",
@@ -244,10 +244,14 @@ def test_relative_order_of_the_old_registry_is_kept():
     for row in page_layers():
         if row["surface"] not in contained_only:
             assert row["rank"] > scene, row
-    assert rank_of(".topbar") <= rank_of(".dock") < rank_of(".panel") < rank_of(".live-banner") < rank_of("#boardsPanel")
+    # La carte Board (Slice 02 de jarvis-board-ui-wheel-dossier-refactor) : son bouton au rang du lanceur.
+    assert rank_of("#boardsHud") <= rank_of(".dock") < rank_of(".panel") < rank_of(".live-banner") < rank_of("#boardsPanel")
     assert rank_of("#boardsPanel") < rank_of("#bgPills") < rank_of(".toasts") < rank_of(".cdialog-back")
-    # Les sélecteurs (Board, mode, cycle Bare Hands) au rang commun, au-dessus du bandeau.
-    for chooser in ("#boardsPanel", ".bh-hud-pop", ".im-pop"):
+    # Le sélecteur de Board (Slice 02) s'ouvre en bas à gauche, là où l'aperçu de capture et la roue ouverte se
+    # posent : au-dessus d'eux, sous le centre d'état.
+    assert rank_of("#toolWheel[data-open]") < rank_of("#screenshotPreview") < rank_of("#boardsPanel") < rank_of("#bgPills")
+    # Les autres sélecteurs (cycle Bare Hands) au rang commun, au-dessus du bandeau.
+    for chooser in (".bh-hud-pop",):
         assert rank_of(chooser) == 36 and rank_of(".live-banner") < rank_of(chooser) < rank_of("#bgPills")
     assert rank_of("#barehandsPalette") < rank_of("#barehandsHud") < rank_of(".bh-hud-pop")
     # Slice 04 : le rail de capture n'existe plus ; ses indicateurs persistants
@@ -257,14 +261,20 @@ def test_relative_order_of_the_old_registry_is_kept():
     # Aperçu de capture (Slice 05) : au-dessus de la roue ouverte qui l'a prise, sous le centre d'état et la visionneuse.
     assert rank_of("#toolWheel[data-open]") < rank_of("#screenshotPreview") < rank_of("#recIndicators") < rank_of(".overlay")
     assert rank_of(".ctxmenu") < rank_of("#barehandsCards") < rank_of(".cdialog-back")
-    views = {rank_of(view) for view in (".tl", ".tlab", ".mcpi", ".wsp", ".pfb")}
+    views = {rank_of(view) for view in (".tl", ".tlab", ".mcpi", ".wsp", ".pfb", "#dossierView")}
+    assert rank_of("#dossierView") < rank_of("#jvStudioExplorer"), "Variantes covers the Dossier (Slice 07)"
     assert len(views) == 1
     view = views.pop()
     for control in (".dock", ".panel", ".live-banner", "#bgPills", "#boardsPanel", "#chatTab"):
         assert rank_of(control) < view, control
     assert view < rank_of(".overlay") < rank_of(".toasts") < rank_of(".ctxmenu") < rank_of(".cdialog-back")
     assert (rank_of("#jvStudioExplorer") < rank_of("html.jvr-studio #presentationRail")
-            < rank_of("html.jvx-run #interactionModeHud") < rank_of(".jvr-menu") < rank_of(".jvr-dialog-back"))
+            < rank_of("html.jvx-run #boardsHud") == rank_of("html.jvx-run #boardsPanel")
+            < rank_of(".jvr-menu") < rank_of(".jvr-dialog-back"))
+    # Retirés par la Slice 02 : ni barre du haut, ni contrôle de mode, ni sélecteur de mode, ni œil permanent.
+    surfaces = {row["surface"] for row in page_layers()}
+    for gone in (".topbar", "#interactionModeHud", ".im-pop", "#hiddenEye", "html.jvx-run #interactionModeHud"):
+        assert gone not in surfaces, gone
     assert max(row["rank"] for row in page_layers()) == rank_of("#jarvisHands") == 2147483000
 
 
@@ -428,7 +438,9 @@ def test_every_declared_control_host_matches_control_selector():
     assert "setAttribute('data-shell-control','')" in rail
     # Les surfaces qui manquaient à l'ancienne liste de la scène sont mesurées.
     selectors = {host["selector"] for host in hosts}
-    assert {"#interactionModeHud", "#chatTab", "#presentationRail", "#boardDropTray", "#toolWheel"} <= selectors
+    assert {"#boardsHud", "#chatTab", "#presentationRail", "#boardDropTray", "#toolWheel"} <= selectors
+    # Slice 02 : la ligne d'état du haut, le contrôle de mode et l'œil ne sont plus des commandes.
+    assert not selectors & {".topbar>.state", "#interactionModeHud", "#hiddenEye"}, selectors
     # L'hôte de la roue est déclaré vide (aucun comportement avant la Slice 02).
     assert re.search(r'<div id="toolWheel" data-shell-control hidden></div>', PAGE_HTML.read_text(encoding="utf-8"))
 

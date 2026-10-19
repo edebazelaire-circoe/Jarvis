@@ -56,9 +56,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from enum import StrEnum
 from typing import Any
 
@@ -851,6 +852,37 @@ class PrefabService:
             self._trace("core.prefab.retention_failed", "Registre d'épinglages illisible : rien n'est archivé",
                         level="error", data={"ids": len(prefab_ids), "error": clip_message(reason)})
             return None
+
+    # ------------------------------------------------------------ purge définitive (sources d'une presentation archivée purgée)
+
+    async def purge_candidates(self, prefix: str) -> tuple[str, ...]:
+        """Ids de la racine de données (catalogue et `.archive`) commençant par `prefix`. Lecture seule."""
+
+        return await asyncio.to_thread(self._library.list_ids, prefix)
+
+    async def export_ids(self, prefab_ids: Collection[str], destination: Path) -> dict[str, Any]:
+        """Copie, sous le verrou d'écriture, les dossiers `<id>/` et `.archive/<id>/` des ids `presentation-studio.*` donnés
+        (sauvegarde avant purge). Rend `{label: TreeCount}` : ce que `remove_ids` acceptera d'effacer."""
+
+        async with self._write_lock:
+            return dict(await asyncio.to_thread(self._library.copy_ids, tuple(prefab_ids), destination))
+
+    async def remove_ids(self, expected: Mapping[str, Any]) -> tuple[str, ...]:
+        """Efface, sous le verrou d'écriture, les dossiers sauvegardés par `export_ids` s'ils n'ont pas bougé depuis (sinon rien),
+        puis relit le catalogue : aucune version effacée ne reste servie depuis le cache."""
+
+        async with self._write_lock:
+            try:
+                removed = await asyncio.to_thread(self._library.remove_ids, dict(expected))
+            finally:
+                try:
+                    await self._refresh()
+                except Exception as exc:  # noqa: BLE001 - traced: the next search or lookup re-scans; the removal itself stands
+                    self._trace("core.prefab.catalog_unavailable", "Catalogue des prefabs non relu apres une purge", level="warning",
+                                data={"error": clip_message(f"{type(exc).__name__}: {exc}")})
+        self._trace("core.prefab.purged", "Sources de scene purgees (presentations archivees supprimees)",
+                    data={"removed": list(removed)})
+        return removed
 
     async def _retire(self, prefab_id: str, versions: list[int]) -> list[int]:
         """Archive les `versions`, la plus ancienne d'abord. Une version qui échoue (emplacement d'archive pris,

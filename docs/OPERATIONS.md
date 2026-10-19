@@ -147,7 +147,11 @@ duration, without storing raw audio.
 
 ## La fenêtre de réglages
 
-Le bouton **SET** du Control Center (ou la touche `s`) ouvre une fenêtre
+Le bouton **Réglages** du Control Center (l'ancien **SET**, dans « Plus d’outils », les trois
+points en haut à droite, depuis la Slice 04 de la refonte roue/dossier ; ce guide écrit
+« Réglages → onglet »), la
+touche `s`, ou la catégorie **Paramètres** de la roue d'outils (une ligne par
+onglet, qui ouvre la fenêtre directement sur cet onglet) ouvrent une fenêtre
 centrée, fermée par un clic à l'extérieur ou par `Échap`. Elle a six onglets :
 Mode vocal, Prompts, Agent / CLI, Config, API Keys et Raccourcis, plus
 Apparence (couche de thèmes) et Expérimental (scène constellation et Barehands en mode test).
@@ -311,7 +315,7 @@ seconde ne se déclencherait jamais et rien ne le dirait.
 
 Réglages du mot d'éveil, dans un bloc `wake_word` à la racine de
 `runtime/control-center-settings.json`, avec leur route dédiée `GET`/`POST
-/api/wake-word` (hors de `/api/settings`, comme `/api/interaction-mode`).
+/api/wake-word` (hors de `/api/settings`).
 Module : `jarvis/runtime/wake_word_settings.py`. Aucune migration SQLite : ce
 sont des réglages JSON.
 
@@ -1123,8 +1127,9 @@ principal de la page.
 
 #### Tester : vérifier qu'une calibration a aidé (calibration adaptative, Slices 08 et 09)
 
-**Lancer.** Clic droit sur le bouton à icône de main (en haut à gauche) →
-**Tester…**, ou onglet Expérimental → section **Test** → **Tester…**, ou à la
+**Lancer.** Onglet Expérimental (roue › Paramètres) → section **Test** →
+**Tester…** (le clic droit sur le bouton à icône de main → **Tester…** ne sert que
+roue masquée : ce bouton est caché tant que la roue est là), ou à la
 voix (« teste mes mains », outil `barehands_test`, Slice 10 : ouvre l'écran
 d'accueil, l'utilisateur lance le run ; un refus remonte au cerveau avec le code
 et la phrase de la porte). Bare
@@ -1319,13 +1324,13 @@ compare à rien.
 
 ##### A1 — caméra, cycle de vie, pannes
 
-- **A1.1** SET → Expérimental → cocher l'interrupteur. Attendu : invite caméra,
+- **A1.1** Réglages → Expérimental → cocher l'interrupteur. Attendu : invite caméra,
   le bandeau passe par « Démarrage… » avec son compteur de secondes, puis toast
   **« Barehands en veille »** et pastille **`MAINS · VEILLE`** en bas à gauche.
   Le bandeau lit « Cycle de vie : **En veille** », bouton « Activer
   l'interaction ». **Aucun jeton ne doit apparaître**, même en agitant les
   mains : la veille guette, elle ne pointe pas.
-- **A1.2** **Veille par le bouton, et retour.** SET → Expérimental → « Mettre en
+- **A1.2** **Veille par le bouton, et retour.** Réglages → Expérimental → « Mettre en
   veille » : jetons retirés, pastille `MAINS · VEILLE`, **le voyant caméra
   reste allumé** (c'est SLEEP, pas OFF). « Activer l'interaction » : les jetons
   reviennent sans nouvelle invite caméra. Même chose depuis la console avec
@@ -1468,7 +1473,7 @@ c'est là que le bruit des points est le plus fort.
 
 - **A5.1** Pincer franchement sur le bouton Trace : le panneau s'ouvre (onde de
   clic). Rester pincé : aucun second clic. Rouvrir puis repincer : nouveau clic.
-- **A5.2** Ouvrir SET, changer d'onglet et cocher une case au pincement.
+- **A5.2** Ouvrir Réglages, changer d'onglet et cocher une case au pincement.
 - **A5.3 — LA CAMÉRA QUI CLIGNE PENDANT UN GESTE.** Nommément demandé par la
   Slice 06 pour cette séance, mot pour mot : « le clignement de la caméra coûte
   le geste en cours ». Commencer à déplacer une étoile, puis masquer la main
@@ -1669,6 +1674,7 @@ Main environment overrides:
 | `JARVIS_BOARD_URL` | loopback board URL only |
 | `JARVIS_VISUALIZER_ENABLED` | enable visualizer health/config |
 | `JARVIS_VISUALIZER_URL` | loopback visualizer URL only |
+| `JARVIS_OPEN_BROWSER` | Control Center opens a browser tab at start (default `1`); `0` / `false` / `no` / `off` opens none (sandboxes and tests: a tab left on a sandbox port would take Jarvis's Dossier / Variantes orders), journal `ui.browser` `opened: false` |
 | `JARVIS_DRIVE_PROVIDER` | `none` (default) or `google` |
 | `GOOGLE_DRIVE_CLIENT_SECRET` | OAuth desktop client JSON; falls back to `GOOGLE_CALENDAR_CLIENT_SECRET` |
 | `GOOGLE_DRIVE_TOKEN` | Drive token file, kept separate from the calendar token |
@@ -1857,32 +1863,79 @@ vide, sous-agent absent, trace non trouvée, lignes illisibles) :
   Exporter avant de l'activer. Détails : [Conversation Events](conversation-events.md),
   « Operations ».
 
-### Boards : le bouton du haut (liste rapide)
+### Boards : la carte Board en bas à gauche (liste rapide)
 
-Le bouton **Board** en haut de l'écran montre toujours le Board actif, tel que
-le serveur le confirme. Un clic (ou ↓) ouvre la liste de tous les Boards ; c'est
-le geste de tous les jours. L'inspection profonde reste dans `WSP` (ci-dessous).
+La **carte Board**, en bas à gauche de l'écran, montre toujours le Board actif,
+tel que le serveur le confirme : son **type** d'abord (icône et mot :
+Assistant, Présentation, Réunion), puis son **titre**. Un clic (ou ↓) ouvre,
+au-dessus de la carte, la liste de tous les Boards ; c'est le geste de tous les
+jours, et le seul endroit où l'on change de Board au quotidien. L'inspection
+profonde reste dans `WSP` (ci-dessous). Le haut de l'écran à gauche est vide
+au repos : l'ancien bouton Board et la ligne d'état `VOICE … · CLAUDE …` n'y
+sont plus ; la touche d'éveil (F9) marche comme avant. Ce que disait la ligne
+d'état se lit dans la catégorie **JARVIS** de la roue (ci-dessous).
 
-- **Lire la liste** : chaque ligne donne le titre, la nature (Générique,
-  Réunion, Présentation) et la dernière ouverture (« ouvert il y a 3 h »,
+### JARVIS, Capture et Paramètres dans la roue (refonte roue/dossier, Slice 04)
+
+Approchez la souris du bord gauche (ou Entrée sur l'ancre de la roue) :
+
+- **JARVIS** montre l'état, sans rien piloter : la **voix** (Veille · SLEEP,
+  Écoute · LISTEN, Parole · TALK, Réflexion · THINKING, ou « hors ligne »), ce
+  que fait la **touche d'éveil** maintenant (« F9 · DÉMARRER », « F9 ·
+  INTERROMPRE »…), l'**agent** (Claude ou Codex, actif ou arrêté, son modèle
+  dans l'infobulle), puis deux raccourcis : **Sous-agents** (ouvre le panneau
+  Agents) et **Réglages de la voix**. Si le Control Center ne répond plus,
+  chaque ligne dit « état inconnu » : ce n'est jamais le dernier état connu.
+  Il n'y a pas de bouton Veille / Réveil : aucune route ne le permet
+  aujourd'hui ; la touche d'éveil reste le geste.
+- **Capture** propose **Capture d'écran**, **Enregistrer l'écran** et
+  **Enregistrer l'audio** (clic droit ou flèche droite sur une ligne : les
+  cibles réelles). Les deux enregistrements peuvent tourner ensemble.
+- **Paramètres** liste les onglets des réglages ; un clic ouvre la fenêtre sur
+  l'onglet choisi.
+
+**Pendant un enregistrement**, un indicateur apparaît **en haut à gauche** et
+seulement à ce moment : rouge « ● REC 0:12 ■ » pour l'écran, ambre avec un
+micro et une onde pour l'audio, côte à côte. La durée vient de Core (elle est
+la même après un rechargement de la page ou dans un second onglet). Cliquer
+l'indicateur (ou Entrée dessus) arrête **cet** enregistrement. Sans
+enregistrement, rien n'est affiché. Il n'y a pas de pause : Core ne sait pas
+suspendre une capture.
+
+- **Board Réunion** : la carte dit « Réunion · prévu » et « Agit en
+  Assistant » : le comportement propre aux réunions n'existe pas encore, ce
+  Board se comporte pour l'instant comme un Board Assistant.
+- **Séance de présentation** : sur un Board Présentation (ou pendant une
+  lecture du Studio), la carte ajoute une ligne qui dit ce que fait la voix :
+  « Écoute la salle », « Sourd à la salle », « Séance inactive », ou, en rouge,
+  « Refusé par la voix » / « Entrée échouée » (le code exact apparaît au survol
+  de la ligne). « Refusé par la voix » veut dire que l'architecture vocale
+  choisie ne porte pas la présentation : changez-la dans l'onglet Mode vocal.
+
+- **Lire la liste** : chaque ligne donne le titre, le type (Assistant,
+  Présentation, Réunion) et la dernière ouverture (« ouvert il y a 3 h »,
   « jamais ouvert » ; l'heure exacte au survol). Le Board actif a le point
   plein, le cadre et « Actif » ; « En fond » signale un autre Board dont l'agent
   travaille encore.
-- **Basculer** : cliquer un Board. Le bouton du haut compte les secondes
+- **Basculer** : cliquer un Board. La carte compte les secondes
   (« Bascule · N s ») et ne change de titre qu'une fois le serveur d'accord ;
   un refus laisse le Board précédent et dit pourquoi.
-- **Créer** : « Nouveau Board », un titre, la nature (Générique par défaut),
-  « Créer ». Le Board n'est pas ouvert : choisissez-le ensuite pour y basculer.
-- **Renommer ou changer la nature** : le crayon de la ligne ouvre le titre et
-  la nature ; « Enregistrer » (ou Entrée) envoie seulement ce qui a changé,
-  Échap annule. La ligne n'affiche la nouvelle nature qu'après la réponse du
-  serveur. Changer la nature ne démarre ni réunion ni présentation.
+- **Créer** : « Nouveau Board », un titre, le type (Assistant par défaut,
+  Présentation, ou « Réunion · prévu » — la phrase dessous rappelle qu'il agit
+  pour l'instant en Assistant), « Créer ». Le type est fixé à la création et
+  décide du comportement de JARVIS sur ce Board (une présentation se fait sur
+  un Board Présentation ; un Board Réunion se comporte pour l'instant en
+  Assistant). Le Board n'est pas ouvert : choisissez-le ensuite pour y basculer.
+- **Renommer** : le crayon de la ligne ouvre le titre seul ; « Enregistrer »
+  (ou Entrée) l'envoie s'il a changé, Échap annule. Le type ne se change pas :
+  pour un autre type, créez un autre Board (une demande de changement de type
+  est refusée avec le code `board_kind_immutable`).
 - **Archivés** : le filtre « En service / Archivés » montre les Boards archivés
   à part. Ils ne s'ouvrent plus (pas de bascule) mais restent lisibles.
 - **Inspecter** : l'icône flèche « ouvrir ailleurs » d'une ligne, archivée ou non, ouvre
   « Sessions & Boards » (bouton `WSP` du dock) directement sur ce Board
-  (mémoire, artefacts, liaisons). Échap referme la vue et rend la main au
-  bouton Board du haut.
+  (mémoire, artefacts, liaisons). Échap referme la vue et rend la main à la
+  carte Board.
 - **Archiver** : l'icône boîte, après confirmation ; impossible pour le Board
   actif (basculez d'abord ailleurs).
 
@@ -1893,8 +1946,9 @@ vue, la liste reste ouverte et le dit (`workspace_manager_missing`).
 ### Sessions & Boards (bouton `WSP` du dock)
 
 Depuis l'orbital UI (Slice 08), `WSP` est dans « Plus d’outils » (les trois
-points, en haut à droite) avec `TRC`, `LAB`, `MCP`, `PFB` et `INS` ; restent
-visibles `CNV`, `AGT`, `ERR` et `SET` (`docs/control-center-shell.md` ›
+points, en haut à droite) avec `SET` (depuis la Slice 04 de la refonte
+roue/dossier), `TRC`, `LAB`, `MCP`, `PFB` et `INS` ; restent visibles `CNV`,
+`AGT` et `ERR` (`docs/control-center-shell.md` ›
 *Global launcher*). Le bouton **WSP** ouvre « Sessions & Boards », une vue plein écran pour vérifier
 où vit la mémoire de chaque Board et ce qu'elle contient. Tout y est lu sur le
 serveur ; « Actualiser » relit tout, Échap ferme.
@@ -1905,8 +1959,8 @@ serveur ; « Actualiser » relit tout, Échap ferme.
 - **Sessions** : l'historique complet, ouvert et clos, page par page ; une ligne
   dépliée montre ses Boards, ses liaisons, ses Contexts et son journal (les
   écritures de mémoire y apparaissent en `board.memory.*`).
-- **Boards** : tous, archivés compris, avec leur nature (Générique, Réunion,
-  Présentation) ; « Basculer sur ce Board » fait la même bascule que le bouton
+- **Boards** : tous, archivés compris, avec leur type (Assistant, Présentation,
+  Réunion) ; « Basculer sur ce Board » fait la même bascule que le bouton
   Board du haut.
 - **Relations** : d'une Session vers ses Boards et liaisons, ou d'un Board vers
   sa mémoire, ses artefacts, ses références héritées (legacy) et ses Sessions.
@@ -2125,8 +2179,8 @@ Les Presentations vivent dans la racine de données du poste, sous
   `(id, version)` des prefabs.
 - **Restaurer** : remettre le dossier à sa place, sous la racine de données voulue, puis
   démarrer Core. Il retire seulement les restes d'écritures interrompues
-  (`.staging-*`, `*.tmp`, trace `core.presentation_studio.swept`) ; il ne supprime ni ne réécrit
-  jamais un document.
+  (`.staging-*`, `*.tmp`, `.purging-*` d'une purge interrompue, trace `core.presentation_studio.swept`) ; il ne supprime ni ne réécrit
+  jamais un document (seule la purge définitive des archivées, demandée et confirmée, en efface, après sauvegarde : ci-dessous).
 - **Vérifier** : `GET /v1/presentation-studio/presentations` rend les Presentations lisibles et, dans
   `problems`, chaque dossier refusé avec son code (`presentation_studio_corrupt_document`,
   `presentation_studio_unsupported_schema_version`). Une restauration faite avec une version de JARVIS
@@ -2152,6 +2206,33 @@ Les Presentations vivent dans la racine de données du poste, sous
   redémarrage : `history_unavailable` avec la raison. Il n'est donc pas une sauvegarde ; la sauvegarde est le dossier
   `presentations/` (aucun instantané durable n'est conservé). `GET .../variants/{id}/history` dit ce qui est annulable,
   les bornes et ce qui a été évincé.
+
+### Purge définitive des présentations archivées
+
+Archiver une présentation (« supprime X ») la retire du rail et se restaure. La **purge** efface pour de bon les présentations
+**archivées**, sur demande explicite de l'utilisateur seulement (« supprime vraiment toutes les archivées ») : la voix appelle
+`presentation_library` op `purge` une première fois (le plan, lu à l'utilisateur : titres, nombre d'exports ; rien n'est effacé), puis,
+après son oui, une seconde fois avec le jeton du plan et `confirmed=true`. Une présentation non archivée n'est jamais purgée ; un plan
+dont l'ensemble a changé (une archivée en plus, une restaurée, un nouvel export) ou qui a plus de 10 minutes est refusé
+(`presentation_studio_confirmation_stale`), rien n'est effacé. Contrat : [presentation-studio.md](presentation-studio.md#purge-definitive-des-archivees).
+
+- **Sauvegarde d'abord** : `backups/purge-presentations-<AAAAMMJJTHHMMSSZ>/` sous la racine de données (`presentations/<pst_...>/`,
+  `prefabs/<id>/` et `prefabs/.archive/<id>/`, `artifacts/<jart_...>/`, `state/jarvis.sqlite3` si des exports partent, `purge.json`). Un
+  dossier `backups/.partial-*` est une sauvegarde qui a échoué (et rien n'a été effacé) : il peut être retiré à la main. JARVIS ne
+  vide jamais `backups/`.
+- **Traces** : `core.presentation_studio.purge_planned`, `core.presentation_studio.purged` (ids, comptes, chemin de la sauvegarde),
+  `core.presentation_studio.purge_failed` (une présentation laissée en place, toujours archivée), `core.prefab.purged`,
+  `core.artifact.deleted` (origine `presentation_purge`).
+- **Restaurer une présentation purgée** (JARVIS arrêté, CLAUDE.md : copier avant de remplacer quoi que ce soit) :
+  1. remettre `presentations/<pst_...>/` de la sauvegarde sous `presentations/` (elle revient archivée : `rail.json` est dans le dossier ;
+     la restaurer ensuite depuis le rail) et `prefabs/<id>/`, `prefabs/.archive/<id>/` sous `prefabs/` ;
+  2. ses exports : remettre `artifacts/<jart_...>/` sous `artifacts/`. Les lignes du registre sont dans `state/jarvis.sqlite3` de la
+     sauvegarde, une copie **de la base entière à l'instant de la purge** : ne jamais la mettre à la place de la base vivante (tout ce qui
+     a été écrit depuis serait perdu). Pour retrouver les lignes `artifacts` et `artifact_relations` des exports, les lire dans la copie
+     (`sqlite3`, en lecture seule) et les réinsérer à la main dans une base mise de côté d'abord ; sans cela, les dossiers restaurés
+     restent des fichiers sans ligne, que le registre ignore.
+- Les sources `presentation-studio.rm-*` (adressées par leur contenu, partageables) ne sont jamais purgées : la rétention des prefabs
+  archive leurs versions qui ne sont plus épinglées.
 
 ### Variantes du Studio : archive, restauration et reprise
 
@@ -2311,7 +2392,7 @@ ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance iso
 
 1. **Clavier réel** : lancer une lecture (rôle « Vous présentez »), cliquer la fenêtre de la scène, puis flèches, Espace, Début, Fin, `P`, Échap
    (pause) : la bande dit où l'on en est à chaque touche, une touche n'agit qu'une fois, et les mêmes touches avec le focus ailleurs (un champ de
-   saisie, une autre fenêtre) ne font rien. La bande ne recouvre pas le sélecteur de mode (en bas à gauche).
+   saisie, une autre fenêtre) ne font rien. La bande ne recouvre pas la carte Board (en bas de la colonne de droite pendant la lecture).
 2. **Plein écran** : « Plein écran » dans la bande (un clic) ; la scène remplit l'écran, la bande n'y est pas, les touches agissent une fois ; **Échap**
    (la vraie touche) sort du plein écran, la bande revient, la lecture n'a **pas** changé d'état (ni pause surprise, ni saut).
 3. **Deux écrans** : même essai avec un second écran branché (l'invite « gestion des fenêtres » est celle de Chrome) ; la bande reste sur l'écran du Control Center.
@@ -2319,13 +2400,13 @@ ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance iso
 5. **Arrêt brutal** : pendant un détour, tuer Core (`taskkill` de CE processus seulement, jamais le Jarvis vivant), le relancer : au démarrage, la ligne
    `core.presentation_studio.playback_reclaimed` dit combien d'objets ont été repris et la scène n'a plus ni fenêtre de stage ni fenêtre annexe ; le fichier
    `state/presentation-studio-stage-ledger.json` a disparu.
-6. **Mode** : « Jarvis présente » passe le mode en SIMPLE pendant la lecture et le rétablit à l'arrêt ; changer le mode à la main pendant la lecture
-   l'arrête (« mode changé par vous ») sans le remettre de force ; la préférence enregistrée du Board n'a pas bougé.
+6. **Mode** : « Jarvis présente » passe le mode en SIMPLE pendant la lecture et le rétablit à l'arrêt (le mode du type du Board) ; basculer de Board pendant
+   la lecture l'arrête (« le mode a changé avec le Board actif ») sans le remettre de force ; le type du Board n'a pas bougé.
 7. **Cues** (pile vocale OpenAI seulement, sinon l'écoute d'ambiance est sourde) : dire la phrase de la cue suivante déclenche l'élément, le dire deux fois
    ne le déclenche qu'une fois (suiveur : Slice 13). Noter la pile utilisée. Recette complète : *Suivi des cues à la voix* ci-dessous.
 
 8. **Suivi vocal absent** (architecture `legacy` ou `duplex`, ou pile ambiante sans suiveur) : lancer « Vous présentez » ; 10 s plus tard la bande
-   dit « Suivi vocal indisponible » avec la raison, le sélecteur de mode dit « Refusé par la voix », et la lecture continue au clavier. Noter l'architecture.
+   dit « Suivi vocal indisponible » avec la raison, la carte Board dit « Refusé par la voix », et la lecture continue au clavier. Noter l'architecture.
 9. **Séquence verrouillée** : arriver à un élément qui héberge une séquence ; « Suivant » est refusé pendant qu'elle tourne (Core l'exécute, la bande
    montre l'étape et le temps) ; « Sortir de la séquence » (ou `S`) continue après elle, toujours.
 10. **Registre illisible** (instance isolée) : après un arrêt brutal, abîmer `state/presentation-studio-stage-ledger.json` (le tronquer), relancer Core : la
@@ -2460,7 +2541,7 @@ ne prouve pas est à regarder une fois, sur un vrai écran, dans une instance is
 6. **Rechargement** : demander à Jarvis une modification de source de la scène et, pendant « Rechargement en cours », régler un curseur : l'inspecteur dit
    qu'il attend, réessaie tout seul, puis enregistre ; « Arrêter d'attendre » rend la main.
 7. **Direction artistique** : le chip montre le nom, la provenance et le contraste ; les 10 variables non livrées au cadre sont marquées « non appliqué ».
-8. **Petit écran** : fenêtre étroite (360 px) : pas de défilement horizontal, les onglets défilent, aucune cible trop petite, le lanceur (quatre outils et « Plus d’outils », une rangée dans les deux thèmes depuis l'orbital UI S08) ne recouvre pas le bouton Boards. Écran bas (600 px de haut) : l'aperçu démarre replié.
+8. **Petit écran** : fenêtre étroite (360 px) : pas de défilement horizontal, les onglets défilent, aucune cible trop petite, le lanceur (trois outils et « Plus d’outils » depuis la refonte roue/dossier S04, une rangée dans les deux thèmes depuis l'orbital UI S08) ne recouvre pas le bouton Boards. Écran bas (600 px de haut) : l'aperçu démarre replié.
    **Flèches sur un champ numérique** : cinq appuis sur ↑ dans « Inclinaison » ne laissent **qu'une** entrée d'historique (un seul `↶` les défait) ; maintenir ↑ ou rouler la molette de même ; Ctrl+Z avec un réglage en cours l'abandonne d'abord.
 9. **Mouvement réduit** (réglage système) : plus d'animation du sablier de chargement ni des transitions.
 
@@ -2496,7 +2577,7 @@ isolée (`JARVIS_DATA_ROOT` à part, jamais le Jarvis vivant), avec un casque ou
    conservés au « Continuer ») ; avec `abort_to_recovery`, « Continuer » ramène au point de reprise déclaré.
 5. **Échecs visibles** : (a) débrancher le micro/la voix ou couper Voice, lancer une ligne : au bout de 10 s la bande dit pourquoi (« La voix n'a pas commencé la
    ligne à temps ») et propose « Continuer » ; (b) redémarrer Core juste avant de lancer : « Jarvis n'a pas pu prendre la ligne » (aucune conversation en cours) ;
-   (c) dans l'instance isolée, forcer PRESENTATION à la main pendant la lecture : la lecture s'arrête (« mode changé par vous ») et Jarvis ne dit plus rien.
+   (c) dans l'instance isolée, basculer vers un Board Présentation pendant la lecture : la lecture s'arrête (« le mode a changé avec le Board actif ») et Jarvis ne dit plus rien.
 6. **Fin et arrêt** : à la dernière ligne la lecture s'arrête d'elle-même (`last_run.reason: completed`), le mode précédent est rétabli ; « Arrêter » coupe tout
    (une ligne déjà partie finit ou est coupée par votre voix) et rétablit le mode ; Core tué au milieu : au redémarrage le mode est celui du Board, jamais le
    mode temporaire.
@@ -2878,7 +2959,7 @@ un autre onglet ou un redémarrage retrouvent la même scène. Le travail termin
 enregistré ni variable d'environnement, la scène est rendue et le cerveau reçoit
 ses outils d'affichage à son prochain démarrage. Rien à faire pour s'en servir.
 
-1. **SET** → onglet **Expérimental** → section « Scène constellation » : la case
+1. **Réglages** → onglet **Expérimental** → section « Scène constellation » : la case
    « Afficher la scène et donner ses outils au brain » est déjà cochée. La
    décocher éteint la scène dans toutes les fenêtres ouvertes en une seconde,
    sans recharger ; la recocher la rallume aussi vite. Le choix est enregistré,
@@ -2929,7 +3010,8 @@ objets ») :
 | --- | --- |
 | déplacer (et donc épingler) | glisser, ou Maj+flèches |
 | épingler / désépingler | menu (clic droit, appui long au doigt ou au stylet, Maj+F10) |
-| masquer, puis réafficher | menu « Masquer » ; œil du centre d'état (bas-centre) : clic = fantômes, clic droit = liste ; « Réafficher » sur un fantôme |
+| masquer, puis réafficher | menu « Masquer », ou la roue › Sélection › « Masquer » ; pour réafficher : la roue › Sélection › « Masqués (N) », ou demandez-le à Jarvis (« affiche les masqués ») |
+| agir sur plusieurs objets | sélectionnez-les (Ctrl+clic, rectangle, ou Ctrl+Espace au clavier), puis la roue › Sélection : Ranger dans le Dossier, Masquer, Changer la forme, Retirer du Board |
 | changer de forme | menu « Afficher en point / capsule / fenêtre » |
 | archiver un objet | menu « Archiver… » ; une étoile emporte ses signaux, **pas** ses artefacts |
 | archiver en groupe | « Archiver les travaux terminés (N objets)… » (terminés, en échec, annulés, interrompus) et « Archiver les artefacts orphelins (N)… » (artefacts dont l'étoile est archivée) |
@@ -3137,6 +3219,19 @@ n'a pas besoin du jeton côté page (`docs/ARCHITECTURE.md`, « Scene transport 
 | `POST /api/scene/commands` | `POST /v1/scene/commands` | une commande de scène ; côté Control Center l'acteur est toujours `user` |
 | `POST /api/scene/captures/{capture_id}` | `PUT /v1/scene/captures/{capture_id}` | envoi de l'image d'une capture par la page meneuse visible (la demande, `POST /v1/scene/captures`, ne vient que du brain) |
 | `POST /api/jobs/cancel` | `POST /v1/work/cancel` | arrêt d'une tâche de Core depuis le menu de son étoile |
+| — | `POST /v1/scene/archived/purge-plan`, `POST /v1/scene/archived/purge` | purge définitive des objets archivés (2026-10-18) : appelée par le cerveau (`scene_purge_archived`), pas encore par la page |
+
+Purge des archivés. Quand vous demandez de supprimer pour de bon les objets
+archivés, le cerveau appelle `scene_purge_archived` : il vous dit le compte
+(objets et lignes d'historique, et ceux gardés parce qu'une tâche encore suivie
+les ferait renaître), puis purge après votre oui. Core écrit d'abord une copie
+complète de la base, `scene.sqlite3.purge-<horodatage UTC>.bak`, dans le dossier
+`state` de la racine de données, à côté de `scene.sqlite3` ; elle n'est jamais
+supprimée par JARVIS. Pour revenir en arrière : arrêtez Core, mettez de côté
+`scene.sqlite3` et ses `-wal`/`-shm`, copiez la sauvegarde sous le nom
+`scene.sqlite3`, redémarrez. Juste après un démarrage de Core, la purge est
+refusée une minute (`runtime_settling`) le temps que les tâches suivies se
+redéclarent.
 
 Voir la scène brute, Core démarré :
 
@@ -3355,7 +3450,7 @@ Détail technique : `docs/ARCHITECTURE.md`, « Brain display MCP ».
 
 **Activer.** Interrupteur `scene.enabled`, **allumé par défaut** : une
 installation neuve, sans clé `scene` dans `runtime/control-center-settings.json`
-et sans variable d'environnement, est allumée. Pour l'éteindre : **SET →
+et sans variable d'environnement, est allumée. Pour l'éteindre : **Réglages →
 Expérimental → « Scène constellation »**, décocher (enregistré immédiatement),
 ou dans `runtime/control-center-settings.json` :
 
@@ -3416,8 +3511,8 @@ Core et le **chemin** du jeton, jamais le jeton.
 
 | Symptôme | Cause probable | Action |
 | --- | --- | --- |
-| `agent.start` dit `display_mcp: false` alors que l'interrupteur est vrai | cerveau pas redémarré, `JARVIS_SCENE_ENABLED=0`, ou brain non Claude (Codex n'a jamais ces outils) | SET → Expérimental → « Redémarrer le brain… » ; lire `GET /api/status` → `agent.display_tools` et `GET /api/settings` → `scene.source` |
-| le cerveau a les outils mais ne crée pas d'artefact et ne relit pas la scène (ou cherche des outils de scène alors qu'elle est éteinte) | conversation reprise (`agent.start` `resumed: true`) qui garde la consigne de son premier tour ; `GET /api/status` → `agent.display_prompt` différent du réglage | SET → Expérimental → « Redémarrer le brain… » (nouvelle conversation), ou redémarrer JARVIS |
+| `agent.start` dit `display_mcp: false` alors que l'interrupteur est vrai | cerveau pas redémarré, `JARVIS_SCENE_ENABLED=0`, ou brain non Claude (Codex n'a jamais ces outils) | Réglages → Expérimental → « Redémarrer le brain… » ; lire `GET /api/status` → `agent.display_tools` et `GET /api/settings` → `scene.source` |
+| le cerveau a les outils mais ne crée pas d'artefact et ne relit pas la scène (ou cherche des outils de scène alors qu'elle est éteinte) | conversation reprise (`agent.start` `resumed: true`) qui garde la consigne de son premier tour ; `GET /api/status` → `agent.display_prompt` différent du réglage | Réglages → Expérimental → « Redémarrer le brain… » (nouvelle conversation), ou redémarrer JARVIS |
 | « Réglage de scène non enregistré » dans l'onglet Expérimental, code `scene_env_override` | `JARVIS_SCENE_ENABLED` est posée pour le Control Center | la retirer et relancer le Control Center, ou garder la valeur imposée |
 | `scene.display_mcp_unconfigured` (avertissement) | Control Center lancé sans coordonnées de Core (hors `python -m jarvis control-center`) | lancer par la commande normale |
 | `agent.display_mcp_failed` (erreur, panneau ERR) | `runtime/display-mcp.json` non inscriptible | corriger les droits du dossier runtime, redémarrer l'agent ; la voix marche sans l'écran en attendant |
@@ -3433,7 +3528,7 @@ Core et le **chemin** du jeton, jamais le jeton.
 | `display.tool_failed` niveau erreur `display_internal_error` | défaut du serveur | remonter le message (type et texte) |
 | erreur d'outil `scene_query (near) … reason=unplaced` | l'objet de référence n'a pas encore de géométrie enregistrée (placement automatique pas encore fait par une page) | normal : ouvrir le Control Center le place en quelques secondes ; sinon `scene_get` |
 | erreur d'outil `scene_query (explains) … reason=object_archived` | l'objet a été archivé | normal : rien à expliquer dans la scène active |
-| le cerveau répond « je ne vois que le titre » d'un artefact | cerveau lancé avec une version plus ancienne, ou conversation reprise (`agent.start` `resumed: true`) qui garde l'ancienne consigne | SET → Expérimental → « Redémarrer le brain… » ; la trace doit montrer `mcp__jarvis-display__scene_get` et `display.read` |
+| le cerveau répond « je ne vois que le titre » d'un artefact | cerveau lancé avec une version plus ancienne, ou conversation reprise (`agent.start` `resumed: true`) qui garde l'ancienne consigne | Réglages → Expérimental → « Redémarrer le brain… » ; la trace doit montrer `mcp__jarvis-display__scene_get` et `display.read` |
 | erreur d'outil `attach_artifact refusé … reason=object_archived` | l'utilisateur a archivé l'étoile du travail | normal : pas d'artefact pour un travail rangé, rien n'a été envoyé |
 
 Tous les appels laissent `display.tool` / `display.read` (lectures `scene_query`
@@ -3478,7 +3573,7 @@ prochain démarrage prend la configuration courante. Tout autre méthode que
 | `503` `mcp_server_unavailable` sur un outil `jarvis-drive` | le module ne s'importe pas (dépendance absente) ; la liste le marque `described: false` | installer les dépendances Drive, redémarrer le Control Center |
 | `404` `mcp_tool_unknown` | serveur ou outil inexistant (le corps ne répète pas la demande) | relire la liste |
 | display `configured` alors que la scène est allumée et le cerveau lancé | cerveau lancé avant l'allumage (`pending_restart: true`) | « Redémarrer le brain… » |
-| `condition_value: false` mais `next_launch: configured` | réglages modifiés dans le fichier sans passer par le Control Center : l'agent tient encore la cible | enregistrer depuis SET (ou redémarrer le Control Center) |
+| `condition_value: false` mais `next_launch: configured` | réglages modifiés dans le fichier sans passer par le Control Center : l'agent tient encore la cible | enregistrer depuis Réglages (ou redémarrer le Control Center) |
 | `advertised: null` sur un serveur natif | instantané de l'agent illisible (`mcp.availability_failed`) ou cerveau Claude sans le drapeau | lire la trace ; redémarrer le brain |
 
 `mcp.catalog_built` (info) part une fois par processus au premier catalogue.
@@ -4165,14 +4260,76 @@ Actions du menu :
   l'arrêt du brain entier, depuis le panneau Agents, les interrompt ;
 - **Archiver les travaux terminés (N objets)…** : voir ci-dessous.
 
-**Retrouver ce qui est masqué.** L'œil du centre d'état, en bas au centre
-(« Afficher les objets masqués (N) » au survol et pour le lecteur d'écran), le
-dit. Un clic montre les objets masqués en **fantômes** à leur place (atténués,
-en tirets) sans les réafficher ; un nouveau clic les cache. Clic droit (ou
-Maj+F10, touche Menu) : la liste, « Afficher « titre » » pour un objet, « Tout
-réafficher » pour tous. Sur un fantôme, le clic droit propose « Réafficher ».
-Un objet masqué qui n'a jamais eu de place n'a pas de fantôme : il est dans la
-liste. Ce réglage ne vaut que pour ce navigateur.
+**Retrouver ce qui est masqué.** La roue › Sélection › « Masqués (N) »
+compte les objets masqués (le compte n'est affiché nulle part ailleurs). Dedans :
+« Voir en fantômes » montre les objets masqués à leur place (atténués, en tirets)
+sans les réafficher, une seconde activation les cache (ce réglage ne vaut que pour
+ce navigateur) ; « Tout réafficher (N) » les remet tous sur le Board d'un coup ;
+« Réafficher « titre » » en remet un. Sur un fantôme, le clic droit propose
+« Réafficher ». Un objet masqué qui n'a jamais eu de place n'a pas de fantôme : il
+est dans la liste.
+
+**Masquer, Ranger, changer de forme, retirer : quatre gestes différents.**
+Sélectionnez un ou plusieurs objets, puis la roue › Sélection :
+
+- **Masquer** cache l'objet ; il reste sur le Board, récupérable, et rien n'entre
+  dans le Dossier ;
+- **Ranger dans le Dossier** garde d'abord le contenu dans le Dossier du Board
+  (une note, ou le lien vers le fichier ou l'Artifact qu'il montre), puis le retire
+  du Board ; ce qui ne se range pas (un groupe, un signal, une interface) reste,
+  et la notification dit pourquoi, objet par objet ;
+- **Changer la forme** (Étoile, Capsule, Fenêtre) change la représentation, rien
+  n'est copié ;
+- **Retirer du Board…** retire la représentation (elle reste dans l'historique)
+  après confirmation ; un document source du Dossier n'est jamais supprimé. Ce
+  qui n'était pas rangé n'est plus sur le Board : rangez-le d'abord pour le
+  garder.
+
+Après Masquer, Ranger ou Retirer, le focus clavier passe à un objet voisin,
+mais la sélection ne le suit pas : elle se vide (ou ne garde que ce qui est
+resté sur le Board). L'action suivante de la roue ne touche donc jamais un objet
+que vous n'avez pas choisi.
+
+**Le Dossier du Board, en plein écran.** La roue › Dossier › « Ouvrir le
+Dossier » (ou l'une des entrées récentes listées dessous). À gauche :
+l'organisation (vue d'ensemble, collections, dossiers de la mémoire, et le
+champ « Filtrer le Dossier » ; Entrée cherche aussi dans le texte des notes).
+Au centre : un onglet par document ; « Comparer… » en met deux côte à côte sur
+un grand écran. À droite, repliable : la source, la date, la provenance, et les
+« Détails techniques » (identifiants) seulement si vous les ouvrez. Sur chaque
+document :
+
+- **Afficher sur le Board** (Fenêtre, Capsule ou Étoile) pose une représentation
+  du **même** fichier sur le Board ; rien n'est copié, et une représentation
+  existante est reprise ;
+- **Modifier** édite une note de la mémoire du Board (Ctrl+S enregistre). Si le
+  fichier a changé entre-temps (Jarvis l'a réécrit), rien n'est écrasé : votre
+  texte reste affiché à côté de la version actuelle, et c'est vous qui décidez
+  d'enregistrer par-dessus ;
+- **Plus… › Renommer ou déplacer**, **Plus… › Supprimer du Dossier** (définitif,
+  après confirmation ; c'est la seule suppression durable).
+
+Échap ferme d'abord le menu ou le formulaire ouvert, puis revient au Board, le
+focus là où vous étiez. Un Board archivé se lit depuis sa ligne du panneau des
+Boards (icône du Dossier) : lecture seule. Si vous changez de Board, le Dossier
+ouvert devient celui du nouveau Board et le dit. Vous pouvez aussi demander à
+Jarvis : « Ouvre le compte rendu dans le Dossier », « Montre-moi les deux notes
+qui expliquent la décision budget » (côte à côte), « Affiche cette note sur le
+Board ». Jarvis ne dit qu'une entrée est ouverte que si la page l'a
+effectivement montrée ; sinon il dit pourquoi (Board non affiché, entrée
+absente, Variantes à l'écran, aucune page visible).
+
+**Bac à sable et onglets du navigateur (exploitation).** Chaque lancement de
+`python -m jarvis control-center` ouvre un onglet du navigateur par défaut ;
+cet onglet reste ensuite à l'écoute des ordres de Jarvis (Dossier, Variantes)
+tant qu'il est ouvert, même après l'arrêt du bac à sable. Pour un bac à sable
+ou un test, posez `JARVIS_OPEN_BROWSER=0` (`$env:JARVIS_OPEN_BROWSER = "0"`) :
+le Control Center n'appelle alors pas `webbrowser.open` et journalise
+`ui.browser` (`opened: false`). Les valeurs `0`, `false`, `no`, `off` coupent
+l'ouverture ; sans la variable, ou avec toute autre valeur, l'onglet s'ouvre comme
+avant (comportement par défaut inchangé). Sur une version antérieure, posez
+`BROWSER` sur une commande vide (`$env:BROWSER = "cmd /c exit %s"`). Fermez les
+onglets laissés sur d'anciens ports.
 
 **Archiver les travaux terminés.** Depuis le menu d'une étoile, ou directement
 depuis la pastille « Scène pleine — archiver des travaux terminés » quand la scène
@@ -4546,7 +4703,7 @@ enrollment, overwrite any file): it is shown read-only and changed only in the f
 
 ### What the Control Center shows for Solo Owner and echo cancellation
 
-Tab **Mode vocal** of the settings window (button **SET**), block **Qui peut
+Tab **Mode vocal** of the settings window (« Plus d’outils » › **Réglages**, or the wheel's **Paramètres**), block **Qui peut
 parler à JARVIS**, right under the architecture. The page only projects: every
 verdict comes from the server (`assess_authorization`, the function Voice uses) or
 from what Voice itself published; the page never decides who is speaking and never
@@ -5264,11 +5421,14 @@ JARVIS_LIVE_OPENAI=1 OPENAI_API_KEY=... python -m pytest -q tests/integration/te
 
 ## Mode PRESENTATION : runbook de l'opérateur
 
-PRESENTATION est un **mode**, pas une architecture. Il se choisit dans le
-Control Center (sélecteur de gauche, `SIMPLE` / `PRESENTATION`), il change **à
-chaud**, et il ne redémarre jamais Voice : `interaction_mode` n'entre pas dans
-`VoiceComposition.configuration_id` (Décision D15). Repasser sur `SIMPLE` rend
-le comportement d'avant, exactement.
+PRESENTATION est un **mode**, pas une architecture. Il suit le **type du Board
+actif** : on y entre en ouvrant (ou en créant) un Board Présentation, on en sort
+en ouvrant un Board Assistant. La carte Board du bas-gauche montre le type du Board ;
+aucun écran ne choisit le mode : `settings_set` ou `POST /api/interaction-mode` est refusé
+(`interaction_mode_derived`, avec la phrase qui dit quoi faire). Il change **à
+chaud**, et il ne redémarre jamais Voice : le mode n'entre pas dans
+`VoiceComposition.configuration_id` (Décision D15). Revenir sur un Board
+Assistant rend le comportement d'avant, exactement.
 
 ### Ce qu'il faut avoir avant d'entrer en PRESENTATION
 
@@ -5380,7 +5540,7 @@ Aucun de ces événements ne porte la parole de la salle. Contrat :
 | `trigger_latency_s` grimpe | relevé + `explicit_address.stale` | la boucle d'évènements est chargée ; l'appui est **servi quand même**, jamais jeté |
 | une commande visuelle ne dit rien | `voice.speech.presentation_decided` | c'est le comportement attendu : D09, le silence est un succès |
 | JARVIS pose une question au lieu de montrer | `voice.presentation.turn_classified` | deux ressources également ancrées : il demande laquelle |
-| **le Control Center dit PRESENTATION et il n'y a aucune ligne `presentation.runtime.*`** | `interaction.mode.observed` / `interaction.mode.ignored` | **le discriminant est là et nulle part ailleurs.** `.observed` : Voice a bien vu le mode, donc regardez `entry_failed` ou `entry_refused` juste après. `.ignored` : l'évènement est arrivé abîmé, le code dit lequel. **Ni l'un ni l'autre** : Voice n'a jamais reçu le changement — flux `/v1/events` coupé, ou processus Voice démarré avant ce commit |
+| **la carte Board dit Présentation et il n'y a aucune ligne `presentation.runtime.*`** | `interaction.mode.observed` / `interaction.mode.ignored` | **le discriminant est là et nulle part ailleurs.** `.observed` : Voice a bien vu le mode, donc regardez `entry_failed` ou `entry_refused` juste après. `.ignored` : l'évènement est arrivé abîmé, le code dit lequel. **Ni l'un ni l'autre** : Voice n'a jamais reçu le changement — flux `/v1/events` coupé, ou processus Voice démarré avant ce commit |
 | PRESENTATION est refusée avant même de prendre le micro | `presentation.runtime.entry_refused`, code `presentation_architecture_unsupported` | l'architecture vocale est « un tour par appui » (`voice_arch=legacy`) : aucun tour adressé ne peut s'y ouvrir, donc le micro n'est pas pris. Choisissez une architecture continue |
 | les préparations s'arrêtent, puis reprennent par à-coups | `speculative_in_flight` au plafond dans le relevé + `presentation.speculative.preempted` | le bassin est plein (3 places par défaut, dont 1 réservée à l'explicite : 2 sous-agents spéculatifs). C'est la conception : le spéculatif est sacrificiel, et un tour adressé préempte. Rien à faire ; si cela gêne, voir *Bassin de préparation* ci-dessous |
 | « montre-moi ça » ne change pas l'écran | `voice.presentation.turn_failed`, code `presentation_reuse_without_screen` | la ressource réutilisée n'était pas un objet de scène : elle a servi, mais il n'y avait rien à dessiner. Voir *Limites connues* |

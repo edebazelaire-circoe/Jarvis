@@ -885,6 +885,8 @@
   function keyIntent(event){
     const key=event&&event.key;
     if(key==='ContextMenu'||(key==='F10'&&event.shiftKey&&!event.ctrlKey&&!event.altKey))return {type:'menu'};
+    /* Ctrl+Espace (Slice 06) : sélection au clavier, l'objet focalisé entre ou sort. */
+    if(key===' '&&event.ctrlKey&&!event.shiftKey&&!event.altKey&&!event.metaKey)return {type:'toggle'};
     const dirs={ArrowRight:[1,0],ArrowLeft:[-1,0],ArrowDown:[0,1],ArrowUp:[0,-1]};
     if(key==='Home'||key==='End')return event.shiftKey||event.ctrlKey||event.altKey||event.metaKey?null:{type:'nav'};
     const dir=dirs[key];
@@ -1142,6 +1144,196 @@
     return {title,items};
   }
 
+  /* ------------------------------------------------- Sélection (roue)
+
+     Handoff `jarvis-board-ui-wheel-dossier-refactor`, Slice 06. Les actions
+     sur les objets sélectionnés, dans le sous-menu Sélection de la roue, à la
+     suite de Souris / Bare Hands (`control_center_input_arbitration.js`).
+     Modèle **pur** : des lignes sans rappel (`act`), que la page branche
+     (`JarvisScene.selectionMenu`). Contrat : `docs/scene-selection-batch.md`
+     › *Selection actions (wheel)*.
+
+     Quatre gestes qui ne se confondent jamais :
+     - **Masquer** : `visibility = hidden` (un `patch_selection`) ; l'objet reste
+       actif et récupérable, rien n'entre dans le Dossier ;
+     - **Changer la forme** : `representation` (étoile / capsule / fenêtre) ;
+       rien n'est copié ;
+     - **Ranger dans le Dossier** : la durabilité d'abord (Slice 05,
+       `…/dossier/ranger`), le retrait ensuite ; un refus laisse l'objet ;
+     - **Retirer du Board** : `archive_selection` de la représentation ; une
+       source durable (fichier de mémoire, Artifact du registre) n'est jamais
+       touchée.
+     « Masqués (N) » est le compte contextuel (D06) : vue en
+     fantômes (réglage de ce navigateur) et réaffichage canonique. */
+
+  /* Au plus ce que la route Ranger accepte en une fois (`_object_ids`, ≤ 20). */
+  const MAX_RANGER_IDS=20;
+  /* Au plus ce que la liste des masqués nomme (le sous-menu tient 9 lignes). */
+  const HIDDEN_LISTED=6;
+  const FORM_WORDS=Object.freeze({point:['étoile','étoiles'],capsule:['capsule','capsules'],window:['fenêtre','fenêtres']});
+  const FORM_ROWS=Object.freeze([
+    /* « Réduire » se dit des deux ; le cerveau l'entend comme l'étoile (trace S06) : la
+       note ne l'attribue pas à la capsule. */
+    Object.freeze({representation:'point',label:'Étoile',note:'réduite à un point'}),
+    Object.freeze({representation:'capsule',label:'Capsule',note:'titre seul'}),
+    Object.freeze({representation:'window',label:'Fenêtre',note:'ouverte'}),
+  ]);
+  const RUN_BLOCKED='Indisponible pendant la lecture : arrêtez la présentation dans Variantes, puis réessayez.';
+  const plural=(n,one,many)=>`${n} ${n>1?many:one}`;
+
+  /* Une source durable que « Retirer du Board » laisse en place : une fenêtre
+     liée à un fichier ou à un Artifact du registre (`docs/dossier.md` › §2). */
+  function durableSourceOf(item){
+    const p=item&&item.payload||{};
+    if(p.registry_artifact_id)return 'artifact';
+    if(p.source_path)return 'file';
+    return null;
+  }
+
+  /* Pourquoi un objet ne se range pas : la phrase du code, puis la raison précise de l'objet quand Core la donne
+     (« un groupe n'est qu'un cadre : rangez ses objets un par un » ; QA S06 polish 6, Slice 08). */
+  function whyNot(o){
+    const message=String((o&&o.message)||'non rangeable');
+    const reason=o&&typeof o.reason==='string'?o.reason.trim():'';
+    if(!reason||message.toLowerCase().includes(reason.toLowerCase()))return message;
+    return `${message} ${reason.charAt(0).toUpperCase()}${reason.slice(1)}${/[.!?]$/.test(reason)?'':'.'}`;
+  }
+
+  /* Ce que dit la ligne Ranger, d'après l'aperçu `backing` de la page.
+     `backing` : `{status:'idle'|'loading'|'ready'|'failed', board_active?,
+     board_message?, message?, objects?: {id: {rangeable, code?, message?}}}`.
+     Le Board affiché compte (polish S05 8) : jamais « rangeable » sur la seule
+     foi de l'aperçu par objet. */
+  function rangerRow(ids,ctx){
+    const row={id:'ranger',act:'ranger',label:'Ranger dans le Dossier',icon:'dossier'};
+    const b=ctx.backing||{status:'idle'};
+    if(ids.length>MAX_RANGER_IDS)
+      return {...row,disabled:true,note:`${MAX_RANGER_IDS} au plus`,
+        detail:`Au plus ${MAX_RANGER_IDS} objets par rangement : réduisez la sélection.`};
+    if(!ctx.boardId)return {...row,disabled:true,tone:'unknown',note:'Board actif inconnu',
+      detail:'Le Board actif n’est pas connu (statut illisible ou bascule en cours) : rien ne peut être rangé.'};
+    if(b.status==='loading'||b.status==='idle')return {...row,tone:'wait',note:'vérification…',
+      detail:'Vérification de ce qui peut se ranger.'};
+    if(b.status==='failed')return {...row,tone:'unknown',note:'non vérifié',
+      detail:`Vérification impossible (${b.message||'erreur'}) : Ranger dira objet par objet ce qu’il garde.`};
+    if(b.board_active===false)return {...row,disabled:true,note:'Board non affiché',
+      detail:String(b.board_message||'Ranger agit seulement sur le Board actif.')};
+    const per=b.objects||{};
+    const refused=ids.filter(id=>!(per[id]&&per[id].rangeable));
+    const ok=ids.length-refused.length;
+    const first=refused.length?whyNot(per[refused[0]]):'';
+    if(!ok)return {...row,disabled:true,note:'rien à ranger',
+      detail:ids.length>1?`Aucun de ces objets ne se range : ${first}`:first};
+    if(refused.length)return {...row,note:`${ok} sur ${ids.length}`,
+      detail:`${plural(ok,'objet se range','objets se rangent')} ; ${plural(refused.length,'autre reste','autres restent')} sur le Board : ${first}`};
+    return {...row,note:ids.length>1?`les ${ids.length}`:'',
+      detail:'Gardé dans le Dossier du Board, puis retiré du Board.'};
+  }
+
+  /* « Masqués (N) » : le compte contextuel (D06) et son second
+     niveau (vue en fantômes, Tout réafficher, les masqués nommés) ; aucun
+     masqué : une ligne d'état qui le dit. */
+  function hiddenRowOf(state,context){
+    const hidden=Math.max(0,Number(context.hidden)||0);
+    /* Une icône comme les autres lignes (Slice 08, QA S06 polish 4) : sans elle, le texte partait de la colonne
+       de la tuile et la ligne paraissait orpheline, mal alignée sous les autres à 600×800. */
+    if(!hidden)return {id:'hidden-none',label:'Aucun objet masqué',status:true,tone:'off',icon:'eye_off'};
+    const list=state?hiddenObjects(state):[];
+    const rows=[
+      {id:'ghosts',act:'ghosts',label:'Voir en fantômes',toggle:true,checked:!!context.ghosts,note:'sans réafficher',
+        detail:'Dessine les objets masqués en transparence, dans ce navigateur seulement ; ils restent masqués.'},
+      {id:'show-all',act:'show-all',label:`Tout réafficher (${hidden})`,note:'sur le Board'},
+    ];
+    for(const entry of list.slice(0,HIDDEN_LISTED))
+      rows.push({id:`show:${entry.id}`,act:`show:${entry.id}`,label:`Réafficher « ${String(entry.title||entry.id).slice(0,40)} »`});
+    if(list.length>HIDDEN_LISTED)rows.push({id:'hidden-more',label:`… et ${list.length-HIDDEN_LISTED} autres`,status:true,tone:'off',icon:'eye_off'});
+    /* Libellé court (« Afficher les masqués (N) » ne tient pas dans une ligne de
+       l'arc, coupé à 1280 et 1920) ; la phrase entière est le nom accessible. */
+    return {id:'hidden',label:`Masqués (${hidden})`,icon:'eye',menu:true,
+      note:context.ghosts?'fantômes visibles':'afficher, réafficher',
+      detail:`Afficher les masqués (${hidden}) : en fantômes, ou de nouveau sur le Board.`,rows};
+  }
+
+  /* Les lignes du sous-menu Sélection après Souris / Bare Hands. `state` :
+     l'état dessiné ; `ids` : la sélection de la page ; `ctx` : `{hidden,
+     ghosts, backing, boardId, runBlocked}`. Une ligne : `{id, act?, label,
+     note?, detail?, icon?, disabled?, status?, tone?, checked?, toggle?,
+     menu?, rows?}` (`rows` : le second niveau). Une action sans objet pour la
+     sélection n'est pas montrée. */
+  function selectionActions(state,ids,ctx){
+    const context=ctx||{};
+    const items=(ids||[]).map(id=>state&&state.objects.get(id)).filter(Boolean);
+    const live=items.map(item=>item.object_id);
+    const hiddenRow=hiddenRowOf(state,context);
+    if(!live.length)return [{id:'selection-none',label:'Aucun objet sélectionné',status:true,tone:'off',icon:'pointer',
+      note:'cliquez un objet',detail:'Cliquez un objet (Ctrl : plusieurs), tracez un rectangle, ou Ctrl+Espace au clavier.'},hiddenRow];
+    const out=[];
+    const forms={};
+    for(const item of items){const r=FORM_WORDS[item.representation]?item.representation:'point';forms[r]=(forms[r]||0)+1}
+    const parts=Object.entries(forms).map(([r,n])=>plural(n,FORM_WORDS[r][0],FORM_WORDS[r][1]));
+    out.push({id:'selection-count',label:plural(live.length,'objet sélectionné','objets sélectionnés'),status:true,icon:'pointer',
+      note:parts.join(' · ')});
+    out.push(rangerRow(live,context));
+    const allHidden=items.every(item=>item.visibility==='hidden');
+    out.push(allHidden
+      ?{id:'show-selection',act:'show-selection',label:'Réafficher',icon:'eye',note:'sur le Board'}
+      :{id:'hide',act:'hide',label:'Masquer',icon:'eye_off',note:'temporaire',
+        detail:'Masqué : l’objet reste sur le Board, récupérable par « Masqués » ; rien n’entre dans le Dossier.'});
+    /* Le compte des masqués suit Masquer (le geste qui les fait naître) ; le
+       geste qui retire la représentation reste le dernier. */
+    out.push(hiddenRow);
+    const uniform=Object.keys(forms).length===1?Object.keys(forms)[0]:null;
+    out.push({id:'form',label:'Changer la forme',icon:'form',menu:true,
+      note:uniform?FORM_WORDS[uniform][live.length>1?1:0]:'mixte',
+      detail:'Étoile, capsule ou fenêtre : la même représentation change de forme, rien n’est copié.',
+      rows:FORM_ROWS.map(f=>({id:`rep:${f.representation}`,act:`rep:${f.representation}`,label:f.label,note:f.note,
+        checked:uniform===f.representation,disabled:uniform===f.representation}))});
+    const sources=items.filter(durableSourceOf).length;
+    const remove={id:'remove',act:'remove',label:'Retirer du Board…',icon:'remove',
+      note:sources?'la source reste':'archive la représentation',
+      detail:sources
+        ?'Retire la représentation du Board (historique gardé) ; le document source reste dans le Dossier.'
+        :'Retire la représentation du Board (historique gardé) ; ce qui n’est pas rangé quitte le Board.'};
+    out.push(context.runBlocked?{...remove,disabled:true,note:'pendant la lecture',detail:RUN_BLOCKED}:remove);
+    return out;
+  }
+
+  /* Le compte rendu d'un Ranger (réponse 200 de `…/dossier/ranger`) dans les
+     mots de l'utilisateur : `{title, lines, kind, removed, kept, refused}`.
+     `titleOf` : le titre affiché d'un objet. Un objet stocké mais pas retiré
+     (`dossier_changed_meanwhile`, `dossier_archive_failed`) est **dit**, et
+     chaque refus garde son `message`. */
+  function rangerReport(body,titleOf){
+    const results=Array.isArray(body&&body.results)?body.results:[];
+    const name=id=>`« ${String(titleOf?titleOf(id):id).slice(0,48)} »`;
+    const removed=results.filter(r=>r.status==='stored'&&r.archived);
+    const kept=results.filter(r=>r.status==='stored'&&!r.archived);
+    const refused=results.filter(r=>r.status!=='stored');
+    const lines=[];
+    /* Un Artifact du registre que ce Board ne liait pas encore (présenté depuis un autre Board, par exemple) : le
+       lien créé se dit (Slice 08, polish S05 9) ; rien n'est déplacé ni copié, il reste aussi là où il était. */
+    for(const r of removed)if(r.action==='linked'&&r.backing==='artifact')
+      lines.push(`${name(r.object_id)} : l’Artifact est désormais aussi dans le Dossier de ce Board.`);
+    for(const r of kept)lines.push(`${name(r.object_id)} : ${r.message||'gardé dans le Dossier, mais toujours sur le Board.'}`);
+    for(const r of refused)lines.push(`${name(r.object_id)} : ${r.message||r.reason?whyNot(r):r.code||'refusé'}`);
+    const head=[];
+    if(removed.length)head.push(`${plural(removed.length,'objet rangé','objets rangés')} dans le Dossier`);
+    if(kept.length)head.push(`${plural(kept.length,'gardé','gardés')} sans retrait`);
+    if(refused.length)head.push(plural(refused.length,'refus','refus'));
+    return {title:head.length?head.join(' · '):'Rien n’a été rangé',lines,
+      kind:refused.length||kept.length?(removed.length?'warn':'bad'):'ok',
+      removed:removed.map(r=>r.object_id),kept:kept.map(r=>r.object_id),refused:refused.map(r=>r.object_id)};
+  }
+
+  /* Refus de la demande entière (avant tout objet) : la phrase pour l'écran. */
+  const RANGER_REQUEST_REFUSALS=Object.freeze({
+    dossier_board_not_active:'Ranger agit seulement sur le Board affiché : rien n’a été rangé.',
+    board_archived:'Ce Board est archivé : rien n’a été rangé.',
+    board_not_found:'Ce Board n’existe plus : rien n’a été rangé.',
+    scene_unavailable:'La scène n’est pas servie en ce moment : rien n’a été rangé.',
+    invalid_request:'Demande refusée : rien n’a été rangé.',
+  });
+
   /* ------------------------------------------------------------ commandes */
 
   const commands=Object.freeze({
@@ -1157,6 +1349,10 @@
        commun, l'épingle dans le même patch — une révision pour tout le glisser. */
     translateSelection:(ids,delta,pin)=>({schema_version:1,op:'translate_selection',selection:{ids:[...ids]},
       delta:{dx:delta.dx,dy:delta.dy},...(pin?{pin:true}:{})}),
+    /* Sélection de la roue (Slice 06) : une commande atomique, jamais de
+       charge (`payload`, donc `registry_artifact_id`, n'est pas réécrit). */
+    patchSelection:(ids,changes)=>({schema_version:1,op:'patch_selection',selection:{ids:[...ids]},changes:{...changes}}),
+    archiveSelection:ids=>({schema_version:1,op:'archive_selection',selection:{ids:[...ids]}}),
   });
 
   /* Refus du domaine dans les mots de l'utilisateur. */
@@ -1507,6 +1703,7 @@
     MANIPULATION_SIDES,resizeBySides,manipulateBox,rebaseManipulation,
     signalOwners,cascadeOf,constellationOf,bulkSelection,chunkIds,menuModel,commands,BAND_MIN_PX,bandBox,bandStarted,bandHits,nextSelection,transportFailure,networkFailure,classifyResponse,stopOutcome,
     focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects,
+    MAX_RANGER_IDS,selectionActions,durableSourceOf,rangerReport,RANGER_REQUEST_REFUSALS,
     groupDelta,orbitGroupDelta,groupMove,commitTranslation});
   /* **La levée reste, mais elle ne sort pas d'ici** — même forme que
      l'enregistreur Bare Hands (§12) et le canal de commandes. Rattrapée, la

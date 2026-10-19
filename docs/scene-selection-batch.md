@@ -528,8 +528,62 @@ a domain rule.
   current path. The Control Center proxy's `patch_omitted` relay for
   `archive_many` (scene-model.md › *Bulk archive answer*) extends to selection
   commands.
+- **Wheel (Slice 06 of the wheel/dossier refactor)**: the Sélection submenu
+  acts on the page selection with the commands above, see §6.1.
 - **Bare Hands**: no new binding in this task; a future group move uses
   `translate_selection` (debt noted in `docs/barehands-contracts.md:3771-3774`).
+
+## 6.1 Selection actions (wheel)
+
+Handoff `tasks/jarvis-board-ui-wheel-dossier-refactor/`, Slice 06. The wheel's
+**Sélection** submenu lists, after the method rows Souris / Bare Hands
+(`control_center_input_arbitration.js`), the actions that apply to the page's
+selection. Rows come from the pure model `JarvisSceneInteract.selectionActions(state,
+ids, ctx)` (`control_center_scene_interact.js`) and are wired by
+`JarvisScene.selectionMenu(ctx)` (`control_center_scene_page.js`), read at each
+opening. The selection itself stays page-only (nothing is sent to Core to
+select); an action sends **one** canonical command, never a payload.
+
+| Selection | Rows (in order) |
+| --- | --- |
+| empty (or every selected id gone) | `selection-none` (status, tone `off`), then the hidden row |
+| one or more objects | `selection-count` (status: « 2 objets sélectionnés », note by form: « 1 fenêtre · 1 étoile »), `ranger`, `hide` (or `show-selection` when every member is hidden), the hidden row, `form` (second level), `remove` |
+| hidden row | `hidden` « Masqués (N) » (opens: `ghosts` toggle, `show-all` « Tout réafficher (N) », up to 6 `show:<id>`, `hidden-more`), or `hidden-none` (status) when N = 0 |
+| scene off | method rows only |
+
+| Action | Canonical path | Notes |
+| --- | --- | --- |
+| Masquer | one object: `set_visibility hidden` (the object menu's path); several: **one** `patch_selection {visibility: hidden}` | hidden stays active and recoverable; never Dossier content; the hidden ids leave the page selection |
+| Réafficher / Tout réafficher | one: `set_visibility visible`; several: **one** `patch_selection {visibility: visible}` | brain parity: `scene_update_many {select:{visibility:"hidden"}, visibility:"visible"}` |
+| Voir en fantômes | browser view preference `showHidden` | never rewrites `visibility` |
+| Changer la forme › Étoile / Capsule / Fenêtre | one: `set_representation` with the menu's placement; several: **one** `patch_selection {representation}` | the current form is checked and inert; nothing is cloned |
+| Retirer du Board… | `confirmDialog`, then **one** `archive_selection` (signals cascade) | the dialog says that a durable source (`source_path`, `registry_artifact_id`) stays in the Dossier and that unranged content leaves the Board; refused during a Variantes run (the dialog would open under the Studio, Slice 02 rework B1) |
+| Ranger dans le Dossier | `POST /api/workspace/boards/{active}/dossier/ranger {object_ids, origin:"user"}` ([dossier.md](dossier.md) › *Ranger*) | nothing removed in advance; per-object report (stored, stored but not removed, refused with its `message`); a whole-request refusal (409 `dossier_board_not_active`…) changes nothing |
+
+The `ranger` row reads the **backing preview** (`GET …/dossier/backing`, debounced,
+re-read at each opening and on selection or active-Board change) and the
+displayed Board (`JarvisBoardsControl.activeId()`): disabled with its reason when
+the active Board is unknown, when `board_active` is false (Ranger would refuse
+409), when more than 20 objects are selected, or when nothing selected is
+rangeable; « k sur N » with the first refusal sentence when the selection is
+mixed; tone `wait` while the preview loads, `unknown` when it failed (Ranger
+still answers per object). Durable deletion is **not** offered here: it exists
+only as `memory/delete` with its confirmation, in the Dossier (Slice 07).
+
+Input parity: the wheel is reached by mouse, keyboard and the Bare Hands pointer;
+reaching it (`#toolWheel`) never clears the selection. Keyboard selection:
+**Ctrl+Espace** on a focused object starts a keyboard selection with that object,
+then adds or removes the focused object; arrows move the focus without
+dissolving it; Escape, a click or an empty selection ends it.
+
+Journal (console of the page): `scene.selection_action`, `scene.selection_backing`
+/ `_failed`, `scene.user_hidden`, `scene.user_shown`, `scene.user_representation_many`,
+`scene.user_removed`, `scene.remove_cancelled`, `scene.remove_blocked_during_run`,
+`scene.ranger_done` (counts, codes, ms), `scene.ranger_refused`, `scene.ranger_failed`,
+`scene.key_selection`. Tests: `tests/unit/test_selection_actions_js.py` (model),
+`tests/unit/test_selection_actions_browser.py` (Chrome, Ranger mixed / refused /
+kept, Masquer, forme, Retirer, registry window, keyboard, Bare Hands pointer),
+`tests/unit/test_status_centre_browser.py` (hidden row, ghosts, Tout réafficher).
 
 ## 7. Tests required by this contract (owners)
 

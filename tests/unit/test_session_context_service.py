@@ -76,7 +76,6 @@ async def test_an_open_session_from_before_contexts_is_adopted_once_at_start(tmp
         state, JsonlHistoryStore(tmp_path / "history")))
     await boards.ensure_default()
     old = await legacy.start()
-    await boards.stop()
     await state.close()
 
     for _ in range(2):  # deux démarrages : une seule adoption

@@ -6,7 +6,7 @@ comportement et **n'ouvre aucun micro**. Voice le consomme au démarrage, en
 PRESENTATION (Slice 04) et en SIMPLE (Slice 05) ; l'écran des Réglages (Slice 07)
 le lit et l'écrit par la route.
 
-Forme reprise de `interaction_mode_settings` : ``SETTING_KEY``, une lecture
+Forme commune aux blocs de réglages de cette page (`barehands_test_mode`, `scene_settings`) : ``SETTING_KEY``, une lecture
 **tolérante** (``load``, ``inspect``), une écriture **stricte** (``apply``, qui
 lève avec un ``code`` stable repris dans l'en-tête ``X-Jarvis-Error-Code``) et
 un ``describe``.

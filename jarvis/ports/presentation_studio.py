@@ -16,7 +16,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from pathlib import Path
+from typing import Any, Protocol
 
 from jarvis.domain.prefab import PrefabInstanceRef, PrefabManifest
 from jarvis.ports.prefabs import InstanceValidation
@@ -40,6 +41,33 @@ class StoreScan:
 class SweepReport:
     removed: tuple[str, ...] = ()
     failed: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PurgeBackupDraft:
+    """Une sauvegarde de purge en construction : `name` (`purge-presentations-<horodatage>`), `folder` (`backups/.partial-<name>/`)."""
+
+    name: str
+    folder: Path
+
+
+class PurgeBackupStore(Protocol):
+    """Sauvegardes d'une purge définitive (`jarvis.adapters.file_purge_backups.FilePurgeBackups`). Synchrone ; jamais une
+    sauvegarde publiée n'est retirée."""
+
+    def begin(self, moment: Any) -> PurgeBackupDraft: ...
+
+    def copy_artifact_folder(self, draft: PurgeBackupDraft, artifact_id: str) -> Any: ...
+
+    def database_path(self, draft: PurgeBackupDraft) -> Path: ...
+
+    def write_manifest(self, draft: PurgeBackupDraft, document: Mapping[str, Any]) -> None: ...
+
+    def publish(self, draft: PurgeBackupDraft) -> str:
+        """Renomme `.partial-<name>` en `<name>` ; rend `backups/<name>` (relatif à la racine de données)."""
+
+    def discard(self, draft: PurgeBackupDraft) -> None:
+        """Retire le `.partial-` d'une sauvegarde qui a échoué (au mieux, ne lève pas)."""
 
 
 class PrefabCatalog(Protocol):
@@ -108,5 +136,13 @@ class PresentationStudioStore(Protocol):
     def write_manifest(self, presentation_id: str, text: str) -> None:
         """Remplace `presentation.json`, atomiquement. Écrit **en dernier** quand une opération touche plusieurs fichiers."""
 
+    def copy_presentation(self, presentation_id: str, destination: Path) -> Any:
+        """Copie le dossier entier dans `destination/<presentation_id>/` (sauvegarde avant purge) ; rend les comptes
+        (`safe_tree.TreeCount`). Lien, jonction ou entrée inattendue : `storage_io`, rien n'est copié."""
+
+    def remove_presentation(self, presentation_id: str) -> Any:
+        """Purge définitive du dossier entier (le service ne l'appelle que pour une Presentation archivée, après sa sauvegarde).
+        Lien, jonction ou entrée inattendue : `storage_io`, rien n'est effacé. Rend les comptes (`safe_tree.TreeCount`)."""
+
     def sweep(self) -> SweepReport:
-        """Retire les restes d'un arrêt brutal (`.staging-*`, `*.tmp`). Jamais un document."""
+        """Retire les restes d'un arrêt brutal (`.staging-*`, `*.tmp`, `.purging-*` d'une purge interrompue). Jamais un document vivant."""

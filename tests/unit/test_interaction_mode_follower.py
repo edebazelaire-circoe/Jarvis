@@ -437,7 +437,6 @@ async def test_follower_rereads_the_token_after_an_independent_core_restart(tmp_
     client = LocalCoreClient(host="127.0.0.1", port=port, token=first)
     journal, observer = RecordingJournal(), InteractionModeObserver()
     task = asyncio.create_task(follow_core_mode(observer, client, journal, backoff=0.01, token_file=token_file))
-    other = LocalCoreClient(host="127.0.0.1", port=port, token=second)
     try:
         # Abonné : l'instantané relu à la connexion porte l'époque de Core.
         await until(lambda: observer.epoch is not None)
@@ -451,7 +450,8 @@ async def test_follower_rereads_the_token_after_an_independent_core_restart(tmp_
         await client.close()
 
         await until(lambda: len(journal.of_kind(FOLLOWER_RESUMED_KIND)) == 1, timeout=5.0)
-        await other.set_interaction_mode(InteractionMode.PRESENTATION.value)
+        # Un changement de mode côté Core (en processus : bascule de Board), que le suiveur doit voir.
+        await core.interaction_mode.request(InteractionMode.PRESENTATION.value, source="board_switch")
         await until(lambda: observer.mode is InteractionMode.PRESENTATION, timeout=5.0)
 
         assert client.token == second
@@ -461,7 +461,6 @@ async def test_follower_rereads_the_token_after_an_independent_core_restart(tmp_
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-        await other.close()
         await client.close()
         await server.stop()
         await core.stop()

@@ -27,7 +27,7 @@ import shutil
 from aiohttp import web
 import pytest
 
-from tests.unit.test_interaction_mode_hud_browser import _chrome, _served_page
+from tests.unit.test_boards_card_browser import _chrome, _served_page
 
 HARNESS = Path(__file__).parent / "_chat_tabs_browser.mjs"
 MAX_HOLD_S = 25.0
@@ -193,3 +193,12 @@ async def test_the_chat_adds_no_held_connection_with_three_tabs_and_a_timeline(t
     assert held(opened) == held(closed), (held(opened), held(closed))
     assert not any("/api/chat/" in url or "/api/conversations/events" in url for url in held(opened) if url not in held(closed))
     _no_chat_wait(opened)
+
+
+async def test_no_tab_holds_a_dossier_navigation_long_poll(tmp_path):
+    """Slice 08 de la refonte roue/Dossier (QA B1) : le canal Jarvis -> Dossier ne tient plus aucune connexion
+    longue ; la commande se relève au battement de statut (`dossier_navigation.pending`)."""
+    plan = {"chatTabs": 3, "timelineTab": False, "settleMs": 6000, "sendFrom": 2, "text": "x", "chatOpen": False}
+    seen, _ = await _run(tmp_path, plan)
+    holders = [urls for urls in seen["held"] if any("/api/dossier/navigation/commands" in url for url in urls)]
+    assert holders == [], seen["held"]

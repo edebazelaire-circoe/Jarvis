@@ -1394,8 +1394,9 @@ def test_the_scene_layer_sits_above_the_face_and_below_every_control():
     assert scene == 20
     assert _z(html, ".face") < scene and _z(work, "#cosmosFace") < scene
     # `.voicehint` est retirée par la Slice 06 de l'orbital UI ; le centre d'état
-    # (indicateurs, pastilles, œil) est au-dessus de la scène.
-    for selector in (".topbar", ".dock", ".panel", ".live-banner", ".bgpills", "#recIndicators", "#hiddenEye", ".chat-tab",
+    # (indicateurs, pastilles) est au-dessus de la scène. La ligne d'état du haut et
+    # l'œil permanent sont retirés par la Slice 02 de jarvis-board-ui-wheel-dossier-refactor.
+    for selector in (".dock", ".panel", ".live-banner", ".bgpills", "#recIndicators", ".chat-tab",
                      ".board-drop-tray", "#toolWheel", ".overlay", ".toasts", ".bgpop", ".ctxmenu", ".tl", ".cdialog-back"):
         assert _z(html, selector) > scene, selector
     # Une géométrie, deux peaux : aucun thème ne reclasse une surface, donc les
@@ -1403,9 +1404,9 @@ def test_the_scene_layer_sits_above_the_face_and_below_every_control():
     assert not re.search(r'html\[data-jarvis-theme="cosmos"\][^{]*\{[^}]*z-index', html + work)
     assert _z(barehands, "#jarvisHands") == 2147483000
     boards = _z(html, "#boardsPanel")
-    assert scene < _z(html, ".topbar") < _z(html, ".dock") < _z(html, ".panel") < _z(html, ".live-banner") < boards
+    assert scene < _z(html, ".dock") < _z(html, ".panel") < _z(html, ".live-banner") < boards
     assert boards < _z(html, ".bgpills") < _z(html, ".toasts") < _z(html, ".cdialog-back")
-    assert re.search(r"#boardsHud\{[^}]*pointer-events:auto", html), "the bar cuts pointer events"
+    assert ".topbar" not in html and "#hiddenEye{" not in html
 
 
 def test_animations_are_bounded_with_urgent_signals_first(tmp_path):
@@ -1840,7 +1841,7 @@ def test_a_live_alert_stays_louder_than_the_finish_mark_on_the_same_star():
     page = PAGE_JS.read_text(encoding="utf-8")
     assert "if(node.alerted)classes.push('sc-alerted')" in page
     # L'alerte qui s'éteint redessine l'étoile : `alerted` est dans la signature du contenu.
-    assert "node.itemCount,node.explains,node.alerted,node.ephemeral,node.task,node.group,node.type,node.ghost]);" in page
+    assert "node.itemCount,node.explains,node.alerted,node.ephemeral,node.task,node.group,node.type,node.ghost," in page
     dimmed = re.search(
         r"\.sc-point\.sc-alerted\.sc-exec-completed \.sc-ring,\.sc-point\.sc-alerted\.sc-exec-failed \.sc-ring\{([^}]*)\}", page
     )
@@ -2116,8 +2117,10 @@ def test_one_reveal_one_set_visibility(tmp_path):
     assert "items:[{act:'reveal',label:'Réafficher'}]" in ghost_menu
     assert "if(act==='reveal')showObjects([id])" in ghost_menu
     assert ghost_menu.count("showObjects(") == 1 and "setVisibility" not in ghost_menu
-    show = page[page.index("async function showObjects(ids){"):page.index("function openHiddenMenu(anchor){")]
-    assert show.count("I.commands.setVisibility(id,'visible')") == 1
+    show = page[page.index("async function showObjects(ids){"):page.index("function ghostsShown(){")]
+    # Un objet : un `set_visibility` ; plusieurs (« Tout réafficher », Slice 06) : un `patch_selection`.
+    assert show.count("I.commands.setVisibility(chosen[0],'visible')") == 1
+    assert show.count("I.commands.patchSelection(chosen,{visibility:'visible'})") == 1
     # La commande elle-même : une opération, un objet, `visible`.
     interact = RUNTIME / "control_center_scene_interact.js"
     node = shutil.which("node")

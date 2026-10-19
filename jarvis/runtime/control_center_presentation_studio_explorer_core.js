@@ -449,15 +449,20 @@
     rgba(3,7,11,.80);
   -webkit-backdrop-filter:blur(26px) saturate(.75);backdrop-filter:blur(26px) saturate(.75)}
 #${HOST_ID}[hidden],#${HOST_ID} [hidden]{display:none!important}
-/* Slice 09 rework: during a run (\`jvx-run\` on <html>) the interaction-mode HUD (\`data-keep-live="run"\`) is drawn above Variants (9000)
-   and the presentations rail (9100), under the rail's menu (9300); beside Variants, in the rail's column, whose list stops above it.
-   Slice 07 (orbital shell, D10): the rail docks at the RIGHT of Variants, so the control sits at the bottom of that right column. */
-html.jvx-run #interactionModeHud{z-index:9150}
-html.jvx-run.jvr-studio #interactionModeHud{left:auto;right:12px;align-items:flex-end}
-html.jvx-run.jvr-studio #interactionModeHud .im-pop{left:auto;right:0}
-html.jvx-run.jvr-studio #interactionModeHud .im-btn{min-width:0;max-width:166px;gap:8px;padding:8px 9px}
-html.jvx-run.jvr-studio #interactionModeHud .im-label{letter-spacing:.04em}
-html.jvx-run.jvr-studio #interactionModeHud .im-sub,html.jvx-run.jvr-studio #interactionModeHud .im-pres{letter-spacing:.04em}
+/* Slice 09 rework: during a run (\`jvx-run\` on <html>) the Board card (\`#boardsHud\`, \`data-keep-live="run"\`; until Slice 02 of
+   jarvis-board-ui-wheel-dossier-refactor, the interaction-mode HUD) and its panel are drawn above Variants (9000) and the presentations
+   rail (9100), under the rail's menu (9300): « Refusé par la voix » stays on screen. Beside Variants, in the rail's column, whose list
+   stops above it. Slice 07 (orbital shell, D10): the rail docks at the RIGHT of Variants, so the card sits at the bottom of that right
+   column; its panel opens above it, right-aligned (\`place\` in control_center_boards.js). */
+html.jvx-run #boardsHud{z-index:9150}
+html.jvx-run #boardsPanel{z-index:9150}
+/* QA S04 B1 (jarvis-board-ui-wheel-dossier-refactor) : les indicateurs d'enregistrement du haut-gauche
+   (\`#recIndicators\`, \`data-keep-live="run"\`) restent visibles et cliquables au-dessus de Variantes pendant
+   une lecture : un enregistrement d'écran ou audio se voit et s'arrête sans fermer ni mettre en pause la lecture. */
+html.jvx-run #recIndicators{z-index:9150}
+html.jvx-run.jvr-studio #boardsHud{left:auto;right:12px;align-items:flex-end}
+html.jvx-run.jvr-studio #boardsHud .bd-btn{min-width:0;max-width:166px;gap:8px;padding:8px 9px}
+html.jvx-run.jvr-studio #boardsHud .bd-eyebrow,html.jvx-run.jvr-studio #boardsHud .bd-sub,html.jvx-run.jvr-studio #boardsHud .bd-pres{letter-spacing:.04em}
 html.jvx-run.jvr-studio #presentationRail{bottom:96px}
 #${HOST_ID}:fullscreen{background:
     radial-gradient(70% 55% at 88% 6%,color-mix(in srgb,var(--jvx-glow-a) 26%,transparent),transparent 72%),

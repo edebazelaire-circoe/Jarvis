@@ -130,7 +130,8 @@ async def expect_refusal(path: Path, code: SceneStoreErrorCode, match: str) -> N
 
 
 def test_repository_matches_its_port():
-    for name in ("sweep_leftovers", "initialize", "load", "commit", "archived_history", "close"):
+    for name in ("sweep_leftovers", "initialize", "load", "commit", "archived_history", "history_counts", "purge_archived",
+                 "close"):
         assert callable(getattr(SQLiteSceneRepository, name)), name
         assert name in SceneRepository.__dict__
 

@@ -245,7 +245,7 @@ def test_the_deprecated_door_inherits_the_calibration_refusals_under_their_own_c
       const still={enabled:BAREHANDS.settings().enabled,lifecycle:BAREHANDS.lifecycle(),
         open:!!deep(document.body,C.DOM.flowRootId)};
       const banner=document.getElementById('barehandsStatus').innerHTML;
-      out({refused,still,toasts,said:banner.indexOf('bouton à icône de main')>=0});
+      out({refused,still,toasts,said:banner.indexOf('Sélection › Bare Hands')>=0});
     """, "refuseOff")
 
     assert off["refused"]["ok"] is False

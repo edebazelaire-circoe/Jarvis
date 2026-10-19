@@ -1,20 +1,20 @@
 """Vérité vivante du mode d'interaction. Core la possède, personne d'autre.
 
-Trois processus veulent connaître le mode : le Control Center l'affiche et
-enregistre la **préférence** de l'utilisateur, Voice doit **se comporter**
-selon lui, et le cerveau le lira plus tard. Sans propriétaire unique, chacun
+Trois processus veulent connaître le mode : le Control Center l'affiche, Voice
+doit **se comporter** selon lui, et le cerveau le lira plus tard. Sans propriétaire unique, chacun
 garderait sa copie optimiste et deux d'entre elles finiraient par diverger un
 soir de présentation.
 
 Le partage est donc :
 
-- la **préférence enregistrée** vit sur le **Board actif** (colonne
-  ``interaction_mode`` de ``work_boards``, handoff board-session Slice 02) :
-  `jarvis/core/board_service.py` écoute ce service et l'écrit, puis la
-  réapplique au démarrage de Core (``source="board_restore"``). Le réglage du
-  Control Center (`jarvis/runtime/interaction_mode_settings.py`) n'est plus
-  qu'une entrée de migration et le repli sans Board : son rejeu est adopté une
-  fois par un Board jamais réglé ;
+- rien n'enregistre de mode : il est **dérivé du type du Board actif**
+  (`docs/boards.md` › *Board type*). `jarvis/core/board_service.py` le demande
+  ici au démarrage de Core (``source="board_restore"``) et à chaque bascule
+  (``source="board_switch"``). Le seul autre écrivain est une lecture du
+  Presentation Studio, transitoire et restaurée (``source="presentation_studio_run"``,
+  appel en processus). Aucune demande venue de l'extérieur de Core n'est prise :
+  `POST /v1/interaction-mode` les refuse toutes (`refuse_external_request`,
+  ``interaction_mode_derived``) ;
 - Core possède la **valeur effective vivante** et sa **révision**, ici ;
 - Voice **observe** par l'évènement ``interaction.mode.changed`` relayé par
   ``/v1/events``, ou relit l'instantané ; il ne tient jamais un second mode.
@@ -28,22 +28,24 @@ cette fonctionnalité ne doit pas introduire. Le mode change donc **à chaud**,
 par évènement, et rien ici ne touche à la composition vocale.
 
 La lecture utilisée est délibérément `behaving_interaction_mode` : cette valeur
-**pilote un comportement**. Un ``meeting`` laissé sur le disque reste affichable
-— c'est le Control Center qui le montre, avec `stored_interaction_mode` — mais
-il ne peut pas devenir le mode effectif, parce qu'aucun comportement de réunion
-n'existe (Décision 02).
+**pilote un comportement**. Un Board Réunion désigne ``meeting`` — la carte Board
+affiche « Réunion · prévu » d'après le type, `/api/status` le publie en `board_mode` —
+mais ``meeting`` ne peut pas devenir le mode effectif, parce qu'aucun
+comportement de réunion n'existe (Décision 02).
 """
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
 from jarvis.domain.interaction_mode import (
     DEFAULT_INTERACTION_MODE,
+    INTERACTION_MODE_DERIVED,
+    INTERACTION_MODE_DERIVED_MESSAGE,
     INTERACTION_MODES,
     InteractionMode,
     InteractionModeError,
@@ -132,11 +134,10 @@ class InteractionModeState:
     revision: int
     epoch: str
     #: Qui a demandé ce mode. Champ libre, journalisé et transporté tel quel ;
-    #: les valeurs réellement émises sont `control_center` (un clic),
-    #: `startup` / `core_restart` / `save_retry` (les rattrapages du Control
-    #: Center), `board_restore` (le mode du Board actif réappliqué par
-    #: `BoardService`), `protocol` (un appel direct) et `default` (l'état
-    #: initial). `BoardService` lit ce champ pour distinguer un choix d'un rejeu.
+    #: depuis la Slice 01b, les valeurs réellement émises sont `board_restore` /
+    #: `board_switch` (le mode du type du Board actif, appliqué par
+    #: `BoardService`), `presentation_studio_run` (un run temporaire du Studio)
+    #: et `default` (l'état initial).
     source: str
     changed_at: datetime
 
@@ -174,25 +175,18 @@ class InteractionModeState:
 class InteractionModeService:
     """Propriétaire de la valeur effective. Un seul écrivain, une seule vérité.
 
-    Toute demande passe par un verrou : deux clics simultanés, ou une
-    réconciliation de démarrage qui croise une demande de l'écran, se
+    Toute demande passe par un verrou : une bascule de Board qui croise
+    l'entrée ou la restauration d'une lecture du Studio, par exemple, se
     sérialisent au lieu de produire deux révisions pour un seul changement.
 
     Rien n'est persisté ici, à dessein. Un mode effectif est un fait de cette
-    vie du processus ; la préférence, elle, est enregistrée **par Board** :
-    `BoardService` (abonné par `add_listener`) l'écrit sur le Board actif et la
-    réapplique au démarrage de Core par ce même `request()`
-    (`source="board_restore"`). Le rejeu du Control Center
-    (`POST /v1/interaction-mode`, sources `startup` / `core_restart`) n'est
-    plus qu'une entrée de migration, adoptée une fois par un Board `unset`.
+    vie du processus, dérivé du type du Board actif : `BoardService` le demande
+    par ce même `request()` au démarrage de Core (`source="board_restore"`) et
+    à chaque bascule (`source="board_switch"`).
 
-    **Il n'y a qu'un seul chemin d'entrée, `request()`, et il est strict.** Une
-    variante tolérante a existé ici : elle n'avait aucun appelant, parce que le
-    Control Center lit et normalise le réglage chez lui — Core ne voit jamais
-    la valeur brute du disque. La tolérance appartient donc au propriétaire de
-    la persistance, et c'est lui qui dit à l'écran et au journal qu'un réglage
-    était illisible (`interaction_mode_unreadable`). Deux endroits pour la même
-    indulgence, dont un injoignable, c'était une promesse que rien ne tenait.
+    **Il n'y a qu'un seul chemin d'entrée, `request()`, et il est strict**, appelé
+    en processus par `BoardService` et par le Presentation Studio. Le protocole
+    n'y mène plus : `refuse_external_request` dit et code son refus.
     """
 
     def __init__(self, *, events: Any, diagnostics: DiagnosticSink | None = None, epoch: str | None = None) -> None:
@@ -210,8 +204,8 @@ class InteractionModeService:
         # jamais pouvoir se faire passer l'un pour l'autre.
         self._epoch = epoch or new_id()
         #: Abonnés synchrones, prévenus au moment du changement (`add_listener`) :
-        #: `(appelable, reçoit l'état complet, reçoit aussi les demandes sans effet)`.
-        self._listeners: list[tuple[Any, bool, bool]] = []
+        #: `(appelable, reçoit l'état complet)`.
+        self._listeners: list[tuple[Any, bool]] = []
         self._state = InteractionModeState(
             mode=DEFAULT_INTERACTION_MODE, revision=0, epoch=self._epoch, source="default",
             changed_at=utc_now(),
@@ -305,16 +299,13 @@ class InteractionModeService:
                           "revision": state.revision, "source": source},
                 )
         if unchanged is not None:
-            # Une demande sans effet reste un choix : les abonnés qui l'ont
-            # demandé (`with_unchanged`, `BoardService` qui l'enregistre sur le
-            # Board actif) la reçoivent, attribuée à sa source. Aucun évènement.
-            self._notify(replace(unchanged, source=source), unchanged_only=True)
+            # Une demande sans effet n'est notifiée à personne et ne publie rien.
             return unchanged, InteractionModeDisposition.UNCHANGED
         self._notify(state)
         await self._publish(state)
         return state, InteractionModeDisposition.APPLIED
 
-    def add_listener(self, listener: Any, *, with_state: bool = False, with_unchanged: bool = False) -> None:
+    def add_listener(self, listener: Any, *, with_state: bool = False) -> None:
         """Brancher un état de Core que le mode doit retirer **tout de suite**.
 
         Ajouté par la Slice 04 pour la mémoire de séance PRESENTATION
@@ -330,23 +321,15 @@ class InteractionModeService:
         se retirer ne doit pas bloquer l'utilisateur qui quitte PRESENTATION.
 
         `with_state=True` : l'appelable reçoit l'`InteractionModeState` du
-        changement (mode, révision, **source**) au lieu du seul mode ; c'est ce
-        qu'utilise `BoardService`, qui doit savoir d'où vient le changement.
-
-        `with_unchanged=True` (implique `with_state`) : l'appelable reçoit aussi
-        chaque demande acceptée **sans effet** (le mode demandé est déjà le
-        mode effectif), sous la forme de l'état courant attribué à la source de
-        la demande (même révision). Aucun évènement n'est publié pour elle.
-        C'est ce qui permet à `BoardService` d'enregistrer sur le Board actif
-        un choix explicite de l'utilisateur qui ne change rien au mode
-        effectif (QA Slice 04b, S1).
+        changement (mode, révision, **source**) au lieu du seul mode. Une
+        demande sans effet (mode déjà effectif) n'est notifiée à personne.
         """
 
         if not callable(listener):
             raise InteractionModeError(
                 "interaction_mode_listener_invalid", "Un observateur de mode est un appelable."
             )
-        self._listeners.append((listener, bool(with_state or with_unchanged), bool(with_unchanged)))
+        self._listeners.append((listener, bool(with_state)))
 
     def remove_listener(self, listener: Any) -> None:
         """Débrancher un abonné (arrêt de son propriétaire). Absent : rien."""
@@ -354,10 +337,8 @@ class InteractionModeService:
         # `!=`, not `is not`: a bound method is a new object at each attribute access.
         self._listeners = [entry for entry in self._listeners if entry[0] != listener]
 
-    def _notify(self, state: InteractionModeState, *, unchanged_only: bool = False) -> None:
-        for listener, with_state, with_unchanged in tuple(self._listeners):
-            if unchanged_only and not with_unchanged:
-                continue
+    def _notify(self, state: InteractionModeState) -> None:
+        for listener, with_state in tuple(self._listeners):
             try:
                 listener(state if with_state else state.mode)
             except Exception as exc:  # noqa: BLE001 - un abonné cassé ne bloque pas un changement de mode
@@ -400,6 +381,22 @@ class InteractionModeService:
                       "revision": state.revision},
             )
 
+    def refuse_external_request(self, value: object, *, source: object) -> InteractionModeError:
+        """Refus d'une demande venue de l'extérieur de Core (`POST /v1/interaction-mode`), tracé.
+
+        Toujours, quelle que soit la valeur ou l'origine : le mode suit le type du
+        Board actif (Slice 01b). Le Studio, seul écrivain transitoire, appelle
+        `request()` en processus et ne passe jamais par ici. Rend l'erreur, que
+        la route sérialise en 409 ; rien n'est changé.
+        """
+
+        self._trace(
+            _TRACE_REFUSED, "Demande de mode refusée : le mode suit le type du Board actif", level="warning",
+            data={"code": INTERACTION_MODE_DERIVED, "source": self._mode_value(source),
+                  "mode": self._mode_value(value)},
+        )
+        return InteractionModeError(INTERACTION_MODE_DERIVED, INTERACTION_MODE_DERIVED_MESSAGE)
+
     @staticmethod
     def _mode_value(value: object) -> str:
         """Ce qu'on a reçu, borné et sans contenu utilisateur.
@@ -409,6 +406,8 @@ class InteractionModeService:
         doit pas pouvoir être rempli par un champ de saisie.
         """
 
+        if value is None:
+            return "absent"  # Slice 08 (polish S01b) : un champ manquant n'est pas une valeur `NoneType`
         text = value if isinstance(value, str) else type(value).__name__
         return text[:64]
 

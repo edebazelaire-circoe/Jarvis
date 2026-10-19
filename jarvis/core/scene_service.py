@@ -52,6 +52,22 @@ contrôle fait sur l'instantané (la `basis` d'un événement d'état,
 `jarvis/core/prefab_events.py`) ne peut donc pas être devancé par une autre
 commande entre la lecture et l'écriture.
 
+Purge définitive des objets archivés (demande de l'utilisateur du
+2026-10-18, `docs/scene-model.md` › *Archive purge*) : hors du réducteur, parce
+qu'elle touche l'historique qui n'est pas dans l'instantané et qu'elle exige
+une confirmation. `plan_archive_purge` (n'écrit rien) rend le plan et un jeton
+HMAC à durée limitée, secret propre à ce processus ; `purge_archived` recalcule
+le plan **sous le même verrou que les commandes**, vérifie le jeton, puis le
+dépôt sauvegarde la base d'abord et efface en une transaction. Ensuite
+seulement l'instantané en mémoire perd les pierres tombales purgées, la
+révision avance d'un cran **sans patch** : l'anneau est vidé, donc tout lecteur
+à une révision antérieure reçoit `resync_required` et relit l'instantané (la
+page, le proxy du Control Center et `jarvis-display` le font déjà). L'époque ne
+change pas : la révision reste monotone, et une nouvelle époque périmerait sans
+raison les plans en cours du Tool Brain. Les ids que le runtime suit encore
+(`archive_retention`, branché sur la projection par `v2_app`) gardent leur
+pierre tombale ; sans source branchée (tests, outils), rien n'est suivi.
+
 Démarrage : `start()` ouvre le fichier, charge la scène ou en crée une avec
 un `scene_id` stable. Un fichier plus récent, inconnu ou corrompu est un
 refus explicite et journalisé (`core.scene.unavailable`) : la scène reste
@@ -62,10 +78,12 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from enum import StrEnum
 import math
+import secrets
+import time
 import uuid
 
 from jarvis.core.v2_services import NullDiagnosticSink
@@ -73,6 +91,7 @@ from jarvis.domain.prefab import PrefabInstanceRef, canonical_json, clip_message
 from jarvis.domain.scene import (
     MAX_SCENE_OBJECTS,
     PatchOpKind,
+    SceneActor,
     SceneCommand,
     SceneCommandOutcome,
     SceneObject,
@@ -83,11 +102,23 @@ from jarvis.domain.scene import (
     SceneUpdate,
     apply_scene_command,
 )
+from jarvis.domain.scene_purge import (
+    ScenePurgeCode,
+    ScenePurgeError,
+    ScenePurgeOffer,
+    ScenePurgePlan,
+    ScenePurgeResult,
+    check_purge_token,
+    issue_purge_token,
+    plan_archive_purge,
+    purged_snapshot,
+)
 from jarvis.ports.prefabs import PrefabInstanceValidator
 from jarvis.ports.scene import (
     ArchivedSceneObject,
     ScenePatchWindow,
     ScenePersistenceError,
+    ScenePurgeBackupError,
     SceneRepository,
     SceneStoreError,
     SceneStoreErrorCode,
@@ -104,6 +135,10 @@ SCENE_PERSIST_RESTORED_KIND = "core.scene.persist_restored"
 SCENE_COMMAND_REFUSED_KIND = "core.scene.command_refused"
 SCENE_CLOSE_FAILED_KIND = "core.scene.close_failed"
 SCENE_SWEPT_KIND = "core.scene.swept"
+#: Purge définitive des objets archivés exécutée (comptes, ids gardés, chemin de la sauvegarde ; jamais de contenu).
+SCENE_ARCHIVE_PURGED_KIND = "core.scene.archive_purged"
+#: Purge demandée mais refusée avant d'effacer (sauvegarde en échec).
+SCENE_ARCHIVE_PURGE_FAILED_KIND = "core.scene.archive_purge_failed"
 SCENE_SWEEP_FAILED_KIND = "core.scene.sweep_failed"
 SCENE_ORPHAN_WAL_SET_ASIDE_KIND = "core.scene.orphan_wal_set_aside"
 #: Le validateur de prefabs a levé : refus fermé (`prefab_invalid`), cause réelle journalisée.
@@ -113,6 +148,9 @@ PREFAB_CATALOG_UNAVAILABLE = "prefab catalog unavailable"
 
 #: Plan d'`apply_if` : la commande à appliquer sur l'instantané courant, ou `None`.
 ScenePlan = Callable[[SceneSnapshot], SceneCommand | None]
+#: Ids d'objets que le runtime suit encore et pourrait réécrire : leur pierre tombale survit à une purge.
+#: Lève `ScenePurgeError(runtime_settling)` quand la projection ne peut pas encore le dire.
+ArchiveRetention = Callable[[], Awaitable[frozenset[str]]]
 
 #: Patchs gardés en mémoire pour le transport. Au-delà, un consommateur en
 #: retard reçoit `resync_required` et relit l'instantané.
@@ -178,6 +216,8 @@ class SceneService:
         diagnostics: DiagnosticSink | None = None,
         patch_ring_size: int = PATCH_RING_SIZE,
         prefab_validator: PrefabInstanceValidator | None = None,
+        archive_retention: ArchiveRetention | None = None,
+        clock: Callable[[], float] = time.time,
     ) -> None:
         if not 1 <= patch_ring_size <= PATCH_RING_SIZE:
             raise ValueError(f"patch_ring_size must be between 1 and {PATCH_RING_SIZE}")
@@ -198,6 +238,15 @@ class SceneService:
         #: journalisé, et nombre d'échecs identiques tus depuis.
         self._persist_failing: tuple[str, str] | None = None
         self._persist_suppressed = 0
+        self._archive_retention = archive_retention
+        self._clock = clock
+        #: Secret des jetons de purge : propre à ce processus, un jeton ne survit pas à un redémarrage.
+        self._purge_secret = secrets.token_bytes(32)
+
+    def attach_archive_retention(self, retention: ArchiveRetention | None) -> None:
+        """Brancher la source des ids suivis par le runtime (la projection naît après la scène dans `v2_app`)."""
+
+        self._archive_retention = retention
 
     @property
     def availability(self) -> SceneAvailability:
@@ -377,12 +426,100 @@ class SceneService:
             try:
                 await self._repository.commit(current, update.patch, update.snapshot)
             except Exception as exc:
-                raise self._persistence_failed(current, update.patch, exc) from exc
+                raise self._persistence_failed(current, update.patch.revision, exc) from exc
             self._snapshot = update.snapshot
             self._ring.append(update.patch)
             self._notify_change()
-            self._persist_recovered(update.patch)
+            self._persist_recovered(update.patch.revision)
             return update
+
+    # ------------------------------------------------------------ purge des archivés
+
+    async def plan_archive_purge(self, *, actor: SceneActor) -> ScenePurgeOffer:
+        """Ce qu'une purge effacerait maintenant, et le jeton pour l'exécuter. N'écrit rien.
+
+        `actor` : `brain` ou `user` (`PermissionError` pour `runtime`, qui n'est pas une personne).
+        """
+
+        self._check_purge_actor(actor)
+        async with self._lock:
+            plan = await self._purge_plan(self._require_snapshot())
+            now = int(self._clock())
+            token, expires = issue_purge_token(self._purge_secret, plan, epoch=self._epoch, now_epoch=now)
+            return ScenePurgeOffer(plan, token, now, expires)
+
+    async def purge_archived(self, *, confirmation: object, actor: SceneActor) -> ScenePurgeResult:
+        """Exécuter la purge que `confirmation` décrit ; refus `ScenePurgeError` sans rien effacer.
+
+        Même protection que `apply` : la purge se poursuit dans une tâche
+        protégée, une annulation de l'appelant ne laisse jamais le disque en
+        avance sur la mémoire.
+        """
+
+        self._check_purge_actor(actor)
+        task = asyncio.ensure_future(self._purge_serialized(confirmation, actor))
+        task.add_done_callback(_consume_outcome)
+        return await asyncio.shield(task)
+
+    @staticmethod
+    def _check_purge_actor(actor: SceneActor) -> None:
+        if actor not in (SceneActor.BRAIN, SceneActor.USER):
+            raise PermissionError("only the brain or the user purges archived scene objects")
+
+    async def _purge_plan(self, current: SceneSnapshot) -> ScenePurgePlan:
+        retained: frozenset[str] = frozenset()
+        if self._archive_retention is not None and current.archived_ids:
+            try:
+                retained = frozenset(await self._archive_retention())
+            except ScenePurgeError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - fermé par défaut : sans savoir ce que le runtime suit, rien ne part
+                raise ScenePurgeError(
+                    ScenePurgeCode.RUNTIME_SETTLING,
+                    f"the runtime projection cannot say which archived ids it still tracks ({type(exc).__name__}): retry later",
+                ) from exc
+        kept = frozenset(object_id for object_id in current.archived_ids if object_id in retained)
+        history_rows, kept_history_rows = await self._repository.history_counts(kept)
+        return plan_archive_purge(current, kept, history_rows=history_rows, kept_history_rows=kept_history_rows)
+
+    async def _purge_serialized(self, confirmation: object, actor: SceneActor) -> ScenePurgeResult:
+        async with self._lock:
+            current = self._require_snapshot()
+            plan = await self._purge_plan(current)
+            check_purge_token(self._purge_secret, plan, confirmation, epoch=self._epoch, now_epoch=int(self._clock()))
+            result = purged_snapshot(current, plan)
+            try:
+                write = await self._repository.purge_archived(
+                    current, result, purge_ids=plan.purge_ids, history_rows=plan.history_rows,
+                )
+            except ScenePurgeBackupError as exc:
+                self._emit(
+                    SCENE_ARCHIVE_PURGE_FAILED_KIND,
+                    "purge des objets archivés refusée : sauvegarde impossible, rien n'a été effacé",
+                    level="error",
+                    data={"actor": actor.value, "revision": current.revision, "error": f"{type(exc).__name__}: {exc}"[:400]},
+                )
+                raise ScenePurgeError(ScenePurgeCode.BACKUP_FAILED, f"nothing was deleted: {exc}") from exc
+            except Exception as exc:
+                raise self._persistence_failed(current, result.revision, exc) from exc
+            self._snapshot = result
+            # Aucun patch ne décrit la purge : vider l'anneau force tout lecteur en retard à relire l'instantané.
+            self._ring.clear()
+            self._notify_change()
+            self._persist_recovered(result.revision)
+            self._emit(
+                SCENE_ARCHIVE_PURGED_KIND,
+                "objets archivés purgés définitivement (sauvegarde écrite avant)",
+                level="warning",
+                data={
+                    "actor": actor.value, "scene_id": result.scene_id, "revision": result.revision,
+                    "purged_ids": write.tombstones, "history_rows": write.history_rows,
+                    "kept_ids": len(plan.kept_ids), "kept_history_rows": plan.kept_history_rows,
+                    "backup": write.backup_path, "compacted": write.compacted,
+                },
+            )
+            return ScenePurgeResult(result.scene_id, result.revision, write.tombstones, write.history_rows, plan.kept_ids,
+                                    plan.kept_history_rows, write.backup_path, write.compacted)
 
     async def _check_prefabs(self, current: SceneSnapshot, update: SceneUpdate) -> tuple[SceneUpdate, dict | None]:
         """Valider chaque bloc `prefab` neuf ou changé du patch et y substituer sa forme complétée.
@@ -452,7 +589,7 @@ class SceneService:
             return "invalid_definition", f"{block.key}: the defaulted block is invalid: {exc}", None
         return "", "", normalized
 
-    def _persistence_failed(self, current: SceneSnapshot, patch: ScenePatch, exc: Exception) -> ScenePersistenceError:
+    def _persistence_failed(self, current: SceneSnapshot, attempted_revision: int, exc: Exception) -> ScenePersistenceError:
         """Journaliser l'échec d'écriture et construire l'erreur rendue à l'appelant."""
 
         code = exc.code if isinstance(exc, SceneStoreError) else SceneStoreErrorCode.STORAGE_IO
@@ -481,7 +618,7 @@ class SceneService:
                 data={
                     "scene_id": current.scene_id,
                     "revision": current.revision,
-                    "attempted_revision": patch.revision,
+                    "attempted_revision": attempted_revision,
                     "code": code.value,
                     "error": detail,
                     **({"suppressed": self._persist_suppressed} if self._persist_suppressed else {}),
@@ -493,9 +630,9 @@ class SceneService:
             self._snapshot = None
             self._ring.clear()
             self._notify_change()
-        return ScenePersistenceError(code, f"scene revision {patch.revision} was not persisted: {detail}")
+        return ScenePersistenceError(code, f"scene revision {attempted_revision} was not persisted: {detail}")
 
-    def _persist_recovered(self, patch: ScenePatch) -> None:
+    def _persist_recovered(self, revision: int) -> None:
         """Première écriture réussie après des échecs : fin de la panne, dite une fois."""
 
         if self._persist_failing is None:
@@ -503,7 +640,7 @@ class SceneService:
         self._emit(
             SCENE_PERSIST_RESTORED_KIND,
             "écriture de la scène de nouveau possible",
-            data={"revision": patch.revision, "code": self._persist_failing[0], "suppressed": self._persist_suppressed},
+            data={"revision": revision, "code": self._persist_failing[0], "suppressed": self._persist_suppressed},
         )
         self._persist_failing, self._persist_suppressed = None, 0
 

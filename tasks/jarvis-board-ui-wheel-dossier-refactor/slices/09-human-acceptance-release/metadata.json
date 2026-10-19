@@ -1,0 +1,19 @@
+{
+  "slice_id": "09-human-acceptance-release",
+  "title": "Slice 09 — Final human acceptance and release gate",
+  "task_type": "waived",
+  "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_SLICE00_READINESS",
+  "dependencies": [
+    "08-integration-accessibility-regression"
+  ],
+  "frontend": true,
+  "code": false,
+  "required_qa": [
+    "qa-verification",
+    "runtime-validation"
+  ],
+  "required_skills": [
+    "/impeccable"
+  ],
+  "agent_routing": "Use a Claude Work Agent for frontend implementation/review where supported by the host."
+}

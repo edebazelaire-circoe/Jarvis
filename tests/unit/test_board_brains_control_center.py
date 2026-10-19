@@ -27,8 +27,6 @@ from jarvis.domain.workspace_board import (
 )
 from jarvis.protocol.client import CoreProtocolError
 from jarvis.protocol.server import LocalProtocolServer
-from jarvis.runtime import control_center as control_center_module
-from jarvis.runtime import interaction_mode_settings as mode_settings
 from jarvis.runtime.agent_tasks import AgentTaskTracker
 from jarvis.runtime.control_center import ControlCenter
 from jarvis.runtime.core_sessions import CoreSessionTransport
@@ -347,31 +345,29 @@ async def test_restart_new_conversation_keeps_the_historical_behaviour_without_c
 
 
 class BoardsCore:
-    """`GET /v1/boards/active` d'un Core à Boards, origine du mode au choix."""
+    """`GET /v1/boards/active` d'un Core à Boards ; `kind=None` : Board hors contrat (forme d'avant v9)."""
 
-    def __init__(self, origin: str) -> None:
-        self.origin = origin
+    def __init__(self, kind: str | None) -> None:
+        self.kind = kind
 
     async def active_board(self) -> dict:
-        return {"board": {"board_id": "default", "interaction_mode": "assistant",
-                          "interaction_mode_origin": self.origin}, "active": True}
+        if self.kind is None:
+            return {"board": {"board_id": "default", "interaction_mode": "assistant",
+                              "interaction_mode_origin": "unset"}, "active": True}
+        return {"board": {"board_id": "default", "board_kind": self.kind}, "active": True}
 
     async def close(self) -> None:
         return None
 
 
 class ServiceReader:
+    """Lecture seule : le Control Center n'a plus de quoi écrire un mode (Slice 01b)."""
+
     def __init__(self, service: InteractionModeService) -> None:
         self.service = service
-        self.writes: list[tuple[str, str | None]] = []
 
     async def interaction_mode(self) -> dict:
         return self.service.snapshot()
-
-    async def set_interaction_mode(self, mode: str, *, source: str | None = None) -> dict:
-        self.writes.append((mode, source))
-        state, disposition = await self.service.request(mode, source=source or "protocol")
-        return {**self.service.snapshot(), "disposition": disposition.value, "revision": state.revision}
 
     async def close(self) -> None:
         return None
@@ -385,45 +381,47 @@ class Bus:
         self.published.append(envelope)
 
 
-async def _core_restart_replay(tmp_path, monkeypatch, origin: str):  # noqa: ANN202
-    monkeypatch.setattr(control_center_module, "INTERACTION_MODE_REPLAY_BACKOFF_S", 0.0)
+def _board_control(tmp_path, kind: str | None):  # noqa: ANN202
     bus = Bus()
     service = InteractionModeService(events=bus)
-    reader = ServiceReader(service)
-    control = make_control(tmp_path, sessions=BoardsCore(origin),
-                           interaction_mode_view=CoreInteractionModeView(reader))
+    control = make_control(tmp_path, sessions=BoardsCore(kind),
+                           interaction_mode_view=CoreInteractionModeView(ServiceReader(service)))
     settings = control._settings()
-    mode_settings.apply(settings, {"mode": "presentation"})  # préférence globale ≠ Board (assistant)
+    settings["interaction_mode"] = {"schema_version": 1, "mode": "presentation"}  # ancienne clé globale ≠ Board
     control._write_settings(settings)
-
-    control._schedule_interaction_mode_replay("core_restart")
-    await control._interaction_mode_replay
-    return control, service, reader, bus
+    return control, service, bus
 
 
-async def test_no_mode_flip_on_core_restart_when_the_active_board_owns_its_mode(tmp_path, monkeypatch):
-    control, service, reader, bus = await _core_restart_replay(tmp_path, monkeypatch, "user")
-    assert reader.writes == [] and bus.published == [], "no presentation -> assistant flip"
-    assert service.mode is InteractionMode.ASSISTANT
-    assert trace(tmp_path, "interaction.mode.replay_retired")[-1]["data"]["source"] == "core_restart"
+@pytest.mark.parametrize("kind", ["assistant", "presentation", "meeting"])
+async def test_the_status_shows_the_board_type_mode_and_never_writes_a_mode(tmp_path, kind):
+    """Slice 01b : le statut lit le type du Board actif ; rien n'est rejoué ni écrit vers Core."""
+
+    control, service, bus = _board_control(tmp_path, kind)
+    for _ in range(3):
+        block = json.loads((await control.status(None)).text)["interaction_mode"]
+    assert block["board_mode"] == kind
+    assert service.revision == 0 and bus.published == [], "no write, no replay"
+    assert control._settings()["interaction_mode"]["mode"] == "presentation", "left in the file, ignored"
 
 
-async def test_the_legacy_mode_is_still_replayed_once_as_migration_input(tmp_path, monkeypatch):
-    control, service, reader, _ = await _core_restart_replay(tmp_path, monkeypatch, "unset")
-    assert reader.writes == [("presentation", "core_restart")]
-    assert service.mode is InteractionMode.PRESENTATION
+async def test_an_out_of_contract_board_is_said_and_designates_no_mode(tmp_path):
+    """Board sans type valide (forme d'avant v9) : dit en warning, aucun mode désigné, rien n'est écrit."""
+
+    control, service, _ = _board_control(tmp_path, None)
+    block = json.loads((await control.status(None)).text)["interaction_mode"]
+    assert block["board_mode"] is None and service.mode is InteractionMode.ASSISTANT
+    unknown = trace(tmp_path, "interaction.mode.board_unknown")
+    assert unknown and unknown[-1]["level"] == "warning" and unknown[-1]["data"]["code"] == "invalid_board_snapshot"
 
 
-async def test_a_mode_chosen_with_board_core_is_not_written_to_the_global_preference(tmp_path):
-    service = InteractionModeService(events=Bus())
-    reader = ServiceReader(service)
-    control = make_control(tmp_path, sessions=BoardsCore("user"), interaction_mode_view=CoreInteractionModeView(reader))
+async def test_a_mode_chosen_with_board_core_is_refused_and_nothing_is_written(tmp_path):
+    control, service, bus = _board_control(tmp_path, "assistant")
 
-    response = await control.save_interaction_mode(JsonRequest({"mode": "presentation"}))
+    with pytest.raises(web.HTTPConflict) as refused:
+        await control.save_interaction_mode(JsonRequest({"mode": "presentation"}))
 
-    assert json.loads(response.text)["effective"]["mode"] == "presentation"
-    assert reader.writes == [("presentation", "control_center")]
-    assert "interaction_mode" not in control._settings(), "the Board keeps the mode, not the global setting"
+    assert refused.value.headers["X-Jarvis-Error-Code"] == "interaction_mode_derived"
+    assert service.revision == 0 and bus.published == []
 
 
 async def test_core_backend_keeps_the_brain_not_foreground_code_of_a_real_control_center(tmp_path):

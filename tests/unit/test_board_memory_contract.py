@@ -1,6 +1,6 @@
-"""Contrat pur `board_kind` + mémoire de Board (handoff board-memory-workspace-inspector, Slice 01).
+"""Contrat pur `board_kind` + mémoire de Board (handoff board-memory-workspace-inspector, Slice 01 ; type fixé : 01a).
 
-Domaine pur : aucun disque, aucune base. Voir `docs/boards.md` › *Board kind*
+Domaine pur : aucun disque, aucune base. Voir `docs/boards.md` › *Board type*
 et *Board memory*.
 """
 from __future__ import annotations
@@ -15,11 +15,9 @@ from jarvis.domain.board_memory import (
     BOARDS_DIR, MAX_MEMORY_IO_BYTES, MAX_MEMORY_PATH_CHARS, MEMORY_DIR, MEMORY_HTTP_STATUS, MEMORY_SUMMARY_NAME,
     BoardMemoryError, BoardMemoryErrorCode, BoardMemoryPath, board_memory_root,
 )
-from jarvis.domain.interaction_mode import InteractionMode
 from jarvis.domain.session_activity import ActivityDraft, ActivityKind
 from jarvis.domain.workspace_board import (
-    DEFAULT_BOARD_KIND, Board, BoardError, BoardKind, InteractionModeOrigin, archive_board, create_board,
-    default_board, set_interaction_mode, update_board,
+    DEFAULT_BOARD_KIND, Board, BoardError, BoardKind, archive_board, create_board, default_board, update_board,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,27 +32,27 @@ def t(minutes: int) -> datetime:
 # ---------------------------------------------------------------- board_kind
 
 
-def test_board_kind_is_a_closed_set_with_empty_by_default():
-    assert [k.value for k in BoardKind] == ["empty", "meeting", "presentation"]
-    assert DEFAULT_BOARD_KIND is BoardKind.EMPTY
-    assert create_board("B", now=T0).board_kind is BoardKind.EMPTY
-    assert default_board(now=T0).board_kind is BoardKind.EMPTY
+def test_board_kind_is_a_closed_set_with_assistant_by_default():
+    assert [k.value for k in BoardKind] == ["assistant", "presentation", "meeting"]
+    assert DEFAULT_BOARD_KIND is BoardKind.ASSISTANT
+    assert create_board("B", now=T0).board_kind is BoardKind.ASSISTANT
+    assert default_board(now=T0).board_kind is BoardKind.ASSISTANT
 
 
 def test_board_kind_round_trips_through_the_payload():
-    board = update_board(create_board("B", now=T0), now=t(1), board_kind=BoardKind.MEETING)
+    board = create_board("B", now=T0, board_kind=BoardKind.MEETING)
     payload = board.to_payload()
     assert payload["board_kind"] == "meeting"
     assert Board.from_payload(payload) == board
 
 
-def test_a_payload_written_before_board_kind_decodes_as_empty():
+def test_a_payload_without_board_kind_decodes_as_assistant():
     payload = create_board("Ancien", now=T0).to_payload()
     del payload["board_kind"]
-    assert Board.from_payload(payload).board_kind is BoardKind.EMPTY
+    assert Board.from_payload(payload).board_kind is BoardKind.ASSISTANT
 
 
-@pytest.mark.parametrize("raw", ["Meeting", "réunion", "", None, 1, ["meeting"]])
+@pytest.mark.parametrize("raw", ["Meeting", "réunion", "", None, 1, ["meeting"], "empty"])
 def test_an_unknown_board_kind_is_refused_on_decode(raw):
     payload = {**create_board("B", now=T0).to_payload(), "board_kind": raw}
     with pytest.raises(BoardError) as exc:
@@ -68,24 +66,13 @@ def test_board_kind_must_be_the_enum_on_the_value():
     assert exc.value.code == "invalid_board"
 
 
-def test_changing_board_kind_never_touches_the_interaction_mode():
-    board = set_interaction_mode(create_board("B", now=T0), InteractionMode.ASSISTANT, now=t(1))
-    for kind in (BoardKind.PRESENTATION, BoardKind.MEETING, BoardKind.EMPTY):
-        changed = update_board(board, now=t(2), board_kind=kind)
-        assert changed.board_kind is kind
-        assert (changed.interaction_mode, changed.interaction_mode_origin) == (
-            InteractionMode.ASSISTANT, InteractionModeOrigin.USER)
-    # Et l'inverse : changer le mode ne change pas la nature.
-    meeting = update_board(create_board("R", now=T0), now=t(1), board_kind=BoardKind.MEETING)
-    assert set_interaction_mode(meeting, InteractionMode.PRESENTATION, now=t(2)).board_kind is BoardKind.MEETING
-
-
-def test_update_without_board_kind_keeps_it_and_archived_board_refuses_it():
-    board = update_board(create_board("B", now=T0), now=t(1), board_kind=BoardKind.PRESENTATION)
+def test_an_update_keeps_the_type_it_cannot_name():
+    board = create_board("B", now=T0, board_kind=BoardKind.PRESENTATION)
     assert update_board(board, now=t(2), title="B2").board_kind is BoardKind.PRESENTATION
     archived = archive_board(board, active_board_id=None, now=t(3))
+    assert archived.board_kind is BoardKind.PRESENTATION
     with pytest.raises(BoardError) as exc:
-        update_board(archived, now=t(4), board_kind=BoardKind.EMPTY)
+        update_board(archived, now=t(4), title="B3")
     assert exc.value.code == "board_archived"
 
 

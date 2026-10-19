@@ -210,7 +210,7 @@ processes with its own lifecycle.
 | --- | --- | --- |
 | Core | `python -m jarvis core` | conversations, jobs, tools, confirmation policy, public brain state; loopback HTTP + `/v1/events` WebSocket; Sessions (resumed at start), Contexts and their folders, Artifacts and the activity ledger, explicit captures (its own microphone stream, GDI screenshots, an `ffmpeg` child in a Job Object for screen recording), recording transcription, the Context enrichment worker (one restricted `claude` child per round) |
 | Voice | `python -m jarvis voice` | wake word, microphone/speakers, the Realtime session, speech scheduling; no part in explicit captures |
-| Control Center | `python -m jarvis control-center` | browser panel, trace/error console, settings, the local Claude/Codex agent behind `POST /api/agent/ask`; the capture controls (tool wheel wedges and `#recIndicators`, orbital UI Slice 04) and the capture relay; the Brain's `jarvis-capture` and `jarvis-workspace` MCP servers are children of the Brain CLI |
+| Control Center | `python -m jarvis control-center` | browser panel, trace/error console, settings, the local Claude/Codex agent behind `POST /api/agent/ask`; the capture controls (the tool wheel's Capture category and the top-left `#recIndicators`, orbital UI Slice 04, wheel/dossier refactor Slice 04) and the capture relay; the Brain's `jarvis-capture` and `jarvis-workspace` MCP servers are children of the Brain CLI |
 
 Sessions, Contexts, evidence and capture (who survives which restart, costs,
 privacy, rollback): [session-context-capture.md](session-context-capture.md).
@@ -239,7 +239,7 @@ Boards and Sessions ([boards.md](boards.md), handoff
 | Presentation Studio authoring planner: first-draft check and one-transaction assembly (jarvis-interactive-presentation-studio, Slice 11) | Core owns; Control Center relays `check` and `assemble` with the actor forced to `user` | `jarvis/core/presentation_studio_authoring.py` (`PresentationStudioAuthoring`) over the pure `jarvis/domain/presentation_studio_authoring{,_build,_gate,_policy}.py` (brief and draft schema, ids allocated by Core, 48 coded gate rules, workflow choice and question budget, registered planner prompt `presentation_studio.authoring.planner`); publishes new sources through `PrefabService.save` under `presentation-studio.*`, stores the whole Presentation with `PresentationStudioStore.create` in one folder rename; Core `POST /v1/presentation-studio/authoring/{check,assemble,finalize,reconcile}` (`jarvis/protocol/presentation_studio_authoring_routes.py`), relay `jarvis/runtime/presentation_studio_authoring_relay.py`. The MCP tools and the real-model trace are Slices 21 and 22. [presentation-studio.md](presentation-studio.md#authoring-contract-slice-11) |
 | Remotion master project of a Presentation Variant: one pure plan (readiness codes, `project_key`, merged `public/`), the master Remotion Composition `JarvisPresentation`, a `variant_master` Remotion Studio target and a whole-video render scope `scope: "master"` (Level 3 — implemented by Slices 03-08 of handoff jarvis-remotion-master-project-studio-export, released by its Slice 09) | Core | derived from the live variant + prefab store or the frozen snapshot, never persisted; the scene lane (scene Studio target, scene export, Variants composition clock) is unchanged. [remotion-master-project.md](remotion-master-project.md) |
 | Prefab catalogue and frame runtime (jarvis-scene-window-prefab-foundation, Slice 03) | Core owns; Control Center relays; page hosts the frames | `jarvis/core/prefab_service.py` (`PrefabService`, sole validation authority) over `FilePrefabLibrary` (package `jarvis/prefabs/base/` + `<data_root>/prefabs/`) and `FilePrefabRuntime` (`jarvis/prefabs/runtime/shim.js`, `shell.css`, shipped with every version bundle); Core `GET /v1/prefabs*` (`jarvis/protocol/prefab_routes.py`), relay `GET /api/prefabs`, `GET /api/prefabs/{prefab_id}`, `GET /api/prefabs/{prefab_id}/{version}`, `GET /api/prefabs/{prefab_id}/{version}/bundle` (`jarvis/runtime/prefab_relay.py`, `/api/prefabs` in `READ_GUARDED_ROUTES`: a frame's `Origin: null` is refused); in the page, `JarvisPrefabProtocol` (pure, `control_center_prefab_protocol.js`) and `JarvisPrefabHost` (`control_center_prefab_host.js`, the only file that sets `iframe.srcdoc`, `sandbox="allow-scripts"`). Slice 04: frame events through `jarvis/core/prefab_events.py` (`PrefabEventService`), Core `GET /v1/prefabs/events`, `POST /v1/prefabs/events`, relay `GET /api/prefabs/events` and `POST /api/prefabs/events` (actor forced `user`); the scene page mounts one frame per prefab window. Slice 07: definition writes `POST /v1/prefabs/validate`, `POST /v1/prefabs`, `POST /v1/prefabs/{prefab_id}/base-edits` (brain only, through `jarvis-display`; never relayed), and undelivered `notify` events joined once to the next brain turn (`BrainContext.prefab_events`). Slice 08: the library view of the dock `PFB` (`control_center_prefabs.js`: list, provenance, sandboxed preview, place on scene) and its fork relay `POST /api/prefabs` (actor forced `user`, Core refuses a `jarvis.*` id with `base_protected`); the Control Center still has no base-edit route. [prefabs.md](prefabs.md) |
-| Effective interaction mode | Core `InteractionModeService` | persisted selection on the Board row |
+| Effective interaction mode | Core `InteractionModeService` | nothing persisted: derived from the active Board's fixed type (`board_kind`: Assistant / Présentation / Réunion, chosen at creation) by `BoardService` at Core start and on every switch ([boards.md](boards.md#board-type)) |
 | Contexts, captures, Artifacts, transcripts: UI and MCP entry points (session-context-recording, Slice 09) | Core owners; Control Center relays | Core `jarvis/protocol/capture_routes.py` (`/v1/contexts*`, `/v1/captures*`, `/v1/artifacts*`, `/v1/activity`, facade `jarvis/core/capture_api.py`); `jarvis/runtime/capture_relay.py` relays them under `/api` (JSON, and the artifact payload in bytes with `Range`), every method origin-guarded; the brain's `jarvis-capture` MCP server (`jarvis/runtime/capture_mcp.py`) calls the relay. Contract: [capture.md](capture.md) › *HTTP API* |
 
 Domain contract: `jarvis/domain/workspace_board.py` and
@@ -441,23 +441,25 @@ questions are never withheld, and ambient can never obtain speech. Assistant
 mode is untouched and the gate writes nothing there — see
 [presentation-response-policy.md](presentation-response-policy.md).
 
-The control plane has three owners and no fourth copy. Core owns the **live
-effective mode and its revision** (`jarvis/core/interaction_mode.py`), served by
-`GET /v1/interaction-mode` and changed by `POST /v1/interaction-mode`; every
-change is published on the bus as `interaction.mode.changed`, so Voice learns it
-through `/v1/events` it already consumes. The Control Center owns the **stored
-operator preference** (`jarvis/runtime/interaction_mode_settings.py`, key
-`interaction_mode`, schema-versioned), exposed and changed by
-`GET`/`POST /api/interaction-mode`, and replayed towards Core at startup and
-whenever a Core that started later is seen at revision 0 — always off the status
-read path, in a single backgrounded task with a backoff. Core stamps a
+The control plane has one owner and no copy. Core owns the **live effective
+mode and its revision** (`jarvis/core/interaction_mode.py`), served by
+`GET /v1/interaction-mode`; the mode is **derived from the active Board's type**
+and changed only in Core's process — by `BoardService` at Core start and on
+every Board switch, and transiently by a Presentation Studio run, which restores
+it. `POST /v1/interaction-mode`, `POST /api/interaction-mode` and
+`settings_set("interaction_mode")` refuse every request with
+`interaction_mode_derived` (Slice 01b of `jarvis-board-ui-wheel-dossier-refactor`).
+Every change is published on the bus as `interaction.mode.changed`, so Voice
+learns it through `/v1/events` it already consumes. The Control Center only
+**reads**: the `interaction_mode` block of `/api/status` carries the effective value and the
+Board type's mode (`board_mode`); nothing is replayed. Core stamps a
 per-process **epoch** beside the revision, because a revision resets on a Core
 restart while Voice's observer survives it; different epoch means "believe this
 unconditionally", same epoch means the monotonic guard.
 
 Interaction mode deliberately does **not** enter
 `VoiceComposition.configuration_id`. That hash decides whether the Voice process
-is restarted, and a restart on a `SIMPLE` ⇄ `PRESENTATION` toggle would cut the
+is restarted, and a restart on a `SIMPLE` ⇄ `PRESENTATION` change (a Board switch) would cut the
 audio exactly during a presentation. The mode changes live, by event, and never
 through `_apply_voice` or `POST /api/settings` — it is its own axis with its own
 key and its own apply path.
@@ -516,11 +518,13 @@ is the opposite of persisting a preparation.
 
 ```text
 Control Center                     Core                              Voice
-  settings key `interaction_mode`    InteractionModeService            InteractionModeObserver
-  (the preference, REUNION kept)     (the effective mode + revision)   (last seen mode, monotonic)
-        │  POST /api/interaction-mode        │                                  ▲
-        ├───────────────────────────────────►│ POST /v1/interaction-mode        │
-        │  GET  /api/status ─► effective     │ ──► interaction.mode.changed ────┘  (via /v1/events)
+  read-only relay in /api/status     BoardService ─► InteractionModeService   InteractionModeObserver
+  (effective + board_mode; no mode   (Board type's mode; Studio run: transient)  (last seen mode, monotonic)
+   control on screen)
+        │  GET /api/status            │  GET /v1/interaction-mode         ▲
+        ├────────────────────────────►│ ──► interaction.mode.changed ─────┘  (via /v1/events)
+        │  POST /api/interaction-mode │  POST /v1/interaction-mode
+        └─► 409 interaction_mode_derived (nothing written)
 ```
 
 ## Surface and brain
@@ -1986,7 +1990,7 @@ cancellation cannot interrupt (`run_sqlite_in_thread`, shared), WAL; plus
 | `scene_objects` | `object_id`, `position`, `data` (`SceneObject.to_payload()`) |
 | `scene_relations` | `relation_id`, `position`, `data` |
 | `scene_tombstones` | `object_id`, `position` — `SceneSnapshot.archived_ids`, evicted beyond 4 096 like the domain |
-| `scene_history` | `object_id`, `revision`, `archived_at`, `data` — the archived form written by each `archive_object` op; not pruned in V1 (one row per archived object: a single archive, its cascaded signals and every object of an `archive_many`) |
+| `scene_history` | `object_id`, `revision`, `archived_at`, `data` — the archived form written by each `archive_object` op (one row per archived object: a single archive, its cascaded signals and every object of an `archive_many`); deleted only by a confirmed archive purge (below) |
 
 `position` restores the exact tuple order of the snapshot (a replaced object
 keeps its place, a new one is appended). The store keeps the **state** produced
@@ -1997,6 +2001,32 @@ snapshot, then moves `revision`. A crash leaves the previous or the next
 revision, never half of one. Loading decodes every row through the strict domain
 decoders (`SceneObject.from_payload`, `SceneSnapshot` invariants); nothing is
 replayed, so the immutable-field guard a patch replay would need is not required.
+
+**Archive purge** (2026-10-18, user request; no schema change). Out of the
+reducer: it touches `scene_history`, which is not in the snapshot, and it needs a
+confirmation. `SceneService.plan_archive_purge` (writes nothing) partitions
+`archived_ids` into purged and kept — kept = ids the runtime projection can
+still write (`SceneProjector.retained_archive_ids`: star and signal ids of every
+work item Core's work state knows, deferred creations, restart-tracked stars;
+refused `runtime_settling` while the projection is not running or during
+`restart_grace_s` after start) — counts the history rows that would go (every
+row whose id keeps no tombstone, older incarnations included) and issues an
+HMAC token bound to `scene_id`, epoch, the exact purged id list and the history
+count, valid 10 minutes, secret per process. The revision is deliberately not
+bound: runtime projection moves it continuously. `purge_archived` re-plans under
+the same lock as commands, checks the token, then `SQLiteSceneRepository.purge_archived`
+backs the base up first (`Connection.backup`, WAL pages included, `.partial`
+then rename, `scene.sqlite3.purge-<UTC>.bak`; failure → `purge_backup_failed`,
+nothing deleted), deletes inside one `BEGIN IMMEDIATE` under
+`PRAGMA secure_delete=ON` with the same revision and row-count checks as
+`commit`, moves `revision` by one, then runs `VACUUM` (text of objects archived earlier lingers in free page space) and `wal_checkpoint(TRUNCATE)`, best effort (`compacted` in the answer). The
+in-memory snapshot loses the purged tombstones and the revision advances
+**without a patch**: the ring is cleared, so every reader behind it gets
+`resync_required` and reloads the snapshot (page, Control Center proxy and
+`jarvis-display` already do). The epoch is kept: the revision stays monotonic and
+a new epoch would needlessly stale the Tool Brain's open plans. Journal:
+`core.scene.archive_purged` (counts, kept count, backup path, actor) or
+`core.scene.archive_purge_failed`.
 
 Opening, in order:
 
@@ -2094,6 +2124,8 @@ Core routes (bearer token and protocol-version check, like every `/v1` route):
 | --- | --- | --- |
 | `GET /v1/scene/snapshot` | 200 `{scene_id, epoch, revision, snapshot}` (`snapshot` = `SceneSnapshot.to_payload()`), compact UTF-8 JSON encoded off Core's event loop | 401, 426, 400 (query present), 503 `scene_unavailable` |
 | `GET /v1/scene/patches?scene_id=&epoch=&after=&wait_s=` | 200 `{scene_id, epoch, revision, resync_required, more, patches}` | 401, 426, 400 (missing/unknown/repeated parameter, `after` not a non-negative integer, `wait_s` not a plain non-negative number), 503 `scene_unavailable` |
+| `POST /v1/scene/archived/purge-plan` `{schema_version: 1, actor}` | 200 `{scene_id, epoch, revision, purgeable{archived_ids, history_rows}, kept{archived_ids, history_rows, ids ≤ 20, reason}, confirmation, expires_at, ttl_s}`; writes nothing, `confirmation: null` when nothing is purgeable | 400, 403 `scene_actor_forbidden` (`runtime`), 409 `runtime_settling` (+ `retry_after_s`), 503 scene unavailable |
+| `POST /v1/scene/archived/purge` `{schema_version: 1, actor, confirmation, confirmed: true}` | 200 `{scene_id, epoch, revision, purged{archived_ids, history_rows}, kept{…}, backup_path, compacted}` | 400 (`confirmed` not `true`, other shape), 403 (`runtime`), 409 `confirmation_required` / `confirmation_stale` / `runtime_settling`, 503 `purge_backup_failed` (nothing deleted) / scene unavailable |
 | `POST /v1/scene/commands` | 200 `{outcome, reason, scene_id, epoch, revision, patch}` for **every** domain outcome (`applied`, `duplicate`, `rejected_authority`, `invalid`); `patch` is `null` unless applied | 401, 426, 400 `invalid_request` (not JSON, duplicate key, non-finite number, any `ValueError`/`TypeError` of `SceneCommand.from_payload`), 403 `scene_actor_forbidden` (actor `runtime`), 413 `payload_too_large` (> 64 KiB, announced or streamed), 503 `scene_unavailable` / `scene_persist_failed` |
 
 A 503 carries `error.scene` (`{state, code}` of `SceneService.availability`) and
@@ -2812,7 +2844,7 @@ display MCP ◄─────────────────────�
   title starts after the category's measured width (no overprint); windows carry
   the page's header (upper-case category · execution label), item count, pin mark,
   title, summary lines and item rows (`host label ref`), clipped to their box; theme colours read from the scene
-  layer (`--sc-*`, `--tone`, `--sc-radius`). Not drawn: dock, topbar, panels,
+  layer (`--sc-*`, `--tone`, `--sc-radius`). Not drawn: dock, launcher, panels,
   timeline, face, voice text, hover labels of points. Scaled with the viewport's
   aspect ratio to at most 1280×720 (never enlarged), on a detached `<canvas>`
   encoded **synchronously** (`JarvisSceneCapture.encodePng`: `toDataURL('image/png')`
@@ -3195,8 +3227,9 @@ capture rail (`#captureRail`, session-context-recording Slice 10) occupied
 x 18–82 px from y 76 px down to about 541 px at 1280 × 720, i.e. inside the
 safe area's left band (x −152 is 32 px there). Since its Slice 04 the left edge
 holds only the tool wheel anchor (14 × 112 px, vertically centred; the wheel
-opens over the scene at rank 37) and the capture indicators sit in the bottom
-row (`#recIndicators`). User gestures stop against them (they are in
+opens over the scene at rank 37) and the capture indicators sit top-left
+while a recording is open (`#recIndicators`, wheel/dossier refactor Slice 04;
+before, in the bottom row). User gestures stop against them (they are in
 `CONTROL_SELECTOR`); what the resolver proposes does not know them yet
 (Issue `tasks/jarvis-session-context-recording-runtime/Issues/scene-safe-area-left-column.md`).
 The resolver places only inside the safe area. The brain
@@ -3785,8 +3818,9 @@ wrap upwards, two rows at most in practice, never blocking): loading; "Scène
 figée · <raison>" plus a muted "N s · réessai N s" that is never truncated (a 1 s
 ticker runs only while degraded); "Scène pleine — archiver des travaux terminés"
 with "n/512", a button that opens the bulk archive confirmation (Slice 08); (the "N objets masqués" button
-of Slice 08 moved to the eye `#hiddenEye` of the bottom status centre in the orbital UI Slice 06,
-see control-center-shell.md › Status centre); "N signaux d'échec sous des fenêtres"
+of Slice 08 moved to the eye `#hiddenEye` of the bottom status centre in the orbital UI Slice 06; the
+wheel/dossier refactor removed that permanent eye (Slice 02, D06) and the hidden count now lives in the
+wheel, Sélection › Masqués (Slice 06), see control-center-shell.md › Selection actions); "N signaux d'échec sous des fenêtres"
 and "N signaux à vérifier sous des fenêtres"; "N objets hors champ". The visible chips
 are not a live region. A separate visually hidden `role=status` region announces
 state changes only ("Scène figée · Core injoignable. Nouvel essai automatique.",
@@ -3846,7 +3880,7 @@ Files:
 | menu › Afficher en point / capsule / fenêtre | menu | `set_representation` with the new default size around the same centre | rolled back, toast |
 | menu › Épingler ici / Désépingler | menu | `pin` / `unpin` (the drawn place is committed first when the object had none) | rolled back, toast |
 | menu › Masquer | menu | `set_visibility hidden`; toast offers to show it again; the selection moves to the reading neighbour | rolled back, toast |
-| eye `#hiddenEye` (status centre, orbital UI S06) › secondary: Afficher / Tout réafficher; ghost › Réafficher | eye is a toggle button | `set_visibility visible`, one per object (≤ 512); the first object shown is selected | count of failures in a toast |
+| wheel › Sélection › « Masqués (N) » (wheel/dossier refactor Slice 06; the eye `#hiddenEye` was removed in Slice 02) › Voir en fantômes / Tout réafficher / Réafficher « … »; ghost › Réafficher | ghost view is a browser toggle | one object: `set_visibility visible`; several: one `patch_selection {visibility: visible}`; the first object shown is focused | refusal in a toast |
 | menu › Archiver… (confirmation) | menu | `archive` (Core cascades the star's runtime signals); short confirmation toast; selection moves to the neighbour | rolled back, toast |
 | menu › Archiver les travaux terminés (N objets)… or the « Scène pleine » chip (confirmation with counts) | menu / chip button | `archive_many` (one command in practice) | whole selection rolled back; `not_bulk_archivable` → counts recomputed and confirmed again once, then a toast offering « Cliquer ici pour réessayer » |
 | menu › Arrêter la tâche… (job stars only, confirmation) | menu | `POST /api/jobs/cancel`; the star shows « arrêt en cours » until Core says it ended, or until the relay deadline | toast with Core's outcome in French |

@@ -338,14 +338,14 @@ def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
     # **Slice 02** : le refus nomme le contrôle qui existe, pas celui qui a
     # été retiré. Une phrase qui désigne une case disparue est une phrase qui
     # ne dit plus comment s’en sortir.
-    assert "bouton à icône de main" in observed["gates"]["calibrate"]["reason"]
+    assert "Sélection › Bare Hands" in observed["gates"]["calibrate"]["reason"]
     # **L'alias déprécié hérite du refus de la calibration, sous le nom de la
     # calibration** (Slice 07B). L'appelant a demandé `tutorial` et a obtenu la
     # calibration ; quand elle refuse, c'est son code qui remonte. Renommer le
     # refus en `barehands_tutorial_*` cacherait **lequel** des parcours a
     # échoué — et il n'y en a plus qu'un.
     assert observed["gates"]["tutorial"]["code"] == "barehands_calibration_lifecycle_off"
-    assert "bouton à icône de main" in observed["gates"]["tutorial"]["reason"]
+    assert "Sélection › Bare Hands" in observed["gates"]["tutorial"]["reason"]
     # Le refus n'est pas décoré : `startTutorialAlias` ne colle sa phrase de
     # dépréciation qu'à une confirmation, parce qu'un refus doit porter sa
     # cause exacte et rien d'autre.

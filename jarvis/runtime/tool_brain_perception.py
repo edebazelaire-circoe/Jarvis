@@ -375,7 +375,7 @@ def _board_detail(state: UiState, board: Board) -> dict[str, Any]:
             "active": board.board_id == state.active_board_id,
             "context_summary": board.context_summary[:MAX_INSPECT_SUMMARY_CHARS],
             "task_refs": len(board.task_refs), "artifact_refs": len(board.artifact_refs),
-            "project_refs": len(board.project_refs), "interaction_mode": board.interaction_mode.value,
+            "project_refs": len(board.project_refs),
             "scene_scope": "global"}
 
 

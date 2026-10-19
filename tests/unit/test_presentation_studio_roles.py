@@ -170,7 +170,7 @@ def test_the_contract_page_states_the_code_names():
     text = (ROOT / "docs/presentation-studio.md").read_text(encoding="utf-8")
     section = text[text.index("## Playback roles and speech authority"):]
     section = section[:section.index("\n## Reused owners")]
-    for name in ("STUDIO_RUN_MODE_SOURCE", "TRANSIENT_MODE_SOURCES", "NON_PERSISTED_SOURCES", "ScoreLineNotice", "plan_mode_entry",
+    for name in ("STUDIO_RUN_MODE_SOURCE", "TRANSIENT_MODE_SOURCES", "ScoreLineNotice", "plan_mode_entry",
                  "decide_restore", "classify_mode_event", "interaction.mode.changed", "presentation_studio_run", "SpeechKind.PROGRESS",
                  "leave_user_choice", "mode_switch_origin_refused", "presentation_studio:<run_id>"):
         assert name in section, name

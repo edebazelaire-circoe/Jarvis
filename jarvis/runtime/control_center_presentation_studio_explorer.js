@@ -1751,14 +1751,15 @@
          under the actions says why; the actions stay on screen (never removed), each `aria-disabled` with the same reason. */
       if(ui.host){if(on)ui.host.setAttribute('data-run','');else ui.host.removeAttribute('data-run')}
       if(ui.runNote)ui.runNote.hidden=!on;
-      /* Slice 09 rework: during a run the interaction-mode HUD (`data-keep-live="run"`) stays live and drawn above Variants (`jvx-run` on
-         <html>, rank in the explorer's sheet): « Refusé par la voix » and the way out of PRESENTATION stay on screen. */
+      /* Slice 09 rework: during a run the Board card and its panel (`data-keep-live="run"`; the interaction-mode HUD until Slice 02 of
+         jarvis-board-ui-wheel-dossier-refactor) stay live and drawn above Variants (`jvx-run` on <html>, rank in the explorer's sheet):
+         « Refusé par la voix » stays on screen; the way out of the run is the Studio's own stop. */
       const html=doc.documentElement;
       if(html&&html.classList)html.classList.toggle('jvx-run',!!on);
       if(S.open)applyInert();
     }
     /* The page under Variants is inert while it is open (a modal dialog), except what lives beside it: `data-keep-live="true"` (the
-       presentations rail, its menu and dialogs) always, `data-keep-live="run"` (the interaction-mode HUD) during a run. A keep-live element
+       presentations rail, its menu and dialogs) always, `data-keep-live="run"` (the Board card and its panel) during a run. A keep-live element
        nested in a container keeps it out of the inert set; its siblings are made inert one level down instead. */
     function keepsLive(n){
       const v=n&&typeof n.getAttribute==='function'?n.getAttribute('data-keep-live'):null;
@@ -1823,7 +1824,7 @@
       renderAll();schedulePreview();
       const problems=(ended&&ended.problems||[]).map(code=>(root.JarvisStudioPlayerCore&&root.JarvisStudioPlayerCore.PROBLEMS[code])||`Problème : ${code}`);
       if(problems.length)say('failed',`Présentation arrêtée. ${problems.join(' ')}`);
-      else say('info',ended&&ended.reason==='mode_changed_by_user'?'Présentation arrêtée : mode changé par vous.':ended&&ended.reason==='crashed'?
+      else say('info',ended&&ended.reason==='mode_changed_by_user'?'Présentation arrêtée : le mode a changé avec le Board actif.':ended&&ended.reason==='crashed'?
         'Présentation interrompue par une erreur de Core.':'Présentation terminée : la vidéo est de nouveau à vous.');
       log('run_left',{reason:ended&&ended.reason||null});
     }

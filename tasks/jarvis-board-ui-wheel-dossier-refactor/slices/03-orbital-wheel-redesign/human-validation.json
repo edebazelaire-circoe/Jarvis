@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HVAL-03-01",
+      "when": "After automated browser/runtime validation passes",
+      "instruction": "Use the wheel normally with a mouse, then keyboard. Open JARVIS, switch directly to Capture, then Dossier, and close it. Compare the feel to the style reference image.",
+      "acceptance": "The wheel feels substantially more polished and layered than before, only one submenu is ever visible, labels are immediately understandable, and the closed state does not steal workspace."
+    }
+  ]
+}

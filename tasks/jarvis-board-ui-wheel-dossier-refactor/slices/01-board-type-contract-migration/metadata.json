@@ -1,0 +1,22 @@
+{
+  "slice_id": "01-board-type-contract-migration",
+  "title": "Slice 01a — Fixed Board type contract and stored-data migration (v9)",
+  "task_type": "waived",
+  "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_SLICE00_READINESS",
+  "dependencies": [
+    "00-project-manager"
+  ],
+  "frontend": false,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation",
+    "agent-trace-analysis"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline"
+  ],
+  "agent_routing": null
+}

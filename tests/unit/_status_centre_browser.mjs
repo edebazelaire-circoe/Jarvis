@@ -15,6 +15,7 @@
      ["eval", name, expr, waitMs]
      ["click", name, selector, waitMs]     vrai clic souris au centre
      ["rclick", name, selector, waitMs]    vrai clic droit au centre
+     ["ctrlclick", name, selector, waitMs] vrai Ctrl-clic au centre (Slice 06 : sélection multiple)
      ["key", name, key, waitMs, shift?]    vraie frappe sur l'element focalise
      ["drag", name, selector, waitMs, [dx,dy]]  vrai glisser souris depuis le centre
      ["shot", name, path, waitMs]
@@ -29,7 +30,11 @@
      ["axe", name, selector, waitMs, file] axe-core (fichier `file`) sur `selector` : violations
    Options d'etape (Slice 09) : `forcedColors` (forced-colors: active), `scale`
    (deviceScaleFactor : 720x450 a l'echelle 2 = une fenetre 1440x900 zoomee a 200 %).
-   Graines (Slice 09) : `live` (bandeau GPT-Live du statut), `mode` (bloc `interaction_mode`), `railRows` (lignes du rail,
+   Une cible de souris (click, rclick, move, press, release, dragto) peut etre un point `[x, y]` au lieu d'un
+   selecteur : un endroit vide de la page (le haut-gauche, libre depuis la Slice 02 de
+   jarvis-board-ui-wheel-dossier-refactor), pour un clic « ailleurs » ou un survol qui s'eloigne.
+   Graines (Slice 09) : `live` (bandeau GPT-Live du statut), `mode` (bloc `interaction_mode`), `presentation`
+   (releve de Voice du statut, Slice 02 : la ligne de seance de la carte Board), `railRows` (lignes du rail,
    fusionnees sur une ligne type), `boardArtifacts` (artefacts du Board actif), `previews`
    ({artifact_id: svg}) ; `POST /api/captures/screenshot` rend une capture d'ecran complete,
    et la route bornee `/api/artifacts/{id}/payload` est doublee la ou la page la lit (un <img>).
@@ -68,8 +73,10 @@ const SERVER=`(()=>{
     /* Boards (test_global_launcher_browser.py) : la bascule change le Board actif du statut. */
     boards:[{board_id:'default',title:'Jarvis',status:'active'}],activeBoard:'default',
     /* Slice 09 : bandeau GPT-Live, rail, artefacts du Board, apercus. */
-    live:null,railRows:null,boardArtifacts:[],previews:{},payloads:[],mode:null,
+    live:null,railRows:null,boardArtifacts:[],previews:{},payloads:[],mode:null,presentation:null,
   },seed);
+  S.navPush=cmd=>{S.nav=S.nav||[];S.nav.push(cmd);return S.nav.length};
+  S.dsrTouch=(board,path,text)=>{const f=S.dsr.boards[board].files[path];f.text=text;f.v=(f.v||1)+10;f.sha='sha'+f.v+'_'+path;return f.sha};
   /* La route bornee des apercus, la ou la page la lit : la source d'un <img>
      (meme double que _presentation_rail_browser.mjs). Sans apercu seme, une
      image unie : la vignette existe, son contenu n'est pas l'objet du test. */
@@ -99,15 +106,25 @@ const SERVER=`(()=>{
   window.fetch=async(path,init)=>{
     const method=(init&&init.method)||'GET';
     const url=String(path);
-    if(url!=='/api/status'&&!url.startsWith('/api/captures/status'))S.calls.push(method+' '+url.split('?')[0]);
+    if(url!=='/api/status'&&!url.startsWith('/api/captures/status')&&!(url.startsWith('/api/dossier/navigation/commands?')))S.calls.push(method+' '+url.split('?')[0]);
     if(init&&init.body&&method!=='GET'){let b=null;try{b=JSON.parse(init.body)}catch(_){b=init.body}S.bodies.push({path:url,body:b})}
     if(url==='/api/status'){
+      /* Slice 04 (sous-menu JARVIS) : \`statusFail\` fait tomber le battement ; \`status\` en remplace des champs. */
+      if(S.statusFail)return Promise.reject(new TypeError('Failed to fetch'));
+      /* Slice 08 (QA B1) : \`statusHang\` = un statut qui ne répond jamais ; seule l'échéance de la page l'abandonne. */
+      if(S.statusHang){S.statusOpen=(S.statusOpen||0)+1;S.statusMax=Math.max(S.statusMax||0,S.statusOpen);
+        return new Promise((_ok,ko)=>{const sig=init&&init.signal;const end=()=>{S.statusOpen-=1;ko(new DOMException('aborted','AbortError'))};
+          if(sig){if(sig.aborted)end();else sig.addEventListener('abort',end,{once:true})}})}
       const counts={};let unread=0;for(const [k,v] of Object.entries(S.counts))if(v>0){counts[k]=v;unread+=v}
       return json(200,{voice_state:'idle',voice_online:true,manual_wake_key:S.wakeKey||'f9',voice_turn_mode:'server',
         agent:{name:'claude',state:'running'},agent_cli:'claude',error_count:S.errorCount||0,subagents:S.subagents||null,
         background:{seq:S.seq,unread,counts,sources:[]},
-        boards:{available:true,active:{board_id:S.activeBoard,title:(S.boards.find(b=>b.board_id===S.activeBoard)||{}).title||S.activeBoard},jarvis_session_id:'jsess_1',bindings:[],error:null},
-        scene:{enabled:S.sceneOn,source:'core'},scene_limits:{job_cancel_timeout_s:30},live:S.live,interaction_mode:S.mode||null});
+        boards:{available:true,active:{board_id:S.activeBoard,title:(S.boards.find(b=>b.board_id===S.activeBoard)||{}).title||S.activeBoard,
+          board_kind:(S.boards.find(b=>b.board_id===S.activeBoard)||{}).board_kind},jarvis_session_id:'jsess_1',bindings:[],error:null},
+        scene:{enabled:S.sceneOn,source:'core'},scene_limits:{job_cancel_timeout_s:30},live:S.live,interaction_mode:S.mode||null,
+        presentation:S.presentation||null,
+        /* Slice 08 : la page relève un ordre de Jarvis au battement, quand le statut dit qu'il attend. */
+        dossier_navigation:{pending:!!(S.nav&&S.nav.length)},...(S.status||{})});
     }
     /* Raccourcis d'interface (valeurs par défaut de jarvis/runtime/shortcuts.py). */
     if(url==='/api/shortcuts')return json(200,{values:{ui_settings:'s',ui_close:'Escape',ui_panel_errors:'e',ui_panel_trace:'t',ui_panel_agents:'a'}});
@@ -149,6 +166,24 @@ const SERVER=`(()=>{
         setTimeout(()=>release([put]),50);
         return json(200,{outcome:'applied',revision:S.revision});
       }
+      /* Slice 06 (Sélection de la roue) : les commandes de sélection, atomiques. \`refuse\` (graine) :
+         {op: reason} rend la commande refusée, rien n'est appliqué. */
+      if(command.op==='patch_selection'||command.op==='archive_selection'){
+        const ids=command.selection&&command.selection.ids||[];
+        const refusal=(S.refuse||{})[command.op];
+        if(refusal)return json(200,{outcome:'invalid',reason:refusal,revision:S.revision,batch:{refused:ids.map(id=>({id,reason:refusal}))}});
+        const members=ids.map(id=>S.objects.find(o=>o.object_id===id));
+        if(members.some(m=>!m))return json(200,{outcome:'invalid',reason:'unknown_object',revision:S.revision});
+        S.revision+=1;
+        const ops=[];
+        if(command.op==='archive_selection'){
+          for(const m of members){S.objects=S.objects.filter(o=>o!==m);ops.push({op:'archive_object',object:m})}
+        }else{
+          for(const m of members){Object.assign(m,command.changes);ops.push({op:'put_object',object:m})}
+        }
+        setTimeout(()=>release([{schema_version:1,revision:S.revision,ops}]),50);
+        return json(200,{outcome:'applied',revision:S.revision,batch:{matched_ids:ids,changed_ids:ids,unchanged_ids:[],skipped:[],refused:[]}});
+      }
       return json(200,{outcome:'applied',revision:S.revision});
     }
     if(url.split('?')[0]==='/api/boards')return json(200,{boards:S.boards,active_board_id:S.activeBoard});
@@ -166,6 +201,117 @@ const SERVER=`(()=>{
         ui:{seq:0,request:null,reported:null},playing:null});
     }
     if(url==='/api/presentation-studio/rail/display-state')return json(200,{seq:0});
+    /* Slice 07 : le Dossier plein écran. \`dsr\` (graine) : {boards:{id:{board, entries, files:{path:{text, sha}}}}} ;
+       \`dsrFail\` : {route: {status, code}} (list | entry | read | write | present | move | delete | search) ;
+       \`dsrDelayMs\` : {route: ms}. Les écritures suivent le propriétaire : \`expected_sha256\` faux -> 409
+       memory_conflict. Navigation : \`__sc.navPush(cmd)\` met un ordre en attente ; la page le prend au
+       long-poll, son reçu (avec l'en-tête du jeton) va dans \`__sc.receipts\`. */
+    {
+      const D=S.dsr;
+      const m=url.match(/^\\/api\\/workspace\\/boards\\/([^/?]+)\\/(dossier|memory)(?:\\/([a-z]+))?/);
+      if(D&&m&&!(m[2]==='dossier'&&(m[3]==='backing'||m[3]==='ranger'))){
+        const id=decodeURIComponent(m[1]),B=D.boards&&D.boards[id];
+        const route=m[2]==='dossier'?(m[3]||'list'):m[3];
+        const fail=(S.dsrFail||{})[route];
+        const delay=(S.dsrDelayMs||{})[route];
+        if(delay)await new Promise(r=>setTimeout(r,delay));
+        if(fail)return json(fail.status,{error:{code:fail.code,message:fail.message||'refusé par le double'}});
+        if(!B)return json(404,{error:{code:'board_not_found',message:'no board'}});
+        const q=new URL(url,location.href).searchParams;
+        const body=init&&init.body?JSON.parse(init.body):null;
+        const writable=B.board.status!=='archived';
+        const entry=eid=>B.entries.find(e=>e.entry_id.toLowerCase()===String(eid).toLowerCase());
+        if(route==='list')return json(200,{board:B.board,entries:B.entries.slice(0,Number(q.get('limit'))||50),total:B.entries.length,
+          truncated:B.entries.length>(Number(q.get('limit'))||50),sources:{memory:{exists:true,files:B.entries.length},artifacts:{linked:0}}});
+        if(route==='entry'){const e=entry(q.get('id'));if(!e)return json(404,{error:{code:'dossier_entry_not_found',message:'not in this Dossier'}});
+          return json(200,{board:B.board,entry:q.get('advanced')==='true'?Object.assign({},e,{advanced:{locator:'boards/'+id+'/memory/'+(e.path||''),artifact_id:e.source==='artifact'?e.entry_id.slice(9):undefined}}):e})}
+        if(route==='present'){
+          if(!writable)return json(409,{error:{code:'board_archived',message:'archived'}});
+          if(id!==S.activeBoard)return json(409,{error:{code:'dossier_board_not_active',message:'not active'}});
+          const e=entry(body.entry_id);if(!e)return json(404,{error:{code:'dossier_entry_not_found',message:'no'}});
+          S.presented=S.presented||{};const again=!!S.presented[e.entry_id];S.presented[e.entry_id]=true;
+          return json(again?200:201,{board_id:id,entry_id:e.entry_id,object_id:'dossier-'+e.source+'-1',created:!again,reused:again,representation:body.representation||'window',revision:again?null:S.revision+1});
+        }
+        const file=path=>B.files&&B.files[path];
+        if(route==='read'){const f=file(q.get('path'));if(!f)return json(404,{error:{code:'memory_not_found',message:'no file'}});
+          const off=Number(q.get('offset'))||0,max=Number(q.get('max_bytes'))||65536,chunk=f.text.slice(off,off+max);
+          return json(200,{board_id:id,path:q.get('path'),text:chunk,offset:off,next_offset:off+chunk.length,size:f.text.length,eof:off+chunk.length>=f.text.length,sha256:f.sha})}
+        if(route==='search'){const needle=(q.get('q')||'').toLowerCase();const matches=[];
+          for(const [path,f] of Object.entries(B.files||{})){const i=f.text.toLowerCase().indexOf(needle);if(i>=0)matches.push({path,line:1,snippet:f.text.slice(Math.max(0,i-30),i+60)})}
+          return json(200,{board_id:id,query:q.get('q'),matches,files_scanned:Object.keys(B.files||{}).length,files_skipped:0})}
+        if(!writable)return json(409,{error:{code:'board_archived',message:'archived'}});
+        if(route==='write'){const f=file(body.path);if(!f)return json(404,{error:{code:'memory_not_found',message:'no'}});
+          if(body.expected_sha256&&body.expected_sha256!==f.sha)return json(409,{error:{code:'memory_conflict',message:'sha mismatch'}});
+          f.text=body.content;f.v=(f.v||1)+1;f.sha='sha'+f.v+'_'+body.path;S.writes=(S.writes||0)+1;
+          return json(200,{board_id:id,path:body.path,bytes:body.content.length,size:body.content.length,sha256:f.sha,activity_seq:9})}
+        if(route==='move'){const f=file(body.from);if(!f)return json(404,{error:{code:'memory_not_found',message:'no'}});
+          if(file(body.to))return json(409,{error:{code:'memory_exists',message:'exists'}});
+          B.files[body.to]=f;delete B.files[body.from];const e=entry('memory:'+body.from);
+          if(e){e.entry_id='memory:'+body.to;e.path=body.to;e.title=body.to.split('/').pop().replace(/\\.[^.]+$/,'');e.folder=body.to.includes('/')?body.to.slice(0,body.to.lastIndexOf('/')):''}
+          return json(200,{board_id:id,from:body.from,to:body.to,activity_seq:10})}
+        if(route==='delete'){if(!file(body.path))return json(404,{error:{code:'memory_not_found',message:'no'}});
+          delete B.files[body.path];B.entries=B.entries.filter(e=>e.entry_id!=='memory:'+body.path);
+          return json(200,{board_id:id,path:body.path,removed:1,activity_seq:11})}
+        return json(404,{error:{code:'http_error',message:'route du double inconnue'}});
+      }
+      if(url.startsWith('/api/dossier/navigation/commands')){
+        S.nav=S.nav||[];S.receipts=S.receipts||[];
+        const rm=url.match(/^\\/api\\/dossier\\/navigation\\/commands\\/([^/?]+)$/);
+        if(rm&&method==='POST'){const h=(init&&init.headers)||{};S.receipts.push({id:decodeURIComponent(rm[1]),token:h['X-Jarvis-Page-Token']||null,body:JSON.parse(init.body)});
+          return json(200,{command:'open_entry',id:decodeURIComponent(rm[1])})}
+        if(new URL(url,location.href).searchParams.get('visible')==='0')return json(200,{command:null});
+        for(let i=0;i<6&&!S.nav.length;i+=1)await new Promise(r=>setTimeout(r,50));
+        const c=S.nav.shift();
+        return json(200,{command:c?Object.assign({remaining_ms:4000},c):null});
+      }
+    }
+    /* Slice 06 : le Dossier du Board actif. \`dossier\` (graine) : {object_id: {rangeable, code?, message?,
+       backing?, stored?:{archived, code?, message?}}} ; \`dossierActive\` faux = Board non affiché ;
+       \`rangerStatus\` : un refus de la demande entière (409...). Ranger applique ce que la graine dit :
+       un objet stocké et retiré quitte la scène (patch rejoué), un refus le laisse. */
+    {
+      const m=url.match(/^\\/api\\/workspace\\/boards\\/([^/?]+)\\/dossier\\/(backing|ranger)/);
+      if(m){
+        const per=S.dossier||{};
+        if(m[2]==='backing'){
+          const ids=new URL(url,location.href).searchParams.getAll('object_id');
+          if(S.backingStatus)return json(S.backingStatus,{error:{code:'scene_unavailable',message:'down'}});
+          const active=S.dossierActive!==false;
+          return json(200,{board_id:decodeURIComponent(m[1]),board_active:active,
+            ...(active?{}:{board_code:'dossier_board_not_active',board_message:'Ce Board n’est pas le Board affiché : Ranger agit seulement sur le Board actif ; rien ne serait rangé.'}),
+            objects:ids.map(id=>{const d=per[id]||{rangeable:false,code:'dossier_not_eligible',message:'Cet objet ne se range pas dans le Dossier ; il reste sur le Board.'};
+              return {object_id:id,backing:d.rangeable?(d.backing||'content'):'refused',entry_id:null,rangeable:!!d.rangeable,
+                ...(d.rangeable?{}:{code:d.code,message:d.message,reason:''})}})});
+        }
+        if(S.rangerStatus)return json(S.rangerStatus,{error:{code:S.rangerCode||'dossier_board_not_active',message:'board is not the active board'}});
+        if(S.rangerDelayMs)await new Promise(r=>setTimeout(r,S.rangerDelayMs));
+        const body=JSON.parse(init.body);
+        const results=[],gone=[];
+        for(const id of body.object_ids){
+          const d=per[id];
+          if(!d||!d.rangeable){results.push({object_id:id,status:'refused',backing:null,action:null,entry_id:null,durable:false,archived:false,
+            code:(d&&d.code)||'dossier_not_eligible',message:(d&&d.message)||'Cet objet ne se range pas dans le Dossier ; il reste sur le Board.'});continue}
+          const st=d.stored||{archived:true};
+          results.push({object_id:id,status:'stored',backing:d.backing||'content',action:'materialized',entry_id:'memory:notes/'+id+'.md',
+            durable:true,archived:!!st.archived,...(st.code?{code:st.code,message:st.message}:{})});
+          if(st.archived)gone.push(id);
+        }
+        let revision=null;
+        if(gone.length){
+          S.revision+=1;revision=S.revision;
+          const ops=[];
+          for(const id of gone){const o=S.objects.find(x=>x.object_id===id);if(o){S.objects=S.objects.filter(x=>x!==o);ops.push({op:'archive_object',object:o})}}
+          setTimeout(()=>release([{schema_version:1,revision:S.revision,ops}]),50);
+        }
+        const stored=results.filter(r=>r.status==='stored').length;
+        return json(200,{board_id:decodeURIComponent(m[1]),stored,refused:results.length-stored,results,revision});
+      }
+    }
+    /* Slice 06 : une fenêtre d'Artifact du registre se lit dans le registre. */
+    {
+      const m=url.match(/^\\/api\\/artifacts\\/(jart_[^/?]+)(\\?|$)/);
+      if(m){const a=(S.registry||{})[m[1]];return a?json(200,{artifact:a}):json(404,{error:{code:'artifact_not_found',message:'no'}})}
+    }
     if(url.startsWith('/api/workspace/artifacts?'))return json(200,{artifacts:S.boardArtifacts,scope:{board_id:S.activeBoard},next_cursor:null});
     return json(404,{error:{code:'http_error',message:'not stubbed '+url}});
   };
@@ -207,22 +353,25 @@ try{
     return r.result.value;
   };
   const center=async selector=>{
+    if(Array.isArray(selector))return {x:selector[0],y:selector[1]};
     const box=await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)return null;
       const r=el.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`);
     if(!box)throw new Error(`selecteur absent : ${selector}`);
     return box;
   };
-  const mouse=async(selector,button)=>{
+  const mouse=async(selector,button,modifiers=0)=>{
     const {x,y}=await center(selector);
-    await send('Input.dispatchMouseEvent',{type:'mouseMoved',x,y,button:'none'});
-    await send('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button,buttons:button==='right'?2:1,clickCount:1});
-    await send('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button,buttons:0,clickCount:1});
+    await send('Input.dispatchMouseEvent',{type:'mouseMoved',x,y,button:'none',modifiers});
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button,buttons:button==='right'?2:1,clickCount:1,modifiers});
+    await send('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button,buttons:0,clickCount:1,modifiers});
   };
   const KEYS={Tab:9,Enter:13,Escape:27,F10:121,ContextMenu:93,' ':32,
     End:35,Home:36,ArrowLeft:37,ArrowUp:38,ArrowRight:39,ArrowDown:40};
   const key=async(name,shift)=>{
     const code=KEYS[name]||0;
-    const base={key:name,code:name==='ContextMenu'?'ContextMenu':name,windowsVirtualKeyCode:code,nativeVirtualKeyCode:code,modifiers:shift?8:0};
+    /* `shift` : vrai = Maj ; un nombre = le masque CDP (2 = Ctrl : Ctrl+Espace, Slice 06). */
+    const mods=typeof shift==='number'?shift:shift?8:0;
+    const base={key:name,code:name==='ContextMenu'?'ContextMenu':name===' '?'Space':name,windowsVirtualKeyCode:code,nativeVirtualKeyCode:code,modifiers:mods};
     await send('Input.dispatchKeyEvent',{type:'rawKeyDown',...base});
     /* Entree active un bouton sur son caractere, comme un vrai clavier. */
     if(name==='Enter')await send('Input.dispatchKeyEvent',{type:'char',text:String.fromCharCode(13),unmodifiedText:String.fromCharCode(13),...base});
@@ -268,7 +417,8 @@ try{
         if(kind==='eval')results[name]=await evaluate(arg);
         else if(kind==='click'){await mouse(arg,'left');results[name]='ok'}
         else if(kind==='rclick'){await mouse(arg,'right');results[name]='ok'}
-        else if(kind==='key'){await key(arg,!!extra);results[name]='ok'}
+        else if(kind==='ctrlclick'){await mouse(arg,'left',2);results[name]='ok'}
+        else if(kind==='key'){await key(arg,typeof extra==='number'?extra:!!extra);results[name]='ok'}
         else if(kind==='drag'){await drag(arg,extra);results[name]='ok'}
         else if(kind==='dragto'){const from=await center(arg),to=await center(extra);await drag(arg,[to.x-from.x,to.y-from.y]);results[name]={from,to}}
         else if(kind==='press'||kind==='release'){const {x,y}=await center(arg);

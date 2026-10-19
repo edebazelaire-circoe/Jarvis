@@ -612,7 +612,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCor
   }
 
   /* Registre d'empilement de la page (voir `control_center.html`) : visage 0,
-     canevas Cosmos 0, **scène 20**, barre du haut et indication vocale 31,
+     canevas Cosmos 0, **scène 20**, indication vocale 31,
      dock 32, panneau 33, bandeau GPT-Live 35, pastilles 40 (Cosmos : panneau
      42, barre 45, bandeau 48, dock et pastilles 50), fond des réglages 60,
      notifications 70, liste des pastilles 75, menu contextuel 80, Barehands
@@ -634,8 +634,8 @@ html:not([data-jarvis-theme="cosmos"]) .scene{--sc-edge:rgba(110,231,255,.2);--s
    entoure l'étoile assombrit au lieu d'éclairer. Elle est donc lisible comme
    passagère, et ne ressemble ni à un travail ordinaire ni à une alerte. */
 .scene .sc-node.sc-ephemeral{--tone:#3fb6ff}
-/* Fantôme d'un objet masqué (orbital-ui Slice 06, D9 ; œil du centre d'état
-   allumé) : atténué, contour en tirets, aucune animation. Le masquage n'est
+/* Fantôme d'un objet masqué (orbital-ui Slice 06, D9 ; Sélection › Afficher les
+   masqués › Voir en fantômes, Slice 06 de la refonte roue/dossier) : atténué, contour en tirets, aucune animation. Le masquage n'est
    pas levé : seul « Réafficher » (menu du fantôme) le fait. Jamais la couleur
    seule : le tiret et le mot « masqué » du nom accessible le disent aussi. */
 .scene .sc-node.sc-ghost{opacity:.42;filter:saturate(.35)}
@@ -873,6 +873,12 @@ ${orbitKeyframes()}
 /* Résumé plus haut que la place qui lui reste : il défile dans la fenêtre
    (molette, PageHaut/PageBas) au lieu d'être coupé sans recours. Barre fine et
    discrète, la même que la liste d'un artefact. */
+.sc-registry-img{display:block;max-width:100%;max-height:100%;object-fit:contain;border-radius:4px}
+/* L'image d'un Artifact du registre prend la place de la fenêtre (Slice 08, QA S06 polish 3 : une capture d'écran
+   tenait dans une vignette d'environ 60×34 px, le résumé d'un artefact étant borné à 38 % de la hauteur). */
+.sc-window .sc-summary.sc-registry-media,.sc-kind-artifact.sc-window .sc-summary.sc-registry-media{flex:1 1 auto;max-height:none;
+  display:flex;align-items:center;justify-content:center;white-space:normal}
+.sc-registry-media .sc-registry-img{width:100%;height:100%}
 .sc-summary{flex:1 1 auto;min-height:0;padding:0 13px 10px;font-size:12px;line-height:1.5;color:#b3cbd6;white-space:pre-wrap;overflow:hidden auto;overflow-wrap:anywhere;
   overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(151,191,209,.28) transparent;
   -webkit-mask-image:linear-gradient(#000 calc(100% - 22px),transparent);mask-image:linear-gradient(#000 calc(100% - 22px),transparent)}
@@ -956,14 +962,14 @@ ${orbitKeyframes()}
   max-width:calc(50vw - 150px);pointer-events:none}
 body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
 /* Le centre d'état du bas (orbital-ui Slice 06, docs/control-center-shell.md › Status
-   centre) partage cette rangée. Au-dessus de 820 px il réserve la largeur du bouton de
-   mode (gouttière + 254 px) de chaque côté : les notes s'arrêtent avant et vont à la
+   centre) partage cette rangée. Au-dessus de 820 px il réserve la largeur de la carte
+   Board (gouttière + 254 px) de chaque côté : les notes s'arrêtent avant et vont à la
    ligne (S06 rework, QA B1 : coupée en points de suspension, la cause d'une scène
    figée disparaissait) ; le texte entier est aussi le \`title\` de la note, et la
-   page publie leur hauteur (\`--sc-status-h\`) pour que le bouton de mode se
+   page publie leur hauteur (\`--sc-status-h\`) pour que la carte Board se
    hisse au-dessus d'une note de plusieurs lignes. À 820 px et moins il ne réserve plus
-   que l'onglet Chat : les notes passent au-dessus de la rangée (18 + 44 + 4), comme le
-   bouton de mode, qui se hisse au-dessus d'elles (rail de \`control_center_interaction_mode.js\`). */
+   que l'onglet Chat : les notes passent au-dessus de la rangée (18 + 44 + 4), comme la
+   carte Board, qui se hisse au-dessus d'elles (rail de \`control_center_boards.js\` › GEO). */
 @media(min-width:821px){.sc-status{max-width:min(calc(50vw - 150px),calc(var(--shell-gutter,18px) + 228px))}}
 @media(max-width:820px){.sc-status,body:has(#jarvisHands .jh-badge) .sc-status{bottom:calc(var(--shell-bottom,18px) + var(--shell-status-h,44px) + 4px)}}
 .sc-status[hidden]{display:none}
@@ -974,7 +980,7 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
 .sc-note::before{content:'';position:absolute;left:10px;top:10px;width:6px;height:6px;border-radius:50%;background:var(--sc-muted)}
 .sc-note-main{min-width:0;flex:1 1 140px;overflow-wrap:anywhere}
 .sc-note-meta{flex:none;color:var(--sc-muted);font-variant-numeric:tabular-nums}
-/* Indicateur actionnable (Slice 08) : scène pleine → archivage (les masqués sont à l’œil du centre d’état depuis l’orbital UI S06). */
+/* Indicateur actionnable (Slice 08) : scène pleine → archivage (les masqués sont dans la roue › Sélection depuis la Slice 06 de la refonte roue/dossier). */
 button.sc-note{pointer-events:auto;border:0;font:inherit;font-size:10px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;text-align:left}
 button.sc-note:hover{background:rgba(10,24,32,.86);color:#eef6fa}
 button.sc-note:focus-visible{outline:1px solid var(--sc-ink);outline-offset:2px}
@@ -1046,6 +1052,11 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      et c'est très bien ainsi. Le rectangle et le Ctrl-clic, eux, en tiennent
      plusieurs (demande du 19/09/2026). */
   let selection=[],band=null;
+  /* Sélection au clavier ouverte par Ctrl+Espace (Slice 06) : le focus ne la remplace plus. */
+  let keySelecting=false;
+  /* Vrai le temps d'un `focus()` posé par la page après un retrait : le focus
+     se déplace, la sélection ne suit pas (QA Slice 06, polish 1). */
+  let focusWithoutSelecting=false;
   const stopping=new Map();
   const actionStats={moves:0,resizes:0,representations:0,visibility:0,pins:0,archives:0,bulkArchives:0,stops:0,menus:0,refused:0,failed:0,rolledBack:0};
   const inflight=new Set();
@@ -1508,13 +1519,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     /* La section des réglages vit dans le modal : elle survit à la scène. */
     lastView=null;lastState=null;layout=null;layoutState=null;lastModel=null;
     viewMemo={state:null,version:-1,value:null};serverMemo={state:null,value:null};gesture=null;
-    selectedId=null;selection=[];band=null;pendingFocus=null;stopping.clear();
+    selectedId=null;selection=[];band=null;pendingFocus=null;stopping.clear();keySelecting=false;
     if(keyEdit&&keyEdit.timer)window.clearTimeout(keyEdit.timer);
     keyEdit=null;
     if(pruneTimer){window.clearTimeout(pruneTimer);pruneTimer=0}
     if(ephemeralTimer){window.clearTimeout(ephemeralTimer);ephemeralTimer=0}
     edgesSig='';statusSig='';announced='';focusId=null;tabStopId=null;
-    syncEye();
+    refreshSelectionMenu();
   }
 
   function scheduleRender(){
@@ -1758,6 +1769,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         return;
       }
       if(node.explains)parts.push(originButton(node.explains));
+      if(node.registry&&!node.summary)parts.push(registryBody(node.registry,node.title));
       if(node.summary){
         /* Comme la liste d'un artefact : un conteneur qui défile deviendrait un
            arrêt de tabulation sans nom (Chrome). Hors tabulation, il défile à la
@@ -1777,6 +1789,55 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(I)parts.push(grip());
     }
     el.append(...parts);
+  }
+
+  /* Fenêtre d'un Artifact du registre (`payload.registry_artifact_id`, posée
+     par « Afficher sur le Board » du Dossier, Slice 05) : son résumé est vide
+     par construction, le contenu est **lu dans le registre** (`GET
+     /api/artifacts/{id}`, texte borné ; une image par la route bornée de ses
+     octets), une fois par Artifact et par page. Rien n'est recopié dans la
+     scène : la charge de l'objet n'est jamais réécrite. */
+  const REGISTRY_TEXT_CHARS=2000;
+  const registryViews=new Map();
+  function registryStamp(id){const view=registryViews.get(id);return view?view.state:'none'}
+  function loadRegistry(id){
+    if(registryViews.has(id))return;
+    registryViews.set(id,{state:'loading'});
+    const started=Date.now();
+    requestJson(`/api/artifacts/${encodeURIComponent(id)}?text_chars=${REGISTRY_TEXT_CHARS}`,{timeoutMs:8000}).then(response=>{
+      const artifact=response.body&&response.body.artifact;
+      if(response.status!==200||!artifact||typeof artifact!=='object'){
+        const code=response.body&&response.body.error&&response.body.error.code||`http_${response.status}`;
+        registryViews.set(id,{state:'failed',code});
+        consoleLog('warn','scene.registry_view_failed',{artifact:id.slice(0,13),code});
+      }else{
+        const mime=String(artifact.mime_type||'');
+        registryViews.set(id,{state:'ready',kind:String(artifact.kind||''),
+          image:mime.startsWith('image/')&&artifact.has_payload!==false,
+          text:typeof artifact.text==='string'?artifact.text:'',truncated:!!artifact.text_truncated});
+        consoleLog('info','scene.registry_view',{artifact:id.slice(0,13),kind:artifact.kind||null,ms:Date.now()-started});
+      }
+    },error=>{
+      registryViews.set(id,{state:'failed',code:error&&error.code||'network'});
+      consoleLog('warn','scene.registry_view_failed',{artifact:id.slice(0,13),code:error&&error.code||'network',error:errorText(error)});
+    }).finally(()=>scheduleRender());
+  }
+  function registryBody(id,title){
+    loadRegistry(id);
+    const view=registryViews.get(id)||{state:'loading'};
+    const body=element('div','sc-summary');body.tabIndex=-1;
+    if(view.state==='loading')body.append(element('p','','Lecture de l’Artifact du registre…'));
+    else if(view.state==='failed')body.append(element('p','',`Artifact du registre illisible (${view.code}) : il reste dans le Dossier.`));
+    else if(view.image){
+      const img=document.createElement('img');
+      img.className='sc-registry-img';img.alt=String(title||'Image du Dossier');img.loading='lazy';
+      img.src=`/api/artifacts/${encodeURIComponent(id)}/payload`;
+      body.classList.add('sc-registry-media');
+      body.append(img);
+    }else if(view.text){
+      appendBlocks(body,L.markdownBlocks(view.text+(view.truncated?' …':'')));
+    }else body.append(element('p','',`${view.kind||'Média'} du registre : ouvrez-le depuis le Dossier.`));
+    return body;
   }
 
   /* Hôte des cadres, créé au premier prefab dessiné. Journal : console de la
@@ -2102,7 +2163,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       /* `prefabKey` et non `props`/`data` : un changement de données d'un prefab
          est un message au cadre (`syncPrefab`), jamais un nouveau dessin. */
       const content=JSON.stringify([node.shape,node.kind,node.tone,node.exec,node.urgency,node.pinned,node.titleSpans,
-        node.category,node.summary,node.items,node.label,node.prefabKey,node.itemCount,node.explains,node.alerted,node.ephemeral,node.task,node.group,node.type,node.ghost]);
+        node.category,node.summary,node.items,node.label,node.prefabKey,node.itemCount,node.explains,node.alerted,node.ephemeral,node.task,node.group,node.type,node.ghost,
+        node.registry?registryStamp(node.registry):'']);
       if(content!==record.content){
         const inside=record.el.contains(document.activeElement);
         fill(record.el,node);record.content=content;record.anim=null;
@@ -2150,18 +2212,29 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     restorePendingFocus();
   }
 
-  /* Après un retrait (archivage, masquage) ou un réaffichage : la sélection va
-     à l'objet prévu dès qu'il est dessiné (2 s au plus). */
+  /* Après un réaffichage : la sélection va à l'objet prévu dès qu'il est
+     dessiné (2 s au plus). Après un retrait (archivage, masquage, Ranger ;
+     `select: false`) : seul le **focus** va au voisin. La sélection perd les
+     objets qui ne sont plus dessinés et garde ceux restés en place (un refus) ;
+     un voisin sans rapport n'est jamais sélectionné, sinon la prochaine action
+     de la roue s'appliquerait à lui (QA Slice 06, polish 1). */
   function restorePendingFocus(){
     if(!pendingFocus)return;
     if(Date.now()-pendingFocus.at>2000){pendingFocus=null;return}
     const record=pendingFocus.id&&nodes.get(pendingFocus.id);
     if(!pendingFocus.id){pendingFocus=null;return}
     if(!record)return;
-    const id=pendingFocus.id;pendingFocus=null;
-    focusId=id;select(id);
+    const {id,select:selects=true}=pendingFocus;pendingFocus=null;
+    focusId=id;
+    if(selects)select(id);
+    else{
+      const kept=selection.filter(other=>nodes.has(other));
+      if(kept.length!==selection.length)applySelection(kept);
+    }
     updateTabStop(lastModel?lastModel.nodes:[]);
-    if(!(typeof CONFIRM==='object'&&CONFIRM&&CONFIRM.resolve))record.el.focus({preventScroll:true});
+    if(typeof CONFIRM==='object'&&CONFIRM&&CONFIRM.resolve)return;
+    focusWithoutSelecting=!selects;
+    try{record.el.focus({preventScroll:true})}finally{focusWithoutSelecting=false}
   }
 
   /* Liste d'éléments entière : pas de fondu. */
@@ -2334,6 +2407,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(gesture){cancelGesture();return}
       if(keyEdit){cancelKeyEdit();return}
       if(event.target!==el){el.focus({preventScroll:true});return}
+      keySelecting=false;
       el.blur();return;
     }
     if((event.key==='PageDown'||event.key==='PageUp')&&!event.altKey&&!event.ctrlKey&&!event.metaKey){
@@ -2353,6 +2427,23 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(intent.type==='menu'){
       event.preventDefault();kbdMenuAt=performance.now();
       openObjectMenu(el.dataset.objectId,anchorOfNode(el),el);
+      return;
+    }
+    /* Ctrl+Espace (Slice 06) : la sélection au clavier. La première frappe
+       ouvre le mode et prend l'objet focalisé seul ; ensuite chaque frappe le
+       fait entrer ou sortir, et les flèches déplacent le focus **sans**
+       défaire la sélection (`onFocusIn`). Échap, un clic ou une sélection
+       vidée referment le mode. La roue (Sélection) agit ensuite sur elle. */
+    if(intent.type==='toggle'){
+      event.preventDefault();
+      const id=el.dataset.objectId;
+      if((nodeOf(id)||{}).ghost)return;
+      if(!keySelecting){keySelecting=true;applySelection([id])}
+      else select(id,'toggle');
+      if(selection.length)keySelecting=true;
+      if(lastModel)updateTabStop(lastModel.nodes);
+      announce(selection.length?`${selection.length} objet${selection.length>1?'s':''} sélectionné${selection.length>1?'s':''}.`:'Sélection vidée.');
+      consoleLog('info','scene.key_selection',{object_id:id,size:selection.length});
       return;
     }
     if(intent.type==='move'||intent.type==='resize'){event.preventDefault();keyAdjust(el,intent);return}
@@ -2415,7 +2506,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        constellation » — se dissolvait sous la main. L'objet déjà sélectionné
        devient simplement l'ancre (le dernier entré), ce que le menu et le
        clavier lisent ; un objet hors sélection, lui, la remplace comme avant. */
-    if(I)anchorSelection(focusId);
+    /* Sélection au clavier ouverte (Ctrl+Espace) : le focus se promène, la
+       sélection reste celle qu'on a composée. */
+    if(I&&!keySelecting&&!focusWithoutSelecting)anchorSelection(focusId);
     if(lastModel)updateTabStop(lastModel.nodes);
     clampLabel(el);
   }
@@ -2529,8 +2622,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     return options===null||calm||reducedMotion()?null:L.orbitField(nodesNow,vp,options);
   }
 
-  /* Hauteur des notes de la scène, publiée sur la page (`--sc-status-h`) pour le
-     bouton de mode, qui se hisse au-dessus d'une note de plusieurs lignes (S06
+  /* Hauteur des notes de la scène, publiée sur la page (`--sc-status-h`) pour la
+     carte Board du bas-gauche (avant elle le bouton de mode), qui se hisse au-dessus d'une note de plusieurs lignes (S06
      rework, QA B1 : une note coupée en points de suspension perdait sa cause). */
   function publishStatusHeight(){
     const h=statusEl&&!statusEl.hidden?Math.ceil(statusEl.getBoundingClientRect().height):0;
@@ -2671,14 +2764,15 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(removed.length){scheduleRender();pushCommitter()}
   }
 
-  /* Sélection à déplacer quand des objets quittent le dessin (archivage,
-     masquage) : le voisin dans l'ordre de lecture, focalisé au prochain rendu. */
+  /* Focus à déplacer quand des objets quittent le dessin (archivage,
+     masquage, Ranger) : le voisin dans l'ordre de lecture, focalisé — **sans
+     être sélectionné** — au prochain rendu. */
   function planFocusAfterRemoval(removedIds,message){
     const list=lastModel?lastModel.nodes:[];
     const active=nodeElement(document.activeElement);
     const current=active?active.dataset.objectId:(focusId||removedIds[0]);
     const next=I.focusAfterRemoval(L.spatialOrder(list).map(node=>node.id),removedIds,current);
-    pendingFocus={id:next,at:Date.now()};
+    pendingFocus={id:next,at:Date.now(),select:false};
     announce(message);
     scheduleRender();
   }
@@ -2946,6 +3040,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        naît du document (`onDocumentPointerDown`). */
     if(!el)return;
     if((nodeOf(el.dataset.objectId)||{}).ghost)return;  // fantôme : « Réafficher » seulement (QA S06 P2)
+    keySelecting=false;  // la souris reprend la sélection (Slice 06)
     raiseWindow(el.dataset.objectId);
     /* Lien d'entrée ou origine d'un artefact : leur clic natif, pas de geste. */
     if(event.target.closest('.sc-item-link,.sc-origin'))return;
@@ -3157,17 +3252,23 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const after=new Set(next);
     for(const id of selection)if(!after.has(id)){const record=nodes.get(id);if(record)record.el.classList.remove('sc-selected')}
     for(const id of next)if(!before.has(id)){const record=nodes.get(id);if(record)record.el.classList.add('sc-selected')}
+    const changed=next.length!==selection.length||next.some((id,i)=>selection[i]!==id);
     selection=next;
     selectedId=next.length?next[next.length-1]:null;
+    if(!next.length)keySelecting=false;
     /* Sélectionner une fenêtre prefab la rend la plus récente (et reprend son cadre en pause). */
     if(prefabHost&&selectedId&&prefabHost.has(selectedId))prefabHost.touch(selectedId);
+    if(changed)selectionChanged();
   }
 
   function onDocumentPointerDown(event){
     if(!root)return;
     const target=event.target&&event.target.closest?event.target:null;
     if(!selection.length)return;
-    if(target&&(target.closest('#sceneLayer .sc-node')||target.closest('#ctxMenu')||target.closest('#confirmBack')))return;
+    /* La roue (Slice 06) agit **sur** la sélection : l'atteindre — souris, ou
+       pointeur synthétique de Bare Hands — ne la défait pas. */
+    if(target&&(target.closest('#sceneLayer .sc-node')||target.closest('#ctxMenu')||target.closest('#confirmBack')
+      ||target.closest('#toolWheel')))return;
     /* Ctrl ou Maj tenu : l'utilisateur agrandit sa sélection, il ne la jette pas. */
     if(event.ctrlKey||event.metaKey||event.shiftKey)return;
     select(null);
@@ -3242,7 +3343,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const state=viewState();
     if(!state||!state.objects.has(id))return;
     /* Fantôme (Slice 06, D9) : une seule action, « Réafficher » — le même
-       `showObjects([id])` que la liste de l'œil, donc un seul
+       `showObjects([id])` que la liste de Sélection, donc un seul
        `set_visibility visible`. Rien d'autre ne s'applique à un objet masqué. */
     const node=nodeOf(id);
     if(node&&node.ghost){
@@ -3329,128 +3430,395 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     actionStats.visibility++;
     planFocusAfterRemoval([id],`${label} masqué.`);
     const {result}=await optimistic('Masquage',id,{visibility:'hidden'},I.commands.setVisibility(id,'hidden'));
+    /* Un objet masqué n'est plus dessiné : il sort de la sélection (Slice 06). */
+    if(result.ok&&selection.includes(id))applySelection(selection.filter(other=>other!==id));
     if(result.ok)notify({title:`${label} masqué`,sub:'Cliquer ici pour le réafficher.',kind:'info',
       onClick:()=>showObjects([id]).catch(error=>actionFailed('Réaffichage',id,error))});
   }
 
-  /* Réafficher des objets masqués, un par un (au plus 512). Le premier
-     réaffiché reçoit la sélection (la pastille disparaît avec le dernier). */
+  /* Réafficher des objets masqués. Un seul : `set_visibility visible` (le
+     « Réafficher » d'un fantôme, d'une notification). Plusieurs (« Tout
+     réafficher », Sélection, Slice 06) : **un** `patch_selection
+     {visibility: visible}`, atomique — la même opération que l'outil du
+     cerveau `scene_update_many`. Le premier réaffiché reçoit le focus. */
   async function showObjects(ids){
-    let shown=0,failed=null;
-    for(const id of ids.slice(0,512)){
-      actionStats.visibility++;
-      const token=pending.begin(id,{visibility:'visible'},Date.now());pendingChanged();
-      const result=await sendCommand(I.commands.setVisibility(id,'visible'));
-      if(result.ok){
-        pending.confirm(id,token,result.revision);
-        if(!shown)pendingFocus={id,at:Date.now()};
-        shown++;
-      }
-      else{if(pending.rollback(id,token)){actionStats.rolledBack++;pendingChanged()}failed=failed||result;if(result.outcome==='failed')break}
+    const chosen=[...new Set(ids)].slice(0,512);
+    if(!chosen.length)return;
+    actionStats.visibility+=chosen.length;
+    const tokens=chosen.map(id=>[id,pending.begin(id,{visibility:'visible'},Date.now())]);
+    pendingChanged();
+    const one=chosen.length===1;
+    const result=await sendCommand(one?I.commands.setVisibility(chosen[0],'visible')
+      :I.commands.patchSelection(chosen,{visibility:'visible'}));
+    if(!result.ok){
+      for(const [id,token] of tokens)if(pending.rollback(id,token))actionStats.rolledBack++;
+      pendingChanged();
+      consoleLog('info','scene.user_shown',{asked:chosen.length,shown:0,outcome:result.outcome});
+      return reportRefusal('Réaffichage',chosen[0],result);
     }
+    for(const [id,token] of tokens)pending.confirm(id,token,result.revision);
+    pendingFocus={id:chosen[0],at:Date.now()};
     prunePending();scheduleRender();
-    consoleLog('info','scene.user_shown',{asked:ids.length,shown});
-    if(shown)announce(shown>1?`${shown} objets réaffichés.`:`${quoted(ids[0])} réaffiché.`);
-    if(failed)reportRefusal(shown?`Réaffichage de ${ids.length-shown} objet(s)`:'Réaffichage',ids[0],failed);
-    else if(ids.length>1)notify({title:`${shown} objets réaffichés`,kind:'ok',ms:3000});
+    consoleLog('info','scene.user_shown',{asked:chosen.length,shown:chosen.length,op:one?'set_visibility':'patch_selection',
+      revision:result.revision,outcome:result.outcome});
+    announce(one?`${quoted(chosen[0])} réaffiché.`:`${chosen.length} objets réaffichés.`);
+    if(!one)notify({title:`${chosen.length} objets réaffichés`,kind:'ok',ms:3000});
   }
 
   /* ------------------------------------------------------------------
-     L'œil des objets masqués (orbital-ui Slice 06, D9).
-
-     Un bouton du centre d'état bas-centre (`#hiddenEye`, déclaré par la page,
-     rang 40), seul contrôle permanent des objets masqués. Il ne tient aucun
-     état : il projette le réglage de vue `showHidden` (`JarvisSceneView`, ce
-     navigateur, jamais envoyé à Core) et le compte `hidden` du dernier modèle
-     de vue. Activation simple : allume ou éteint les fantômes ; activation
-     secondaire (clic droit, pincement pouce + majeur, `ContextMenu`,
-     `Maj+F10`) : la liste existante (`openHiddenMenu`, « Tout réafficher »).
-     Aucun objet masqué : il reste focalisable, l'air inerte, et le dit.
-     Scène éteinte : caché. */
-  const EYE_ID='hiddenEye';
-  let eyeKbdAt=0,eyeWired=false,eyeSig='';
-  function eyeElement(){return document.getElementById(EYE_ID)}
-
-  function syncEye(){
-    const eye=eyeElement();
-    if(!eye)return;
-    if(!eyeWired)wireEye(eye);
-    const shown=!!(enabled&&root&&V&&I);
-    if(!shown){if(!eye.hidden){eye.hidden=true;eyeSig=''}return}
-    const view=V.hiddenEye(viewPrefs,lastModel?lastModel.hidden:0);
-    const sig=`${view.pressed}|${view.inert}|${view.label}`;
-    if(eye.hidden)eye.hidden=false;
-    if(sig===eyeSig)return;
-    eyeSig=sig;
-    eye.setAttribute('aria-pressed',view.pressed?'true':'false');
-    eye.setAttribute('aria-disabled',view.inert?'true':'false');
-    eye.setAttribute('aria-label',view.label);
-    eye.title=view.label;
-    eye.dataset.eye=view.pressed?'on':'off';
+     Les masqués en fantômes (orbital-ui Slice 06, D9), **dans Sélection**
+     depuis la Slice 06 de jarvis-board-ui-wheel-dossier-refactor : la roue ›
+     Sélection › « Masqués (N) » › « Voir en fantômes ». Plus
+     d'œil ni de compte permanent dans la coque (D06, Slice 02). Le réglage de
+     vue `showHidden` est de ce navigateur (`JarvisSceneView`, jamais envoyé à
+     Core) : la vue en fantômes ne réécrit **jamais** `visibility` ; « Tout
+     réafficher » et « Réafficher » le font (canonique, `showObjects`). */
+  let ghostsWithheld=false;
+  /* **Les fantômes ne se dessinent que si une commande peut les éteindre** :
+     celle de Sélection, donc la roue. Sans roue installée, un `showHidden`
+     resté allumé est gardé mais pas appliqué, et c'est dit une fois. */
+  function ghostsShown(){
+    const wanted=!!(viewPrefs&&viewPrefs.showHidden);
+    if(!wanted)return false;
+    if(window.JarvisToolWheel)return true;
+    if(!ghostsWithheld){ghostsWithheld=true;consoleLog('info','scene.hidden_view_withheld',{reason:'no_selection_menu'})}
+    return false;
   }
 
-  function toggleEye(){
-    const eye=eyeElement();
-    if(!eye||!enabled||!V)return;
+  function toggleGhosts(){
+    if(!enabled||!V)return;
     const view=V.hiddenEye(viewPrefs,lastModel?lastModel.hidden:0);
     if(view.inert){announce('Aucun objet masqué.');consoleLog('info','scene.hidden_view_inert',{});return}
-    const field=V.FIELD_BY_ID.get('showHidden');
-    setViewField(field,!view.pressed);
+    setViewField(V.FIELD_BY_ID.get('showHidden'),!view.pressed);
     /* Un fantôme n'est dessiné que pour un objet masqué qui a une place
        enregistrée (`JarvisSceneLayout.viewModel`) : on annonce ceux-là, et la
-       liste de l'œil, qui les tient tous (QA S06, P1). */
+       liste de Sélection, qui les tient tous (QA S06, P1). */
     const state=viewState();
     const ghosts=state?[...state.objects.values()].filter(o=>o.visibility!=='visible'&&o.geometry).length:0;
-    const listed=`${view.count} dans la liste de l’œil.`;
+    const listed=`${view.count} dans Sélection › Masqués.`;
     announce(view.pressed?'Objets masqués cachés.'
       :ghosts?`${ghosts} ${ghosts>1?'objets masqués affichés':'objet masqué affiché'} en fantômes ; ${listed}`
       :`Aucun objet masqué n’a de place enregistrée ; ${listed}`);
     consoleLog('info','scene.hidden_view',{show:!view.pressed,hidden:view.count,ghosts});
-    syncEye();
+    refreshSelectionMenu();
   }
 
-  function eyeSecondary(eye){
-    if(!enabled)return;
-    const count=lastModel?lastModel.hidden:0;
-    consoleLog('info','scene.hidden_menu',{hidden:count});
-    if(!count){announce('Aucun objet masqué.');return}
-    openHiddenMenu(eye);
+  /* ------------------------------------------------------------------
+     Sélection (Slice 06 de jarvis-board-ui-wheel-dossier-refactor) : les
+     actions sur la sélection de la page, dans le sous-menu Sélection de la
+     roue (`JarvisScene.selectionMenu`, lu par
+     `control_center_input_arbitration.js` après Souris / Bare Hands). Le
+     modèle des lignes est pur (`I.selectionActions`) ; ici, le branchement aux
+     chemins canoniques :
+     - Masquer / Réafficher : `set_visibility` (un objet) ou **un**
+       `patch_selection {visibility}` ;
+     - Changer la forme : le chemin du menu d'un objet (un objet, place
+       choisie) ou **un** `patch_selection {representation}` ;
+     - Retirer du Board : confirmation, puis **un** `archive_selection` ;
+     - Ranger dans le Dossier : `POST /api/workspace/boards/{actif}/dossier/ranger`
+       (Slice 05 : la durabilité d'abord, le retrait ensuite, résultat par
+       objet), précédé de l'aperçu `…/dossier/backing` qui nourrit la ligne.
+     Aucune de ces commandes ne porte de charge : `payload` (et donc
+     `registry_artifact_id`) n'est jamais réécrit. */
+  const BACKING_DEBOUNCE_MS=180;
+  const BACKING_TIMEOUT_MS=8000;
+  const RANGER_TIMEOUT_MS=20000;
+  let backing={key:'',status:'idle'},backingTimer=0,backingSeq=0;
+
+  function liveSelection(){
+    const state=viewState();
+    return state?selection.filter(id=>state.objects.has(id)):[];
+  }
+  function activeBoardId(){
+    try{
+      const boards=window.JarvisBoardsControl;
+      return boards&&typeof boards.activeId==='function'?boards.activeId():null;
+    }catch(error){consoleLog('warn','scene.active_board_unreadable',{error:errorText(error)});return null}
+  }
+  function runBlocked(){return document.documentElement.classList.contains('jvx-run')}
+  const nounOf=n=>`${n} ${n>1?'objets':'objet'}`;
+
+  function refreshSelectionMenu(){
+    const wheel=window.JarvisToolWheel;
+    if(!wheel||typeof wheel.isOpen!=='function'||!wheel.isOpen())return;
+    try{wheel.refresh('selection')}
+    catch(error){consoleLog('warn','scene.selection_menu_refresh_failed',{error:errorText(error)})}
   }
 
-  function wireEye(eye){
-    eyeWired=true;
-    eye.addEventListener('click',event=>{event.preventDefault();toggleEye()});
-    eye.addEventListener('contextmenu',event=>{
-      event.preventDefault();
-      /* La touche Menu / Maj+F10 a déjà ouvert la liste : le `contextmenu`
-         que le navigateur envoie ensuite compte une fois. */
-      if(performance.now()-eyeKbdAt<700)return;
-      eyeSecondary(eye);
-    });
-    eye.addEventListener('keydown',event=>{
-      if(event.key==='ContextMenu'||(event.key==='F10'&&event.shiftKey)){
-        event.preventDefault();eyeKbdAt=performance.now();eyeSecondary(eye);
+  function selectionChanged(){
+    requestBacking(false);
+    refreshSelectionMenu();
+  }
+
+  /* L'aperçu Dossier de la sélection (`backing`, une lecture) : ce que Ranger
+     ferait de chaque objet, et si ce Board est celui affiché. Relu quand la
+     sélection ou le Board actif change, et à chaque ouverture du sous-menu ;
+     une relecture garde l'aperçu précédent tant qu'elle n'a pas répondu. */
+  function requestBacking(force){
+    const ids=liveSelection();
+    const board=activeBoardId();
+    const key=`${board||''}|${ids.join(',')}`;
+    if(!ids.length||!board||ids.length>I.MAX_RANGER_IDS){
+      window.clearTimeout(backingTimer);backingSeq++;
+      backing={key,status:'idle'};return;
+    }
+    if(!force&&backing.key===key)return;
+    if(!(backing.key===key&&backing.status==='ready'))backing={key,status:'loading'};
+    window.clearTimeout(backingTimer);
+    const seq=++backingSeq;
+    backingTimer=window.setTimeout(async()=>{
+      const started=Date.now();
+      const query=ids.map(id=>`object_id=${encodeURIComponent(id)}`).join('&');
+      let next;
+      try{
+        const response=await requestJson(`/api/workspace/boards/${encodeURIComponent(board)}/dossier/backing?${query}`,
+          {timeoutMs:BACKING_TIMEOUT_MS});
+        const body=response.body||{};
+        if(response.status!==200||!Array.isArray(body.objects)){
+          const code=body.error&&body.error.code||`http_${response.status}`;
+          next={key,status:'failed',message:code};
+          consoleLog('warn','scene.selection_backing_failed',{code,status:response.status,count:ids.length});
+        }else{
+          const objects={};
+          for(const o of body.objects)if(o&&o.object_id)
+            objects[o.object_id]={rangeable:o.rangeable===true,backing:o.backing||null,code:o.code||null,message:o.message||'',
+              reason:typeof o.reason==='string'?o.reason:''};
+          next={key,status:'ready',board_active:body.board_active!==false,board_message:body.board_message||'',objects};
+          consoleLog('info','scene.selection_backing',{count:ids.length,
+            rangeable:Object.values(objects).filter(o=>o.rangeable).length,board_active:next.board_active,ms:Date.now()-started});
+        }
+      }catch(error){
+        next={key,status:'failed',message:error&&error.code||errorText(error)};
+        consoleLog('warn','scene.selection_backing_failed',{code:error&&error.code||'network',error:errorText(error),count:ids.length});
       }
-    });
+      if(seq!==backingSeq)return;
+      backing=next;
+      refreshSelectionMenu();
+    },BACKING_DEBOUNCE_MS);
   }
 
-  function openHiddenMenu(anchor){
-    if(typeof showMenu!=='function'||!I)return;
+  /* Les lignes du sous-menu (après Souris / Bare Hands), branchées. `ctx` :
+     celui de la roue ; une ouverture par l'utilisateur relit l'aperçu. */
+  function selectionMenu(ctx){
+    if(!enabled||!I)return [];
+    const state=viewState();
+    if(!state)return [];
+    if(!ctx||ctx.source!=='refresh')requestBacking(true);
+    const ids=liveSelection();
+    const rows=I.selectionActions(state,ids,{hidden:lastModel?lastModel.hidden:I.hiddenObjects(state).length,
+      ghosts:!!(viewPrefs&&viewPrefs.showHidden),backing,boardId:activeBoardId(),runBlocked:runBlocked()});
+    const wire=row=>{
+      const out={...row};
+      delete out.act;delete out.rows;
+      if(row.rows){const children=row.rows.map(wire);out.onSecondary=()=>children}
+      if(row.act&&!row.status)out.onActivate=at=>runSelectionAction(row.act,ids,at);
+      return out;
+    };
+    return rows.map(wire);
+  }
+
+  async function runSelectionAction(act,ids,ctx){
+    const source=ctx&&ctx.source||'api';
+    const state=viewState();
+    const live=state?ids.filter(id=>state.objects.has(id)):[];
+    consoleLog('info','scene.selection_action',{act:act.startsWith('show:')?'show-one':act,count:live.length,source});
+    if(act==='ghosts')return toggleGhosts();
+    if(act==='show-all')return showObjects(state?I.hiddenObjects(state).map(entry=>entry.id):[]);
+    if(act.startsWith('show:'))return showObjects([act.slice(5)]);
+    if(!live.length){
+      announce('La sélection a changé : aucun objet choisi n’est encore sur le Board.');
+      notify({title:'Sélection vide',sub:'Aucun objet choisi n’est encore sur le Board : rien n’a été fait.',kind:'info',ms:3000});
+      return;
+    }
+    if(act==='hide')return hideSelection(live);
+    if(act==='show-selection')return showObjects(live);
+    if(act.startsWith('rep:'))return changeSelectionRepresentation(live,act.slice(4));
+    if(act==='remove')return removeSelection(live);
+    if(act==='ranger')return rangerSelection(live);
+    consoleLog('warn','scene.selection_action_unknown',{act});
+  }
+
+  async function hideSelection(ids){
+    if(ids.length===1)return hideObject(ids[0]);
+    actionStats.visibility+=ids.length;
+    const noun=nounOf(ids.length);
+    planFocusAfterRemoval(ids,`${noun} masqués.`);
+    const tokens=ids.map(id=>[id,pending.begin(id,{visibility:'hidden'},Date.now())]);
+    pendingChanged();
+    const result=await sendCommand(I.commands.patchSelection(ids,{visibility:'hidden'}));
+    if(!result.ok){
+      for(const [id,token] of tokens)if(pending.rollback(id,token))actionStats.rolledBack++;
+      pendingChanged();
+      return reportRefusal('Masquage',ids[0],result);
+    }
+    for(const [id,token] of tokens)pending.confirm(id,token,result.revision);
+    prunePending();
+    applySelection(selection.filter(id=>!ids.includes(id)));
+    consoleLog('info','scene.user_hidden',{count:ids.length,revision:result.revision,outcome:result.outcome});
+    notify({title:`${noun} masqués`,sub:'Ils restent sur le Board : Sélection › Masqués, ou cliquer ici.',kind:'info',
+      onClick:()=>showObjects(ids).catch(error=>actionFailed('Réaffichage',ids[0],error))});
+  }
+
+  async function changeSelectionRepresentation(ids,representation){
+    if(!['point','capsule','window'].includes(representation))return;
+    if(ids.length===1)return changeRepresentation(ids[0],representation);
+    actionStats.representations+=ids.length;
+    const tokens=ids.map(id=>[id,pending.begin(id,{representation},Date.now())]);
+    pendingChanged();
+    const result=await sendCommand(I.commands.patchSelection(ids,{representation}));
+    if(!result.ok){
+      for(const [id,token] of tokens)if(pending.rollback(id,token))actionStats.rolledBack++;
+      pendingChanged();
+      return reportRefusal('Changement de forme',ids[0],result);
+    }
+    for(const [id,token] of tokens)pending.confirm(id,token,result.revision);
+    prunePending();
+    const word={point:'étoiles',capsule:'capsules',window:'fenêtres'}[representation];
+    consoleLog('info','scene.user_representation_many',{count:ids.length,representation,revision:result.revision,outcome:result.outcome});
+    announce(`${nounOf(ids.length)} en ${word}.`);
+  }
+
+  /* « Retirer du Board » : la représentation quitte la scène active
+     (`archive_selection`, une révision, la cascade des signaux), l'historique
+     la garde ; une source durable (fichier de la mémoire, Artifact du
+     registre) n'est jamais touchée — la confirmation le dit, et dit aussi ce
+     qui, n'étant pas rangé, ne sera plus sur le Board. Pendant une lecture de
+     Variantes, la confirmation s'ouvrirait sous le Studio (rework B1 de la
+     Slice 02) : le geste est alors refusé, avec la raison. */
+  async function removeSelection(ids){
+    if(runBlocked()){
+      consoleLog('info','scene.remove_blocked_during_run',{count:ids.length});
+      notify({title:'Retirer du Board indisponible',sub:'Indisponible pendant la lecture : arrêtez la présentation dans Variantes, puis réessayez.',kind:'info'});
+      return;
+    }
+    const key='remove-selection';
+    if(inflight.has(key))return;
     const state=viewState();
     if(!state)return;
-    const hidden=I.hiddenObjects(state);
-    if(!hidden.length)return;
-    const shown=hidden.slice(0,24);
-    const items=shown.map((entry,index)=>({act:`show:${index}`,label:`Afficher « ${L.cleanLine(entry.title,48)||entry.id} »`}));
-    if(hidden.length>shown.length)items.push({act:'more',label:`… et ${hidden.length-shown.length} autres`,disabled:true});
-    items.push('-',{act:'show-all',label:`Tout réafficher (${hidden.length})`});
-    const r=anchor.getBoundingClientRect();
-    actionStats.menus++;
-    showMenu({title:hidden.length>1?`${hidden.length} objets masqués`:'1 objet masqué',items,
-      pos:{x:r.left,y:r.top-4,above:r.top-4},origin:anchor,run:act=>{
-        const ids=act==='show-all'?hidden.map(entry=>entry.id):act.startsWith('show:')?[shown[Number(act.slice(5))].id]:[];
-        if(ids.length)showObjects(ids).catch(error=>actionFailed('Réaffichage',ids[0],error));
-      }});
+    const items=ids.map(id=>state.objects.get(id)).filter(Boolean);
+    const cascade=[];
+    for(const item of items)if(['agent','job'].includes(item.kind))
+      for(const signal of I.cascadeOf(state,item.object_id))if(!ids.includes(signal)&&!cascade.includes(signal))cascade.push(signal);
+    const sources=items.filter(I.durableSourceOf).length;
+    const unranged=items.filter(item=>!I.durableSourceOf(item)&&['artifact','window'].includes(item.kind)&&!(item.payload&&item.payload.prefab)).length;
+    const running=items.filter(item=>['running','pending','blocked'].includes(item.exec_state)&&['agent','job'].includes(item.kind)).length;
+    const many=items.length>1;
+    const lines=[many?`Ces ${items.length} représentations quittent le Board ; elles restent dans l’historique.`
+      :'La représentation quitte le Board ; elle reste dans l’historique.'];
+    if(sources)lines.push(sources>1?`Les ${sources} documents source restent dans le Dossier : seule leur représentation part.`
+      :'Le document source reste dans le Dossier : seule sa représentation part.');
+    if(unranged)lines.push(unranged>1?`${unranged} contenus ne sont pas rangés : pour les garder dans le Dossier, choisissez plutôt « Ranger dans le Dossier ».`
+      :'Ce contenu n’est pas rangé : pour le garder dans le Dossier, choisissez plutôt « Ranger dans le Dossier ».');
+    if(cascade.length)lines.push(cascade.length>1?`${cascade.length} signaux d’attention partent avec elles.`:'Un signal d’attention part avec elle.');
+    if(running)lines.push('Le travail en cours continue, mais son étoile ne reviendra pas.');
+    if(typeof confirmDialog!=='function'){consoleLog('warn','scene.confirm_unavailable',{});return}
+    /* Le titre se lit avant le retrait : après, l'objet n'est plus dessiné. */
+    const label=quoted(items[0].object_id);
+    const title=many?`Retirer ${items.length} objets du Board ?`:`Retirer ${label} du Board ?`;
+    if(!await confirmDialog({title,lines,confirmLabel:'Retirer du Board',danger:true})){
+      consoleLog('info','scene.remove_cancelled',{count:items.length});return;
+    }
+    inflight.add(key);
+    try{
+      actionStats.archives+=items.length;
+      const targets=[...items.map(item=>item.object_id),...cascade];
+      planFocusAfterRemoval(targets,many?`${items.length} objets retirés du Board.`:`${label} retiré du Board.`);
+      const tokens=targets.map(target=>[target,pending.begin(target,{archived:true},Date.now())]);
+      pendingChanged();
+      const result=await sendCommand(I.commands.archiveSelection(items.map(item=>item.object_id)));
+      if(!result.ok){
+        for(const [target,token] of tokens)if(pending.rollback(target,token))actionStats.rolledBack++;
+        pendingChanged();
+        return reportRefusal('Retrait du Board',items[0].object_id,result);
+      }
+      for(const [target,token] of tokens)pending.confirm(target,token,result.revision);
+      prunePending();
+      applySelection(selection.filter(id=>!targets.includes(id)));
+      consoleLog('info','scene.user_removed',{count:items.length,signals:cascade.length,sources,revision:result.revision,outcome:result.outcome});
+      notify({title:many?`${items.length} objets retirés du Board`:`${label} retiré du Board`,
+        sub:sources?(sources>1?'Les documents source restent dans le Dossier.':'Le document source reste dans le Dossier.'):'Gardé dans l’historique.',
+        kind:'ok',ms:3500});
+    }finally{inflight.delete(key)}
+  }
+
+  /* « Ranger dans le Dossier » : la route de la Slice 05, sur le Board
+     **actif** (celui de la scène affichée), `origin: user`. Rien n'est retiré
+     d'avance : la page attend le résultat par objet ; un refus laisse la
+     représentation en place et sa phrase est dite ; un objet gardé dans le
+     Dossier mais pas retiré (`dossier_changed_meanwhile`,
+     `dossier_archive_failed`) aussi. Au-delà d'une seconde, une notification
+     dit que le rangement est en cours ; au-delà de 20 s, l'issue est dite
+     inconnue (rien n'est supposé). */
+  async function rangerSelection(ids){
+    if(inflight.has('ranger')){announce('Un rangement est déjà en cours.');return}
+    const board=activeBoardId();
+    if(!board){
+      consoleLog('warn','scene.ranger_refused',{code:'board_unknown',count:ids.length});
+      notify({title:'Ranger impossible',sub:'Le Board actif n’est pas connu : rien n’a été rangé.',kind:'bad'});
+      return;
+    }
+    if(ids.length>I.MAX_RANGER_IDS){
+      notify({title:'Ranger impossible',sub:`Au plus ${I.MAX_RANGER_IDS} objets par rangement : réduisez la sélection.`,kind:'bad'});
+      return;
+    }
+    inflight.add('ranger');
+    const started=Date.now();
+    /* Les titres se lisent avant : un objet rangé n'est plus dessiné quand le compte rendu s'écrit. */
+    const titles=new Map(ids.map(id=>[id,titleOf(id)]));
+    const noun=nounOf(ids.length);
+    announce(`Rangement de ${noun} dans le Dossier…`);
+    const slow=window.setTimeout(()=>notify({title:'Rangement en cours…',
+      sub:`${noun} : d’abord gardés dans le Dossier, ensuite retirés du Board.`,kind:'info',ms:6000}),1000);
+    try{
+      let response;
+      try{
+        response=await requestJson(`/api/workspace/boards/${encodeURIComponent(board)}/dossier/ranger`,
+          {method:'POST',body:{object_ids:ids,origin:'user'},timeoutMs:RANGER_TIMEOUT_MS});
+      }catch(error){
+        consoleLog('warn','scene.ranger_failed',{code:error&&error.code||'network',error:errorText(error),count:ids.length,ms:Date.now()-started});
+        notify({title:'Ranger : issue inconnue',kind:'warn',sub:error&&error.code==='timeout'
+          ?`Pas de réponse en ${RANGER_TIMEOUT_MS/1000} s : relisez le Dossier et le Board avant de réessayer.`
+          :'Control Center injoignable : relisez le Dossier et le Board avant de réessayer.'});
+        return;
+      }
+      const body=response.body||{};
+      if(response.status!==200||!Array.isArray(body.results)){
+        const code=body.error&&body.error.code||`http_${response.status}`;
+        consoleLog('warn','scene.ranger_refused',{code,status:response.status,count:ids.length});
+        notify({title:'Ranger refusé',sub:I.RANGER_REQUEST_REFUSALS[code]||`Rien n’a été rangé (${code}).`,kind:'bad'});
+        return;
+      }
+      const report=I.rangerReport(body,id=>titles.get(id)||titleOf(id));
+      /* Ce qui reste sur le Board (refusé, gardé sans retrait) reste la
+         sélection : l'utilisateur voit ce qui n'est pas parti et peut agir
+         dessus. Tout est parti : le focus va au voisin, comme un retrait. */
+      const remaining=selection.filter(id=>!report.removed.includes(id));
+      if(report.removed.length&&!remaining.length)planFocusAfterRemoval(report.removed,report.title);
+      else announce(report.title);
+      if(report.removed.length){
+        applySelection(remaining);
+        if(remaining.length)pendingFocus={id:remaining[remaining.length-1],at:Date.now()};
+      }
+      consoleLog(report.refused.length||report.kept.length?'warn':'info','scene.ranger_done',{asked:ids.length,
+        removed:report.removed.length,kept:report.kept.length,refused:report.refused.length,
+        codes:body.results.filter(r=>r.code).map(r=>r.code),revision:body.revision==null?null:body.revision,ms:Date.now()-started});
+      const more=report.lines.length>3?` — et ${report.lines.length-3} autres`:'';
+      /* Slice 07 : le toast ouvre le Dossier sur ce qui vient d'y entrer (une entrée : elle-même ; plusieurs : l'accueil). */
+      const stored=body.results.filter(r=>r.status==='stored'&&r.entry_id).map(r=>r.entry_id);
+      const dossier=window.JarvisDossier;
+      const openDossier=stored.length&&dossier?()=>{
+        consoleLog('info','scene.ranger_open_dossier',{entries:stored.length});
+        if(stored.length===1)dossier.openEntry({entry_id:stored[0]}).catch(error=>actionFailed('Ouverture du Dossier',ids[0],error));
+        else dossier.open();
+      }:undefined;
+      notify({title:report.title,kind:report.kind,ms:report.lines.length?10000:6000,onClick:openDossier,
+        sub:(report.lines.length?report.lines.slice(0,3).join(' — ')+more:'Retrouvez-les dans le Dossier du Board.')
+          +(openDossier?' Cliquer ici pour l’ouvrir dans le Dossier.':'')});
+    }finally{
+      window.clearTimeout(slow);
+      inflight.delete('ranger');
+      requestBacking(true);
+    }
   }
 
   async function archiveObject(id){
@@ -3846,7 +4214,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     nextEphemeralMs=Infinity;
     lastModel=L.viewModel(viewState(),current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
       animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now,
-      workView:item=>workViewOf(item,now),work:workIndex,raised,showHidden:!!(viewPrefs&&viewPrefs.showHidden)});
+      workView:item=>workViewOf(item,now),work:workIndex,raised,showHidden:ghostsShown()});
     armEphemeralTimer();
     /* Gravitation : le centre, la période et le resserrement du champ sont
        calculés pour ce rendu ; le rayon et la phase, eux, appartiennent à
@@ -3971,9 +4339,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     for(const entry of stopping.values()){
       notes.push({cls:'sc-busy',main:`Arrêt de ${entry.label} en cours`,meta:elapsed(Date.now()-entry.started)});
     }
-    /* Les objets masqués ne sont plus une note ici (Slice 06, D9) : l'œil du
-       centre d'état (`#hiddenEye`) les compte et les montre. */
-    syncEye();
+    /* Les objets masqués ne sont plus une note ici (orbital-ui Slice 06, D9), ni un
+       œil permanent (Slice 02, D06) : la roue › Sélection les compte et les
+       montre (Slice 06), son sous-menu ouvert suit le compte. */
+    refreshSelectionMenu();
     if(lastModel&&lastModel.offscreen){
       notes.push({cls:'',main:`${lastModel.offscreen} ${lastModel.offscreen>1?'objets':'objet'} hors champ`,meta:''});
       announce.push('Des objets sont hors champ.');
@@ -4155,6 +4524,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   window.JarvisScene=Object.freeze({
     version:2,gate,setWork,
+    /* Sélection de la roue (Slice 06) : les actions sur la sélection, lues par
+       `control_center_input_arbitration.js` à chaque ouverture du sous-menu. */
+    selectionMenu,
     /* Cadres manipulables à mains nues (Bare Hands V1, Slice 06). Le pointeur
        est inséré **avant** ce module, donc il lit cette couture à l'appel et non
        au chargement. */

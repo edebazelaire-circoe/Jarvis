@@ -1,7 +1,7 @@
 """La lane Tool Brain de la chronologie, mesurée dans un vrai navigateur (Slice 09 de jarvis-tool-brain-ui-orchestrator).
 
 `test_control_center_timeline_js.py` prouve la logique pure sous node ; ici on charge la page **telle que
-`ControlCenter.index` la sert** dans Chrome sans tête (le harnais CDP de `test_interaction_mode_hud_browser.py`), on
+`ControlCenter.index` la sert** dans Chrome sans tête (le harnais CDP de `test_boards_card_browser.py`), on
 ouvre la chronologie par un vrai clic, et on relève des rectangles, des styles **calculés** et des noms
 accessibles. Les routes `/api/conversations*` sont servies par un `fetch` de remplacement installé avant le module de
 la page : il rend de **vrais évènements** (ceux que `ToolBrainEvents` écrit, ou le fixture doré), au format exact de
@@ -21,7 +21,7 @@ import pytest
 
 from jarvis.domain.conversation_events import encode_conversation_event
 from tests.unit.test_control_center_timeline_js import fixture_payloads, tool_brain_events
-from tests.unit.test_interaction_mode_hud_browser import HARNESS, _chrome, _served_page, _shots, _wait
+from tests.unit.test_boards_card_browser import HARNESS, _chrome, _served_page, _shots, _wait
 
 #: Remplace `fetch` pour les routes de conversation avant que le module de la page ne le capture.
 STUB = r"""<script>(()=>{

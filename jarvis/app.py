@@ -349,6 +349,15 @@ def _mcp_allow_loopback_http() -> bool:
     return os.getenv("JARVIS_MCP_ALLOW_LOOPBACK_HTTP", "0").strip() == "1"
 
 
+def _open_browser_enabled() -> bool:
+    """`JARVIS_OPEN_BROWSER=0` : le Control Center n'ouvre aucun onglet à son démarrage.
+
+    Défaut inchangé (un onglet du navigateur par défaut). Pour les bacs à sable et les tests : un onglet
+    resté ouvert sur un port de bac à sable prendrait les ordres de Jarvis (`docs/OPERATIONS.md`).
+    """
+    return os.getenv("JARVIS_OPEN_BROWSER", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
 #: Chemin du retour OAuth servi par le Control Center (`docs/mcp/plugins.md` §3.3, ARCH §14 C6).
 MCP_OAUTH_CALLBACK_PATH = "/api/mcp/oauth/callback"
 DEFAULT_UI_PORT = 17654
@@ -1656,9 +1665,9 @@ async def _run_control_center_v2() -> int:
         CoreSceneTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
         journal=journal,
     )
-    # Mode d'interaction (Slice 02) : Core possède la valeur effective, ce
-    # Control Center la préférence enregistrée. Sa propre connexion, pour qu'un
-    # jeton périmé ici ne ferme pas celle du panneau Agents.
+    # Mode d'interaction : Core possède la valeur effective, dérivée du type du
+    # Board actif ; ce Control Center la lit pour l'afficher (Slice 01b). Sa
+    # propre connexion, pour qu'un jeton périmé ici ne ferme pas celle du panneau Agents.
     from jarvis.runtime.interaction_mode_view import CoreInteractionModeTransport, CoreInteractionModeView
 
     interaction_mode_view = CoreInteractionModeView(
@@ -1743,7 +1752,10 @@ async def _run_control_center_v2() -> int:
         journal.emit("ui.visualizer", f"ai-visualizer {reason} ; pas de visage", data={"enabled": False, "installed": visualizer_installed})
     try:
         await asyncio.sleep(0.5)
-        webbrowser.open(url)
+        if _open_browser_enabled():
+            webbrowser.open(url)
+        else:
+            journal.emit("ui.browser", "onglet non ouvert (JARVIS_OPEN_BROWSER=0)", data={"url": url, "opened": False})
         stop = asyncio.create_task(asyncio.Event().wait(), name="jarvis-control-center-wait")
         watched = {stop}
         waiter = None

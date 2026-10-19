@@ -32,6 +32,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from jarvis.runtime.journal import read_jsonl_tail
 from jarvis.runtime.control_center import ControlCenter
 from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
 from jarvis.runtime.settings_mcp import (
@@ -288,9 +289,8 @@ def test_the_mcp_config_names_its_own_subcommand(tmp_path):
 
 @pytest.fixture
 async def moded(tmp_path):
-    """Un vrai Control Center **relié à un vrai service Core du mode** : sans Core,
-    `POST /api/interaction-mode` enregistre mais répond 503, et on ne prouverait
-    rien de l'effet à chaud."""
+    """Un vrai Control Center **relié à un vrai service Core du mode**, pour prouver
+    qu'un `settings_set` refusé ne touche ni au fichier ni au mode vivant."""
 
     import socket
 
@@ -305,7 +305,7 @@ async def moded(tmp_path):
     control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path,
                             interaction_mode_view=CoreInteractionModeView(ServiceReader(service)))
     await control.start(port=port)
-    console = ConsoleSettingsTools(ConsoleMcpTarget("127.0.0.1", port))
+    console = ConsoleSettingsTools(ConsoleMcpTarget("127.0.0.1", port), journal=control.journal)
     try:
         yield console, control, service, port
     finally:
@@ -313,60 +313,40 @@ async def moded(tmp_path):
         await control.stop()
 
 
-async def _status_mode(port: int) -> dict:
-    """Ce que lit le sélecteur du bas-gauche : `interaction_mode` de `GET /api/status`."""
+@pytest.mark.parametrize("value", ["présentation", "presentation", "SIMPLE", "réunion", "duplex"])
+async def test_the_interaction_mode_is_no_longer_a_setting_and_says_what_to_do(moded, value):
+    """Slice 01b : « passe en mode présentation » n'est pas un réglage, le mode suit le type du Board.
 
-    import aiohttp
+    Refus à code stable (`interaction_mode_derived`), phrase qui nomme les outils
+    à utiliser, ligne de journal, et rien d'écrit : ni le fichier, ni Core.
+    """
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(f"http://127.0.0.1:{port}/api/status") as response:
-            return (await response.json())["interaction_mode"]
+    tools, control, service, _port = moded
+    with pytest.raises(ConsoleToolError) as failure:
+        await tools.set("interaction_mode", value)
+    assert failure.value.code == "interaction_mode_derived"
+    assert "board_switch" in str(failure.value) and "board_create" in str(failure.value)
+    assert "Board Présentation" in str(failure.value)
+    assert service.revision == 0 and "interaction_mode" not in control._settings()
+    refused = [entry for entry in read_jsonl_tail(control.journal.trace_path, limit=50)
+               if entry["kind"] == "settings.tool_refused"]
+    assert refused[-1]["data"]["code"] == "interaction_mode_derived"
 
 
-async def test_the_interaction_mode_is_found_by_the_words_the_brain_searched(moded):
-    """« présentation », « interaction », « réunion » : les trois recherches du 29/09 revenues vides."""
-
+async def test_no_setting_describes_or_offers_a_mode(moded):
     tools, *_ = moded
-    for needle in ("présentation", "interaction", "réunion", "simple"):
-        shown = await tools.describe(search=needle)
-        assert "interaction_mode" in shown, needle
-    line = await tools.describe(category="interaction")
-    assert "[assistant, presentation, meeting]" in line
-
-
-async def test_the_brain_switches_to_presentation_like_the_selector(moded):
-    """« Passe en mode présentation » : même effet que le sélecteur, à chaud, relu."""
-
-    tools, control, service, port = moded
-    from jarvis.runtime import interaction_mode_settings
-
-    done = await tools.set("interaction_mode", "présentation")
-    assert done["before"] == "assistant" and done["after"] == "presentation"
-    assert done["changed"] is True and done["restart_required"] is None
-    # Enregistré, appliqué par Core, et vu par l'écran.
-    assert interaction_mode_settings.load(control._settings()).value == "presentation"
-    assert service.snapshot()["mode"] == "presentation"
-    status = await _status_mode(port)
-    assert status["mode"] == "presentation" and status["core_reachable"] is True
-
-    back = await tools.set("interaction_mode", "SIMPLE")
-    assert back["after"] == "assistant"
-    assert service.snapshot()["mode"] == "assistant"
-    assert (await _status_mode(port))["mode"] == "assistant"
-    assert (await tools.get(["interaction_mode"]))["settings"]["interaction_mode"]["value"] == "assistant"
-
-
-async def test_meeting_is_refused_with_the_servers_sentence(moded):
-    """RÉUNION est annoncé, pas activable : le refus du serveur, tel quel, et rien de changé."""
-
-    tools, _control, service, _port = moded
+    shown = await tools.describe()
+    assert "interaction_mode" not in shown
+    # Slice 08 (polish S01b) : `describe` et `get` donnent le même refus guidant que `set`, plus « Réglage inconnu ».
+    for call in (lambda: tools.describe(category="interaction"), lambda: tools.describe(search="interaction_mode"),
+                 lambda: tools.get(["interaction_mode"]), lambda: tools.get(["voice_turn_mode", "interaction_mode"])):
+        with pytest.raises(ConsoleToolError) as failure:
+            await call()
+        assert failure.value.code == "interaction_mode_derived", failure.value
+        assert "board_switch" in str(failure.value)
     with pytest.raises(ConsoleToolError) as failure:
-        await tools.set("interaction_mode", "réunion")
-    assert failure.value.code == "interaction_mode_not_implemented"
-    assert service.snapshot()["mode"] == "assistant"
-    with pytest.raises(ConsoleToolError) as failure:
-        await tools.set("interaction_mode", "duplex")
-    assert failure.value.code == "settings_bad_value"
+        await tools.describe(category="cuisine")
+    assert failure.value.code == "settings_no_match"
 
 
 # ============================================================ plus aucun outil Board/Session ici

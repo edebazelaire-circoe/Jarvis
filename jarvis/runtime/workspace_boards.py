@@ -10,7 +10,7 @@ Jamais Core directement : le Control Center est l'unique entrée UI/MCP
 (`docs/boards.md` › *Ownership*), et c'est lui qui diffère une demande du
 cerveau pendant son propre tour.
 
-- Un **Board** est un espace de travail durable (titre, nature, résumé de
+- Un **Board** est un espace de travail durable (titre, type, résumé de
   contexte, références). Basculer déplace la conversation et la voix sur ce
   Board ; le Board quitté garde son travail de fond.
 - Une **Session** est un épisode de conversation. `session_new` ouvre un fil
@@ -64,9 +64,10 @@ NEW_SESSION_ROUTE = "/api/sessions/new"
 #: Origine des demandes de ces outils (`board_routes.ORIGINS`).
 BRAIN_ORIGIN = "brain"
 
-#: Champs qu'un outil écrit sur un Board : ceux de l'écran, nature comprise (Slice 06). `scene_ref` et
+#: Champs qu'un outil modifie sur un Board : ceux de l'écran (Slice 06), sans le type, fixé à la création
+#: (`board_kind_immutable`, `board_create` seul le choisit). `scene_ref` et
 #: `runtime_metadata` sont éditables par Core mais appartiennent au runtime.
-BOARD_EDIT_FIELDS = ("title", "board_kind", "context_summary", "task_refs", "artifact_refs", "project_refs")
+BOARD_EDIT_FIELDS = ("title", "context_summary", "task_refs", "artifact_refs", "project_refs")
 
 READ_TIMEOUT_S = 15.0
 #: Une bascule ou une nouvelle Session immédiate (hors tour) attend le relais,
@@ -98,6 +99,8 @@ ERROR_SENTENCES: dict[str, str] = {
     "brain_not_foreground": "Ce cerveau n'a plus la parole : un autre Board est au premier plan.",
     "board_activation_failed": ("Le cerveau du Board cible n'a pas pu démarrer : rien n'a changé, "
                                 "le Board actuel reste actif."),
+    "board_kind_immutable": ("Le type d'un Board est fixé à sa création : rien n'a été écrit. Pour un autre type, "
+                             "crée un autre Board (board_create) puis bascule dessus."),
     "board_switch_rolled_back": ("La bascule a échoué après l'activation et a été annulée : "
                                  "le Board précédent reste actif, rien n'a été écrit."),
     "invalid_title": "Titre refusé (1 à 120 caractères, une ligne, sans espace autour) : rien n'a été écrit.",
@@ -121,6 +124,21 @@ ERROR_SENTENCES: dict[str, str] = {
     "memory_path_escape": "Chemin hors de la mémoire du Board (absolu, lecteur ou ..) : refusé.",
     "memory_not_found": "Rien à ce chemin dans la mémoire de ce Board : relis board_memory_tree.",
     "memory_exists": "Un fichier existe déjà à ce chemin : rien n'a été écrit (mode replace ou append pour le changer).",
+    # Dossier (wheel-dossier-refactor, Slice 05) : phrases vouvoyées.
+    "dossier_board_not_active": ("Ranger et Afficher sur le Board agissent sur le Board affiché : donnez le Board "
+                                 "actif (board_get_active)."),
+    "dossier_entry_not_found": "Cette entrée n'est pas dans ce Dossier : relisez dossier_list.",
+    "dossier_entry_invalid": "Identifiant d'entrée mal formé : reprenez un entry_id de dossier_list.",
+    "scene_unavailable": "La scène n'est pas servie en ce moment : rien n'a été rangé ni affiché.",
+    "no_visible_page": ("Aucune page visible du Control Center n'a pris la demande : l'entrée n'est pas ouverte "
+                        "et rien ne l'ouvrira de soi-même. Dites-le sans rien promettre ; l'utilisateur l'ouvre "
+                        "depuis la roue, catégorie Dossier."),
+    "command_expired": ("La page a pris la demande sans répondre : l'issue est inconnue, ne dites pas qu'elle est "
+                        "ouverte."),
+    "command_busy": "Une autre ouverture est en cours : réessayez dans une seconde.",
+    "edit_in_progress": ("Une modification non enregistrée est en cours dans le Dossier : la page n'a rien ouvert, "
+                         "pour ne pas la perdre. Dites-le ; l'utilisateur enregistre ou abandonne, puis "
+                         "redemandez. Ne dites pas que l'entrée est ouverte."),
     "memory_conflict": ("Conflit : le fichier a changé depuis ta lecture (expected_sha256), ou dossier/fichier "
                         "inattendu, ou dossier non vide sans recursive. Relis puis réessaie."),
     "memory_too_large": "Trop gros (256 Kio par appel) : découpe.",
@@ -131,6 +149,9 @@ ERROR_SENTENCES: dict[str, str] = {
                                 "ne le refais pas."),
     "workspace_failed": "Erreur interne du workspace de Core.",
 }
+
+#: Refus d'un changement de type (D02) : code de Core, repris par le garde-fou de `board_update`.
+KIND_IMMUTABLE_CODE = "board_kind_immutable"
 
 #: Codes que le relais du Control Center écrit lui-même (`board_routes.py`) : pas des refus de Core.
 RELAY_CODES = frozenset({"invalid_request", "core_unreachable", "core_unconfigured", "core_transition_timeout",
@@ -260,11 +281,24 @@ class BoardTools:
         payload = {name: value for name, value in fields.items() if value is not None}
         if not payload:
             self._failed("board_update", "invalid_board", _board_route(board_id), reason="no_field")
-            raise self._error("invalid_board", "Rien à modifier : donne au moins un champ (title, board_kind, "
+            raise self._error("invalid_board", "Rien à modifier : donne au moins un champ (title, "
                                                "context_summary, task_refs, artifact_refs, project_refs). "
                                                "Rien n'a été écrit.")
         return await self._board("board_update", "PATCH", _board_route(board_id), payload=payload,
                                  board_id=board_id)
+
+    def kind_change_refused(self, board_id: object) -> Exception:
+        """`board_update` porteur de `board_kind` : le refus `board_kind_immutable` de Core, dit avant tout envoi.
+
+        Le schéma de l'outil n'a plus ce champ (D02) ; sans ce refus nommé, le
+        cerveau ne lirait qu'« Arguments inconnus » et ne saurait pas qu'il faut
+        créer un autre Board. Journalisé comme tout refus d'outil.
+        """
+
+        route = _board_route(str(board_id)) if isinstance(board_id, str) else BOARDS_ROUTE
+        self._failed("board_update", KIND_IMMUTABLE_CODE, route, reason="board_kind_argument")
+        return self._error(KIND_IMMUTABLE_CODE, _refusal(
+            KIND_IMMUTABLE_CODE, "board_update n'a pas de board_kind : le type est fixé à la création", "jarvis-workspace"))
 
     async def archive_board(self, board_id: str) -> dict[str, Any]:
         return await self._board("board_archive", "POST", _board_route(board_id) + "/archive", payload={},
@@ -400,8 +434,8 @@ def _summary(board: Mapping[str, Any], active: bool) -> dict[str, Any]:
     """Ligne de `board_list` : de quoi reconnaître un Board, sans son contenu (board_get le rend)."""
 
     return {"board_id": board.get("board_id"), "title": board.get("title"),
-            "board_kind": board.get("board_kind") or "empty", "status": board.get("status"), "active": active,
-            "interaction_mode": board.get("interaction_mode"), "last_opened_at": board.get("last_opened_at")}
+            "board_kind": board.get("board_kind") or "assistant", "status": board.get("status"), "active": active,
+            "last_opened_at": board.get("last_opened_at")}
 
 
 def _detail(board: Mapping[str, Any], active: bool) -> dict[str, Any]:

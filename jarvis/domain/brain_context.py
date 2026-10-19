@@ -641,8 +641,8 @@ class BrainBoardContext:
     project_refs: tuple[str, ...] = ()
     omitted_refs: int = 0
     summary_clipped: bool = False
-    #: Nature du Board (R1, `BoardKind.value`) : `empty`, `meeting` ou `presentation`.
-    board_kind: str = "empty"
+    #: Type fixé du Board (`BoardKind.value`) : `assistant`, `presentation` ou `meeting`.
+    board_kind: str = "assistant"
     memory: BrainBoardMemory | None = None
 
     @classmethod

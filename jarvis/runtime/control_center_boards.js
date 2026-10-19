@@ -1,23 +1,39 @@
-/* Boards — le contrôle du haut-droit (handoff jarvis-board-session-context-runtime, Slice 06).
+/* Boards — la carte Board du bas-gauche (handoff jarvis-board-session-context-runtime,
+   Slice 06 ; déplacée du haut-gauche par la Slice 02 de
+   jarvis-board-ui-wheel-dossier-refactor, D04).
 
    Contrat : `docs/boards.md`. Un Board est l'espace de travail durable ; une
    Session est la conversation en cours avec Jarvis. Ce module montre **en
-   permanence** le titre du Board actif et ouvre un panneau simple : liste des
-   Boards (l'actif marqué), bascule au clic, création, renommage, archivage, et
-   « Nouvelle session ». Pas de carte, pas de minimap (hors périmètre V1).
+   permanence**, dans une carte compacte du coin bas-gauche, le **type** du Board
+   actif (Assistant / Présentation / Réunion, icône et accent, Réunion dite
+   « prévue » : D24) et son **titre**, et ouvre un panneau simple : liste des
+   Boards (l'actif marqué), bascule au clic, création (type choisi à la création,
+   fixé ensuite : D02), renommage, archivage, et « Nouvelle session ». C'est
+   la seule entrée quotidienne de navigation entre Boards (D04, D05).
+
+   **Présence de la voix (Slice 02, retour critique déplacé).** La carte porte
+   aussi la ligne de séance PRESENTATION que Voice rapporte (`/api/status.
+   presentation` : « Refusé par la voix », séance sourde, entrée ratée,
+   écoute) tant que le mode en vigueur est PRESENTATION — un Board Présentation,
+   ou une lecture du Studio sur n'importe quel Board. Elle vivait dans le
+   contrôle de mode d'interaction, retiré avec son sélecteur (D03) ; la logique
+   pure (`presenceOf`, `freshReport`) est reprise telle quelle. Pendant une
+   lecture montrée dans Variantes, la carte reste vivante et dessinée au-dessus
+   (`data-keep-live="run"`, rangs du registre).
 
    **Navigateur rapide** (handoff jarvis-board-memory-workspace-inspector,
-   Slice 08). Le même panneau, pas un second sélecteur : chaque ligne dit la
-   nature du Board (`board_kind`) et sa dernière ouverture (lue sur le
+   Slice 08). Le même panneau, pas un second sélecteur : chaque ligne dit le
+   type du Board (`board_kind`) et sa dernière ouverture (lue sur le
    serveur), un filtre « En service / Archivés » montre les archivés à part
-   (lisibles, jamais ouvrables), la nature se choisit à la création et se
-   change avec le titre (`PATCH /api/boards/{id}`), et « Inspecter » ouvre le
+   (lisibles, jamais ouvrables), le type se choisit à la création et ne change
+   plus (D02 : seul le titre se modifie, `PATCH /api/boards/{id}`), et « Inspecter » ouvre le
    gestionnaire profond (`WSP`, `window.JarvisWorkspace.openBoard`) sur ce
    Board. L'inspection profonde (mémoire, Sessions, artefacts) reste là-bas.
 
    **Routes.** Uniquement celles du Control Center (`/api/boards*`,
    `/api/sessions*`, `jarvis/runtime/board_routes.py`), jamais MCP ni Core en
    direct. Ce sont les mêmes que les outils `jarvis-workspace` (parité UI/MCP).
+   La présence de la voix n'a aucune route : elle arrive dans le statut.
 
    **Aucune peinture optimiste.** Le Board actif affiché vient **toujours** du
    bloc `boards` de `GET /api/status` (sondé chaque seconde par la page, porte
@@ -34,13 +50,12 @@
    dit combien de temps il a attendu, et relit le serveur.
 
    **Emplacements.** Deux, déclarés dans `control_center.html` pour que leurs
-   rangs vivent au registre d'empilement : `#boardsHud` (le bouton, dans
-   `.topbar`, qui coupe les événements de pointeur — l'emplacement les rend) et
-   `#boardsPanel` (le panneau, hors de la barre : la barre est un contexte
-   d'empilement au rang 31, le panneau y serait enfermé sous le dock). Ce
-   module refuse de s'installer si l'un manque, sous un nom cherchable, et ce
-   refus est rattrapé : la page concatène tous ses modules dans un seul
-   `<script>`. */
+   rangs vivent au registre d'empilement : `#boardsHud` (la carte, au bas du
+   bord gauche ; ce module en pose la place, partagée avec Bare Hands et les
+   notes de la scène, voir `GEO`) et `#boardsPanel` (le panneau, qui s'ouvre
+   au-dessus de la carte, `place`). Ce module refuse de s'installer si l'un
+   manque, sous un nom cherchable, et ce refus est rattrapé : la page concatène
+   tous ses modules dans un seul `<script>`. */
 (function(root){
   'use strict';
 
@@ -51,6 +66,11 @@
     triggerId:'boardsButton',
     titleId:'boardsTitle',
     subId:'boardsSub',
+    /* Le type du Board actif, en tête de la carte (Slice 02). */
+    kindId:'boardsKind',
+    /* La séance PRESENTATION que Voice rapporte, et sa région vivante. */
+    presenceId:'boardsPresence',
+    presenceAnnounceId:'boardsPresenceAnnounce',
     headingId:'boardsHeading',
     closeId:'boardsClose',
     noteId:'boardsNote',
@@ -59,6 +79,8 @@
     createButtonId:'boardsCreate',
     createErrorId:'boardsCreateError',
     createKindId:'boardsCreateKind',
+    /* Ce qu'un type « prévu » fait vraiment, dit au moment du choix (D24). */
+    createKindHintId:'boardsCreateKindHint',
     filterId:'boardsFilter',
     filterAttribute:'data-bd-filter',
     sessionLineId:'boardsSessionLine',
@@ -68,6 +90,8 @@
     actionAttribute:'data-bd-action',
     toneAttribute:'data-bd-tone',
     busyAttribute:'data-bd-busy',
+    kindAttribute:'data-bd-kind',
+    presenceAttribute:'data-bd-presence',
   });
 
   /* Borne du titre : celle du contrat (`docs/boards.md` › Values › Board). */
@@ -85,12 +109,22 @@
   const DEADLINE_MS=Object.freeze({
     switch:165000,new_session:165000,create:15000,update:15000,archive:15000,list:15000});
 
-  /* Nature d'un Board (`BoardKind`, `docs/boards.md` › *Board kind*), mots
+  /* Type d'un Board (`BoardKind`, `docs/boards.md` › *Board type*), mots
      identiques à ceux du gestionnaire profond (`JarvisWorkspaceCore.BOARD_KINDS`,
      épinglé par `test_boards_hud_js`). L'ordre est celui du sélecteur. Une
      valeur inconnue s'affiche telle quelle, jamais maquillée. */
-  const BOARD_KINDS=Object.freeze({empty:'Générique',meeting:'Réunion',presentation:'Présentation'});
-  const DEFAULT_KIND='empty';
+  const BOARD_KINDS=Object.freeze({assistant:'Assistant',presentation:'Présentation',meeting:'Réunion'});
+  const DEFAULT_KIND='assistant';
+
+  /* Un type dont le comportement dédié n'existe pas encore (D24) : le Board
+     s'ouvre et se comporte en Assistant (Core le trace `meeting_planned`). La
+     carte, la liste et le choix du type à la création le **disent à l'écran** :
+     un Board Réunion qui se tairait sur ce point ferait croire à un mode
+     réunion qui n'existe pas (QA 01a). */
+  const PLANNED=Object.freeze({
+    meeting:Object.freeze({tag:'prévu',short:'Agit en Assistant',
+      said:'Comportement Réunion prévu : ce Board se comporte en Assistant pour l’instant.'}),
+  });
 
   /* Issue inconnue (échéance client, ou 504 `core_transition_timeout` du
      relais) d'une bascule ou d'une nouvelle Session : on relit le serveur
@@ -133,6 +167,7 @@
     invalid_request:'Demande mal formée, refusée par le Control Center.',
     board_activation_failed:'L’agent du Board n’a pas pu démarrer. Rien n’a changé : le Board précédent reste actif.',
     board_switch_rolled_back:'La bascule a échoué en cours de route et a été annulée. Le Board précédent reste actif.',
+    board_kind_immutable:'Le type d’un Board est fixé à sa création. Créez un autre Board pour un autre type.',
     board_store_unreadable:'Le stockage des Boards est illisible.',
     board_store_failed:'Le stockage des Boards est indisponible.',
     core_unreachable:'Core ne répond pas. Rien n’a changé.',
@@ -161,6 +196,13 @@
     core_boards_unsupported:'Core sans Boards',core_unavailable:'Core pas prêt'});
   const VERIFYING='Résultat inconnu, vérification…';
 
+  /* Pendant une lecture montrée dans Variantes (`html.jvx-run`), la carte et son panneau sont
+     dessinés au-dessus du Studio (9150), mais la confirmation de la page (`.cdialog-back`, 85) et
+     le gestionnaire Sessions & Boards (`.wsp`, 55) restent dessous, invisibles : une action qui
+     les ouvrirait rendrait la page inerte sans rien montrer (QA Slice 02, B1). Ces actions
+     — Archiver, Nouvelle session, Inspecter — sont donc éteintes le temps de la lecture, et le
+     disent ; la bascule, la création et le renommage n'ouvrent aucune couche et restent permis. */
+  const RUN_BLOCKED='Indisponible pendant la lecture : arrêtez la présentation dans Variantes, puis réessayez.';
   const ARCHIVE_ACTIVE_REASON='Le Board actif ne peut pas être archivé : basculez d’abord sur un autre Board.';
   const NEW_SESSION_HINT='Nouvelle conversation avec Jarvis sur ce Board. Le Board, ses tâches et le travail en cours sont conservés.';
   const ARCHIVED_HINT='Archivés : lisibles dans le gestionnaire Sessions & Boards, ils ne s’ouvrent plus.';
@@ -216,35 +258,45 @@
     return ids;
   }
 
-  /* Ce que le bouton du haut montre. Quatre tons :
+  /* Ce que la carte montre. Quatre tons :
      - `ready` : le Board actif, confirmé par le dernier statut ;
      - `pending` : une bascule ou une nouvelle Session est en vol ;
      - `unavailable` : Core n'a pas de Boards, ou ne répond pas ;
-     - `unknown` : le sondage de statut lui-même est tombé. */
+     - `unknown` : le sondage de statut lui-même est tombé.
+     `eyebrow` est la ligne du type, en tête de la carte ; `kind` est vide quand
+     le type n'est pas connu (bascule vers un Board pas encore listé, statut
+     perdu, Core indisponible) : la carte ne prétend alors aucun type. */
   function triggerViewOf(block,pending,seconds){
     const secs=Math.max(0,Math.floor(seconds||0));
     const verifying=!!(pending&&pending.verifying);
+    const typed=(raw,extra)=>{
+      const k=raw?kindOf(raw):null;
+      return Object.assign({kind:k?k.kind:'',kindLabel:k?k.label:'',planned:k?k.planned:null,
+        eyebrow:k?`${k.label}${k.planned?` · ${k.planned.tag}`:''}`:'Board'},extra);
+    };
     if(pending&&pending.kind==='switch')
-      return {tone:'pending',title:text(pending.title),sub:verifying?`Vérification · ${secs} s`:`Bascule · ${secs} s`};
+      return typed(text(pending.boardKind),{tone:'pending',title:text(pending.title),
+        sub:verifying?`Vérification · ${secs} s`:`Bascule · ${secs} s`});
     if(block===null||block===undefined)
-      return {tone:'unknown',title:'Inconnu',sub:'Statut perdu'};
+      return typed('',{tone:'unknown',title:'Inconnu',sub:'Statut perdu'});
     const active=isObject(block.active)?block.active:null;
     if(pending&&pending.kind==='new_session')
-      return {tone:'pending',title:text(active&&active.title)||'Board',
-        sub:verifying?`Vérification · ${secs} s`:`Nouvelle session · ${secs} s`};
+      return typed(active?text(active.board_kind)||DEFAULT_KIND:'',{tone:'pending',title:text(active&&active.title)||'Board',
+        sub:verifying?`Vérification · ${secs} s`:`Nouvelle session · ${secs} s`});
     if(!block.available||!active){
       const code=isObject(block.error)?text(block.error.code):'';
-      return {tone:'unavailable',title:'Indisponible',sub:UNAVAILABLE[code]||'Core indisponible',code};
+      return typed('',{tone:'unavailable',title:'Indisponible',sub:UNAVAILABLE[code]||'Core indisponible',code});
     }
     const working=[...workingIdsOf(block)].filter(id=>id!==String(active.board_id)).length;
-    return {tone:'ready',title:text(active.title)||text(active.board_id),
-      sub:working?`${working} en arrière-plan`:''};
+    const view=typed(text(active.board_kind)||DEFAULT_KIND,{tone:'ready',title:text(active.title)||text(active.board_id)});
+    view.sub=[view.planned?view.planned.short:'',working?`${working} en arrière-plan`:''].filter(Boolean).join(' · ');
+    return view;
   }
 
-  /* La nature d'un Board en mots. Absente : `empty`, comme Core la décode. */
+  /* Le type d'un Board en mots. Absent : `assistant`, comme Core le décode. */
   function kindOf(raw){
     const kind=text(raw)||DEFAULT_KIND;
-    return {kind,label:BOARD_KINDS[kind]||kind};
+    return {kind,label:BOARD_KINDS[kind]||kind,planned:PLANNED[kind]||null};
   }
 
   const MONTHS=['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
@@ -293,7 +345,8 @@
       const kind=kindOf(b.board_kind),opened=openedOf(b.last_opened_at,nowMs);
       return {
         board_id:id,title:text(b.title)||id,active,archived,
-        kind:kind.kind,kindLabel:kind.label,opened:opened.label,openedExact:opened.exact,
+        kind:kind.kind,kindLabel:kind.label,planned:kind.planned?kind.planned.said:'',
+        opened:opened.label,openedExact:opened.exact,
         working:!active&&!archived&&working.has(id),
         pending:!!(pending&&pending.boardId===id)?pending.kind:null,
         canArchive:!active&&!archived,
@@ -301,6 +354,106 @@
       };
     });
   }
+
+  /* ------------------------------------- présence de la voix (Slice 02)
+
+     La séance PRESENTATION **telle que Voice la rapporte** (`/api/status.
+     presentation`, publié par la Slice 10, P7, de `jarvis-presentation-
+     interaction-mode`). Reprise telle quelle du contrôle de mode d'interaction,
+     retiré par la Slice 02 de `jarvis-board-ui-wheel-dossier-refactor` : ce
+     retour critique déménage sur la carte Board, il ne disparaît pas.
+
+     Le mode en vigueur dit ce que Core a décidé (le type du Board actif, ou une
+     lecture du Studio) ; ce relevé dit ce que Voice en a fait. Les deux
+     divergent exactement dans les cas qui comptent : un PRESENTATION refusé par
+     l'architecture vocale, une entrée qui n'a pas pu prendre le micro, une
+     séance ouverte mais sourde à la salle.
+
+     Cinq états, et `null` quand Voice est hors ligne (le Control Center rend
+     alors `presentation: null`) :
+
+     - `listening` — une séance vit (`active`) et la voie ambiante entend ;
+     - `deaf` — une séance vit mais `ambient_deaf` : seule l'adresse explicite
+       est entendue ;
+     - `refused` — `event: "refused"` : l'architecture vocale ne porte pas
+       PRESENTATION (session continue requise, Duplex exclu) ;
+     - `entry_failed` — `event: "entry_failed"` : le micro partagé n'a pas pu
+       s'ouvrir ;
+     - `inactive` — aucune séance.
+
+     **Refus et échec ne valent que tant que le mode en vigueur est
+     PRESENTATION** : le coordinateur ne republie pas son relevé quand le mode
+     le quitte, le fichier garde `event: "refused"` en SIMPLE.
+
+     Le texte appartient à l'écran ; le code (`last_failure_code`,
+     `blocker_code`) est rendu tel quel dans `title`, parce que c'est lui que
+     l'on cherche dans la trace. */
+  const PRESENTATION_MODE='presentation';
+  const PRESENCE=Object.freeze({
+    LISTENING:'listening',DEAF:'deaf',REFUSED:'refused',
+    ENTRY_FAILED:'entry_failed',INACTIVE:'inactive'});
+  const PRESENCE_TEXT=Object.freeze({
+    listening:Object.freeze({line:'Écoute la salle',tone:'live',
+      said:'Séance PRESENTATION : Jarvis écoute la salle.'}),
+    deaf:Object.freeze({line:'Sourd à la salle',tone:'warn',
+      said:'Séance PRESENTATION ouverte mais sourde à la salle : la transcription '
+        +'ambiante est indisponible. Jarvis n’entend que ce qui lui est adressé.'}),
+    refused:Object.freeze({line:'Refusé par la voix',tone:'bad',
+      said:'PRESENTATION refusé : l’architecture vocale ne le porte pas (une session '
+        +'continue est requise, le Duplex est exclu). Changez-la dans l’onglet Mode vocal.'}),
+    entry_failed:Object.freeze({line:'Entrée échouée',tone:'bad',
+      said:'PRESENTATION n’a pas pu ouvrir le micro partagé : Jarvis reste adressable, '
+        +'mais n’écoute pas la salle.'}),
+    inactive:Object.freeze({line:'Séance inactive',tone:'idle',
+      said:'Aucune séance PRESENTATION ne tourne encore.'}),
+  });
+
+  /* **Un refus d'avant la bascule n'est pas un refus de cette bascule** (p17).
+
+     Le coordinateur écrit `refused` / `entry_failed` une seule fois, à la
+     bascule, et ne le republie pas. La borne est le **dernier battement qui
+     montrait encore un autre mode, confirmé par Core** (Voice réagit souvent
+     avant le sondage suivant : un vrai refus peut être plus ancien que le
+     battement qui montre PRESENTATION), moins `STALE_REPORT_MARGIN_S`. Sans
+     borne connue ou sans `ts`, le relevé est cru. Pur. */
+  const STALE_REPORT_MARGIN_S=2;
+  function freshReport(report,otherModeSeenAtS){
+    if(!isObject(report))return report;
+    if(report.event!=='refused'&&report.event!=='entry_failed')return report;
+    if(typeof otherModeSeenAtS!=='number'||!Number.isFinite(otherModeSeenAtS))return report;
+    const ts=report.ts;
+    if(typeof ts!=='number'||!Number.isFinite(ts))return report;
+    if(ts>=otherModeSeenAtS-STALE_REPORT_MARGIN_S)return report;
+    return Object.freeze({...report,event:'stale',last_failure_code:null});
+  }
+
+  /* Le relevé, traduit en un état. `mode` est le mode en vigueur du même
+     statut. `null` sans relevé (Voice hors ligne). Pur. */
+  function presenceOf(report,mode){
+    if(!isObject(report))return null;
+    const code=value=>typeof value==='string'&&value?value:'';
+    let state=PRESENCE.INACTIVE,why='';
+    if(report.active===true){
+      state=report.ambient_deaf===true?PRESENCE.DEAF:PRESENCE.LISTENING;
+      why=code(report.blocker_code);
+    }else if(mode===PRESENTATION_MODE&&report.event==='refused'){
+      state=PRESENCE.REFUSED;why=code(report.last_failure_code);
+    }else if(mode===PRESENTATION_MODE&&report.event==='entry_failed'){
+      state=PRESENCE.ENTRY_FAILED;why=code(report.last_failure_code);
+    }
+    const said=PRESENCE_TEXT[state];
+    return Object.freeze({
+      state,code:why,line:said.line,said:said.said,tone:said.tone,
+      /* `inactive` hors PRESENTATION est l'état ordinaire : le dire en
+         permanence serait un bandeau que plus personne ne lit. Il reste porté
+         par `data-bd-presence`. */
+      shown:!(state===PRESENCE.INACTIVE&&mode!==PRESENTATION_MODE),
+    });
+  }
+
+  /* Le mode en vigueur que porte le bloc `interaction_mode` du statut, tel
+     quel (repli local compris quand Core est injoignable) ; vide sans bloc. */
+  const liveModeOf=block=>isObject(block)?text(block.mode):'';
 
   /* ------------------------------------------------- alertes (Slice 07)
 
@@ -376,7 +529,7 @@
     const say=value=>{if(note){note.textContent=value;note.hidden=!value}};
     const id=text(opts.boardId),title=text(opts.title)||id;
     if(!control||typeof control.switchTo!=='function'){
-      say('Le contrôle Boards n’est pas installé : ouvrez le Board depuis le haut de l’écran.');
+      say('Le contrôle Boards n’est pas installé : ouvrez le Board depuis la carte du bas-gauche.');
       log('error','boards.alert_jump_failed',{board_id:id,code:'boards_control_missing'});
       return false;
     }
@@ -418,7 +571,7 @@
     if(answer){log('info','boards.alert_jump_done',{board_id:id});return true}
     const failure=typeof control.failure==='function'?control.failure():null;
     say(failure&&failure.text?`${failure.text}${failure.detail?` (${failure.detail})`:''}`
-      :'Bascule non confirmée : le Board affiché en haut est celui que le serveur confirme.');
+      :'Bascule non confirmée : le Board affiché sur la carte du bas-gauche est celui que le serveur confirme.');
     log('warn','boards.alert_jump_refused',{board_id:id,detail:failure?failure.detail||null:null});
     return false;
   }
@@ -439,6 +592,7 @@
 
   const ICON=Object.freeze({
     chevron:'M6 9l6 6 6-6',
+    chevronUp:'M6 15l6-6 6 6',
     rename:'M4 20h4L19 9l-4-4L4 16v4ZM13.5 6.5l4 4',
     archive:'M4 5h16v4H4ZM6 9v10h12V9M10 13h4',
     close:'M6 6l12 12M18 6 6 18',
@@ -446,6 +600,17 @@
     session:'M4 5h16v11H9l-5 4V5ZM12 8v5M9.5 10.5h5',
     /* « Inspecter » : une flèche « ouvrir ailleurs », pas une loupe (lue « chercher »). */
     inspect:'M14 5h5v5M19 5l-8 8M17 14v5H5V7h5',
+    /* Slice 07 : la chemise du Dossier (même tracé que la roue). */
+    dossier:'M3.8 7.2a1.6 1.6 0 0 1 1.6-1.6h3.9l1.9 2.1h7.4a1.6 1.6 0 0 1 1.6 1.6v8.3a1.6 1.6 0 0 1-1.6 1.6H5.4a1.6 1.6 0 0 1-1.6-1.6zM3.8 10.4h16.4',
+    /* Les trois types, tracés et non écrits (repris du contrôle de mode retiré) :
+       une couleur seule ne distingue rien pour qui ne la voit pas. Assistant :
+       une bulle de parole ; Présentation : un écran sur pied ; Réunion : trois
+       présences autour d'une table. */
+    assistant:'M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H10l-4 3.5v-3.5H6.5A2.5 2.5 0 0 1 4 13.5Z',
+    presentation:'M3 5h18v10H3ZM12 15v4M8.5 21h7',
+    meeting:'M7 8.5a2 2 0 1 1 4 0 2 2 0 0 1-4 0ZM14 9.5a1.6 1.6 0 1 1 3.2 0 1.6 1.6 0 0 1-3.2 0ZM3.5 19c0-2.5 2.2-4.2 5.5-4.2s5.5 1.7 5.5 4.2M15.5 14.9c3 .2 5 1.8 5 4.1',
+    /* Type inconnu (statut perdu, bascule vers un Board pas encore listé). */
+    board:'M4 5h16v14H4ZM4 10h16',
   });
 
   function icon(doc,name,size){
@@ -466,30 +631,122 @@
 
   const ACCENT='var(--accent,#6ee7ff)',WARN='var(--warn,#ffb85c)',DANGER='var(--danger,#ff6577)';
   const OK='var(--ok,#68e0a0)',MUTED='var(--muted,#7190a0)',LINE='var(--line,#183343)',INK='var(--text,#d8edf7)';
+  /* L'accent d'un Board Présentation (docs/06 › Bottom-left Board card :
+     magenta/violet) ; jamais seul, l'icône et le mot du type le doublent. */
+  const VIOLET='#c69cff';
   const H=`#${DOM.hostId}`,P=`#${DOM.panelId}`;
 
-  /* Le positionnement et les rangs des deux emplacements vivent dans
-     `control_center.html` (registre d'empilement) ; ici, l'apparence. */
+  /* La géométrie du coin bas-gauche, et **le rail qu'il faut partager**
+     (reprise du contrôle de mode d'interaction, dont la carte prend la place
+     en Slice 02 : mêmes barreaux, même largeur, donc les marges du centre
+     d'état, l'aperçu de capture et le plateau de dépôt restent justes).
+
+     Trois occupants y vivent déjà, posés par des feuilles injectées depuis du
+     JS : `#jarvisHands .jh-badge` (`left:18px; bottom:18px`, rang 2147483000),
+     `#jarvisHands .jh-note` (`bottom:46px`, le mot d'un geste étouffé) et
+     `.sc-status` (`control_center_scene_page.js`, `bottom:18px`, 52 quand la
+     pastille des mains est là). La carte rejoint leur **convention
+     d'évitement** — `body:has(<sélecteur du contrat>)`, sélecteur du badge
+     écrit tel quel et gardé par `tests/unit/test_barehands_contracts_js.py` —
+     au lieu d'inventer un second décalage.
+
+     L'échelle, de bas en haut : la pastille des mains 18→42, le mot d'un
+     geste 46→72, les notes de la scène 18→42 seules ou 52→76 décalées. D'où
+     deux barreaux (52, 86), et jamais un troisième. Le second est engagé dès
+     que Bare Hands est monté (`:has()` ne voit pas `display:none`) et y reste :
+     une carte qui sauterait de 34 px sous la main au moment d'un geste serait
+     pire qu'une marge prudente.
+
+     Sous 820 px le centre d'état ne réserve plus la largeur de la carte : elle
+     se hisse au-dessus de sa rangée (`lift`, 22 + 42 = 64). Sous 700 px la
+     colonne Bare Hands devient relative au centre et sa hauteur dépend du
+     nombre d'outils : la carte passe à **droite** de la colonne (10 + 64 + 10
+     = 84) et se hisse de 62 px au-dessus des infusions. */
+  const GEO=Object.freeze({
+    left:18,bottom:22,minWidth:168,maxWidth:236,
+    /* Slice 08 : sur grand écran le titre n'est plus coupé à 236 px : la carte va jusqu'à
+       320 px et le titre tient sur deux lignes ; le centre d'état réserve alors gutter + 338 px
+       (`control_center.html`). */
+    wideFrom:1400,wideMaxWidth:320,
+    railOne:52,railTwo:86,
+    badgeSelector:'#jarvisHands .jh-badge',
+    noteSelector:'#jarvisHands .jh-note',
+    sceneSelector:'.sc-status:not([hidden])',
+    liftBelow:820,narrowBelow:700,lift:42,
+    narrowLeft:84,narrowLift:62,
+  });
+
+  /* La place de la carte et son apparence vivent ici, le rang de son bouton
+     (32) et celui du panneau (39 ; 9150 pendant une lecture) au registre d'empilement
+     (`docs/control-center-shell.md`). **Aucun `z-index` sur l'emplacement** :
+     il ouvrirait un contexte d'empilement. */
   const STYLE=`
-${H} .bd-btn{display:inline-flex;align-items:center;gap:9px;min-width:0;max-width:100%;
-  padding:7px 10px 7px 12px;border:1px solid rgba(110,231,255,.18);background:rgba(3,8,12,.72);
-  color:${INK};font:12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;cursor:pointer;position:relative;
-  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+${H}{position:absolute;left:${GEO.left}px;
+  --bd-rail:${GEO.bottom}px;--bd-lift:0px;
+  bottom:calc(var(--bd-rail) + var(--bd-lift));
+  display:flex;flex-direction:column;align-items:flex-start;
+  pointer-events:auto;
+  --bd-ink:${ACCENT};--bd-line:color-mix(in srgb,${ACCENT} 34%,transparent)}
+/* ---- l'évitement du rail bas-gauche, partagé avec Bare Hands et la scène ---- */
+body:has(${GEO.badgeSelector}) ${H}{--bd-rail:${GEO.railOne}px}
+body:has(${GEO.sceneSelector}) ${H}{--bd-rail:${GEO.railOne}px}
+body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) ${H}{--bd-rail:${GEO.railTwo}px}
+body:has(${GEO.noteSelector}) ${H}{--bd-rail:${GEO.railTwo}px}
+/* Une note de la scène qui va à la ligne : la page publie sa hauteur
+   (\`--sc-status-h\`) et la carte passe au-dessus d'elle, jamais plus bas que le
+   barreau. Une ligne = 24 px : 24 + 28 = 52. */
+body:has(${GEO.sceneSelector}) ${H}{--bd-rail:max(${GEO.railOne}px,calc(var(--sc-status-h,24px) + ${GEO.railOne - 24}px))}
+body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) ${H}{--bd-rail:max(${GEO.railTwo}px,calc(var(--sc-status-h,24px) + ${GEO.railTwo - 24}px))}
+${H}[${DOM.kindAttribute}=presentation]{--bd-ink:${VIOLET};--bd-line:color-mix(in srgb,${VIOLET} 40%,transparent)}
+${H}[${DOM.kindAttribute}=meeting]{--bd-ink:${WARN};--bd-line:color-mix(in srgb,${WARN} 40%,transparent)}
+${H} .bd-btn{position:relative;z-index:32;
+  min-width:${GEO.minWidth}px;max-width:${GEO.maxWidth}px;
+  display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;
+  padding:8px 10px 8px 9px;border:1px solid var(--bd-line);border-radius:11px;background:rgba(6,12,18,.88);
+  color:${INK};font:12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;cursor:pointer;text-align:left;
+  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
   transition:border-color .16s ease,color .16s ease,background .16s ease}
-${H} .bd-btn:hover{border-color:color-mix(in srgb,${ACCENT} 60%,transparent)}
+${H} .bd-btn:hover{border-color:color-mix(in srgb,var(--bd-ink) 72%,transparent)}
 ${H} .bd-btn:focus-visible{outline:2px solid ${ACCENT};outline-offset:3px}
-${H} .bd-btn[aria-expanded=true]{border-color:color-mix(in srgb,${ACCENT} 70%,transparent);background:rgba(6,20,27,.86)}
-${H} .bd-eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:${MUTED}}
+${H} .bd-btn[aria-expanded=true]{border-color:color-mix(in srgb,var(--bd-ink) 70%,transparent);background:rgba(6,20,27,.92)}
+${H} .bd-mark{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;
+  border:1px solid var(--bd-line);background:rgba(0,0,0,.25);color:var(--bd-ink)}
+${H} .bd-text{display:grid;gap:2px;min-width:0}
+${H} .bd-eyebrow{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--bd-ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 ${H} .bd-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  color:${ACCENT};font-weight:600;letter-spacing:.03em}
-${H} .bd-sub{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:${MUTED};white-space:nowrap}
+  color:${INK};font-size:12.5px;font-weight:600;letter-spacing:.02em}
+${H} .bd-sub{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:${MUTED};
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 ${H} .bd-sub:empty{display:none}
-${H} .bd-chev{flex:0 0 auto;color:${MUTED};transition:transform .16s ease}
+${H} .bd-chev{flex:0 0 auto;align-self:start;color:${MUTED};transition:transform .16s ease}
 ${H} .bd-btn[aria-expanded=true] .bd-chev{transform:rotate(180deg)}
 ${H}[${DOM.toneAttribute}=pending] .bd-sub{color:${ACCENT}}
-${H}[${DOM.toneAttribute}=unknown] .bd-btn,${H}[${DOM.toneAttribute}=unavailable] .bd-btn{border-style:dashed}
+${H}[${DOM.toneAttribute}=unknown] .bd-btn,${H}[${DOM.toneAttribute}=unavailable] .bd-btn{border-style:dashed;
+  border-color:color-mix(in srgb,${MUTED} 55%,transparent)}
+${H}[${DOM.toneAttribute}=unknown] .bd-mark,${H}[${DOM.toneAttribute}=unavailable] .bd-mark{color:${MUTED};border-style:dashed}
+${H}[${DOM.toneAttribute}=unknown] .bd-eyebrow,${H}[${DOM.toneAttribute}=unavailable] .bd-eyebrow{color:${MUTED}}
 ${H}[${DOM.toneAttribute}=unknown] .bd-title,${H}[${DOM.toneAttribute}=unavailable] .bd-title{color:${MUTED};font-weight:400}
 ${H}[${DOM.toneAttribute}=unknown] .bd-sub,${H}[${DOM.toneAttribute}=unavailable] .bd-sub{color:${WARN}}
+/* La séance PRESENTATION, telle que Voice la rapporte. Une marque **et** un
+   mot : la forme distingue les états sans la couleur — disque plein qui
+   respire (écoute), anneau (sourd), carré (refus, échec), anneau en tirets
+   (inactive). Le code d'échec est dans \`title\`. Refus et échec teintent
+   aussi le bord de la carte : rien n'écoute la salle. */
+${H} .bd-pres{display:flex;align-items:center;gap:6px;min-width:0;
+  font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:${MUTED}}
+${H} .bd-pres[hidden]{display:none}
+${H} .bd-pres-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+${H} .bd-pres-dot{flex:none;width:6px;height:6px;border-radius:50%;box-sizing:border-box;border:1.5px solid currentColor}
+${H} .bd-pres[${DOM.presenceAttribute}=listening]{color:var(--bd-ink)}
+${H} .bd-pres[${DOM.presenceAttribute}=listening] .bd-pres-dot{background:currentColor;animation:bdListen 2.4s ease-in-out infinite}
+${H} .bd-pres[${DOM.presenceAttribute}=deaf]{color:${WARN}}
+${H} .bd-pres[${DOM.presenceAttribute}=refused],${H} .bd-pres[${DOM.presenceAttribute}=entry_failed]{color:${DANGER}}
+${H} .bd-pres[${DOM.presenceAttribute}=refused] .bd-pres-dot,${H} .bd-pres[${DOM.presenceAttribute}=entry_failed] .bd-pres-dot{border-radius:1px;background:currentColor}
+${H} .bd-pres[${DOM.presenceAttribute}=inactive] .bd-pres-dot{border-style:dashed}
+${H}[${DOM.presenceAttribute}=refused] .bd-btn,${H}[${DOM.presenceAttribute}=entry_failed] .bd-btn{
+  border-color:color-mix(in srgb,${DANGER} 55%,transparent)}
+@keyframes bdListen{0%,100%{opacity:1}50%{opacity:.35}}
 /* RÈGLE ZÉRO : l'attente se voit bouger ; le compteur monte même sans animation. */
 ${H} .bd-wait,${P} .bd-wait{position:absolute;left:8px;right:8px;bottom:3px;height:2px;border-radius:2px;overflow:hidden;
   display:none;background:color-mix(in srgb,${ACCENT} 20%,transparent)}
@@ -498,12 +755,13 @@ ${H} .bd-wait::after,${P} .bd-wait::after{content:'';position:absolute;top:0;bot
   border-radius:2px;background:${ACCENT};animation:bdSweep 1.25s ease-in-out infinite}
 @keyframes bdSweep{from{transform:translateX(-115%)}to{transform:translateX(260%)}}
 
-${P}{width:min(372px,calc(100vw - 24px));max-height:calc(100vh - 90px);display:flex;flex-direction:column;
+${P}{width:min(372px,calc(100vw - 24px));max-height:calc(100vh - 140px);display:flex;flex-direction:column;
   border:1px solid ${LINE};border-radius:12px;background:var(--panel,rgba(6,12,18,.94));color:${INK};
   font:12px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;
-  box-shadow:0 18px 44px rgba(0,0,0,.52);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);
+  box-shadow:0 -18px 44px rgba(0,0,0,.52);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);
   animation:bdPop .16s cubic-bezier(.16,1,.3,1)}
-@keyframes bdPop{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+/* Le panneau s'ouvre **vers le haut**, au-dessus de la carte du bas-gauche. */
+@keyframes bdPop{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 ${P}:focus{outline:none}
 ${P} .bd-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 12px 8px 14px}
 ${P} h2{margin:0;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:${INK}}
@@ -528,9 +786,9 @@ ${P} .bd-meta{display:flex;align-items:center;gap:7px;min-width:0;font-size:10.5
 ${P} .bd-meta span:last-child{overflow:hidden;text-overflow:ellipsis}
 ${P} .bd-kind{flex:0 0 auto;padding:1px 6px;border:1px solid ${LINE};border-radius:999px;font-size:9.5px;
   letter-spacing:.08em;text-transform:uppercase;color:${MUTED}}
-/* Nature : ton neutre, plus lisible que « Générique » mais jamais l'accent
+/* Type : ton neutre, plus lisible que « Assistant » mais jamais l'accent
    cyan, réservé au Board actif (QA S08, critique HV-WS-UI-002). */
-${P} .bd-kind:not([data-kind=empty]){color:color-mix(in srgb,${INK} 82%,transparent);
+${P} .bd-kind:not([data-kind=assistant]){color:color-mix(in srgb,${INK} 82%,transparent);
   border-color:color-mix(in srgb,${INK} 22%,transparent);background:color-mix(in srgb,${INK} 5%,transparent)}
 ${P} .bd-still{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center;min-width:0;
   padding:9px 8px 9px 10px;color:${MUTED}}
@@ -588,15 +846,28 @@ ${P} .bd-create{padding:10px 14px 12px;border-top:1px solid ${LINE}}
 ${P} .bd-label{display:block;margin-bottom:6px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:${MUTED}}
 ${P} .bd-create-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px}
 ${P} .bd-fielderr{margin:6px 0 0;font-size:10.5px;color:#ffb3bd}
+${P} .bd-kindhint{margin:6px 0 0;font-size:10.5px;line-height:1.45;color:${WARN}}
+${P} .bd-kindhint[hidden]{display:none}
 ${P} .bd-fielderr:empty{display:none}
 ${P} .bd-foot{padding:10px 14px 13px;border-top:1px solid ${LINE};display:grid;gap:7px}
 ${P} .bd-session{font-size:10px;letter-spacing:.06em;color:${MUTED}}
 ${P} .bd-session:empty{display:none}
 ${P} .bd-foot .bd-act{display:inline-flex;align-items:center;gap:8px;justify-self:start}
 ${P} .bd-foot p{margin:0;font-size:10.5px;line-height:1.5;color:${MUTED}}
-${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-@media(max-width:700px){
-  ${H} .bd-eyebrow{display:none}
+${P} .bd-foot p[data-tone=warn]{color:${WARN}}
+${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+/* Le centre d'état ne réserve plus la largeur de la carte sous 820 px : elle se
+   hisse au-dessus de sa rangée, avant le resserrement de 700 px (voir \`GEO\`). */
+@media(min-width:${GEO.wideFrom}px){
+  ${H} .bd-btn{max-width:${GEO.wideMaxWidth}px}
+  ${H} .bd-title{white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+}
+@media(max-width:${GEO.liftBelow}px){
+  ${H}{--bd-lift:${GEO.lift}px}
+}
+@media(max-width:${GEO.narrowBelow}px){
+  ${H}{left:${GEO.narrowLeft}px;--bd-lift:${GEO.narrowLift}px}
+  ${H} .bd-btn{min-width:150px;max-width:calc(100vw - ${GEO.narrowLeft + 18}px)}
 }
 /* Écran bas : l'aide permanente du pied se replie (toujours lue par
    aria-describedby) pour laisser des lignes visibles. */
@@ -608,6 +879,8 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
   ${H} .bd-wait::after,${P} .bd-wait::after{animation:none;width:100%;opacity:.6}
   ${P}{animation:none}
   ${H} .bd-btn,${H} .bd-chev,${P} .bd-row,${P} .bd-filter button{transition:none}
+  /* Même spécificité que la règle qui anime, sinon elle perdrait la cascade. */
+  ${H} .bd-pres[${DOM.presenceAttribute}=listening] .bd-pres-dot{animation:none}
 }`;
 
   function installStyle(doc){
@@ -634,9 +907,26 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     const place=typeof deps.place==='function'?deps.place:null;
     /* Ouvrir le gestionnaire profond sur un Board (Slice 08). */
     const inspect=typeof deps.inspect==='function'?deps.inspect:null;
+    /* Une lecture tient le Studio par-dessus la page : vrai tant que les couches de la page
+       (confirmation, gestionnaire) seraient cachées (voir `RUN_BLOCKED`). */
+    const runBlocked=typeof deps.runBlocked==='function'?()=>!!deps.runBlocked():()=>false;
+    /* Le panneau dit quand il s'ouvre ou se ferme (surfaces exclusives,
+       docs/control-center-shell.md › Exclusive surfaces : la roue d'outils lui
+       cède la place, et la lui prend). */
+    const onOpenChange=typeof deps.onOpenChange==='function'?deps.onOpenChange:null;
+    const openChanged=value=>{
+      if(!onOpenChange)return;
+      try{onOpenChange(value)}
+      catch(error){log('warn','boards.open_change_failed',{error:String(error&&error.message||error)})}
+    };
 
     let block=null,listing=null,session=null,listError=null,loading=false,loadSeq=0;
-    let pending=null,failure=null,editing=null,editError='',editDraft=null,editKind=null,opened=false,ticker=0,listSignature='';
+    /* La présence de la voix (Slice 02) : le bloc `interaction_mode` et le
+       relevé `presentation` du **même** battement, jamais écrits par un clic.
+       `otherModeSeenAtS` : heure murale (s) du dernier battement montrant un
+       autre mode que PRESENTATION, confirmé par Core (voir `freshReport`). */
+    let modeBlock=null,report=null,otherModeSeenAtS=null,presenceSpoken='';
+    let pending=null,failure=null,editing=null,editError='',editDraft=null,opened=false,ticker=0,listSignature='';
     /* Filtre du panneau : `active` (en service) ou `archived`. */
     let view='active';
     const waits=new Set();
@@ -647,19 +937,36 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     const waitSeconds=()=>pending?Math.max(0,(now()-pending.since)/1000):0;
     const disable=(node,on)=>{if(on)node.setAttribute('aria-disabled','true');else node.removeAttribute('aria-disabled')};
 
-    /* ---- le bouton du haut */
+    /* ---- la carte du bas-gauche : icône du type, type, titre, sous-ligne, présence */
     const trigger=el('button','bd-btn');
     trigger.id=DOM.triggerId;trigger.setAttribute('type','button');
     trigger.setAttribute('aria-haspopup','dialog');trigger.setAttribute('aria-expanded','false');
     trigger.setAttribute('aria-controls',DOM.panelId);
-    const eyebrow=el('span','bd-eyebrow','Board ');  // espace : « Board Jarvis » et non « BoardJarvis » dans le texte du bouton
+    const mark=el('span','bd-mark');mark.setAttribute('aria-hidden','true');
+    let markKind=null,markIcon=null;
+    const text_=el('span','bd-text');
+    /* L'espace final sépare le type du titre dans le texte du bouton (« Assistant Jarvis »
+       et non « AssistantJarvis ») ; en fin de bloc, il ne se voit pas. */
+    const eyebrow=el('span','bd-eyebrow');eyebrow.id=DOM.kindId;
     const title=el('span','bd-title');title.id=DOM.titleId;
     const sub=el('span','bd-sub');sub.id=DOM.subId;
-    const chev=el('span','bd-chev');chev.appendChild(icon(doc,'chevron',14));
+    const presence=el('span','bd-pres');presence.id=DOM.presenceId;presence.hidden=true;
+    const presenceDot=el('span','bd-pres-dot');presenceDot.setAttribute('aria-hidden','true');
+    const presenceText=el('span','bd-pres-text');
+    presence.appendChild(presenceDot);presence.appendChild(presenceText);
+    text_.appendChild(eyebrow);text_.appendChild(title);text_.appendChild(sub);text_.appendChild(presence);
+    /* Chevron vers le haut : le panneau s'ouvre au-dessus de la carte. */
+    const chev=el('span','bd-chev');chev.appendChild(icon(doc,'chevronUp',14));
     const triggerWait=el('span','bd-wait');triggerWait.setAttribute('aria-hidden','true');
-    trigger.appendChild(eyebrow);trigger.appendChild(title);trigger.appendChild(sub);
+    trigger.appendChild(mark);trigger.appendChild(text_);
     trigger.appendChild(chev);trigger.appendChild(triggerWait);
     host.appendChild(trigger);
+    /* La séance se dit aussi à voix haute quand elle change : un refus d'entrée
+       doit s'entendre, pas seulement se voir. Région de la carte, pas du panneau
+       (fermé, il est caché, et sa région avec lui). */
+    const presenceAnnounce=el('span','bd-sr');presenceAnnounce.id=DOM.presenceAnnounceId;
+    presenceAnnounce.setAttribute('role','status');presenceAnnounce.setAttribute('aria-live','polite');
+    host.appendChild(presenceAnnounce);
 
     /* ---- le panneau */
     panel.hidden=true;
@@ -696,7 +1003,11 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       select.setAttribute('aria-label',label);select.setAttribute('title',label);
       const known=Object.keys(BOARD_KINDS);
       for(const kind of known.includes(value)||!value?known:known.concat([value])){
-        const o=el('option','',BOARD_KINDS[kind]||kind);o.value=kind;o.setAttribute('value',kind);
+        const planned=PLANNED[kind];
+        /* Court dans la liste (le sélecteur prend la largeur de sa plus longue option) ; la phrase entière
+           est la ligne d'aide sous la rangée (`createKindHint`). */
+        const o=el('option','',`${BOARD_KINDS[kind]||kind}${planned?` · ${planned.tag}`:''}`);
+        o.value=kind;o.setAttribute('value',kind);
         if(kind===(value||DEFAULT_KIND)){o.selected=true;o.setAttribute('selected','')}
         select.appendChild(o);
       }
@@ -711,12 +1022,17 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     createInput.setAttribute('type','text');createInput.setAttribute('autocomplete','off');
     createInput.setAttribute('placeholder','Titre du Board');createInput.setAttribute('maxlength',String(TITLE_MAX*2));
     createInput.setAttribute('aria-describedby',DOM.createErrorId);
-    const createKind=kindSelect(DOM.createKindId,'Nature du nouveau Board',DEFAULT_KIND);
+    const createKind=kindSelect(DOM.createKindId,'Type du nouveau Board (fixé à la création)',DEFAULT_KIND);
     const createButton=el('button','bd-act primary','Créer');createButton.id=DOM.createButtonId;
     createButton.setAttribute('type','button');
     createRow.appendChild(createInput);createRow.appendChild(createKind);createRow.appendChild(createButton);
     const createError=el('p','bd-fielderr');createError.id=DOM.createErrorId;createError.setAttribute('role','alert');
-    create.appendChild(createLabel);create.appendChild(createRow);create.appendChild(createError);
+    const createKindHint=el('p','bd-kindhint');createKindHint.id=DOM.createKindHintId;createKindHint.hidden=true;
+    createKind.setAttribute('aria-describedby',DOM.createKindHintId);
+    const paintKindHint=()=>{const planned=PLANNED[text(createKind.value)];
+      createKindHint.textContent=planned?planned.said:'';createKindHint.hidden=!planned};
+    createKind.addEventListener('change',paintKindHint);
+    create.appendChild(createLabel);create.appendChild(createRow);create.appendChild(createKindHint);create.appendChild(createError);
 
     const foot=el('div','bd-foot');
     const sessionLine=el('div','bd-session');sessionLine.id=DOM.sessionLineId;
@@ -735,16 +1051,48 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     function paintTrigger(){
       const view=triggerViewOf(block,pending,waitSeconds());
+      const session=presenceOf(report,liveModeOf(modeBlock));
+      const shown=!!session&&session.shown;
       host.setAttribute(DOM.toneAttribute,view.tone);
+      host.setAttribute(DOM.kindAttribute,view.kind);
       host.setAttribute(DOM.busyAttribute,pending&&(pending.kind==='switch'||pending.kind==='new_session')?'true':'false');
+      host.setAttribute(DOM.presenceAttribute,session?session.state:'none');
+      /* L'icône n'est refaite que lorsque le type change : la carte est repeinte
+         chaque seconde. */
+      if(markKind!==view.kind){
+        markKind=view.kind;
+        if(markIcon)mark.removeChild(markIcon);
+        markIcon=icon(doc,view.kind&&ICON[view.kind]?view.kind:'board',18);
+        mark.appendChild(markIcon);
+      }
+      const eyebrowText=`${view.eyebrow} `;
+      if(eyebrow.textContent!==eyebrowText)eyebrow.textContent=eyebrowText;
       if(title.textContent!==view.title)title.textContent=view.title;
       if(sub.textContent!==view.sub)sub.textContent=view.sub;
-      /* Le nom commence par ce que le bouton montre (« BOARD » puis le titre) : WCAG 2.5.3 (orbital-ui Slice 09, axe-core). */
-      const label=view.tone==='ready'?`Board ${view.title} : Board actif. Ouvrir la liste des Boards`
-        :view.tone==='pending'?`${view.title} — ${view.sub}. Ouvrir la liste des Boards`
-        :`Boards ${view.title.toLowerCase()} (${view.sub}${view.code?` · ${view.code}`:''}). Ouvrir la liste des Boards`;
+      presence.hidden=!shown;
+      if(presenceText.textContent!==(shown?session.line:''))presenceText.textContent=shown?session.line:'';
+      if(session)presence.setAttribute(DOM.presenceAttribute,session.state);else presence.removeAttribute(DOM.presenceAttribute);
+      /* Le code d'échec, tel que la trace le porte ; sans code, la phrase. */
+      if(shown)presence.setAttribute('title',session.code||session.said);else presence.removeAttribute('title');
+      /* Le nom commence par ce que la carte montre (le type puis le titre) : WCAG 2.5.3
+         (orbital-ui Slice 09, axe-core). Le type prévu et la séance passent avant l'action. */
+      const planned=view.planned?` ${view.planned.said}`:'';
+      const heard=shown?` ${session.said}`:'';
+      const label=view.tone==='ready'?`${view.eyebrow} ${view.title} : Board actif.${planned}${heard} Ouvrir la liste des Boards`
+        :view.tone==='pending'?`${view.eyebrow} ${view.title} — ${view.sub}.${heard} Ouvrir la liste des Boards`
+        :`Board ${view.title.toLowerCase()} (${view.sub}${view.code?` · ${view.code}`:''}).${heard} Ouvrir la liste des Boards`;
       trigger.setAttribute('aria-label',label);
-      trigger.setAttribute('title',view.tone==='ready'?`Board actif : ${view.title}`:label);
+      /* Infobulle courte : le titre et le type ; la séance garde son code. */
+      trigger.setAttribute('title',view.tone==='ready'
+        ?`Board actif : ${view.title} (${view.kindLabel}${view.planned?`, ${view.planned.tag}`:''})${shown?` · ${session.line}${session.code?` (${session.code})`:''}`:''}`
+        :label);
+      /* Une séance qui change se dit, une fois. Rien quand elle ne se montre pas. */
+      const said=shown?session.said:'';
+      if(said!==presenceSpoken){
+        presenceSpoken=said;presenceAnnounce.textContent=said;
+        if(session&&shown)log(session.tone==='bad'?'warn':'info','boards.voice_presence_shown',
+          {state:session.state,code:session.code||null});
+      }
       return view;
     }
 
@@ -770,7 +1118,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     }
 
     function signatureOfRows(rows){
-      return JSON.stringify([rows,view,editing,editError,!!pending,loading,listing===null]);
+      return JSON.stringify([rows,view,editing,editError,!!pending,loading,listing===null,runBlocked()]);
     }
     const currentRows=()=>rowsOf(listing,block,pending,{view,now:now()});
 
@@ -789,7 +1137,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     function setView(next){
       const target=next==='archived'?'archived':'active';
       if(target===view)return;
-      view=target;editing=null;editError='';editDraft=null;editKind=null;
+      view=target;editing=null;editError='';editDraft=null;
       log('info','boards.filter_changed',{view});
       paint(true);
       /* Une autre liste : elle commence en haut, jamais à la hauteur de la
@@ -842,7 +1190,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       const pick=el('button','bd-pick');pick.setAttribute('type','button');
       pick.setAttribute(DOM.boardAttribute,row.board_id);pick.setAttribute(DOM.actionAttribute,'switch');
       if(row.active)pick.setAttribute('aria-current','true');
-      /* Le nom vient du contenu (titre, état, nature, dernière ouverture) : il commence par ce que la ligne montre,
+      /* Le nom vient du contenu (titre, état, type, dernière ouverture) : il commence par ce que la ligne montre,
          ce que l'Accès vocal et WCAG 2.5.3 attendent (orbital-ui QA S09 P4, axe `label-content-name-mismatch`) ;
          l'action passe en description. */
       pick.setAttribute('aria-description',row.active?'Board actif'
@@ -855,7 +1203,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
       const rename=el('button','bd-icon');rename.setAttribute('type','button');
       rename.setAttribute(DOM.boardAttribute,row.board_id);rename.setAttribute(DOM.actionAttribute,'rename');
-      rename.setAttribute('aria-label',`Modifier ${row.title} (titre, nature)`);rename.setAttribute('title','Renommer, changer la nature');
+      rename.setAttribute('aria-label',`Renommer ${row.title}`);rename.setAttribute('title','Renommer');
       rename.appendChild(icon(doc,'rename',15));disable(rename,!!pending);
       rename.addEventListener('click',()=>{startEdit(row.board_id)});
       li.appendChild(rename);
@@ -863,9 +1211,10 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
       const archive=el('button','bd-icon');archive.setAttribute('type','button');
       archive.setAttribute(DOM.boardAttribute,row.board_id);archive.setAttribute(DOM.actionAttribute,'archive');
-      archive.setAttribute('aria-label',row.canArchive?`Archiver ${row.title}`:`Archiver ${row.title} — impossible : ${row.archiveReason}`);
-      archive.setAttribute('title',row.canArchive?'Archiver':row.archiveReason);
-      archive.appendChild(icon(doc,'archive',15));disable(archive,!row.canArchive||!!pending);
+      const archiveReason=!row.canArchive?row.archiveReason:runBlocked()?RUN_BLOCKED:'';
+      archive.setAttribute('aria-label',archiveReason?`Archiver ${row.title} — impossible : ${archiveReason}`:`Archiver ${row.title}`);
+      archive.setAttribute('title',archiveReason||'Archiver');
+      archive.appendChild(icon(doc,'archive',15));disable(archive,!!archiveReason||!!pending);
       archive.addEventListener('click',()=>{archiveBoard(row.board_id)});
       li.appendChild(archive);
       const wait=el('span','bd-wait');wait.setAttribute('aria-hidden','true');li.appendChild(wait);
@@ -874,7 +1223,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     const dotOf=()=>{const dot=el('span','bd-dot');dot.setAttribute('aria-hidden','true');return dot};
 
-    /* Titre et état sur une ligne, nature et dernière ouverture dessous : ce
+    /* Titre et état sur une ligne, type et dernière ouverture dessous : ce
        qu'on lit pour choisir, sans que l'état ne rogne la date. */
     function textOf(row,state){
       const box=el('span','bd-text');
@@ -883,7 +1232,8 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       line.appendChild(name);line.appendChild(state);
       const meta=el('span','bd-meta');
       const kind=el('span','bd-kind',row.kindLabel);kind.setAttribute('data-kind',row.kind);
-      kind.setAttribute('data-role','kind');kind.setAttribute('title',`Nature : ${row.kindLabel}`);
+      kind.setAttribute('data-role','kind');
+      kind.setAttribute('title',`Type : ${row.kindLabel}${row.planned?` — ${row.planned}`:''}`);
       const when=el('span','',row.opened);
       when.setAttribute('data-role','opened');if(row.openedExact)when.setAttribute('title',row.openedExact);
       meta.appendChild(kind);meta.appendChild(when);
@@ -894,14 +1244,15 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     /* « Inspecter » : le gestionnaire profond sur ce Board, archivé compris. */
     function inspectButton(row){
       /* Une icône comme ses voisines (crayon, boîte) : un libellé visible
-         rognait la nature et la dernière ouverture de chaque ligne (372 px).
+         rognait le type et la dernière ouverture de chaque ligne (372 px).
          Le glyphe dit « ouvrir ailleurs », le nom accessible et l'infobulle
          nomment le gestionnaire. */
       const b=el('button','bd-icon');b.setAttribute('type','button');
       b.setAttribute(DOM.boardAttribute,row.board_id);b.setAttribute(DOM.actionAttribute,'inspect');
-      b.setAttribute('aria-label',`Inspecter ${row.title} dans Sessions & Boards`);
-      b.setAttribute('title','Inspecter dans Sessions & Boards (mémoire, Sessions, artefacts)');
-      b.appendChild(icon(doc,'inspect',15));disable(b,!!pending);
+      const blocked=runBlocked();
+      b.setAttribute('aria-label',`Inspecter ${row.title} dans Sessions & Boards${blocked?` — impossible : ${RUN_BLOCKED}`:''}`);
+      b.setAttribute('title',blocked?RUN_BLOCKED:'Inspecter dans Sessions & Boards (mémoire, Sessions, artefacts)');
+      b.appendChild(icon(doc,'inspect',15));disable(b,blocked||!!pending);
       b.addEventListener('click',()=>{inspectBoard(row.board_id)});
       return b;
     }
@@ -916,8 +1267,26 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       const still=el('div','bd-still');
       const state=el('span','bd-state','Archivé');state.setAttribute('data-role','state');
       still.appendChild(dotOf());still.appendChild(textOf(row,state));
-      li.appendChild(still);li.appendChild(inspectButton(row));
+      li.appendChild(still);
+      /* Slice 07 (refonte roue/dossier) : le Dossier d'un Board archivé se lit en plein écran, en lecture seule. */
+      if(root.JarvisDossier&&typeof root.JarvisDossier.openBoard==='function')li.appendChild(dossierButton(row));
+      li.appendChild(inspectButton(row));
       return li;
+    }
+    function dossierButton(row){
+      const b=el('button','bd-icon');b.setAttribute('type','button');
+      b.setAttribute(DOM.boardAttribute,row.board_id);b.setAttribute(DOM.actionAttribute,'dossier');
+      const blocked=runBlocked();
+      b.setAttribute('aria-label',`Lire le Dossier de ${row.title}${blocked?` — impossible : ${RUN_BLOCKED}`:' (lecture seule)'}`);
+      b.setAttribute('title',blocked?RUN_BLOCKED:'Lire son Dossier (lecture seule)');
+      b.appendChild(icon(doc,'dossier',15));disable(b,blocked||!!pending);
+      b.addEventListener('click',()=>{
+        if(runBlocked()){refuseDuringRun('dossier',{board_id:String(row.board_id)});return}
+        log('info','boards.dossier_requested',{board_id:String(row.board_id)});
+        const r=root.JarvisDossier.openBoard(String(row.board_id),{opener:trigger});
+        if(r&&r.ok)close({focus:false});
+      });
+      return b;
     }
 
     function editRow(row){
@@ -937,10 +1306,6 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         else if(event.key==='Escape'){event.preventDefault();event.stopPropagation&&event.stopPropagation();cancelEdit()}
       };
       field.addEventListener('keydown',keys);
-      const kind=kindSelect('',`Nature de ${row.title}`,editKind!==null?editKind:row.kind);
-      kind.setAttribute(DOM.boardAttribute,row.board_id);kind.setAttribute(DOM.actionAttribute,'kind');
-      kind.addEventListener('change',()=>{editKind=kind.value});
-      kind.addEventListener('keydown',event=>{if(event.key==='Escape')keys(event)});
       const save=el('button','bd-act primary','Enregistrer');save.setAttribute('type','button');
       save.setAttribute(DOM.boardAttribute,row.board_id);save.setAttribute(DOM.actionAttribute,'save');
       disable(save,!!pending);
@@ -948,7 +1313,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       const cancel=el('button','bd-act','Annuler');cancel.setAttribute('type','button');
       cancel.setAttribute(DOM.boardAttribute,row.board_id);cancel.setAttribute(DOM.actionAttribute,'cancel');
       cancel.addEventListener('click',()=>{cancelEdit()});
-      box.appendChild(field);box.appendChild(kind);box.appendChild(save);box.appendChild(cancel);
+      box.appendChild(field);box.appendChild(save);box.appendChild(cancel);
       li.appendChild(box);
       const error=el('p','bd-rowerr',editError);error.setAttribute('role','alert');li.appendChild(error);
       const wait=el('span','bd-wait');wait.setAttribute('aria-hidden','true');li.appendChild(wait);
@@ -981,7 +1346,13 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     function paintControls(){
       const busy=!!pending;
-      disable(createButton,busy);disable(newSession,busy||!(block&&block.available));
+      const blocked=runBlocked();
+      disable(createButton,busy);disable(newSession,busy||blocked||!(block&&block.available));
+      /* La raison se lit sur le bouton (infobulle) et sous lui (l'aide du pied la remplace). */
+      if(blocked)newSession.setAttribute('title',RUN_BLOCKED);else newSession.removeAttribute('title');
+      const help=blocked?RUN_BLOCKED:NEW_SESSION_HINT;
+      if(newSessionHint.textContent!==help)newSessionHint.textContent=help;
+      newSessionHint.setAttribute('data-tone',blocked?'warn':'');
       createInput.setAttribute('aria-invalid',createError.textContent?'true':'false');
       const line=sessionLineOf(session);
       if(sessionLine.textContent!==line)sessionLine.textContent=line;
@@ -1007,15 +1378,17 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
          la liste arrive — à moins que l'utilisateur ne soit déjà ailleurs. */
       if(listing)focusActive();else panel.focus();
       log('info','boards.panel_opened',{active_board_id:activeIdOf(block,listing)});
+      openChanged(true);
       load().then(()=>{if(opened&&(doc.activeElement===panel||!doc.activeElement))focusActive()});
     }
 
     function close(options){
       if(!opened)return;
-      opened=false;editing=null;editError='';editDraft=null;editKind=null;
+      opened=false;editing=null;editError='';editDraft=null;
       panel.hidden=true;
       trigger.setAttribute('aria-expanded','false');
       if(options&&options.focus)trigger.focus();
+      openChanged(false);
     }
 
     function focusActive(){
@@ -1059,7 +1432,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       }
     }
 
-    /* Revenir à la vérité du serveur : statut canonique (bouton du haut) et
+    /* Revenir à la vérité du serveur : statut canonique (la carte) et
        liste. Ne lève pas. */
     async function resync(){
       const jobs=[load()];
@@ -1234,7 +1607,10 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       if(id===activeIdOf(block,listing)){close({focus:true});return null}
       const listed=titleOf(id);
       const target=listed!==id?listed:(isObject(hint)&&text(hint.title))||id;
-      return run('switch',{boardId:id,title:target},()=>post(PATH.switch,{board_id:id}),answer=>{
+      /* Le type de la cible, s'il est déjà lu : la carte le montre pendant la bascule. */
+      const row=(isObject(listing)&&Array.isArray(listing.boards)?listing.boards:[]).find(x=>isObject(x)&&String(x.board_id)===id);
+      const boardKind=row?text(row.board_kind)||DEFAULT_KIND:'';
+      return run('switch',{boardId:id,title:target,boardKind},()=>post(PATH.switch,{board_id:id}),answer=>{
         const said=`Board « ${target} » actif.`;
         announce.textContent=said;
         if(toast)toast({title:said,sub:'La voix et la conversation suivent ce Board. Le Board quitté garde son travail en cours.',kind:'ok'});
@@ -1254,7 +1630,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       }
       createError.textContent='';
       let createdId=null;
-      /* La nature n'est envoyée que choisie : absente, Core pose `empty`. */
+      /* Le type n'est envoyé que choisi : absent, Core pose `assistant`. Fixé à la création (D02). */
       const kind=text(createKind.value)||DEFAULT_KIND;
       const body=kind===DEFAULT_KIND?{title:check.value}:{title:check.value,board_kind:kind};
       const result=await run('create',Object.assign({},body),async()=>{
@@ -1262,7 +1638,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         catch(error){createError.textContent=refusalOf(error).text;throw error}
       },answer=>{
         createdId=answer&&isObject(answer.board)?String(answer.board.board_id):null;
-        createInput.value='';createError.textContent='';createKind.value=DEFAULT_KIND;
+        createInput.value='';createError.textContent='';createKind.value=DEFAULT_KIND;paintKindHint();
         const said=`Board « ${check.value} » créé${kind===DEFAULT_KIND?'':` (${kindOf(kind).label})`}.`;
         announce.textContent=said;
         if(toast)toast({title:said,sub:'Il n’est pas encore ouvert : choisissez-le dans la liste pour y basculer.',kind:'ok'});
@@ -1274,7 +1650,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     function startEdit(boardId){
       if(pending)return;
-      editing=String(boardId);editError='';editDraft=null;editKind=null;
+      editing=String(boardId);editError='';editDraft=null;
       paint(true);
       const field=findRowControl(editing,'title');
       if(field){field.focus();if(typeof field.select==='function')field.select()}
@@ -1282,37 +1658,32 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     function cancelEdit(){
       const id=editing;
-      editing=null;editError='';editDraft=null;editKind=null;
+      editing=null;editError='';editDraft=null;
       paint(true);
       const back=id&&findRowControl(id,'rename');
       if(back)back.focus();
     }
 
-    const kindOfId=id=>{const row=rowsOf(listing,block,null).find(r=>r.board_id===id);return row?row.kind:DEFAULT_KIND};
-
-    /* Titre et nature en un seul `PATCH`, qui ne porte que ce qui change. Rien
-       ne change : aucune requête. La ligne n'est repeinte qu'après relecture
-       de la liste : la nature affichée est celle que le serveur a gardée. */
+    /* Le titre seul, en un `PATCH` : le type est fixé à la création (D02).
+       Rien ne change : aucune requête. La ligne n'est repeinte qu'après
+       relecture de la liste. */
     async function saveEdit(boardId){
       if(pending||editing!==String(boardId))return null;
-      const id=editing,field=findRowControl(id,'title'),select=findRowControl(id,'kind');
+      const id=editing,field=findRowControl(id,'title');
       const check=validateTitle(field?field.value:editDraft);
-      const kind=text(select?select.value:editKind)||kindOfId(id);
-      if(!check.ok){editError=check.error;editDraft=field?field.value:editDraft;editKind=kind;paint(true);
+      if(!check.ok){editError=check.error;editDraft=field?field.value:editDraft;paint(true);
         const again=findRowControl(id,'title');if(again)again.focus();return null}
       const body={};
       if(check.value!==titleOf(id))body.title=check.value;
-      if(kind!==kindOfId(id))body.board_kind=kind;
       if(!Object.keys(body).length){cancelEdit();return null}
-      editDraft=check.value;editKind=kind;
+      editDraft=check.value;
       const result=await run('update',Object.assign({boardId:id},body),async()=>{
         try{return await post(PATH.board(id),body,'PATCH')}
         catch(error){editError=refusalOf(error).text;throw error}
       },()=>{
-        editing=null;editError='';editDraft=null;editKind=null;
+        editing=null;editError='';editDraft=null;
         const parts=[];
         if(body.title!==undefined)parts.push(`renommé en « ${body.title} »`);
-        if(body.board_kind!==undefined)parts.push(`nature ${kindOf(body.board_kind).label}`);
         announce.textContent=`Board ${parts.join(', ')}.`;
       },{inline:true});
       if(result){paint(true);const back=findRowControl(id,'rename');if(back)back.focus()}
@@ -1320,8 +1691,18 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       return result;
     }
 
+    /* Une action éteinte pendant la lecture, déclenchée quand même (clavier, appel direct) :
+       rien n'est ouvert, la raison est dite dans le bandeau du panneau et au journal. */
+    function refuseDuringRun(kind,data){
+      failure=Object.freeze({text:RUN_BLOCKED,tone:'warn',detail:'presentation_run'});
+      announce.textContent=RUN_BLOCKED;
+      log('info','boards.action_blocked_during_run',Object.assign({action:kind},data||{}));
+      paint(true);
+    }
+
     async function archiveBoard(boardId){
       if(pending)return null;
+      if(runBlocked()){refuseDuringRun('archive',{board_id:String(boardId)});return null}
       const id=String(boardId),name=titleOf(id);
       if(id===activeIdOf(block,listing)){
         /* Refusé **ici**, sans aller-retour : le serveur répondrait 409
@@ -1358,6 +1739,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
        gestionnaire (promesse rejetée) passe par l'infusion. */
     function inspectBoard(boardId){
       if(pending)return false;
+      if(runBlocked()){refuseDuringRun('inspect',{board_id:String(boardId)});return false}
       const id=String(boardId),name=titleOf(id);
       if(!inspect){
         fail({code:'workspace_manager_missing',text:INSPECT_MISSING},'inspect',{board_id:id});
@@ -1388,6 +1770,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     async function startNewSession(){
       if(pending)return null;
+      if(runBlocked()){refuseDuringRun('new_session',{});return null}
       if(!(block&&block.available)){
         failure=Object.freeze({text:REFUSAL.core_unavailable,tone:'warn',detail:''});paint(true);return null}
       const boardTitle=text(block.active&&block.active.title);
@@ -1446,20 +1829,29 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     /* ---------------------------------------------------------- couture */
 
     /* La porte que `refreshStatus` appelle chaque seconde avec le bloc
-       `boards` de `/api/status`. Un changement de Board actif ou de Session
+       `boards` de `/api/status` — et, depuis la Slice 02, le bloc
+       `interaction_mode` et le relevé `presentation` du même statut, que la
+       carte rend en ligne de séance. Un changement de Board actif ou de Session
        venu d'ailleurs (voix, MCP, autre onglet) relit la liste si le panneau
        est ouvert. */
-    function gate(next){
+    function gate(next,nextMode,nextReport){
       const before=block?`${activeIdOf(block,null)}|${text(block.jarvis_session_id)}`:'';
       block=isObject(next)?next:null;
+      modeBlock=isObject(nextMode)?nextMode:null;
+      const mode=liveModeOf(modeBlock);
+      if(modeBlock&&modeBlock.core_reachable===true&&mode&&mode!==PRESENTATION_MODE)otherModeSeenAtS=now()/1000;
+      /* Un refus d'avant la bascule est écarté (`freshReport`) ; absent, le
+         relevé vaut `null` : Voice hors ligne, rien n'est dit. */
+      report=isObject(nextReport)?freshReport(nextReport,otherModeSeenAtS):null;
       const after=block?`${activeIdOf(block,null)}|${text(block.jarvis_session_id)}`:'';
       paint(false);
       if(opened&&!pending&&block&&after!==before&&before)load();
       return triggerViewOf(block,pending,waitSeconds());
     }
 
+    /* Le sondage est tombé : ni Board ni séance ne sont plus confirmés. */
     function statusLost(){
-      block=null;
+      block=null;modeBlock=null;report=null;
       paint(false);
       return triggerViewOf(block,pending,waitSeconds());
     }
@@ -1476,6 +1868,8 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       rows:()=>rowsOf(listing,block,pending,{view,now:now()}),
       view:()=>view,
       presentation:()=>triggerViewOf(block,pending,waitSeconds()),
+      /* La séance que la carte peint (Slice 02), `null` sans relevé. */
+      presence:()=>presenceOf(report,liveModeOf(modeBlock)),
       waits:()=>waits.size,
       block:()=>block,
     };
@@ -1494,7 +1888,8 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
      `<script>`, où `api` est déjà sa porte réseau. */
   const BOARDS_API=Object.freeze({
     DOM,TITLE_MAX,DEADLINE_MS,VERIFY,PATH,REFUSAL,UNAVAILABLE,WAITING,ARCHIVE_ACTIVE_REASON,NEW_SESSION_HINT,STYLE,
-    BOARD_KINDS,DEFAULT_KIND,ARCHIVED_HINT,INSPECT_MISSING,
+    BOARD_KINDS,DEFAULT_KIND,PLANNED,ARCHIVED_HINT,INSPECT_MISSING,GEO,RUN_BLOCKED,
+    PRESENCE,PRESENCE_TEXT,STALE_REPORT_MARGIN_S,presenceOf,freshReport,
     validateTitle,refusalOf,activeIdOf,workingIdsOf,triggerViewOf,rowsOf,sessionLineOf,kindOf,openedOf,countsOf,
     alertBoardOf,elsewhereOf,pillLabelOf,goToBoardFromAlert,
     installStyle,createBoardsControl});
@@ -1503,22 +1898,43 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
   if(typeof window==='undefined'||typeof document==='undefined')return;
 
+  /* Le journal du module : une ligne `[boards] <événement> {json}` au niveau dit (Slice 08 : `panel_yield`
+     et `hud_installed` passaient par un `console.info` à part). */
+  function journal(level,event,data){
+    const line=`[boards] ${event} ${JSON.stringify(data||{})}`;
+    if(level==='error')console.error(line);
+    else if(level==='warn')console.warn(line);
+    else console.info(line);
+  }
+
   function installJarvisBoards(){
     const host=document.getElementById(DOM.hostId),panel=document.getElementById(DOM.panelId);
     if(!host||!panel)
       throw Object.assign(
         new Error(`JarvisBoards : l’emplacement #${!host?DOM.hostId:DOM.panelId} manque dans control_center.html`),
         {code:'boards_host_missing'});
-    /* Le panneau s'ancre sous le bouton, où qu'il soit (haut-gauche dans
-       les deux thèmes aujourd'hui), sans sortir de l'écran. */
+    /* Le panneau s'ouvre **au-dessus** de la carte (bas-gauche dans les deux
+       thèmes ; colonne de droite pendant une lecture dans Variantes), aligné
+       sur son bord, sans sortir de l'écran. */
     const place=(pane,button)=>{
       const r=button.getBoundingClientRect(),gutter=12;
       const width=Math.min(372,window.innerWidth-gutter*2);
-      const left=Math.max(gutter,Math.min(r.right-width,window.innerWidth-width-gutter));
-      pane.style.left=`${Math.round(left)}px`;
-      pane.style.top=`${Math.round(r.bottom+8)}px`;
-      pane.style.maxHeight=`${Math.max(180,Math.round(window.innerHeight-r.bottom-26))}px`;
+      const right=window.innerWidth-r.right<r.left;
+      const left=right?r.right-width:r.left;
+      pane.style.left=`${Math.round(Math.max(gutter,Math.min(left,window.innerWidth-width-gutter)))}px`;
+      pane.style.top='auto';
+      pane.style.bottom=`${Math.round(window.innerHeight-r.top+8)}px`;
+      /* Jamais sur le lanceur du haut : le panneau s'arrête là où commencent les panneaux
+         latéraux (`--shell-panel-top`, sous la rangée du lanceur) et sa liste défile. */
+      const top=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--shell-panel-top'))||64;
+      pane.style.maxHeight=`${Math.max(180,Math.round(r.top-8-top))}px`;
     };
+    /* Surfaces exclusives : le panneau Board et la roue d'outils ne sont
+       jamais ouverts ensemble (docs/control-center-shell.md › Exclusive
+       surfaces). Le nom de l'événement vient de la coque ; sa copie de repli
+       est identique (testé). */
+    const EXCLUSIVE_EVENT=(window.JarvisShell&&window.JarvisShell.EXCLUSIVE_EVENT)||'jarvis:shell-exclusive';
+    const EXCLUSIVE_ID='board-panel';
     const control=createBoardsControl({
       document,host,panel,
       now:()=>Date.now(),
@@ -1532,6 +1948,9 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       confirm:typeof confirmDialog==='function'?spec=>confirmDialog(spec):undefined,
       /* Le gestionnaire profond s'installe APRÈS ce module (même `<script>`) :
          il est cherché au clic, pas à l'installation. */
+      /* `jvx-run` : posé par Variantes le temps d'une lecture (control_center_presentation_studio_explorer.js). */
+      runBlocked:()=>document.documentElement.classList.contains('jvx-run'),
+      onOpenChange:open=>document.dispatchEvent(new CustomEvent(EXCLUSIVE_EVENT,{detail:{id:EXCLUSIVE_ID,open}})),
       inspect:(id,options)=>{
         const manager=window.JarvisWorkspace;
         if(!manager||typeof manager.openBoard!=='function')
@@ -1539,12 +1958,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         return manager.openBoard(id,options);
       },
       place,
-      log:(level,event,data)=>{
-        const line=`[boards] ${event} ${JSON.stringify(data||{})}`;
-        if(level==='error')console.error(line);
-        else if(level==='warn')console.warn(line);
-        else console.info(line);
-      },
+      log:journal,
     });
     /* Clic hors du contrôle : il se ferme. La boîte de confirmation de la
        page (archivage, nouvelle session) n'est pas « dehors ». */
@@ -1555,6 +1969,14 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       control.close();
     },true);
     window.addEventListener('resize',()=>{if(control.isOpen())place(panel,control.trigger)});
+    /* Une autre surface exclusive s'ouvre (la roue) : le panneau lui cède la
+       place, sans reprendre le focus (il est à elle). */
+    document.addEventListener(EXCLUSIVE_EVENT,event=>{
+      const d=event&&event.detail;
+      if(!d||d.id===EXCLUSIVE_ID||!d.open||!control.isOpen())return;
+      journal('info','boards.panel_yield',{to:String(d.id)});
+      control.close();
+    });
     /* Échap ferme aussi quand le focus a quitté le panneau (ligne retirée,
        clic sur un fond inerte). La confirmation de la page garde le sien. */
     document.addEventListener('keydown',event=>{
@@ -1564,7 +1986,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       control.close({focus:true});
     });
     window.JarvisBoardsControl=Object.freeze({
-      gate:control.gate,statusLost:control.statusLost,
+      gate:control.gate,statusLost:control.statusLost,presence:control.presence,
       open:control.open,close:control.close,isOpen:control.isOpen,
       presentation:control.presentation,failure:control.failure,pending:control.pending,rows:control.rows,
       /* Slice 07 : la bascule normale, pour « Aller au Board » des alertes. */
@@ -1573,7 +1995,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       inspect:control.inspectBoard,
       activeId:()=>activeIdOf(control.block(),null),
     });
-    console.info('[boards] boards.hud_installed '+JSON.stringify({host:DOM.hostId,panel:DOM.panelId}));
+    journal('info','boards.hud_installed',{host:DOM.hostId,panel:DOM.panelId});
   }
 
   try{installJarvisBoards()}

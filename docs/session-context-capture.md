@@ -8,7 +8,7 @@ the whole and how to operate it; the contracts it links are the reference:
 | --- | --- |
 | [session-context.md](session-context.md) | Session lifetime (resume, explicit new Session), Contexts (one active, dormant ones), Context folders, agent hydration, enrichment worker (`summary.md`), Brain catch-up |
 | [artifacts.md](artifacts.md) | Artifact registry (kinds, states, provenance), payload files, Session activity ledger, deletion, HTTP queries |
-| [capture.md](capture.md) | `CaptureService` (Core): states, error codes, continuity guarantee, loss bounds, recovery, microphone recording and transcription, screenshot and screen recording, HTTP API, the capture controls (tool wheel wedges + persistent indicators, orbital UI Slice 04) |
+| [capture.md](capture.md) | `CaptureService` (Core): states, error codes, continuity guarantee, loss bounds, recovery, microphone recording and transcription, screenshot and screen recording, HTTP API, the capture controls (the wheel's Capture category and the top-left indicators shown only while a capture is open, wheel/Dossier refactor Slice 04) |
 | [mcp/tool-contract.md](mcp/tool-contract.md) §10.11 | the Brain's `jarvis-capture` MCP tools |
 | [local-data.md](local-data.md), [state-model.md](state-model.md) | where the data lives, schema versions v5–v7, backups and rollback |
 | [boards.md](boards.md) | Boards and their bindings inside a Session |
@@ -24,7 +24,7 @@ records is an **Artifact** (audio recording, transcript and its segments,
 screenshot, screen recording, description), indexed by time, kind, Session
 and Context, with its provenance, and announced in the Session **activity
 ledger**. Recordings and screenshots are owned by Core's **CaptureService**,
-the only status truth: the left rail of the Control Center, the HTTP API and
+the only status truth: the Control Center (wheel › Capture and its indicators), the HTTP API and
 the Brain's MCP tools all read and call it. The Brain never replays the
 transcript: each turn carries a bounded **catch-up** (active Context summary,
 recent activity, a transcript tail of the recording in progress, pointers).
@@ -40,7 +40,7 @@ supervisor ─┬─ Core ───────── SessionManager (Sessions, 
             │                 RecordingTranscriber (OpenAI STT, from the durable WAV spool)
             │                 ContextEnrichmentWorker ── restricted `claude` child per round (haiku, no tools)
             ├─ Control Center ─ capture relay (/api/captures, /api/contexts, /api/artifacts, /api/activity)
-            │                   capture controller + tool wheel wedges + #recIndicators (polls the status)
+            │                   capture controller + wheel Capture category + #recIndicators (polls the status)
             │                   Brain CLI ── `jarvis-capture` MCP server (calls the relay)
             └─ Voice ──────── nothing of the above (its microphone streams are separate)
 ```
@@ -142,8 +142,8 @@ Nothing is deleted automatically: media are kept until the user deletes them.
 | Microphone refused | `permission_denied` (Windows privacy settings: *Microphone access* for desktop apps) or `source_unavailable` (absent, busy in exclusive mode) | allow desktop apps to use the microphone; close the application holding it exclusively; check the input device in the Control Center settings |
 | Screenshot or recording refused while the PC is locked / UAC prompt | `permission_denied` | unlock; GDI cannot read the secure desktop |
 | Disk full | `storage_full` (start refused, or the capture stops `partial`) | free space; the bytes already written are kept |
-| A stop does not finish, rail shows « arrêt bloqué » | `status.stuck`, `core.capture.stop_stuck` | click stop again (replayed); Core's next stop or start replays it too |
-| Rail shows « état inconnu » | `core_unreachable` / `core_timeout` | Core is down or slow: starts are refused, a known capture can still be stopped; it recovers on the next successful read |
+| A stop does not finish, the indicator shows « arrêt bloqué » | `status.stuck`, `core.capture.stop_stuck` | click stop again (replayed); Core's next stop or start replays it too |
+| The indicators / Capture rows show « état inconnu » | `core_unreachable` / `core_timeout` | Core is down or slow: starts are refused, a known capture can still be stopped; it recovers on the next successful read |
 | Transcript waits | `transcription.state` = `waiting_retry` / `unavailable`, `last_error` = the provider's own message | add the OpenAI key (no restart), then `POST /v1/captures/{id}/transcription/retry`; or abandon it to free the recording for deletion |
 | Recording ended `partial` after a crash | `recoverable_partial`, `capture.gap` (`core_restart`) | expected: repaired and playable up to the last second written; nothing restarts on its own, start a new recording |
 | `summary.md` not updated | `status.enrichment.state` (`unavailable`, `waiting_retry`, `disabled`), `core.context_enrichment.*` | install the native Claude CLI; check `JARVIS_CONTEXT_ENRICHMENT`; failures retry after 30 s, 2 min, 10 min |

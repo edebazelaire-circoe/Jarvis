@@ -31,7 +31,7 @@ from jarvis.adapters.board_memory_store import FileBoardMemoryStore
 from jarvis.domain.board_memory import BoardMemoryPath
 from jarvis.ports.board_memory import WriteMode
 from tests.fakes.capture_stack import CaptureStack
-from tests.unit.test_interaction_mode_hud_browser import _chrome
+from tests.unit.test_boards_card_browser import _chrome
 from tests.unit.test_workspace_inspection_api import build
 
 HARNESS = Path(__file__).parent / "_workspace_browser.mjs"

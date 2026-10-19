@@ -190,7 +190,7 @@ def _schema(server: str, name: str) -> dict:
 
 # ------------------------------------------------------------------ contexte du modèle
 
-def test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_nineteen(catalog):
+def test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_nineteen(catalog):  # 21 depuis la purge
     # Amendement plugins MCP (Slice 04, tool-contract §5.3, ARCH C5) : `jarvis-tools` est le **seul**
     # serveur de découverte, avec exactement `list_tools` et `call_tool` ; tout le reste est inchangé.
     gateway = [entry["name"] for entry in catalog["tools"] if entry["server"] == "jarvis-tools"]
@@ -203,7 +203,9 @@ def test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_nineteen(
     # R6 : chercher, lire, valider, enregistrer, éditer une base, lire les événements). Pas d'outil d'instanciation :
     # l'argument `prefab` de scene_create_object / scene_update_object.
     # Tool Brain S4 : + `ui_intent_publish` (intention d'écran de Jarvis, `ui` nul : pas une action d'interface).
-    assert sum(1 for entry in catalog["tools"] if entry["server"] == "jarvis-display") <= 20
+    # Purge des archivés (2026-10-18, demande de l'utilisateur) : + `scene_purge_archived`. Ni `scene_archive` (délégable
+    # au Tool Brain, dont le garde-fou irréversible exige au plus 3 ids explicites) ni une lecture ne pouvaient la porter.
+    assert sum(1 for entry in catalog["tools"] if entry["server"] == "jarvis-display") <= 21
     assert [entry["name"] for entry in catalog["tools"] if entry["server"] == "jarvis-display"] == list(display_mcp.TOOL_NAMES)
     # Le module de catalogue ne construit aucun serveur MCP à lui.
     source = open(mcp_catalog.__file__, encoding="utf-8").read()
@@ -220,7 +222,11 @@ CONSOLE_INSTRUCTIONS_BUDGET_BYTES = 900
 #: mesurés — les neuf outils Board/Session déplacés (≈ 6 640 o, `board_kind` en plus) et onze outils typés
 #: d'historique, de mémoire et de liens. Pièces de schéma partagées (identifiant, chemin, curseur) et
 #: descriptions d'une ligne. Plafond : un outil de plus ou une description qui enfle se voit ici.
-WORKSPACE_CONTEXT_BUDGET_BYTES = 14_500
+#: Wheel-dossier-refactor Slice 05 : quatre outils Dossier (`dossier_list` 649 o, `dossier_ranger` 771 o,
+#: `dossier_present` 665 o, `dossier_view` 536 o, +2 621 o) : 16 417 o mesurés, plafond 16 700 o. Décision
+#: délibérée : sans eux le cerveau recompose la liste (board_memory_tree + board_artifacts), ne peut ni ranger
+#: (durabilité puis retrait, une sémantique de Core) ni afficher une entrée sans recopier son contenu.
+WORKSPACE_CONTEXT_BUDGET_BYTES = 16_700
 #: Consigne du serveur `jarvis-workspace` : 874 o mesurés (la console en a perdu 495).
 WORKSPACE_INSTRUCTIONS_BUDGET_BYTES = 950
 #: Tous les serveurs natifs que Jarvis déclare au cerveau Claude (display, console, workspace, capture,
@@ -238,7 +244,18 @@ WORKSPACE_INSTRUCTIONS_BUDGET_BYTES = 950
 #: pas ce qu'il a code et ne peut pas corriger sa propre scene (BENCHMARK.md de la Slice 13) ; la consigne du serveur ne change pas.
 #: Master-project Slice 07 : `presentation_inspect` nomme le bloc `master` de la variante (+34 o, compense en partie) : 20 896 o mesures, plafond
 #: inchange ; plafond global inchange (113 686 o mesures avec `scope` de `remotion_export`).
-PRESENTATION_CONTEXT_BUDGET_BYTES = 21_000
+#: Wheel-dossier-refactor Slice 05 : les quatre outils Dossier de `jarvis-workspace` (+2 621 o, voir
+#: WORKSPACE_CONTEXT_BUDGET_BYTES) : 116 259 o mesurés, plafond 116 500 o ; aucun autre serveur ne change.
+#: Purge definitive des presentations archivees : op `purge` de `presentation_library` et son parametre `confirmation` (le jeton du plan,
+#: exige au second appel), +188 o apres compression des textes de l'outil : 21 075 o mesures, plafond 21 100 o ; plafond global 113 900 o
+#: (113 873 mesures). Decision deliberee : l'utilisateur a demande une vraie suppression, et elle passe par un plan, un jeton et son oui
+#: (docs/presentation-studio.md > Rail des presentations > Purge definitive) ; aucun nouvel outil, la consigne du serveur ne change pas.
+#: Purge des archivés de la scène (2026-10-18) : `scene_purge_archived` +502 o sur `jarvis-display` (description de trois
+#: lignes, deux arguments) : 114 187 o mesurés, plafond global 114 300 o. Décision délibérée : l'utilisateur a demandé
+#: une vraie purge définitive à la voix ; elle ne peut ni passer par `scene_archive` (garde-fou du Tool Brain) ni par la
+#: passerelle `jarvis-tools` (outils externes seulement).
+#: Les deux purges reunies : plafond global 114 500 o (environ 114 380 mesures).
+PRESENTATION_CONTEXT_BUDGET_BYTES = 21_100
 #: Consigne du serveur `jarvis-presentation` : mesurée 640 o (plafond 700 o).
 PRESENTATION_INSTRUCTIONS_BUDGET_BYTES = 700
 #: Memory-intelligence-knowledge S5b : `jarvis-memory` (cinq outils) ajoute environ 3 900 o. Fusion des deux serveurs : 104 337 o mesurés
@@ -246,7 +263,8 @@ PRESENTATION_INSTRUCTIONS_BUDGET_BYTES = 700
 #: Remotion Slice 21 : `jarvis-remotion` (six outils, serveur SÉPARÉ de `jarvis-presentation` dont le plafond reste 17 100 o) ajoute 5 178 o
 #: mesurés (export 1 763, import 1 076, upgrades 948, studio 545, status 457, setup 389). Le plafond de ce gate monte de ce serveur seulement :
 #: 104 548 o avant, 109 726 o après, marge de 274 o, plafond 110 000 o. Décision délibérée (handoff Slice 21), mesure dans le LOG.
-DECLARED_CONTEXT_BUDGET_BYTES = 113_700
+#: Fusion wheel-dossier-refactor (outils Dossier, +2 621 o) et des deux purges (+694 o) : 117 048 o mesurés, plafond 117 300 o.
+DECLARED_CONTEXT_BUDGET_BYTES = 117_300
 #: `jarvis-remotion` : 5 178 o mesurés, plafond 5 400 o ; consigne du serveur (plafond 330 o). Master-project Slice 07 : `scope` (scene | master)
 #: dans les réglages de `remotion_export` : 5 335 o mesurés, plafond inchangé.
 REMOTION_CONTEXT_BUDGET_BYTES = 5_400
@@ -289,16 +307,20 @@ async def test_the_workspace_server_lists_its_tools_in_order_within_its_budget(c
         "board_list", "board_get", "board_get_active", "board_create", "board_update", "board_archive",
         "board_switch", "session_current", "session_new", "session_list", "session_get", "board_inspect",
         "board_memory_tree", "board_memory_read", "board_memory_search", "board_memory_write", "board_memory_move",
-        "board_memory_delete", "board_artifacts", "board_artifact_link"]
+        "board_memory_delete", "board_artifacts", "board_artifact_link", "dossier_list", "dossier_ranger",
+        "dossier_present", "dossier_view"]
     effects = {entry["name"]: (entry["side_effect"], entry["idempotent"]) for entry in described}
     assert {name for name, (effect, _) in effects.items() if effect == "read"} == {
         "board_list", "board_get", "board_get_active", "session_current", "session_list", "session_get",
-        "board_inspect", "board_memory_tree", "board_memory_read", "board_memory_search", "board_artifacts"}
+        "board_inspect", "board_memory_tree", "board_memory_read", "board_memory_search", "board_artifacts",
+        "dossier_list"}
     assert {name for name, (effect, _) in effects.items() if effect == "destructive"} == {
         "board_archive", "board_memory_write", "board_memory_delete"}  # write : mode=replace écrase
     assert effects["board_create"] == ("write", False) and effects["session_new"] == ("write", False)
     assert effects["board_switch"] == ("write", True) and effects["board_artifact_link"] == ("write", True)
     assert effects["board_memory_write"] == ("destructive", False) and effects["board_memory_move"] == ("write", False)
+    # Ranger retire une représentation dont la source durable est confirmée : write, jamais destructive.
+    assert all(effects[name] == ("write", True) for name in ("dossier_ranger", "dossier_present", "dossier_view"))
     assert all(entry["category"] == "workspace" and entry["output"]["format"] == "structured" for entry in described)
     # Pas d'échappatoire générique : un outil typé par intention.
     assert not any("execute" in name or "command" in name for name in wire)
@@ -410,8 +432,8 @@ async def test_the_remotion_server_lists_its_tools_in_order_within_its_budget(ca
     assert sum(entry["context_bytes"] for entry in described) <= REMOTION_CONTEXT_BUDGET_BYTES
     assert len(remotion_mcp._SERVER_INSTRUCTIONS.encode("utf-8")) <= REMOTION_INSTRUCTIONS_BUDGET_BYTES
     # Le budget de `jarvis-presentation` n'a PAS bougé pour les verbes Remotion (il a bougé une fois depuis, pour `presentation_source`,
-    # native-studio-playback-fix Slice 13 : 19 300 -> 21 000 o).
-    assert PRESENTATION_CONTEXT_BUDGET_BYTES == 21_000
+    # native-studio-playback-fix Slice 13 : 19 300 -> 21 000 o ; purge des archivees : 21 000 -> 21 100 o).
+    assert PRESENTATION_CONTEXT_BUDGET_BYTES == 21_100
     for tool in wire:
         dumped = json.dumps(tool.inputSchema)
         for forbidden in ("actor", "origin", "engine", "acknowledge", "licence_ack", "authorised_boards", "concurrency"):
@@ -425,7 +447,8 @@ async def test_the_remotion_server_lists_its_tools_in_order_within_its_budget(ca
 #: events 543) et l'argument `prefab` de scene_create_object / scene_update_object (547 o chacun). Plafond 39 000 o.
 #: Reprise S07 (QA) : 38 291 o (-160 o, détail au contrat §10.13).
 #: Tool Brain S4 (contrat tool-brain §11) : `ui_intent_publish` +1 225 o, 39 516 o mesurés. Plafond 40 000 o.
-DISPLAY_CONTEXT_BASELINE_BYTES = 40_000
+#: Purge des archivés (2026-10-18) : `scene_purge_archived` +502 o, 40 015 o mesurés. Plafond 40 300 o.
+DISPLAY_CONTEXT_BASELINE_BYTES = 40_300
 
 
 def test_the_display_context_cost_stays_within_the_slice_04_baseline(catalog):

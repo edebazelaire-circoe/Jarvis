@@ -272,8 +272,9 @@ async def test_a_v7_root_made_by_the_v7_code_migrates_once_keeps_everything_and_
 
     await up(bench)
 
-    # Une étape, une sauvegarde v7 ligne pour ligne, rien de perdu, une seule table neuve, aucun rattrapage.
-    assert _sql(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)] == [(8,)]
+    # v7 -> v9 (v8 : une table neuve ; v9 : type fixé, données seules), une sauvegarde v7 ligne pour ligne,
+    # rien de perdu, aucun rattrapage.
+    assert _sql(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)] == [(9,)]
     backup = db.parent / "jarvis.sqlite3.v7.bak"
     assert sorted(p.name for p in db.parent.glob("*.bak")) == [backup.name]
     assert _dump(backup) == v7_dump, "the backup is the v7 database, row for row"
@@ -289,10 +290,12 @@ async def test_a_v7_root_made_by_the_v7_code_migrates_once_keeps_everything_and_
     turns = await bench.core.state.list_turns(current["binding"]["conversation_id"])
     assert [t.content for t in turns] == ["où en est Atlas ?", "Lot 2 en cours."]
 
-    # Boards v7 : nature absente lue `empty`, champs et références legacy intacts, archivé toujours archivé.
+    # Boards v7 (type absent, mode `unset`) : Assistant par la migration v9, clés de mode retirées,
+    # champs et références legacy intacts, archivé toujours archivé.
     every = (await bench.ok("GET", "/api/boards", params={"include_archived": "true"}))["boards"]
     assert {b["board_id"] for b in every} == set(boards_v7)
-    assert all(b["board_kind"] == "empty" for b in every)
+    assert all(b["board_kind"] == "assistant" and "interaction_mode" not in b for b in every)
+    assert all("interaction_mode" not in data for _, data in _sql(db, "SELECT board_id, data FROM work_boards"))
     atlas_view = await bench.ok("GET", ws(atlas))
     assert atlas_view["board"]["context_summary"] == "Refonte du site, lot 2"
     assert atlas_view["board"]["task_refs"] == ["task-atlas-1"]
@@ -421,7 +424,9 @@ async def test_each_board_turn_carries_its_own_memory_and_never_the_other_boards
     await bench.ok("POST", "/api/boards/switch", json={"board_id": b})
     await bench.turn("tour sur B")
     on_b = last_input()
-    assert "BRAVO-9" in on_b and "b-seul.md" in on_b and f"boards/{b}/memory" in on_b and "meeting" in on_b
+    assert "BRAVO-9" in on_b and "b-seul.md" in on_b and f"boards/{b}/memory" in on_b and re.search(r"Type : R.{1,4}union\.", on_b)
+    # Slice 08 : le type dit avec le mot de l'interface, plus la valeur interne (le « é » peut arriver réencodé par
+    # le double du CLI selon l'encodage de la console, d'où le motif).
     assert "ALPHA-7" not in on_b and "a-seul.md" not in on_b
 
     # Une écriture sur A pendant que B est actif n'atteint pas le tour de B ; elle est là au retour sur A.
@@ -761,11 +766,12 @@ async def test_an_archived_board_is_readable_everywhere_and_writable_nowhere(ben
         ("POST", ws(arch, f"/artifacts/{other_session_art}"), {"json": {}}),
         ("DELETE", ws(arch, f"/artifacts/{other_session_art}"), {}),
         ("PATCH", f"/api/boards/{arch}", {"json": {"title": "renommé"}}),
-        ("PATCH", f"/api/boards/{arch}", {"json": {"board_kind": "meeting"}}),
         ("POST", "/api/boards/switch", {"json": {"board_id": arch}}),
     ]
     for method, path, kwargs in http_writes:
         assert await http_code(bench, method, path, **kwargs) == "board_archived", (method, path, kwargs)
+    # Le type ne change jamais, archivé ou non (D02) : refusé avant toute autre garde.
+    assert await http_code(bench, "PATCH", f"/api/boards/{arch}", json={"board_kind": "meeting"}) ==         "board_kind_immutable"
 
     async with Brain(bench) as brain:
         tool_writes = [
@@ -776,7 +782,6 @@ async def test_an_archived_board_is_readable_everywhere_and_writable_nowhere(ben
             ("board_artifact_link", {"board_id": arch, "artifact_id": other_session_art}),
             ("board_artifact_link", {"board_id": arch, "artifact_id": other_session_art, "linked": False}),
             ("board_update", {"board_id": arch, "title": "renommé"}),
-            ("board_update", {"board_id": arch, "board_kind": "meeting"}),
             ("board_switch", {"board_id": arch}),
         ]
         for name, arguments in tool_writes:

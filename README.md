@@ -24,7 +24,7 @@ It deliberately **does not fork or build on `fullstack-agent`**. The Jarvis core
 - One-time third-party bootstrap with immutable commits, integrity checks and local vendoring of Three.js/MediaPipe so Barehands no longer needs CDN/model downloads at runtime.
 - Optional Google Drive access (read/write) behind one OAuth client, exposed both as Jarvis voice tools and as a local MCP stdio server (`python -m jarvis drive-mcp`) usable from Claude Code. See `docs/OPERATIONS.md`.
 - Health checks, privacy-safe JSONL diagnostics, automated release gates and a single local launcher.
-- Durable Jarvis Sessions with one active Context each, explicit audio and screen recording, screenshots, transcripts and a queryable evidence registry, owned by Core and driven from the Control Center's left rail or by the Brain (`jarvis-capture` MCP). Overview, costs, privacy and rollback: [docs/session-context-capture.md](docs/session-context-capture.md).
+- Durable Jarvis Sessions with one active Context each, explicit audio and screen recording, screenshots, transcripts and a queryable evidence registry, owned by Core and driven from the Control Center's wheel (Capture) or by the Brain (`jarvis-capture` MCP). Overview, costs, privacy and rollback: [docs/session-context-capture.md](docs/session-context-capture.md).
 
 ## Architecture
 
@@ -187,23 +187,43 @@ acoustic echo, VAD retriggering, audible barge-in) and no run against the real
 OpenAI Realtime service have been executed for this path. See
 `docs/handoff-realtime-brain/FINAL-REPORT.md` and `docs/ACCEPTANCE_STATUS.md`.
 
-## Interaction modes: SIMPLE and PRESENTATION
+## Board types: Assistant, Présentation, Réunion
 
 Orthogonal to the voice architectures above, and to who may speak to JARVIS,
-there is a third axis: **how he behaves**. It is chosen in the Control Center
-and it changes live, without restarting Voice.
+there is a third axis: **how he behaves**. It is the **type of the active
+Board**, chosen when the Board is created and never changed afterwards (to
+present, create or open a Présentation Board). Switching Boards changes the
+behaviour live, without restarting Voice. There is no separate mode to choose:
+the internal interaction mode is derived from the Board type
+(`docs/boards.md` › *Board type*; stored Boards were converted once by the
+`jarvis.sqlite3` v9 migration, rollback from `jarvis.sqlite3.v8.bak`). The
+bottom-left Board card shows the type; no screen sets a mode, and the former
+ways to set one on its own (`settings_set`, `POST /api/interaction-mode`,
+`POST /v1/interaction-mode`) refuse with `interaction_mode_derived` and say to
+open or create a Board of the wanted type (`docs/interaction-mode.md`).
 
-- **SIMPLE** (`assistant`, the default and the regression boundary) - exactly
-  the behaviour described everywhere else in this file. Nothing of PRESENTATION
-  is constructed while it is selected.
-- **PRESENTATION** - JARVIS listens to the room continuously, prepares ahead of
+- **Assistant** (`assistant`, internal mode SIMPLE; the default and
+  the regression boundary) - exactly the behaviour described everywhere else in
+  this file. Nothing of PRESENTATION is constructed while it is active.
+- **Présentation** (`presentation`) - JARVIS listens to the room continuously, prepares ahead of
   it, stays externally quiet, and answers immediately when he is explicitly
   addressed. One microphone owner instead of two, a bounded in-memory session
   working set instead of a transcript, silence as a first-class successful
   outcome, and a discreet visual card (never speech) when a claim is
   contradicted.
-- **REUNION** (`meeting`) is reserved: displayable, `implemented=false`, with no
-  behaviour behind it.
+- **Réunion** (`meeting`) is a valid Board whose dedicated behaviour does not
+  exist yet: it behaves as Assistant and says so (`meeting_planned`).
+
+**On screen** (Control Center, `docs/control-center-shell.md`): the bottom-left
+**Board card** shows the active Board's type and title and switches or creates
+Boards (the type is chosen at creation only); the left-edge **wheel** has five
+categories, JARVIS (status of Voice, the agent, sub-agents, the wake key),
+Sélection (Souris / Bare Hands and actions on selected objects: Ranger dans le
+Dossier, Masquer, Masqués, Changer la forme, Retirer du Board), Dossier,
+Capture (screenshot, screen and audio recording; top-left indicators only while
+a capture is open) and Paramètres, one submenu at a time; the full-screen
+**Dossier** (`docs/dossier.md`) is the Board's documentary view over its memory
+and linked Artifacts, read and corrected by you and by Jarvis alike.
 
 PRESENTATION keeps its own privacy line: no raw audio is persisted anywhere, the
 room's speech lives only in a bounded in-memory working set that is retired the

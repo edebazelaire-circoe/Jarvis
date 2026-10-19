@@ -66,7 +66,6 @@ def _board(board_id: str = "board_ab12", title: str = "Recherche", **extra) -> d
     return {"board_id": board_id, "title": title, "status": "active", "created_at": _T, "updated_at": _T,
             "last_opened_at": None, "context_summary": "", "task_refs": [], "artifact_refs": [],
             "project_refs": [], "scene_ref": {"kind": "global", "scene_id": "scene", "revision_at_leave": 3},
-            "interaction_mode": "assistant", "interaction_mode_origin": "unset",
             "runtime_metadata": {"k": "v"}, **extra}
 
 
@@ -180,7 +179,11 @@ async def test_the_moved_board_tools_keep_their_names_and_order_at_the_head_of_t
     pattern = create["properties"]["board_kind"]["anyOf"][0]["pattern"]
     assert pattern == workspace_mcp.BOARD_KIND_PATTERN
     assert all(re.match(pattern, kind.value) for kind in BoardKind)
-    assert not any(re.match(pattern, value) for value in ("Meeting", "meetings", "", "reunion"))
+    assert not any(re.match(pattern, value) for value in ("Meeting", "meetings", "", "reunion", "empty"))
+    # D02 : le type se choisit à la création, `board_update` ne le porte pas (Core refuserait `board_kind_immutable`).
+    assert "board_kind" not in listed["board_update"].inputSchema["properties"]
+    assert set(listed["board_update"].inputSchema["properties"]) == {
+        "board_id", "title", "context_summary", "task_refs", "artifact_refs", "project_refs"}
     assert create["properties"]["title"]["maxLength"] == 120
     for name in TOOL_NAMES:
         assert listed[name].outputSchema is not None, name  # résultat typé (contrat §5.2)
@@ -225,9 +228,8 @@ async def test_board_list_reads_the_ui_route_and_marks_the_active_board(fake_cc,
     assert fake.requests == [("GET", "/api/boards", {}, None)]
     assert listed["active_board_id"] == "default"
     assert [(b["board_id"], b["active"]) for b in listed["boards"]] == [("default", True), ("board_ab12", False)]
-    assert set(listed["boards"][0]) == {"board_id", "title", "board_kind", "status", "active", "interaction_mode",
-                                        "last_opened_at"}
-    assert listed["boards"][0]["board_kind"] == "empty"  # payload sans nature (avant v8) : empty
+    assert set(listed["boards"][0]) == {"board_id", "title", "board_kind", "status", "active", "last_opened_at"}
+    assert listed["boards"][0]["board_kind"] == "assistant"  # payload sans type : assistant, comme Core le décode
     await ws.boards.list_boards(include_archived=True)
     assert fake.requests[-1] == ("GET", "/api/boards", {"include_archived": "true"}, None)
     assert _journal(tmp_path, "board.tool")[-1]["data"]["tool"] == "board_list"
@@ -240,7 +242,7 @@ async def test_board_get_and_get_active_show_the_board_without_runtime_fields(fa
     fake.answer("GET", "/api/boards/active", 200, {"board": _board("default", "Jarvis"), "active": True})
     got = await ws.boards.get_board("board_ab12")
     assert got["context_summary"] == "Lot 2" and got["task_refs"] == ["t1"] and got["active"] is False
-    assert "scene_ref" not in got and "runtime_metadata" not in got and "interaction_mode_origin" not in got
+    assert "scene_ref" not in got and "runtime_metadata" not in got and "interaction_mode" not in got
     active = await ws.boards.get_active()
     assert active["board_id"] == "default" and active["active"] is True
     assert [r[:2] for r in fake.requests] == [("GET", "/api/boards/board_ab12"), ("GET", "/api/boards/active")]
@@ -335,7 +337,8 @@ async def test_session_new_targets_the_session_it_read_and_says_scheduled(fake_c
 @pytest.mark.parametrize(("status", "code"), [
     (404, "board_not_found"), (409, "board_archived"), (409, "board_is_active"), (409, "session_closed"),
     (404, "session_not_found"), (409, "brain_not_foreground"), (502, "board_activation_failed"),
-    (500, "board_switch_rolled_back"), (400, "invalid_title"), (400, "context_summary_too_long"),
+    (500, "board_switch_rolled_back"), (409, "board_kind_immutable"), (400, "invalid_title"),
+    (400, "context_summary_too_long"),
     (400, "invalid_board"), (400, "invalid_request"), (503, "core_unreachable"), (503, "core_unconfigured"),
 ])
 async def test_every_stable_code_of_the_relay_becomes_a_coded_tool_error(fake_cc, tmp_path, status, code):
@@ -478,6 +481,25 @@ async def test_through_mcp_a_refusal_is_a_tool_error_with_its_code(fake_cc):
         result = await session.call_tool("board_archive", {"board_id": "default"})
     assert result.isError is True
     assert result.content[0].text.startswith("Refus board_is_active : ")
+
+
+async def test_through_mcp_board_update_with_a_type_is_refused_board_kind_immutable_before_sending(fake_cc, tmp_path):
+    """D02 : le type ne change jamais ; le cerveau lit le refus nommé et quoi faire, pas « argument inconnu »."""
+
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    fake, ws = fake_cc
+    async with create_connected_server_and_client_session(build_server(tools=ws)) as session:
+        result = await session.call_tool("board_update", {"board_id": "board_ab12", "board_kind": "presentation"})
+        alone = await session.call_tool("board_update", {"board_id": "board_ab12", "title": "X",
+                                                         "board_kind": "meeting"})
+    for refused in (result, alone):
+        text = refused.content[0].text
+        assert refused.isError and text.startswith("Refus board_kind_immutable : ")
+        assert workspace_boards.ERROR_SENTENCES["board_kind_immutable"] in text and "Arguments inconnus" not in text
+    assert fake.requests == [], "nothing is sent to the Control Center"
+    failed = _journal(tmp_path, "board.tool_failed")
+    assert failed and failed[-1]["data"]["code"] == "board_kind_immutable" and failed[-1]["level"] == "warning"
 
 
 async def test_through_mcp_unknown_or_malformed_arguments_send_nothing(fake_cc):
@@ -1214,4 +1236,10 @@ def test_the_brain_prompt_says_how_to_look_at_another_board_without_switching():
     # 2026-10-07 : 700 -> 1000. La liste de contrôle des capacités (test_brain_capability_parity)
     # exige que chaque outil exposé au cerveau soit nommé dans sa consigne.
     # 2026-10-09 (memory-intelligence-knowledge S5b) : 1000 -> 1300, les cinq outils de `jarvis-memory` y sont nommes.
-    assert len(BRAIN_WORKSPACE_PROMPT.encode("utf-8")) <= 1300
+    # 2026-10-18 (board-ui-wheel-dossier-refactor S01b) : 1300 -> 1550, « passe en mode présentation » se répond
+    # par le type du Board (bascule / création), plus par un réglage : la règle vit ici, avec les outils qu'elle nomme.
+    # 2026-10-18 (board-ui-wheel-dossier-refactor S07) : 1550 -> 1800. Le Dossier n'y était pas nommé : le cerveau
+    # répondait « montre-moi les deux notes » par dossier_present (fenêtres sous le Dossier ouvert) ou par Read sur
+    # un chemin absolu (trace du bac à sable S07) ; une ligne dit dossier_view, son reçu, et board_memory_read.
+    assert len(BRAIN_WORKSPACE_PROMPT.encode("utf-8")) <= 1800
+    assert "dossier_view" in BRAIN_WORKSPACE_PROMPT and "dossier_present seulement sur demande" in BRAIN_WORKSPACE_PROMPT

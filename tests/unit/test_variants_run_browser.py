@@ -80,7 +80,7 @@ READY = _until(f"{EXPLORER}.state().open && !!{EXPLORER}.run.view() && !!{STRIP}
 
 GEOMETRY = {"value": "geometry", "expr": """(()=>{
   const rect=el=>{if(!el)return null;const r=el.getBoundingClientRect();return {l:Math.round(r.left),t:Math.round(r.top),r:Math.round(r.right),b:Math.round(r.bottom)}};
-  const band=document.querySelector('#jvStudioExplorer .jvx-presenter'),hud=document.getElementById('interactionModeHud');
+  const band=document.querySelector('#jvStudioExplorer .jvx-presenter'),hud=document.getElementById('boardsHud');
   const btn=hud&&hud.querySelector('button'),rail=document.getElementById('presentationRail');
   const a=rect(band),h=rect(btn||hud),r=rail&&!rail.hidden?rect(rail):null;
   const meets=(x,y)=>!!x&&!!y&&x.l<y.r&&y.l<x.r&&x.t<y.b&&y.t<x.b;
@@ -215,15 +215,16 @@ async def test_escape_closes_variants_and_pauses_the_run_which_never_reopens_it_
 
 
 @pytest.mark.parametrize("viewport", ["1280x720", "1920x1080"])
-async def test_the_presenter_strip_never_overlaps_the_mode_hud_and_stays_on_screen(run, viewport, tmp_path):
+async def test_the_presenter_strip_never_overlaps_the_board_card_and_stays_on_screen(run, viewport, tmp_path):
     core, url = run
     shot = tmp_path / f"strip-{viewport}.png"
     result = await drive(url, [{"wait": 600}, READY, {"wait": 500}, GEOMETRY, {"shot": str(shot)}], viewport=viewport)
     geometry = result["reads"]["geometry"]
-    assert geometry["hud"] is not None, "the interaction-mode HUD is part of the real page"
+    assert geometry["hud"] is not None, "the Board card is part of the real page"
     assert geometry["overlap"] is False, geometry
-    # Slice 09 rework (agent 0's decision): during a run the interaction-mode HUD stays live and drawn above Variants, in the rail's
-    # column (whose list stops above it): « Refusé par la voix » and the way out of PRESENTATION stay visible and clickable.
+    # Slice 09 rework (agent 0's decision), carried by the Board card since Slice 02 of jarvis-board-ui-wheel-dossier-refactor:
+    # during a run the card stays live and drawn above Variants, in the rail's column (whose list stops above it):
+    # « Refusé par la voix » stays visible and the card clickable.
     assert geometry["runClass"] is True and geometry["hudInert"] is False, geometry
     assert geometry["hudReachable"] is True, geometry
     assert geometry["railOverlap"] is False, geometry
@@ -232,4 +233,114 @@ async def test_the_presenter_strip_never_overlaps_the_mode_hud_and_stays_on_scre
     band = geometry["band"]
     assert band["l"] >= 0 and band["r"] <= geometry["vw"] and band["t"] >= 0 and band["b"] <= geometry["vh"], geometry
     assert shot.stat().st_size > 1000
+    _no_noise(result)
+
+
+#: QA Slice 02, B1 : ce que le panneau Board montre et permet pendant une lecture.
+RUN_PANEL = """(()=>{const q=s=>document.querySelector(s),attr=(e,k)=>e?e.getAttribute(k):'absent';
+  const other=q('#boardsList .bd-row[data-active=false]');const a=other&&other.querySelector('[data-bd-action=archive]');
+  const i=other&&other.querySelector('[data-bd-action=inspect]');const n=q('#boardsNewSession');
+  return {archive:[attr(a,'aria-disabled'),attr(a,'title')],inspect:[attr(i,'aria-disabled'),attr(i,'title')],
+    session:[attr(n,'aria-disabled'),attr(n,'title')],hint:(q('#boardsNewSessionHint')||{}).textContent,
+    confirmOpen:!q('#confirmBack').hidden,managerOpen:!q('#workspaceManager').hidden,
+    note:(q('#boardsNote')||{}).hidden===false?q('#boardsNote').textContent:''}})()"""
+
+
+async def test_during_a_run_the_board_panel_opens_no_hidden_layer(run, tmp_path):
+    """QA Slice 02, B1 : la carte et son panneau sont au-dessus de Variantes (9150), la confirmation de la
+    page (85) et le gestionnaire Sessions & Boards (55) dessous. Pendant la lecture, Archiver, Nouvelle
+    session et Inspecter sont éteints et disent pourquoi ; un vrai clic n'ouvre aucune couche invisible."""
+    core, url = run
+    # Les routes Boards du Control Center parlent au Core isolé (comme dans `test_boards_hud_browser.py`, Slice 08).
+    core.stack.center.board_routes._transport = core.stack.sessions
+    shot = tmp_path / "run-board-panel.png"
+    result = await drive(url, [
+        {"wait": 600}, READY, {"wait": 400},
+        {"value": "created", "expr": "fetch('/api/boards',{method:'POST',headers:{'Content-Type':'application/json'},"
+                                     "body:JSON.stringify({title:'Autre Board'})}).then(r=>r.status)"},
+        {"click": "#boardsButton"},
+        {"until": "!document.getElementById('boardsPanel').hidden&&!!document.querySelector('#boardsList .bd-row[data-active=false]')",
+         "ms": 6000},
+        {"value": "before", "expr": RUN_PANEL},
+        {"click": "#boardsList .bd-row[data-active=false] [data-bd-action=archive]"}, {"wait": 500},
+        {"click": "#boardsList .bd-row[data-active=false] [data-bd-action=inspect]"}, {"wait": 500},
+        {"click": "#boardsNewSession"}, {"wait": 500},
+        {"value": "after", "expr": RUN_PANEL},
+        {"value": "panelOnTop", "expr": "(()=>{const r=document.getElementById('boardsPanel').getBoundingClientRect();"
+                                        "const t=document.elementFromPoint(r.left+r.width/2,r.top+30);"
+                                        "return !!t&&document.getElementById('boardsPanel').contains(t)})()"},
+        {"shot": str(shot)},
+    ], viewport="1280x720")
+    reads = result["reads"]
+    assert reads["created"] == 201, reads
+    blocked = "Indisponible pendant la lecture : arrêtez la présentation dans Variantes, puis réessayez."
+    before = reads["before"]
+    assert before["archive"] == ["true", blocked] and before["inspect"] == ["true", blocked], before
+    assert before["session"] == ["true", blocked] and before["hint"] == blocked, before
+    after = reads["after"]
+    assert after["confirmOpen"] is False and after["managerOpen"] is False, after
+    assert after["note"].startswith(blocked), after
+    assert reads["panelOnTop"] is True
+    assert shot.stat().st_size > 1000
+    _no_noise(result)
+
+
+#: QA Slice 04 (jarvis-board-ui-wheel-dossier-refactor), B1 : les indicateurs d'enregistrement du haut-gauche pendant
+#: une lecture. Pour chaque puce : visible, hors `inert`, atteinte par `elementFromPoint` ; puis, puces cachées un
+#: instant, ce que le Studio a d'interactif sous leur boîte (rien ne doit l'être : elles ne masquent aucune commande).
+REC_GEOMETRY = {"value": "rec", "expr": """(()=>{
+  const rect=el=>{const r=el.getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom}};
+  const host=document.getElementById('recIndicators');
+  const chips=[...host.querySelectorAll('.ri-chip')].map(c=>{const b=rect(c);
+    const hit=document.elementFromPoint((b.l+b.r)/2,(b.t+b.b)/2);let inert=false;for(let n=c;n;n=n.parentElement)if(n.inert)inert=true;
+    return {channel:c.dataset.riChannel,state:c.dataset.riState,box:b,reachable:!!hit&&c.contains(hit),inert,visible:c.checkVisibility()}});
+  const boxes=chips.map(c=>c.box);host.style.visibility='hidden';
+  const under=new Set();
+  for(const b of boxes)for(let x=b.l+2;x<b.r;x+=8)for(let y=b.t+2;y<b.b;y+=8){
+    for(const el of document.elementsFromPoint(x,y)){
+      const live=el.closest('#jvStudioExplorer button,#jvStudioExplorer [role=slider],#jvStudioExplorer input,#jvStudioExplorer select,#jvStudioExplorer a[href],#jvStudioExplorer [tabindex]:not([tabindex="-1"])');
+      if(live)under.add((live.getAttribute('aria-label')||live.textContent||live.className||live.tagName).trim().slice(0,40));
+    }}
+  host.style.visibility='';
+  return {run:document.documentElement.classList.contains('jvx-run'),z:getComputedStyle(host).zIndex,chips,under:[...under],
+    keepLive:host.getAttribute('data-keep-live')};
+})()"""}
+
+
+@pytest.mark.parametrize("viewport", ["1280x720", "1920x1032", "600x800"])
+async def test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run(run, viewport, tmp_path):
+    """QA Slice 04, B1 : enregistrer l'écran pendant qu'on présente est le cas le plus probable. Pendant une lecture
+    (`jvx-run`), les puces REC et audio restent au-dessus de Variantes (9150, `data-keep-live="run"`), atteintes par
+    un vrai clic, sans couvrir aucune commande du Studio ; arrêter l'écran depuis sa puce l'arrête chez Core, ne ferme
+    pas Variantes et ne met pas la lecture en pause. Plein écran natif (`F`) : seul l'élément en plein écran se voit."""
+
+    core, url = run
+    for channel in ("screen", "audio"):
+        status, body, *_ = await core.stack.call("POST", "/api/captures/start", json={"channel": channel})
+        assert status in (200, 201, 202), (status, body)
+    two = "document.querySelectorAll('#recIndicators .ri-chip[data-ri-state=active]').length===2"
+    shot = tmp_path / f"run-rec-{viewport}.png"
+    result = await drive(url, [
+        {"wait": 600}, READY, _until(two, 8000), {"wait": 600}, REC_GEOMETRY, {"shot": str(shot)},
+        {"click": "#recIndicators .ri-chip[data-ri-channel=screen]"},
+        _until("!document.querySelector('#recIndicators .ri-chip[data-ri-channel=screen]')", 9000),
+        {"wait": 300},
+        {"value": "after", "expr": f"[{EXPLORER}.state().open,{PHASE},document.documentElement.classList.contains('jvx-run')]"},
+    ], viewport=viewport)
+    reads = result["reads"]
+    assert "failed" not in reads, reads
+    assert all(v for k, v in reads.items() if k.startswith("until:")), reads
+    rec = reads["rec"]
+    assert rec["run"] is True and rec["z"] == "9150" and rec["keepLive"] == "run", rec
+    assert {c["channel"] for c in rec["chips"]} == {"screen", "audio"}
+    for chip in rec["chips"]:
+        assert chip["visible"] and chip["reachable"] and not chip["inert"], chip
+    assert rec["under"] == [], ("une puce couvre une commande du Studio", rec["under"])
+    assert reads["after"] == [True, "playing", True], "l'arrêt depuis la puce ne ferme ni ne met en pause la lecture"
+    channels = [row.channel.value for row in core.stack.core.captures.status().captures]
+    assert channels == ["audio"], channels
+    state = await core.client.presentation_studio_playback_state()
+    assert state["state"]["phase"] == "playing"
+    for row in core.stack.core.captures.status().captures:
+        await core.stack.core.captures.stop(row.capture_id)
     _no_noise(result)

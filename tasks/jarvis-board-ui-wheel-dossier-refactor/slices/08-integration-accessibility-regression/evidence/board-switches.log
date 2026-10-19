@@ -1,0 +1,15 @@
+start {"active": {"board_id": "board_a6ea9d38aab54a28ab30b016903787b2", "title": "Projet Atlas", "board_kind": "presentation"}, "mode": "presentation", "label": "PRESENTATION", "board_mode": "presentation", "source": "core", "revision": 1, "board_status": "planned"}
+switch courses -> 200 {"session": {"jarvis_session_id": "jsess_52c453109289417dbae5ee68554fa262", "started_at": "2026-10-18T20:59:05.204315+00:00", "ended_at": null, "end_reason": nu (5.7s)
+   status {"active": {"board_id": "board_372c377e218442bebccb6b60f881b019", "title": "Courses", "board_kind": "assistant"}, "mode": "assistant", "label": "SIMPLE", "board_mode": "assistant", "source": "core", "revision": 2, "board_status": "planned"}
+switch budget -> 200 {"session": {"jarvis_session_id": "jsess_52c453109289417dbae5ee68554fa262", "started_at": "2026-10-18T20:59:05.204315+00:00", "ended_at": null, "end_reason": nu (5.7s)
+   status {"active": {"board_id": "board_f61ba9dd423545c4942fa38bf42227c2", "title": "Budget 2027", "board_kind": "meeting"}, "mode": "assistant", "label": "SIMPLE", "board_mode": "meeting", "source": "core", "revision": 2, "board_status": "planned"}
+switch atlas -> 200 {"session": {"jarvis_session_id": "jsess_52c453109289417dbae5ee68554fa262", "started_at": "2026-10-18T20:59:05.204315+00:00", "ended_at": null, "end_reason": nu (5.7s)
+   status {"active": {"board_id": "board_a6ea9d38aab54a28ab30b016903787b2", "title": "Projet Atlas", "board_kind": "presentation"}, "mode": "presentation", "label": "PRESENTATION", "board_mode": "presentation", "source": "core", "revision": 3, "board_status": "planned"}
+switch board_jarvis_presentation -> 200 {"session": {"jarvis_session_id": "jsess_52c453109289417dbae5ee68554fa262", "started_at": "2026-10-18T20:59:05.204315+00:00", "ended_at": null, "end_reason": nu (5.8s)
+   status {"active": {"board_id": "board_jarvis_presentation", "title": "Jarvis PRESENTATION", "board_kind": "presentation"}, "mode": "presentation", "label": "PRESENTATION", "board_mode": "presentation", "source": "core", "revision": 3, "board_status": "planned"}
+
+after Core restart: {"active": {"board_id": "board_jarvis_presentation", "title": "Jarvis PRESENTATION", "board_kind": "presentation"}, "mode": "presentation", "label": "PRESENTATION", "board_mode": "presentation", "core_reachable": true}
+start {"active": {"board_id": "board_jarvis_presentation", "title": "Jarvis PRESENTATION", "board_kind": "presentation"}, "mode": "presentation", "label": "PRESENTATION", "board_mode": "presentation", "source": "core", "revision": 1, "board_status": "planned"}
+switch atlas -> 200 {"session": {"jarvis_session_id": "jsess_52c453109289417dbae5ee68554fa262", "started_at": "2026-10-18T20:59:05.204315+00:00", "ended_at": null, "end_reason": nu (5.8s)
+   status {"active": {"board_id": "board_a6ea9d38aab54a28ab30b016903787b2", "title": "Projet Atlas", "board_kind": "presentation"}, "mode": "presentation", "label": "PRESENTATION", "board_mode": "presentation", "source": "core", "revision": 1, "board_status": "planned"}
+

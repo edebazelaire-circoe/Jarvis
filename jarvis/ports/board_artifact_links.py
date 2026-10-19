@@ -43,3 +43,7 @@ class BoardArtifactLinkStore(Protocol):
     async def boards_of_artifact(self, artifact_id: str, *, limit: int) -> Sequence[BoardArtifactLink]:
         """Liens d'un Artifact, du plus ancien au plus récent."""
         ...
+
+    async def link_of(self, board_id: str, artifact_id: str) -> BoardArtifactLink | None:
+        """Le lien de ce Board vers cet Artifact, ou `None` (lecture directe par la clé, sans borne)."""
+        ...

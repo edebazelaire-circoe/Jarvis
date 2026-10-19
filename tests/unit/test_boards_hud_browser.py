@@ -1,20 +1,22 @@
-"""Le contrôle Boards, mesuré dans un vrai Chrome sans tête (handoff board-session, Slice 06).
+"""La carte Board du bas-gauche, mesurée dans un vrai Chrome sans tête (handoff board-session,
+Slice 06 ; déplacée en bas à gauche par la Slice 02 de jarvis-board-ui-wheel-dossier-refactor).
 
 La page est celle que `ControlCenter.index` sert ; seul `fetch` est un double
 (`_boards_browser.mjs`), si bien que le vrai `refreshStatus` nourrit le vrai
 module chaque seconde. Ce que ce fichier épingle, et qu'aucune lecture de la
 feuille de style ne prouve :
 
-- le bouton est **cliquable** alors que `.topbar` coupe les événements de
-  pointeur (`elementFromPoint`), en haut à droite, sans recouvrir l'état ;
-- le panneau s'ouvre sous lui, dans l'écran, **au-dessus** du dock ;
+- la carte est **cliquable** (`elementFromPoint`), en bas à gauche, et dit le
+  type du Board actif avant son titre ; le haut-gauche ne porte plus ni
+  sélecteur, ni état permanent, ni contrôle de mode, ni œil (Slice 02) ;
+- le panneau s'ouvre au-dessus d'elle, dans l'écran, par-dessus ce qu'il couvre ;
 - une bascule suit le serveur (A → B → A), un refus laisse A actif et le dit ;
 - `prefers-reduced-motion` arrête la barre d'attente et l'ouverture animée ;
 - aucune erreur de console.
 
 Slice 08 (board-memory-workspace-inspector) : un dernier parcours, sans aucun
 double, contre un vrai Core et un vrai Control Center (`CaptureStack`) — créer
-un Board « Réunion », changer sa nature, filtrer les archivés, « Inspecter »
+un Board « Réunion », le renommer (son type ne change pas, D02), filtrer les archivés, « Inspecter »
 ouvre le gestionnaire sur ce Board. Captures dans `JARVIS_S8_EVIDENCE_DIR`.
 
 Se saute si Chrome ou node manque.
@@ -28,7 +30,7 @@ import subprocess
 
 import pytest
 
-from tests.unit.test_interaction_mode_hud_browser import _chrome, _served_page
+from tests.unit.test_boards_card_browser import _chrome, _served_page
 
 HARNESS = Path(__file__).parent / "_boards_browser.mjs"
 
@@ -55,27 +57,23 @@ def _overlap(a: dict | None, b: dict | None) -> bool:
     return min(a["r"], b["r"]) > max(a["l"], b["l"]) and min(a["b"], b["b"]) > max(a["t"], b["t"])
 
 
-@pytest.mark.parametrize("width,height", [(1440, 900), (1024, 700), (500, 700)])
-def test_the_control_is_clickable_top_right_and_its_panel_stays_on_screen(tmp_path, width, height):
+@pytest.mark.parametrize("width,height", [(1440, 900), (1280, 720), (1024, 700), (900, 600), (500, 700)])
+def test_the_card_is_clickable_bottom_left_and_its_panel_opens_above_it(tmp_path, width, height):
     seen = _drive(tmp_path, [{"width": width, "height": height, "actions": [OPEN]}])[0]
-    trigger, state, panel, dock = seen["trigger"], seen["state"], seen["panel"], seen["dock"]
+    trigger, panel, dock = seen["trigger"], seen["panel"], seen["dock"]
     assert seen["title"] == "Jarvis" and seen["tone"] == "ready"
-    assert seen["triggerHit"] is True, "the top bar cuts pointer events; the slot gives them back"
-    assert not _overlap(trigger, state)
-    # Depuis la Slice 01 de l'orbital UI, la ligne d'état est en haut à gauche dans
-    # les deux thèmes et s'arrête avant le lanceur : le Board d'abord, l'état juste
-    # après sur la même rangée, ou, quand la place manque (500 px), l'état passe à
-    # la ligne sous le Board plutôt que de glisser sous le lanceur.
-    if abs(trigger["t"] - state["t"]) <= 2:
-        assert 0 <= state["l"] - trigger["r"] <= 12, "right next to the state, same row"
-    else:
-        assert width <= 700 and state["t"] >= trigger["b"] - 1, "the state wraps below the Board, never over it"
-    assert trigger["l"] <= 18 + 1, "the Board leads the top-left state line"
-    assert panel is not None and panel["z"] == "36"
-    assert panel["t"] >= trigger["b"] and panel["l"] >= 12 and panel["r"] <= width - 12 + 1
-    assert panel["b"] <= height
+    assert (seen["kind"], seen["eyebrow"]) == ("assistant", "Assistant "), "the type leads the card"
+    assert seen["triggerHit"] is True
+    # D04 / D05 : la carte est en bas à gauche ; le haut-gauche n'a plus rien de permanent.
+    assert seen["retired"] == {"topbar": False, "state": False, "mode": False, "eye": False}, seen["retired"]
+    assert trigger["l"] <= (84 if width <= 700 else 18) + 1, trigger
+    assert trigger["b"] >= height - 160 and trigger["t"] > height / 2, trigger
+    assert not _overlap(trigger, dock)
+    assert panel is not None and panel["z"] == "39"
+    assert panel["b"] <= trigger["t"], "the panel opens above the card"
+    assert panel["t"] >= 0 and panel["l"] >= 10 and panel["r"] <= width - 10 + 1
     assert seen["panelHit"] is True, "the open panel is on top of whatever it covers (dock included)"
-    assert [row["id"] for row in seen["rows"]] == ["default", "board_b"]
+    assert [row["id"] for row in seen["rows"]] == ["default", "board_b", "board_m"]
     assert seen["rows"][0]["current"] is True
     assert [line for line in seen["console"] if line["type"] in ("error", "exception")] == [], seen["console"]
 
@@ -92,6 +90,7 @@ def test_switch_a_b_a_follows_the_server_and_a_refusal_keeps_a(tmp_path):
     seen = _drive(tmp_path, plan)[0]
     assert seen["results"]["snap_b"] == "Projet Atlas — refonte du tableau de bord"
     assert seen["results"]["snap_a"] == "Jarvis"
+    assert seen["kind"] == "assistant", "the card follows the server's type, back on A"
     assert seen["title"] == "Jarvis", "refused: the server truth stays"
     assert seen["rows"][0] == {"id": "default", "current": True}
     assert seen["note"].startswith("L’agent du Board n’a pas pu démarrer")
@@ -117,17 +116,28 @@ COSMOS = ("cosmos", "window.JarvisThemeAPI.activate('cosmos',{persist:false});'o
 
 
 @pytest.mark.parametrize("width,height", [(500, 700), (800, 700), (1440, 900)])
-def test_in_cosmos_the_dock_never_covers_the_boards_button_nor_the_voice_state(tmp_path, width, height):
-    """QA 06/07, point 6 : à 500 px le dock cachait l'état vocal et rognait le bouton de 4 px."""
+def test_in_cosmos_the_card_is_whole_and_nothing_permanent_is_left_top_left(tmp_path, width, height):
+    """QA 06/07, point 6 (le dock rognait le bouton du haut) : en Cosmos, la carte est entière, hors du lanceur."""
 
     seen = _drive(tmp_path, [{"width": width, "height": height, "actions": [COSMOS]}])[0]
-    trigger, state, dock = seen["trigger"], seen["state"], seen["dock"]
+    trigger, dock = seen["trigger"], seen["dock"]
     assert seen["theme"] == "cosmos"
-    assert trigger and state and dock
-    assert not _overlap(trigger, dock) and not _overlap(state, dock), (trigger, state, dock)
-    assert trigger["l"] >= 0 and trigger["r"] <= width and trigger["w"] >= 60, "whole, not clipped"
-    assert state["r"] <= width and state["w"] > 0
+    assert trigger and dock
+    assert not _overlap(trigger, dock), (trigger, dock)
+    assert trigger["l"] >= 0 and trigger["r"] <= width and trigger["w"] >= 140, "whole, not clipped"
+    assert seen["retired"] == {"topbar": False, "state": False, "mode": False, "eye": False}
     assert seen["triggerHit"] is True
+
+
+MEETING = ("meeting", "window.__boards.active='board_m';'ok'", 1600)
+
+
+def test_a_meeting_board_says_on_the_card_that_it_is_planned(tmp_path):
+    """QA 01a / D24 : l'état « prévu » d'un Board Réunion se lit à l'écran, pas seulement dans la trace."""
+
+    seen = _drive(tmp_path, [{"width": 1440, "height": 900, "actions": [MEETING]}])[0]
+    assert (seen["kind"], seen["eyebrow"], seen["title"]) == ("meeting", "Réunion · prévu ", "Point hebdo")
+    assert seen["sub"] == "Agit en Assistant"
 
 
 def test_the_active_boards_archive_icon_looks_disabled(tmp_path):
@@ -171,17 +181,17 @@ def _quick_plan(w) -> dict:
         {"get": "created_focus", "expr": "document.activeElement&&document.activeElement.closest('.bd-row')&&"
                                          "document.activeElement.closest('.bd-row').getAttribute('data-board-id')===window.__s8"},
         {"shot": "02-created-meeting.png"},
-        # Changer sa nature (et son titre) depuis le formulaire de la ligne.
+        # Renommer depuis le formulaire de la ligne : le type n'y est pas proposé (D02, Slice 01a).
         {"do": action("Point hebdo S8", "rename")},
-        {"wait": "document.querySelector('#boardsList [data-bd-action=kind]')"},
+        {"wait": "document.querySelector('#boardsList [data-bd-action=title]')"},
+        {"get": "edit_kind_offered", "expr": "!!document.querySelector('#boardsList [data-bd-action=kind]')"},
         {"do": "(()=>{const f=document.querySelector('#boardsList [data-bd-action=title]');f.value='Démo S8';"
                "f.dispatchEvent(new Event('input',{bubbles:true}));return true})()"},
-        {"do": pick("#boardsList [data-bd-action=kind]", "presentation")},
-        {"shot": "03-edit-kind.png"},
+        {"shot": "03-edit-title.png"},
         {"do": "document.querySelector('#boardsList [data-bd-action=save]').click()", "ms": 400},
-        {"wait": f"({row('Démo S8')})&&{kind_of('Démo S8')}==='Présentation'"},
+        {"wait": f"({row('Démo S8')})&&{kind_of('Démo S8')}==='Réunion'"},
         {"get": "edited_kind", "expr": kind_of("Démo S8")},
-        {"shot": "04-kind-changed.png"},
+        {"shot": "04-renamed.png"},
         # Archivés : à part, sans bascule, inspectables.
         {"do": "document.getElementById('boardsFilterArchived').click()"},
         {"wait": f"({row('Ancien')})"},
@@ -200,7 +210,7 @@ def _quick_plan(w) -> dict:
         {"shot": "06-inspect-archived.png"},
         {"key": "Escape"},
         {"wait": "document.getElementById('workspaceManager').hidden"},
-        # QA S08 point 4 : Échap rend le focus là où l'utilisateur est parti, le bouton Board du haut.
+        # QA S08 point 4 : Échap rend le focus là où l'utilisateur est parti, la carte Board.
         {"get": "focus_after_escape", "expr": "document.activeElement&&document.activeElement.id"},
         # Depuis la liste en service : « Inspecter » sur le Board Réunion seedé.
         {"do": "document.getElementById('boardsButton').click()"},
@@ -265,7 +275,7 @@ async def test_quick_browser_creates_edits_filters_and_inspects_against_the_real
             {"do": "document.getElementById('boardsButton').click()"},
             {"wait": "document.querySelector('#boardsList [data-bd-action=inspect]')"},
             {"do": "document.querySelector('#boardsList .bd-row[data-active=false] [data-bd-action=rename]').click()"},
-            {"wait": "document.querySelector('#boardsList [data-bd-action=kind]')"},
+            {"wait": "document.querySelector('#boardsList [data-bd-action=title]')"},
             {"get": "overflow", "expr": "(()=>{const p=document.getElementById('boardsPanel');"
                                         "return {panel:p.scrollWidth-p.clientWidth,page:document.documentElement.scrollWidth-innerWidth,"
                                         "right:p.getBoundingClientRect().right}})()"},
@@ -302,14 +312,15 @@ async def test_quick_browser_creates_edits_filters_and_inspects_against_the_real
     r = seen["results"]
     rows = {row["title"]: row for row in r["list"]}
     assert set(rows) == {"Board principal", "Projet A", "Projet B"}, "archived Boards stay out of the list in service"
-    assert rows["Projet A"]["kind"] == "Réunion" and rows["Projet B"]["kind"] == "Générique"
+    assert rows["Projet A"]["kind"] == "Réunion" and rows["Projet B"]["kind"] == "Assistant"
     assert rows["Projet B"]["active"] == "true" and rows["Projet B"]["state"] == "Actif"
     assert rows["Projet A"]["opened"].startswith("ouvert") and rows["Projet B"]["opened"] == "ouvert à l’instant"
     assert rows["Board principal"]["opened"].startswith("ouvert"),         "the Board a Session opened on is opened (QA S08 point 2), never « jamais ouvert »"
     assert "En service3" in r["filter"] and "Archivés1" in r["filter"]
     assert r["created_kind"] == "Réunion" and r["created_focus"] is True
-    assert r["edited_kind"] == "Présentation"
-    assert r["archived"] == [{"title": "Ancien", "state": "Archivé", "actions": ["inspect"]}]
+    assert r["edited_kind"] == "Réunion" and r["edit_kind_offered"] is False, "renaming never changes the type"
+    # Slice 07 (refonte roue/dossier) : un Board archivé se lit aussi dans le Dossier plein écran (lecture seule).
+    assert r["archived"] == [{"title": "Ancien", "state": "Archivé", "actions": ["dossier", "inspect"]}]
     inspected = r["inspect_archived"]
     assert inspected["id"] == w.board_archived and inspected["tab"] == "Boards" and inspected["panelHidden"] is True
     assert "Archivé" in inspected["text"] and inspected["focus"] == w.board_archived
@@ -321,7 +332,7 @@ async def test_quick_browser_creates_edits_filters_and_inspects_against_the_real
     assert len(taken) == 8 and taken <= {p.name for p in shots.glob("*.png")}
 
     created = [b for b in listing if b["title"] == "Démo S8"]
-    assert len(created) == 1 and created[0]["board_kind"] == "presentation" and created[0]["status"] == "active"
+    assert len(created) == 1 and created[0]["board_kind"] == "meeting" and created[0]["status"] == "active"
     assert [b["status"] for b in listing if b["board_id"] == w.board_archived] == ["archived"]
     assert active_after["board"]["board_id"] == active_before["board"]["board_id"],         "creating, editing and inspecting never switch; the real A/B/A ends where it started"
 
@@ -335,3 +346,19 @@ async def test_quick_browser_creates_edits_filters_and_inspects_against_the_real
     assert low["foot"]["hint"] == "none" and low["foot"]["described"] == "boardsNewSessionHint"
     assert low["foot"]["bottom"] <= 560 and low["foot"]["rows"] == 4
     assert small["overflow"]["panel"] <= 0 and small["overflow"]["page"] <= 0 and small["overflow"]["right"] <= 500
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (1920, 1032)])
+def test_on_a_large_screen_a_long_board_title_is_not_cut(tmp_path, width, height):
+    """Polish S02 item 3 (Slice 08) : la carte était plafonnée à 236 px, « Projet Atlas — refonte du tableau de
+    bord » était coupé à 1440 et 1920 px. Dès 1400 px elle va jusqu'à 320 px et le titre tient sur deux lignes,
+    sans toucher le centre d'état."""
+    read = ("t", "(()=>{const t=document.querySelector('#boardsTitle'),c=document.querySelector('#boardsButton')"
+                 ".getBoundingClientRect(),s=document.querySelector('.status-centre').getBoundingClientRect();"
+                 "return {cut:t.scrollWidth>t.clientWidth+1||t.scrollHeight>t.clientHeight+1,lines:Math.round(t.getBoundingClientRect().height/parseFloat(getComputedStyle(t).lineHeight||15)),text:t.textContent,right:c.right,statusLeft:s.left}})()", 0)
+    seen = _drive(tmp_path, [{"width": width, "height": height, "actions": [
+        ("go", "window.__boards.active='board_b';'ok'", 1800), read]}])[0]
+    t = seen["results"]["t"]
+    assert t["text"] == "Projet Atlas — refonte du tableau de bord", t
+    assert t["cut"] is False, t
+    assert t["right"] <= t["statusLeft"], ("la carte reste hors du centre d'état", t)

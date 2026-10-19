@@ -35,7 +35,7 @@ BAREHANDS = RUNTIME / "control_center_barehands.js"
 SCENE_PAGE = RUNTIME / "control_center_scene_page.js"
 #: Le controle de mode d'interaction (jarvis-presentation-interaction-mode,
 #: Slice 03), troisieme occupant du rail du bas-gauche.
-INTERACTION_MODE = RUNTIME / "control_center_interaction_mode.js"
+BOARDS = RUNTIME / "control_center_boards.js"
 PAGE_HTML = RUNTIME / "control_center.html"
 
 
@@ -184,16 +184,16 @@ def test_the_style_sheets_agree_with_the_dom_names_the_contract_owns(tmp_path):
     assert f".{names['hoverClass']}{{" in barehands
     # La scène décale ses indicateurs au-dessus du badge des mains.
     assert f"body:has({names['badgeSelector']}) .sc-status" in scene
-    # Le contrôle de mode d'interaction (jarvis-presentation-interaction-mode,
-    # Slice 03) partage ce même rail du bas-gauche et emploie la même
-    # convention d'évitement. Il est ici, et non dans un test à lui, pour la
-    # raison qui vaut déjà pour la scène : la dérive se prend par la comparaison
-    # contrat-feuille, pas par la coïncidence de deux littéraux Python. Sa
-    # feuille est un gabarit, donc c'est la feuille **produite** qu'on lit.
-    mode = run_node(tmp_path, f"out(require({json.dumps(str(INTERACTION_MODE))}).STYLE);")
-    assert f"body:has({names['badgeSelector']}) #interactionModeHud" in mode
+    # La carte Board (Slice 02 de jarvis-board-ui-wheel-dossier-refactor, à la
+    # place du contrôle de mode d'interaction) partage ce même rail du bas-gauche
+    # et emploie la même convention d'évitement. Elle est ici, et non dans un test
+    # à elle, pour la raison qui vaut déjà pour la scène : la dérive se prend par
+    # la comparaison contrat-feuille, pas par la coïncidence de deux littéraux
+    # Python. Sa feuille est un gabarit, donc c'est la feuille **produite** qu'on lit.
+    card = run_node(tmp_path, f"out(require({json.dumps(str(BOARDS))}).STYLE);")
+    assert f"body:has({names['badgeSelector']}) #boardsHud" in card
     note_selector = f"{names['rootSelector']} .{names['noteClass']}"
-    assert f"body:has({note_selector}) #interactionModeHud" in mode
+    assert f"body:has({note_selector}) #boardsHud" in card
 
 
 # --------------------------------------------------------- HandFrame neutre

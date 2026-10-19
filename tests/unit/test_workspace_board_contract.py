@@ -15,12 +15,12 @@ from jarvis.domain.interaction_mode import InteractionMode
 from jarvis.domain.workspace_board import (
     BOARD_ID_PREFIX, DEFAULT_BOARD_ID, HTTP_STATUS, MAX_CONTEXT_SUMMARY_CHARS, MAX_TITLE_CHARS,
     SESSION_ID_PREFIX, BindingStatus, Board, BoardConversationBinding, BoardError, BoardErrorCode,
-    BoardStatus, BrainLifecycle, InteractionModeOrigin, JarvisSession, SceneRef, SessionEndReason,
-    SessionStatus, adopt_legacy_interaction_mode, archive_board, check_bindings, close_binding,
+    BoardKind, BoardStatus, BrainLifecycle, JarvisSession, SceneRef, SessionEndReason,
+    SessionStatus, archive_board, board_kind_mode, check_bindings, close_binding,
     close_session, close_session_with_bindings, create_board, default_board, find_binding,
-    mark_opened, resume_session_bindings,
+    mark_opened, parse_board_kind_input, resume_session_bindings,
     new_binding, open_session,
-    promote_binding, record_agent_session, set_interaction_mode, set_lifecycle, update_board, visit_board,
+    promote_binding, record_agent_session, set_lifecycle, update_board, visit_board,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -48,7 +48,7 @@ def test_error_codes_are_stable_and_all_mapped_to_http():
         "board_not_found", "board_archived", "board_is_active", "session_not_found", "session_closed",
         "binding_not_found", "binding_conflict", "invalid_title", "context_summary_too_long",
         "invalid_board", "invalid_session", "invalid_binding", "brain_not_foreground",
-        "board_activation_failed", "board_switch_rolled_back",
+        "board_activation_failed", "board_switch_rolled_back", "board_kind_immutable",
     }
     assert set(HTTP_STATUS) == set(BoardErrorCode)
     err = BoardError(BoardErrorCode.BOARD_IS_ACTIVE, "x")
@@ -57,6 +57,7 @@ def test_error_codes_are_stable_and_all_mapped_to_http():
                                               BoardErrorCode.BOARD_ACTIVATION_FAILED,
                                               BoardErrorCode.BOARD_SWITCH_ROLLED_BACK)} == {
         "brain_not_foreground": 409, "board_activation_failed": 502, "board_switch_rolled_back": 500}
+    assert HTTP_STATUS[BoardErrorCode.BOARD_KIND_IMMUTABLE] == 409
 
 
 def test_ids_use_the_documented_prefixes_and_default(boards):
@@ -65,14 +66,14 @@ def test_ids_use_the_documented_prefixes_and_default(boards):
     assert other.board_id.startswith(BOARD_ID_PREFIX) and other.title == "Projet B"
     session = open_session(default, now=T0)
     assert session.jarvis_session_id.startswith(SESSION_ID_PREFIX)
-    assert default.interaction_mode_origin is InteractionModeOrigin.UNSET
+    assert default.board_kind is BoardKind.ASSISTANT and other.board_kind is BoardKind.ASSISTANT
 
 
 def test_enum_values_are_the_wire_values():
     assert [s.value for s in BoardStatus] == ["active", "archived"]
     assert [s.value for s in SessionStatus] == ["open", "closed"]
     assert [s.value for s in BrainLifecycle] == ["foreground", "background_running", "suspended"]
-    assert [s.value for s in InteractionModeOrigin] == ["unset", "migrated", "user"]
+    assert [s.value for s in BoardKind] == ["assistant", "presentation", "meeting"]
 
 
 # ---------------------------------------------------------------- Board
@@ -164,17 +165,33 @@ def test_archive_refuses_active_board_and_archived_board_refuses_edits(boards):
         assert code_of(exc) == "board_archived"
 
 
-def test_interaction_mode_per_board_and_idempotent_legacy_adoption(boards):
-    default, _ = boards
-    migrated = adopt_legacy_interaction_mode(default, InteractionMode.PRESENTATION, now=t(1))
-    assert (migrated.interaction_mode, migrated.interaction_mode_origin) == (
-        InteractionMode.PRESENTATION, InteractionModeOrigin.MIGRATED)
-    assert adopt_legacy_interaction_mode(migrated, InteractionMode.ASSISTANT, now=t(2)) is migrated
-    chosen = set_interaction_mode(migrated, InteractionMode.ASSISTANT, now=t(3))
-    assert chosen.interaction_mode_origin is InteractionModeOrigin.USER
-    assert adopt_legacy_interaction_mode(chosen, InteractionMode.PRESENTATION, now=t(4)) is chosen
-    with pytest.raises(BoardError):
-        set_interaction_mode(default, InteractionMode.ASSISTANT, now=t(1), origin=InteractionModeOrigin.UNSET)
+def test_the_board_type_is_chosen_at_creation_and_designates_the_mode():
+    """D01/D02 : un type par Board, choisi à la création ; le mode en est dérivé, jamais stocké."""
+
+    board = create_board("Démo", now=T0, board_kind=BoardKind.PRESENTATION)
+    assert board.board_kind is BoardKind.PRESENTATION
+    assert "interaction_mode" not in board.to_payload() and "interaction_mode_origin" not in board.to_payload()
+    assert {kind: board_kind_mode(kind) for kind in BoardKind} == {
+        BoardKind.ASSISTANT: InteractionMode.ASSISTANT, BoardKind.PRESENTATION: InteractionMode.PRESENTATION,
+        BoardKind.MEETING: InteractionMode.MEETING}
+    with pytest.raises(TypeError):
+        update_board(board, now=t(1), board_kind=BoardKind.ASSISTANT)  # type: ignore[call-arg]
+    assert not any(f.name.startswith("interaction_mode") for f in dataclasses.fields(Board))
+
+
+@pytest.mark.parametrize("raw, kind", [
+    ("assistant", BoardKind.ASSISTANT), ("presentation", BoardKind.PRESENTATION), ("meeting", BoardKind.MEETING),
+    ("empty", BoardKind.ASSISTANT),  # alias déprécié, en entrée de création seulement
+])
+def test_creation_input_accepts_the_three_types_and_the_deprecated_empty_alias(raw, kind):
+    assert parse_board_kind_input(raw) is kind
+
+
+@pytest.mark.parametrize("raw", ["Assistant", "PRESENTATION", "simple", "", None, 3])
+def test_creation_input_refuses_any_other_value(raw):
+    with pytest.raises(BoardError) as exc:
+        parse_board_kind_input(raw)
+    assert code_of(exc) == "invalid_board"
 
 
 # ---------------------------------------------------------------- Session
@@ -422,7 +439,7 @@ def test_agent_session_id_is_recorded(boards):
 def test_payload_round_trip(boards):
     a, b = boards
     board = update_board(
-        set_interaction_mode(b, InteractionMode.PRESENTATION, now=t(1)), now=t(2),
+        create_board("Projet C", now=t(1), board_kind=BoardKind.MEETING), now=t(2),
         context_summary="Résumé\nsur deux lignes", task_refs=["t1"], artifact_refs=["docs/x.md"],
         project_refs=["p1"], scene_ref=SceneRef(scene_id="scene-1", revision_at_leave=7),
         runtime_metadata={"agent_cli": "claude", "count": 2, "flag": True, "none": None},
@@ -449,7 +466,10 @@ def test_payload_round_trip(boards):
     (lambda p: p.update(created_at="yesterday"), "invalid_board"),
     (lambda p: p.update(created_at="2026-09-29T10:00:00"), "invalid_board"),  # naïf
     (lambda p: p.update(task_refs="t1"), "invalid_board"),
-    (lambda p: p.update(interaction_mode="SIMPLE"), "invalid_board"),
+    (lambda p: p.update(interaction_mode="assistant"), "invalid_board"),  # plus un champ du Board (v9)
+    (lambda p: p.update(interaction_mode_origin="user"), "invalid_board"),
+    (lambda p: p.update(board_kind="empty"), "invalid_board"),  # réécrit par la migration v9, jamais stocké
+    (lambda p: p.update(board_kind="Presentation"), "invalid_board"),
     (lambda p: p.update(scene_ref={"kind": "board", "scene_id": "s"}), "invalid_board"),
     (lambda p: p.update(board_id="nope"), "invalid_board"),
     (lambda p: p.update(title=""), "invalid_title"),

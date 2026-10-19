@@ -49,6 +49,20 @@ class InteractionModeError(ValueError):
         self.code = code
 
 
+#: Refus de toute demande de mode venue de l'extérieur de Core (Slice 01b de
+#: `jarvis-board-ui-wheel-dossier-refactor`) : le mode est **dérivé du type du
+#: Board actif** (`docs/boards.md` › *Board type*), il ne se règle plus à part.
+#: Même code et même phrase partout où une ancienne porte d'écriture répond :
+#: `POST /v1/interaction-mode` (Core), `POST /api/interaction-mode` (Control
+#: Center), `settings_set("interaction_mode")` (MCP) et le HUD du bas-gauche.
+INTERACTION_MODE_DERIVED = "interaction_mode_derived"
+INTERACTION_MODE_DERIVED_MESSAGE = (
+    "Le mode d'interaction suit le type du Board actif : il ne se règle plus à part. "
+    "Pour présenter, ouvrez ou créez un Board Présentation ; pour revenir au mode simple, "
+    "ouvrez un Board Assistant. Rien n'a été changé."
+)
+
+
 class InteractionMode(StrEnum):
     """Politique de comportement produit. Valeurs internes, jamais affichées."""
 
