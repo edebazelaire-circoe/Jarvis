@@ -26,3 +26,4 @@
 - Freshness check before each dispatch defined (`references/readiness-audit.md` §7).
 - Baseline tests: `test_subagent_roles.py`, `test_work_state_contracts.py`, `test_schema_migrations.py` — 123 passed. No product code changed; JARVIS not started.
 - **Readiness: READY.** Next: independent QA (qa-verification) of Slice 00, then dispatch Slice 01.
+- Agent 0 decisions (autonomous, recommended options): Q1/I-004 resolved — one ephemeral flag, silence kept, brain rule widened to small self-evident corrections (Slices 05/07 unblocked). Q2 (archive `jarvis-subagent-roles-interview` to done, remove worktree `subag`) and Q3 (fate of the 13 uncommitted files in `eph`) left to the Human: Drive moves and uncommitted work are Human-owned.

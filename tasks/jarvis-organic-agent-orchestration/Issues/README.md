@@ -22,7 +22,7 @@ Main already carries `EXECUTION_GATE_RULE` (`jarvis/domain/subagent_roles.py:314
 
 ## I-004 — Meaning of "ephemeral" (Q1 of the readiness audit)
 
-**Status:** open; blocks the dispatch of Slices 05 and 07 only.
+**Status:** resolved by agent 0 (2026-10-20, handle-task autonomy, recommended option): one flag, current silence kept; the brain rule widens to small self-evident corrections whose visible change is the report; a fix whose confirmation is awaited stays an ordinary one-agent task; failures are always announced. The Human may revert.
 
 On main, an ephemeral task is one whose result the user does not expect: its success is silent and the brain prompt forbids it for work whose result is awaited (`jarvis/runtime/claude_local.py:101`). This handoff uses ephemeral for small corrections that should not clutter history (D07/D08). Recommendation: keep one flag with its current silence and widen the brain rule to small self-evident corrections whose visible change is the report; a bug fix whose confirmation is awaited stays an ordinary one-agent task. Failures are always announced. Alternative: two flags (history retention vs announcement).
 
