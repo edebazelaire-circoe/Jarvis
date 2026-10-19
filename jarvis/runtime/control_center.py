@@ -39,6 +39,7 @@ from jarvis.domain.speaker import (
     assess_authorization,
 )
 from jarvis.domain.routing import RoutingError
+from jarvis.domain.subagent_roles import PROMPT_PREFIX as SUBAGENT_ROLE_PROMPT_PREFIX
 from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, AddressingDecision, SpeechKind
 from jarvis.runtime.audio_devices import AudioDiagnosticError, SoundDeviceAudioDiagnostics, normalize_device_id
 from jarvis.runtime import (
@@ -255,6 +256,10 @@ _CALIBRATION_SESSION = re.compile(r"\A[A-Za-z0-9_-]{16,64}\Z")
 #: transcription ni consommation, et rien de secret (contrat §9 de
 #: `docs/mcp/tool-contract.md`, testé par sentinelles).
 MCP_TOOLS_ROUTE = "/api/mcp/tools"
+#: Registre des rôles de sous-agent (`subagent_roles`) avec le texte effectif de leurs instructions. GET
+#: seulement, hors de `READ_GUARDED_ROUTES` comme `/api/prompts` dont il est une vue : des consignes de
+#: méthode, ni transcription ni secret.
+SUBAGENT_ROLES_ROUTE = "/api/subagent-roles"
 #: Tout chemin sous ce préfixe répond en JSON codé, même quand aucune route ne
 #: l'apparie (404) ou que la méthode n'existe pas (405) : `_mcp_json_errors`.
 MCP_ROUTE_PREFIX = "/api/mcp"
@@ -1457,6 +1462,9 @@ class ControlCenter:
             web.post("/api/settings", self.save_settings),
             web.get("/api/prompts", self.get_prompts),
             web.post("/api/prompts/{prompt_id}", self.update_prompt),
+            # Registre des rôles de sous-agent (Settings > Sous-agents) : lecture seule, l'édition passe par
+            # `POST /api/prompts/subagent_role.<id>`.
+            web.get(SUBAGENT_ROLES_ROUTE, self.get_subagent_roles),
             web.get("/api/credentials", self.get_credentials),
             web.post("/api/credentials", self.save_credential),
             web.post("/api/credentials/delete", self.remove_credential),
@@ -5018,10 +5026,83 @@ class ControlCenter:
                 )
             else:
                 raise PromptError("prompt_request_invalid", "Use action edit or reset with the documented fields")
-            return web.json_response({"mutation": mutation, "prompts": self._prompt_payload(self._settings())})
+            body: dict[str, Any] = {"mutation": mutation, "prompts": self._prompt_payload(self._settings())}
+            if identifier.startswith(SUBAGENT_ROLE_PROMPT_PREFIX):
+                # Le hook ne lit que l'instantané : sans lui, l'édition enregistrée resterait sans effet.
+                body["subagent_roles_snapshot"] = self._refresh_subagent_roles_snapshot()
+            return web.json_response(body)
         except (PromptError, agent_behavior.AgentBehaviorError, TypeError) as exc:
             code = getattr(exc, "code", "prompt_request_invalid")
             raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: code}) from exc
+
+    def _refresh_subagent_roles_snapshot(self) -> dict[str, Any]:
+        """Réécrit `subagent-roles.json` depuis les surcharges enregistrées ; rend l'issue, pour l'écran.
+
+        L'édition est déjà enregistrée quand on arrive ici : une écriture d'instantané impossible ne
+        l'annule pas, elle est journalisée en erreur et rendue telle quelle (`written: false`) pour que
+        l'onglet dise que le prochain sous-agent ne la verra pas encore.
+        """
+        from jarvis.domain.prompt_registry import PromptError
+        from jarvis.runtime import subagent_roles_snapshot
+        from jarvis.runtime.prompt_overrides import stored_prompt_override_document
+        try:
+            overrides = subagent_roles_snapshot.refresh(
+                self.runtime_root, stored_prompt_override_document(self._settings()))
+        except (OSError, PromptError) as exc:
+            self.journal.emit(
+                "subagent_roles.snapshot_failed",
+                f"Instructions des rôles non transmises au hook : {type(exc).__name__}: {exc}",
+                level="error",
+                data={"code": "subagent_roles_snapshot_write_failed", "exception_type": type(exc).__name__},
+            )
+            return {"written": False, "code": "subagent_roles_snapshot_write_failed",
+                    "error": f"{type(exc).__name__}: {exc}"}
+        self.journal.emit(
+            "subagent_roles.snapshot_written",
+            "Instructions des rôles transmises au hook.",
+            data={"code": "subagent_roles_snapshot_written", "modified_roles": sorted(overrides)},
+        )
+        return {"written": True, "modified_roles": sorted(overrides)}
+
+    def _subagent_roles_payload(self, settings: dict[str, Any]) -> dict[str, Any]:
+        """Le registre des rôles, chacun avec le texte effectif de ses instructions, sa révision et `modified`."""
+        from jarvis.domain import subagent_roles
+        from jarvis.runtime.prompt_catalog import default_prompt_registry
+        from jarvis.runtime.prompt_overrides import stored_prompt_override_document
+
+        layers = {item["prompt_id"]: item for item in
+                  default_prompt_registry().inspect(stored_prompt_override_document(settings))["layers"]}
+        roles = []
+        for role in subagent_roles.ROLES:
+            layer = layers[role.prompt_id]
+            roles.append({
+                **role.as_dict(),
+                "instructions": layer["current_text"],
+                "default_instructions": layer["default_text"],
+                "modified": layer["current_text"] != layer["default_text"],
+                # Ce que `POST /api/prompts/{prompt_id}` attend : `base_revision`, puis
+                # `expected_effective_revision` pour refuser une édition concurrente.
+                "default_revision": layer["default_revision"],
+                "revision": layer["effective_revision"],
+                # Surcharge enregistrée mais écartée (défaut changé depuis, texte invalide) : le défaut s'applique.
+                "conflict": layer["conflict"],
+            })
+        return {
+            "schema_version": 1,
+            "roles": roles,
+            "execution_gate": subagent_roles.EXECUTION_GATE_RULE,
+            "mission_path": subagent_roles.MISSION_PATH_HINT,
+            "application": "next_invocation",
+        }
+
+    async def get_subagent_roles(self, request: web.Request) -> web.Response:
+        del request
+        from jarvis.domain.prompt_registry import PromptError
+        try:
+            return web.json_response(self._subagent_roles_payload(self._settings()))
+        except PromptError as exc:
+            # Document de surcharges illisible : même réponse codée que `/api/prompts`.
+            raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
 
     async def save_settings(self, request: web.Request) -> web.Response:
         payload = await request.json()

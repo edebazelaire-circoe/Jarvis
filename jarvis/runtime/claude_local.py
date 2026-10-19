@@ -12,6 +12,7 @@ import uuid
 
 from jarvis.adapters import global_context, safe_folders
 from jarvis.domain.brain_notice import NoticeTyping
+from jarvis.domain.subagent_roles import brain_rules
 from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, SpeechKind
 from jarvis.runtime import routing_hook
 from jarvis.runtime.routing_hook import PROFILE_RULE
@@ -77,6 +78,11 @@ PRESENTATION_PRODUCTION_RULE = (
 # une conversation ouverte avant cette consigne ne la verra qu'après un
 # redémarrage de JARVIS, qui ouvre une conversation neuve. Le rappel du
 # contexte par tour (`build_agent_brief`) s'applique, lui, immédiatement.
+#
+# La section « TYPE DE DEMANDE » est générée depuis le registre des rôles de
+# sous-agent (`subagent_roles.brain_rules`) : classer la demande (action claire,
+# intention à cadrer par l'Intervieweur, expertises en parallèle) et ne passer à
+# l'exécution d'une demande cadrée qu'après l'accord oral (`EXECUTION_GATE_RULE`).
 BRAIN_SYSTEM_PROMPT = f"""\
 Tu es le cerveau vocal de JARVIS. Tes réponses sont lues à voix haute, dans une conversation en direct.
 
@@ -89,7 +95,6 @@ Tu aiguilles, tu n'exécutes pas. Pendant que tu travailles, l'utilisateur ne pe
 - Ta consigne tient en quelques lignes de faits, car il ne voit pas la conversation : la demande de l'utilisateur dans ses mots exacts, ce qu'il doit constater quand ce sera réparé, où chercher, et ce qui a déjà été essayé et refusé sur ce sujet. Une hypothèse reste une hypothèse, jamais une cause. Demande un compte rendu court.
 - Une demande qui revient une deuxième fois se cite en entier : les mots de chaque tour, et ce qui a été rejeté à chaque fois. Sans cet historique, le sous-agent repart de zéro et refait ce que tu as déjà refusé.
 - Quand un sous-agent te remonte une question, relaie-la en une phrase : une question bloquante passe avant le reste, une question ouverte attend un moment calme. La réponse de l'utilisateur repart en nouvelle consigne.
-- Quand sa demande peut se lire de deux façons, tranche avec lui tout de suite, en une question courte : tu es le seul à avoir le micro. Ne lance pas un chantier sur une lecture incertaine.
 - {PROFILE_RULE}
 - {PRESENTATION_PRODUCTION_RULE}
 - Dès le lancement, réponds en une phrase qui dit ce que tu as lancé, puis termine ton tour.
@@ -97,6 +102,8 @@ Tu aiguilles, tu n'exécutes pas. Pendant que tu travailles, l'utilisateur ne pe
 - Quand un sous-agent ou une tâche de fond se termine, tu reçois une notification : relaie le résultat en une à trois phrases orales. Si elle ne mérite aucune annonce, réponds exactement {BRAIN_NOT_ADDRESSED_ANSWER} et rien d'autre : rien ne sera dit.
 - Une tâche de fond qui échoue, qui meurt avec son hôte ou qui attend une réponse t'ouvre aussi un tour, sans que l'utilisateur ait parlé. Le détail est dans ton contexte de travail, section « attention ». Dis-le : ce qui est tombé, et ce que tu proposes — relancer, corriger, ou attendre sa décision. Ne relance rien dans ce tour-là, annonce d'abord. Une tâche ne doit jamais mourir en silence.
 - Une nouvelle demande pendant qu'un sous-agent travaille se traite normalement, sans attendre la fin de celui-ci.
+
+{brain_rules()}
 
 FORMAT ORAL
 - Quelques phrases courtes, en français parlé. Pas de markdown : ni titres, ni tableaux, ni listes à puces, ni gras, ni blocs de code.
@@ -1139,6 +1146,10 @@ class ClaudeLocalAgent:
             restricted = self.execution_profile in RESTRICTED_PROFILES
             speculative = self.execution_profile == "speculative_analysis"
             routing_args = [] if restricted else ["--settings", routing_hook.hook_settings(self.runtime_root)]
+            if not restricted:
+                # Le hook lit les instructions des rôles dans un instantané, sans réseau : il est réécrit à
+                # chaque lancement pour suivre les surcharges enregistrées.
+                self._write_subagent_roles_snapshot()
             restricted_args = []
             if restricted:
                 suffix = os.path.splitext(executable)[1].lower()
@@ -1324,6 +1335,30 @@ class ClaudeLocalAgent:
             )
             return []
         return ["--mcp-config", str(path)]
+
+    def _write_subagent_roles_snapshot(self) -> None:
+        """Réécrit `subagent-roles.json` depuis les surcharges de prompts connues de cet agent.
+
+        Écriture impossible : le cerveau démarre quand même, et le hook garde l'instantané précédent ou les
+        défauts du code. La panne est journalisée en erreur, avec son code.
+        """
+        from jarvis.domain.prompt_registry import PromptError
+        from jarvis.runtime import subagent_roles_snapshot
+        try:
+            overrides = subagent_roles_snapshot.refresh(self.runtime_root, self._prompt_overrides)
+        except (OSError, PromptError) as exc:
+            self.journal.emit(
+                "agent.subagent_roles_snapshot_failed",
+                f"Instructions des rôles de sous-agent non transmises au hook : {type(exc).__name__}: {exc}",
+                level="error",
+                data={"code": "subagent_roles_snapshot_write_failed", "runtime_root": str(self.runtime_root)},
+            )
+            return
+        self.journal.emit(
+            "agent.subagent_roles_snapshot_written",
+            "Instructions des rôles de sous-agent transmises au hook.",
+            data={"code": "subagent_roles_snapshot_written", "modified_roles": sorted(overrides)},
+        )
 
     def _console_mcp_args(self) -> list[str]:
         """`--mcp-config <fichier>` du serveur `jarvis-console`, ou rien.

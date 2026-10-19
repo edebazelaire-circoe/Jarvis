@@ -36,6 +36,7 @@ from jarvis.domain import routing
 from jarvis.domain.agent_charter import sign_brief
 from jarvis.domain.loadout_view import MANIFEST_MARK
 from jarvis.domain.memory_settings import LOADOUT_ROLES
+from jarvis.domain.subagent_roles import ROLE_MARK, ROLE_MARKERS, with_role_instructions
 from jarvis.domain.routing import (
     CandidateRef,
     ModelCandidate,
@@ -45,7 +46,7 @@ from jarvis.domain.routing import (
     RoutingIntent,
     RoutingPolicy,
 )
-from jarvis.runtime import agent_routing, cli_catalog, credentials, loadout_snapshot
+from jarvis.runtime import agent_routing, cli_catalog, credentials, loadout_snapshot, subagent_roles_snapshot
 from jarvis.runtime.catalog_view import ProviderCatalogSnapshot
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.model_catalog import ModelCatalog, filter_by_role
@@ -68,6 +69,10 @@ PROFILE_PATTERN = re.compile(r"^\s*\[\s*([A-Za-z_-]{2,24})\s*\]\s*")
 #: Un marqueur entre crochets sans ancre : le rôle (`coder`, `reviewer`, `research`) peut suivre
 #: le profil (`[code] [reviewer] ...`) ou le remplacer (`[reviewer] ...`, profil `general`).
 _BRACKET = re.compile(r"\[\s*([A-Za-z_-]{2,24})\s*\]\s*")
+
+#: Les rôles qu'une description peut annoncer : ceux du loadout (`memory_settings.LOADOUT_ROLES`) et ceux du
+#: registre des sous-agents (`subagent_roles`), qui en reprennent deux (`research`, `coder`).
+ANNOUNCED_ROLES = tuple(dict.fromkeys((*LOADOUT_ROLES, *ROLE_MARKERS)))
 
 PROFILE_RULE = (
     "Commence la description de chaque sous-agent par son profil entre crochets : "
@@ -99,13 +104,13 @@ def _markers(text: str) -> tuple[int, str | None]:
     if first is None:
         return 0, None
     word = first.group(1).strip().lower()
-    if word in LOADOUT_ROLES:
+    if word in ANNOUNCED_ROLES:
         return first.end(), word
     if routing.is_profile(word):
         second = _BRACKET.match(text, first.end())
         if second is not None:
             name = second.group(1).strip().lower()
-            if name in LOADOUT_ROLES:
+            if name in ANNOUNCED_ROLES:
                 return second.end(), name
             if name in PLAYBOOK_ROLES:  # consommé pour l'affichage, sans rôle de loadout
                 return second.end(), None
@@ -119,6 +124,16 @@ def read_role(tool_input: Mapping[str, Any]) -> str | None:
         if role is not None:
             return role
     return None
+
+
+def read_loadout_role(tool_input: Mapping[str, Any]) -> str | None:
+    """Le rôle annoncé s'il a un loadout (`coder`, `reviewer`, `research`), sinon `None`.
+
+    Un rôle du registre sans loadout (`interviewer`, `web-research`, `concept`) garde le loadout de son
+    profil : une clé `general:interviewer` n'existe pas et ferait perdre celui de `general`.
+    """
+    role = read_role(tool_input)
+    return role if role in LOADOUT_ROLES else None
 
 
 _LEADING_BRACKET = re.compile(r"\s*\[\s*([A-Za-z_-]{2,24})\s*\]")
@@ -154,6 +169,7 @@ def strip_profile(text: str) -> str:
 
 
 CHARTER_NOTE = "Charte du chantier apposée sur la consigne du sous-agent."
+ROLE_NOTE = "Méthode du rôle apposée sur la consigne du sous-agent."
 LOADOUT_NOTE = "Manifeste du loadout apposé sur la consigne du sous-agent."
 #: Séparation entre la consigne du cerveau et le manifeste ajouté à sa suite.
 BRIEF_GAP = "\n\n"
@@ -164,7 +180,9 @@ def _allow() -> dict[str, Any]:
     return {}
 
 
-def charter_input(event: Mapping[str, Any]) -> dict[str, Any] | None:
+def charter_input(
+    event: Mapping[str, Any], role_overrides: Mapping[str, str] | None = None
+) -> dict[str, Any] | None:
     """La consigne signée de la charte du chantier, ou `None` si rien à changer.
 
     Même raison d'être que la réécriture de modèle : un prompt système peut
@@ -173,7 +191,9 @@ def charter_input(event: Mapping[str, Any]) -> dict[str, Any] | None:
     soit ce que le cerveau a rédigé.
 
     Fonction pure et sans entrée-sortie : elle ne lit ni réglage ni disque, pour
-    que la charte survive à une politique d'aiguillage éteinte ou cassée.
+    que la charte survive à une politique d'aiguillage éteinte ou cassée. Les
+    surcharges des méthodes de rôle (`role_overrides`, `{id: texte}`) sont lues
+    par l'appelant ; sans elles, chaque rôle prend le défaut du code.
     """
     if str(event.get("tool_name") or "") not in AGENT_TOOLS:
         return None
@@ -189,6 +209,9 @@ def charter_input(event: Mapping[str, Any]) -> dict[str, Any] | None:
     # La méthode de production d'une présentation : apposée ici, sur l'appel lui-même, parce qu'un sous-agent ne
     # voit pas le prompt du cerveau et que ce prompt demande des consignes courtes.
     signed = with_playbook(signed, read_playbook_role(tool_input)) or signed
+    # La méthode du rôle annoncé (`subagent_roles`), pour la même raison : texte enregistré par l'utilisateur,
+    # sinon défaut du code. Jamais doublée.
+    signed = with_role_instructions(signed, read_role(tool_input), role_overrides) or signed
     return None if signed == brief else {"prompt": signed}
 
 
@@ -203,7 +226,7 @@ def loadout_input(event: Mapping[str, Any], runtime_root: Path, prompt: str) -> 
         return None
     tool_input = event.get("tool_input")
     tool_input = tool_input if isinstance(tool_input, Mapping) else {}
-    manifest = loadout_snapshot.read_manifest(runtime_root, read_profile(tool_input), read_role(tool_input))
+    manifest = loadout_snapshot.read_manifest(runtime_root, read_profile(tool_input), read_loadout_role(tool_input))
     if not manifest or MANIFEST_MARK in prompt:
         return None
     return {"prompt": f"{prompt.rstrip()}{BRIEF_GAP}{manifest}"}
@@ -408,12 +431,14 @@ def run(event: Mapping[str, Any], runtime_root: Path) -> dict[str, Any]:
     doit pas rendre les sous-agents muets sur leur propre rôle.
     """
     journal = RuntimeJournal(runtime_root)
+    role_overrides = _role_overrides(event, runtime_root, journal)
     try:
-        charter = charter_input(event)
+        charter = charter_input(event, role_overrides)
     except Exception:  # noqa: BLE001 - une charte qui lève ne vaut pas un outil perdu
         charter = None
+    role = _log_role(journal, event, charter, role_overrides)
     brief, loadout = _brief_change(event, runtime_root, charter, journal)
-    note = _brief_note(charter is not None, loadout)
+    note = _brief_note(charter is not None, loadout, role=role)
     try:
         settings = load_settings(runtime_root)
         policy = agent_routing.load_policy(settings)
@@ -473,7 +498,7 @@ def _brief_change(
                 "code": "loadout_manifest_applied",
                 "tool_use_id": str(event.get("tool_use_id") or ""),
                 "profile": read_profile(tool_input),
-                "role": read_role(tool_input),
+                "role": read_loadout_role(tool_input),
                 "manifest_chars": len(added["prompt"]) - len(base),
             },
         )
@@ -482,10 +507,72 @@ def _brief_change(
     return added, True
 
 
-def _brief_note(charter: bool, loadout: bool) -> str:
-    if charter and loadout:
-        return f"{CHARTER_NOTE} {LOADOUT_NOTE}"
-    return LOADOUT_NOTE if loadout else CHARTER_NOTE
+def _brief_note(charter: bool, loadout: bool, *, role: bool = False) -> str:
+    notes = ([CHARTER_NOTE] if charter or not loadout else []) + [ROLE_NOTE] * role + [LOADOUT_NOTE] * loadout
+    return " ".join(notes)
+
+
+def _role_overrides(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJournal) -> dict[str, str]:
+    """Les surcharges des méthodes de rôle, lues dans l'instantané ; `{}` (défauts du code) si rien ou illisible.
+
+    Lu seulement pour un appel qui annonce un rôle du registre : les autres n'en ont pas besoin. Un fichier
+    illisible est consigné en avertissement et la consigne part avec le texte par défaut du rôle.
+    """
+    if str(event.get("tool_name") or "") not in AGENT_TOOLS:
+        return {}
+    tool_input = event.get("tool_input")
+    if read_role(tool_input if isinstance(tool_input, Mapping) else {}) not in ROLE_MARKERS:
+        return {}
+    try:
+        return subagent_roles_snapshot.read_overrides(runtime_root)
+    except Exception as exc:  # noqa: BLE001 - un instantané illisible ne vaut pas un outil perdu
+        try:
+            journal.emit(
+                "agent.role.failed",
+                f"Instructions de rôle enregistrées illisibles ({type(exc).__name__}) : "
+                "le rôle part avec son texte par défaut.",
+                level="warning",
+                data={"code": "subagent_roles_snapshot_failed", "exception_type": type(exc).__name__},
+            )
+        except OSError:
+            pass
+        return {}
+
+
+def _log_role(
+    journal: RuntimeJournal,
+    event: Mapping[str, Any],
+    charter: Mapping[str, Any] | None,
+    role_overrides: Mapping[str, str],
+) -> bool:
+    """Consigne `agent.role_applied` quand la méthode d'un rôle vient d'être apposée ; rend si elle l'a été.
+
+    La preuve est faite de codes : le rôle, le profil, la source du texte (`override` ou `default`) et sa
+    taille, jamais le texte lui-même.
+    """
+    tool_input = event.get("tool_input")
+    tool_input = tool_input if isinstance(tool_input, Mapping) else {}
+    before = tool_input.get("prompt")
+    after = charter.get("prompt") if charter else None
+    if not isinstance(after, str) or ROLE_MARK not in after or (isinstance(before, str) and ROLE_MARK in before):
+        return False
+    role = read_role(tool_input)
+    try:
+        journal.emit(
+            "agent.role_applied",
+            f"Méthode du rôle « {role} » ajoutée à la consigne du sous-agent.",
+            data={
+                "code": "subagent_role_applied",
+                "tool_use_id": str(event.get("tool_use_id") or ""),
+                "role": role,
+                "profile": read_profile(tool_input),
+                "source": "override" if role in role_overrides else "default",
+                "instructions_chars": len(after) - after.index(ROLE_MARK),
+            },
+        )
+    except OSError:
+        pass
+    return True
 
 
 def _log(

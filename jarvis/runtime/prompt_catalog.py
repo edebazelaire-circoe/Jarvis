@@ -13,7 +13,7 @@ from typing import Mapping
 from jarvis.adapters import global_context, openai_realtime
 from jarvis.domain import (
     agenda_reminders, agent_charter, context_enrichment_prompt, conversation_prompt, front_brain_prompt, live_prompt,
-    presentation_studio_authoring_policy, work_attention_prompt,
+    presentation_studio_authoring_policy, subagent_roles, work_attention_prompt,
 )
 from jarvis.domain.prompt_registry import (
     PromptDescriptor,
@@ -247,6 +247,12 @@ def default_prompt_registry() -> PromptRegistry:
         # programme, le hook étant un processus court qui lit la constante.
         _descriptor("agent.task.charter", agent_charter, "AGENT_TASK_CHARTER",
                     agent_charter.AGENT_TASK_CHARTER, variables=("brief",), apply_policy="read_only"),
+        # Méthode de chaque rôle de sous-agent (`subagent_roles`), apposée par le même hook après la charte.
+        # Éditable (Settings > Sous-agents) : la surcharge rejoint le hook par l'instantané `subagent-roles.json`,
+        # réécrit après chaque édition et au lancement du CLI ; elle vaut donc dès le prochain sous-agent lancé.
+        *(_descriptor(role.prompt_id, subagent_roles, "ROLES", role.instructions,
+                      editable=True, apply_policy="next_invocation")
+          for role in subagent_roles.ROLES),
         # Consigne du tour que Core ouvre seul sur un changement de travail de
         # fond. Elle voyage comme le texte d'un tour, donc par `backend.*.turn` ;
         # elle est déclarée ici parce qu'elle est visible du modèle.

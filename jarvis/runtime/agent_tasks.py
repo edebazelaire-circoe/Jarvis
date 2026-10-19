@@ -28,6 +28,7 @@ import time
 from typing import Any, Callable
 
 from jarvis.ports.v2 import ConversationEventRecorder
+from jarvis.runtime import routing_hook
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.subagent_conversation import (
     SubagentConversations,
@@ -1005,6 +1006,9 @@ class AgentTaskTracker:
             "provider": self.provider,
             "subagent_type": task.subagent_type,
             "description": task.description,
+            # Le rôle annoncé par le marqueur de la description (`[general] [interviewer] ...`), lu comme le hook
+            # le lit : `None` pour une tâche sans rôle. Settings > Sous-agents l'affiche dans les instances actives.
+            "role": routing_hook.read_role({"description": task.description}),
             "model": task.model,
             "status": task.status,
             "background": task.background,

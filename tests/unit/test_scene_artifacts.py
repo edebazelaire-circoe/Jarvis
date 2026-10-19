@@ -582,7 +582,11 @@ def test_orphan_artifacts_are_bulk_archivable_and_linked_ones_never():
 #: Board actif va dans son dossier mémoire, jamais dans celui d'un autre Board.
 #: Tâches éphémères (feat/ephemeral-tasks, changement délibéré hors scène) : une
 #: ligne de délégation déclare le marqueur `[éphémère]` et garde l'échec audible.
-BASE_SYSTEM_SHA256 = "20a65470bcbc87dda3b79cdf7c0bbaa53da814d7c3fa235b9ba7e61dfaa999ab"
+#: Rôles de sous-agent (jarvis-subagent-roles-interview, changement délibéré hors scène) : la puce « quand sa
+#: demande peut se lire de deux façons » devient la section « TYPE DE DEMANDE » générée par
+#: `subagent_roles.brain_rules()` (action claire, intention à cadrer par l'Intervieweur, expertises en
+#: parallèle, accord oral avant exécution).
+BASE_SYSTEM_SHA256 = "0cde112f1aa5ffd2aa0e9b3c174d90e767833b1b2cd5dcca1e284d9c1ecbd9f7"
 #: Réalignement baseline (main `f05ed24`, changement délibéré venu de main) : la
 #: consigne d'affichage nomme scene_update_many, scene_archive, scene_pin et
 #: donne au cerveau la main de l'utilisateur (archiver, épingler, déplacer).
