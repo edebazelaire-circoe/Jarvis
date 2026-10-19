@@ -286,6 +286,106 @@ async def test_trailing_deltas_inside_the_grace_join_the_submitted_request():
         await asyncio.wait_for(reader, 1)
 
 
+def user_says(wire, identity, delta, at_ms):
+    wire.push({"type": "session.input_transcript.delta", "event_id": identity,
+               "delta": delta, "start_ms": at_ms, "end_ms": at_ms + 100})
+
+
+def model_says(wire, identity, delta, at_ms):
+    wire.push({"type": "session.output_transcript.delta", "event_id": identity,
+               "delta": delta, "start_ms": at_ms, "end_ms": at_ms + 100})
+
+
+def delegate(wire, identity, item, at_ms):
+    wire.push({"type": "session.delegation.created", "event_id": identity, "offset_ms": at_ms,
+               "delegation": {"id": item, "type": "delegation", "target": "client"}})
+
+
+async def wait_turns(session, core, count=1):
+    async with asyncio.timeout(3):
+        while len(core.turns) < count or session._delegations._tasks:
+            await asyncio.sleep(0)
+
+
+async def test_model_backchannel_during_a_pause_keeps_the_start_of_the_request(tmp_path):
+    # Coupure du 16/10 : un « mm » du modèle pendant une pause effaçait le
+    # début de la phrase, et le cerveau recevait « , si je te demande… ».
+    wire, core = LiveWire(), BrainCore()
+    journal = RuntimeJournal(tmp_path)
+    session = await live_session(wire, core, journal=journal)
+    reader = drain(session)
+    try:
+        user_says(wire, "i0", "Quand je te demande une présentation", 0)
+        model_says(wire, "o0", "Mm.", 900)
+        user_says(wire, "i1", ", pose-moi d'abord des questions", 1500)
+        delegate(wire, "d1", "item-k", 2000)
+        await wait_turns(session, core)
+        assert core.turns[0][1]["content"] == "Quand je te demande une présentation, pose-moi d'abord des questions"
+        rows = [row for row in read_jsonl_tail(journal.trace_path) if row["kind"] == "voice.live.request_boundary"]
+        assert [row["data"]["decision"] for row in rows] == ["kept_over_model_speech"]
+        assert rows[0]["data"]["model_delta"] == "Mm."
+    finally:
+        await asyncio.wait_for(session.close(), 3)
+        await asyncio.wait_for(reader, 1)
+
+
+async def test_model_answer_followed_by_a_long_user_silence_closes_the_previous_request(tmp_path):
+    wire, core = LiveWire(), BrainCore()
+    journal = RuntimeJournal(tmp_path)
+    session = await live_session(wire, core, journal=journal)
+    session.request_stale_gap_s = .05
+    reader = drain(session)
+    try:
+        user_says(wire, "i0", "Merci", 0)
+        model_says(wire, "o0", "Avec plaisir.", 300)
+        async with asyncio.timeout(1):
+            while session.input_observation_revision < 1:
+                await asyncio.sleep(0)
+        await asyncio.sleep(.15)
+        user_says(wire, "i1", "Lance la vidéo", 9000)
+        delegate(wire, "d1", "item-l", 9500)
+        await wait_turns(session, core)
+        assert core.turns[0][1]["content"] == "Lance la vidéo"
+        rows = [row for row in read_jsonl_tail(journal.trace_path) if row["kind"] == "voice.live.request_boundary"]
+        assert [(row["data"]["decision"], row["data"]["text"]) for row in rows] == [("expired", "Merci")]
+    finally:
+        await asyncio.wait_for(session.close(), 3)
+        await asyncio.wait_for(reader, 1)
+
+
+async def test_words_spoken_while_the_brain_turn_is_submitted_join_the_next_request():
+    gate = asyncio.Event()
+
+    class SlowCore(BrainCore):
+        async def submit_brain_turn(self, conversation_id, **values):
+            await gate.wait()
+            return await super().submit_brain_turn(conversation_id, **values)
+
+    wire, core = LiveWire(), SlowCore()
+    session = await live_session(wire, core)
+    reader = drain(session)
+    try:
+        user_says(wire, "i0", "Ouvre le plan", 0)
+        delegate(wire, "d1", "item-m", 200)
+        async with asyncio.timeout(2):
+            while session.input_observation_revision < 1 or session.pending_request_text() is not None:
+                await asyncio.sleep(0)
+        user_says(wire, "i1", " et ajoute une étape", 600)
+        async with asyncio.timeout(1):
+            while session.pending_request_text() is None:
+                await asyncio.sleep(0)
+        gate.set()
+        await wait_turns(session, core)
+        assert core.turns[0][1]["content"] == "Ouvre le plan"
+        assert session.pending_request_text() == "et ajoute une étape"
+        delegate(wire, "d2", "item-n", 1200)
+        await wait_turns(session, core, 2)
+        assert core.turns[1][1]["content"] == "et ajoute une étape"
+    finally:
+        await asyncio.wait_for(session.close(), 3)
+        await asyncio.wait_for(reader, 1)
+
+
 async def test_delegation_without_request_text_never_submits_an_empty_turn(tmp_path):
     wire, core = LiveWire(), BrainCore()
     journal = RuntimeJournal(tmp_path)
