@@ -52,8 +52,9 @@
    **Emplacements.** Deux, déclarés dans `control_center.html` pour que leurs
    rangs vivent au registre d'empilement : `#boardsHud` (la carte, au bas du
    bord gauche ; ce module en pose la place, partagée avec Bare Hands et les
-   notes de la scène, voir `GEO`) et `#boardsPanel` (le panneau, qui s'ouvre
-   au-dessus de la carte, `place`). Ce module refuse de s'installer si l'un
+   notes de la scène, voir `GEO`) et `#boardsPanel` (le sélecteur : un voile
+   plein écran, flouté, par-dessus la scène ; un écran à la fois — la grille
+   des Boards, puis la création en deux temps, le type puis le titre). Ce module refuse de s'installer si l'un
    manque, sous un nom cherchable, et ce refus est rattrapé : la page concatène
    tous ses modules dans un seul `<script>`. */
 (function(root){
@@ -92,6 +93,12 @@
     busyAttribute:'data-bd-busy',
     kindAttribute:'data-bd-kind',
     presenceAttribute:'data-bd-presence',
+    /* Le sélecteur plein écran : l'écran montré (`browse`, `kind`, `name`), le retour,
+       l'orbe « Nouveau Board » et les orbes du type à la création. */
+    screenAttribute:'data-bd-screen',
+    backId:'boardsBack',
+    newBoardId:'boardsNewBoard',
+    createKindPickId:'boardsCreateKindPick',
   });
 
   /* Borne du titre : celle du contrat (`docs/boards.md` › Values › Board). */
@@ -596,6 +603,7 @@
     rename:'M4 20h4L19 9l-4-4L4 16v4ZM13.5 6.5l4 4',
     archive:'M4 5h16v4H4ZM6 9v10h12V9M10 13h4',
     close:'M6 6l12 12M18 6 6 18',
+    back:'M15 5l-7 7 7 7',
     plus:'M12 5v14M5 12h14',
     session:'M4 5h16v11H9l-5 4V5ZM12 8v5M9.5 10.5h5',
     /* « Inspecter » : une flèche « ouvrir ailleurs », pas une loupe (lue « chercher »). */
@@ -755,106 +763,176 @@ ${H} .bd-wait::after,${P} .bd-wait::after{content:'';position:absolute;top:0;bot
   border-radius:2px;background:${ACCENT};animation:bdSweep 1.25s ease-in-out infinite}
 @keyframes bdSweep{from{transform:translateX(-115%)}to{transform:translateX(260%)}}
 
-${P}{width:min(372px,calc(100vw - 24px));max-height:calc(100vh - 140px);display:flex;flex-direction:column;
-  border:1px solid ${LINE};border-radius:12px;background:var(--panel,rgba(6,12,18,.94));color:${INK};
-  font:12px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;
-  box-shadow:0 -18px 44px rgba(0,0,0,.52);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);
-  animation:bdPop .16s cubic-bezier(.16,1,.3,1)}
-/* Le panneau s'ouvre **vers le haut**, au-dessus de la carte du bas-gauche. */
-@keyframes bdPop{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+/* ---- Le sélecteur : un voile plein écran par-dessus la scène (refonte du sélecteur de Board).
+   L'écran de derrière reste deviné, flouté et assombri ; au centre, un seul écran à la fois :
+   la grille des Boards (un orbe par Board), ou la création en deux temps (le type, puis le titre). */
+${P}{position:fixed;inset:0;display:flex;overflow:hidden auto;overscroll-behavior:contain;
+  color:${INK};font:13px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;
+  background:radial-gradient(ellipse 70% 60% at 50% 46%,rgba(4,13,19,.50),rgba(1,3,6,.80));
+  -webkit-backdrop-filter:blur(18px) saturate(.7);backdrop-filter:blur(18px) saturate(.7);
+  animation:bdVeil .32s cubic-bezier(.16,1,.3,1)}
+${P}[hidden]{display:none}
+@keyframes bdVeil{from{opacity:0;-webkit-backdrop-filter:blur(0) saturate(1);backdrop-filter:blur(0) saturate(1)}}
 ${P}:focus{outline:none}
-${P} .bd-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 12px 8px 14px}
-${P} h2{margin:0;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:${INK}}
-${P} .bd-x{display:grid;place-items:center;width:28px;height:28px;border:1px solid transparent;border-radius:7px;
-  background:none;color:${MUTED};cursor:pointer}
-${P} .bd-x:hover{color:${INK};border-color:${LINE}}
-${P} button:focus-visible,${P} input:focus-visible{outline:2px solid ${ACCENT};outline-offset:2px}
-${P} .bd-note{margin:0 12px 8px;padding:7px 9px;border-radius:8px;font-size:11px;line-height:1.5;
-  border:1px solid ${LINE};color:${MUTED};background:rgba(6,12,18,.5);overflow-wrap:anywhere}
-${P} .bd-note[data-tone=bad]{color:#ffb3bd;border-color:color-mix(in srgb,${DANGER} 38%,transparent);background:rgba(35,7,12,.5)}
-${P} .bd-note[data-tone=wait]{color:${ACCENT};border-color:color-mix(in srgb,${ACCENT} 32%,transparent);background:rgba(6,26,33,.5)}
-${P} .bd-note[data-tone=warn]{color:${WARN};border-color:color-mix(in srgb,${WARN} 34%,transparent);background:rgba(38,23,5,.45)}
-${P} .bd-note small{display:block;margin-top:3px;font-size:10px;color:${MUTED}}
-${P} .bd-list{list-style:none;margin:0;padding:2px 8px 8px;display:grid;gap:4px;overflow-y:auto;overscroll-behavior:contain;min-height:0}
-${P} .bd-empty{padding:14px 6px;color:${MUTED};font-size:11px;text-align:center}
-${P} .bd-row{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:2px;align-items:center;
-  border:1px solid transparent;border-radius:9px;transition:background .14s ease,border-color .14s ease}
-${P} .bd-row[data-archived=true]{grid-template-columns:minmax(0,1fr) auto}
-${P} .bd-text{display:grid;gap:3px;min-width:0}
-${P} .bd-line{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0}
-${P} .bd-meta{display:flex;align-items:center;gap:7px;min-width:0;font-size:10.5px;color:${MUTED};white-space:nowrap;overflow:hidden}
-${P} .bd-meta span:last-child{overflow:hidden;text-overflow:ellipsis}
-${P} .bd-kind{flex:0 0 auto;padding:1px 6px;border:1px solid ${LINE};border-radius:999px;font-size:9.5px;
-  letter-spacing:.08em;text-transform:uppercase;color:${MUTED}}
-/* Type : ton neutre, plus lisible que « Assistant » mais jamais l'accent
-   cyan, réservé au Board actif (QA S08, critique HV-WS-UI-002). */
-${P} .bd-kind:not([data-kind=assistant]){color:color-mix(in srgb,${INK} 82%,transparent);
-  border-color:color-mix(in srgb,${INK} 22%,transparent);background:color-mix(in srgb,${INK} 5%,transparent)}
-${P} .bd-still{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center;min-width:0;
-  padding:9px 8px 9px 10px;color:${MUTED}}
-${P} .bd-row[data-archived=true] .bd-dot{opacity:.45}
-${P} .bd-row[data-archived=true] .bd-name{color:color-mix(in srgb,${INK} 72%,transparent)}
-${P} .bd-filter{display:grid;grid-template-columns:1fr 1fr;gap:3px;margin:0 12px 8px;padding:3px;
-  border:1px solid ${LINE};border-radius:9px}
-${P} .bd-filter button{display:flex;align-items:center;justify-content:center;gap:7px;padding:6px 8px;border:0;border-radius:6px;
-  background:none;color:${MUTED};font:inherit;font-size:11px;cursor:pointer;transition:background .14s ease,color .14s ease}
+${P} .bd-stage{box-sizing:border-box;width:100%;min-height:100%;margin:auto;padding:clamp(56px,10vh,112px) 24px 48px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(28px,5vh,48px);
+  animation:bdRise .42s cubic-bezier(.16,1,.3,1)}
+@keyframes bdRise{from{opacity:0;transform:translateY(14px) scale(.985)}}
+${P} .bd-screen{display:contents}
+${P} .bd-screen[hidden]{display:none}
+${P} .bd-swap{animation:bdSwap .24s cubic-bezier(.16,1,.3,1)}
+@keyframes bdSwap{from{opacity:0;transform:translateY(8px)}}
+/* Fermer : en haut à droite de l'écran, toujours au même endroit. */
+${P} .bd-x{position:fixed;top:22px;right:24px;display:grid;place-items:center;width:44px;height:44px;
+  border:1px solid color-mix(in srgb,${INK} 16%,transparent);border-radius:50%;background:rgba(4,10,15,.5);
+  color:${MUTED};cursor:pointer;transition:color .16s ease,border-color .16s ease}
+${P} .bd-x:hover{color:${INK};border-color:color-mix(in srgb,${INK} 40%,transparent)}
+/* Retour : en haut à gauche, seulement hors de la grille. */
+${P} .bd-back{position:fixed;top:22px;left:24px;display:inline-flex;align-items:center;gap:10px;height:44px;
+  padding:0 18px 0 12px;border:1px solid color-mix(in srgb,${INK} 16%,transparent);border-radius:22px;
+  background:rgba(4,10,15,.5);color:${MUTED};font:inherit;font-size:12px;letter-spacing:.08em;cursor:pointer;
+  transition:color .16s ease,border-color .16s ease}
+${P} .bd-back:hover{color:${INK};border-color:color-mix(in srgb,${INK} 40%,transparent)}
+${P} .bd-back[hidden]{display:none}
+${P} button:focus-visible,${P} input:focus-visible,${P} select:focus-visible{outline:2px solid ${ACCENT};outline-offset:3px}
+${P} h2{margin:0;font-size:clamp(26px,3.4vw,40px);font-weight:600;letter-spacing:.06em;color:${INK};text-align:center;text-wrap:balance}
+${P} .bd-note{width:min(560px,100%);margin:0;padding:10px 14px;border-radius:12px;font-size:12px;line-height:1.5;text-align:center;
+  border:1px solid ${LINE};color:${MUTED};background:rgba(6,12,18,.6);overflow-wrap:anywhere}
+${P} .bd-note[hidden]{display:none}
+${P} .bd-note[data-tone=bad]{color:#ffb3bd;border-color:color-mix(in srgb,${DANGER} 38%,transparent);background:rgba(35,7,12,.6)}
+${P} .bd-note[data-tone=wait]{color:${ACCENT};border-color:color-mix(in srgb,${ACCENT} 32%,transparent);background:rgba(6,26,33,.6)}
+${P} .bd-note[data-tone=warn]{color:${WARN};border-color:color-mix(in srgb,${WARN} 34%,transparent);background:rgba(38,23,5,.55)}
+${P} .bd-note small{display:block;margin-top:3px;font-size:11px;color:${MUTED}}
+
+/* En service / Archivés : deux mots sous le titre, pas un panneau d'onglets. */
+${P} .bd-filter{display:flex;gap:6px;margin-top:-16px;padding:4px;border-radius:999px;
+  border:1px solid color-mix(in srgb,${INK} 10%,transparent)}
+${P} .bd-filter button{display:flex;align-items:center;gap:8px;padding:7px 16px;border:0;border-radius:999px;
+  background:none;color:${MUTED};font:inherit;font-size:12px;letter-spacing:.06em;cursor:pointer;transition:background .16s ease,color .16s ease}
 ${P} .bd-filter button:hover{color:${INK}}
-${P} .bd-filter button[aria-pressed=true]{background:color-mix(in srgb,${ACCENT} 12%,transparent);color:${ACCENT}}
-${P} .bd-count{font-size:10px;opacity:.8}
-${P} .bd-hint{margin:0 14px 6px;font-size:10.5px;line-height:1.45;color:${MUTED}}
+${P} .bd-filter button[aria-pressed=true]{background:color-mix(in srgb,${INK} 9%,transparent);color:${INK}}
+${P} .bd-count{font-size:11px;opacity:.6}
+${P} .bd-hint{margin:-12px 0 0;max-width:46ch;font-size:12px;line-height:1.5;color:${MUTED};text-align:center}
 ${P} .bd-hint[hidden]{display:none}
-${P} .bd-row:hover{background:rgba(110,231,255,.045)}
-${P} .bd-row[data-active=true]{border-color:color-mix(in srgb,${ACCENT} 42%,transparent);background:rgba(110,231,255,.07)}
-${P} .bd-row[${DOM.busyAttribute}=true] .bd-wait{display:block}
-${P} .bd-pick{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center;min-width:0;
-  padding:9px 8px 9px 10px;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;border-radius:8px}
-${P} .bd-dot{width:10px;height:10px;border-radius:50%;border:1.5px solid color-mix(in srgb,${MUTED} 80%,transparent)}
-${P} .bd-row[data-active=true] .bd-dot{border-color:${ACCENT};background:${ACCENT};
-  box-shadow:0 0 0 3px color-mix(in srgb,${ACCENT} 18%,transparent)}
-${P} .bd-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}
-${P} .bd-row[data-active=true] .bd-name{color:${ACCENT};font-weight:600}
-${P} .bd-state{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:${MUTED};white-space:nowrap}
+
+/* La grille : un orbe par Board, grand, et son titre. */
+${P} .bd-list{list-style:none;margin:0;padding:0;width:min(1040px,100%);
+  display:flex;flex-wrap:wrap;justify-content:center;gap:clamp(18px,3vw,36px) clamp(12px,2.4vw,28px)}
+${P} .bd-empty{padding:28px;color:${MUTED};font-size:13px;text-align:center}
+${P} .bd-row,${P} .bd-new{position:relative;width:184px;--bd-k:${ACCENT};--bd-orb:104px;list-style:none}
+${P} .bd-row[data-kind=presentation]{--bd-k:${VIOLET}}
+${P} .bd-row[data-kind=meeting]{--bd-k:${WARN}}
+${P} .bd-pick,${P} .bd-still,${P} .bd-newpick{box-sizing:border-box;width:100%;display:flex;flex-direction:column;align-items:center;gap:14px;
+  position:relative;padding:18px 10px 16px;border:0;border-radius:20px;background:none;color:inherit;font:inherit;text-align:center;cursor:pointer;
+  transition:background .2s ease}
+${P} .bd-still{cursor:default}
+${P} .bd-pick:hover,${P} .bd-newpick:hover{background:color-mix(in srgb,${INK} 4%,transparent)}
+${P} .bd-orb{position:relative;display:grid;place-items:center;width:var(--bd-orb,104px);height:var(--bd-orb,104px);border-radius:50%;flex:none;
+  color:var(--bd-k);border:1.5px solid color-mix(in srgb,var(--bd-k) 38%,transparent);
+  background:radial-gradient(circle at 50% 38%,color-mix(in srgb,var(--bd-k) 14%,transparent),rgba(2,6,9,.7) 72%);
+  box-shadow:0 12px 30px rgba(0,0,0,.45);
+  transition:transform .28s cubic-bezier(.16,1,.3,1),border-color .2s ease,box-shadow .28s ease}
+${P} .bd-orb svg{width:42px;height:42px;stroke-width:1.5}
+${P} .bd-pick:hover .bd-orb,${P} .bd-newpick:hover .bd-orb{transform:translateY(-4px);border-color:color-mix(in srgb,var(--bd-k) 75%,transparent)}
+/* Le Board actif : l'orbe plein, un anneau de plus autour. */
+${P} .bd-row[data-active=true] .bd-orb{border-color:var(--bd-k);
+  background:radial-gradient(circle at 50% 38%,color-mix(in srgb,var(--bd-k) 32%,transparent),rgba(2,8,12,.8) 74%);
+  box-shadow:0 0 0 7px rgba(2,6,9,.6),0 0 0 8.5px color-mix(in srgb,var(--bd-k) 45%,transparent),0 14px 38px rgba(0,0,0,.5)}
+${P} .bd-row[data-archived=true] .bd-orb{filter:grayscale(.8);opacity:.5;border-style:dashed}
+${P} .bd-text{display:grid;justify-items:center;gap:6px;min-width:0;width:100%}
+${P} .bd-line{display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0;width:100%}
+${P} .bd-name{max-width:100%;font-size:15px;font-weight:600;letter-spacing:.02em;color:${INK};
+  overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+${P} .bd-row[data-archived=true] .bd-name{color:color-mix(in srgb,${INK} 64%,transparent)}
+${P} .bd-row[data-archived=true] .bd-kind{color:${MUTED}}
+/* L'état (Actif, En fond, Bascule…) se pose sur le bas de l'orbe : les titres restent alignés. */
+${P} .bd-state{position:absolute;top:calc(18px + var(--bd-orb,104px) - 10px);left:50%;transform:translateX(-50%);
+  padding:2px 9px;border-radius:999px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--bd-k);background:#061016;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--bd-k) 45%,transparent);white-space:nowrap}
 ${P} .bd-state:empty{display:none}
-${P} .bd-row[data-active=true] .bd-state{color:${ACCENT}}
-${P} .bd-state[data-tone=working]{color:${OK}}
-${P} .bd-state[data-tone=wait]{color:${ACCENT}}
-${P} .bd-icon{display:grid;place-items:center;width:30px;height:30px;border:1px solid transparent;border-radius:7px;
-  background:none;color:${MUTED};cursor:pointer}
+${P} .bd-state[data-tone=working]{color:${OK};box-shadow:inset 0 0 0 1px color-mix(in srgb,${OK} 45%,transparent)}
+${P} .bd-state[data-tone=wait]{color:${ACCENT};box-shadow:inset 0 0 0 1px color-mix(in srgb,${ACCENT} 45%,transparent)}
+${P} .bd-row[data-archived=true] .bd-state{color:${MUTED};box-shadow:inset 0 0 0 1px color-mix(in srgb,${MUTED} 35%,transparent)}
+${P} .bd-meta{display:grid;justify-items:center;gap:3px;max-width:100%;font-size:11px;color:${MUTED}}
+${P} .bd-kind{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:color-mix(in srgb,var(--bd-k) 80%,${INK})}
+/* Gérer un Board (renommer, inspecter, archiver) : trois petites icônes qui n'apparaissent qu'au survol
+   ou au clavier ; la grille reste faite d'orbes et de titres. */
+${P} .bd-tools{position:absolute;top:4px;right:4px;display:flex;gap:2px;opacity:0;transition:opacity .16s ease}
+${P} .bd-row:hover .bd-tools,${P} .bd-row:focus-within .bd-tools{opacity:1}
+@media(hover:none){${P} .bd-tools{opacity:1}}
+${P} .bd-icon{display:grid;place-items:center;width:30px;height:30px;border:1px solid transparent;border-radius:50%;
+  background:rgba(4,10,15,.7);color:${MUTED};cursor:pointer}
 ${P} .bd-icon:hover:not([aria-disabled=true]){color:${ACCENT};border-color:${LINE}}
 ${P} .bd-icon[${DOM.actionAttribute}=archive]:hover:not([aria-disabled=true]){color:${DANGER}}
 ${P} [aria-disabled=true]{opacity:.42;cursor:not-allowed}
-/* Icône refusée (archiver le Board actif) : visiblement éteinte, pas seulement
-   atténuée (QA 06/07, point 9). */
-${P} .bd-icon[aria-disabled=true]{opacity:.26;filter:grayscale(1);border-style:dashed;border-color:${LINE}}
-${P} .bd-pick[aria-disabled=true]{opacity:.6;cursor:progress}
-${P} .bd-edit{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px;padding:6px}
-${P} .bd-edit>.bd-field{grid-column:1/-1}
-${P} .bd-select{min-width:0;padding:7px 8px;border:1px solid ${LINE};border-radius:7px;background:#071015;
-  color:${INK};font:inherit;font-size:12px;cursor:pointer}
-${P} .bd-select:focus-visible{outline:2px solid ${ACCENT};outline-offset:2px}
-${P} .bd-rowerr{grid-column:1/-1;margin:0 8px 6px;font-size:10.5px;color:#ffb3bd}
+${P} .bd-icon[aria-disabled=true]{opacity:.3;filter:grayscale(1)}
+${P} .bd-pick[aria-disabled=true]{opacity:.55;cursor:progress}
+/* Nouveau Board : le dernier orbe de la grille, en pointillés. */
+${P} .bd-new{--bd-k:${INK}}
+${P} .bd-new .bd-orb{border-style:dashed;border-color:color-mix(in srgb,${INK} 30%,transparent);background:rgba(2,6,9,.4);color:${MUTED};box-shadow:none}
+${P} .bd-newpick:hover .bd-orb{color:${INK}}
+${P} .bd-new .bd-name{color:${MUTED};font-weight:500}
+${P} .bd-newpick:hover .bd-name{color:${INK}}
+${P} .bd-new[hidden]{display:none}
+/* Renommer, sur place : le champ prend la carte. */
+${P} .bd-edit{display:grid;gap:8px;padding:14px 6px}
+${P} .bd-edit .bd-act{justify-self:stretch}
+${P} .bd-rowerr{margin:0 6px 6px;font-size:11px;color:#ffb3bd;text-align:center}
 ${P} .bd-rowerr:empty{display:none}
-${P} .bd-field{min-width:0;width:100%;padding:7px 9px;border:1px solid ${LINE};border-radius:7px;background:#071015;
-  color:${INK};font:inherit;font-size:12.5px}
+${P} .bd-field{box-sizing:border-box;min-width:0;width:100%;padding:9px 11px;border:1px solid ${LINE};border-radius:10px;background:#071015;
+  color:${INK};font:inherit;font-size:13px}
 ${P} .bd-field:focus{border-color:color-mix(in srgb,${ACCENT} 60%,transparent)}
 ${P} .bd-field[aria-invalid=true]{border-color:color-mix(in srgb,${DANGER} 60%,transparent)}
-${P} .bd-act{padding:7px 11px;border:1px solid ${LINE};border-radius:7px;background:#0b141a;color:${INK};
-  font:inherit;font-size:11.5px;cursor:pointer;white-space:nowrap}
+${P} .bd-act{display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:9px 16px;border:1px solid ${LINE};border-radius:999px;
+  background:rgba(8,16,22,.8);color:${INK};font:inherit;font-size:12px;letter-spacing:.04em;cursor:pointer;white-space:nowrap;
+  transition:border-color .16s ease,color .16s ease}
 ${P} .bd-act:hover:not([aria-disabled=true]){border-color:${ACCENT}}
 ${P} .bd-act.primary{border-color:color-mix(in srgb,${ACCENT} 55%,transparent);color:${ACCENT}}
-${P} .bd-create{padding:10px 14px 12px;border-top:1px solid ${LINE}}
-${P} .bd-label{display:block;margin-bottom:6px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:${MUTED}}
-${P} .bd-create-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px}
-${P} .bd-fielderr{margin:6px 0 0;font-size:10.5px;color:#ffb3bd}
-${P} .bd-kindhint{margin:6px 0 0;font-size:10.5px;line-height:1.45;color:${WARN}}
-${P} .bd-kindhint[hidden]{display:none}
-${P} .bd-fielderr:empty{display:none}
-${P} .bd-foot{padding:10px 14px 13px;border-top:1px solid ${LINE};display:grid;gap:7px}
-${P} .bd-session{font-size:10px;letter-spacing:.06em;color:${MUTED}}
+${P} .bd-wait{left:30%;right:30%;bottom:0}
+${P} .bd-row[${DOM.busyAttribute}=true] .bd-wait{display:block}
+/* Pied de la grille : la session en cours, discrète. */
+${P} .bd-foot{display:flex;flex-direction:column;align-items:center;gap:10px}
+${P} .bd-session{font-size:11px;letter-spacing:.06em;color:${MUTED}}
 ${P} .bd-session:empty{display:none}
-${P} .bd-foot .bd-act{display:inline-flex;align-items:center;gap:8px;justify-self:start}
-${P} .bd-foot p{margin:0;font-size:10.5px;line-height:1.5;color:${MUTED}}
-${P} .bd-foot p[data-tone=warn]{color:${WARN}}
+${P} .bd-foot .bd-act{background:none;border-color:color-mix(in srgb,${INK} 14%,transparent);color:${MUTED}}
+${P} .bd-foot .bd-act:hover:not([aria-disabled=true]){color:${INK};border-color:color-mix(in srgb,${INK} 40%,transparent)}
+${P} .bd-foot p{margin:0;max-width:46ch;font-size:11px;line-height:1.5;color:${WARN};text-align:center}
+${P} .bd-foot p:not([data-tone=warn]){position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+
+/* Création, premier temps : trois grands orbes, un par type. */
+${P} .bd-kinds{display:flex;flex-wrap:wrap;justify-content:center;gap:clamp(16px,4vw,48px)}
+${P} .bd-kindpick{--bd-k:${ACCENT};display:flex;flex-direction:column;align-items:center;gap:16px;width:200px;padding:20px 10px;
+  border:0;border-radius:24px;background:none;color:${INK};font:inherit;cursor:pointer;transition:background .2s ease}
+${P} .bd-kindpick[data-kind=presentation]{--bd-k:${VIOLET}}
+${P} .bd-kindpick[data-kind=meeting]{--bd-k:${WARN}}
+${P} .bd-kindpick:hover{background:color-mix(in srgb,${INK} 4%,transparent)}
+${P} .bd-kindpick .bd-orb{--bd-orb:132px}
+${P} .bd-kindpick .bd-orb svg{width:54px;height:54px}
+${P} .bd-kindpick:hover .bd-orb{transform:translateY(-5px);border-color:var(--bd-k)}
+${P} .bd-kindpick[aria-checked=true] .bd-orb{border-color:var(--bd-k);
+  box-shadow:0 0 0 7px rgba(2,6,9,.6),0 0 0 8.5px color-mix(in srgb,var(--bd-k) 45%,transparent),0 14px 38px rgba(0,0,0,.5)}
+${P} .bd-kindname{font-size:17px;font-weight:600;letter-spacing:.03em}
+${P} .bd-kindtag{margin-top:-8px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:${WARN}}
+/* Création, second temps : l'orbe du type choisi, un grand champ, un bouton. */
+${P} .bd-named{display:flex;flex-direction:column;align-items:center;gap:26px;width:min(560px,100%)}
+${P} .bd-named .bd-orb{--bd-k:${ACCENT};--bd-orb:116px}
+${P} .bd-named .bd-orb svg{width:48px;height:48px}
+${P} .bd-named[data-kind=presentation] .bd-orb{--bd-k:${VIOLET}}
+${P} .bd-named[data-kind=meeting] .bd-orb{--bd-k:${WARN}}
+${P} .bd-bigfield{box-sizing:border-box;width:100%;padding:10px 4px 12px;border:0;border-bottom:1.5px solid color-mix(in srgb,${INK} 24%,transparent);
+  border-radius:0;background:none;color:${INK};font:inherit;font-size:clamp(20px,2.6vw,28px);text-align:center;letter-spacing:.02em;
+  transition:border-color .2s ease}
+${P} .bd-bigfield::placeholder{color:color-mix(in srgb,${MUTED} 80%,transparent)}
+${P} .bd-bigfield:focus{outline:none;border-bottom-color:${ACCENT}}
+${P} .bd-bigfield:focus-visible{outline:none}
+${P} .bd-bigfield[aria-invalid=true]{border-bottom-color:${DANGER}}
+${P} .bd-go{padding:13px 34px;font-size:14px;letter-spacing:.08em}
+${P} .bd-fielderr{margin:-12px 0 0;font-size:12px;color:#ffb3bd;text-align:center}
+${P} .bd-fielderr:empty{display:none}
+${P} .bd-kindhint{margin:-12px 0 0;max-width:46ch;font-size:12px;line-height:1.5;color:${WARN};text-align:center}
+${P} .bd-kindhint[hidden]{display:none}
+${P} .bd-select{display:none}
+${P} .bd-orbslot{display:contents}
 ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 /* Le centre d'état ne réserve plus la largeur de la carte sous 820 px : elle se
    hisse au-dessus de sa rangée, avant le resserrement de 700 px (voir \`GEO\`). */
@@ -869,16 +947,23 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
   ${H}{left:${GEO.narrowLeft}px;--bd-lift:${GEO.narrowLift}px}
   ${H} .bd-btn{min-width:150px;max-width:calc(100vw - ${GEO.narrowLeft + 18}px)}
 }
-/* Écran bas : l'aide permanente du pied se replie (toujours lue par
-   aria-describedby) pour laisser des lignes visibles. */
+/* Petit écran : des orbes plus petits, deux par rangée sur un téléphone. */
+@media(max-width:700px){
+  ${P} .bd-stage{padding:84px 16px 32px}
+  ${P} .bd-x{top:14px;right:14px}
+  ${P} .bd-back{top:14px;left:14px}
+  ${P} .bd-row,${P} .bd-new{width:min(150px,calc(50% - 8px));--bd-orb:80px}
+  ${P} .bd-orb svg{width:34px;height:34px}
+  ${P} .bd-kindpick{width:min(150px,calc(50% - 8px))}
+  ${P} .bd-kindpick .bd-orb{--bd-orb:96px}
+}
 @media(max-height:600px){
-  ${P} .bd-foot p{display:none}
-  ${P} .bd-foot{padding-top:8px;padding-bottom:9px}
+  ${P} .bd-stage{padding-top:72px;gap:22px}
 }
 @media(prefers-reduced-motion:reduce){
   ${H} .bd-wait::after,${P} .bd-wait::after{animation:none;width:100%;opacity:.6}
-  ${P}{animation:none}
-  ${H} .bd-btn,${H} .bd-chev,${P} .bd-row,${P} .bd-filter button{transition:none}
+  ${P},${P} .bd-stage,${P} .bd-swap{animation:none}
+  ${H} .bd-btn,${H} .bd-chev,${P} .bd-orb,${P} .bd-tools,${P} .bd-filter button{transition:none}
   /* Même spécificité que la règle qui anime, sinon elle perdrait la cascade. */
   ${H} .bd-pres[${DOM.presenceAttribute}=listening] .bd-pres-dot{animation:none}
 }`;
@@ -904,7 +989,6 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
     const refresh=typeof deps.refresh==='function'?deps.refresh:null;
     const toast=typeof deps.toast==='function'?deps.toast:null;
     const askConfirm=typeof deps.confirm==='function'?deps.confirm:null;
-    const place=typeof deps.place==='function'?deps.place:null;
     /* Ouvrir le gestionnaire profond sur un Board (Slice 08). */
     const inspect=typeof deps.inspect==='function'?deps.inspect:null;
     /* Une lecture tient le Studio par-dessus la page : vrai tant que les couches de la page
@@ -968,16 +1052,19 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
     presenceAnnounce.setAttribute('role','status');presenceAnnounce.setAttribute('aria-live','polite');
     host.appendChild(presenceAnnounce);
 
-    /* ---- le panneau */
+    /* ---- le sélecteur : un voile plein écran, un seul écran à la fois (`screen`) :
+       `browse` (la grille des Boards), `kind` puis `name` (la création en deux temps). */
     panel.hidden=true;
     panel.setAttribute('role','dialog');
+    panel.setAttribute('aria-modal','true');
     panel.setAttribute('aria-labelledby',DOM.headingId);
     panel.setAttribute('tabindex','-1');
-    const head=el('div','bd-head');
+    const stage=el('div','bd-stage');
     const heading=el('h2','','Boards');heading.id=DOM.headingId;
     const closer=el('button','bd-x');closer.id=DOM.closeId;closer.setAttribute('type','button');
-    closer.setAttribute('aria-label','Fermer les Boards (Échap)');closer.appendChild(icon(doc,'close',15));
-    head.appendChild(heading);head.appendChild(closer);
+    closer.setAttribute('aria-label','Fermer les Boards (Échap)');closer.appendChild(icon(doc,'close',20));
+    const back=el('button','bd-back');back.id=DOM.backId;back.setAttribute('type','button');back.hidden=true;
+    back.appendChild(icon(doc,'back',18));const backText=el('span','','Boards');back.appendChild(backText);
     const note=el('p','bd-note');note.id=DOM.noteId;note.hidden=true;note.setAttribute('role','status');
     const noteText=el('span','');const noteDetail=el('small','');
     note.appendChild(noteText);note.appendChild(noteDetail);
@@ -1015,24 +1102,67 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       return select;
     };
 
-    const create=el('div','bd-create');
-    const createLabel=el('label','bd-label','Nouveau Board');createLabel.setAttribute('for',DOM.createInputId);
-    const createRow=el('div','bd-create-row');
-    const createInput=el('input','bd-field');createInput.id=DOM.createInputId;
+    /* Un orbe : le grand rond de la grille, l'icône du type au centre. */
+    const orbOf=(kind,size)=>{
+      const orb=el('span','bd-orb');orb.setAttribute('aria-hidden','true');
+      orb.appendChild(icon(doc,kind&&ICON[kind]?kind:'board',size||42));
+      return orb;
+    };
+
+    /* « Nouveau Board » : le dernier orbe de la grille (en service seulement). Créé une fois,
+       replacé en fin de liste à chaque peinture. */
+    const newTile=el('li','bd-new');
+    const newPick=el('button','bd-newpick');newPick.id=DOM.newBoardId;newPick.setAttribute('type','button');
+    newPick.appendChild(orbOf('plus',40));
+    newPick.appendChild(el('span','bd-name','Nouveau Board'));
+    newTile.appendChild(newPick);
+
+    /* La création, premier temps : le type, en trois grands orbes (radio). Le sélecteur
+       natif reste la valeur du formulaire, caché : les orbes l'écrivent. */
+    const kindScreen=el('div','bd-screen');kindScreen.setAttribute(DOM.screenAttribute,'kind');kindScreen.hidden=true;
+    const kinds=el('div','bd-kinds');kinds.id=DOM.createKindPickId;
+    kinds.setAttribute('role','radiogroup');kinds.setAttribute('aria-label','Type du nouveau Board (fixé à la création)');
+    const kindPicks={};
+    for(const kind of Object.keys(BOARD_KINDS)){
+      const b=el('button','bd-kindpick');b.setAttribute('type','button');b.setAttribute('role','radio');
+      b.setAttribute('data-kind',kind);b.setAttribute('aria-checked','false');
+      b.appendChild(orbOf(kind,54));
+      b.appendChild(el('span','bd-kindname',BOARD_KINDS[kind]));
+      if(PLANNED[kind]){b.appendChild(el('span','bd-kindtag',PLANNED[kind].tag));b.setAttribute('aria-description',PLANNED[kind].said)}
+      b.addEventListener('click',()=>{chooseKind(kind)});
+      kinds.appendChild(b);kindPicks[kind]=b;
+    }
+    kindScreen.appendChild(kinds);
+
+    /* La création, second temps : l'orbe du type choisi, le titre, Créer. */
+    const nameScreen=el('div','bd-screen');nameScreen.setAttribute(DOM.screenAttribute,'name');nameScreen.hidden=true;
+    const create=el('div','bd-named');
+    const nameOrb=el('span','bd-orbslot');
+    const createLabel=el('label','bd-sr','Titre du nouveau Board');createLabel.setAttribute('for',DOM.createInputId);
+    const createInput=el('input','bd-bigfield');createInput.id=DOM.createInputId;
     createInput.setAttribute('type','text');createInput.setAttribute('autocomplete','off');
     createInput.setAttribute('placeholder','Titre du Board');createInput.setAttribute('maxlength',String(TITLE_MAX*2));
     createInput.setAttribute('aria-describedby',DOM.createErrorId);
     const createKind=kindSelect(DOM.createKindId,'Type du nouveau Board (fixé à la création)',DEFAULT_KIND);
-    const createButton=el('button','bd-act primary','Créer');createButton.id=DOM.createButtonId;
+    createKind.hidden=true;
+    const createButton=el('button','bd-act primary bd-go','Créer le Board');createButton.id=DOM.createButtonId;
     createButton.setAttribute('type','button');
-    createRow.appendChild(createInput);createRow.appendChild(createKind);createRow.appendChild(createButton);
     const createError=el('p','bd-fielderr');createError.id=DOM.createErrorId;createError.setAttribute('role','alert');
     const createKindHint=el('p','bd-kindhint');createKindHint.id=DOM.createKindHintId;createKindHint.hidden=true;
     createKind.setAttribute('aria-describedby',DOM.createKindHintId);
-    const paintKindHint=()=>{const planned=PLANNED[text(createKind.value)];
-      createKindHint.textContent=planned?planned.said:'';createKindHint.hidden=!planned};
+    let nameOrbKind=null;
+    const paintKindHint=()=>{
+      const kind=text(createKind.value)||DEFAULT_KIND,planned=PLANNED[kind];
+      createKindHint.textContent=planned?planned.said:'';createKindHint.hidden=!planned;
+      create.setAttribute('data-kind',kind);
+      for(const k of Object.keys(kindPicks))kindPicks[k].setAttribute('aria-checked',k===kind?'true':'false');
+      if(nameOrbKind!==kind){nameOrbKind=kind;clear(nameOrb);nameOrb.appendChild(orbOf(kind,48))}
+      if(screen==='name')heading.textContent=headingOf('name');
+    };
     createKind.addEventListener('change',paintKindHint);
-    create.appendChild(createLabel);create.appendChild(createRow);create.appendChild(createKindHint);create.appendChild(createError);
+    create.appendChild(nameOrb);create.appendChild(createLabel);create.appendChild(createInput);create.appendChild(createKind);
+    create.appendChild(createKindHint);create.appendChild(createError);create.appendChild(createButton);
+    nameScreen.appendChild(create);
 
     const foot=el('div','bd-foot');
     const sessionLine=el('div','bd-session');sessionLine.id=DOM.sessionLineId;
@@ -1040,12 +1170,60 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
     newSession.appendChild(icon(doc,'session',15));newSession.appendChild(el('span','','Nouvelle session'));
     const newSessionHint=el('p','',NEW_SESSION_HINT);newSessionHint.id=`${DOM.newSessionId}Hint`;
     newSession.setAttribute('aria-describedby',newSessionHint.id);
-    foot.appendChild(sessionLine);foot.appendChild(newSession);foot.appendChild(newSessionHint);
+    foot.appendChild(newSession);foot.appendChild(sessionLine);foot.appendChild(newSessionHint);
+
+    /* La grille et ce qui l'entoure. */
+    const browseScreen=el('div','bd-screen');browseScreen.setAttribute(DOM.screenAttribute,'browse');
+    browseScreen.appendChild(filter);browseScreen.appendChild(archivedHint);browseScreen.appendChild(list);browseScreen.appendChild(foot);
 
     const announce=el('span','bd-sr');announce.id=DOM.announceId;announce.setAttribute('aria-live','polite');
 
-    panel.appendChild(head);panel.appendChild(filter);panel.appendChild(note);panel.appendChild(archivedHint);panel.appendChild(list);
-    panel.appendChild(create);panel.appendChild(foot);panel.appendChild(announce);
+    stage.appendChild(heading);stage.appendChild(note);
+    stage.appendChild(browseScreen);stage.appendChild(kindScreen);stage.appendChild(nameScreen);
+    panel.appendChild(back);panel.appendChild(closer);panel.appendChild(stage);panel.appendChild(announce);
+
+    /* ---------------------------------------------------------- écrans */
+
+    let screen='browse';
+    const headingOf=at=>at==='browse'?'Boards'
+      :at==='name'?`Nouveau Board ${text(BOARD_KINDS[createKind.value]||createKind.value)}`.trim():'Nouveau Board';
+    function go(next,options){
+      const target=next==='kind'||next==='name'?next:'browse';
+      const changed=target!==screen;
+      screen=target;
+      panel.setAttribute(DOM.screenAttribute,screen);
+      browseScreen.hidden=screen!=='browse';kindScreen.hidden=screen!=='kind';nameScreen.hidden=screen!=='name';
+      heading.textContent=headingOf(screen);
+      back.hidden=screen==='browse';
+      backText.textContent=screen==='name'?'Type':'Boards';
+      back.setAttribute('aria-label',screen==='name'?'Revenir au choix du type':'Revenir aux Boards');
+      if(changed){
+        log('info','boards.screen_changed',{screen});
+        /* Ce qui arrive glisse un peu ; l'écran quitté a déjà disparu. */
+        const shown=screen==='browse'?list:screen==='kind'?kinds:create;
+        if(shown.classList&&typeof shown.classList.remove==='function'){
+          shown.classList.remove('bd-swap');void shown.offsetWidth;shown.classList.add('bd-swap')}
+      }
+      if(options&&options.focus===false)return;
+      if(screen==='kind')(kindPicks[text(createKind.value)]||kindPicks[DEFAULT_KIND]).focus();
+      else if(screen==='name')createInput.focus();
+    }
+    function chooseKind(kind){
+      createKind.value=kind;paintKindHint();
+      go('name');
+    }
+    function startCreate(){
+      if(pending)return;
+      createError.textContent='';
+      go('kind');
+    }
+    function goBack(){
+      if(screen==='name')go('kind');
+      else if(screen==='kind'){go('browse',{focus:false});newPick.focus()}
+    }
+    paintKindHint();
+    newPick.addEventListener('click',()=>{startCreate()});
+    back.addEventListener('click',()=>{goBack()});
 
     /* ---------------------------------------------------------- peinture */
 
@@ -1167,7 +1345,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       const signature=signatureOfRows(rows);
       if(!force&&signature===listSignature){paintRowWaits(rows);return rows}
       listSignature=signature;
-      const kept=focusKey();
+      const kept=focusKey(),keptNew=doc.activeElement===newPick;
       clear(list);
       list.setAttribute('aria-label',view==='archived'?'Boards archivés':'Boards en service');
       if(listing===null){
@@ -1177,14 +1355,17 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       }
       for(const row of rows)
         list.appendChild(row.archived?archivedRow(row):row.board_id===editing?editRow(row):pickRow(row));
+      const withNew=listing!==null&&view==='active';
+      if(withNew){list.appendChild(newTile);disable(newPick,!!pending)}
       if(kept){const again=findRowControl(kept.id,kept.action);if(again)again.focus()}
+      else if(keptNew&&withNew)newPick.focus();
       paintRowWaits(rows);
       return rows;
     }
 
     function pickRow(row){
       const li=el('li','bd-row');
-      li.setAttribute(DOM.boardAttribute,row.board_id);
+      li.setAttribute(DOM.boardAttribute,row.board_id);li.setAttribute('data-kind',row.kind);
       li.setAttribute('data-active',row.active?'true':'false');
       li.setAttribute(DOM.busyAttribute,row.pending?'true':'false');
       const pick=el('button','bd-pick');pick.setAttribute('type','button');
@@ -1197,7 +1378,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
         :`Basculer sur ce Board${row.working?' (travail en arrière-plan)':''}`);
       disable(pick,!!pending&&!row.active);
       const state=el('span','bd-state');state.setAttribute('data-role','state');
-      pick.appendChild(dotOf());pick.appendChild(textOf(row,state));
+      pick.appendChild(orbOf(row.kind));pick.appendChild(textOf(row,state));
       pick.addEventListener('click',()=>{switchTo(row.board_id)});
       li.appendChild(pick);
 
@@ -1206,8 +1387,11 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       rename.setAttribute('aria-label',`Renommer ${row.title}`);rename.setAttribute('title','Renommer');
       rename.appendChild(icon(doc,'rename',15));disable(rename,!!pending);
       rename.addEventListener('click',()=>{startEdit(row.board_id)});
-      li.appendChild(rename);
-      li.appendChild(inspectButton(row));
+      /* Gérer : au survol ou au clavier seulement (voir `.bd-tools`). */
+      const tools=el('div','bd-tools');
+      tools.appendChild(rename);
+      tools.appendChild(inspectButton(row));
+      li.appendChild(tools);
 
       const archive=el('button','bd-icon');archive.setAttribute('type','button');
       archive.setAttribute(DOM.boardAttribute,row.board_id);archive.setAttribute(DOM.actionAttribute,'archive');
@@ -1216,12 +1400,10 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       archive.setAttribute('title',archiveReason||'Archiver');
       archive.appendChild(icon(doc,'archive',15));disable(archive,!!archiveReason||!!pending);
       archive.addEventListener('click',()=>{archiveBoard(row.board_id)});
-      li.appendChild(archive);
+      tools.appendChild(archive);
       const wait=el('span','bd-wait');wait.setAttribute('aria-hidden','true');li.appendChild(wait);
       return li;
     }
-
-    const dotOf=()=>{const dot=el('span','bd-dot');dot.setAttribute('aria-hidden','true');return dot};
 
     /* Titre et état sur une ligne, type et dernière ouverture dessous : ce
        qu'on lit pour choisir, sans que l'état ne rogne la date. */
@@ -1261,16 +1443,18 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
        seule l'inspection est offerte. */
     function archivedRow(row){
       const li=el('li','bd-row');
-      li.setAttribute(DOM.boardAttribute,row.board_id);
+      li.setAttribute(DOM.boardAttribute,row.board_id);li.setAttribute('data-kind',row.kind);
       li.setAttribute('data-active','false');li.setAttribute('data-archived','true');
       li.setAttribute(DOM.busyAttribute,'false');
       const still=el('div','bd-still');
       const state=el('span','bd-state','Archivé');state.setAttribute('data-role','state');
-      still.appendChild(dotOf());still.appendChild(textOf(row,state));
+      still.appendChild(orbOf(row.kind));still.appendChild(textOf(row,state));
       li.appendChild(still);
+      const tools=el('div','bd-tools');
       /* Slice 07 (refonte roue/dossier) : le Dossier d'un Board archivé se lit en plein écran, en lecture seule. */
-      if(root.JarvisDossier&&typeof root.JarvisDossier.openBoard==='function')li.appendChild(dossierButton(row));
-      li.appendChild(inspectButton(row));
+      if(root.JarvisDossier&&typeof root.JarvisDossier.openBoard==='function')tools.appendChild(dossierButton(row));
+      tools.appendChild(inspectButton(row));
+      li.appendChild(tools);
       return li;
     }
     function dossierButton(row){
@@ -1291,7 +1475,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
 
     function editRow(row){
       const li=el('li','bd-row');
-      li.setAttribute(DOM.boardAttribute,row.board_id);
+      li.setAttribute(DOM.boardAttribute,row.board_id);li.setAttribute('data-kind',row.kind);
       li.setAttribute('data-active',row.active?'true':'false');
       li.setAttribute(DOM.busyAttribute,row.pending?'true':'false');
       const box=el('div','bd-edit');
@@ -1369,9 +1553,9 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
     function open(){
       if(opened)return;
       opened=true;failure=null;view='active';
+      go('browse',{focus:false});
       panel.hidden=false;
       trigger.setAttribute('aria-expanded','true');
-      if(place)place(panel,trigger);
       paint(true);
       /* Liste déjà connue (réouverture) : le focus va au Board actif tout de
          suite. Sinon il attend sur le panneau et rejoint le Board actif dès que
@@ -1386,6 +1570,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       if(!opened)return;
       opened=false;editing=null;editError='';editDraft=null;
       panel.hidden=true;
+      go('browse',{focus:false});
       trigger.setAttribute('aria-expanded','false');
       if(options&&options.focus)trigger.focus();
       openChanged(false);
@@ -1639,6 +1824,8 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       },answer=>{
         createdId=answer&&isObject(answer.board)?String(answer.board.board_id):null;
         createInput.value='';createError.textContent='';createKind.value=DEFAULT_KIND;paintKindHint();
+        /* Créé : retour à la grille, le nouvel orbe y prend le focus. */
+        go('browse',{focus:false});
         const said=`Board « ${check.value} » créé${kind===DEFAULT_KIND?'':` (${kindOf(kind).label})`}.`;
         announce.textContent=said;
         if(toast)toast({title:said,sub:'Il n’est pas encore ouvert : choisissez-le dans la liste pour y basculer.',kind:'ok'});
@@ -1801,6 +1988,20 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       if(event.key==='ArrowDown'&&!opened){event.preventDefault();open()}
     });
     closer.addEventListener('click',()=>close({focus:true}));
+    /* Le voile lui-même (hors de tout contenu) : un clic ferme, comme Échap. */
+    panel.addEventListener('mousedown',event=>{
+      if(event.target===panel||event.target===stage)close({focus:true});
+    });
+    /* Un voile modal garde le focus : Tab tourne dans ce qui se voit. */
+    function trapTab(event){
+      if(typeof panel.querySelectorAll!=='function')return;
+      const items=[...panel.querySelectorAll('button,input,select,[tabindex]:not([tabindex="-1"])')]
+        .filter(n=>!n.disabled&&n.getClientRects().length);
+      if(!items.length)return;
+      const first=items[0],last=items[items.length-1],at=doc.activeElement;
+      if(event.shiftKey&&(at===first||at===panel||!panel.contains(at))){event.preventDefault();last.focus()}
+      else if(!event.shiftKey&&(at===last||!panel.contains(at))){event.preventDefault();first.focus()}
+    }
     createButton.addEventListener('click',()=>{createBoard()});
     createInput.addEventListener('keydown',event=>{
       if(event.key==='Enter'){event.preventDefault();createBoard()}
@@ -1811,16 +2012,17 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       if(event.key==='Escape'){
         if(event.defaultPrevented)return;
         event.preventDefault();
-        if(editing)cancelEdit();else close({focus:true});
+        if(editing)cancelEdit();else if(screen!=='browse')goBack();else close({focus:true});
         return;
       }
+      if(event.key==='Tab'){trapTab(event);return}
       const at=doc.activeElement;
       if(!at||!at.getAttribute||at.getAttribute(DOM.actionAttribute)!=='switch')return;
       const picks=walk(list).filter(n=>n.getAttribute&&n.getAttribute(DOM.actionAttribute)==='switch');
       const i=picks.indexOf(at);
       let next=-1;
-      if(event.key==='ArrowDown')next=Math.min(picks.length-1,i+1);
-      else if(event.key==='ArrowUp')next=Math.max(0,i-1);
+      if(event.key==='ArrowDown'||event.key==='ArrowRight')next=Math.min(picks.length-1,i+1);
+      else if(event.key==='ArrowUp'||event.key==='ArrowLeft')next=Math.max(0,i-1);
       else if(event.key==='Home')next=0;
       else if(event.key==='End')next=picks.length-1;
       if(next>=0){event.preventDefault();picks[next].focus()}
@@ -1913,22 +2115,6 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       throw Object.assign(
         new Error(`JarvisBoards : l’emplacement #${!host?DOM.hostId:DOM.panelId} manque dans control_center.html`),
         {code:'boards_host_missing'});
-    /* Le panneau s'ouvre **au-dessus** de la carte (bas-gauche dans les deux
-       thèmes ; colonne de droite pendant une lecture dans Variantes), aligné
-       sur son bord, sans sortir de l'écran. */
-    const place=(pane,button)=>{
-      const r=button.getBoundingClientRect(),gutter=12;
-      const width=Math.min(372,window.innerWidth-gutter*2);
-      const right=window.innerWidth-r.right<r.left;
-      const left=right?r.right-width:r.left;
-      pane.style.left=`${Math.round(Math.max(gutter,Math.min(left,window.innerWidth-width-gutter)))}px`;
-      pane.style.top='auto';
-      pane.style.bottom=`${Math.round(window.innerHeight-r.top+8)}px`;
-      /* Jamais sur le lanceur du haut : le panneau s'arrête là où commencent les panneaux
-         latéraux (`--shell-panel-top`, sous la rangée du lanceur) et sa liste défile. */
-      const top=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--shell-panel-top'))||64;
-      pane.style.maxHeight=`${Math.max(180,Math.round(r.top-8-top))}px`;
-    };
     /* Surfaces exclusives : le panneau Board et la roue d'outils ne sont
        jamais ouverts ensemble (docs/control-center-shell.md › Exclusive
        surfaces). Le nom de l'événement vient de la coque ; sa copie de repli
@@ -1957,7 +2143,6 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
           throw Object.assign(new Error('window.JarvisWorkspace.openBoard absent'),{code:'workspace_manager_missing'});
         return manager.openBoard(id,options);
       },
-      place,
       log:journal,
     });
     /* Clic hors du contrôle : il se ferme. La boîte de confirmation de la
@@ -1968,7 +2153,6 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       if(host.contains(t)||panel.contains(t)||(confirmBack&&confirmBack.contains(t)))return;
       control.close();
     },true);
-    window.addEventListener('resize',()=>{if(control.isOpen())place(panel,control.trigger)});
     /* Une autre surface exclusive s'ouvre (la roue) : le panneau lui cède la
        place, sans reprendre le focus (il est à elle). */
     document.addEventListener(EXCLUSIVE_EVENT,event=>{

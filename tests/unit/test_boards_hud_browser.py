@@ -58,21 +58,21 @@ def _overlap(a: dict | None, b: dict | None) -> bool:
 
 
 @pytest.mark.parametrize("width,height", [(1440, 900), (1280, 720), (1024, 700), (900, 600), (500, 700)])
-def test_the_card_is_clickable_bottom_left_and_its_panel_opens_above_it(tmp_path, width, height):
+def test_the_card_is_bottom_left_and_opens_a_full_screen_veil_over_the_page(tmp_path, width, height):
     seen = _drive(tmp_path, [{"width": width, "height": height, "actions": [OPEN]}])[0]
     trigger, panel, dock = seen["trigger"], seen["panel"], seen["dock"]
     assert seen["title"] == "Jarvis" and seen["tone"] == "ready"
     assert (seen["kind"], seen["eyebrow"]) == ("assistant", "Assistant "), "the type leads the card"
-    assert seen["triggerHit"] is True
     # D04 / D05 : la carte est en bas à gauche ; le haut-gauche n'a plus rien de permanent.
     assert seen["retired"] == {"topbar": False, "state": False, "mode": False, "eye": False}, seen["retired"]
     assert trigger["l"] <= (84 if width <= 700 else 18) + 1, trigger
     assert trigger["b"] >= height - 160 and trigger["t"] > height / 2, trigger
     assert not _overlap(trigger, dock)
-    assert panel is not None and panel["z"] == "39"
-    assert panel["b"] <= trigger["t"], "the panel opens above the card"
-    assert panel["t"] >= 0 and panel["l"] >= 10 and panel["r"] <= width - 10 + 1
-    assert seen["panelHit"] is True, "the open panel is on top of whatever it covers (dock included)"
+    # Refonte du sélecteur (2026-10-19) : un voile plein écran, flouté, par-dessus toute la page — la carte comprise.
+    assert panel is not None and panel["z"] == "58"
+    assert (panel["l"], panel["t"], panel["r"], panel["b"]) == (0, 0, width, height), panel
+    assert seen["panelHit"] is True, "the open veil is on top of whatever it covers (dock included)"
+    assert seen["triggerHit"] is False, "the veil covers the card that opened it"
     assert [row["id"] for row in seen["rows"]] == ["default", "board_b", "board_m"]
     assert seen["rows"][0]["current"] is True
     assert [line for line in seen["console"] if line["type"] in ("error", "exception")] == [], seen["console"]
@@ -107,7 +107,7 @@ def test_reduced_motion_stops_the_wait_bar_and_the_opening_animation(tmp_path):
         {"width": 1440, "height": 900, "reducedMotion": True, "actions": [hang, OPEN, click_b]},
     ])
     assert normal["tone"] == "pending" and normal["sub"].startswith("Bascule · ")
-    assert normal["motion"]["sweep"] == "bdSweep" and normal["motion"]["pop"] == "bdPop"
+    assert normal["motion"]["sweep"] == "bdSweep" and normal["motion"]["pop"] == "bdVeil"
     assert reduced["tone"] == "pending"
     assert reduced["motion"] == {"sweep": "none", "pop": "none"}
 
@@ -158,8 +158,6 @@ def _quick_plan(w) -> dict:
     row = lambda title: _ROW % json.dumps(title)  # noqa: E731
     kind_of = lambda title: f"((({row(title)})||document).querySelector('[data-role=kind]')||{{}}).textContent"  # noqa: E731
     action = lambda title, act: f"({row(title)}).querySelector('[data-bd-action={act}]').click()"  # noqa: E731
-    pick = lambda sel, value: (f"(()=>{{const s=document.querySelector({json.dumps(sel)});s.value={json.dumps(value)};"  # noqa: E731
-                               "s.dispatchEvent(new Event('change',{bubbles:true}));return true})()")
     wsp_text = "document.getElementById('wspPanel').textContent"
     return {"width": 1440, "height": 900, "steps": [
         {"wait": "(document.getElementById('boardsTitle')||{}).textContent==='Projet B'"},
@@ -172,8 +170,21 @@ def _quick_plan(w) -> dict:
         {"get": "filter", "expr": "document.getElementById('boardsFilter').textContent"},
         {"shot": "01-list.png"},
         # Créer un Board « Réunion ».
+        # Le parcours de l'écran : l'orbe « Nouveau Board », l'orbe du type, puis le titre.
+        {"do": "document.getElementById('boardsNewBoard').click()"},
+        {"wait": "document.getElementById('boardsPanel').getAttribute('data-bd-screen')==='kind'"},
+        {"get": "kind_screen", "expr": "(()=>{const s=document.getElementById('boardsPanel');return {"
+                                       "list:!!document.getElementById('boardsList').getClientRects().length,"
+                                       "kinds:[...s.querySelectorAll('#boardsCreateKindPick [role=radio]')].filter(b=>b.getClientRects().length).map(b=>b.getAttribute('data-kind')),"
+                                       "focus:document.activeElement&&document.activeElement.getAttribute('data-kind')}})()"},
+        {"shot": "01b-kind.png"},
+        {"do": "document.querySelector('#boardsCreateKindPick [data-kind=meeting]').click()"},
+        {"wait": "document.getElementById('boardsPanel').getAttribute('data-bd-screen')==='name'&&document.activeElement.id==='boardsCreateTitle'"},
         {"do": "(()=>{const i=document.getElementById('boardsCreateTitle');i.value='Point hebdo S8';return true})()"},
-        {"do": pick("#boardsCreateKind", "meeting")},
+        {"get": "name_screen", "expr": "(()=>({heading:document.getElementById('boardsHeading').textContent,"
+                                       "hint:document.getElementById('boardsCreateKindHint').getClientRects().length>0,"
+                                       "kind:document.getElementById('boardsCreateKind').value}))()"},
+        {"shot": "01c-name.png"},
         {"do": "document.getElementById('boardsCreate').click()", "ms": 400},
         {"wait": f"({row('Point hebdo S8')})&&{kind_of('Point hebdo S8')}==='Réunion'"},
         {"do": f"window.__s8=({row('Point hebdo S8')}).getAttribute('data-board-id')"},
@@ -288,7 +299,7 @@ async def test_quick_browser_creates_edits_filters_and_inspects_against_the_real
             {"wait": "document.querySelector('#boardsList [data-bd-action=inspect]')"},
             {"get": "foot", "expr": "(()=>{const h=document.getElementById('boardsNewSessionHint');"
                                     "const p=document.getElementById('boardsPanel').getBoundingClientRect();"
-                                    "return {hint:getComputedStyle(h).display,bottom:p.bottom,"
+                                    "return {hint:h.getBoundingClientRect().width<=1?'none':'shown',bottom:p.bottom,"
                                     "rows:document.querySelectorAll('#boardsList .bd-row').length,"
                                     "described:document.getElementById('boardsNewSession').getAttribute('aria-describedby')}})()"},
             {"shot": "10-short-height.png"},
@@ -317,6 +328,8 @@ async def test_quick_browser_creates_edits_filters_and_inspects_against_the_real
     assert rows["Projet A"]["opened"].startswith("ouvert") and rows["Projet B"]["opened"] == "ouvert à l’instant"
     assert rows["Board principal"]["opened"].startswith("ouvert"),         "the Board a Session opened on is opened (QA S08 point 2), never « jamais ouvert »"
     assert "En service3" in r["filter"] and "Archivés1" in r["filter"]
+    assert r["kind_screen"] == {"list": False, "kinds": ["assistant", "presentation", "meeting"], "focus": "assistant"},         "creating is its own screen: the grid is gone, the three types are shown, the default one has the focus"
+    assert r["name_screen"] == {"heading": "Nouveau Board Réunion", "hint": True, "kind": "meeting"}
     assert r["created_kind"] == "Réunion" and r["created_focus"] is True
     assert r["edited_kind"] == "Réunion" and r["edit_kind_offered"] is False, "renaming never changes the type"
     # Slice 07 (refonte roue/dossier) : un Board archivé se lit aussi dans le Dossier plein écran (lecture seule).
@@ -329,7 +342,7 @@ async def test_quick_browser_creates_edits_filters_and_inspects_against_the_real
     assert r["on_a"] == {"active": "true", "state": "Actif", "opened": "ouvert à l’instant"}
     assert r["back_on_b"] == ["Projet B"]
     taken = {k[5:] for k in r if k.startswith("shot:")}
-    assert len(taken) == 8 and taken <= {p.name for p in shots.glob("*.png")}
+    assert len(taken) == 10 and taken <= {p.name for p in shots.glob("*.png")}
 
     created = [b for b in listing if b["title"] == "Démo S8"]
     assert len(created) == 1 and created[0]["board_kind"] == "meeting" and created[0]["status"] == "active"

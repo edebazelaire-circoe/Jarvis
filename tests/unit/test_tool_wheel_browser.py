@@ -580,8 +580,9 @@ def test_wheel_and_board_panel_are_never_open_together(tmp_path):
     ]})
     opened, hovered, clicked, back, keyboard, escaped, api, panel_esc = (v[2], v[5], v[8], v[10], v[13], v[15], v[18], v[21])
     assert opened["panel"] is True and opened["open"] is False
-    assert hovered["panel"] is True and hovered["open"] is False  # le survol ne retire pas la place
-    assert any("tool_wheel.hover_blocked" in line for line in hovered["yields"])
+    # Le sélecteur de Board est un voile plein écran (refonte du 2026-10-19) : le pointeur sur l'ancre survole le
+    # voile, jamais la roue ; rien ne s'ouvre au survol.
+    assert hovered["panel"] is True and hovered["open"] is False
     assert clicked["open"] is True and clicked["panel"] is False
     assert back["panel"] is True and back["open"] is False
     # À la souris, l’appui hors de la roue la ferme déjà (« outside ») avant que le panneau ne s’ouvre.

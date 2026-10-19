@@ -211,7 +211,6 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 36 | `.dock[data-more-open]` | `control_center.html` | `.dock[data-more-open]` | launcher with its « Plus d’outils » popover open (Slice 08): the whole launcher rises to the choosers' rank, over the side panels and the banner it briefly covers |
 | 37 | `#toolWheel[data-open]` | `control_center.html` | `#toolWheel[data-open]` | open wheel and its curved submenu: above the choosers, the wheel is the user's latest focus; never open together with `#boardsPanel` ([Exclusive surfaces](#exclusive-surfaces-wheel-and-board-panel)) |
 | 38 | `#screenshotPreview` | `control_center.html` | `#screenshotPreview` | screenshot preview (Slice 05): transient, non-modal, above the open wheel that took the shot, below the status centre, toasts and the lightbox |
-| 39 | `#boardsPanel` | `control_center.html` | `#boardsPanel` | Board chooser, opened by the user above the bottom-left Board card (wheel/dossier refactor Slice 02): it opens where the screenshot preview (38) sits and is the user's latest gesture; below the status centre (40) and the toasts. Since Slice 03 it is exclusive with the open wheel (37): opening one closes the other, so their ranks never compete |
 | 40 | `#recIndicators` | `control_center.html` | `#recIndicators` | recording indicators (orbital UI Slice 04), top-left since the wheel/dossier refactor Slice 04 (before: left of the status centre); an open recording stays visible above the open wheel and the side panels, below toasts |
 | 40 | `#bgPills` | `control_center.html` | `.bgpills` | status centre, middle: background pills |
 | 55 | `.tl` | `control_center.html` | `.tl` | conversation timeline, full-screen launcher view |
@@ -220,6 +219,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 55 | `.wsp` | `control_center.html` | `.wsp` | Sessions & Boards |
 | 55 | `.pfb` | `control_center.html` | `.pfb` | prefab library |
 | 55 | `#dossierView` | `control_center.html` | `.dsr` | full-screen Dossier of the Board (wheel/dossier refactor Slice 07): one full-screen view among the others; below `.overlay`, toasts and the page confirmation; Variantes (9000) covers it, so it never opens while the Studio is shown ([Dossier](#dossier-full-screen-view-dossierview)) |
+| 58 | `#boardsPanel` | `control_center.html` | `#boardsPanel` | Board chooser: a full-screen blurred veil over the whole page (Board picker redesign, 2026-10-19), opened from the bottom-left Board card; above the status centre (40) and the full-screen views (55) it never opens with, below `.overlay`, the toasts that report its actions and the page confirmation (archive, new session). Exclusive with the open wheel (37) since wheel/dossier Slice 03 |
 | 60 | `.overlay` | `control_center.html` | `.overlay` | settings and modal overlays; the screenshot lightbox `#screenshotLightbox` and annotation editor `#screenshotAnnotate` (Slice 05) take the class, no rank of their own |
 | 70 | `.toasts` | `control_center.html` | `.toasts` | toasts |
 | 75 | `.bgpop` | `control_center.html` | `.bgpop` | background pill popover |
@@ -287,11 +287,11 @@ Checked on the registry rows by `test_relative_order_of_the_old_registry_is_kept
 - every page control is above the scene (20); the face and the Cosmos canvas
   are below it;
 - `#boardsHud` (card button) ≤ `.dock` < `.panel` < `.live-banner` <
-  `#boardsPanel` < `#bgPills` < `.toasts` < `.cdialog-back`;
+  `#bgPills` < `#boardsPanel` < `.overlay` < `.toasts` < `.cdialog-back`;
 - choosers (36), the open launcher popover among them, are above the GPT-Live
   banner (35) and below the pills, toasts, context menu and confirmation; the
-  Board chooser `#boardsPanel` is at 39 since it opens bottom-left, above the
-  screenshot preview (38) it may cover; it is never open together with the
+  Board chooser `#boardsPanel` is a full-screen veil at 58, above everything
+  the page shows at rest; it is never open together with the
   wheel (37): [Exclusive surfaces](#exclusive-surfaces-wheel-and-board-panel);
 - the open wheel (37) is above the choosers and below rank 40 (the top-left
   capture indicators `#recIndicators` and the status-centre pills), toasts and context menu; closed, its
@@ -462,9 +462,13 @@ moved right of the Bare Hands column at 700 px and below (`left: 84px`, lift
 (`body:has(#jarvisHands .jh-badge)`, checked by
 `test_barehands_contracts_js.py`). Because the envelope is unchanged, the
 status-centre insets (gutter + 254 px), the screenshot-preview rungs and the
-drop-tray centring keep their values, re-attributed to the card. The panel
-`#boardsPanel` opens **above** the card, aligned on its edge, bounded to the
-screen (`place`).
+drop-tray centring keep their values, re-attributed to the card. The chooser
+`#boardsPanel` is a **full-screen veil** over the page (dark, blurred), one
+screen at a time: the grid of Boards (one large orb per Board, the type icon
+inside, the title under it; rename / inspect / archive appear on hover or
+keyboard focus), then creation in two steps — the type (three large orbs),
+then the title (one large field). Escape goes back one screen, then closes;
+a click on the veil itself closes.
 
 **Content** (compact, two to four short lines): the type icon (Assistant =
 speech bubble, cyan; Présentation = screen on a stand, violet; Réunion = three

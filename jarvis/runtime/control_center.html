@@ -29,9 +29,9 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    @shell-layer 36: .bh-hud-pop, .dock[data-more-open]
    @shell-layer 37: #toolWheel[data-open]
    @shell-layer 38: #screenshotPreview
-   @shell-layer 39: #boardsPanel
    @shell-layer 40: #recIndicators, #bgPills
    @shell-layer 55: .tl, .tlab, .mcpi, .wsp, .pfb, #dossierView
+   @shell-layer 58: #boardsPanel
    @shell-layer 60: .overlay
    @shell-layer 70: .toasts
    @shell-layer 75: .bgpop, #jvStudioReloadBand
@@ -91,7 +91,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    le panneau s'ouvre au-dessus d'elle (`place`, qui pose `left`/`bottom`). Rang 39 : il
    s'ouvre dans la zone de l'aperçu de capture (38) et de la roue ouverte (37), et c'est le
    dernier geste de l'utilisateur ; sous le centre d'état (40) et les infusions. */
-#boardsPanel{position:absolute;z-index:39;left:var(--shell-gutter);bottom:96px}
+#boardsPanel{position:fixed;z-index:58;inset:0}
 /* Lanceur global (zone haut-droit, orbital-ui Slice 08) : une rangée de quatre boutons
    de 34 px dans les deux thèmes — Conversation, Agents, Errors, « Plus d’outils » (Réglages
    y est replié depuis la Slice 04 de jarvis-board-ui-wheel-dossier-refactor) ; le

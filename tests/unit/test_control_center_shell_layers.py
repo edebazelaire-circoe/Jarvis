@@ -246,10 +246,10 @@ def test_relative_order_of_the_old_registry_is_kept():
             assert row["rank"] > scene, row
     # La carte Board (Slice 02 de jarvis-board-ui-wheel-dossier-refactor) : son bouton au rang du lanceur.
     assert rank_of("#boardsHud") <= rank_of(".dock") < rank_of(".panel") < rank_of(".live-banner") < rank_of("#boardsPanel")
-    assert rank_of("#boardsPanel") < rank_of("#bgPills") < rank_of(".toasts") < rank_of(".cdialog-back")
-    # Le sélecteur de Board (Slice 02) s'ouvre en bas à gauche, là où l'aperçu de capture et la roue ouverte se
-    # posent : au-dessus d'eux, sous le centre d'état.
-    assert rank_of("#toolWheel[data-open]") < rank_of("#screenshotPreview") < rank_of("#boardsPanel") < rank_of("#bgPills")
+    assert rank_of("#bgPills") < rank_of("#boardsPanel") < rank_of(".overlay") < rank_of(".toasts") < rank_of(".cdialog-back")
+    # Le sélecteur de Board est un voile plein écran (refonte du 2026-10-19) : au-dessus de tout ce que la page
+    # montre au repos, centre d'état compris.
+    assert rank_of("#toolWheel[data-open]") < rank_of("#screenshotPreview") < rank_of("#bgPills") < rank_of("#boardsPanel")
     # Les autres sélecteurs (cycle Bare Hands) au rang commun, au-dessus du bandeau.
     for chooser in (".bh-hud-pop",):
         assert rank_of(chooser) == 36 and rank_of(".live-banner") < rank_of(chooser) < rank_of("#bgPills")
@@ -265,8 +265,9 @@ def test_relative_order_of_the_old_registry_is_kept():
     assert rank_of("#dossierView") < rank_of("#jvStudioExplorer"), "Variantes covers the Dossier (Slice 07)"
     assert len(views) == 1
     view = views.pop()
-    for control in (".dock", ".panel", ".live-banner", "#bgPills", "#boardsPanel", "#chatTab"):
+    for control in (".dock", ".panel", ".live-banner", "#bgPills", "#chatTab"):
         assert rank_of(control) < view, control
+    assert view < rank_of("#boardsPanel") < rank_of(".overlay")
     assert view < rank_of(".overlay") < rank_of(".toasts") < rank_of(".ctxmenu") < rank_of(".cdialog-back")
     assert (rank_of("#jvStudioExplorer") < rank_of("html.jvr-studio #presentationRail")
             < rank_of("html.jvx-run #boardsHud") == rank_of("html.jvx-run #boardsPanel")
