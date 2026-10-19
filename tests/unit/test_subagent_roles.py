@@ -53,9 +53,13 @@ def trace(root: Path, kind: str) -> list[dict]:
 # ---------------------------------------------------------------- registre
 
 
-def test_the_registry_holds_the_five_roles_with_valid_unique_markers():
-    assert [role.marker for role in ROLES] == ["interviewer", "research", "web-research", "coder", "concept"]
-    assert len({role.id for role in ROLES}) == len({role.marker for role in ROLES}) == 5
+def test_the_registry_holds_the_seven_roles_with_valid_unique_markers():
+    # Les cinq ids d'origine indexent les surcharges enregistrées (`subagent_role.<id>`) : ils ne bougent pas.
+    # Direction de recherche et Contrôle qualité s'ajoutent, désactivés jusqu'à leur câblage (Slices 04 et 07).
+    assert [role.marker for role in ROLES] == [
+        "interviewer", "research", "web-research", "coder", "concept", "research-lead", "qa"]
+    assert len({role.id for role in ROLES}) == len({role.marker for role in ROLES}) == 7
+    assert [role.id for role in ROLES if not role.enabled] == ["research-lead", "qa"]
     for role in ROLES:
         # Lisible par le motif des marqueurs du hook, et jamais confondu avec un profil.
         assert routing_hook._BRACKET.fullmatch(f"[{role.marker}] ")
@@ -63,7 +67,7 @@ def test_the_registry_holds_the_five_roles_with_valid_unique_markers():
         assert prompt_id(role.prompt_id) == f"subagent_role.{role.id}"
         # Éditable en entier : le défaut tient dans la borne d'une surcharge.
         assert len(role.instructions) <= MAX_OVERRIDE_TEXT
-        assert role_for(role.marker.upper()) is role
+        assert role_for(role.marker.upper()) is (role if role.enabled else None)
     assert role_for("reviewer") is None and role_for("") is None
     # Les deux rôles de loadout repris gardent leur nom.
     assert {"research", "coder"} <= set(LOADOUT_ROLES) & {role.marker for role in ROLES}
@@ -355,3 +359,93 @@ async def test_a_snapshot_that_cannot_be_written_is_said_not_hidden(tmp_path, mo
         assert (await (await client.get("/api/subagent-roles")).json())["roles"][4]["modified"] is True
     [failure] = trace(tmp_path, "subagent_roles.snapshot_failed")
     assert failure["level"] == "error"
+
+
+# ---------------------------------------------------------------- contrat de rôle (Slice 01, orchestration organique)
+
+
+def test_the_handoff_names_map_to_the_kept_ids():
+    from jarvis.domain.subagent_roles import role_by_id
+    # Developer = coder, Document Research = research, Web Research = web-research, Conceptualizer = concept.
+    assert role_by_id("coder").name == "Développement"
+    assert role_by_id("research").name == "Recherche documentaire"
+    assert role_by_id("web-research").name == "Recherche web"
+    assert role_by_id("concept").name == "Conceptualisation"
+    assert role_by_id("research-lead").name == "Direction de recherche"
+    assert role_by_id("qa").name == "Contrôle qualité"
+    assert role_by_id("reviewer") is None  # un alias n'est pas un rôle
+
+
+@pytest.mark.parametrize(
+    ("marker", "role_id", "status"),
+    [
+        ("coder", "coder", "declared"),
+        ("CODER", "coder", "declared"),
+        ("reviewer", "qa", "alias"),
+        ("qa", "qa", "disabled"),
+        ("research-lead", "research-lead", "disabled"),
+        ("zorg", "unknown", "unknown"),
+        ("", "undeclared", "undeclared"),
+        (None, "undeclared", "undeclared"),
+    ],
+)
+def test_markers_resolve_deterministically_or_degrade_explicitly(marker, role_id, status):
+    from jarvis.domain.subagent_roles import resolve_role
+    resolution = resolve_role(marker)
+    assert (resolution.role_id, resolution.status.value) == (role_id, status)
+    assert resolve_role(marker) == resolution
+
+
+def test_each_role_has_its_own_visual_identity_and_coherent_capabilities():
+    from jarvis.domain.subagent_roles import ROLE_ACCENTS, SPAWN_TOOL
+    for key in ("icon", "accent", "badge"):
+        assert len({getattr(role.visual, key) for role in ROLES}) == len(ROLES)
+    for role in ROLES:
+        assert role.visual.accent in ROLE_ACCENTS
+        assert role.can_spawn == (SPAWN_TOOL in role.tools)
+        assert not role.can_own_mission or role.can_spawn
+        payload = role.as_dict()
+        assert payload["visual"] == role.visual.as_dict() and payload["can_own_mission"] == role.can_own_mission
+    owners = {role.id for role in ROLES if role.can_own_mission}
+    assert owners == {"coder", "research-lead"}
+    assert not role_for("interviewer").can_spawn  # « Vous ne lancez aucun autre agent »
+
+
+def test_role_contract_fields_are_validated():
+    from dataclasses import replace
+    from jarvis.domain.subagent_roles import RoleVisual
+    coder = role_for("coder")
+    for changes in (
+        {"can_own_mission": True, "can_spawn": False, "tools": ("Read",)},
+        {"can_spawn": False},  # garde l'outil Agent
+        {"work_methods": ("Pas Un Id",)},
+        {"work_methods": ("a-method",), "default_work_method": "other-method"},
+        {"loadout_role": "interviewer"},
+        {"id": "unknown", "marker": "unknown"},
+    ):
+        with pytest.raises(ValueError):
+            replace(coder, **changes)
+    with pytest.raises(ValueError):
+        RoleVisual(icon="code", accent="#ff0000", badge="DEV")
+    with pytest.raises(ValueError):
+        RoleVisual(icon="code", accent="amber", badge="dev")
+
+
+def test_loadout_roles_of_the_registry_agree_with_what_the_hook_reads():
+    # Pour un rôle dont le marqueur est déjà un rôle de loadout, le hook lit ce loadout-là ; `qa` emprunte
+    # `reviewer` par contrat (câblage : Slice 04), et `[code] [reviewer]` garde son loadout d'aujourd'hui.
+    for role in ROLES:
+        read = routing_hook.read_loadout_role({"description": f"[general] [{role.marker}] x"})
+        if role.loadout_role == role.marker:
+            assert read == role.marker
+        elif role.loadout_role is None:
+            assert read is None
+    assert role_for("qa") is None and subagent_roles.role_by_id("qa").loadout_role == "reviewer"
+    assert routing_hook.read_loadout_role({"description": "[code] [reviewer] Relire"}) == "reviewer"
+
+
+def test_disabled_new_roles_change_nothing_live():
+    rules = brain_rules()
+    assert "[research-lead]" not in rules and "[qa]" not in rules
+    assert with_role_instructions("Consigne.", "qa") is None
+    assert with_role_instructions("Consigne.", "research-lead") is None

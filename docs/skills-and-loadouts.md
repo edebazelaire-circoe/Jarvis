@@ -162,7 +162,11 @@ skills or settings change; the hook reads one manifest from it:
    (`prompt` + blank line + manifest);
 2. the key comes from the markers at the start of the `description` (or `prompt`):
    `[code] [reviewer] ...` is `code:reviewer`, `[reviewer] ...` is `general:reviewer`,
-   `[code] ...` is `code`, nothing is `general`. An unknown second word is ignored;
+   `[code] ...` is `code`, nothing is `general`. An unknown second word is ignored. The
+   head-marker grammar (profile, role, `[éphémère]` in any position of the head) is
+   `jarvis/domain/agent_markers.py`, shared with the task tracker; the sub-agent role
+   registry, its aliases (`reviewer` is the compatibility alias of the `qa` role) and each
+   role's `loadout_role` are described in [subagent-roles.md](subagent-roles.md);
 3. a brief already holding the manifest mark `[loadout JARVIS]` is not given a second one;
 4. **any failure** (no file, unreadable or oversized file, wrong schema, missing key, a
    text without the mark, an exception) leaves the call exactly as the charter alone

@@ -27,6 +27,7 @@ import re
 import time
 from typing import Any, Callable
 
+from jarvis.domain import agent_markers
 from jarvis.ports.v2 import ConversationEventRecorder
 from jarvis.runtime import routing_hook
 from jarvis.runtime.journal import RuntimeJournal
@@ -66,11 +67,11 @@ SYNTHETIC_MODEL = "<synthetic>"
 NON_TERMINAL = frozenset({"", "running", "pending", "queued", "started"})
 #: Fins anormales : le journal les signale en avertissement.
 WARNING_STATUSES = frozenset({"failed", "killed", "interrupted"})
-#: Marqueur de tâche éphémère : le brain préfixe la `description` de l'outil
-#: `Agent` (celui du CLI, auquel on ne peut pas ajouter de paramètre) par ce
-#: jeton exact. Voir `parse_ephemeral_description`.
-EPHEMERAL_MARKER = "[éphémère]"
-_EPHEMERAL_RE = re.compile(re.escape(EPHEMERAL_MARKER) + r"[ \t]+(\S.*)", re.DOTALL)
+#: Marqueur de tâche éphémère : le brain le place parmi les marqueurs de tête de
+#: la `description` de l'outil `Agent` (celui du CLI, auquel on ne peut pas
+#: ajouter de paramètre). Grammaire canonique, partagée avec le hook :
+#: `jarvis/domain/agent_markers.py`. Voir `parse_ephemeral_description`.
+EPHEMERAL_MARKER = agent_markers.EPHEMERAL_MARKER
 TASK_SUBTYPES = frozenset({"task_started", "task_progress", "task_notification", "task_updated"})
 
 _HINT_KEYS = ("description", "command", "file_path", "notebook_path", "pattern", "query", "url", "path", "skill", "prompt")
@@ -182,22 +183,19 @@ def _result_text(block: dict[str, Any]) -> str:
 
 
 def parse_ephemeral_description(description: str) -> tuple[str, bool]:
-    """Libellé affichable et drapeau « éphémère » d'une `description` d'`Agent`.
+    """Description sans le marqueur éphémère, et drapeau « éphémère », d'une `description` d'`Agent`.
 
-    Grammaire exacte : `[éphémère]` en tête de la description (après les blancs
-    de bord), suivi d'au moins un espace ou une tabulation, puis d'un libellé
-    non vide. Le marqueur est retiré du libellé. Tout le reste — casse ou accent
-    différents, marqueur collé au libellé, seul, au milieu du texte — est une
-    tâche normale et garde son texte tel quel : l'échec est du côté sûr, une
-    tâche ordinaire qu'on voit et qu'on annonce.
+    Grammaire (`agent_markers.parse_head`, la même que lit le hook) : `[éphémère]`
+    exact, parmi les marqueurs de tête (avant, entre ou après `[profil] [rôle]`),
+    une seule fois, suivi d'au moins un espace ou une tabulation, avec un texte non
+    vide après son retrait. Seul ce marqueur est retiré : profil et rôle restent,
+    pour que le rôle se relise sur la description gardée. Tout le reste — casse ou
+    accent différents, marqueur collé au libellé, seul, au milieu du texte, en
+    double — est une tâche normale et garde son texte tel quel : l'échec est du
+    côté sûr, une tâche ordinaire qu'on voit et qu'on annonce.
     """
 
-    text = (description or "").strip()
-    match = _EPHEMERAL_RE.fullmatch(text)
-    # Deux marqueurs à la suite : mal formé, donc tâche normale au texte intact.
-    if match is None or match.group(1).startswith(EPHEMERAL_MARKER):
-        return text, False
-    return match.group(1).strip(), True
+    return agent_markers.parse_ephemeral_description(description)
 
 
 # ---------------------------------------------------------------------- tâche

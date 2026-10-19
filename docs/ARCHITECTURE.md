@@ -57,7 +57,7 @@ Key ports live under `jarvis/ports/`:
 
 Typed domain objects live under `jarvis/domain/`. The release verifier parses the core AST and fails if OpenAI/HTTP/audio/keyboard provider packages leak into `jarvis/core`.
 
-Tool Brain (UI decision owner: dedicated decider, action queue, executor, ownership and guardrails, timeline lane; off by default, `JARVIS_TOOL_BRAIN`): integration contracts and, from section 8, its stable behaviour contracts, replay/evaluation harness, performance baseline, rollout and the public intake for the presentation mode ([tool-brain-contracts.md](tool-brain-contracts.md); operator runbook: *Tool Brain: roll-out, checks and roll-back* in [OPERATIONS.md](OPERATIONS.md)). Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics), Boards, Jarvis Sessions and their conversation bindings ([boards.md](boards.md): glossary, invariants, lifecycle, V1 limits), plus the Presentation session working set and its transcript tail ([presentation-working-set.md](presentation-working-set.md): bounds, eviction, provenance, resource temperature, lifecycle — bounded and session-scoped, never canonical memory),
+Tool Brain (UI decision owner: dedicated decider, action queue, executor, ownership and guardrails, timeline lane; off by default, `JARVIS_TOOL_BRAIN`): integration contracts and, from section 8, its stable behaviour contracts, replay/evaluation harness, performance baseline, rollout and the public intake for the presentation mode ([tool-brain-contracts.md](tool-brain-contracts.md); operator runbook: *Tool Brain: roll-out, checks and roll-back* in [OPERATIONS.md](OPERATIONS.md)). Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below), sub-agent roles, missions, Mission Owner and the head-marker grammar of `Agent` calls ([subagent-roles.md](subagent-roles.md)) with their heuristic Work Methods ([work-methods.md](work-methods.md)) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics), Boards, Jarvis Sessions and their conversation bindings ([boards.md](boards.md): glossary, invariants, lifecycle, V1 limits), plus the Presentation session working set and its transcript tail ([presentation-working-set.md](presentation-working-set.md): bounds, eviction, provenance, resource temperature, lifecycle — bounded and session-scoped, never canonical memory),
 fed by the Presentation ambient lane ([presentation-ambient-lane.md](presentation-ambient-lane.md):
 segmentation, transcription seam, queue budgets, failure isolation) and by the
 Presentation speculative preparation lane
@@ -3516,11 +3516,15 @@ with `RiskLevel.EPHEMERAL` (action risk) nor with the speculative PRESENTATION
 preparations (sacrificial and already silent): they share the word only.
 
 - *Declaration.* The `Agent` tool belongs to the CLI, so it gets no parameter: the
-  brain prefixes the call's `description` with the fixed marker `[éphémère]`
-  (`agent_tasks.EPHEMERAL_MARKER`, taught in `BRAIN_SYSTEM_PROMPT`). The tracker
-  parses it (`parse_ephemeral_description`, grammar pinned by tests) into the typed
-  `AgentTask.ephemeral_declared` and strips it from the label. Absent or malformed
-  = ordinary task (fail safe).
+  brain puts the fixed marker `[éphémère]` among the head markers of the call's
+  `description` (`agent_tasks.EPHEMERAL_MARKER`, taught in `BRAIN_SYSTEM_PROMPT`),
+  before, between or after `[profile] [role]` (the prompt teaches the leading form;
+  its wider rule belongs to the orchestration task's Slice 07). One grammar, shared by the tracker
+  and the routing hook: `jarvis/domain/agent_markers.py` (contract in
+  `docs/subagent-roles.md`, "Les marqueurs de tête"). The tracker parses it
+  (`parse_ephemeral_description`, grammar pinned by tests) into the typed
+  `AgentTask.ephemeral_declared` and strips only that marker from the description.
+  Absent or malformed = ordinary task (fail safe).
 - *Effective flag.* `AgentTask.ephemeral` is true only while the task runs or after
   `completed`. `failed`, `killed`, `stopped` and `interrupted` always unmask it
   (`EPHEMERAL_WORK_STATUSES` in `domain/work_state.py` mirrors this for Core; the

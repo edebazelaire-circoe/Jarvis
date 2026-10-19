@@ -32,11 +32,13 @@ import shutil
 import sys
 from typing import Any, Mapping, Sequence
 
-from jarvis.domain import routing
+from jarvis.domain import agent_markers, routing
 from jarvis.domain.agent_charter import sign_brief
 from jarvis.domain.loadout_view import MANIFEST_MARK
 from jarvis.domain.memory_settings import LOADOUT_ROLES
 from jarvis.domain.subagent_roles import ROLE_MARK, ROLE_MARKERS, with_role_instructions
+# `ANNOUNCED_ROLES` : les rôles qu'une description peut annoncer (loadout, registre, alias), réexporté ici.
+from jarvis.domain.agent_markers import ANNOUNCED_ROLES, WORD_PATTERN  # noqa: F401
 from jarvis.domain.routing import (
     CandidateRef,
     ModelCandidate,
@@ -64,15 +66,11 @@ HOST_AGENT = "claude"
 #: Comment le cerveau annonce le profil : le premier mot entre crochets de la
 #: description. Inventé ici plutôt que déduit du texte — deviner l'intention
 #: d'une phrase serait exactement le genre de choix qu'on refuse au modèle.
-PROFILE_PATTERN = re.compile(r"^\s*\[\s*([A-Za-z_-]{2,24})\s*\]\s*")
-
-#: Un marqueur entre crochets sans ancre : le rôle (`coder`, `reviewer`, `research`) peut suivre
-#: le profil (`[code] [reviewer] ...`) ou le remplacer (`[reviewer] ...`, profil `general`).
-_BRACKET = re.compile(r"\[\s*([A-Za-z_-]{2,24})\s*\]\s*")
-
-#: Les rôles qu'une description peut annoncer : ceux du loadout (`memory_settings.LOADOUT_ROLES`) et ceux du
-#: registre des sous-agents (`subagent_roles`), qui en reprennent deux (`research`, `coder`).
-ANNOUNCED_ROLES = tuple(dict.fromkeys((*LOADOUT_ROLES, *ROLE_MARKERS)))
+#: La grammaire complète des marqueurs de tête (profil, rôle, `[éphémère]`) vit
+#: dans `jarvis/domain/agent_markers.py`, partagée avec le suivi des tâches
+#: (I-005) ; ces motifs n'en sont que les briques, gardées pour compatibilité.
+PROFILE_PATTERN = re.compile(r"^\s*\[\s*(" + WORD_PATTERN + r")\s*\]\s*")
+_BRACKET = re.compile(r"\[\s*(" + WORD_PATTERN + r")\s*\]\s*")
 
 PROFILE_RULE = (
     "Commence la description de chaque sous-agent par son profil entre crochets : "
@@ -86,44 +84,23 @@ PROFILE_RULE = (
 
 
 def read_profile(tool_input: Mapping[str, Any]) -> str:
-    """Le profil annoncé, ou « general ». Un profil inconnu n'en est pas un."""
-    for key in ("description", "prompt"):
-        match = PROFILE_PATTERN.match(str(tool_input.get(key) or ""))
-        if match is not None and routing.is_profile(match.group(1)):
-            return match.group(1).strip().lower()
-    return routing.GENERAL_PROFILE
+    """Le profil annoncé, ou « general ». Un profil inconnu n'en est pas un (`agent_markers`)."""
+    return agent_markers.read_profile(tool_input)
 
 
 def _markers(text: str) -> tuple[int, str | None]:
-    """Fin des marqueurs de tête et rôle annoncé : `[profil]`, `[profil] [rôle]` ou `[rôle]`.
+    """Fin des marqueurs de tête consommés et rôle annoncé, selon `agent_markers.parse_head`.
 
-    Un premier mot entre crochets est toujours consommé, profil connu ou non (comme avant
-    le rôle) ; un second ne l'est que s'il nomme un rôle.
+    Un premier mot entre crochets est toujours consommé, profil connu ou non ; un second ne l'est que s'il
+    nomme un rôle (ou un rôle de production, sans rôle de loadout). `[éphémère]` est transparent.
     """
-    first = PROFILE_PATTERN.match(text)
-    if first is None:
-        return 0, None
-    word = first.group(1).strip().lower()
-    if word in ANNOUNCED_ROLES:
-        return first.end(), word
-    if routing.is_profile(word):
-        second = _BRACKET.match(text, first.end())
-        if second is not None:
-            name = second.group(1).strip().lower()
-            if name in ANNOUNCED_ROLES:
-                return second.end(), name
-            if name in PLAYBOOK_ROLES:  # consommé pour l'affichage, sans rôle de loadout
-                return second.end(), None
-    return first.end(), None
+    head = agent_markers.parse_head(text, extra_consumed=PLAYBOOK_ROLES)
+    return head.head_end, head.role
 
 
 def read_role(tool_input: Mapping[str, Any]) -> str | None:
     """Le rôle annoncé après le profil (ou seul), ou `None`. Un rôle inconnu n'en est pas un."""
-    for key in ("description", "prompt"):
-        role = _markers(str(tool_input.get(key) or ""))[1]
-        if role is not None:
-            return role
-    return None
+    return agent_markers.read_role(tool_input)
 
 
 def read_loadout_role(tool_input: Mapping[str, Any]) -> str | None:
@@ -136,33 +113,22 @@ def read_loadout_role(tool_input: Mapping[str, Any]) -> str | None:
     return role if role in LOADOUT_ROLES else None
 
 
-_LEADING_BRACKET = re.compile(r"\s*\[\s*([A-Za-z_-]{2,24})\s*\]")
-
-
 def read_playbook_role(tool_input: Mapping[str, Any]) -> str | None:
     """Le rôle de production (`presentation-brief`, `-author`, `-review`) annoncé en tête, ou `None`.
 
     Trois marqueurs de tête au plus, dans l'ordre où le cerveau les écrit : `[general] [presentation-brief] ...`
-    ou `[presentation-author] ...`.
+    ou `[presentation-author] ...`. `[éphémère]` ne compte pas parmi eux.
     """
     for key in ("description", "prompt"):
-        text = str(tool_input.get(key) or "")
-        position = 0
-        for _ in range(3):
-            match = _LEADING_BRACKET.match(text, position)
-            if match is None:
-                break
-            word = match.group(1).strip().lower()
+        for word in agent_markers.parse_head(str(tool_input.get(key) or "")).words:
             if word in PLAYBOOK_ROLES:
                 return word
-            position = match.end()
     return None
 
 
 def strip_profile(text: str) -> str:
-    """La description sans ses marqueurs : ce que l'utilisateur doit lire."""
-    text = str(text or "")
-    return text[_markers(text)[0]:].strip()
+    """La description sans ses marqueurs (éphémère compris) : ce que l'utilisateur doit lire."""
+    return agent_markers.parse_head(text, extra_consumed=PLAYBOOK_ROLES).label
 
 
 # ------------------------------------------------------------------ décision

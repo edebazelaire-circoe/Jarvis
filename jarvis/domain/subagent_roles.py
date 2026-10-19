@@ -18,18 +18,34 @@ Ce module ne dépend de rien d'autre que du domaine :
   isolée dans `EXECUTION_GATE_RULE` pour pouvoir la changer seule.
 
 Les instructions sont éditables dans Settings > Sous-agents : chaque rôle est
-déclaré `subagent_role.<id>` au catalogue des prompts. Contrat :
-`docs/subagent-roles.md`.
+déclaré `subagent_role.<id>` au catalogue des prompts.
+
+Contrat de rôle (Slice 01 du handoff jarvis-organic-agent-orchestration) :
+l'id d'un rôle est explicite, stable et immuable pour une instance d'agent
+(`jarvis/domain/missions.py`) ; chaque rôle porte son identité visuelle
+(`RoleVisual` : icône, accent, badge, en jetons, sans CSS), ses capacités
+(`can_own_mission`, `can_spawn`), ses Work Methods permises
+(`jarvis/domain/work_methods.py`) et son rôle de loadout. Un marqueur se
+résout par `resolve_role` : rôle déclaré, alias de compatibilité
+(`ROLE_ALIASES`, `reviewer` -> `qa`), rôle désactivé, inconnu ou non déclaré,
+jamais deviné d'un libellé. Mission Owner n'est pas un rôle : c'est un statut
+d'instance (`missions.AgentInstance.mission_owner`).
+
+Contrat : `docs/subagent-roles.md`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import StrEnum
 import re
 from typing import Any
 
 from jarvis.domain import routing
+from jarvis.domain.memory_settings import LOADOUT_ROLES
+from jarvis.domain.work_methods import ROLE_ID as _METHOD_ROLE_ID
+from jarvis.domain.work_methods import is_method_id
 
 #: Préfixe des prompts éditables qui portent les instructions d'un rôle.
 PROMPT_PREFIX = "subagent_role."
@@ -46,8 +62,46 @@ MISSION_PATH_HINT = f"{MISSION_DIR}/<sujet-court>-<AAAAMMJJ>/{MISSION_FILE}"
 QUESTION_PREFIX = "QUESTION :"
 READY_PREFIX = "PRÊT :"
 
-#: Les marqueurs restent compatibles avec `routing_hook._BRACKET` : ASCII, 2 à 24 caractères.
+#: Les marqueurs restent lisibles par la grammaire des marqueurs de tête (`agent_markers.WORD_PATTERN`) :
+#: ASCII, 2 à 24 caractères.
 _MARKER = re.compile(r"[a-z][a-z_-]{1,23}\Z")
+if _MARKER.pattern != _METHOD_ROLE_ID.pattern:
+    raise ValueError("work_methods.ROLE_ID must match subagent_roles._MARKER")
+
+#: Id réservé d'une instance dont aucun rôle n'a été déclaré : projection sûre « générale », jamais un rôle deviné.
+UNDECLARED_ROLE_ID = "undeclared"
+#: Id réservé d'un marqueur de rôle qui ne nomme aucun rôle connu : dégradation visible, le marqueur est gardé.
+UNKNOWN_ROLE_ID = "unknown"
+RESERVED_ROLE_IDS = frozenset({UNDECLARED_ROLE_ID, UNKNOWN_ROLE_ID})
+
+#: L'outil du CLI qui lance un sous-agent : un rôle qui peut lancer des agents le liste dans `tools`.
+SPAWN_TOOL = "Agent"
+
+#: Accents de rôle : jetons de palette, que le frontend traduit en variables CSS. Aucune couleur ici.
+ROLE_ACCENTS = ("violet", "teal", "sky", "amber", "rose", "indigo", "lime", "slate", "orange", "cyan")
+_ICON = re.compile(r"[a-z][a-z0-9-]{1,31}\Z")
+#: Badge : court libellé redondant avec l'icône et l'accent (D02 : jamais la couleur seule).
+_BADGE = re.compile(r"[A-Z][A-Z0-9]{1,3}\Z")
+
+
+@dataclass(frozen=True, slots=True)
+class RoleVisual:
+    """Identité visuelle d'un rôle, en jetons : `icon` (nom d'icône), `accent` (`ROLE_ACCENTS`), `badge`."""
+
+    icon: str
+    accent: str
+    badge: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.icon, str) or not _ICON.fullmatch(self.icon):
+            raise ValueError(f"role icon must match {_ICON.pattern}")
+        if self.accent not in ROLE_ACCENTS:
+            raise ValueError(f"role accent must be one of {list(ROLE_ACCENTS)}")
+        if not isinstance(self.badge, str) or not _BADGE.fullmatch(self.badge):
+            raise ValueError(f"role badge must match {_BADGE.pattern}")
+
+    def as_dict(self) -> dict[str, str]:
+        return {"icon": self.icon, "accent": self.accent, "badge": self.badge}
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,11 +119,23 @@ class SubagentRole:
     when_relevant: str = ""
     default_profile: str = routing.GENERAL_PROFILE
     enabled: bool = True
+    visual: RoleVisual = field(default_factory=lambda: RoleVisual("agent", "slate", "AG"))
+    #: Peut porter la responsabilité d'une mission (Mission Owner, D03/D04). Exige `can_spawn`.
+    can_own_mission: bool = False
+    #: Peut lancer d'autres agents ; se reflète dans `tools` par l'outil `Agent` (audit de readiness §8).
+    can_spawn: bool = False
+    #: Work Methods permises (ids de `work_methods`) et celle proposée par défaut.
+    work_methods: tuple[str, ...] = ()
+    default_work_method: str | None = None
+    #: Rôle de loadout (`memory_settings.LOADOUT_ROLES`) dont ce rôle prend les savoirs, ou `None` (profil seul).
+    loadout_role: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("id", "marker"):
             if not _MARKER.fullmatch(getattr(self, name)):
                 raise ValueError(f"subagent role {name} must match {_MARKER.pattern}")
+        if self.id in RESERVED_ROLE_IDS or self.marker in RESERVED_ROLE_IDS:
+            raise ValueError(f"subagent role id {self.id!r} is reserved")
         if routing.is_profile(self.marker):
             raise ValueError(f"subagent role marker {self.marker!r} would be read as a profile")
         if not routing.is_profile(self.default_profile):
@@ -82,6 +148,22 @@ class SubagentRole:
             raise ValueError(f"subagent role {self.id}: instructions cannot hold braces")
         if not isinstance(self.skills, tuple) or not isinstance(self.tools, tuple):
             raise TypeError("skills and tools must be tuples")
+        if not isinstance(self.visual, RoleVisual):
+            raise TypeError("visual must be a RoleVisual")
+        if not isinstance(self.can_own_mission, bool) or not isinstance(self.can_spawn, bool):
+            raise TypeError("can_own_mission and can_spawn must be booleans")
+        if self.can_own_mission and not self.can_spawn:
+            raise ValueError(f"subagent role {self.id}: a mission owner must be able to spawn")
+        if self.can_spawn != (SPAWN_TOOL in self.tools):
+            raise ValueError(f"subagent role {self.id}: can_spawn and the {SPAWN_TOOL!r} tool must agree")
+        if not isinstance(self.work_methods, tuple) or not all(is_method_id(item) for item in self.work_methods):
+            raise ValueError(f"subagent role {self.id}: work_methods must be a tuple of method ids")
+        if len(set(self.work_methods)) != len(self.work_methods):
+            raise ValueError(f"subagent role {self.id}: work_methods must be unique")
+        if self.default_work_method is not None and self.default_work_method not in self.work_methods:
+            raise ValueError(f"subagent role {self.id}: default_work_method must be one of work_methods")
+        if self.loadout_role is not None and self.loadout_role not in LOADOUT_ROLES:
+            raise ValueError(f"subagent role {self.id}: loadout_role must be one of {list(LOADOUT_ROLES)}")
 
     @property
     def prompt_id(self) -> str:
@@ -100,6 +182,12 @@ class SubagentRole:
             "default_profile": self.default_profile,
             "enabled": self.enabled,
             "prompt_id": self.prompt_id,
+            "visual": self.visual.as_dict(),
+            "can_own_mission": self.can_own_mission,
+            "can_spawn": self.can_spawn,
+            "work_methods": list(self.work_methods),
+            "default_work_method": self.default_work_method,
+            "loadout_role": self.loadout_role,
         }
 
 
@@ -200,6 +288,36 @@ CODER_INSTRUCTIONS = (
     "Ce qui est changé, la preuve (échec avant, réussite après), ce qui reste ouvert."
 )
 
+RESEARCH_LEAD_INSTRUCTIONS = (
+    "VOTRE MISSION : PORTER UNE RECHERCHE JUSQU'À UNE RÉPONSE QUI TIENT\n"
+    "Vous êtes la direction de recherche, et vous portez la mission : c'est à vous de juger quand les preuves "
+    "suffisent. Une réponse plausible tirée de deux pages ne suffit pas quand la question en demande plus.\n\n"
+    f"{_DOSSIER}\n\n"
+    "RÉFLEXES\n"
+    "- Jugez l'ampleur de la question : quelles sources, quels angles (caractéristiques, avis indépendants, "
+    "prix, retours dans la durée) changeraient la réponse.\n"
+    "- Lancez les recherches utiles quand elles servent, documentaires ou web ; pas davantage.\n"
+    "- Confrontez les sources qui se contredisent au lieu d'en choisir une en silence.\n"
+    "- Quand des usages différents donnent des gagnants différents, dites-le.\n"
+    "- Vérifiez que chaque affirmation de la synthèse a sa source.\n\n"
+    "COMPTE RENDU\n"
+    "Une synthèse comparée et sourcée, la recommandation et ses limites, ce qui reste incertain."
+)
+
+QA_INSTRUCTIONS = (
+    "VOTRE MISSION : DIRE SI UN RÉSULTAT TIENT, PREUVES À L'APPUI\n"
+    "Vous êtes le contrôle qualité. Vous examinez le résultat d'un autre agent, désigné par votre consigne. "
+    "Vous ne refaites pas son travail et vous ne proposez pas une solution concurrente.\n\n"
+    "RÉFLEXES\n"
+    "- Lisez la demande d'origine et ses critères de réussite avant le résultat.\n"
+    "- Vérifiez par vous-même : relancez les tests, ouvrez les sources citées, relisez le code changé.\n"
+    "- Classez vos constats : bloquant, à corriger, remarque. Chaque constat avec sa preuve (fichier, ligne, "
+    "source, sortie de test).\n"
+    "- Un doute non vérifié se dit doute, jamais défaut.\n\n"
+    "COMPTE RENDU\n"
+    "Le verdict (tient, à corriger, ne tient pas), puis les constats classés avec leur preuve."
+)
+
 CONCEPT_INSTRUCTIONS = (
     "VOTRE MISSION : PROPOSER DES PISTES DE CONCEPTION\n"
     "Vous êtes l'agent de conceptualisation. Pendant que l'Intervieweur cadre la demande, vous explorez des "
@@ -231,6 +349,7 @@ ROLES: tuple[SubagentRole, ...] = (
         instructions=INTERVIEWER_INSTRUCTIONS,
         tools=("Read", "Edit", "Write"),
         when_relevant="Création, livrable important ou résultat attendu flou, avant toute exécution.",
+        visual=RoleVisual(icon="question", accent="violet", badge="INT"),
     ),
     SubagentRole(
         id="research",
@@ -241,6 +360,8 @@ ROLES: tuple[SubagentRole, ...] = (
         instructions=RESEARCH_INSTRUCTIONS,
         tools=("Read", "Grep", "Glob", "Edit", "board_memory_search", "memory_search", "knowledge_search"),
         when_relevant="Quand la matière existe probablement déjà dans le Board, la mémoire ou le dépôt.",
+        visual=RoleVisual(icon="book", accent="teal", badge="DOC"),
+        loadout_role="research",
     ),
     SubagentRole(
         id="web-research",
@@ -251,6 +372,7 @@ ROLES: tuple[SubagentRole, ...] = (
         instructions=WEB_RESEARCH_INSTRUCTIONS,
         tools=("WebSearch", "WebFetch", "Read", "Edit"),
         when_relevant="Quand il faut des sources extérieures que le poste n'a pas.",
+        visual=RoleVisual(icon="globe", accent="sky", badge="WEB"),
     ),
     SubagentRole(
         id="coder",
@@ -260,10 +382,14 @@ ROLES: tuple[SubagentRole, ...] = (
         mission="Livrer un changement de code qui marche, prouvé par un test, dans les règles du dépôt.",
         instructions=CODER_INSTRUCTIONS,
         skills=("coding-guideline", "error-handling"),
-        tools=("Read", "Edit", "Write", "Bash", "Grep", "Glob"),
+        tools=("Read", "Edit", "Write", "Bash", "Grep", "Glob", SPAWN_TOOL),
         when_relevant="Action claire sur du code (un bug, une évolution précise), ou exécution d'un cahier des "
                       "charges cadré.",
         default_profile="code",
+        visual=RoleVisual(icon="code", accent="amber", badge="DEV"),
+        can_own_mission=True,
+        can_spawn=True,
+        loadout_role="coder",
     ),
     SubagentRole(
         id="concept",
@@ -274,14 +400,59 @@ ROLES: tuple[SubagentRole, ...] = (
         instructions=CONCEPT_INSTRUCTIONS,
         tools=("Read", "Edit"),
         when_relevant="Création ouverte où plusieurs directions sont possibles, en parallèle de l'Intervieweur.",
+        visual=RoleVisual(icon="lightbulb", accent="rose", badge="CPT"),
+    ),
+    # Rôles additifs du handoff jarvis-organic-agent-orchestration (Slice 01) : définis ici, désactivés tant que
+    # leur câblage n'est pas livré (méthode et loadout : Slice 04 ; règles du cerveau : Slice 07). Désactivés, ils
+    # n'apparaissent pas dans `brain_rules` et le hook n'appose pas leur méthode : le comportement vivant est
+    # inchangé. Condition d'activation : `enabled=True` dans la Slice qui les câble, avec ses tests.
+    SubagentRole(
+        id="research-lead",
+        marker="research-lead",
+        name="Direction de recherche",
+        description="Pilote une recherche large : répartit les pistes, confronte les sources, juge quand c'est assez.",
+        mission="Porter une mission de recherche jusqu'à une synthèse comparée et sourcée, en organisant les "
+                "recherches utiles au fil de ce qu'on découvre.",
+        instructions=RESEARCH_LEAD_INSTRUCTIONS,
+        tools=("Read", "Edit", SPAWN_TOOL),
+        when_relevant="Question qui demande plusieurs sources ou angles (comparer, choisir, faire l'état d'un sujet).",
+        enabled=False,
+        visual=RoleVisual(icon="compass", accent="indigo", badge="DIR"),
+        can_own_mission=True,
+        can_spawn=True,
+    ),
+    SubagentRole(
+        id="qa",
+        marker="qa",
+        name="Contrôle qualité",
+        description="Examine le résultat d'un autre agent et dit s'il tient, preuves à l'appui.",
+        mission="Donner un second regard critique sur un résultat précis : approuver, relever des défauts ou "
+                "demander une correction, sans produire un travail concurrent.",
+        instructions=QA_INSTRUCTIONS,
+        tools=("Read", "Grep", "Glob", "Bash"),
+        when_relevant="Résultat critique ou risqué qui mérite un second regard avant d'être rendu.",
+        enabled=False,
+        visual=RoleVisual(icon="shield-check", accent="lime", badge="QA"),
+        loadout_role="reviewer",
     ),
 )
 
 _BY_MARKER: Mapping[str, SubagentRole] = {role.marker: role for role in ROLES}
+_BY_ID: Mapping[str, SubagentRole] = {role.id: role for role in ROLES}
 ROLE_MARKERS: tuple[str, ...] = tuple(_BY_MARKER)
 
-if len(_BY_MARKER) != len(ROLES) or len({role.id for role in ROLES}) != len(ROLES):
+#: Alias de compatibilité : un marqueur historique -> l'id canonique qu'il désigne. Données explicites, jamais
+#: déduites d'un libellé. `reviewer` est le rôle de loadout historique de la relecture (`LOADOUT_ROLES`).
+ROLE_ALIASES: Mapping[str, str] = {"reviewer": "qa"}
+
+if len(_BY_MARKER) != len(ROLES) or len(_BY_ID) != len(ROLES):
     raise ValueError("subagent role ids and markers must be unique")
+for _alias, _target in ROLE_ALIASES.items():
+    if _alias in _BY_MARKER or _alias in _BY_ID or _target not in _BY_ID or not _MARKER.fullmatch(_alias):
+        raise ValueError(f"role alias {_alias!r} must be a free marker pointing at a registered role")
+for _visual_key in ("icon", "accent", "badge"):
+    if len({getattr(role.visual, _visual_key) for role in ROLES}) != len(ROLES):
+        raise ValueError(f"each subagent role needs its own visual {_visual_key}")
 
 
 def role_for(marker: object) -> SubagentRole | None:
@@ -289,6 +460,62 @@ def role_for(marker: object) -> SubagentRole | None:
 
     role = _BY_MARKER.get(str(marker or "").strip().lower())
     return role if role is not None and role.enabled else None
+
+
+def role_by_id(role_id: object) -> SubagentRole | None:
+    """La définition d'un id canonique, active ou non, ou `None`."""
+
+    return _BY_ID.get(str(role_id or ""))
+
+
+class RoleStatus(StrEnum):
+    """Comment un marqueur a été résolu. Seuls `declared` et `alias` donnent un rôle actif."""
+
+    DECLARED = "declared"
+    ALIAS = "alias"
+    DISABLED = "disabled"
+    UNKNOWN = "unknown"
+    UNDECLARED = "undeclared"
+
+
+@dataclass(frozen=True, slots=True)
+class RoleResolution:
+    """`role_id` canonique (ou réservé), le marqueur tel qu'écrit, et le statut de la résolution."""
+
+    role_id: str
+    marker: str | None
+    status: RoleStatus
+
+    @property
+    def known(self) -> bool:
+        return self.status in (RoleStatus.DECLARED, RoleStatus.ALIAS, RoleStatus.DISABLED)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"role_id": self.role_id, "role_marker": self.marker, "role_status": self.status.value}
+
+
+#: Longueur gardée d'un marqueur inconnu, pour le diagnostic.
+MAX_UNKNOWN_MARKER_CHARS = 24
+
+
+def resolve_role(marker: object) -> RoleResolution:
+    """Résoudre un marqueur de rôle, de façon déterministe. Ne lève jamais.
+
+    Absent -> `undeclared` ; marqueur du registre -> son id (`declared`, ou `disabled` si le rôle l'est) ;
+    alias -> l'id visé (`alias`, l'alias reste visible dans `marker`) ; tout le reste -> `unknown`, marqueur
+    gardé tronqué. Une alias qui vise un rôle désactivé reste `alias` : la cible fait foi pour l'affichage.
+    """
+
+    raw = str(marker or "").strip().lower()
+    if not raw:
+        return RoleResolution(UNDECLARED_ROLE_ID, None, RoleStatus.UNDECLARED)
+    role = _BY_MARKER.get(raw)
+    if role is not None:
+        return RoleResolution(role.id, raw, RoleStatus.DECLARED if role.enabled else RoleStatus.DISABLED)
+    target = ROLE_ALIASES.get(raw)
+    if target is not None:
+        return RoleResolution(target, raw, RoleStatus.ALIAS)
+    return RoleResolution(UNKNOWN_ROLE_ID, raw[:MAX_UNKNOWN_MARKER_CHARS], RoleStatus.UNKNOWN)
 
 
 def instructions_for(role: SubagentRole, overrides: Mapping[str, str] | None = None) -> str:

@@ -101,6 +101,15 @@ def preview(value: object) -> str:
 Fail = Callable[[str], Exception]
 
 
+def recode(fail: Fail, check: Callable[..., None], name: str, *args: Any, **kwargs: Any) -> None:
+    """Appliquer un contrôle de ce module (`check_text`, `check_id`...) en levant l'erreur codée de l'appelant."""
+
+    try:
+        check(name, *args, **kwargs)
+    except (TypeError, ValueError) as exc:
+        raise fail(str(exc)) from None
+
+
 def check_aware(fail: Fail, name: str, value: object, *, required: bool = True) -> None:
     if value is None and not required:
         return
