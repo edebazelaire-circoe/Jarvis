@@ -31,6 +31,7 @@ from typing import Any
 from jarvis.domain._checks import check_aware, parse_dt, parse_enum, preview, recode, strict_keys
 from jarvis.domain._checks import check_id as _check_id
 from jarvis.domain._checks import check_text as _check_text
+from jarvis.domain.agent_relations import RELATION_KINDS
 
 #: Identifiant d'une méthode : minuscules ASCII, chiffres et tirets, 2 à 48 caractères.
 METHOD_ID = re.compile(r"[a-z][a-z0-9-]{1,47}\Z")
@@ -46,9 +47,9 @@ MAX_METHOD_VERSION = 9999
 #: peut donc pas être importé ici. L'égalité des deux motifs est vérifiée par un test.
 ROLE_ID = re.compile(r"[a-z][a-z_-]{1,23}\Z")
 
-#: Les types de relation qu'une méthode peut suggérer (D09). Vocabulaire seulement : la Slice 02 possède le
-#: contrat des relations et doit réutiliser ces valeurs (ou faire de ce tuple un import de son énumération).
-USEFUL_RELATION_KINDS: tuple[str, ...] = ("delegation", "communication", "adversary", "qa", "handoff")
+#: Les types de relation qu'une méthode peut suggérer (D09) : le vocabulaire canonique des relations
+#: (`agent_relations.AgentRelationKind`), importé, jamais redéfini ici.
+USEFUL_RELATION_KINDS: tuple[str, ...] = RELATION_KINDS
 
 #: Clés refusées avec un message explicite : une méthode n'est pas un plan d'exécution (D06).
 FORBIDDEN_PLAN_KEYS = frozenset({"steps", "sequence", "order", "graph", "dag", "nodes", "edges", "workflow", "plan"})

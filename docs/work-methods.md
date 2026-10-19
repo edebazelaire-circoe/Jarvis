@@ -27,8 +27,8 @@ Le décodage (`from_payload`) est strict : toute clé inconnue est refusée, et 
 `sequence`, `order`, `graph`, `dag`, `nodes`, `edges`, `workflow`, `plan`) est refusée nommément, code
 `work_method_is_not_a_plan`.
 
-Le vocabulaire des relations (`USEFUL_RELATION_KINDS`) est celui de D09 ; le contrat des relations
-appartient à la Slice 02, qui doit réutiliser ces valeurs.
+Le vocabulaire des relations (`USEFUL_RELATION_KINDS`) est importé de `agent_relations.RELATION_KINDS`,
+sa source canonique ; le contrat des relations est [agent-relations.md](agent-relations.md).
 
 ## Versions et provenance
 

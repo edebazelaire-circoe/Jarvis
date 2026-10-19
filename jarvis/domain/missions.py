@@ -340,7 +340,8 @@ def reconcile_instance(current: AgentInstance, incoming: AgentInstance) -> Agent
 
 
 def transfer_ownership(mission: Mission, successor: AgentInstance, *, handoff_ref: str) -> Mission:
-    """Passer la mission à `successor` par un relais explicite (`handoff_ref` : id du relais, Slice 02).
+    """Passer la mission à `successor` par un relais explicite (`handoff_ref` : `relation_id` de la relation
+    `handoff` de `agent_relations`, qui porte le paquet de relais).
 
     Le successeur doit être une autre instance, Mission Owner de cette mission. Une mission close ne change
     plus de propriétaire.

@@ -10,6 +10,7 @@ affichage) est signalé là où il manque encore.
 | Grammaire des marqueurs de tête, déclaration | `jarvis/domain/agent_markers.py` | `tests/unit/test_agent_markers.py` |
 | Missions, instances, Mission Owner, éphémère | `jarvis/domain/missions.py` | `tests/unit/test_missions.py` |
 | Work Methods | `jarvis/domain/work_methods.py`, voir [work-methods.md](work-methods.md) | `tests/unit/test_work_methods.py` |
+| Relations typées, tableaux de relation, relais | `jarvis/domain/agent_relations.py`, voir [agent-relations.md](agent-relations.md) | `tests/unit/test_agent_relations.py` |
 
 Les décisions produit dont ces contrats découlent (D01 à D25) sont celles du handoff
 `tasks/jarvis-organic-agent-orchestration/docs/01-decisions.md`.
@@ -215,7 +216,7 @@ créée (D15).
 `reconcile_instance(current, incoming)` accepte une seconde déclaration identique (rejeu, redémarrage) et
 peut seulement compléter un libellé vide ; toute autre différence lève `MissionError` de code
 `immutable_field`, nommant le champ. Changer de rôle ou de contexte, c'est une **nouvelle instance** (D14,
-relais : Slice 02).
+relais : [agent-relations.md](agent-relations.md) §4).
 
 Un rôle que le registre ne connaît plus reste tel quel dans l'instance : `role_known` est faux et
 l'affichage dégrade, rien n'est réécrit.
