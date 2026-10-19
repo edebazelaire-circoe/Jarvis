@@ -3,9 +3,16 @@
 Date : 2026-10-20. Auteur : Work Agent de la Slice 00. Worktree `C:/Projects/jarvis/orch`,
 branche `task/jarvis-organic-agent-orchestration`, issue de `main`.
 
-**État de readiness : `READY`** (après les amendements consignés ici et dans les `SLICE.md`).
-Une décision produit non bloquante pour les Slices 01 à 04 doit être tranchée avant le dispatch
-de la Slice 05 : Q1 (§6).
+**État de readiness : `READY`** (après les amendements consignés ici et dans les `SLICE.md`,
+confirmé après le rework QA du 2026-10-20, §8).
+
+- Q1 / I-004 (sens d'« éphémère ») est **tranchée par l'agent 0** (commit `6f2ca77d`, option
+  recommandée) : un seul drapeau, silence de la réussite conservé, règle du cerveau élargie aux
+  petites corrections évidentes dont le changement visible tient lieu de compte rendu ; un correctif
+  dont l'utilisateur attend la confirmation reste une tâche ordinaire à un seul agent ; un échec est
+  toujours annoncé. Le Human peut revenir dessus. Propriétaire de la modification de la règle du
+  prompt (`jarvis/runtime/claude_local.py:101`) : **Slice 07**.
+- Le spawn imbriqué, dont dépend D04, est **prouvé** sur le CLI installé (§8, sonde N3).
 
 Ordre suivi : l'audit du §1 a été mené sur le code et la documentation du dépôt **avant** toute
 lecture de `README.md`, `docs/`, `references/`, `Issues/` et des `slices/` de ce handoff (seul
@@ -19,7 +26,7 @@ réconciliation (§2 et suivants) vient ensuite.
 | Fait | Preuve |
 | --- | --- |
 | HEAD de la branche de tâche = `336f21be` (« Merge branch 'task/quick-fixes-pre-presentation' ») | `git log --oneline -3` |
-| `origin/main` = HEAD, aucune dérive au 2026-10-20 | `git fetch` puis `git log HEAD..origin/main` vide |
+| **Correction QA (N1)** : `origin/main` n'est **pas** égal à HEAD. Le distant est resté à `82051c3a` ; le `main` local de `C:/Projects/jarvis/jarvis` porte 2 commits non poussés, `3351ef59` et `336f21be`, dont la branche de tâche est issue. Le premier constat (« aucune dérive ») venait de `git log HEAD..origin/main`, vide parce que le distant est **en retard**, pas à jour. Les merges arrivent dans le `main` local, souvent sans push : le contrôle de fraîcheur compare donc aussi `HEAD..main` (§7) | `git ls-remote origin main` → `82051c3a` ; `git log --oneline 82051c3a..main` → 2 commits ; `git log HEAD..main` vide |
 | Base du handoff `82051c3a` ; entre elle et HEAD, un seul commit : `3351ef59` (lasso, Suppr/-, roue épinglée, Dossier direct) | `git log 82051c3a..336f21be` |
 | `3351ef59` ne touche que l'UI scène/dossier/roue (`control_center_scene_page.js`, `control_center_tool_wheel.js`, `control_center_dossier*.js`, docs `control-center-shell.md`, `scene-selection-batch.md`) : aucun contrat Work State, rôle, loadout, Scene domaine, migration. Impact : nul sur le plan, sauf vigilance de fusion pour la Slice 09 (`control_center_scene_page.js` +62 lignes) | `git diff --stat 82051c3a 336f21be` |
 | `e05d931d` (registre des rôles, mode Interview) est **antérieur** à la base du handoff : il était déjà dans `82051c3a`, mais le handoff ne le mentionne nulle part | `git merge-base --is-ancestor e05d931d 82051c3a` vrai |
@@ -114,7 +121,7 @@ Center, à surveiller par la Slice 09/10).
 - `LOADOUT_ROLES = ("coder", "reviewer", "research")` (`jarvis/domain/memory_settings.py:159`) ;
   clés `<profil>` / `<profil>:<rôle>` validées (`:164-175`).
 - `LoadoutResolver.resolve(profile, role)` (`jarvis/core/loadout_resolver.py:122`),
-  `ROLE_BASE_PROFILE` (`:46`). Un rôle du registre sans loadout garde celui de son profil
+  `ROLE_BASE_PROFILE` (`:45`). Un rôle du registre sans loadout garde celui de son profil
   (`routing_hook.py:129-136`). `ANNOUNCED_ROLES` = union loadout + registre (`routing_hook.py:75`).
 - `reviewer` existe comme rôle de loadout mais **pas** dans le registre des sous-agents.
 
@@ -230,15 +237,23 @@ Aucun conflit qui rende une décision impossible. Trois tensions, traitées sans
    travail dont on attend le résultat (`claude_local.py:101`). Le handoff l'emploie pour « une
    correction de fichier, une note, un renommage » qui ne doit pas encombrer l'historique (D07/D08,
    1er critère d'acceptation). Une correction déclarée éphémère serait donc tue à la réussite. Les
-   deux sens ne s'excluent pas mais ne coïncident pas ; trancher avant la Slice 05 (§6, Q1).
+   deux sens ne s'excluent pas mais ne coïncident pas. **Tranché par l'agent 0** (`6f2ca77d`) :
+   un seul drapeau, silence conservé, règle élargie ; la Slice 07 modifie la règle du prompt.
 
 ### 2.5 Incompatibilité technique trouvée : marqueurs éphémère + profil + rôle
 
 La grammaire éphémère exige `[éphémère]` **en tête** (`agent_tasks.py:73`, `:196`), alors que le hook
 lit le profil puis le rôle **en tête** (`routing_hook.py:88-117`) : `[éphémère] [code] [coder] …`
-fait perdre profil et rôle (le premier crochet est consommé comme profil inconnu → `general`, rôle
-`None`), et `[code] [coder] [éphémère] …` fait perdre le drapeau éphémère. Aujourd'hui une tâche
-éphémère ne peut donc pas porter de rôle. La Slice 01 doit définir **une seule grammaire composée**
+fait perdre profil et rôle, et `[code] [coder] [éphémère] …` fait perdre le drapeau éphémère.
+Mécanique exacte (correction QA N4) : `PROFILE_PATTERN` et `_BRACKET` n'acceptent que
+`[A-Za-z_-]{2,24}` (`routing_hook.py:67`, `:71`), donc `[éphémère]` **ne correspond pas** : il
+n'est pas consommé comme profil inconnu, `_markers` rend `(0, None)` sur la description
+(`:103-105`). `read_profile` et `read_role` se rabattent alors sur la clé `prompt` de l'appel
+(`:90`, `:122`) : un `[profil] [rôle]` en tête de la *consigne* serait encore lu, sinon profil
+`general` et rôle `None`. Dans l'autre ordre, le hook lit bien profil et rôle, mais la grammaire
+éphémère (`fullmatch` ancré en tête, `agent_tasks.py:73`, `:196`) ne voit plus le drapeau.
+Aujourd'hui une tâche éphémère ne peut donc porter de rôle que par sa consigne, ce que le cerveau
+n'écrit pas. La Slice 01 doit définir **une seule grammaire composée**
 (ou un champ structuré équivalent) lue par le tracker et le hook, testée dans les deux sens.
 
 ---
@@ -319,11 +334,13 @@ rôle réservé au runtime) : un binaire v1 refuserait de décoder ; même règl
   `LOADOUT_ROLES` étendu additivement si un rôle reçoit un loadout ; le prompt d'édition reste
   `subagent_role.<id>`.
 - **05** : spawn réel = outil `Agent` du CLI + hook `PreToolUse` ; Core ne lance rien ; vérifier le
-  spawn imbriqué et la présence des outils MCP Core dans les sous-agents ; Codex sans sous-tâches.
-  Q1 tranchée avant dispatch.
+  spawn imbriqué **prouvé** (§8) ; confirmer en bac à sable la visibilité des serveurs MCP de
+  Jarvis (`jarvis-tools`) dans un sous-agent ; Codex sans sous-tâches. Source du rôle transmise à
+  Core : le hook `PreToolUse` (arbitrage D25, §8).
 - **06** : rien de spécifique hors chemins.
 - **07** : amender `brain_rules()` et les instructions de l'Intervieweur existantes ; préserver
-  `EXECUTION_GATE_RULE` ; reprendre l'essai en bac à sable du plan `subag`.
+  `EXECUTION_GATE_RULE` ; **propriétaire de la règle éphémère du prompt** (`claude_local.py:101`,
+  décision I-004) ; reprendre l'essai en bac à sable du plan `subag`.
 - **08** : rôle dans un champ réservé au runtime, pas dans `category` ; voie D08 à choisir
   (recommandée : ne jamais projeter une éphémère dans la scène persistée ; visibilité vivante par le
   panneau Agents / la table de travail déjà branchés) ; ne pas reprendre l'archivage runtime d'`eph` ;
@@ -337,9 +354,10 @@ rôle réservé au runtime) : un binaire v1 refuserait de décoder ; même règl
 
 ---
 
-## 6. Questions pour le Human (aucune ne bloque les Slices 01 à 04)
+## 6. Questions pour le Human (aucune ne bloque de Slice)
 
-- **Q1 — sens d'« éphémère » (avant la Slice 05).** Aujourd'hui une éphémère réussit en silence et
+- **Q1 — sens d'« éphémère». Tranchée par l'agent 0 le 2026-10-20 (`6f2ca77d`) selon la
+  recommandation ci-dessous ; le Human peut revenir dessus. Exécution : Slice 07.** Aujourd'hui une éphémère réussit en silence et
   ne sert jamais à un travail dont vous attendez le résultat. Le handoff veut qu'une petite
   correction puisse être éphémère pour ne pas encombrer l'historique.
   *Recommandation :* garder **un seul** drapeau, avec son silence actuel, et élargir la règle du
@@ -360,9 +378,13 @@ rôle réservé au runtime) : un binaire v1 refuserait de décoder ; même règl
 
 À exécuter par le PM dans `C:/Projects/jarvis/orch`, résultat consigné dans `LOG.md` :
 
-1. `git fetch` ; `git log --oneline HEAD..origin/main`. Si non vide : merger `origin/main` dans la
-   branche de tâche avant dispatch, puis relancer un balayage large des tests touchés.
-2. `git diff --stat <dernier contrôle>..origin/main -- <chemins de la Slice>` (liste
+1. `git fetch` ; `git log --oneline HEAD..origin/main` **et** `git log --oneline HEAD..main` (le
+   `main` local de `C:/Projects/jarvis/jarvis`, où les merges arrivent souvent sans push ; une
+   branche est un ref partagé entre worktrees). Si l'un est non vide : merger le plus avancé
+   (`main` local s'il contient `origin/main`, sinon les deux) dans la branche de tâche avant
+   dispatch, puis relancer un balayage large des tests touchés.
+2. `git diff --stat <dernier contrôle>..main -- <chemins de la Slice>` et la même commande sur
+   `origin/main` (liste
    `freshness_paths` du `metadata.json`). Tout changement sur ces chemins ⇒ relire et amender la
    `SLICE.md` avant dispatch.
 3. Versions de schéma : `grep -n "^_SCHEMA_VERSION" jarvis/adapters/sqlite_state.py
@@ -370,9 +392,77 @@ rôle réservé au runtime) : un binaire v1 refuserait de décoder ; même règl
    bougé, renuméroter la migration prévue.
 4. Recoupements vivants : `git worktree list`, puis pour chaque worktree actif
    `git -C <wt> status --short -- <chemins de la Slice>` et
-   `git log --oneline main..<branche> -- <chemins>` (au minimum `bor`, `eph`, `subag`). Un writer
-   concurrent sur les mêmes fichiers ⇒ attendre ou réordonner.
+   `git log --oneline main..<branche> -- <chemins>` et `git log --oneline HEAD..main -- <chemins>`
+   (au minimum `bor`, `eph`, `subag`). Un writer concurrent sur les mêmes fichiers ⇒ attendre ou
+   réordonner.
 5. Lot de tests de référence de la Slice en avant-plan (petits lots,
    `C:/Projects/jarvis/jarvis/.venv/Scripts/python.exe -m pytest`) ; noter à part les échecs déjà
    présents sur main (`test_brain_capability_parity`, `test_brain_delegation`).
-6. Vérifier que la Q bloquante éventuelle de la Slice est tranchée (Q1 pour 05/07).
+6. Vérifier qu'aucune décision n'est rouverte par le Human (Q1/I-004 tranchée le 2026-10-20 ; si
+   le Human la renverse, amender 01, 05, 07 avant dispatch).
+
+---
+
+## 8. Rework QA (2026-10-20, PASS_WITH_NOTES)
+
+### N3 — Sonde du spawn imbriqué (preuve, avant la Slice 01)
+
+CLI installé : `claude --version` → `2.1.304 (Claude Code)` (`/c/Users/Clarice/.local/bin/claude`).
+Deux invocations `claude -p --model haiku --output-format stream-json --verbose
+--permission-mode bypassPermissions` dans `C:/Users/Clarice/AppData/Local/Temp/claude/C--Projects-jarvis-jarvis/7314dd51-936a-4614-8684-8f4233075b7c/scratchpad/probe` (scratchpad, hors dépôt), sans JARVIS, sans
+port Core, ≈ 0,02 $ au total.
+
+1. **Sonde 1** (`out.jsonl`) : le cerveau appelle `Agent` (« sonde niveau 1 ») ; le sous-agent liste
+   ses outils, y trouve `Agent`, l'appelle (« sonde niveau 2 ») et rapporte `NESTED_OK`.
+   - flux : `task_started` `spawn_depth: 1` puis `task_started` `spawn_depth: 2` ; le `tool_use`
+     `Agent` de niveau 2 porte `parent_tool_use_id` = id de l'appel de niveau 1 ;
+   - le sous-agent voit les outils MCP de la session : `mcp__jarvis-drive__*` et
+     `mcp__claude_ai_Claude_Docs__*` (chargeables par `ToolSearch`), soit les serveurs montés par le
+     processus parent.
+2. **Sonde 2** (`out2.jsonl`, `hook.log`) : même scénario avec `--settings` déclarant un hook
+   `PreToolUse` sur `Agent|Task` (comme `routing_hook.hook_settings`). Le hook est appelé **deux
+   fois** : pour l'appel du cerveau (`[general] [research] sonde N1`, sans `agent_id`) **et** pour
+   l'appel imbriqué (`[code] [coder] sonde N2`, avec `agent_id` du sous-agent appelant et
+   `agent_type: general-purpose`). Chaque charge utile du hook porte `tool_use_id`, `session_id`,
+   `tool_input.{description,prompt,subagent_type,run_in_background}`. `NESTED_OK` rendu,
+   `spawn_depth` 1 et 2 observés.
+
+**Conclusion :** sur le CLI installé, un sous-agent `general-purpose` peut lui-même appeler `Agent`,
+le hook de Jarvis voit et peut signer cet appel imbriqué, et il sait **qui** l'appelle (`agent_id`).
+D04 (propriété de mission récursive) est réalisable par la voie native. Pas de récursivité médiée par
+Core nécessaire ; état inchangé : **READY**.
+
+Limites, à vérifier par la Slice 05 en bac à sable : (a) le profil normal du cerveau ne restreint
+pas les outils (`claude_local.py:1148` monte le hook, `--tools` n'est passé qu'aux profils
+restreints, `:398-421`, `:1187`), mais un type de sous-agent personnalisé à liste d'outils réduite
+pourrait ne pas avoir `Agent` : `can_spawn` doit donc aussi se traduire par l'outillage du type ;
+(b) la visibilité MCP prouvée l'est pour des serveurs de la session ; celle des serveurs `jarvis-tools`
+/ `jarvis-barehands` passés par `--mcp-config` (`claude_local.py:775-784`) se confirme dans le bac à
+sable ; (c) Codex : pas de sous-tâches relayées ; (d) la profondeur n'a été prouvée que jusqu'à 2.
+
+### N5 — Arbitrage D25 : source du rôle transmise à Core
+
+Recommandation : **le hook `PreToolUse` est la source du rôle (et de l'éphémère, de la mission, du
+parent) transmise à Core**, avant le spawn, sous un contrat Core ; le parsing `stream-json` de
+`agent_tasks.py:1011` reste un affichage diagnostique de compatibilité. Raisons : D25 réserve les
+sémantiques aux contrats Core ; le hook est déjà le seul point contraignant (il signe la consigne
+avec la méthode du rôle, `routing_hook.py:214`) ; la sonde 2 montre qu'il reçoit `tool_use_id` (clé
+de jointure avec la tâche suivie, dont l'id initial est ce `tool_use_id`) et l'`agent_id` du parent
+pour les appels imbriqués ; il voit l'appel même si le flux est perdu. Contrainte : le hook est un
+processus court, sans réseau (`routing_hook.py`, docstring) ; il écrit donc un fait daté et borné
+(instantané/journal local relu par le Control Center, ou envoi au relais existant) que le Control
+Center rattache à l'observation et que Core accepte comme déclaration — jamais un appel bloquant
+vers Core qui retarderait le spawn. Décision finale du mécanisme de transport : Slice 03 (contrat)
+et 05 (câblage).
+
+### N6 — Conversation Events et éphémères
+
+Les spans `subagent.*` enregistrent durablement les sous-agents, éphémères compris, avec l'attribut
+`ephemeral` (`subagent_conversation.py:333`, `conversation_events.py:298`). Ce registre est
+**diagnostique** : il n'est pas un nœud d'historique au sens de D08 et ne doit alimenter ni
+l'historique de mission (Slice 03) ni le graphe/la scène (Slice 08). Consigné dans ces deux Slices.
+
+### N7
+
+La Slice 00 a été exécutée par un Work Agent délégué par l'agent 0, puis revue par une QA
+indépendante (PASS_WITH_NOTES) ; choix voulu, consigné dans `LOG.md`.

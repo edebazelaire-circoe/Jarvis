@@ -15,12 +15,15 @@
   "readiness": {
     "state": "READY",
     "date": "2026-10-20",
-    "audited_head": "main@336f21be",
+    "audited_head": "main local @336f21be (origin/main @82051c3a, 2 commits non poussés)",
     "evidence": "references/readiness-audit.md",
     "open_questions": [
-      "Q1 avant Slice 05",
-      "Q2 non bloquante",
-      "Q3 non bloquante"
+      "Q2 non bloquante (Human)",
+      "Q3 non bloquante (Human)"
+    ],
+    "decided": [
+      "I-004 par l'agent 0 (6f2ca77d)",
+      "N3 spawn imbriqué prouvé (CLI 2.1.304)"
     ]
   },
   "absorbs": {

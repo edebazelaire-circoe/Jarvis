@@ -7,8 +7,9 @@ State: **READY** (audited `main@336f21be`, evidence `references/readiness-audit.
 - Task Type gate resolved: `waived-by-agent-0` on every Slice (precedent `jarvis-unified-chat-and-board-drop`).
 - Mission History seam: `jarvis.sqlite3` v10 via `sqlite_state._MIGRATIONS`.
 - This task absorbs the remaining scope of `jarvis-subagent-roles-interview` (Slice 10 = its Settings tab).
-- Slices 05 and 07 also wait for Q1 / I-004 (meaning of ephemeral).
-- Before each dispatch: freshness check of `references/readiness-audit.md` §7, result in `LOG.md`.
+- I-004 (meaning of ephemeral) decided by agent 0 (`6f2ca77d`): one flag, silence kept, brain rule widened; Slice 07 owns the prompt rule change (`claude_local.py:101`).
+- Nested spawn proven on CLI 2.1.304 (readiness audit §8): D04 feasible natively; the `PreToolUse` hook is the role source sent to Core (D25).
+- Before each dispatch: freshness check of `references/readiness-audit.md` §7 (compare `HEAD..main` **and** `HEAD..origin/main`), result in `LOG.md`.
 
 ## Order and dependencies
 

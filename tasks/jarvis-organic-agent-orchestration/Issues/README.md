@@ -30,7 +30,7 @@ On main, an ephemeral task is one whose result the user does not expect: its suc
 
 **Status:** open; assigned to Slice 01.
 
-`[éphémère]` must lead the description (`agent_tasks.py:73`, `:196`) while the routing hook reads `[profile] [role]` at the head (`routing_hook.py:88-117`): either order loses one of the two. Slice 01 defines one composed grammar parsed identically on both sides.
+`[éphémère]` must lead the description (`agent_tasks.py:73`, `fullmatch` at `:196`) while the routing hook reads `[profile] [role]` at the head with ASCII-only patterns (`routing_hook.py:67`, `:71`): `[éphémère]` does not match them, `_markers` returns `(0, None)`, and `read_profile`/`read_role` fall back to the `prompt` key (`:90`, `:122`), else `general`/`None`; the other order keeps profile/role but loses the ephemeral flag. Slice 01 defines one composed grammar parsed identically on both sides.
 
 ## I-006 — Overlapping worktrees
 

@@ -13,7 +13,7 @@
 
 ## 2026-10-20 — Slice 00 readiness (blind audit, reconciliation)
 
-- Worktree `C:/Projects/jarvis/orch`, branch `task/jarvis-organic-agent-orchestration` from `main`. Audited HEAD `336f21be`; `origin/main` identical (no drift). Only commit since the handoff baseline `82051c3a`: `3351ef59` (scene/dossier/wheel UI fixes) — no impact on contracts, watch `control_center_scene_page.js` for Slice 09.
+- Worktree `C:/Projects/jarvis/orch`, branch `task/jarvis-organic-agent-orchestration` from `main`. Audited HEAD `336f21be` (local `main`). Corrected by the QA rework: `origin/main` is still `82051c3a`; local `main` carries 2 unpushed commits (`3351ef59`, `336f21be`) — the first check compared only `HEAD..origin/main`. Only commit since the handoff baseline `82051c3a`: `3351ef59` (scene/dossier/wheel UI fixes) — no impact on contracts, watch `control_center_scene_page.js` for Slice 09.
 - The repository has no `docs/workflows/AGENT_TASK_LIFECYCLE.md`: fallback on the project memory (no dev branch, branch from `main`, dedicated worktree, one writer per worktree, merge `origin/main` into the task branch before closing).
 - Blind audit performed on code and repository docs before reading this handoff; evidence with `file:line` in `references/readiness-audit.md`.
 - Main finding: the handoff missed what was already on main at its own baseline — role registry `jarvis/domain/subagent_roles.py` with Interviewer, mission dossier, `EXECUTION_GATE_RULE`, editable role instructions and `GET /api/subagent-roles` (`e05d931d`), and the merged ephemeral-task feature (`3bc7acf2`). Slices 01/04/07/10 amended to extend these instead of recreating them.
@@ -27,3 +27,16 @@
 - Baseline tests: `test_subagent_roles.py`, `test_work_state_contracts.py`, `test_schema_migrations.py` — 123 passed. No product code changed; JARVIS not started.
 - **Readiness: READY.** Next: independent QA (qa-verification) of Slice 00, then dispatch Slice 01.
 - Agent 0 decisions (autonomous, recommended options): Q1/I-004 resolved — one ephemeral flag, silence kept, brain rule widened to small self-evident corrections (Slices 05/07 unblocked). Q2 (archive `jarvis-subagent-roles-interview` to done, remove worktree `subag`) and Q3 (fate of the 13 uncommitted files in `eph`) left to the Human: Drive moves and uncommitted work are Human-owned.
+
+## 2026-10-20 — Slice 00 rework after independent QA (PASS_WITH_NOTES)
+
+- Process: Slice 00 was executed by a Work Agent delegated by agent 0, then reviewed by an independent QA (PASS_WITH_NOTES). This is a deliberate choice.
+- N1: drift statement corrected (`git ls-remote origin main` -> `82051c3a`; local `main` 2 commits ahead, unpushed). Freshness check §7 now compares `HEAD..main` and `HEAD..origin/main` (steps 1, 2, 4).
+- N2: I-004 decision of agent 0 (`6f2ca77d`) carried into `slices/TODO.md`, `readiness-audit.md` (header, §2.4, §6 Q1), metadata 05/07 `dispatch_precondition`; Slice 07 named owner of the ephemeral rule of the brain prompt (`claude_local.py:101`); Slice 01 amendment aligned (contract only, no prompt edit).
+- N3: nested spawn probe run in the scratchpad (`claude -p`, haiku, 2 short calls, no JARVIS, no Core port). CLI `2.1.304`. Proven: a `general-purpose` sub-agent calls `Agent` (`spawn_depth` 2, `parent_tool_use_id`, `NESTED_OK`); it sees the session's MCP tools; the `PreToolUse` hook fires for the nested call and carries the caller's `agent_id` and `tool_use_id`. D04 feasible natively; readiness stays READY. Remaining sandbox checks for Slice 05: Jarvis `--mcp-config` servers in sub-agents, depth > 2, custom agent types.
+- N4: I-005 mechanics corrected (ASCII-only `PROFILE_PATTERN`/`_BRACKET`, `[éphémère]` does not match; fallback on the `prompt` key); Slice 01 tests retargeted.
+- N5: D25 arbitration — the `PreToolUse` hook is the source of role/ephemeral/mission/parent facts sent to Core; `agent_tasks.py:1011` stays diagnostic (Slices 03, 05).
+- N6: Conversation Events `subagent.*` spans (ephemeral included) are diagnostic, not D08 history; must not feed Mission History nor the graph (Slices 03, 08).
+- Minor: `ROLE_BASE_PROFILE` at `loadout_resolver.py:45`.
+- **Readiness: READY** (unchanged). Open Human questions: Q2, Q3 (non-blocking).
+

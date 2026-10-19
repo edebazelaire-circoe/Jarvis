@@ -37,5 +37,5 @@
     "jarvis/adapters/sqlite_scene.py"
   ],
   "readiness": "READY (Slice 00, 2026-10-20) ; voir references/readiness-audit.md",
-  "dispatch_precondition": "Q1 (sens d'« éphémère ») tranchée par le Human ou par l'agent 0 selon la recommandation de references/readiness-audit.md §6."
+  "dispatch_precondition": "Aucune : I-004 tranchée par l'agent 0 (6f2ca77d). Sonde N3 : spawn imbriqué prouvé ; confirmer en bac à sable la visibilité de jarvis-tools dans un sous-agent."
 }
