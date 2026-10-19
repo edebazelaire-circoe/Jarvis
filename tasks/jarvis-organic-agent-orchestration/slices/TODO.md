@@ -35,7 +35,7 @@ State: **READY** (audited `main@336f21be`, evidence `references/readiness-audit.
 ## Status
 
 - [x] 00-project-manager-readiness (READY 2026-10-20; QA qa-verification pending)
-- [ ] 01-agent-role-mission-contracts
+- [x] 01-agent-role-mission-contracts (implemented 2026-10-20; QA pending)
 - [ ] 02-agent-relation-contracts
 - [ ] 03-work-state-mission-history
 - [ ] 04-role-registry-loadouts-methods
