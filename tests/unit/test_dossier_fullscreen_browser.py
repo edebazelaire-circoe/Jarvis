@@ -95,9 +95,9 @@ def seed(*, active: str = A, big: bool = False) -> dict:
                        {"board_id": B, "title": "Budget 2027", "status": "active", "board_kind": "meeting"}]}
 
 
+# Correctifs avant Presentation : Dossier n'a plus de sous-menu, un clic ouvre directement la vue.
 OPEN_DOSSIER = [["click", "wheel", "#toolWheel .tw-anchor", 400],
-                ["click", "dossierSlot", "#toolWheel [data-tw-slot=dossier] .tw-dot", 900],
-                ["click", "openRow", "#toolWheel .tw-item[data-tw-item='open']", 900]]
+                ["click", "dossierSlot", "#toolWheel [data-tw-slot=dossier] .tw-dot", 900]]
 STATE = "JarvisDossier.state()"
 HEAD = "document.getElementById('dsrTitle').textContent"
 DOC = "[...document.querySelectorAll('#dossierView article.dsr-doc')].map(a=>a.dataset.entry)"

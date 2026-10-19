@@ -228,6 +228,29 @@ def test_pointer_leave_closes_after_grace_and_reentry_cancels(tmp_path):
     assert v["kbArm"] == 0
 
 
+def test_a_clicked_sub_menu_stays_pinned_while_the_pointer_wanders(tmp_path):
+    """Correctifs avant Presentation : un sous-menu ouvert par un clic (ou un pincement) ne se ferme ni ne
+    change parce que la main survole un autre secteur ou sort de la roue ; un clic sur un autre secteur,
+    un clic ailleurs ou Échap le défont."""
+
+    v = run(tmp_path, f"""
+      const pinned=play([{OPEN},{{type:'click',target:'wedge',index:1,detail:1,source:'barehands',menu:true,t:10}},
+                         {{type:'subOpen',slot:1,count:3,source:'barehands',level:1}}]);
+      const wander=play([{{type:'pointerover',target:'wedge',index:3}},{{type:'pointerout',inside:false}}],pinned.s);
+      const other=play([{{type:'click',target:'wedge',index:3,detail:1,source:'mouse',menu:true,t:900}}],wander.s);
+      const outside=play([{{type:'pointerdownOutside'}}],wander.s);
+      const esc=play([{{type:'keydown',target:'wedge',index:1,key:'Escape'}}],wander.s);
+      out({{opened:did(pinned.fx,'cancelLeave').length>0,
+           wander:[wander.s.open,wander.s.sub&&wander.s.sub.slot,wander.s.focus,did(wander.fx,'armLeave').length,
+                   did(wander.fx,'focus').length],
+           other:did(other.fx,'secondary'),outside:[outside.s.open,outside.s.sub],esc:[esc.s.open,esc.s.sub]}})""")
+    assert v["opened"] is True
+    assert v["wander"] == [True, 1, 1, 0, 0]
+    assert v["other"] == [{"do": "secondary", "index": 3, "source": "mouse"}]
+    assert v["outside"] == [False, None]
+    assert v["esc"] == [True, None]
+
+
 def test_keyboard_roving_wraps_and_escape_returns_to_anchor(tmp_path):
     v = run(tmp_path, """
       const k=(key,index,extra)=>Object.assign({type:'keydown',target:'wedge',index,key},extra||{});
@@ -304,14 +327,17 @@ async def test_module_is_served_after_the_capture_rail_and_host_declared(tmp_pat
 # ------------------------------------------------------------ Slice 03 et reprise QA de la Slice 02
 
 
-def test_hovering_another_wedge_closes_the_open_sub_arc(tmp_path):
+def test_hovering_another_wedge_keeps_the_open_sub_arc_pinned(tmp_path):
+    """Correctifs avant Presentation : le sous-arc ouvert par un geste explicite est épinglé ; survoler un
+    autre secteur ne le ferme plus et ne déplace pas la mise en avant (qui reste sur sa catégorie)."""
+
     v = run(tmp_path, f"""
       const o=play([{OPEN},{{type:'contextmenu',target:'wedge',index:0,source:'mouse',t:10}},
                     {{type:'subOpen',slot:0,count:2,source:'mouse'}}]).s;
       const same=play([{{type:'pointerover',target:'wedge',index:0}}],o).s;
       const other=play([{{type:'pointerover',target:'wedge',index:2}}],o).s;
-      out({{same:!!same.sub,other:other.sub,label:M.viewOf(other).label}})""")
-    assert v == {"same": True, "other": None, "label": "Dossier"}
+      out({{same:!!same.sub,other:other.sub&&other.sub.slot,label:M.viewOf(other).label}})""")
+    assert v == {"same": True, "other": 0, "label": None}
 
 
 def test_bh_pinch_on_anchor_is_a_pointer_not_the_keyboard(tmp_path):

@@ -2966,6 +2966,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function startBand(event){
     band={pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
       add:!!(event.ctrlKey||event.metaKey||event.shiftKey),moved:false,el:null};
+    /* Le rectangle n'est pas une sélection de texte : le navigateur en
+       commençait une au même appui, qui s'étendait en bleu sur les libellés
+       traversés et restait là à l'ouverture d'un menu. Elle est refusée
+       pendant le geste et effacée au début comme à la fin. */
+    clearNativeSelection();
+    document.addEventListener('selectstart',onBandSelectStart,true);
     document.addEventListener('pointermove',onBandMove,true);
     document.addEventListener('pointerup',onBandUp,true);
     document.addEventListener('pointercancel',onBandUp,true);
@@ -2974,6 +2980,11 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   function onBandMove(event){
     if(!band||event.pointerId!==band.pointerId)return;
+    /* Plus aucun bouton tenu : le lâcher a eu lieu là où la page ne l'entend
+       pas (au-dessus du visage ou d'un cadre isolé). Le rectangle est
+       abandonné, sinon il suivait le pointeur et le clic suivant — sur un
+       menu, par exemple — le refermait en sélectionnant. */
+    if(event.buttons===0){cancelBand();return}
     const box=bandFrame(event);
     if(box)event.preventDefault();
   }
@@ -2988,6 +2999,24 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     document.removeEventListener('pointermove',onBandMove,true);
     document.removeEventListener('pointerup',onBandUp,true);
     document.removeEventListener('pointercancel',onBandUp,true);
+    document.removeEventListener('selectstart',onBandSelectStart,true);
+  }
+
+  function onBandSelectStart(event){event.preventDefault()}
+
+  /* Efface une sélection de texte de la page — jamais celle d'un champ où
+     l'utilisateur écrit (le curseur y vit). */
+  function clearNativeSelection(){
+    if(typeof window.getSelection!=='function')return;
+    if(editableTarget(document.activeElement))return;
+    try{const native=window.getSelection();if(native&&native.rangeCount)native.removeAllRanges()}
+    catch(_error){/* sélection illisible : rien à effacer */}
+  }
+
+  /* Un champ où la frappe et la sélection de texte appartiennent à l'utilisateur. */
+  function editableTarget(target){
+    if(!target||!target.closest)return false;
+    return !!(target.isContentEditable||target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]'));
   }
 
   /* Rectangle abandonné sans lâcher (fenêtre quittée) : rien n'est
@@ -3017,6 +3046,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const held=band;
     band=null;
     syncHolding();
+    clearNativeSelection();
     if(held&&held.el)held.el.remove();
     if(!held||!held.moved||!box)return;
     /* Les boîtes **dessinées**, lues sur la page : le champ tourne, et ce que
@@ -3277,7 +3307,37 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   /* Le rectangle de sélection s'ouvre ici, dans la même écoute : c'est le seul
      endroit qui voit les appuis du vide. */
   function onDocumentBandDown(event){
+    /* Le même pointeur appuie de nouveau alors qu'un rectangle ou un geste
+       l'attendait encore : son lâcher s'est perdu. Rien de cet état ne
+       survit à l'appui — sur un menu comme sur le fond. */
+    if(band&&event.pointerId===band.pointerId)cancelBand();
+    if(gesture&&event.pointerId===gesture.pointerId&&!nodeElement(event.target)){
+      consoleLog('info','scene.gesture_cancelled',{object_id:gesture.id,mode:gesture.mode,reason:'stale_pointer'});
+      cancelGesture();
+    }
     if(bandCandidate(event))startBand(event);
+  }
+
+  /* Suppr / « - » sur la sélection de la page (une étoile ou plusieurs) :
+     les mêmes actions que le sous-menu Sélection de la roue — « Retirer du
+     Board » (avec sa confirmation) et « Masquer ». Seulement quand la frappe
+     vise la scène (fond de la page ou un de ses objets) : jamais dans un
+     champ, un éditeur, un panneau ou un menu, qui gardent leurs touches. */
+  function onDocumentKeyDown(event){
+    if(!enabled||!root||root.hidden||event.defaultPrevented||event.repeat)return;
+    if(event.ctrlKey||event.metaKey||event.altKey)return;
+    const act=event.key==='Delete'?'remove':event.key==='-'?'hide':null;
+    if(!act||!selection.length)return;
+    const target=event.target;
+    if(editableTarget(target))return;
+    if(target!==document.body&&target!==document.documentElement&&!nodeElement(target))return;
+    const ids=liveSelection();
+    if(!ids.length)return;
+    event.preventDefault();
+    if(gesture)cancelGesture();
+    if(band)cancelBand();
+    runSelectionAction(act,ids,{source:'keyboard'})
+      .catch(error=>actionFailed(act==='remove'?'Retrait du Board':'Masquage',ids[0],error));
   }
 
   /* Maj+flèches / Ctrl+flèches : aperçu tout de suite, validation au relâchement
@@ -4487,6 +4547,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       document.addEventListener('visibilitychange',onVisibility);
       document.addEventListener('pointerdown',onDocumentPointerDown,true);
       document.addEventListener('pointerdown',onDocumentBandDown,true);
+      document.addEventListener('keydown',onDocumentKeyDown);
       /* Un nœud retiré du document pendant qu'on le tient perd sa capture, et
          le navigateur le dit **au document**, plus au nœud ni à la scène. */
       if(I)document.addEventListener('lostpointercapture',onPointerCancel,true);
@@ -4509,6 +4570,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
          retrait, scène éteinte, un appui dans le vide ouvrait encore un
          rectangle sur une scène qui n'est plus là. */
       document.removeEventListener('pointerdown',onDocumentBandDown,true);
+      document.removeEventListener('keydown',onDocumentKeyDown);
       document.removeEventListener('lostpointercapture',onPointerCancel,true);
       window.removeEventListener('blur',onWindowBlur);
       window.removeEventListener('blur',onFrameFocus);

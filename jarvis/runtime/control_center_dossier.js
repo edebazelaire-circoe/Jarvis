@@ -1059,7 +1059,6 @@
   window.addEventListener('resize',()=>{if(S.open)render()});
 
   /* ------------------------------------------------------------ couture du statut et de la roue */
-  let displayedTitle=null;
   function gate(block,navigation){
     /* La commande de Jarvis en attente, relevée au battement (Slice 08) ; `channel` est posé plus bas, avant tout battement. */
     if(navigation)channel.beat(navigation);
@@ -1073,7 +1072,6 @@
     const was=S.displayed;
     S.coreLost=false;
     S.displayed=active;
-    displayedTitle=active?{board_id:active,title:String(block.active.title||''),board_kind:block.active.board_kind||null}:null;
     if(S.open&&active!==was){
       const decision=C.rebindOnSwitch({follow:S.follow,boardId:S.boardId,displayedBoardId:active});
       if(decision==='rebind'){
@@ -1098,27 +1096,14 @@
     const was=S.coreLost;S.coreLost=true;
     if(S.open&&!was)render();
   }
-  let recent=[];
-  async function wheelMenu(){
-    const reason=covered();
-    const board=displayedTitle;
-    if(reason||!board||S.coreLost)return C.wheelItems({board,recent:[],coreLost:S.coreLost||!board,covered:reason});
-    const answer=await client.get(C.PATHS.list(board.board_id,false),3000);
-    if(answer.ok){recent=(answer.body.entries||[]).slice(0,4);if(answer.body.board)Object.assign(board,{title:answer.body.board.title})}
-    else log('warn','dossier.wheel_recent_failed',{code:answer.error.code});
-    const items=C.wheelItems({board,recent:answer.ok?recent:[],coreLost:false,covered:null});
-    if(!answer.ok)items.push({id:'recent_failed',status:true,icon:'dossier',label:'Entrées récentes',note:'illisibles',detail:`${answer.error.title} : ouvrez le Dossier pour réessayer`,tone:'error'});
-    return items.map(it=>it.disabled||it.status?it:{...it,onActivate:()=>{
-      if(it.entryId)openFromOutside({entry_id:it.entryId,opener:wheelAnchor()});else open({opener:wheelAnchor()});
-    }});
-  }
   function wheelAnchor(){return document.querySelector('#toolWheel .tw-anchor')}
+  /* Dossier dans la roue : un clic ouvre directement le Dossier du Board affiché, sans sous-menu — le même
+     chemin que « Ouvrir le Dossier » ; `show` dit lui-même pourquoi il refuse (Variantes, Board inconnu). */
   function registerWheel(){
     const W=root.JarvisToolWheel;
     if(!W||typeof W.register!=='function'){log('warn','dossier.wheel_missing',{});return}
-    W.register({id:'dossier',menu:true,
-      onActivate:()=>{/* `menu:true` : l'activation ouvre le sous-menu. */},
-      onSecondary:ctx=>{log('info','dossier.wheel_menu',{source:ctx&&ctx.source||null});return wheelMenu()}});
+    W.register({id:'dossier',
+      onActivate:ctx=>{log('info','dossier.wheel_open',{source:ctx&&ctx.source||null});open({opener:wheelAnchor()})}});
   }
 
   /* ------------------------------------------------------------ entrées publiques */

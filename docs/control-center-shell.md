@@ -745,7 +745,7 @@ category does comes from its registrant.
 | --- | --- | --- |
 | JARVIS | `control_center_jarvis_wheel.js` (Slice 04) | status rows Voix, touche d'éveil, Agent; actions Sous-agents, Réglages de la voix — see *JARVIS and Paramètres* below |
 | Sélection | `control_center_input_arbitration.js` (method rows) + `JarvisScene.selectionMenu` (Slice 06, action rows) | Souris / Bare Hands (then Bare Hands › tools, Veille, Aide, Diagnostic, Calibration); then the selection: a count, Ranger dans le Dossier, Masquer, Masqués (N) ›, Changer la forme ›, Retirer du Board… — or « Aucun objet sélectionné » and the hidden row — see *Selection actions* below |
-| Dossier | `control_center_dossier.js` (Slice 07) | « Ouvrir le Dossier » (displayed Board title as note), then up to four most recent entries (read from `…/dossier` when the tree opens, 3 s deadline; a failed read adds an error status row); disabled with its reason when the Board is unknown (status lost) or Variantes covers the screen — see [Dossier full-screen view](#dossier-full-screen-view-dossierview) |
+| Dossier | `control_center_dossier.js` (Slice 07) | **no tree**: a click opens the displayed Board's Dossier directly (same path as « Ouvrir le Dossier », `dossier.wheel_open`); refused with a toast and its reason when the Board is unknown (status lost) or Variantes covers the screen — see [Dossier full-screen view](#dossier-full-screen-view-dossierview) |
 | Capture | `control_center_capture_wheel.js` | Capture d'écran, Enregistrer l'écran, Enregistrer l'audio, each with its second level (stop list, then Core's real targets); live while open (`refresh`) — [capture.md](capture.md) › *Interface* |
 | Paramètres | `control_center_jarvis_wheel.js` (Slice 04) | one row per settings tab (`settingsTabs()`), each opens the settings modal on that tab |
 
@@ -857,9 +857,14 @@ pointer-opened wheel), activating an entry (or a category without tree), a
 `pointerdown` outside (document `pointerdown` and `keydown` listeners present
 **only while open**), focus leaving the host (`Tab` away: no focus trap),
 another exclusive surface opening (`tool_wheel.close {reason: exclusive}`),
-and — when the wheel was opened by a pointer — the pointer leaving it for
-400 ms (grace covering the gaps between anchor, sectors and submenu; Bare
-Hands sends `pointerout` without `relatedTarget`). A click on the submenu's
+and — when the wheel was opened by a pointer and **no submenu is open** — the
+pointer leaving it for 400 ms (grace covering the gaps between anchor, sectors
+and submenu; Bare Hands sends `pointerout` without `relatedTarget`). A submenu
+is only ever opened by an explicit gesture (click, pinch, keyboard), so it is
+**pinned**: hovering another category neither closes it nor moves the
+highlight, and the pointer (or the hand) leaving the wheel does not close it.
+It goes away on a click on another category, a click outside, `Esc`, or an
+explicit close. A click on the submenu's
 glass between rows stays inside the wheel. Closing never touches domain
 state. Focus is never left on a hidden element: if it was inside the wheel,
 it returns to the anchor.
@@ -1016,7 +1021,7 @@ Dossier (UI)*. Modules: `control_center_dossier_core.js` (pure, node tests
   `closed`, `list_read`, `doc_read`, `save`, `move`, `delete`, `present`,
   `search`, `rebound`, `rebind_held`, `stale_list_dropped`,
   `navigation_answered`, `navigation_receipt_failed`, `navigation_poll_failed`,
-  `open_refused`, `wheel_menu` — entry kinds and codes, never a title.
+  `open_refused`, `wheel_open` — entry kinds and codes, never a title.
 
 ## Selection method (`control_center_input_arbitration.js`)
 

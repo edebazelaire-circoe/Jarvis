@@ -263,9 +263,12 @@
           else fx.push({do:'cancelLeave'});
         }else if(s.open&&input.target==='wedge'){
           fx.push({do:'cancelLeave'});
-          /* Un autre secteur pointé : le sous-arc ouvert ne lui appartient
-             pas, il se ferme (sinon il resterait affiché sans libellé). */
-          if(s.sub&&s.sub.slot!==input.index)s.sub=null;
+          /* Un sous-menu ouvert l'a toujours été par un geste explicite (clic,
+             pincement, clavier) : il est **épinglé**. Survoler un autre
+             secteur — un faux mouvement de la main — ne le ferme ni ne déplace
+             la mise en avant ; seuls un clic sur un autre secteur, un clic
+             ailleurs, Échap ou la fermeture le défont. */
+          if(s.sub&&s.sub.slot!==input.index)break;
           focusWedge(input.index,false);
           fx.push({do:'focus',target:'wedge',index:s.focus,onlyIfInside:true});
         }else if(s.open&&input.target==='item'&&s.sub){
@@ -275,7 +278,8 @@
         }
         break;
       case 'pointerout':
-        if(s.open&&!input.inside&&s.openedBy==='pointer')fx.push({do:'armLeave',ms:LEAVE_GRACE_MS});
+        /* Sous-menu épinglé : sortir de la roue ne le ferme pas. */
+        if(s.open&&!input.inside&&s.openedBy==='pointer'&&!s.sub)fx.push({do:'armLeave',ms:LEAVE_GRACE_MS});
         break;
       case 'leave':
         close('leave',true);
@@ -374,6 +378,8 @@
           const wanted=Number.isInteger(input.focus)&&input.focus>=0&&input.focus<input.count?input.focus
             :(input.source==='keyboard'&&input.count?0:-1);
           s.sub={slot:input.slot,count:input.count,focus:wanted,level,parent:level===2?input.parent:-1};
+          /* Une sortie armée avant l'ouverture ne ferme pas le sous-menu épinglé. */
+          fx.push({do:'cancelLeave'});
           if(wanted>=0&&input.source==='keyboard')fx.push({do:'focus',target:'item',index:wanted});
         }
         break;

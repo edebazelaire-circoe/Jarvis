@@ -576,6 +576,19 @@ reaching it (`#toolWheel`) never clears the selection. Keyboard selection:
 then adds or removes the focused object; arrows move the focus without
 dissolving it; Escape, a click or an empty selection ends it.
 
+Keyboard actions on the selection (one object or many): **Suppr / Delete** runs
+« Retirer du Board… » (same confirmation) and **-** runs « Masquer », through
+the same `runSelectionAction` as the wheel (`source: keyboard`). They fire only
+when the key targets the scene — the page background or one of its objects —
+never from a field, an editor, a panel or a menu, nor with Ctrl/Alt/Meta held.
+
+Selection band: native text selection is refused while a band is drawn
+(`selectstart`) and any leftover page selection is cleared when it starts and
+ends (never inside a focused field). A band whose release the page never saw
+(released over an isolated frame) is abandoned on the next move without a
+button, and any band or object gesture still waiting on the same pointer is
+cancelled by its next press — on a menu as on the background.
+
 Journal (console of the page): `scene.selection_action`, `scene.selection_backing`
 / `_failed`, `scene.user_hidden`, `scene.user_shown`, `scene.user_representation_many`,
 `scene.user_removed`, `scene.remove_cancelled`, `scene.remove_blocked_during_run`,

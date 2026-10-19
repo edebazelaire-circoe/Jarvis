@@ -46,6 +46,7 @@ PAGE_FUNCTIONS = (
     "syncHolding", "onPointerDown", "onPointerMove", "endGesture", "onPointerUp", "dropGesture", "cancelGesture",
     "onPointerCancel", "startBand", "onBandMove", "onBandUp", "stopBandListening", "cancelBand", "bandFrame",
     "endBand", "onWindowBlur", "onFocusIn", "nodeElement", "select", "anchorSelection", "applySelection",
+    "onBandSelectStart", "clearNativeSelection", "editableTarget", "onDocumentBandDown", "onDocumentKeyDown",
 )
 
 
@@ -115,6 +116,15 @@ const takeHold=(source,ids)=>desk.take(source,ids),barehandsActive=()=>false;
 const reportSent=()=>{},closeMenu=()=>{},openObjectMenu=()=>log.push(['menu']),announce=()=>{},updateTabStop=()=>{},
   setInnerTabs=()=>{},clampLabel=()=>{},flushKeyEdit=()=>{};
 const shield=()=>root.classList.contains('sc-gesture');
+/* Sélection de texte du navigateur, rectangle et actions de la sélection (correctifs avant Presentation). */
+const nativeSelection={rangeCount:1,cleared:0,removeAllRanges(){this.cleared++;this.rangeCount=0}};
+window.getSelection=()=>nativeSelection;
+document.body=el('BODY');
+const bandCandidate=event=>!!event.background&&!band&&!gesture;
+const liveSelection=()=>selection.slice();
+const actions=[];
+const runSelectionAction=(act,ids,ctx)=>{actions.push([act,ids.join(),ctx.source]);return Promise.resolve()};
+const actionFailed=()=>{};
 const down=(target,extra)=>onPointerDown(Object.assign({button:0,pointerId:1,clientX:10,clientY:10,target,preventDefault(){}},extra||{}));
 const move=(x,y)=>onPointerMove({pointerId:1,clientX:x,clientY:y});
 """
@@ -215,6 +225,76 @@ def test_the_selection_band_raises_and_drops_the_shield_on_release_cancel_and_bl
     assert result["released"] == [False, True, "pw-1"]
     assert result["cancelled"] == [False, True]
     assert result["blurred"] == [False, True, []]
+
+
+def test_the_band_refuses_native_text_selection_and_clears_it_at_both_ends(tmp_path):
+    result = run_page(tmp_path, r"""
+      const out={};
+      startBand({pointerId:7,clientX:0,clientY:0});
+      out.clearedAtStart=nativeSelection.cleared;
+      out.refusing=listeners.has('selectstart:onBandSelectStart');
+      let refused=false;onBandSelectStart({preventDefault(){refused=true}});out.refused=refused;
+      nativeSelection.rangeCount=1;
+      onBandMove({pointerId:7,clientX:60,clientY:60,preventDefault(){}});
+      onBandUp({type:'pointerup',pointerId:7,clientX:80,clientY:80});
+      out.clearedAtEnd=nativeSelection.cleared;out.listening=listeners.has('selectstart:onBandSelectStart');
+      /* Un champ focalisé garde sa sélection : son curseur y vit. */
+      const field=el('INPUT');field.closest=sel=>sel.startsWith('input')?field:null;
+      document.activeElement=field;nativeSelection.rangeCount=1;
+      startBand({pointerId:8,clientX:0,clientY:0});cancelBand();
+      out.fieldKept=nativeSelection.cleared;
+      return out;
+    """)
+    assert result == {"clearedAtStart": 1, "refusing": True, "refused": True, "clearedAtEnd": 2,
+                      "listening": False, "fieldKept": 2}
+
+
+def test_a_band_whose_release_was_never_seen_does_not_survive(tmp_path):
+    result = run_page(tmp_path, r"""
+      const out={};
+      /* Relâché au-dessus d'un cadre isolé : le mouvement suivant n'a plus de bouton. */
+      startBand({pointerId:1,clientX:0,clientY:0});
+      onBandMove({pointerId:1,clientX:60,clientY:60,buttons:1,preventDefault(){}});
+      onBandMove({pointerId:1,clientX:90,clientY:90,buttons:0,preventDefault(){}});
+      out.abandoned=[band===null,shield(),selection.length];
+      /* Lâcher perdu sans mouvement : le prochain appui (un menu) l'efface, sans sélectionner. */
+      startBand({pointerId:1,clientX:0,clientY:0});
+      onBandMove({pointerId:1,clientX:60,clientY:60,buttons:1,preventDefault(){}});
+      onDocumentBandDown({pointerId:1,target:el('BUTTON')});
+      out.menuPress=[band===null,shield(),selection.length,[...listeners.keys()].filter(k=>k.includes('Band'))];
+      /* Un geste d'objet resté ouvert ne survit pas non plus à l'appui suivant hors de la scène. */
+      down(A.grip);move(80,60);
+      onDocumentBandDown({pointerId:1,target:el('BUTTON')});
+      out.gesture=[gesture===null,shield()];
+      return out;
+    """)
+    assert result["abandoned"] == [True, False, 0]
+    assert result["menuPress"] == [True, False, 0, []]
+    assert result["gesture"] == [True, False]
+
+
+def test_delete_and_minus_act_on_the_whole_selection_but_never_from_a_field(tmp_path):
+    result = run_page(tmp_path, r"""
+      const out={};
+      const key=(k,target,extra)=>{let prevented=false;
+        onDocumentKeyDown(Object.assign({key:k,target,preventDefault(){prevented=true}},extra||{}));return prevented};
+      out.empty=key('Delete',document.body);
+      applySelection(['pw-1','pw-2']);
+      out.del=key('Delete',document.body);
+      out.minus=key('-',A.node);
+      const field=el('TEXTAREA');field.closest=sel=>sel.startsWith('input')?field:null;
+      out.field=[key('Delete',field),key('-',field)];
+      out.panel=key('Delete',el('BUTTON'));
+      out.ctrl=key('-',document.body,{ctrlKey:true});
+      out.repeat=key('Delete',document.body,{repeat:true});
+      out.actions=actions;
+      return out;
+    """)
+    assert result["empty"] is False
+    assert result["del"] is True and result["minus"] is True
+    assert result["field"] == [False, False] and result["panel"] is False
+    assert result["ctrl"] is False and result["repeat"] is False
+    assert result["actions"] == [["remove", "pw-1,pw-2", "keyboard"], ["hide", "pw-1,pw-2", "keyboard"]]
 
 
 def test_focus_taken_by_a_prefab_frame_selects_its_window_without_a_gesture(tmp_path):

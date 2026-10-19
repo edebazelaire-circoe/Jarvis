@@ -161,14 +161,11 @@ def test_jarvis_orders_are_refused_with_stable_codes_and_switches_rebind_only_a_
         bad:C.openDecision({action:'nope'},{displayedBoardId:'b1'}).code,
         follow:C.rebindOnSwitch({follow:true,boardId:'b1',displayedBoardId:'b2'}),
         pinned:C.rebindOnSwitch({follow:false,boardId:'b0',displayedBoardId:'b2'}),
-        same:C.rebindOnSwitch({follow:true,boardId:'b1',displayedBoardId:'b1'}),
-        wheel:C.wheelItems({board:{title:'Atlas'},recent:[{entry_id:'memory:a.md',title:'A',kind:'note'}]}).map(i=>i.id),
-        wheelLost:C.wheelItems({board:null,coreLost:true})[0].disabled};
+        same:C.rebindOnSwitch({follow:true,boardId:'b1',displayedBoardId:'b1'})};
     """)
     assert r["ok"] == {"ok": True} and r["other"] == "board_not_displayed"
     assert r["lost"] == r["covered"] == r["bad"] == "dossier_unavailable"
     assert (r["follow"], r["pinned"], r["same"]) == ("rebind", "keep", "keep")
-    assert r["wheel"] == ["open", "entry:memory:a.md"] and r["wheelLost"] is True
 
 
 def test_the_served_page_inserts_the_dossier_after_the_wheel_and_feeds_it_from_the_status():
