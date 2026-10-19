@@ -1,3 +1,34 @@
 {
-  "checks": []
+  "checks": [
+    {
+      "id": "HVAL-08-01",
+      "when": "First JARVIS start after the merge (the Human restarts it)",
+      "instruction": "Look at the bottom-left Board card and at how JARVIS behaves on « Jarvis PRESENTATION ».",
+      "acceptance": "The card reads « Présentation · Jarvis PRESENTATION » and JARVIS behaves in PRESENTATION mode; jarvis.sqlite3.v8.bak sits next to the base and the trace has one core.state.migrated line. « Board principal » is Assistant, « Mon Q » stays archived."
+    },
+    {
+      "id": "HVAL-08-02",
+      "when": "Slice 09, real browser",
+      "instruction": "Zoom the Control Center to 200 % (1440×900 window), open the wheel and each category, the Board card, the Dossier, take a screenshot.",
+      "acceptance": "Everything stays on screen, nothing overlaps, the Board card and the Chat tab stay usable."
+    },
+    {
+      "id": "HVAL-08-03",
+      "when": "Slice 09, Windows high-contrast theme",
+      "instruction": "Go through the wheel (sectors, submenus), the Board card and its panel, the recording indicators, the bottom pills, the Dossier and the launcher.",
+      "acceptance": "Every control has a visible edge, focus is visible everywhere, no state depends on colour alone."
+    },
+    {
+      "id": "HVAL-08-04",
+      "when": "Slice 09, Narrator or NVDA, keyboard only",
+      "instruction": "Listen to the wheel anchor, a sector, a JARVIS status row, the Board card, a REC chip, a Board panel row, « Plus d'outils », a Dossier tab.",
+      "acceptance": "Every name and state is announced; launcher names are identical after a theme round trip."
+    },
+    {
+      "id": "HVAL-08-05",
+      "when": "Slice 09, Windows Voice Access",
+      "instruction": "Say « cliquer Outils », « cliquer Capture », « cliquer CNV », then during a screen recording « cliquer REC ».",
+      "acceptance": "Each command reaches the right control the first time and « cliquer REC » stops the recording."
+    }
+  ]
 }
