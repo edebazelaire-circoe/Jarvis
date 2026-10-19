@@ -455,6 +455,13 @@ The `presentation-studio.` namespace is reserved to the Studio: `POST /v1/prefab
 - `PrefabDraftCoalescer.flush()` is called at Core shutdown (a pending burst is otherwise never published). *(Done: `PresentationStudioReloadService.close()` first in `JarvisCoreApplication.stop`.)*
 - The registry answers from memory, well within 5 s, with every requested id as a key.
 - Restore path: no tool yet. With Core stopped, move `prefabs/.archive/<id>/<version>/` back to `prefabs/<id>/<version>/` by hand.
+- **Purge of archived presentations** (the one exception to "no byte is destroyed"): the explicit, confirmed purge of an **archived** presentation
+  ([presentation-studio.md](presentation-studio.md#purge-definitive-des-archivees)) deletes that presentation's own scene sources,
+  `presentation-studio.p<first 12 hex of its id>.*`, both `prefabs/<id>/` and `prefabs/.archive/<id>/`, after copying them into
+  `<data_root>/backups/purge-presentations-<timestamp>/prefabs/` (`PrefabService.export_ids`, then `remove_ids` under the write lock, only for folders
+  still exactly as copied, catalogue re-read). Their numbers are then free again; that id belongs to a presentation that no longer exists. Content-addressed
+  `presentation-studio.rm-*` sources are never purged (they may be shared): once the purged presentation leaves the pin index, this retention archives
+  their unpinned versions as usual.
 
 ## Instance block
 

@@ -1990,7 +1990,7 @@ cancellation cannot interrupt (`run_sqlite_in_thread`, shared), WAL; plus
 | `scene_objects` | `object_id`, `position`, `data` (`SceneObject.to_payload()`) |
 | `scene_relations` | `relation_id`, `position`, `data` |
 | `scene_tombstones` | `object_id`, `position` — `SceneSnapshot.archived_ids`, evicted beyond 4 096 like the domain |
-| `scene_history` | `object_id`, `revision`, `archived_at`, `data` — the archived form written by each `archive_object` op; not pruned in V1 (one row per archived object: a single archive, its cascaded signals and every object of an `archive_many`) |
+| `scene_history` | `object_id`, `revision`, `archived_at`, `data` — the archived form written by each `archive_object` op (one row per archived object: a single archive, its cascaded signals and every object of an `archive_many`); deleted only by a confirmed archive purge (below) |
 
 `position` restores the exact tuple order of the snapshot (a replaced object
 keeps its place, a new one is appended). The store keeps the **state** produced
@@ -2001,6 +2001,32 @@ snapshot, then moves `revision`. A crash leaves the previous or the next
 revision, never half of one. Loading decodes every row through the strict domain
 decoders (`SceneObject.from_payload`, `SceneSnapshot` invariants); nothing is
 replayed, so the immutable-field guard a patch replay would need is not required.
+
+**Archive purge** (2026-10-18, user request; no schema change). Out of the
+reducer: it touches `scene_history`, which is not in the snapshot, and it needs a
+confirmation. `SceneService.plan_archive_purge` (writes nothing) partitions
+`archived_ids` into purged and kept — kept = ids the runtime projection can
+still write (`SceneProjector.retained_archive_ids`: star and signal ids of every
+work item Core's work state knows, deferred creations, restart-tracked stars;
+refused `runtime_settling` while the projection is not running or during
+`restart_grace_s` after start) — counts the history rows that would go (every
+row whose id keeps no tombstone, older incarnations included) and issues an
+HMAC token bound to `scene_id`, epoch, the exact purged id list and the history
+count, valid 10 minutes, secret per process. The revision is deliberately not
+bound: runtime projection moves it continuously. `purge_archived` re-plans under
+the same lock as commands, checks the token, then `SQLiteSceneRepository.purge_archived`
+backs the base up first (`Connection.backup`, WAL pages included, `.partial`
+then rename, `scene.sqlite3.purge-<UTC>.bak`; failure → `purge_backup_failed`,
+nothing deleted), deletes inside one `BEGIN IMMEDIATE` under
+`PRAGMA secure_delete=ON` with the same revision and row-count checks as
+`commit`, moves `revision` by one, then runs `VACUUM` (text of objects archived earlier lingers in free page space) and `wal_checkpoint(TRUNCATE)`, best effort (`compacted` in the answer). The
+in-memory snapshot loses the purged tombstones and the revision advances
+**without a patch**: the ring is cleared, so every reader behind it gets
+`resync_required` and reloads the snapshot (page, Control Center proxy and
+`jarvis-display` already do). The epoch is kept: the revision stays monotonic and
+a new epoch would needlessly stale the Tool Brain's open plans. Journal:
+`core.scene.archive_purged` (counts, kept count, backup path, actor) or
+`core.scene.archive_purge_failed`.
 
 Opening, in order:
 
@@ -2098,6 +2124,8 @@ Core routes (bearer token and protocol-version check, like every `/v1` route):
 | --- | --- | --- |
 | `GET /v1/scene/snapshot` | 200 `{scene_id, epoch, revision, snapshot}` (`snapshot` = `SceneSnapshot.to_payload()`), compact UTF-8 JSON encoded off Core's event loop | 401, 426, 400 (query present), 503 `scene_unavailable` |
 | `GET /v1/scene/patches?scene_id=&epoch=&after=&wait_s=` | 200 `{scene_id, epoch, revision, resync_required, more, patches}` | 401, 426, 400 (missing/unknown/repeated parameter, `after` not a non-negative integer, `wait_s` not a plain non-negative number), 503 `scene_unavailable` |
+| `POST /v1/scene/archived/purge-plan` `{schema_version: 1, actor}` | 200 `{scene_id, epoch, revision, purgeable{archived_ids, history_rows}, kept{archived_ids, history_rows, ids ≤ 20, reason}, confirmation, expires_at, ttl_s}`; writes nothing, `confirmation: null` when nothing is purgeable | 400, 403 `scene_actor_forbidden` (`runtime`), 409 `runtime_settling` (+ `retry_after_s`), 503 scene unavailable |
+| `POST /v1/scene/archived/purge` `{schema_version: 1, actor, confirmation, confirmed: true}` | 200 `{scene_id, epoch, revision, purged{archived_ids, history_rows}, kept{…}, backup_path, compacted}` | 400 (`confirmed` not `true`, other shape), 403 (`runtime`), 409 `confirmation_required` / `confirmation_stale` / `runtime_settling`, 503 `purge_backup_failed` (nothing deleted) / scene unavailable |
 | `POST /v1/scene/commands` | 200 `{outcome, reason, scene_id, epoch, revision, patch}` for **every** domain outcome (`applied`, `duplicate`, `rejected_authority`, `invalid`); `patch` is `null` unless applied | 401, 426, 400 `invalid_request` (not JSON, duplicate key, non-finite number, any `ValueError`/`TypeError` of `SceneCommand.from_payload`), 403 `scene_actor_forbidden` (actor `runtime`), 413 `payload_too_large` (> 64 KiB, announced or streamed), 503 `scene_unavailable` / `scene_persist_failed` |
 
 A 503 carries `error.scene` (`{state, code}` of `SceneService.availability`) and

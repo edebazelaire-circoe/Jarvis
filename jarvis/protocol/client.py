@@ -77,6 +77,8 @@ TEMPLATES_PREFIX = "/v1/presentation-studio/templates"  # modeles reutilisables 
 AUTHORING_PREFIX = "/v1/presentation-studio/authoring"  # planificateur d'ecriture (Slice 11) : aussi dans FORWARDABLE_PREFIXES
 #: Longest an authoring request may take (Remotion Slice 15): the compile budget of the service (120 s) plus the write and some slack.
 AUTHORING_TIMEOUT_S = 150.0
+#: Longest a purge of archived presentations may take: it copies every folder, export and the state DB before deleting.
+PURGE_TIMEOUT_S = 300.0
 #: Plus grande réponse binaire relayée : la borne par réponse de Core (`MAX_PAYLOAD_CHUNK_BYTES`).
 MAX_FORWARDED_PAYLOAD_BYTES = 8 * 1024 * 1024
 #: En-têtes de la réponse binaire de Core rendus tels quels par le relais.
@@ -646,6 +648,28 @@ class LocalCoreClient:
         async with session.post(self.base_url + "/v1/scene/commands", headers=self.headers, json=command, **options) as response:
             return await self._bounded_json(response)
 
+    async def scene_purge_plan(self, *, actor: str = "brain", timeout_s: float = 30.0) -> dict[str, Any]:
+        """`POST /v1/scene/archived/purge-plan` : ce qu'une purge des archivés effacerait, et son jeton. N'écrit rien."""
+
+        session = await self._http()
+        body = {"schema_version": 1, "actor": actor}
+        async with session.post(self.base_url + "/v1/scene/archived/purge-plan", headers=self.headers, json=body,
+                                timeout=aiohttp.ClientTimeout(total=timeout_s)) as response:
+            return await self._bounded_json(response, 65_536)
+
+    async def scene_purge_archived(self, *, confirmation: str, actor: str = "brain", timeout_s: float = 120.0) -> dict[str, Any]:
+        """`POST /v1/scene/archived/purge` (`confirmed: true`) : sauvegarde de la base, puis purge définitive.
+
+        Refus en `CoreProtocolError` : 409 `confirmation_required` / `confirmation_stale` / `runtime_settling`,
+        503 `purge_backup_failed`. `timeout_s` large : la sauvegarde copie toute la base.
+        """
+
+        session = await self._http()
+        body = {"schema_version": 1, "actor": actor, "confirmation": confirmation, "confirmed": True}
+        async with session.post(self.base_url + "/v1/scene/archived/purge", headers=self.headers, json=body,
+                                timeout=aiohttp.ClientTimeout(total=timeout_s)) as response:
+            return await self._bounded_json(response, 65_536)
+
     async def scene_capture(self, *, connect_timeout_s: float, read_timeout_s: float) -> dict[str, Any]:
         """`POST /v1/scene/captures` (Slice 09, partie 2) : demande du cerveau, rendue quand la page a envoyé le PNG.
 
@@ -890,6 +914,24 @@ class LocalCoreClient:
 
         session = await self._http()
         async with session.post(f"{self.base_url}/v1/presentation-studio/rail/display", headers=self.headers, json=dict(body)) as response:
+            return await self._json(response)
+
+    async def presentation_studio_purge_plan(self, body: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """`POST /v1/presentation-studio/rail/purge-plan` `{presentation_ids?, actor?}` : les presentations ARCHIVEES qu'une purge
+        effacerait, ce qui part avec chacune, et le jeton de confirmation (`ppk_...`). N'ecrit rien."""
+
+        session = await self._http()
+        async with session.post(f"{self.base_url}/v1/presentation-studio/rail/purge-plan", headers=self.headers,
+                                json=dict(body or {})) as response:
+            return await self._json(response)
+
+    async def presentation_studio_purge(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST /v1/presentation-studio/rail/purge` `{confirmation, confirmed: true, presentation_ids?, actor?}` : purge definitive des
+        archivees du plan, sauvegarde d'abord (`backup`). Exige le jeton du plan courant."""
+
+        session = await self._http()
+        async with session.post(f"{self.base_url}/v1/presentation-studio/rail/purge", headers=self.headers, json=dict(body),
+                                timeout=aiohttp.ClientTimeout(total=PURGE_TIMEOUT_S)) as response:
             return await self._json(response)
 
     async def presentation_studio_create(self, title: str) -> dict[str, Any]:

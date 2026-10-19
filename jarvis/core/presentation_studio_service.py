@@ -1066,6 +1066,11 @@ class PresentationStudioService:
     def store(self) -> PresentationStudioStore:
         return self._store
 
+    def forget_presentation(self, presentation_id: str) -> None:
+        """Purge definitive (`core/presentation_studio_purge.py`) : l'origine de moteur retenue pour la presentation effacee est oubliee."""
+
+        self._choice.origins.pop(presentation_id, None)
+
     def exclusive(self) -> asyncio.Lock:
         """Le verrou d'écriture des Presentations (`async with studio.exclusive():`). Non réentrant : n'appeler que les méthodes `*_locked`."""
 

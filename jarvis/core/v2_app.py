@@ -23,6 +23,7 @@ from jarvis.adapters.board_memory_store import FileBoardMemoryStore
 from jarvis.adapters.file_prefab_library import FilePrefabLibrary, FilePrefabRuntime
 from jarvis.adapters.file_presentation_studio_stage_ledger import FileStageLedger
 from jarvis.adapters.file_presentation_studio_store import FilePresentationStudioStore
+from jarvis.adapters.file_purge_backups import FilePurgeBackups
 from jarvis.adapters.file_presentation_template_store import FilePresentationTemplateStore
 from jarvis.adapters.sqlite_board_artifact_links import SQLiteBoardArtifactLinks
 from jarvis.adapters.artifact_payloads import FileArtifactPayloads
@@ -103,6 +104,7 @@ from jarvis.core.presentation_studio_run_surface import RunSurface
 from jarvis.core.presentation_studio_stage import LegacyStageReclaimer, StageLedger
 from jarvis.core.presentation_studio_variant_events import StudioVariantEvents
 from jarvis.core.presentation_studio_variants import PresentationStudioVariants
+from jarvis.core.presentation_studio_purge import PresentationPurge
 from jarvis.core.presentation_studio_rail import PresentationRail
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
@@ -578,6 +580,22 @@ class JarvisCoreApplication:
         # Pins : une source par magasin (undo 08 ; variantes vivantes et archivees 16 par `rebuild` ; scene vivante et surface de
         # lecture de Variantes, liees plus haut ; retenues en vol du rechargement).
         self.studio_pins.add_source("undo", self.presentation_studio_history.pins)
+        # Purge definitive des presentations ARCHIVEES (demande explicite de l'utilisateur, plan + jeton + oui) : sauvegarde complete
+        # sous `<data_root>/backups/purge-presentations-<horodatage>/` (dossiers, sources de scene, Artifacts, copie coherente de
+        # jarvis.sqlite3), puis effacement ; chaque etat en memoire qui nomme la presentation l'oublie ensuite.
+        self.presentation_studio_purge = PresentationPurge(self.presentation_studio, backups=FilePurgeBackups(root))
+        self.presentation_studio_purge.bind_artifacts(self.artifacts, self.state.backup_to)
+        self.presentation_studio_purge.bind_prefabs(self.prefabs)
+        self.presentation_studio_purge.bind_playback(self.presentation_studio_playback)
+        for name, hook in (("variants", self.presentation_studio_variants.drop_presentation),
+                           ("pins", self.studio_pins.forget_presentation),
+                           ("rail", self.presentation_studio_rail.forget),
+                           ("compare", self.presentation_studio_compare.forget),
+                           ("reload", self.presentation_studio_reload.forget_presentation),
+                           ("stage", self.studio_stage.unbind),
+                           ("edit", self.presentation_studio_edit.forget_presentation),
+                           ("engine_choice", self.presentation_studio.forget_presentation)):
+            self.presentation_studio_purge.add_forget_hook(name, hook)
         # Projection runtime (Slice 04) : chaque sous-agent et chaque job
         # deviennent des étoiles sans tour du cerveau. Seul écrivain `runtime`
         # de la scène ; abonné tolérant de `core.work.updated`, il se
@@ -594,6 +612,8 @@ class JarvisCoreApplication:
             work=self.work_state, scene=self.scene, events=self.events, diagnostics=diagnostics,
             restart_grace_s=scene_restart_grace_s, job_outcomes=self.jobs.observe_persisted_outcomes,
         )
+        # Purge des archivés : ce que la projection peut encore écrire garde sa pierre tombale (sinon l'étoile renaîtrait).
+        self.scene.attach_archive_retention(self.scene_projector.retained_archive_ids)
         # Fenêtres liées à un fichier (`ScenePayload.source_path`) : le résumé
         # suit le fichier, sans tour du cerveau.
         self.scene_file_watcher = SceneFileWatcher(self.scene, diagnostics=diagnostics, notifier_factory=file_change_notifier_factory)

@@ -206,15 +206,16 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_library"))
     async def presentation_library(
-        op: Annotated[Literal["hide", "show", "archive", "restore", "rename", "acknowledge"],
-                      Field(description="hide / show : retirer de / remettre dans le rail ; archive / restore : supprimer (restaurable) / rendre ; "
-                                        "rename ; acknowledge : effacer la pastille orange.")],
+        op: Annotated[Literal["hide", "show", "archive", "restore", "rename", "acknowledge", "purge"],
+                      Field(description="hide / show : hors du / dans le rail ; archive / restore : supprimer (restaurable) / rendre ; rename ; "
+                                        "acknowledge : effacer la pastille orange ; purge : effacer pour de bon les archivées (ou presentation_id).")],
         presentation_id: PresentationId = None,
         title: Annotated[str | None, Field(max_length=80, description="rename : le nouveau titre, une ligne.")] = None,
-        confirmed: Annotated[bool | None, Field(description="archive : l'utilisateur a dit oui.")] = None,
+        confirmed: Annotated[bool | None, Field(description="archive, purge : l'utilisateur a dit oui.")] = None,
+        confirmation: Annotated[str | None, Field(max_length=80, description="purge : jeton du plan.")] = None,
     ) -> dict[str, Any]:
-        """Gérer une présentation dans le rail : masquer, archiver, renommer. Archiver demande d'abord l'accord de l'utilisateur."""
-        return await studio.library(op, presentation_id=presentation_id, title=title, confirmed=confirmed)
+        """Rail : masquer, archiver, renommer, purger les archivées. archive et purge : après le oui de l'utilisateur."""
+        return await studio.library(op, presentation_id=presentation_id, title=title, confirmed=confirmed, confirmation=confirmation)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_play"))
     async def presentation_play(

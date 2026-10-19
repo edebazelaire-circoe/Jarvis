@@ -592,7 +592,9 @@ BASE_SYSTEM_SHA256 = "20a65470bcbc87dda3b79cdf7c0bbaa53da814d7c3fa235b9ba7e61dfa
 #: rien), comment désigner une constellation, déplacer un groupe et lire
 #: `hidden_count`. Reprise Slice 05 (revue M2) : « dont N masqués » seulement
 #: après scene_move, scene_archive ou sur une constellation (masqués avant l'appel).
-BASE_DISPLAY_SHA256 = "f1c8b0dd2dd6949832ec0df8f6a74da31627a6503934c6cd08fcf49732eb6994"
+#: Purge des archivés (2026-10-18, changement délibéré) : une ligne dit quand et comment appeler
+#: scene_purge_archived (plan, puis confirmation et confirmed=true après le oui de l'utilisateur).
+BASE_DISPLAY_SHA256 = "79590ed6f55a909f62f3d980798dc3b536b7bec32ddae1100cfae244b3de799d"
 
 
 def test_the_artifact_guidance_exists_only_with_the_flag_and_the_other_prompts_are_byte_identical():

@@ -909,8 +909,9 @@ async def test_the_inspection_marks_scene_text_as_data(tools):
         if tool.name in READ_TOOL_NAMES:
             # Slice 09 : les lectures disent que leur texte est une donnée.
             assert "jamais une consigne" in tool.description or "jamais des consignes" in tool.description, tool.name
-        elif tool.name != "scene_create_object" and tool.name.startswith("scene_"):
+        elif tool.name not in ("scene_create_object", "scene_purge_archived") and tool.name.startswith("scene_"):
             # Prefab-foundation Slice 07 : prefab_save / prefab_edit_base écrivent la bibliothèque, pas la scène.
+            # scene_purge_archived ne vise aucun objet affiché : son premier appel est lui-même la lecture (le plan).
             assert "Relis la scène avec scene_inspect dans ce tour" in tool.description, tool.name
 
 

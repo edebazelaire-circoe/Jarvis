@@ -159,6 +159,16 @@ class PrefabLibrary(Protocol):
         sinon.
         """
 
+    def list_ids(self, prefix: str) -> tuple[str, ...]:
+        """Ids de la racine de données (catalogue et `.archive`) commençant par `prefix` (purge définitive, lecture seule)."""
+
+    def copy_ids(self, prefab_ids: Collection[str], destination: Any) -> Mapping[str, Any]:
+        """Purge : copie `<id>/` et `.archive/<id>/` de chaque id `presentation-studio.*` sous `destination` ; rend
+        `{label: safe_tree.TreeCount}`. Lien ou jonction : `storage_io`, rien n'est copié."""
+
+    def remove_ids(self, expected: Mapping[str, Any]) -> tuple[str, ...]:
+        """Purge : efface les dossiers copiés par `copy_ids`, seulement s'ils sont encore ce qui a été copié (sinon rien)."""
+
 
 class PrefabPinRegistry(Protocol):
     """Qui épingle quelles versions (Slice 01a) : implémenté par le Studio, que la couche prefab n'importe pas.

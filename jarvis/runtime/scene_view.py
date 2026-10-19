@@ -165,6 +165,14 @@ class SceneTransport(Protocol):
         """`POST /v1/work/cancel` ; `aiohttp.ConnectionTimeoutError` : requête **non envoyée**."""
         ...
 
+    async def scene_purge_plan(self) -> dict[str, Any]:
+        """`POST /v1/scene/archived/purge-plan` (acteur `brain`) : plan et jeton, rien d'effacé."""
+        ...
+
+    async def scene_purge_archived(self, *, confirmation: str) -> dict[str, Any]:
+        """`POST /v1/scene/archived/purge` (acteur `brain`, `confirmed: true`) : sauvegarde puis purge."""
+        ...
+
     async def close(self) -> None: ...
 
 
@@ -216,6 +224,12 @@ class CoreSceneTransport(CoreWorkTransport):
         return await _with_fresh_token(
             self, lambda client: client.publish_ui_intent(intent, connect_timeout_s=connect_timeout_s, read_timeout_s=read_timeout_s),
         )
+
+    async def scene_purge_plan(self) -> dict[str, Any]:
+        return await _with_fresh_token(self, lambda client: client.scene_purge_plan(actor="brain"))
+
+    async def scene_purge_archived(self, *, confirmation: str) -> dict[str, Any]:
+        return await _with_fresh_token(self, lambda client: client.scene_purge_archived(confirmation=confirmation, actor="brain"))
 
     async def scene_capture(self, *, connect_timeout_s: float, read_timeout_s: float) -> dict[str, Any]:
         return await _with_fresh_token(

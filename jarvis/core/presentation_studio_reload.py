@@ -175,6 +175,14 @@ class PresentationStudioReloadService:
         self._idle.set()
         self._counters = {"applied": 0, "refused": 0, "rolled_back": 0, "stale": 0, "pending": 0, "merged": 0, "degraded": 0}
 
+    def forget_presentation(self, presentation_id: str) -> None:
+        """Purge definitive de la presentation : historique de retour arriere, montages non verifies et issues gardees en memoire pour
+        ses scenes sont oublies (les verrous et rechargements en vol sont transitoires et se vident seuls)."""
+
+        for book in (self._restorable, self._unverified, self._outcomes):
+            for key in [key for key in book if key[0] == presentation_id]:
+                del book[key]
+
     def bind_playback(self, playback: PlaybackProbe) -> None:
         """La lecture (Slice 12), liee apres sa construction (`v2_app`) : la position qu'un resultat rapporte, **lue** avant
         et apres le rechargement (`preserved.playback`, `playback_unchanged`)."""

@@ -314,8 +314,18 @@ of the Control Center.
 Privacy and retention. Core projects the scene whether or not the display is on:
 sub-agent labels, runtime failure summaries, brain notes, artifact summaries and
 URLs are persisted in `data/state/scene.sqlite3` (local, not encrypted, like
-`jarvis.sqlite3`). Archived objects move to `scene_history`, which is **never
-pruned in V1**; there is no archive undo and no purge command. Captures stay in
+`jarvis.sqlite3`). Archived objects move to `scene_history` and keep a tombstone;
+there is no archive undo. Since 2026-10-18 the user can ask for a **definitive
+purge** of archived objects (`scene_purge_archived`, `POST /v1/scene/archived/purge`,
+`docs/scene-model.md` › *Archive purge*): plan first, then an HMAC confirmation
+token (10 min, per-process secret) with `confirmed: true`. Core first writes a
+consistent copy of the whole base with SQLite's backup API to
+`scene.sqlite3.purge-<UTC stamp>.bak` next to it (nothing is deleted if that
+fails), then deletes the tombstones and history rows under
+`PRAGMA secure_delete=ON`, then `VACUUM`s the base and truncates the WAL (`compacted`). That backup still holds
+everything purged, in clear text, and is never rotated: for a real erasure the
+user deletes it by hand. Ids the runtime still tracks keep their tombstone and
+history (otherwise their star would come back). Captures stay in
 `runtime/scene-captures/` (5 files, 24 h). Nothing of the scene leaves the machine
 except what the brain itself sends to its model provider (scene text it reads,
 capture images).

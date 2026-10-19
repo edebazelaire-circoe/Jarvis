@@ -1138,6 +1138,11 @@ in `off`. A crashed Core cannot leave a delegation behind (TTL); a clean stop pu
 
 ### 16.3 Guardrails for irreversible actions (`DestructiveGuard`)
 
+`scene_purge_archived` (2026-10-18, definitive purge of already archived objects) is `destructive` but has **no**
+`ui_surface` and no adapter: it is never delegated to the Tool Brain, never reaches `DestructiveGuard` (whose explicit-ids,
+three-target rule would make a purge of hundreds of tombstones impossible), and stays with Jarvis in delegated mode. Its own
+gate is Core's two-step confirmation token (`docs/scene-model.md` › *Archive purge*).
+
 Reversible actions (`ToolMeta.reversibility == "reversible"`) are autonomous. Guarded: any tool `ToolMeta` marks `irreversible`
 or `destructive` (today `scene_archive`, executable **only** through the guard) and the confirmed bulk hide
 (`scene_update_many`, `visibility=hidden`, `confirm=true`, which bypasses the "half the screen" refusal). Checked in the

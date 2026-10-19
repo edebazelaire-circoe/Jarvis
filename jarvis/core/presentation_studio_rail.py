@@ -464,6 +464,17 @@ class PresentationRail:
                                        data={"presentation_id": presentation_id, "code": exc.code.value, "message": exc.message})
         return {"presentation_id": presentation_id, "work": work}
 
+    def forget(self, presentation_id: str) -> None:
+        """Purge definitive (`core/presentation_studio_purge.py`) : l'etat de travail, l'apercu et une demande d'ecran qui nommaient
+        la presentation effacee sont oublies."""
+
+        self.tracker.forget(presentation_id)
+        self.tracker.revision += 1
+        self._preview_map.pop(presentation_id, None)
+        self._preview_key = None
+        if self._display.presentation_id == presentation_id:
+            self._display.presentation_id = None
+
     def on_edit_committed(self, presentation_id: str) -> None:
         self.tracker.touch(presentation_id)
 

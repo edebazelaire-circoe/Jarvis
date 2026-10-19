@@ -195,6 +195,8 @@ class PresentationTools:
         self._clock = clock
         #: Le plan d'archivage lu dans ce processus : `(presentation_id, variant_id) -> jeton de Core` (Core reste juge du jeton).
         self._archive_plans: dict[tuple[str, str], str] = {}
+        #: Les plans de purge lus dans ce processus : `jeton de Core -> filtre d'ids` (Core reste juge du jeton et de l'ensemble).
+        self._purge_plans: dict[str, tuple[str, ...] | None] = {}
 
     async def close(self) -> None:
         for part in (self._core, self._cc):
@@ -842,11 +844,63 @@ class PresentationTools:
     # ------------------------------------------------------------------ rail : masquer, archiver, renommer (niveau présentation)
 
     async def library(self, op: str, *, presentation_id: str | None = None, title: str | None = None,
-                      confirmed: bool | None = None) -> dict[str, Any]:
+                      confirmed: bool | None = None, confirmation: str | None = None) -> dict[str, Any]:
         async def body() -> dict[str, Any]:
+            if op == "purge":
+                return await self._purge(presentation_id, confirmation, confirmed)
             return await self._library(op, presentation_id, title, confirmed)
 
         return await self._run("presentation_library", op, {"presentation_id": presentation_id}, body)
+
+    async def _purge(self, pid: str | None, confirmation: str | None, confirmed: bool | None) -> dict[str, Any]:
+        """Purge définitive des archivées : sans `confirmation`, le plan (rien n'est supprimé) et la question ; avec le jeton de CE plan
+        et `confirmed=true` (le oui de l'utilisateur), la purge. Core sauvegarde d'abord, reste juge du jeton et de l'ensemble."""
+
+        tool = "presentation_library"
+        if pid is not None and not is_presentation_id(pid):
+            raise self._refuse(tool, "invalid_id", "presentation_id mal formé : prends-le dans presentation_inspect (target overview).")
+        only = None if pid is None else (pid,)
+        scope = {} if only is None else {"presentation_ids": list(only)}
+        if confirmation is None:
+            answer = await self._c(lambda c: c.presentation_studio_purge_plan({"actor": BRAIN_ACTOR, **scope}))
+            plan = answer.get("plan") if isinstance(answer.get("plan"), Mapping) else {}
+            rows = [_drop_none({"presentation_id": r.get("presentation_id"), "title": clip(r.get("title"), 40),
+                                "archived_at": r.get("archived_at"), "snapshots": r.get("snapshots"), "renders": r.get("renders")})
+                    for r in plan.get("presentations") or [] if isinstance(r, Mapping)]
+            blocked = [_drop_none({"presentation_id": b.get("presentation_id"), "reason": b.get("reason")})
+                       for b in plan.get("blocked") or [] if isinstance(b, Mapping)]
+            token = answer.get("confirmation")
+            if not token or not rows:
+                return self._ok("say", say="Aucune présentation archivée à supprimer." if not blocked else
+                                "Les présentations archivées ont un export en cours : rien à supprimer pour l'instant.",
+                                status="nothing_to_purge", count=0, blocked=capped(blocked, 12) if blocked else None)
+            self._purge_plans[str(token)] = only
+            titles = ", ".join(f"« {r['title']} »" if r.get("title") else str(r.get("presentation_id")) for r in rows[:5])
+            more = f" et {len(rows) - 5} autre(s)" if len(rows) > 5 else ""
+            totals = plan.get("totals") if isinstance(plan.get("totals"), Mapping) else {}
+            exports = int(totals.get("snapshots") or 0) + int(totals.get("renders") or 0)
+            return self._ok(
+                "say", status="confirmation_required", confirmation=token, count=len(rows), presentations=capped(rows, 24),
+                blocked=capped(blocked, 12) if blocked else None, untrusted=["presentations.items.title"],
+                say=(f"Je supprime définitivement {len(rows)} présentation(s) archivée(s) ({titles}{more})"
+                     + (f", avec {exports} export(s)" if exports else "") + " ? Une sauvegarde est gardée. Dis oui pour confirmer."),
+                note="Rien n'est supprimé. Après le oui de l'utilisateur, rappelle purge avec confirmation et confirmed=true. Irréversible "
+                     "hors restauration manuelle de la sauvegarde.")
+        if confirmed is not True or confirmation not in self._purge_plans or self._purge_plans[confirmation] != only:
+            raise self._refuse(tool, "presentation_studio_confirmation_required",
+                               "purger exige le plan (purge sans confirmation) dans ce processus, le oui de l'utilisateur, puis confirmation "
+                               "(le jeton du plan, même presentation_id) et confirmed=true. Rien n'a été supprimé.")
+        done = await self._c(lambda c: c.presentation_studio_purge({"actor": BRAIN_ACTOR, "confirmation": confirmation,
+                                                                    "confirmed": True, **scope}))
+        self._purge_plans.pop(confirmation, None)
+        purged = [p for p in done.get("purged") or [] if isinstance(p, str)]
+        failed = [_drop_none({"presentation_id": f.get("presentation_id"), "step": f.get("step"), "code": f.get("code")})
+                  for f in done.get("failed") or [] if isinstance(f, Mapping)]
+        say = f"{len(purged)} présentation(s) supprimée(s) définitivement ; la sauvegarde est gardée."
+        if failed:
+            say += f" {len(failed)} n'ont pas pu l'être : elles restent archivées."
+        return self._ok("say", say=say, status="purged", purged=purged, count=len(purged), deleted=done.get("deleted"),
+                        backup=done.get("backup"), failed=capped(failed, 12) if failed else None, complete=done.get("complete"))
 
     async def _library(self, op: str, pid: str | None, title: str | None, confirmed: bool | None) -> dict[str, Any]:
         tool = "presentation_library"

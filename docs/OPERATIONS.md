@@ -2179,8 +2179,8 @@ Les Presentations vivent dans la racine de données du poste, sous
   `(id, version)` des prefabs.
 - **Restaurer** : remettre le dossier à sa place, sous la racine de données voulue, puis
   démarrer Core. Il retire seulement les restes d'écritures interrompues
-  (`.staging-*`, `*.tmp`, trace `core.presentation_studio.swept`) ; il ne supprime ni ne réécrit
-  jamais un document.
+  (`.staging-*`, `*.tmp`, `.purging-*` d'une purge interrompue, trace `core.presentation_studio.swept`) ; il ne supprime ni ne réécrit
+  jamais un document (seule la purge définitive des archivées, demandée et confirmée, en efface, après sauvegarde : ci-dessous).
 - **Vérifier** : `GET /v1/presentation-studio/presentations` rend les Presentations lisibles et, dans
   `problems`, chaque dossier refusé avec son code (`presentation_studio_corrupt_document`,
   `presentation_studio_unsupported_schema_version`). Une restauration faite avec une version de JARVIS
@@ -2206,6 +2206,33 @@ Les Presentations vivent dans la racine de données du poste, sous
   redémarrage : `history_unavailable` avec la raison. Il n'est donc pas une sauvegarde ; la sauvegarde est le dossier
   `presentations/` (aucun instantané durable n'est conservé). `GET .../variants/{id}/history` dit ce qui est annulable,
   les bornes et ce qui a été évincé.
+
+### Purge définitive des présentations archivées
+
+Archiver une présentation (« supprime X ») la retire du rail et se restaure. La **purge** efface pour de bon les présentations
+**archivées**, sur demande explicite de l'utilisateur seulement (« supprime vraiment toutes les archivées ») : la voix appelle
+`presentation_library` op `purge` une première fois (le plan, lu à l'utilisateur : titres, nombre d'exports ; rien n'est effacé), puis,
+après son oui, une seconde fois avec le jeton du plan et `confirmed=true`. Une présentation non archivée n'est jamais purgée ; un plan
+dont l'ensemble a changé (une archivée en plus, une restaurée, un nouvel export) ou qui a plus de 10 minutes est refusé
+(`presentation_studio_confirmation_stale`), rien n'est effacé. Contrat : [presentation-studio.md](presentation-studio.md#purge-definitive-des-archivees).
+
+- **Sauvegarde d'abord** : `backups/purge-presentations-<AAAAMMJJTHHMMSSZ>/` sous la racine de données (`presentations/<pst_...>/`,
+  `prefabs/<id>/` et `prefabs/.archive/<id>/`, `artifacts/<jart_...>/`, `state/jarvis.sqlite3` si des exports partent, `purge.json`). Un
+  dossier `backups/.partial-*` est une sauvegarde qui a échoué (et rien n'a été effacé) : il peut être retiré à la main. JARVIS ne
+  vide jamais `backups/`.
+- **Traces** : `core.presentation_studio.purge_planned`, `core.presentation_studio.purged` (ids, comptes, chemin de la sauvegarde),
+  `core.presentation_studio.purge_failed` (une présentation laissée en place, toujours archivée), `core.prefab.purged`,
+  `core.artifact.deleted` (origine `presentation_purge`).
+- **Restaurer une présentation purgée** (JARVIS arrêté, CLAUDE.md : copier avant de remplacer quoi que ce soit) :
+  1. remettre `presentations/<pst_...>/` de la sauvegarde sous `presentations/` (elle revient archivée : `rail.json` est dans le dossier ;
+     la restaurer ensuite depuis le rail) et `prefabs/<id>/`, `prefabs/.archive/<id>/` sous `prefabs/` ;
+  2. ses exports : remettre `artifacts/<jart_...>/` sous `artifacts/`. Les lignes du registre sont dans `state/jarvis.sqlite3` de la
+     sauvegarde, une copie **de la base entière à l'instant de la purge** : ne jamais la mettre à la place de la base vivante (tout ce qui
+     a été écrit depuis serait perdu). Pour retrouver les lignes `artifacts` et `artifact_relations` des exports, les lire dans la copie
+     (`sqlite3`, en lecture seule) et les réinsérer à la main dans une base mise de côté d'abord ; sans cela, les dossiers restaurés
+     restent des fichiers sans ligne, que le registre ignore.
+- Les sources `presentation-studio.rm-*` (adressées par leur contenu, partageables) ne sont jamais purgées : la rétention des prefabs
+  archive leurs versions qui ne sont plus épinglées.
 
 ### Variantes du Studio : archive, restauration et reprise
 
@@ -3192,6 +3219,19 @@ n'a pas besoin du jeton côté page (`docs/ARCHITECTURE.md`, « Scene transport 
 | `POST /api/scene/commands` | `POST /v1/scene/commands` | une commande de scène ; côté Control Center l'acteur est toujours `user` |
 | `POST /api/scene/captures/{capture_id}` | `PUT /v1/scene/captures/{capture_id}` | envoi de l'image d'une capture par la page meneuse visible (la demande, `POST /v1/scene/captures`, ne vient que du brain) |
 | `POST /api/jobs/cancel` | `POST /v1/work/cancel` | arrêt d'une tâche de Core depuis le menu de son étoile |
+| — | `POST /v1/scene/archived/purge-plan`, `POST /v1/scene/archived/purge` | purge définitive des objets archivés (2026-10-18) : appelée par le cerveau (`scene_purge_archived`), pas encore par la page |
+
+Purge des archivés. Quand vous demandez de supprimer pour de bon les objets
+archivés, le cerveau appelle `scene_purge_archived` : il vous dit le compte
+(objets et lignes d'historique, et ceux gardés parce qu'une tâche encore suivie
+les ferait renaître), puis purge après votre oui. Core écrit d'abord une copie
+complète de la base, `scene.sqlite3.purge-<horodatage UTC>.bak`, dans le dossier
+`state` de la racine de données, à côté de `scene.sqlite3` ; elle n'est jamais
+supprimée par JARVIS. Pour revenir en arrière : arrêtez Core, mettez de côté
+`scene.sqlite3` et ses `-wal`/`-shm`, copiez la sauvegarde sous le nom
+`scene.sqlite3`, redémarrez. Juste après un démarrage de Core, la purge est
+refusée une minute (`runtime_settling`) le temps que les tâches suivies se
+redéclarent.
 
 Voir la scène brute, Core démarré :
 

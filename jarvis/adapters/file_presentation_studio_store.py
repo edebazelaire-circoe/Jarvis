@@ -31,8 +31,12 @@ Garanties (réutilisées, jamais refaites) :
 - dossiers par `safe_folders` (racine absolue, aucun lien ni jonction, limite
   de chemin Windows), fichiers lus par `lstat` + `fstat` (même fichier,
   ordinaire, borné à `MAX_DOCUMENT_BYTES`) ;
-- ne supprime jamais un document : `sweep` ne retire que des `.staging-*` et
-  des `*.tmp` à nous (CLAUDE.md « Données locales »).
+- ne supprime jamais un document **sauf** par `remove_presentation`, la purge définitive d'une Presentation archivée
+  (`jarvis/core/presentation_studio_purge.py`), que Core n'appelle qu'après la sauvegarde complète du dossier
+  (`copy_presentation`) : le dossier est d'abord inventorié (un lien, une jonction ou une entrée inattendue fait tout refuser),
+  puis renommé en `.purging-<16 hex>` (il sort de la liste d'un seul renommage), puis effacé par `safe_tree.remove_tree`, qui ne
+  sort jamais de `presentations/`. Un reste `.purging-*` (arrêt brutal pendant l'effacement) est retiré par `sweep`. Hors de
+  cela, `sweep` ne retire que des `.staging-*` et des `*.tmp` à nous (CLAUDE.md « Données locales »).
 """
 
 from __future__ import annotations
@@ -48,6 +52,7 @@ import stat
 
 from jarvis.adapters import safe_folders
 from jarvis.adapters.file_replace import replace_with_retry, retry_on_permission
+from jarvis.adapters.safe_tree import TreeCount, UnsafeTree, copy_tree, inventory, remove_tree
 from jarvis.domain.presentation_studio import (
     MAX_DOCUMENT_BYTES, MAX_PRESENTATIONS, PresentationStudioError, PresentationStudioErrorCode as C,
     is_art_direction_id, is_presentation_id, is_score_id, is_variant_id,
@@ -64,7 +69,10 @@ SCORES_DIR = "scores"
 ART_DIRECTIONS_DIR = "art_directions"
 COMPOSITIONS_DIR = "compositions"
 STAGING_PREFIX = ".staging-"
+#: Dossier d'une Presentation en cours d'effacement (purge définitive) : déjà hors de la liste, retiré par `sweep` s'il reste.
+PURGING_PREFIX = ".purging-"
 _STAGING = re.compile(r"\.staging-[0-9a-f]{16}\Z")
+_PURGING = re.compile(r"\.purging-[0-9a-f]{16}\Z")
 _TEMPORARY = re.compile(r".+\.[0-9a-f]{8}\.tmp\Z")
 
 
@@ -598,6 +606,53 @@ class FilePresentationStudioStore:
             return  # kept once, never overwritten
         self._note_flush(_write_file(backup, old_bytes.decode("utf-8")), "manifest_backup")
 
+    # ------------------------------------------------------------ purge définitive (Presentation archivée seulement : règle du service)
+
+    def copy_presentation(self, presentation_id: str, destination: Path) -> TreeCount:
+        """Copie le dossier entier de la Presentation dans `destination/<presentation_id>/` (sauvegarde avant purge). Rien n'est
+        copié si l'arbre contient un lien, une jonction ou une entrée inattendue (`storage_io`)."""
+
+        _check_ids(presentation_id)
+        folder = self._folder(presentation_id)
+        if folder is None:
+            raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
+        try:
+            return copy_tree(folder, Path(destination) / presentation_id)
+        except UnsafeTree as exc:
+            raise PresentationStudioError(C.STORAGE_IO, f"{presentation_id}/{exc.where}: {exc.reason}; nothing copied") from None
+        except safe_folders.SafeFolderError as exc:
+            raise _unsafe(exc, presentation_id) from None
+        except OSError as exc:
+            raise _io(exc, f"{presentation_id}: copy") from None
+
+    def remove_presentation(self, presentation_id: str) -> TreeCount:
+        """Efface le dossier entier de la Presentation (purge définitive, **après** `copy_presentation`). Inventaire d'abord : un lien,
+        une jonction ou une entrée inattendue fait tout refuser, rien n'est effacé. Puis un renommage en `.purging-<hex>` (la
+        Presentation sort de la liste d'un coup), puis l'effacement, qui ne sort jamais de `presentations/`."""
+
+        _check_ids(presentation_id)
+        folder = self._folder(presentation_id)
+        if folder is None:
+            raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
+        library = folder.parent
+        try:
+            inventory(folder)
+        except UnsafeTree as exc:
+            raise PresentationStudioError(C.STORAGE_IO, f"{presentation_id}/{exc.where}: {exc.reason}; nothing removed") from None
+        except OSError as exc:
+            raise _io(exc, f"{presentation_id}: inventory") from None
+        hidden = library / f"{PURGING_PREFIX}{secrets.token_hex(8)}"
+        try:
+            retry_on_permission(lambda: os.rename(folder, hidden))
+        except OSError as exc:
+            raise _io(exc, f"{presentation_id}: cannot set aside; nothing removed") from None
+        self._note_flush(_sync_folder(library), "purge")
+        try:
+            return remove_tree(hidden, within=library)
+        except (UnsafeTree, OSError) as exc:
+            raise PresentationStudioError(C.STORAGE_IO, f"{presentation_id}: left the listing but its folder was not fully removed "
+                                                        f"({type(exc).__name__}); the next start sweeps it") from None
+
     # ------------------------------------------------------------ balayage
 
     def sweep(self) -> SweepReport:
@@ -616,6 +671,12 @@ class FilePresentationStudioStore:
         for entry in entries:
             if _STAGING.fullmatch(entry.name):
                 (removed if _remove_staging(Path(entry.path)) else failed).append(entry.name)
+            elif _PURGING.fullmatch(entry.name):  # a purge stopped mid-removal: already backed up and out of the listing
+                try:
+                    remove_tree(Path(entry.path), within=base)
+                    removed.append(entry.name)
+                except (UnsafeTree, OSError):
+                    failed.append(entry.name)
             elif is_presentation_id(entry.name):
                 for folder in (Path(entry.path), Path(entry.path) / VARIANTS_DIR, Path(entry.path) / SCORES_DIR,
                                Path(entry.path) / ARCHIVE_DIR, Path(entry.path) / ART_DIRECTIONS_DIR,

@@ -108,7 +108,8 @@ class LiveDelegationController:
             if self._stale(trigger):
                 return
             await self.session.flush_observations()
-            text = self.session.pending_request_text()
+            take = getattr(self.session, "take_pending_request", None)
+            text = take() if callable(take) else self.session.pending_request_text()
             if not text:
                 # Aucun tour vide ne part : mieux vaut perdre une délégation
                 # qu'inventer une demande que l'utilisateur n'a pas faite.
@@ -134,9 +135,12 @@ class LiveDelegationController:
         except Exception:
             self._trace("submission_unknown", offset_ms=trigger.offset_ms)
         finally:
-            reset = getattr(self.session, "reset_pending_request", None)
-            if callable(reset):
-                reset()
+            # Ce que l'utilisateur a dit pendant l'envoi reste pour la demande
+            # suivante : seul le verrou tombe.
+            release = (getattr(self.session, "release_pending_request", None)
+                       or getattr(self.session, "reset_pending_request", None))
+            if callable(release):
+                release()
 
     async def _append(self, channel: str, text: str, trigger: _Trigger) -> bool:
         if self._stale(trigger):

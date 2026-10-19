@@ -184,7 +184,7 @@ Versioning is therefore per file (`schema_version` + `UPGRADES`), not `_MIGRATIO
 - **Atomic creation**: the whole folder is built in `.staging-*` (variants, then since Slice 11 the scores and art directions of an assembled Presentation, manifest last), then renamed; `os.rename` fails if the target exists. There is never a presentation folder without its manifest, nor (Slice 11) one whose variants cite a score or art direction that is not there.
 - **Multi-file operations** write variants first and `presentation.json` last. Slice 16 is the first to touch both: its operations, their order and the reconciliation rule for every interrupted state are in *Variant graph and operations contract*. Reads reconcile (`check_consistency`): an indexed variant that is missing is `corrupt_document`, not silently dropped.
 - **Defences** (`safe_folders`): absolute root, no link/junction/reparse point, Windows path limit, ids validated as exact-shape path components, files read by `lstat` + `fstat` (same inode, regular, <= 256 KiB, UTF-8), bounded retry when Windows refuses an open for a few milliseconds.
-- **Never deletes a document**: `sweep` removes only `.staging-*` and our `*.tmp`. Archiving a variant (Slice 16) moves (`move_variant`: one `rename`, never replaces), never removes.
+- **Deletes a document only through the purge of an archived presentation**: `sweep` removes only `.staging-*`, our `*.tmp` and the `.purging-*` leftover of an interrupted purge. Archiving a variant (Slice 16) moves (`move_variant`: one `rename`, never replaces), never removes. The one hard delete is `remove_presentation`, called only by the explicit, confirmed purge of **archived** presentations, after a complete backup (*Rail des presentations › Purge definitive des archivees*).
 - Proof: `tests/unit/test_presentation_studio_crash.py` kills a real writer subprocess at varied instants (mutation-checked: an in-place write fails it) and a creator, and kills at the worst deterministic point (complete temporary, replace not done).
 
 ### Seams left for later Slices (not built here)
@@ -1191,8 +1191,9 @@ registry hooks), so concurrent creates serialise (distinct numbers) and an edit 
 | **restore** (`POST .../variants/{id}/restore`) `{with_descendants?}` | Moves the file back and returns the node to the live set **with the archived ancestors it needs** (a live node never has an archived ancestor); archived descendants only with `with_descendants`. Needs no token (it destroys nothing). Refuses beyond 64 live nodes (`limit_reached`), a non-archived variant (`presentation_studio_not_archived`), a file that disagrees with its manifest entry (parent or number: `corrupt_document`). |
 | **graph** (`GET .../graph[?archived=1&check=1]`) | The nodes (title, parent, number, rationale, creator, sources, preview, scene count, active, state), the counter, the active variant, the last reconciliation report; `archived=1` adds archived nodes (their titles come from the archive folder; an unreadable file is a `problem` on the node, never a missing node); `check=1` adds a full read-only report. |
 
-There is no hard delete: "delete a branch" is archive. Emptying `archive/` is a human decision made with the Core stopped (see `docs/OPERATIONS.md`). Deleting a whole Presentation does not exist yet;
-`PresentationStudioVariants.drop_presentation` is the hook that operation must call (Slice 08: `PresentationStudioHistory.drop_presentation`).
+There is no hard delete of a branch: "delete a branch" is archive. Emptying `archive/` of a presentation that stays is a human decision made with the Core stopped (see `docs/OPERATIONS.md`). Deleting a whole
+Presentation is the purge of **archived** presentations (*Rail des presentations › Purge definitive des archivees*): plan, token, the user's yes, backup, then deletion; it calls
+`PresentationStudioVariants.drop_presentation` (Slice 08: `PresentationStudioHistory.drop_presentation`, plus the graph's in-memory reconciliation state) for every purged presentation.
 
 ### Linked documents: deep copy through a registry, closed by default
 
@@ -4312,10 +4313,51 @@ means *visible, not archived*. A newer `schema_version` or an unreadable file is
 There is no `_MIGRATIONS` entry (this is a file store, not `jarvis.sqlite3`; see *Storage*), and `*.<8 hex>.tmp` leftovers are swept by the existing startup sweep.
 
 - **Hide / show**: the presentation leaves (returns to) the rail. It stays readable, playable and listed by `presentation_inspect`. The rail keeps it under a folded *Masquees* group.
-- **Archive** ("Supprimer", restorable): the presentation leaves the rail (folded *Archivees* group), and refuses to be opened, studied or played until restored. **Nothing is deleted**: the folder, its
-  variants and its documents stay as they were. Refused while the presentation is being played (`presentation_studio_variant_in_playback`). The Control Center asks for a confirmation
+- **Archive** ("Supprimer", restorable): the presentation leaves the rail (folded *Archivees* group), and refuses to be opened, studied or played until restored. **Archiving deletes nothing**: the folder, its
+  variants and its documents stay as they were, until the user explicitly asks for the purge of the archived presentations (below). Refused while the presentation is being played (`presentation_studio_variant_in_playback`). The Control Center asks for a confirmation
   first (Cancel by default); the brain must pass `confirmed=true` after the user said yes, or Core answers `presentation_studio_confirmation_required`.
 - **Rename**: the existing revisioned save (`PUT` presentation), title trimmed and bounded (80). Unchanged title: `changed: false`, no write.
+
+### Purge definitive des archivees
+
+Archive stays the everyday, restorable "delete". The **purge** is the explicit gesture, asked by the user ("supprime vraiment toutes les archivées"), that deletes for good what is archived. It
+was added on the user's request (policy change: until then there was no hard delete of a presentation). Logic: `jarvis/core/presentation_studio_purge.py` (`PresentationPurge`), pure plan and
+token: `jarvis/domain/presentation_studio_purge.py`, routes: `jarvis/protocol/presentation_studio_rail_routes.py`, tests: `tests/unit/test_presentation_studio_purge.py`.
+
+Two steps, like the archive of a branch:
+
+1. **Plan** (`POST /v1/presentation-studio/rail/purge-plan` `{presentation_ids?}`), **writes nothing**. Under the Studio lock: every presentation whose `rail.json` says `archived` (or only the
+   `presentation_ids` filter, where a presentation that is **not archived is refused** `presentation_studio_not_archived` 409: a live presentation is never purged), and for each what goes with it:
+   live and archived variants, scores, art directions, compositions, its **derived Artifacts** (the `presentation_snapshot` rows whose `source_presentation_id`, or whose derived id
+   `jart_ps_<32 hex>_...`, names it, and everything rendered from them through `rendered_from`), and its **own scene sources** `presentation-studio.p<first 12 hex>.*` (catalogue folder and
+   `prefabs/.archive/<id>/`). Answers the list (id, title, `archived_at`, counts) and a **confirmation token** (`ppk_<expiry>.<HMAC>`, per-process secret, valid 10 minutes) bound to that exact set:
+   ids, titles, archive dates, manifest revisions, variant ids, Artifact ids, scene-source ids and document counts. An archived presentation with an Artifact still `pending` (an export being
+   written) is left out (`blocked`), never half purged.
+2. **Purge** (`POST /v1/presentation-studio/rail/purge` `{confirmation, confirmed: true, presentation_ids?}`). Needs the token **and** `confirmed: true` for every actor (the brain sets it only after
+   the user's yes). Under the Studio lock: re-plans; refuses if a presentation of the set is being played (`variant_in_playback`), if the set changed since the plan (one more archived, one restored,
+   a new export, a new scene source) or the token expired (`presentation_studio_confirmation_stale` 409). Then:
+   - **backup first**, in `<data_root>/backups/purge-presentations-<UTC timestamp>/`: the whole folder of each presentation (`presentations/<pst_...>/`), the purged scene-source folders
+     (`prefabs/<id>/`, `prefabs/.archive/<id>/`), the folders of the purged Artifacts (`artifacts/<jart_...>/`), a **consistent copy of `jarvis.sqlite3`** through the sqlite3 backup API
+     (`SQLiteStateRepository.backup_to`, under the repository lock, single-file, `quick_check` ok; only when Artifacts are purged) and `purge.json` (what was saved), built in `backups/.partial-<name>/`
+     then published by one rename. **If the backup fails, nothing is deleted** (`presentation_studio_storage_io` 500). A backup is never deleted by JARVIS;
+   - then, per presentation: its Artifacts (`ArtifactService.delete(cascade=True)`, registry rows first, `board_artifact_links` follow by `ON DELETE CASCADE`, then the payload folders), its scene
+     sources (`PrefabService.remove_ids`, only folders still exactly as backed up, catalogue re-read so nothing deleted is served from the cache), then its folder
+     (`FilePresentationStudioStore.remove_presentation`: full inventory first, a link, junction or unexpected entry refuses everything; renamed `.purging-<hex>` so it leaves the listing in one
+     rename; removed without ever leaving `presentations/`; an interrupted removal is swept at the next start). A step that fails leaves that presentation archived and in place (`failed`);
+   - after the lock, every in-memory state naming a purged presentation forgets it: undo history and the variant graph's reconciliation state (`drop_presentation`), the pin index
+     (`StudioPinRegistry.forget_presentation`), the rail (work state, preview, screen request), compare, hot reload (rollback history, unverified mounts, outcomes), stage binding, the agent's
+     authoring permissions, the engine-choice origin.
+   - answers `{purged, count, deleted: {presentations, variants, artifacts, prefabs, files}, backup: "backups/purge-presentations-...", failed, orphan_folders, blocked, notes, forget_failed, complete}`.
+
+What is **not** purged: content-addressed scene sources `presentation-studio.rm-*` (their id hashes the content, not the presentation, so two presentations may share one; deciding that no remaining
+presentation, undo stack, live or archived scene object, Remotion Studio pin or authoring draft still needs one is not established reliably here). Once the purged presentation leaves the pin index,
+the prefab retention (*docs/prefabs.md › Retention of studio scene sources*) archives their unpinned versions like any other. A `presentation-studio.p<12 hex>.*` id whose 12-hex prefix is shared
+with a presentation that stays is kept and reported in `notes`. The Remotion Studio `state.json` may still name a purged presentation as its master target: its status read degrades
+(`master_live_unread`), opening it answers `source_unavailable`; reopen the Studio on another presentation.
+
+MCP: `presentation_library` op `purge`. First call without `confirmation` (optionally `presentation_id` to purge one archived presentation): the plan, the token, `speech: say` with the question
+("Je supprime définitivement N présentation(s) archivée(s) (...) ? Une sauvegarde est gardée. Dis oui pour confirmer."), nothing deleted; second call with `confirmation` (the token of that plan, read in
+the same MCP process, same `presentation_id`) and `confirmed=true`: the purge. Restoring from a backup is a human procedure: `docs/OPERATIONS.md` › *Purge definitive des presentations archivees*.
 
 ### Work state (memory only)
 

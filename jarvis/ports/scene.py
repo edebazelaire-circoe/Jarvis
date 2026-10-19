@@ -66,6 +66,10 @@ class SceneUnavailableError(SceneStoreError):
     """La scène n'est pas servie : refusée au démarrage, divergée ou fermée."""
 
 
+class ScenePurgeBackupError(SceneStoreError):
+    """La sauvegarde qui précède une purge a échoué : **rien n'a été effacé**, la base est intacte."""
+
+
 class ScenePersistenceError(SceneStoreError):
     """L'écriture d'une commande appliquée a échoué : révision en mémoire inchangée, rien de visible.
 
@@ -116,6 +120,17 @@ class ArchivedSceneObject:
     object: SceneObject
     revision: int
     archived_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ScenePurgeWrite:
+    """Ce que `SceneRepository.purge_archived` a écrit : sauvegarde d'abord, puis lignes effacées."""
+
+    backup_path: str
+    tombstones: int
+    history_rows: int
+    #: `VACUUM` puis checkpoint réussis : plus aucun reste des objets purgés dans la base ni son `-wal`.
+    compacted: bool = True
 
 
 class SceneCommandSink(Protocol):
@@ -184,7 +199,15 @@ class SceneRepository(Protocol):
     - `commit` écrit, en une seule transaction, l'état qui résulte de
       `patch` appliqué à `previous` ; il refuse si la révision stockée n'est
       pas `previous.revision` (`REVISION_CONFLICT`) ;
-    - `archived_history` lit l'historique alimenté par les `archive_object`.
+    - `archived_history` lit l'historique alimenté par les `archive_object` ;
+    - `history_counts(kept)` compte les lignes d'historique purgeables (id
+      hors de `kept`) et gardées, sans rien écrire ;
+    - `purge_archived` (purge définitive, `docs/scene-model.md` › *Archive
+      purge*) écrit **d'abord** une sauvegarde cohérente de la base (sinon
+      `ScenePurgeBackupError`, rien d'effacé), puis, en une transaction,
+      efface les pierres tombales `purge_ids` et tout l'historique des ids qui
+      ne gardent pas la leur, et pose la révision de `result`. Mêmes contrôles
+      que `commit` : révision stockée, comptes de lignes égaux à `result`.
     """
 
     async def sweep_leftovers(self) -> SceneSweepReport: ...
@@ -196,6 +219,12 @@ class SceneRepository(Protocol):
     async def commit(self, previous: SceneSnapshot, patch: ScenePatch, result: SceneSnapshot) -> None: ...
 
     async def archived_history(self, *, object_id: str | None = None, limit: int = 100) -> tuple[ArchivedSceneObject, ...]: ...
+
+    async def history_counts(self, kept: frozenset[str]) -> tuple[int, int]: ...
+
+    async def purge_archived(
+        self, previous: SceneSnapshot, result: SceneSnapshot, *, purge_ids: tuple[str, ...], history_rows: int,
+    ) -> ScenePurgeWrite: ...
 
     async def close(self) -> None: ...
 

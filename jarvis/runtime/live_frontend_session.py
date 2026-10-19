@@ -29,6 +29,10 @@ from jarvis.runtime.voice_observations import VoiceObservationDispatcher
 
 MAX_REQUEST_UTF8 = 8192
 MAX_REQUEST_DELTAS = 256
+#: Silence de l'utilisateur (entre deux mots transcrits) au-delà duquel, si le
+#: modèle a parlé entretemps, la demande précédente est close : il y a répondu
+#: seul. En deçà, c'est une pause au milieu d'une phrase, que la demande garde.
+REQUEST_STALE_GAP_S = 8.0
 # MAX_APPEND_UTF8 vaut 500 côté adaptateur : on découpe sous cette borne pour
 # qu'un résultat de cerveau, régulièrement plus long, reste prononçable.
 MAX_APPEND_CHUNK_UTF8 = 450
@@ -118,6 +122,10 @@ class LiveFrontendSession:
         self._request_deltas: deque[str] = deque()
         self._request_bytes = 0
         self._request_held = False
+        self._request_last_input_ns: int | None = None
+        self._request_model_spoke = False
+        self._request_model_delta = ""
+        self.request_stale_gap_s = REQUEST_STALE_GAP_S
         self._brain_orchestration = brain_orchestration
         self._lifecycle_owner = lifecycle_owner
         self.prompt_applications = [dict(prompt_evidence)] if isinstance(prompt_evidence, dict) else []
@@ -264,6 +272,40 @@ class LiveFrontendSession:
         while len(self._request_deltas) > MAX_REQUEST_DELTAS or self._request_bytes > MAX_REQUEST_UTF8:
             self._request_bytes -= len(self._request_deltas.popleft().encode("utf-8"))
 
+    def _continue_request(self, observed_ns: int) -> None:
+        """Keep the request across model speech, unless the user moved on.
+
+        Only a long silence on the user's side, with the model speaking in
+        between, closes the previous request: the model then answered it alone.
+        """
+        last, self._request_last_input_ns = self._request_last_input_ns, observed_ns
+        spoke, model_delta = self._request_model_spoke, self._request_model_delta
+        self._request_model_spoke, self._request_model_delta = False, ""
+        if not spoke or not self._request_deltas or self._request_held:
+            return
+        gap_s = (observed_ns - last) / 1e9 if last is not None else None
+        expired = gap_s is not None and gap_s > self.request_stale_gap_s
+        text = self.pending_request_text() or ""
+        if expired:
+            self._request_deltas.clear()
+            self._request_bytes = 0
+        self._trace_request("expired" if expired else "kept_over_model_speech", text, gap_s, model_delta)
+
+    def _trace_request(self, decision: str, text: str, gap_s: float | None, model_delta: str) -> None:
+        # Diagnostic des coupures de parole : ce que le modèle a dit pendant la
+        # demande, la pause de l'utilisateur, et ce que la demande est devenue.
+        if self.journal is None:
+            return
+        try:
+            self.journal.emit("voice.live.request_boundary", "Live pending request crossed model speech", data={
+                "session_id": self.session_id, "conversation_id": self.conversation_id,
+                "decision": decision, "user_gap_s": None if gap_s is None else round(gap_s, 3),
+                "stale_gap_s": self.request_stale_gap_s, "chars": len(text), "text": text[:2000],
+                "model_delta": model_delta[:200],
+            })
+        except Exception:
+            pass
+
     def hold_pending_request(self) -> None:
         """Keep the accumulated request while a delegation is being dispatched.
 
@@ -277,10 +319,26 @@ class LiveFrontendSession:
         self._request_deltas.clear()
         self._request_bytes = 0
         self._request_held = False
+        self._request_model_spoke, self._request_model_delta = False, ""
 
     def pending_request_text(self) -> str | None:
         text = " ".join("".join(self._request_deltas).split())
         return text or None
+
+    def take_pending_request(self) -> str | None:
+        """Read and remove exactly the request a delegation carries.
+
+        Words heard while the brain turn is being submitted belong to the next
+        request: `reset_pending_request` after the submission erased them.
+        """
+        text = self.pending_request_text()
+        self._request_deltas.clear()
+        self._request_bytes = 0
+        self._request_model_spoke, self._request_model_delta = False, ""
+        return text
+
+    def release_pending_request(self) -> None:
+        self._request_held = False
 
     async def flush_observations(self) -> None:
         if self._dispatcher is None:
@@ -468,11 +526,16 @@ class LiveFrontendSession:
     def _observe(self, event) -> None:
         if isinstance(event.payload, UserTranscriptDelta):
             self.input_observation_revision += 1
+            self._continue_request(event.observation.monotonic_ns)
             self._note_request_delta(event.payload.delta)
-        elif isinstance(event.payload, AssistantTranscriptDelta) and not self._request_held:
-            # Une réponse du modèle ferme la demande en cours ; tant qu'une
-            # délégation est en vol, elle ne l'efface pas.
-            self.reset_pending_request()
+        elif isinstance(event.payload, AssistantTranscriptDelta) and not self._request_held and self._request_deltas:
+            # Le modèle a parlé pendant la demande. Ce n'est pas une fin de
+            # demande : un « mm » ou une relance pendant une pause de
+            # l'utilisateur effaçait ici le début de sa phrase, que le cerveau
+            # ne recevait jamais. On décide à la reprise de l'utilisateur.
+            if not self._request_model_spoke:
+                self._request_model_spoke = True
+                self._request_model_delta = event.payload.delta
         if event.correlation.output_id:
             key = str(event.correlation.output_id)
             if key not in self._outputs:
