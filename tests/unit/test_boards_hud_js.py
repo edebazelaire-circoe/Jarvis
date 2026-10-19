@@ -956,14 +956,14 @@ async def test_the_served_page_inserts_the_module_and_declares_both_slots(tmp_pa
     assert html.count("JarvisBoardsControl.gate(s.boards,s.interaction_mode,s.presentation)") == 1
     assert "JarvisBoardsControl.statusLost()" in html
     source = PAGE_HTML.read_text(encoding="utf-8")
-    # Registre : docs/control-center-shell.md ; le bouton de la carte au rang 32, le panneau au 39 (au-dessus de
-    # l'aperçu de capture et de la roue ouverte, qu'il peut couvrir en s'ouvrant en bas à gauche).
+    # Registre : docs/control-center-shell.md ; le bouton de la carte au rang 32, le sélecteur au 58 (voile plein écran
+    # par-dessus la page, sous `.overlay`, les toasts et la confirmation).
     registry = source[:source.index("*/")]
     assert re.search(r"@shell-layer 32:[^\n]*#boardsHud", registry)
-    assert re.search(r"@shell-layer 39: #boardsPanel\n", registry)
+    assert re.search(r"@shell-layer 58: #boardsPanel\n", registry)
     shell_doc = (PAGE_HTML.parents[2] / "docs" / "control-center-shell.md").read_text(encoding="utf-8")
     assert "| 32 | `#boardsHud` | `control_center_boards.js` | `${H} .bd-btn` |" in shell_doc
-    assert "| 39 | `#boardsPanel` |" in shell_doc
+    assert "| 58 | `#boardsPanel` |" in shell_doc
     style = run_node(tmp_path, "out(B.STYLE);", name="style")
     assert re.search(r"#boardsHud\{position:absolute;left:18px;[^}]*pointer-events:auto", style)
 

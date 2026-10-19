@@ -360,7 +360,7 @@ async def test_la_carte_suit_la_seance_de_la_voix_en_un_battement(served, tmp_pa
     # Le clic ouvre le panneau au-dessus de la carte ; ni le mode ni la séance ne bougent.
     assert actions[8]["ok"], actions[8]
     opened = actions[9]["value"]
-    assert opened["boardsPanel"]["b"] <= opened["card"]["t"], (opened["boardsPanel"], opened["card"])
+    assert (opened["boardsPanel"]["l"], opened["boardsPanel"]["t"]) == (0, 0), opened["boardsPanel"]  # voile plein écran
     assert opened["presence"]["state"] == "listening"
     # Le changement venu d'ailleurs : aucun clic, un battement ; en SIMPLE la ligne se tait.
     assert actions[11]["status"] == 200

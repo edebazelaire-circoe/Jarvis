@@ -1405,7 +1405,8 @@ def test_the_scene_layer_sits_above_the_face_and_below_every_control():
     assert _z(barehands, "#jarvisHands") == 2147483000
     boards = _z(html, "#boardsPanel")
     assert scene < _z(html, ".dock") < _z(html, ".panel") < _z(html, ".live-banner") < boards
-    assert boards < _z(html, ".bgpills") < _z(html, ".toasts") < _z(html, ".cdialog-back")
+    # Le sélecteur de Board est un voile plein écran (refonte du 2026-10-19) : au-dessus du centre d'état.
+    assert _z(html, ".bgpills") < boards < _z(html, ".overlay") < _z(html, ".toasts") < _z(html, ".cdialog-back")
     assert ".topbar" not in html and "#hiddenEye{" not in html
 
 
