@@ -128,6 +128,8 @@ MISSION_HISTORY_RELATION_WITHDRAWN_KIND = "mission_history.relation_withdrawn_af
 MAX_RELATIONS_PER_INSTANCE = 8
 MAX_RELATION_CACHE = 1_024
 MAX_RELATION_WARMUPS = 16
+#: Délai avant de retenter le retrait d'une relation en échec (balayage toutes les 30 s : pas à chaque passe).
+WITHDRAW_RETRY_S = 300.0
 
 #: Balayage périodique (Slice 05, note N5 de la Slice 03) : rattrape un événement perdu ou un magasin rétabli même
 #: quand aucun travail ne bouge. Un balayage a aussi lieu au démarrage.
@@ -252,6 +254,8 @@ class MissionHistoryService:
         self._sweep_lock = asyncio.Lock()
         #: Slice 06 : relais préparés en attente de leur successeur (mémoire seulement, bornés, expirés au balayage).
         self._handoffs: OrderedDict[str, PendingHandoff] = OrderedDict()
+        #: Relations dont le retrait a échoué -> date de la prochaine tentative (reprise QA, balayage non bloqué).
+        self._withdraw_retry: OrderedDict[str, Any] = OrderedDict()
         #: instance -> ses relations connues (les plus récentes en fin), pour `relation_refs` sans E/S.
         self._relations: OrderedDict[str, OrderedDict[str, AgentRelation]] = OrderedDict()
 
@@ -1103,23 +1107,42 @@ class MissionHistoryService:
         """Clore `withdrawn` les relations encore ouvertes d'une mission close depuis plus que la grâce (reprise QA
         N4) : aucun verdict ni vainqueur inventé, c'est dit au journal. Ne lève jamais."""
 
-        cutoff = self._clock.now() - timedelta(seconds=relation_runtime.CLOSED_MISSION_GRACE_S)
+        now = self._clock.now()
+        cutoff = now - timedelta(seconds=relation_runtime.CLOSED_MISSION_GRACE_S)
+        for relation_id, retry_at in list(self._withdraw_retry.items()):
+            if retry_at <= now:
+                self._withdraw_retry.pop(relation_id, None)
         try:
             stale = await self._guard("stale_open_relations", self._repository.stale_open_relations(
-                cutoff, limit=MAX_SWEPT_MISSIONS))
-            for relation in stale:
-                closed = await self.close_relation(
-                    relation.relation_id, RelationOutcome.WITHDRAWN,
-                    summary="Mission close depuis plus de 10 min : relation retirée sans verdict ni issue.")
-                self._note_relation(closed)
-                self._emit(MISSION_HISTORY_RELATION_WITHDRAWN_KIND, "relation retirée après la clôture de sa mission",
-                           level="warning", data={"relation_id": closed.relation_id, "kind": closed.kind.value,
-                                                  "mission_id": closed.mission_id})
-        except (MissionError, RelationError, MissionHistoryError, MissionHistoryUnavailable,
-                MissionHistoryStoreError) as exc:
+                cutoff, limit=MAX_SWEPT_MISSIONS + len(self._withdraw_retry)))
+        except (MissionHistoryUnavailable, MissionHistoryStoreError, MissionHistoryError) as exc:
             self._report(("withdraw_stale", type(exc).__name__), MISSION_HISTORY_CLOSE_FAILED_KIND,
                          f"retrait des relations d'une mission close en échec : {exc}", level="warning",
                          data={"code": getattr(exc, "code", None)})
+            return
+        for relation in stale:
+            if relation.relation_id in self._withdraw_retry:
+                continue  # en échec récemment : retentée après `WITHDRAW_RETRY_S`, sans bloquer les suivantes
+            try:
+                closed = await self.close_relation(
+                    relation.relation_id, RelationOutcome.WITHDRAWN,
+                    summary="Mission close depuis plus de 10 min : relation retirée sans verdict ni issue.")
+            except (MissionError, RelationError, MissionHistoryError, MissionHistoryUnavailable,
+                    MissionHistoryStoreError) as exc:
+                # Reprise QA : un échec ne bloque pas le balayage ; il est dit une fois par relation et retenté plus tard.
+                self._withdraw_retry[relation.relation_id] = now + timedelta(seconds=WITHDRAW_RETRY_S)
+                while len(self._withdraw_retry) > MAX_RELATION_CACHE:
+                    self._withdraw_retry.popitem(last=False)
+                self._report(("withdraw_one", relation.relation_id, type(exc).__name__),
+                             MISSION_HISTORY_CLOSE_FAILED_KIND,
+                             f"retrait d'une relation d'une mission close en échec : {exc}", level="warning",
+                             data={"relation_id": relation.relation_id, "code": getattr(exc, "code", None),
+                                   "retry_in_s": WITHDRAW_RETRY_S})
+                continue
+            self._note_relation(closed)
+            self._emit(MISSION_HISTORY_RELATION_WITHDRAWN_KIND, "relation retirée après la clôture de sa mission",
+                       level="warning", data={"relation_id": closed.relation_id, "kind": closed.kind.value,
+                                              "mission_id": closed.mission_id})
 
     def _expire_handoffs(self) -> None:
         now = self._clock.now()

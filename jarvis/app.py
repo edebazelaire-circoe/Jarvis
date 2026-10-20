@@ -2073,10 +2073,11 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "routing-hook":
         try:
             from jarvis.runtime.routing_hook import main as routing_hook_main
-        except Exception:  # noqa: BLE001 - argued: a broken hook import refuses relation tools (fail closed), else silent
+        except Exception as exc:  # noqa: BLE001 - argued: a broken hook import refuses relation tools, says it, exits 0
             from jarvis.runtime import hook_failsafe
 
-            return hook_failsafe.main()
+            return hook_failsafe.main(runtime_root=args.runtime_root or None,
+                                      cause=f"{type(exc).__name__}: {exc}"[:200])
 
         return routing_hook_main([*(["--runtime-root", args.runtime_root] if args.runtime_root else []),
                                   *(["--spawn-guard"] if args.spawn_guard else [])])

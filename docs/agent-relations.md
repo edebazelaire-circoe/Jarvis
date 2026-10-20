@@ -267,7 +267,7 @@ Un agent noue, alimente, lit ou clôt une relation, ou passe la main, par cinq o
   strict des arguments (`CURRENT_CALLER`). Sans lui, ou sans la version `hook` attendue (CLI lancé avec un ancien
   hook, champ écrit par le modèle), refus `relation_caller_unstamped` : rien n'est deviné. Le hook **échoue fermé**
   pour ces seuls outils : une panne (exception, import du hook cassé, `jarvis/runtime/hook_failsafe.py`) rend un
-  refus explicite au lieu d'une sortie vide ; tout autre outil reste *fail-open*. Un hook tué par son délai ne
+  refus explicite au lieu d'une sortie vide ; tout autre outil reste *fail-open*. Un import cassé du hook est toujours dit : une ligne sur stderr et un événement `agent.routing.failed` (`routing_hook_import_failed`) dans `<runtime>/trace.jsonl` et `errors.jsonl`, sans changer le code de sortie. Un hook tué par son délai ne
   pose rien : le serveur refuse alors l'appel. Constaté sur le CLI 2.1.304 (sonde du 2026-10-20) : l'`agent_id`
   du hook est le `task_id` de `task_started` et l'« agentId » que l'outil `Agent` rend à l'appelant ;
   `updatedInput` est honoré pour un outil MCP, même avec un champ hors schéma.
@@ -287,7 +287,7 @@ refus de Core. Core parle d'identités de travail, jamais d'agentId (D25).
 | --- | --- |
 | nouer une communication ou un Adversary | le propriétaire courant de la mission de l'appelant, ou d'une mission ancêtre (D04) |
 | nouer une QA | ce propriétaire, ou le relecteur lui-même (`reviewer = self`) : le Mission Owner décide en lançant un relecteur sur un travail nommé, le relecteur l'enregistre |
-| publier, clore | un participant (`relation_not_participant` sinon), tant que la relation est ouverte. Mission close : pendant `CLOSED_MISSION_GRACE_S` (600 s) après la clôture, le geste est retenu et dit au journal (`relation_message_after_close` : un agent repris par `SendMessage` peut travailler après la clôture, constaté en bac à sable) ; ensuite refus `mission_closed`, et le balayage clôt `withdrawn` les relations encore ouvertes (`relation_withdrawn_after_close`, aucun verdict ni vainqueur inventé) |
+| publier, clore | un participant (`relation_not_participant` sinon), tant que la relation est ouverte. Mission close : pendant `CLOSED_MISSION_GRACE_S` (600 s) après la clôture, le geste est retenu et dit au journal (`relation_message_after_close` : un agent repris par `SendMessage` peut travailler après la clôture, constaté en bac à sable) ; ensuite refus `mission_closed`, et le balayage clôt `withdrawn` les relations encore ouvertes (`relation_withdrawn_after_close`, aucun verdict ni vainqueur inventé ; un retrait en échec est dit une fois et retenté après 300 s, sans arrêter les suivants) |
 | clore | verdict QA : le relecteur ; issue d'un Adversary : le propriétaire ou le créateur ; fin d'une communication : un membre aussi ; `withdrawn` : le créateur ou le propriétaire |
 | délégation, relais | Core seulement (`relation_kind_not_opened_by_agent`, `relation_closed_by_core`) |
 | lire | un participant, ou le Mission Owner courant de la mission ou d'une mission ancêtre ; le cerveau (et l'interface, sans lecteur) lit tout ; sinon refus `relation_read_not_allowed` (403) |
