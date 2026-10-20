@@ -14,7 +14,8 @@
           "Vérifiez que deux rôles se distinguent sans la couleur : pictogramme et badge différents.",
           "Parcourez la liste au clavier : Tab jusqu'à la liste, puis flèches haut et bas, Début, Fin ; la fiche suit et le focus reste visible.",
           "Vérifiez qu'aucun texte d'instructions n'est déplié par défaut : il est derrière « Afficher et modifier les instructions (N caractères) ».",
-          "Changez de thème (onglet Apparence : Circuit imprimé puis Cosmos) et revenez : l'onglet reste lisible dans les deux."
+          "Changez de thème (onglet Apparence : Circuit imprimé puis Cosmos) et revenez : l'onglet reste lisible dans les deux.",
+          "Rétrécissez la fenêtre à environ 760 px de large : l'onglet « Sous-agents » reste visible dans la barre d'onglets, la liste passe au-dessus de la fiche ; cliquez un rôle : la fiche vient à l'écran, focus sur son titre, et « Revenir à la liste des rôles » ramène à la liste."
         ],
         "expected": "Un catalogue structuré et facile à parcourir, une identité (pictogramme, badge, accent) cohérente d'un rôle à l'autre, aucun mur de texte.",
         "reference_captures": [
@@ -22,6 +23,7 @@
           "evidence/03-catalogue-cosmos-qa-alias.png",
           "evidence/04-clavier-focus-web-research.png",
           "evidence/09-etroit-760.png",
+          "evidence/13-etroit-760-fiche.png",
           "evidence/12-couleurs-forcees-contraste.png"
         ],
         "note": "Le graphe des tâches ne lit pas encore ces jetons (Slice 08) : la table --role-accent-* de control_center.html est celle qu'il devra reprendre. Le Control Center n'a pas de thème clair : les deux thèmes livrés sont sombres."

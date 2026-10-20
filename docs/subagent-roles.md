@@ -192,10 +192,11 @@ Slice 04 :
 | `aliases` | `ROLE_ALIASES` (`{"reviewer": "qa"}`) |
 | `accents` | `ROLE_ACCENTS`, les jetons que le frontend traduit en variables CSS |
 | `relation_labels` | `work_methods.RELATION_LABELS` : libellé français de chaque relation citée par `useful_relations` (Slice 10) |
+| `instructions_max_chars` | `prompt_registry.MAX_OVERRIDE_TEXT` (8 192) : borne d'une surcharge d'instructions, affichée près du compteur (Slice 10) |
 | `reserved_role_ids` | `undeclared`, `unknown` : à afficher comme rôle général ou inconnu, jamais deviné |
 | `execution_gate`, `mission_path`, `application` | inchangés depuis la version 1 |
 
-Version 2 n'ajoute que des clés (`relation_labels` ajoutée par la Slice 10, même règle) : un lecteur de la version 1 lit la même chose. Une valeur existante change
+Version 2 n'ajoute que des clés (`relation_labels` et `instructions_max_chars` ajoutées par la Slice 10, même règle) : un lecteur de la version 1 lit la même chose. Une valeur existante change
 depuis la Slice 01 : `coder.tools` contient `Agent`.
 
 ## 2. Les marqueurs de tête d'un appel `Agent`
@@ -384,15 +385,21 @@ autre donnée, aucune liste recopiée : libellés, capacités, méthodes, libell
   s'ajoute **après** les instructions éditables et suit le code ;
 - les instructions, repliées derrière « Afficher et modifier les instructions (N caractères) » : jamais un mur
   de texte en premier plan ;
-- les instances en cours, dans une zone séparée : rôle résolu comme `resolve_role` (déclaré, alias avec son
-  marqueur, désactivé), « Marqueur hors registre » pour un mot inconnu, « Général, aucun rôle déclaré » sans
-  marqueur, étiquette éphémère.
+- les instances en cours, dans une zone repliable sous la liste (« Instances en cours » et leur nombre) : rôle
+  résolu comme `resolve_role` (déclaré, alias avec son marqueur, désactivé ; un alias dont la cible manque à la
+  liste reste un alias, nommé avec sa cible), « Marqueur hors registre » pour un mot inconnu, « Général, aucun
+  rôle déclaré » sans marqueur, étiquette éphémère. Seules les clés propres de `aliases` comptent
+  (`constructor` n'est pas un alias) ;
+- un renvoi vers « Agent / CLI › Sous-agents / Modèles », qui règle les modèles des sous-agents.
 
 **Identité visuelle.** `visual.accent` est un jeton : il devient `var(--role-accent-<jeton>)`, défini une
 seule fois dans `control_center.html` pour les dix jetons de `ROLE_ACCENTS` (table partagée avec le graphe des
 tâches). Un jeton absent de `accents` retombe sur `slate` et est journalisé une fois
 (`subagent_settings_unknown_accent`). L'icône (`visual.icon`, pictogramme dessiné ; silhouette générique pour
 un jeton inconnu) et le badge accompagnent toujours la couleur. Le module ne contient aucune couleur (test).
+
+**Compteur.** « n / 8 192 caractères », la borne lue dans `instructions_max_chars` (à défaut la constante
+`DEFAULT_MAX_CHARS` du module, égale à `MAX_OVERRIDE_TEXT`) ; au-delà, le bouton Enregistrer se désactive.
 
 **Seule écriture : les instructions.** `POST /api/prompts/subagent_role.<id>` existant :
 `{action: "edit", text, base_revision: default_revision, expected_effective_revision: revision}` ou
@@ -406,14 +413,18 @@ hook. Capacités et méthodes sont marquées « lecture seule » : aucune voie d
 | État | Ce qui s'affiche |
 | --- | --- |
 | chargement | pictogramme animé, « Lecture du registre des rôles… », compteur en secondes, échéance (15 s) |
-| erreur de lecture | alerte avec le message et le code du serveur, « Rien n'a été modifié », bouton Réessayer ; console `subagent_settings_load_failed` |
+| erreur de lecture | alerte « Réponse : « … ». », le code, « Rien n'a été modifié », un conseil propre à la cause (document `prompt_overrides` illisible pour un code `prompt_*`, réponse d'une autre version, Control Center injoignable), bouton Réessayer ; console `subagent_settings_load_failed` |
 | échéance dépassée | « Pas de réponse du Control Center après 15 s. » (`subagent_settings_timeout`) |
 | registre vide | « Aucun rôle dans le registre » : les sous-agents s'exécutent comme agents généraux |
 | rôle désactivé | nom barré dans la liste, étiquette Désactivé, explication dans la fiche |
 | actif mais pas proposé au cerveau | note dans la fiche (aujourd'hui `research-lead`, `qa`) |
 | surcharge écartée (`conflict`) | alerte : le défaut s'applique, réenregistrer pour la reprendre |
+| écriture réussie, relecture en échec | « Enregistré ; la relecture a échoué : « … ». », bouton « Réessayer la relecture » ; jamais « Rien n'a été écrit » ; console `subagent_settings_refresh_failed` |
+| écriture sans réponse (échéance de 15 s, ou serveur injoignable) | « Résultat inconnu : … Relisez avant de réenregistrer. », relecture immédiate, puis ce qu'elle montre : modification enregistrée (brouillon retiré) ou version précédente (texte gardé dans le champ) |
+| charge utile partielle ou d'une autre version | avertissement de version, entrées sans `id` ignorées et comptées, « Fiche incomplète » qui nomme les champs absents (affichés vides), enregistrement désactivé sans révisions |
+| exception d'affichage | état d'erreur `subagent_settings_render_failed` avec Réessayer, jamais un écran figé ; le montage de l'onglet intercepte aussi `load()` (`subagent_settings_mount_failed`) |
 | conflit de révision (`prompt_override_concurrent`, `prompt_override_stale`) | alerte : la version a changé ailleurs, **le texte de l'utilisateur reste dans le champ**, les révisions sont relues ; un second enregistrement, voulu, remplace la version enregistrée |
-| refus d'enregistrement | message et code du serveur, « Rien n'a été écrit », brouillon gardé ; console `subagent_settings_save_failed` |
+| refus d'enregistrement (réponse d'erreur du serveur) | « Enregistrement refusé. Refus du serveur : « … ». Rien n'a été écrit. », le code, brouillon gardé ; console `subagent_settings_save_failed` |
 | instances illisibles | alerte locale ; le catalogue reste utilisable ; console `subagent_settings_tasks_failed` |
 
 Les brouillons vivent dans `SET.subagentDrafts` : changer d'onglet des Réglages ne perd pas un texte non
@@ -421,6 +432,14 @@ enregistré (fermer la page, si). Le chemin normal est journalisé en console à
 (`subagent_settings.loaded`, `subagent_settings.instructions_edit|reset`) ; le serveur journalise
 `prompt.override.*` et `subagent_roles.snapshot_*`. Le Control Center n'a pas de route d'écriture des erreurs
 du navigateur : les échecs du navigateur restent en console et à l'écran.
+
+**Accessibilité et largeur.** La fiche n'est pas une région live : une région courte, hors du rendu, annonce
+seulement les notices. En couleurs forcées, la sélection est marquée par une bordure épaisse `Highlight` et
+un soulignement, pas par la couleur. Sous 900 px, une seule colonne : choisir un rôle amène la fiche à l'écran,
+focus sur son titre, avec « Revenir à la liste des rôles ». La barre d'onglets des Réglages ramène l'onglet actif
+dans la vue (pour tous les onglets). Le pied de la modale est masqué dans cet onglet, qui porte ses propres
+notices. Les couleurs du CSS `.sar-*` sont des jetons du thème (`--text`, `--muted`, `--solid`, `--line`,
+`--accent`, `--role-accent-*`).
 
 **Thèmes.** Lisible dans les deux thèmes livrés (Circuit imprimé, Cosmos), tous deux sombres, et en couleurs
 forcées (contraste élevé de Windows). Le Control Center n'a pas de thème clair.

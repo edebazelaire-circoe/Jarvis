@@ -115,7 +115,7 @@ v.select('concept');v.state.drafts.concept='Mon texte';await v.save('concept');
 process.stdout.write(JSON.stringify({calls,draft:v.state.drafts.concept,notice:v.state.notice.concept,html:host.innerHTML,errors,busy:v.state.save}));""")
     assert out["draft"] == "Mon texte" and out["busy"] is None
     assert out["notice"]["code"] == "prompt_override_concurrent" and "modifiées ailleurs" in out["notice"]["text"]
-    assert "prompt_override_concurrent" in out["html"] and 'role="alert"' in out["html"]
+    assert "prompt_override_concurrent" in out["html"] and "data-sar-notice" in out["html"]
     assert [c[0] for c in out["calls"]].count("/api/subagent-roles") == 2
     assert ["subagent_settings_save_failed", "prompt_override_concurrent", {"role_id": "concept", "code": "prompt_override_concurrent"}] in out["errors"]
 
@@ -130,7 +130,7 @@ const v=M.create(host,{fetch:fetchFn,...quiet});await v.load();
 v.state.drafts.research='x';await v.save('research');const refused=v.state.notice.research;
 await v.save('research');
 process.stdout.write(JSON.stringify({refused,snapshot:v.state.notice.research,errors}));""")
-    assert "Prompt text too large" in out["refused"]["text"] and "Rien n’a été écrit" in out["refused"]["text"]
+    assert out["refused"]["text"] == "Enregistrement refusé. Refus du serveur : « Prompt text too large ». Rien n’a été écrit."
     assert out["refused"]["code"] == "agent_settings_behavior_prompt_too_large"
     assert out["snapshot"]["tone"] == "bad" and out["snapshot"]["code"] == "subagent_roles_snapshot_write_failed"
 
@@ -246,3 +246,140 @@ def test_route_serves_relation_labels_additively(tmp_path):
     assert payload["relation_labels"]["delegation"] == "délégation"
     used = {k for m in payload["work_methods"] for k in m["useful_relations"]}
     assert used <= set(payload["relation_labels"])
+
+
+def test_route_serves_the_instructions_bound_shown_by_the_counter(tmp_path):
+    from jarvis.domain.prompt_registry import MAX_OVERRIDE_TEXT
+
+    payload = roles_payload(tmp_path)
+    assert payload["instructions_max_chars"] == MAX_OVERRIDE_TEXT
+    out = run_node(tmp_path, payload, """
+const v=M.create(host,{fetch:reply,...quiet});await v.load();v.select('concept');
+const before=host.innerHTML;v.state.drafts.concept='x'.repeat(DATA.roles.instructions_max_chars+1);v.render();
+process.stdout.write(JSON.stringify({before,after:host.innerHTML}));""")
+    assert re.search(r"\(\d[\d ]* / 8 192 caractères\)", out["before"])
+    assert "au-delà de la limite" in out["after"]
+    assert re.search(r'data-sar-save="concept" disabled', out["after"])
+
+
+# --- N1 : l'écriture et la relecture sont deux étapes ---------------------------------------------------
+
+def test_post_succeeds_then_reread_fails_says_saved_and_offers_retry(tmp_path):
+    payload = roles_payload(tmp_path)
+    out = run_node(tmp_path, payload, """
+let n=0;
+const fetchFn=async(p,i)=>{if(p==='/api/subagent-roles'&&++n>1){const e=new Error('Control Center injoignable : boom');e.code='subagent_settings_unreachable';throw e}return reply(p,i)};
+const v=M.create(host,{fetch:fetchFn,...quiet});await v.load();
+v.select('concept');v.state.drafts.concept='nouveau texte';await v.save('concept');
+const notice=v.state.notice.concept,html=host.innerHTML,draft=v.state.drafts.concept;
+n=0;await v.reread('concept');
+process.stdout.write(JSON.stringify({notice,html,draft,after:v.state.notice.concept,errors}));""")
+    notice = out["notice"]
+    assert notice["text"].startswith("Enregistré ; la relecture a échoué : « Control Center injoignable : boom »")
+    assert "Rien n" not in notice["text"] and notice["reread"] is True
+    assert 'data-sar-reread="concept"' in out["html"] and out.get("draft") is None
+    assert out["after"]["tone"] == "ok" and out["after"]["text"] == "Version enregistrée relue."
+    assert "subagent_settings_refresh_failed" in [e[0] for e in out["errors"]]
+
+
+def test_post_timeout_is_an_unknown_outcome_followed_by_a_reread(tmp_path):
+    payload = roles_payload(tmp_path)
+    saved = json.loads(json.dumps(payload))
+    next(r for r in saved["roles"] if r["id"] == "concept")["instructions"] = "nouveau texte"
+    out = run_node(tmp_path, payload, """
+const saved=JSON.parse(process.env.SAVED);let reads=0;
+const timeout=()=>{const e=new Error('Pas de réponse du Control Center après 15 s.');e.code='subagent_settings_timeout';throw e};
+const run=async(answer)=>{
+  reads=0;const v=M.create(host,{fetch:async(p,i)=>{if(i&&i.method==='POST')timeout();if(p==='/api/subagent-roles'){reads++;return reads>1?answer:DATA.roles}return reply(p,i)},...quiet});
+  await v.load();v.select('concept');v.state.drafts.concept='nouveau texte';await v.save('concept');
+  return {notice:v.state.notice.concept,reads,draft:v.state.drafts.concept??null};
+};
+const written=await run(saved),lost=await run(DATA.roles);
+process.stdout.write(JSON.stringify({written,lost}));""".replace("process.env.SAVED", json.dumps(json.dumps(saved))))
+    for case in (out["written"], out["lost"]):
+        assert case["notice"]["text"] == "Résultat inconnu : Pas de réponse du Control Center après 15 s. Relisez avant de réenregistrer."
+        assert case["reads"] == 2 and case["notice"]["code"] == "subagent_settings_timeout"
+    assert "bien été enregistrée" in out["written"]["notice"]["hint"] and out["written"]["draft"] is None
+    assert "n’a pas été enregistrée" in out["lost"]["notice"]["hint"] and out["lost"]["draft"] == "nouveau texte"
+
+
+# --- N2 : une charge utile partielle ne fige jamais l'écran -------------------------------------------
+
+def test_minimal_unknown_version_payload_renders_with_empty_fields_and_a_warning(tmp_path):
+    out = run_node(tmp_path, {"schema_version": 3, "roles": [{"id": "x"}, {"name": "sans id"}]}, """
+const v=M.create(host,{fetch:reply,...quiet});await v.load();
+process.stdout.write(JSON.stringify({phase:v.state.phase,html:host.innerHTML,errors}));""")
+    assert out["phase"] == "ready"
+    html = out["html"]
+    assert "Version du registre inattendue (<code>3</code>, cet écran lit la version 2)" in html
+    assert "1 entrée(s) sans identifiant ignorée(s)" in html and 'data-sar-role="x"' in html
+    assert "Fiche incomplète" in html and "<code>instructions</code>" in html
+    assert "Révisions absentes de la réponse" in html and 'data-sar-save="x" disabled' in html
+
+
+def test_role_without_instructions_still_renders(tmp_path):
+    payload = json.loads(json.dumps(roles_payload(tmp_path)))
+    del payload["roles"][0]["instructions"]
+    out = run_node(tmp_path, payload, """
+const v=M.create(host,{fetch:reply,...quiet});await v.load();
+process.stdout.write(JSON.stringify({phase:v.state.phase,html:host.innerHTML}));""")
+    assert out["phase"] == "ready" and "sar-detail" in out["html"]
+
+
+def test_a_rendering_exception_becomes_a_coded_error_with_retry(tmp_path):
+    payload = roles_payload(tmp_path)
+    out = run_node(tmp_path, payload, """
+const data=DATA.roles;Object.defineProperty(data.roles[0],'mission',{get(){throw new Error('champ piégé')},enumerable:true});
+const v=M.create(host,{fetch:async p=>p==='/api/subagent-roles'?data:reply(p),...quiet});await v.load();
+process.stdout.write(JSON.stringify({phase:v.state.phase,html:host.innerHTML,errors,code:v.state.error&&v.state.error.code}));""")
+    # Le getter piégé lève dès la normalisation : la lecture échoue, codée, avec Réessayer.
+    assert out["phase"] == "error" and "data-sar-retry" in out["html"]
+    assert out["errors"][0][0] in {"subagent_settings_load_failed", "subagent_settings_render_failed"}
+
+    out = run_node(tmp_path, payload, """
+const v=M.create(host,{fetch:reply,...quiet});await v.load();
+v.state.payload.roles[0].tools={map(){throw new Error('piège')},length:1};v.render();
+process.stdout.write(JSON.stringify({phase:v.state.phase,html:host.innerHTML,errors,code:v.state.error.code}));""")
+    assert out["phase"] == "error" and out["code"] == "subagent_settings_render_failed"
+    assert "data-sar-retry" in out["html"] and "L’écran n’a pas pu afficher cette réponse" in out["html"]
+    assert ["subagent_settings_render_failed", None, {"schema_version": 2}] in out["errors"]
+
+
+def test_load_error_advice_matches_the_real_cause(tmp_path):
+    payload = roles_payload(tmp_path)
+    out = run_node(tmp_path, payload, """
+const fail=code=>async()=>{const e=new Error('Expected versioned prompt overrides');e.code=code;throw e};
+const a=M.create(host,{fetch:fail('prompt_override_schema_invalid'),...quiet});await a.load();const schema=host.innerHTML;
+const b=M.create(host,{fetch:fail('subagent_settings_unreachable'),...quiet});await b.load();
+process.stdout.write(JSON.stringify({schema,net:host.innerHTML}));""")
+    assert "Réponse : « Expected versioned prompt overrides »." in out["schema"]
+    assert "document des surcharges de prompts" in out["schema"] and "Control Center répond" not in out["schema"]
+    assert "Vérifiez que le Control Center répond" in out["net"]
+
+
+# --- N3 : un alias reste un alias ---------------------------------------------------------------------
+
+def test_alias_to_a_role_missing_from_the_list_resolves_alias_and_prototype_keys_do_not(tmp_path):
+    payload = json.loads(json.dumps(roles_payload(tmp_path)))
+    payload["aliases"] = {"old": "ghost", "reviewer": "qa"}
+    tasks = {"tasks": [{"status": "running", "kind": "agent", "role": "old", "description": "[old] Vieux"}]}
+    out = run_node(tmp_path, payload, """
+const v=M.create(host,{fetch:reply,...quiet});await v.load();
+const r=m=>{const x=v.resolveMarker(m);return [x.status,x.roleId,x.role&&x.role.id||null]};
+process.stdout.write(JSON.stringify({old:r('old'),ctor:r('constructor'),proto:r('__proto__'),html:host.innerHTML}));""", tasks)
+    assert out["old"] == ["alias", "ghost", None]
+    assert out["ctor"][0] == "unknown" and out["proto"][0] == "unknown"
+    assert "Alias <code>[old]</code> du rôle <code>ghost</code>" in out["html"]
+
+
+def test_served_page_hides_the_empty_footer_scrolls_the_active_tab_and_links_models(tmp_path):
+    served = asyncio.run(ControlCenter(runtime_root=tmp_path, project_root=tmp_path).index(None)).text
+    assert "footer.hidden=SET.tab==='subagents'" in served
+    assert "active.scrollIntoView({block:'nearest',inline:'nearest'})" in served
+    assert "openTab:selectTab" in served and "subagent_settings_mount_failed" in served
+    payload = roles_payload(tmp_path)
+    out = run_node(tmp_path, payload, """
+const opened=[];const v=M.create(host,{fetch:reply,openTab:t=>opened.push(t),...quiet});await v.load();
+process.stdout.write(JSON.stringify({html:host.innerHTML}));""")
+    assert "data-sar-open-cli" in out["html"] and "Agent / CLI › Sous-agents / Modèles" in out["html"]
+    assert 'aria-live' not in out["html"]  # la fiche n'est plus une région live

@@ -187,8 +187,8 @@ textarea{width:100%;min-height:80px;background:#071015;border:1px solid var(--li
 .sar-summary{margin:0;font-size:12px;color:var(--muted);letter-spacing:.02em}
 .sar-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
 .sar-item{width:100%;display:flex;align-items:center;gap:11px;padding:8px 10px;border:1px solid transparent;border-radius:8px;background:none;color:var(--text);font:inherit;text-align:left;cursor:pointer;transition:background-color .15s,border-color .15s}
-.sar-item:hover{background:rgba(113,144,160,.08)}
-.sar-item.selected{background:color-mix(in srgb,var(--sar-accent) 9%,#0b141a);border-color:color-mix(in srgb,var(--sar-accent) 38%,transparent)}
+.sar-item:hover{background:color-mix(in srgb,var(--muted) 8%,transparent)}
+.sar-item.selected{background:color-mix(in srgb,var(--sar-accent) 9%,var(--solid));border-color:color-mix(in srgb,var(--sar-accent) 38%,transparent)}
 .sar-item.off .sar-item-name{color:var(--muted);text-decoration:line-through;text-decoration-thickness:1px}
 .sar :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .sar-item-text{min-width:0;display:flex;flex-direction:column;gap:3px}
@@ -207,7 +207,7 @@ textarea{width:100%;min-height:80px;background:#071015;border:1px solid var(--li
 .sar-detail{max-width:780px}
 .sar-head{display:flex;gap:18px;align-items:flex-start;padding-bottom:18px;margin-bottom:6px;border-bottom:1px solid var(--line)}
 .content h3.sar-title{margin:2px 0 6px;font-size:20px;letter-spacing:.01em;text-transform:none;color:var(--text);font-weight:600}
-.sar-desc{margin:0 0 10px;font-size:13px;line-height:1.55;color:#b8cfda;max-width:68ch}
+.sar-desc{margin:0 0 10px;font-size:13px;line-height:1.55;color:color-mix(in srgb,var(--text) 82%,var(--muted));max-width:68ch}
 .sar-tags{display:flex;flex-wrap:wrap;gap:6px}
 .sar-block{padding:18px 0 4px}
 .sar-block h4{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:normal}
@@ -227,7 +227,7 @@ textarea{width:100%;min-height:80px;background:#071015;border:1px solid var(--li
 .sar-mlist{margin:8px 0}.sar-mlabel{display:block;font-size:11px;color:var(--muted);margin-bottom:3px}
 .sar-mlist ul{margin:0;padding-left:18px;font-size:12px;line-height:1.55}.sar-mlist p{margin:0;font-size:12px}
 .sar-compose{margin:0;padding:0;list-style:none;counter-reset:sar}
-.sar-compose li{counter-increment:sar;display:grid;grid-template-columns:26px auto 1fr;grid-template-areas:"n s t" ". h h";gap:3px 8px;align-items:center;padding:9px 0;border-bottom:1px dashed rgba(113,144,160,.22)}
+.sar-compose li{counter-increment:sar;display:grid;grid-template-columns:26px auto 1fr;grid-template-areas:"n s t" ". h h";gap:3px 8px;align-items:center;padding:9px 0;border-bottom:1px dashed color-mix(in srgb,var(--muted) 22%,transparent)}
 .sar-compose li:last-child{border-bottom:0}
 .sar-compose li::before{content:counter(sar);grid-area:n;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:11px;color:var(--muted);border:1px solid var(--line);box-sizing:border-box}
 .sar-compose li:first-child::before{color:var(--sar-accent);border-color:color-mix(in srgb,var(--sar-accent) 50%,transparent)}
@@ -243,12 +243,22 @@ textarea{width:100%;min-height:80px;background:#071015;border:1px solid var(--li
 @media(prefers-reduced-motion:reduce){.sar-spin{animation-duration:2.4s}}
 .sar-state{max-width:640px}
 .sar-code code{word-break:normal;overflow-wrap:anywhere}
-.sar-instances{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
-.sar-inst-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
-.sar-inst-head h4{margin:0;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:normal}
-.sar-inst-head button.action{padding:4px 9px;font-size:11px}
+.sar-instances{margin-top:4px;padding-top:10px;border-top:1px solid var(--line)}
+.sar-instances>summary{cursor:pointer;display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.sar-instances[open]>summary{margin-bottom:8px}
+.sar-instances button.action{padding:4px 9px;font-size:11px}
+.sar-models{margin:6px 0 0}
+.sar-link{background:none;border:0;padding:0;color:var(--accent);font:inherit;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.sar-back{display:none;margin-bottom:14px}
+.sar-title:focus{outline:none}.sar-title:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.sar-live{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
+@media(forced-colors:active){
+  .sar-item.selected{border:3px solid Highlight;padding:6px 8px}
+  .sar-item.selected .sar-item-name{text-decoration:underline;text-decoration-thickness:2px}
+  .sar-yn::before{forced-color-adjust:none;border:1px solid CanvasText}.sar-yn.yes::before{background:CanvasText}
+}
 .sar-inst{display:flex;align-items:center;gap:10px;padding:6px 4px}
-@media(max-width:900px){.sar{grid-template-columns:1fr;height:auto}.sar-side,.sar-detail-pane{overflow:visible;padding-right:0}}
+@media(max-width:900px){.sar{grid-template-columns:1fr;height:auto}.sar-side,.sar-detail-pane{overflow:visible;padding-right:0}.sar-back{display:inline-block}.sar-detail-pane{border-top:1px solid var(--line);padding-top:16px}}
 [hidden]{display:none!important}
 
 /* ---------- Panneau Agents ---------- */
@@ -4929,13 +4939,24 @@ function mountSubagentSettings(revision){
   const host=modalContent.querySelector('#subagentSettingsMount');
   if(!host)return;
   if(!window.JarvisSubagentSettings){host.innerHTML='<div class="notice bad" role="alert">Module de l’onglet Sous-agents absent de la page servie.</div>';console.error('subagent_settings_module_missing');return}
-  const view=window.JarvisSubagentSettings.create(host,{drafts:SET.subagentDrafts});
+  const view=window.JarvisSubagentSettings.create(host,{drafts:SET.subagentDrafts,openTab:selectTab});
   if(revision!==SET.renderRevision){view.destroy();return}
-  SET.subagentView=view;view.load();
+  SET.subagentView=view;
+  /* `load` ne rejette pas (il rend son état d'erreur) ; ce filet attrape tout le reste, visible et codé. */
+  Promise.resolve().then(()=>view.load()).catch(e=>{
+    console.error('subagent_settings_mount_failed',e);
+    host.innerHTML=`<div class="notice bad" role="alert"><strong>Onglet Sous-agents indisponible.</strong> ${esc(e&&e.message||String(e))}<div class="hint">Code : <code>subagent_settings_mount_failed</code></div></div>`;
+  });
 }
 function renderTabs(){
   $('#modalTabs').innerHTML=TABS.map(t=>`<button data-tab="${t.id}" class="${t.id===SET.tab?'active':''}">${esc(t.label)}</button>`).join('');
   document.querySelectorAll('#modalTabs button').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.tab)));
+  /* En largeur étroite la barre d'onglets défile : l'onglet actif est ramené dans la vue, pour tous les onglets
+     (sans effet quand la barre est verticale et tout visible). */
+  const active=$('#modalTabs button.active');
+  if(active&&active.scrollIntoView)active.scrollIntoView({block:'nearest',inline:'nearest'});
+  /* Le pied (état + Enregistrer) n'a rien à dire dans l'onglet Sous-agents, qui porte ses propres notices. */
+  const footer=modalSave.closest('footer');if(footer)footer.hidden=SET.tab==='subagents';
 }
 
 async function renderTab(){

@@ -5078,6 +5078,7 @@ class ControlCenter:
         instructions s'éditent par `POST /api/prompts/subagent_role.<id>`.
         """
         from jarvis.domain import subagent_roles, work_methods
+        from jarvis.domain.prompt_registry import MAX_OVERRIDE_TEXT
         from jarvis.runtime.prompt_catalog import default_prompt_registry
         from jarvis.runtime.prompt_overrides import stored_prompt_override_document
 
@@ -5107,6 +5108,8 @@ class ControlCenter:
             # Libellés français des relations citées par les méthodes (`useful_relations`), pour que l'onglet
             # Sous-agents n'en recopie pas le vocabulaire (Slice 10, additif).
             "relation_labels": dict(work_methods.RELATION_LABELS),
+            # Borne d'une surcharge d'instructions (celle que `POST /api/prompts/...` applique), pour le compteur.
+            "instructions_max_chars": MAX_OVERRIDE_TEXT,
             "reserved_role_ids": sorted(subagent_roles.RESERVED_ROLE_IDS),
             "execution_gate": subagent_roles.EXECUTION_GATE_RULE,
             "mission_path": subagent_roles.MISSION_PATH_HINT,
