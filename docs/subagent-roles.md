@@ -398,7 +398,16 @@ avant de rendre (D22, même bloc).
 | --- | --- |
 | création refusée (`prefab_invalid`, `unknown_prefab`, `prefab_unavailable`, `invalid_argument`, commande non envoyée…) | la fenêtre n'a pas été créée, rien de nouveau n'est à l'écran |
 | mise à jour refusée (mêmes codes) | la mise à jour n'est pas appliquée, la fenêtre `<object_id>` garde son contenu précédent |
-| panne de transport ou réponse illisible (`UNKNOWN_OUTCOME_CODES` : `core_timeout`, `core_unreachable`, `core_bad_answer`, `invalid_scene_response`, `protocol_error`, `display_internal_error`) | l'état de l'affichage est inconnu : relire la scène avant d'en parler ou de réessayer |
+| mise à jour d'un objet inconnu ou archivé (motif `unknown_object` / `object_archived`) | aucune fenêtre `<object_id>` n'existe, rien n'est affiché sous ce nom |
+| panne de transport, réponse illisible ou erreur HTTP de Core hors 400/413 (`UNKNOWN_OUTCOME_CODES` : `core_timeout`, `core_unreachable`, `core_bad_answer`, `invalid_scene_response`, `core_refused`, `display_internal_error`) | l'état de l'affichage est inconnu : relire la scène avant d'en parler ou de réessayer |
+
+Pourquoi un refus est sûr : il est décidé avant l'envoi (argument, taille, prefab, délégation), la commande n'est
+pas partie (`command_not_sent`), ou Core répond sans appliquer : refus du domaine dans une réponse 200
+(`scene_refused`), 400/413, ou 503 de scène (`scene_unavailable`, `scene_persist_failed`, « Rien n'a été
+appliqué »). `core_refused` couvre toute autre erreur HTTP de Core, 5xx compris ; le statut ne remonte pas
+jusqu'à la note et une erreur interne après application ne peut pas être exclue, d'où « inconnu ».
+`protocol_error` n'est levé que par un lot, jamais par une création ou une mise à jour. Un `prefab` sans
+`prefab_id` (absent ou vide) est refusé avant tout envoi (`invalid_argument`), jamais « inconnu ».
 
 Pour un refus, corriger les données et réessayer reste permis : la remarque `scene_changed` éventuelle porte sur
 d'autres objets. Puis le prefab visé et le contenu prêt à livrer (`readable_content` : tableau Markdown pour

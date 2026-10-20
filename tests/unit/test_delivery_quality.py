@@ -289,11 +289,38 @@ async def test_update_fallback_on_a_displayed_window(core, display):
 
 
 async def test_an_unknown_prefab_on_update_also_falls_back(core, display):
+    created = await display.create_object(kind="window", category="research", title="Rapport",
+                                          prefab={"prefab_id": "jarvis.document", "data": {"body": "# V1"}})
     with pytest.raises(DisplayToolError) as refused:
-        await display.update_object(object_id="brain-window-x", title="x",
+        await display.update_object(object_id=created["object_id"], title="x",
                                     prefab={"prefab_id": "custom.none", "data": {"body": "Synthèse."}})
     assert refused.value.code == "unknown_prefab" and "garde son contenu précédent" in str(refused.value)
     assert str(refused.value).endswith("Synthèse.")
+
+
+async def test_update_with_prefab_on_unknown_object(core, display):
+    # Sonde de la QA (revérification) : aucune fenêtre sous ce nom, la note ne parle pas de « contenu précédent ».
+    with pytest.raises(DisplayToolError) as refused:
+        await display.update_object(object_id="brain-window-nope", prefab={"prefab_id": "jarvis.document",
+                                                                           "data": {"body": "x"}})
+    message = str(refused.value)
+    assert refused.value.reason == "unknown_object"
+    assert "Aucune fenêtre brain-window-nope n'existe" in message and "rien n'est affiché sous ce nom" in message
+    assert "garde son contenu précédent" not in message and "inconnu" not in message.split(dq.FALLBACK_MARK)[1]
+    assert await _scene_object(core, "brain-window-nope") is None
+
+
+def test_an_archived_target_is_named_as_such():
+    note = dq.fallback_note({"prefab_id": "jarvis.document"}, operation="update", code="scene_refused",
+                            object_id="brain-window-1", reason="object_archived")
+    assert "Aucune fenêtre brain-window-1 n'existe (elle est archivée)" in note
+
+
+def test_the_unknown_outcome_codes_are_only_codes_a_create_or_update_can_raise():
+    # `protocol_error` n'est levé que par un lot ; `core_refused` (toute erreur HTTP hors 400/413, 5xx compris)
+    # reste inconnu : le statut ne remonte pas jusqu'à la note.
+    assert "protocol_error" not in dq.UNKNOWN_OUTCOME_CODES and "core_refused" in dq.UNKNOWN_OUTCOME_CODES
+    assert "command_not_sent" not in dq.UNKNOWN_OUTCOME_CODES
 
 
 async def test_a_displayed_document_succeeds_without_any_fallback(core, display, tmp_path):
@@ -313,10 +340,18 @@ async def test_the_bound_holds_on_a_maximal_table(core, display):
     assert len(tail) <= dq.MAX_FALLBACK_CHARS + 60
 
 
-async def test_an_empty_prefab_argument_gets_a_clean_note(core, display):
+@pytest.mark.parametrize("prefab", [{}, {"prefab_id": "  "}, {"data": {"body": "x"}}])
+async def test_an_empty_prefab_argument_is_refused_before_sending(core, display, prefab):
+    # Reprise QA : rien n'est parti, donc un refus explicite (`invalid_argument`), jamais « état inconnu ».
+    _, before, _ = await core.request("GET", "/v1/scene/snapshot")
     with pytest.raises(DisplayToolError) as refused:
-        await display.create_object(kind="window", category="research", title="T", prefab={})
-    assert "ne nomme aucun prefab_id" in str(refused.value) and "fenêtre ?" not in str(refused.value)
+        await display.create_object(kind="window", category="research", title="T", prefab=prefab)
+    message = str(refused.value)
+    assert refused.value.code == "invalid_argument" and "rien n'a été envoyé" in message
+    assert "ne nomme aucun prefab_id" in message and "rien de nouveau n'est à l'écran" in message
+    assert "inconnu" not in message and "fenêtre ?" not in message
+    _, after, _ = await core.request("GET", "/v1/scene/snapshot")
+    assert after["snapshot"]["revision"] == before["snapshot"]["revision"]
 
 
 async def test_prefabs_out_of_reach_fall_back_and_a_plain_failure_is_untouched(core, tmp_path):

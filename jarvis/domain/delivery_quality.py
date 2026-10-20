@@ -58,12 +58,23 @@ CHECKLIST_MAX_ID = 64
 CHECKLIST_MAX_LABEL = 200
 CHECKLIST_MAX_NOTE = 500
 
-#: Codes d'une panne dont on ne sait pas si l'écran a changé (transport, expiration, réponse illisible).
-#: Tout autre code est un refus avant ou par Core : rien n'a été appliqué.
+#: Codes d'une panne dont on ne sait pas si l'écran a changé (transport, expiration, réponse illisible), tels que
+#: les lèvent `display_mcp` / `scene_view.classify_scene_call_failure` / `display_prefabs` pour une création ou une
+#: mise à jour. `core_refused` en fait partie : `classify_scene_call_failure` le donne à toute réponse d'erreur HTTP
+#: de Core hors 400/413 et hors codes de scène, **5xx compris**, et le statut n'arrive pas jusqu'ici ; une erreur
+#: interne de Core après application ne peut pas être exclue, donc l'issue est dite inconnue (reprise QA).
+#: `protocol_error` n'y figure pas : seul un lot (`scene_update_many`) le lève, jamais une création ni une mise à jour.
+#: Tout autre code est un refus sûr, sans application : vérification avant envoi (`invalid_argument`,
+#: `payload_too_large`, `prefab_unavailable`, `ui_delegated`), commande non envoyée (`command_not_sent`), refus
+#: de catalogue (`unknown_prefab`…), refus du domaine de la scène dans une réponse 200 (`scene_refused`, issue
+#: `invalid` / `rejected_authority` : rien d'appliqué par contrat du domaine), ou 400/413/503 de scène dont Core
+#: garantit qu'ils n'appliquent rien (`scene_unavailable`, `scene_persist_failed` : « Rien n'a été appliqué »).
 UNKNOWN_OUTCOME_CODES = frozenset({
-    "core_timeout", "core_unreachable", "core_bad_answer", "invalid_scene_response", "protocol_error",
+    "core_timeout", "core_unreachable", "core_bad_answer", "invalid_scene_response", "core_refused",
     "display_internal_error",
 })
+#: Motifs d'un refus de la scène qui disent qu'aucune fenêtre active ne porte cet identifiant.
+MISSING_TARGET_REASONS = frozenset({"unknown_object", "object_archived"})
 
 #: Ligne ajoutée à la charte d'un Mission Owner, juste après sa consigne de compte rendu (cohérence N8).
 REPORT_NOTE = (
@@ -172,12 +183,18 @@ def readable_content(prefab_id: str, data: object) -> str | None:
     return text
 
 
-def screen_state(operation: Literal["create", "update"], code: str, object_id: str | None) -> str:
-    """Ce qui est réellement à l'écran après l'échec `code` d'une création ou d'une mise à jour (reprise QA B1)."""
+def screen_state(operation: Literal["create", "update"], code: str, object_id: str | None,
+                 reason: str | None = None) -> str:
+    """Ce qui est réellement à l'écran après l'échec `code` (motif `reason`) d'une création ou d'une mise à jour."""
 
     if code in UNKNOWN_OUTCOME_CODES:
         return ("L'état de l'affichage est inconnu (la commande a pu partir ou non) : relisez la scène "
                 "(scene_get ou scene_inspect) avant d'en parler ou de réessayer.")
+    if operation == "update" and reason in MISSING_TARGET_REASONS:
+        name = object_id or "visée"
+        why = "elle est archivée" if reason == "object_archived" else "l'identifiant ne désigne aucun objet actif"
+        return (f"Aucune fenêtre {name} n'existe ({why}) ; rien n'est affiché sous ce nom. Relisez la scène "
+                "(scene_inspect) pour retrouver la bonne fenêtre, ou créez-en une avec scene_create_object.")
     if operation == "update":
         target = f"la fenêtre {object_id}" if object_id else "la fenêtre visée"
         return (f"La mise à jour n'est pas appliquée : {target} garde son contenu précédent. Si la cause tient "
@@ -189,7 +206,7 @@ def screen_state(operation: Literal["create", "update"], code: str, object_id: s
 
 
 def fallback_note(prefab: object, *, operation: Literal["create", "update"] = "create", code: str = "",
-                  object_id: str | None = None) -> str:
+                  object_id: str | None = None, reason: str | None = None) -> str:
     """Le repli joint à l'erreur d'un affichage de prefab (`prefab` : l'argument de l'outil, tel que reçu).
 
     Neutre vis-à-vis de l'appelant (cerveau ou sous-agent) : l'état réel de l'écran, puis le contenu sous une
@@ -198,8 +215,8 @@ def fallback_note(prefab: object, *, operation: Literal["create", "update"] = "c
 
     given = prefab if isinstance(prefab, Mapping) else {}
     prefab_id = given.get("prefab_id")
-    lines = [FALLBACK_MARK, screen_state(operation, code, object_id)]
-    if not isinstance(prefab_id, str) or not prefab_id:
+    lines = [FALLBACK_MARK, screen_state(operation, code, object_id, reason)]
+    if not isinstance(prefab_id, str) or not prefab_id.strip():
         lines.append("L'argument prefab ne nomme aucun prefab_id : donnez-en un (prefab_search) ou livrez le "
                      "contenu autrement.")
         return "\n".join(lines)

@@ -987,13 +987,20 @@ class SceneDisplayTools(SurfaceToolsMixin):
             self._emit("display.prefab_fallback", f"{tool} : repli de restitution proposé ({exc.code})",
                        data={"tool": tool, "code": exc.code, "reason": exc.reason,
                              "prefab_id": prefab_id if isinstance(prefab_id, str) else None})
-            note = delivery_quality.fallback_note(prefab, operation=operation, code=exc.code, object_id=object_id)
+            note = delivery_quality.fallback_note(prefab, operation=operation, code=exc.code, object_id=object_id,
+                                                  reason=exc.reason)
             raise DisplayToolError(exc.code, f"{exc}\n\n{note}",
                                    outcome=exc.outcome, reason=exc.reason, hint=exc.hint) from None
 
     async def _prefab_ref(self, given: Mapping[str, Any], current: ScenePrefabRef | None) -> ScenePrefabRef:
         """Bloc d'instance de l'argument `prefab` (version épinglée), par `PrefabDisplayTools`."""
 
+        prefab_id = given.get("prefab_id") if isinstance(given, Mapping) else None
+        if not isinstance(prefab_id, str) or not prefab_id.strip():
+            # Reprise QA S11 : refus explicite avant tout envoi. L'accès `given["prefab_id"]` levait une KeyError,
+            # rendue `display_internal_error` (« état inconnu ») alors que rien n'était parti.
+            raise DisplayToolError("invalid_argument", "Argument invalide, rien n'a été envoyé : prefab doit nommer "
+                                                       "un prefab_id (cherchez-le avec prefab_search).")
         if self.prefabs is None:
             raise DisplayToolError("prefab_unavailable", "Les prefabs ne sont pas joignables depuis ce serveur : "
                                                          "rien n'a été envoyé.")
