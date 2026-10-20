@@ -349,7 +349,9 @@ def test_voice_catalog_unknown_credentials_never_promotes_or_offers_request_acti
 async def test_assembled_primary_navigation_has_six_tabs_and_no_legacy_navigation(tmp_path: Path):
     served = (await ControlCenter(runtime_root=tmp_path, project_root=tmp_path).index(None)).text
     scripts = "\n".join(re.findall(r"<script>(.*?)</script>", served, re.S))
-    tabs = scripts[scripts.index("const TABS=") : scripts.index("const SET=")]
+    # Ancré en début de ligne : le Memory Center (`control_center_memory.js`, inséré plus haut dans le même script)
+    # déclare son propre `  const TABS=` indenté, qui faisait découper ce test au mauvais endroit (SyntaxError).
+    tabs = scripts[scripts.index("\nconst TABS=") + 1 : scripts.index("\nconst SET=")]
     install = scripts[scripts.index("  function installSettingsTab()") : scripts.index("  function bridgeStatusApi()")]
     rendered = run_node(
         tmp_path,
@@ -370,10 +372,17 @@ async def test_assembled_primary_navigation_has_six_tabs_and_no_legacy_navigatio
         {"id": "cli", "label": "Agent / CLI"},
         {"id": "keys", "label": "API Keys"},
         {"id": "shortcuts", "label": "Raccourcis"},
+        {"id": "memory", "label": "Mémoire"},
+        {"id": "subagents", "label": "Sous-agents"},
         {"id": "appearance", "label": "Apparence"},
     ]
+    # Le contrat de navigation de jarvis-settings-model-catalog-ux (six onglets) est figé ; les onglets ajoutés
+    # depuis par d'autres handoffs (Mémoire, Sous-agents) s'intercalent sans changer l'ordre des siens.
+    added_since_contract = {"memory", "subagents"}
     contract_navigation = json.loads(IA_CONTRACT.read_text(encoding="utf-8"))["navigation"]
-    assert [item["label"] for item in contract_navigation] == [item["label"] for item in rendered]
+    assert [item["label"] for item in contract_navigation] == [
+        item["label"] for item in rendered if item["id"] not in added_since_contract
+    ]
     assert [item["id"] for item in contract_navigation] == [
         "voice", "prompts", "agent_cli", "credentials", "shortcuts", "appearance",
     ]

@@ -178,6 +178,87 @@ textarea{width:100%;min-height:80px;background:#071015;border:1px solid var(--li
 .mem-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
 .mem-settings button:disabled{opacity:.5;cursor:not-allowed}
 .mem-settings :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* Accents des rôles de sous-agent : `subagent_roles.ROLE_ACCENTS` (jetons) -> variables du thème. Seule table de
+   correspondance, partagée par Réglages > Sous-agents et le graphe des tâches. Toujours doublées d'une icône et d'un badge. */
+:root{--role-accent-violet:#b9a2ff;--role-accent-teal:#4fd6c8;--role-accent-sky:#74c6ff;--role-accent-amber:#ffc561;--role-accent-rose:#ff94b6;--role-accent-indigo:#98a3ff;--role-accent-lime:#b8e872;--role-accent-slate:#a3b6c4;--role-accent-orange:#ffa262;--role-accent-cyan:#62e4f1}
+#subagentSettingsMount{height:100%;min-height:0}
+.sar{--sar-accent:var(--role-accent-slate);display:grid;grid-template-columns:minmax(230px,300px) minmax(0,1fr);gap:26px;height:100%;min-height:0}
+.sar-side{min-width:0;display:flex;flex-direction:column;gap:10px;overflow:auto}
+.sar-summary{margin:0;font-size:12px;color:var(--muted);letter-spacing:.02em}
+.sar-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.sar-item{width:100%;display:flex;align-items:center;gap:11px;padding:8px 10px;border:1px solid transparent;border-radius:8px;background:none;color:var(--text);font:inherit;text-align:left;cursor:pointer;transition:background-color .15s,border-color .15s}
+.sar-item:hover{background:color-mix(in srgb,var(--muted) 8%,transparent)}
+.sar-item.selected{background:color-mix(in srgb,var(--sar-accent) 9%,var(--solid));border-color:color-mix(in srgb,var(--sar-accent) 38%,transparent)}
+.sar-item.off .sar-item-name{color:var(--muted);text-decoration:line-through;text-decoration-thickness:1px}
+.sar :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.sar-item-text{min-width:0;display:flex;flex-direction:column;gap:3px}
+.sar-item-name{font-size:13px;line-height:1.3;overflow-wrap:anywhere}
+.sar-item-meta{display:flex;flex-wrap:wrap;align-items:center;gap:5px;font-size:11px;color:var(--muted)}
+.sar-item-meta code{font-size:11px;color:var(--muted)}
+.sar-item-meta .tag{font-size:9px;padding:0 5px}
+.sar-ident{flex:none;display:inline-flex;flex-direction:column;align-items:center;gap:4px}
+.sar-tile{display:grid;place-items:center;border-radius:9px;color:var(--sar-accent);background:color-mix(in srgb,var(--sar-accent) 13%,transparent);border:1px solid color-mix(in srgb,var(--sar-accent) 42%,transparent)}
+.sar-sm .sar-tile{width:30px;height:30px}.sar-sm .sar-glyph{width:17px;height:17px}
+.sar-lg .sar-tile{width:54px;height:54px;border-radius:13px}.sar-lg .sar-glyph{width:28px;height:28px}
+.sar-badge{font:700 9px/1 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.08em;color:var(--sar-accent)}
+.sar-lg .sar-badge{font-size:11px}
+.sar-sm .sar-badge{min-width:30px;text-align:center}
+.sar-detail-pane{min-width:0;overflow:auto;padding-right:6px}
+.sar-detail{max-width:780px}
+.sar-head{display:flex;gap:18px;align-items:flex-start;padding-bottom:18px;margin-bottom:6px;border-bottom:1px solid var(--line)}
+.content h3.sar-title{margin:2px 0 6px;font-size:20px;letter-spacing:.01em;text-transform:none;color:var(--text);font-weight:600}
+.sar-desc{margin:0 0 10px;font-size:13px;line-height:1.55;color:color-mix(in srgb,var(--text) 82%,var(--muted));max-width:68ch}
+.sar-tags{display:flex;flex-wrap:wrap;gap:6px}
+.sar-block{padding:18px 0 4px}
+.sar-block h4{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:normal}
+.sar-prose{margin:0 0 10px;font-size:13px;line-height:1.6;max-width:68ch}
+.sar-facts{display:grid;grid-template-columns:minmax(120px,max-content) minmax(0,1fr);gap:7px 18px;margin:8px 0 10px;font-size:12px}
+.sar-facts dt{color:var(--muted)}.sar-facts dd{margin:0;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.sar-yn.yes{color:var(--text)}.sar-yn.no{color:var(--muted)}
+.sar-yn::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:7px;vertical-align:middle;box-sizing:border-box}
+.sar-yn.yes::before{background:var(--ok)}.sar-yn.no::before{border:1px solid var(--muted)}
+.sar-tool{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:1px 6px}
+.sar-methods{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.sar-method details{border:1px solid var(--line);border-radius:7px;padding:9px 12px}
+.sar-method.default details{border-color:color-mix(in srgb,var(--sar-accent) 40%,var(--line))}
+.sar-method summary{display:flex;flex-wrap:wrap;align-items:center;gap:8px;cursor:pointer;font-size:13px}
+.sar-mkey{margin-left:auto;font-size:11px;color:var(--muted)}
+.sar-msummary{margin:10px 0 6px;font-size:12px;line-height:1.55;max-width:68ch}
+.sar-mlist{margin:8px 0}.sar-mlabel{display:block;font-size:11px;color:var(--muted);margin-bottom:3px}
+.sar-mlist ul{margin:0;padding-left:18px;font-size:12px;line-height:1.55}.sar-mlist p{margin:0;font-size:12px}
+.sar-compose{margin:0;padding:0;list-style:none;counter-reset:sar}
+.sar-compose li{counter-increment:sar;display:grid;grid-template-columns:26px auto 1fr;grid-template-areas:"n s t" ". h h";gap:3px 8px;align-items:center;padding:9px 0;border-bottom:1px dashed color-mix(in srgb,var(--muted) 22%,transparent)}
+.sar-compose li:last-child{border-bottom:0}
+.sar-compose li::before{content:counter(sar);grid-area:n;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:11px;color:var(--muted);border:1px solid var(--line);box-sizing:border-box}
+.sar-compose li:first-child::before{color:var(--sar-accent);border-color:color-mix(in srgb,var(--sar-accent) 50%,transparent)}
+.sar-step{grid-area:s;font-size:13px}.sar-compose .tag{grid-area:t;justify-self:start}.sar-compose .hint{grid-area:h}
+.sar-editor textarea{min-height:240px;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;margin:6px 0}
+.sar-label{display:block;font-size:12px;color:var(--muted);margin-top:4px}
+.sar-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:12px}
+.sar button:disabled{opacity:.5;cursor:not-allowed}
+.sar-wait{display:flex;flex-wrap:wrap;align-items:center;gap:9px;font-size:12px;color:var(--text);padding:8px 0}
+.sar-elapsed{font-variant-numeric:tabular-nums;color:var(--accent)}
+.sar-spin{width:12px;height:12px;border-radius:50%;border:2px solid color-mix(in srgb,var(--accent) 25%,transparent);border-top-color:var(--accent);animation:sarSpin .9s linear infinite;box-sizing:border-box}
+@keyframes sarSpin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.sar-spin{animation-duration:2.4s}}
+.sar-state{max-width:640px}
+.sar-code code{word-break:normal;overflow-wrap:anywhere}
+.sar-instances{margin-top:4px;padding-top:10px;border-top:1px solid var(--line)}
+.sar-instances>summary{cursor:pointer;display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.sar-instances[open]>summary{margin-bottom:8px}
+.sar-instances button.action{padding:4px 9px;font-size:11px}
+.sar-models{margin:6px 0 0}
+.sar-link{background:none;border:0;padding:0;color:var(--accent);font:inherit;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.sar-back{display:none;margin-bottom:14px}
+.sar-title:focus{outline:none}.sar-title:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.sar-live{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
+@media(forced-colors:active){
+  .sar-item.selected{border:3px solid Highlight;padding:6px 8px}
+  .sar-item.selected .sar-item-name{text-decoration:underline;text-decoration-thickness:2px}
+  .sar-yn::before{forced-color-adjust:none;border:1px solid CanvasText}.sar-yn.yes::before{background:CanvasText}
+}
+.sar-inst{display:flex;align-items:center;gap:10px;padding:6px 4px}
+@media(max-width:900px){.sar{grid-template-columns:1fr;height:auto}.sar-side,.sar-detail-pane{overflow:visible;padding-right:0}.sar-back{display:inline-block}.sar-detail-pane{border-top:1px solid var(--line);padding-top:16px}}
 [hidden]{display:none!important}
 
 /* ---------- Panneau Agents ---------- */
@@ -2762,6 +2843,9 @@ const STATUS={
 /*__CONTROL_CENTER_PREFABS_JS__*/
 /* Mémoire (jarvis-memory-intelligence-knowledge, Slice 10b) : accroches servies, remplies par les Slices 11 et 12. */
 /*__CONTROL_CENTER_MEMORY_SETTINGS_JS__*/
+/* Onglet Sous-agents des Réglages (jarvis-organic-agent-orchestration, Slice 10) : `control_center_subagents_settings.js`,
+   `window.JarvisSubagentSettings`, monté par `renderTab` (`mountSubagentSettings`). */
+/*__CONTROL_CENTER_SUBAGENTS_SETTINGS_JS__*/
 /*__CONTROL_CENTER_MEMORY_JS__*/
 /* Chat (handoff jarvis-unified-chat-and-board-drop, Slice 06) : modèle pur de la Slice 02
    (`control_center_chat_model.js`, `window.JarvisChatModel`) puis la vue
@@ -4032,8 +4116,9 @@ const TABS=[
   {id:'keys',label:'API Keys',save:false},
   {id:'shortcuts',label:'Raccourcis',save:false},
   {id:'memory',label:'Mémoire',save:false},
+  {id:'subagents',label:'Sous-agents',save:false},
 ];
-const SET={open:false,tab:'voice',voiceTab:'architecture',voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:''};
+const SET={open:false,tab:'voice',voiceTab:'architecture',voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:'',subagentView:null,subagentDrafts:{}};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
 
 function say(text,kind){modalStatus.className='status'+(kind?' '+kind:'');modalStatus.textContent=text||''}
@@ -4846,10 +4931,32 @@ function tabShortcuts(){
 }
 
 /* --- rendu et liaisons --------------------------------------------------- */
-function cleanupSettingsSurface(){destroyAgentCatalog();destroyVoiceCatalog()}
+function cleanupSettingsSurface(){destroyAgentCatalog();destroyVoiceCatalog();destroySubagentSettings()}
+/* Onglet Sous-agents (`control_center_subagents_settings.js`) : sa vue arrête son compteur d'attente et ignore
+   ses réponses tardives une fois détruite ; ses brouillons vivent dans `SET.subagentDrafts`, d'un onglet à l'autre. */
+function destroySubagentSettings(){if(SET.subagentView){SET.subagentView.destroy();SET.subagentView=null}}
+function mountSubagentSettings(revision){
+  const host=modalContent.querySelector('#subagentSettingsMount');
+  if(!host)return;
+  if(!window.JarvisSubagentSettings){host.innerHTML='<div class="notice bad" role="alert">Module de l’onglet Sous-agents absent de la page servie.</div>';console.error('subagent_settings_module_missing');return}
+  const view=window.JarvisSubagentSettings.create(host,{drafts:SET.subagentDrafts,openTab:selectTab});
+  if(revision!==SET.renderRevision){view.destroy();return}
+  SET.subagentView=view;
+  /* `load` ne rejette pas (il rend son état d'erreur) ; ce filet attrape tout le reste, visible et codé. */
+  Promise.resolve().then(()=>view.load()).catch(e=>{
+    console.error('subagent_settings_mount_failed',e);
+    host.innerHTML=`<div class="notice bad" role="alert"><strong>Onglet Sous-agents indisponible.</strong> ${esc(e&&e.message||String(e))}<div class="hint">Code : <code>subagent_settings_mount_failed</code></div></div>`;
+  });
+}
 function renderTabs(){
   $('#modalTabs').innerHTML=TABS.map(t=>`<button data-tab="${t.id}" class="${t.id===SET.tab?'active':''}">${esc(t.label)}</button>`).join('');
   document.querySelectorAll('#modalTabs button').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.tab)));
+  /* En largeur étroite la barre d'onglets défile : l'onglet actif est ramené dans la vue, pour tous les onglets
+     (sans effet quand la barre est verticale et tout visible). */
+  const active=$('#modalTabs button.active');
+  if(active&&active.scrollIntoView)active.scrollIntoView({block:'nearest',inline:'nearest'});
+  /* Le pied (état + Enregistrer) n'a rien à dire dans l'onglet Sous-agents, qui porte ses propres notices. */
+  const footer=modalSave.closest('footer');if(footer)footer.hidden=SET.tab==='subagents';
 }
 
 async function renderTab(){
@@ -4861,6 +4968,7 @@ async function renderTab(){
   modalSub.textContent={
     voice:'Les réglages vocaux sont préparés pour la prochaine activation.',
     cli:'Configuration technique, comportement et modèles des agents.',
+    subagents:'Rôles, capacités et Work Methods des sous-agents. Seules les instructions se modifient.',
     prompts:'Chaque couche est enregistrée avec son propre bouton.',
     keys:'Les clés sont enregistrées immédiatement sans jamais être relues par la page.',
     shortcuts:'Les raccourcis sont enregistrés immédiatement.',
@@ -4873,12 +4981,14 @@ async function renderTab(){
     else if(SET.tab==='cli')content=tabCli()+tabAgenda();
     else if(SET.tab==='keys')content=tabKeys();
     else if(SET.tab==='memory')content='<div id="memorySettingsMount"></div>';
+    else if(SET.tab==='subagents')content='<div id="subagentSettingsMount"></div>';
     else content=tabShortcuts();
     if(revision!==SET.renderRevision||SET.open===false)return;
     modalContent.innerHTML=content;
   }catch(e){if(revision===SET.renderRevision&&SET.open!==false)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
   bindTab(revision);
   if(SET.tab==='memory'&&window.JarvisMemorySettings)window.JarvisMemorySettings.show(modalContent.querySelector('#memorySettingsMount'));
+  if(SET.tab==='subagents')mountSubagentSettings(revision);
   if(SET.tab==='voice')bindVoiceSurface(revision);
   if(SET.tab==='cli')bindAgenda();
   if(SET.tab==='cli'){mountAgentCatalog(revision);hydrateCliAgents(revision)}

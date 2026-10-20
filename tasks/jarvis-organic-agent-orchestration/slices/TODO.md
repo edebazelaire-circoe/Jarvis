@@ -44,7 +44,7 @@ State: **READY** (audited `main@336f21be`, evidence `references/readiness-audit.
 - [ ] 07-interviewer-background-coordination
 - [ ] 08-scene-projection-role-relations
 - [ ] 09-task-graph-ui
-- [ ] 10-agent-roles-settings-ui
+- [x] 10-agent-roles-settings-ui (2026-10-20; QA code-review+qa-verification+runtime-validation+impeccable PASS_WITH_NOTES, notes fixed 7480cc5c; HV-ORG-10-01/02 pending)
 - [ ] 11-output-quality-prefab-delivery
 - [ ] 12-work-method-learning
 - [ ] 13-integration-rollout-quality-docs

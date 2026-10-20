@@ -170,3 +170,27 @@
 - 2 (N10): test of the retained owner end when the owner was pruned from Work State before the team ended; mutant re-applied by hand: the test fails.
 - 3: `subagent_type: "claude"` (CLI catch-all, tools `*`, same as `general-purpose`) is now rewritten to `jarvis-no-spawn`; `fork` (inherits the caller's context), `Explore`, `Plan` and user types stay `can_spawn_not_enforced`, documented.
 - Tests: Slice + neighbours 450 passed; second batch 346; brain/parity/scene/routes/architecture/app/ingress/events 261 passed + the 3 failures already on main; integration 103 passed. Hashes unchanged (`BRAIN_SYSTEM_PROMPT` `0cde112f…d9f7`, `brain_rules()` `7bca8da7…296c`). JARVIS live untouched; no sandbox run in this pass.
+
+## 2026-10-20 — Slice 10 implemented (QA pending)
+
+- Settings tab `Sous-agents` (after `Mémoire`; before it would break the Agent/CLI navigation fixture): `jarvis/runtime/control_center_subagents_settings.js` (`window.JarvisSubagentSettings`), served by marker from `control_center.py`, mounted by `renderTab`, destroyed by `cleanupSettingsSurface`; drafts kept in `SET.subagentDrafts`.
+- Reads only `GET /api/subagent-roles` v2 (+ additive `relation_labels` = `work_methods.RELATION_LABELS`, schema_version still 2) and `GET /api/agent/tasks` (instances, role resolved like `resolve_role`). Only write: instructions through the existing `POST /api/prompts/subagent_role.<id>` (base_revision + expected_effective_revision, two-step reset); capabilities and Work Methods read-only; brief order shown (instructions -> generated capabilities -> default Work Method, "appended after your instructions").
+- Identity: icon (authored SVG) + badge + accent token -> `var(--role-accent-<token>)`, single table of the 10 `ROLE_ACCENTS` in `control_center.html` `:root` (for Slice 08 graph to reuse); no colour in the module (test).
+- States: loading with live counter and 15 s deadline, read error with server code + retry, empty registry, disabled, not offered to brain, discarded override, revision conflict keeps user text, refused save, unsent hook snapshot, instances error isolated. Failures on screen + `console.error('<code>')` (no browser error route exists; none added).
+- Pre-existing `test_assembled_primary_navigation_has_six_tabs_and_no_legacy_navigation` fixed: slice anchored at line start (Memory Center's indented `const TABS=` broke it since memory-intelligence S12); expects Mémoire + Sous-agents.
+- Tests: new test_control_center_subagents_settings_js.py 15 passed; settings lot 282 passed. Pre-existing failures also on base 02bed9d8: shell_browser geometry[size0..3] + reduced_motion, wake_word_settings_browser lecture_en_echec.
+- Sandbox trial (ports 28653/28654, scratchpad data/runtime, stopped by PID): save, real revision conflict, real read error + retry, keyboard, 760 px, forced colours; captures in slices/10-agent-roles-settings-ui/evidence/ (08 = fixture instances). HV-ORG-10-01/02 prepared, pending. No light theme exists in the product. JARVIS live not touched.
+
+## 2026-10-20 — Slice 10 fix pass after independent QA (PASS_WITH_NOTES)
+
+- N1: POST and re-read are separate steps. POST ok + re-read failed -> "Enregistré ; la relecture a échoué" + retry; POST without answer (15 s / unreachable) -> "Résultat inconnu : … Relisez avant de réenregistrer", immediate re-read saying whether the change was saved. "Rien n'a été écrit" only on a server refusal.
+- N2: roles normalised (missing fields empty, "Fiche incomplète", entries without id counted, save disabled without revisions); unexpected schema_version warned; render exception -> `subagent_settings_render_failed` with retry; mount catches load() (`subagent_settings_mount_failed`).
+- N3: alias whose target is missing stays `alias`; own keys only.
+- N4: "Refus du serveur : « … »." wording; cause-specific advice; counter "n / 8 192" from additive route key `instructions_max_chars` (schema_version still 2); comma fixed.
+- N5: active Settings tab scrolled into view (generic, all tabs); one column: selecting a role brings the sheet on screen, focus on its title, back-to-list button.
+- N6/N7/N8: theme tokens; instances collapsible; modal footer hidden on this tab; short live region; forced-colours 3 px Highlight border; link to Agent / CLI › Sous-agents / Modèles.
+- Tests: node 24 passed; Settings lot 291 passed; wake_word_settings_browser flaky under load (20/20 on a quiet run per QA). Captures 13, 21-27 in evidence/. HV-ORG-10-01 gains a 760 px step; both HV pending. Commit 7480cc5c.
+
+## 2026-10-20 — Slice 10 merged into the task branch
+
+- Branch `task/jarvis-organic-agent-orchestration-s10` (worktree `orch10`, commits 66db6257, 7480cc5c) merged by agent 0 after independent QA (code-review+qa-verification+runtime-validation+impeccable audit PASS_WITH_NOTES, notes fixed 7480cc5c). No conflict. Human checks HV-ORG-10-01/02 pending.

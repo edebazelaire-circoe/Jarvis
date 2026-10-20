@@ -778,6 +778,10 @@ PREFABS_SCRIPT_MARKER = "/*__CONTROL_CENTER_PREFABS_JS__*/"
 #: la section `memory` de `/api/settings` et `/api/memory/*`.
 MEMORY_SETTINGS_SCRIPT_FILE = "control_center_memory_settings.js"
 MEMORY_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MEMORY_SETTINGS_JS__*/"
+#: Onglet Réglages « Sous-agents » (jarvis-organic-agent-orchestration, Slice 10) : lit `GET /api/subagent-roles` et
+#: `GET /api/agent/tasks`, n'écrit que par `POST /api/prompts/subagent_role.<id>`. Contrat : `docs/subagent-roles.md` § 8.
+SUBAGENTS_SETTINGS_SCRIPT_FILE = "control_center_subagents_settings.js"
+SUBAGENTS_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_SUBAGENTS_SETTINGS_JS__*/"
 MEMORY_SCRIPT_FILE = "control_center_memory.js"
 MEMORY_SCRIPT_MARKER = "/*__CONTROL_CENTER_MEMORY_JS__*/"
 #: Chat (jarvis-unified-chat-and-board-drop, Slice 06, `docs/chat.md` › Panel) : modèle pur de la Slice 02
@@ -2574,6 +2578,7 @@ class ControlCenter:
             PREFABS_SCRIPT_MARKER, page.with_name(PREFABS_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         for marker, name in ((MEMORY_SETTINGS_SCRIPT_MARKER, MEMORY_SETTINGS_SCRIPT_FILE),
+                             (SUBAGENTS_SETTINGS_SCRIPT_MARKER, SUBAGENTS_SETTINGS_SCRIPT_FILE),
                              (MEMORY_SCRIPT_MARKER, MEMORY_SCRIPT_FILE),
                              (CHAT_MODEL_SCRIPT_MARKER, CHAT_MODEL_SCRIPT_FILE),
                              (CHAT_SCRIPT_MARKER, CHAT_SCRIPT_FILE),
@@ -5126,6 +5131,7 @@ class ControlCenter:
         instructions s'éditent par `POST /api/prompts/subagent_role.<id>`.
         """
         from jarvis.domain import subagent_roles, work_methods
+        from jarvis.domain.prompt_registry import MAX_OVERRIDE_TEXT
         from jarvis.runtime.prompt_catalog import default_prompt_registry
         from jarvis.runtime.prompt_overrides import stored_prompt_override_document
 
@@ -5152,6 +5158,11 @@ class ControlCenter:
             "work_methods": [method.to_payload() for method in work_methods.BUILTIN_METHODS],
             "aliases": dict(subagent_roles.ROLE_ALIASES),
             "accents": list(subagent_roles.ROLE_ACCENTS),
+            # Libellés français des relations citées par les méthodes (`useful_relations`), pour que l'onglet
+            # Sous-agents n'en recopie pas le vocabulaire (Slice 10, additif).
+            "relation_labels": dict(work_methods.RELATION_LABELS),
+            # Borne d'une surcharge d'instructions (celle que `POST /api/prompts/...` applique), pour le compteur.
+            "instructions_max_chars": MAX_OVERRIDE_TEXT,
             "reserved_role_ids": sorted(subagent_roles.RESERVED_ROLE_IDS),
             "execution_gate": subagent_roles.EXECUTION_GATE_RULE,
             "mission_path": subagent_roles.MISSION_PATH_HINT,
