@@ -63,8 +63,10 @@
       if(p&&typeof p.instance_id==='string')instances.set(p.instance_id,{instanceId:p.instance_id,roleId:str(p.role_id),
         label:str(p.label),workStatus:p.work_status==null?null:str(p.work_status),owner:p.mission_owner===true});
     }
+    /* Propriétaires COURANTS de l'arbre (après un relais, le successeur ; jamais la déclaration d'origine). */
+    const owners=new Set(body.missions.filter(item=>item&&typeof item.owner_instance_id==='string').map(item=>item.owner_instance_id));
     return {mission:m?{id:m.mission_id,objective:str(m.objective),origin:str(m.origin_kind),status:str(m.status),
-      liveUnknown:m.live_unknown===true}:null,instances};
+      liveUnknown:m.live_unknown===true}:null,instances,owners};
   }
 
   /* Messages : une lecture (`after`) s'ajoute à ce qui est déjà là, sans doublon, dans l'ordre de `seq`. */
@@ -147,9 +149,9 @@
 .rb-facts dd{margin:0;min-width:0;overflow-wrap:anywhere}
 .rb-unknown{color:var(--warn)}
 .rb-people{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
-.rb-person{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
+.rb-person{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:8px;row-gap:1px;align-items:center;min-width:0}
 .rb-person-name{min-width:0;overflow-wrap:anywhere}
-.rb-person-meta{color:var(--muted);font-size:12px}
+.rb-person-meta{grid-column:2;color:var(--muted);font-size:12px}
 .rb-ident{--rb-role:var(--role-accent-slate);display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px 0 4px;border-radius:5px;
   border:1px solid color-mix(in srgb,var(--rb-role) 70%,transparent);color:var(--rb-role);font-size:10.5px;font-weight:700;letter-spacing:.05em;flex:none}
 .rb-ident svg{width:13px;height:13px}
@@ -199,7 +201,7 @@
     });
 
     const st={open:false,relationId:'',kind:'',missionId:'',trigger:null,phase:'idle',startedAt:0,error:null,
-      read:null,messages:[],instances:new Map(),mission:null,missionError:null,lastSeq:0,readAt:0,more:false,
+      read:null,messages:[],instances:new Map(),mission:null,owners:null,missionError:null,lastSeq:0,readAt:0,more:false,
       generation:0,inflight:false,focusIndex:0};
     let panel=null,ticker=null,refresher=null;
     const el=(tag,cls,text)=>{const e=doc.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e};
@@ -242,7 +244,7 @@
       if(!same){
         st.generation++;bodySig='';
         Object.assign(st,{relationId,kind:str(request.kind),missionId:str(request.missionId),phase:'loading',error:null,read:null,
-          messages:[],instances:new Map(),mission:null,missionError:null,lastSeq:0,readAt:0,more:false,focusIndex:0});
+          messages:[],instances:new Map(),mission:null,owners:null,missionError:null,lastSeq:0,readAt:0,more:false,focusIndex:0});
       }
       setTrigger(request.trigger||null);
       st.open=true;st.startedAt=now();
@@ -294,7 +296,7 @@
         if(!st.missionId&&read.relation.missionId)st.missionId=read.relation.missionId;
         const mission=missionRead?await missionRead:null;
         if(generation!==st.generation)return;
-        if(mission){st.mission=mission.mission;st.missionError=null;for(const [id,p] of mission.instances)if(!st.instances.has(id))st.instances.set(id,p)}
+        if(mission){st.mission=mission.mission;st.owners=mission.owners;st.missionError=null;for(const [id,p] of mission.instances)if(!st.instances.has(id))st.instances.set(id,p)}
         const added=st.messages.length-before;
         if(!full&&added>0)announce(added===1?'Un nouveau message.':`${added} nouveaux messages.`);
         log('info','relation_board_read',{relation_id:st.relationId,messages:st.messages.length,added:full?st.messages.length:added});
@@ -337,8 +339,10 @@
       const p=st.instances.get(instanceId);
       if(!p)return {text:`instance ${instanceId.slice(0,14)}`,roleId:'',owner:false,known:false};
       const who=p.roleId?words.identity(p.roleId):null;
+      /* Responsable : d'après les propriétaires courants de la mission lue, sinon la déclaration de l'instance. */
+      const owner=st.owners?st.owners.has(instanceId):p.owner;
       return {text:[who?who.name:'',p.label?`« ${p.label} »`:''].filter(Boolean).join(' ')||`instance ${instanceId.slice(0,14)}`,
-        roleId:p.roleId,owner:p.owner,known:true,workStatus:p.workStatus};
+        roleId:p.roleId,owner,known:true,workStatus:p.workStatus};
     }
 
     /* Le corps n'est refait que si ce qu'il montre a changé : une relecture sans nouveauté (toutes les 5 s) ne
@@ -356,7 +360,7 @@
         title.dataset.heading=`${st.kind}|${heading}`;
       }
       const sig=JSON.stringify([st.relationId,st.phase,st.error?[st.error.code||'',st.error.message||'']:null,st.read&&st.read.relation,
-        st.messages.length,st.lastSeq,st.mission,st.missionError?st.missionError.code||'':null,st.more,st.instances.size]);
+        st.messages.length,st.lastSeq,st.mission,st.owners?[...st.owners]:null,st.missionError?st.missionError.code||'':null,st.more,st.instances.size]);
       if(sig!==bodySig){
         const body=panel.querySelector('#relationBoardBody');
         const keep=focusKey(body);

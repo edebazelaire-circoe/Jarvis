@@ -137,6 +137,7 @@ return {a:n('a').role,b:n('b').role,c:n('c').role,d:n('d').role,w:n('w').role,la
   edges:vm.edges.map(e=>({id:e.id,kind:e.kind,rel:e.relationId,state:e.state,outcome:e.outcome,lane:e.lane}))};""")
     assert out["a"]["owner"] is True and out["a"]["origin"] == "général" and out["a"]["liveUnknown"] is True
     assert out["b"]["owner"] is False and out["b"]["origin"] == "" and out["b"]["badge"] == "DEV"
+    assert out["b"]["liveUnknown"] is False                  # l'état inconnu de la mission : chez son responsable
     assert out["c"]["id"] == "coder" and out["d"] is None and out["w"] is None   # id hors forme, job : pas de rôle
     assert "rôle Direction de recherche" in out["label"] and "responsable de la mission" in out["label"]
     assert "origine général" in out["label"] and "mission : état inconnu" in out["label"]
@@ -230,10 +231,12 @@ const body={ok:true,relation:{relation_id:'r',kind:'communication',mission_id:'m
 const read=B.normalizeRead(body);
 let invalid=null;try{B.normalizeRead({relation:{}})}catch(e){invalid=e.code}
 const merged=B.mergeMessages(read.messages,[{seq:3,text:'z'},{seq:1,text:'y2'}]);
-const mission=B.normalizeMission({missions:[{mission_id:'m',objective:'O',origin_kind:'code',status:'open',live_unknown:true}],instances:[]},'m');
+const mission=B.normalizeMission({missions:[{mission_id:'m',objective:'O',origin_kind:'code',status:'open',live_unknown:true,owner_instance_id:'succ'},
+  {mission_id:'s',owner_instance_id:'subowner',status:'open'}],instances:[{instance_id:'pred',mission_owner:true}]},'m');
 return {participants:read.relation.participants,seqs:read.messages.map(m=>m.seq),text:read.messages[0].text,invalid,
   merged:merged.map(m=>[m.seq,m.text]),status:B.missionStatusLabel(mission.mission),closed:B.missionStatusLabel({status:'completed'}),
-  work:[B.workStatusLabel(null),B.workStatusLabel('running')],advice:B.advice('relation_unknown')};""")
+  work:[B.workStatusLabel(null),B.workStatusLabel('running')],advice:B.advice('relation_unknown'),owners:[...mission.owners].sort(),
+  declared:mission.instances.get('pred').owner};""")
     assert out["participants"] == [{"instanceId": "i1", "position": "member"}]
     assert out["seqs"] == [2, 1] and out["text"] == "<b>x</b>"          # le texte reste du texte (rendu par textContent)
     assert out["invalid"] == "relation_board_payload_invalid"
@@ -241,6 +244,8 @@ return {participants:read.relation.participants,seqs:read.messages.map(m=>m.seq)
     assert out["status"] == "état inconnu" and out["closed"] == "terminée"
     assert out["work"] == ["hors du suivi vivant", "en cours"]
     assert "n’existe pas" in out["advice"]
+    # Après un relais, le responsable est le propriétaire COURANT, pas la déclaration d'origine du prédécesseur.
+    assert out["owners"] == ["subowner", "succ"] and out["declared"] is True
 
 
 def test_no_new_write_path_is_introduced_by_the_graph_modules():
@@ -248,3 +253,30 @@ def test_no_new_write_path_is_introduced_by_the_graph_modules():
         source = (RUNTIME / name).read_text(encoding="utf-8")
         assert "method:'POST'" not in source and "method:\"POST\"" not in source and "'DELETE'" not in source, name
         assert "/api/missions/relations/" not in source or "/messages" not in source, name
+
+
+def test_role_stars_get_room_for_their_pill_and_lose_only_their_exact_role_marker():
+    out = _node("""
+const agent=(id,ref,title)=>({schema_version:1,object_id:id,kind:'agent',category:'agent',exec_state:'running',representation:'point',
+  geometry:null,layer:100,order:0,visibility:'visible',disposition:'active',constraints:{},origin:'runtime',
+  work_ref:{source:'claude',external_id:id},role_ref:ref,payload:{title,summary:'',items:[]}});
+const objects=[agent('p',{role_id:'research-lead',mission_owner:true},'[general] [research-lead] Comparer'),
+  ...['a','b','c','d'].map(id=>agent(id,{role_id:'coder'},'[code] [coder] Prototype '+id)),
+  agent('x',{role_id:'qa'},'[general] [coder] Mal marqué'),agent('plain',null,'[general] Sans rôle')];
+const relations=['a','b','c','d'].map(id=>({relation_id:'parent_of!p~'+id,kind:'parent_of',from_id:'p',to_id:id,layer:0}));
+const state={objects:new Map(objects.map(o=>[o.object_id,o])),relations:new Map(relations.map(r=>[r.relation_id,r]))};
+const layout=L.resolveLayout(state);
+const boxes=Object.fromEntries([...layout.placements].map(([id,b])=>[id,b]));
+const vm=L.viewModel(state,layout,L.viewport(1440,900),{});
+const title=id=>vm.nodes.find(n=>n.id===id).title;
+return {sizes:L.DEFAULT_SIZE,boxes,titles:{p:title('p'),a:title('a'),x:title('x'),plain:title('plain')}};""")
+    assert out["sizes"]["rolePoint"] == {"w": 18, "h": 8} and out["sizes"]["ownerPoint"] == {"w": 32, "h": 8}
+    boxes = out["boxes"]
+    assert (boxes["a"]["w"], boxes["a"]["h"]) == (18, 8) and (boxes["plain"]["w"], boxes["plain"]["h"]) == (6, 6)
+    team = [boxes[k] for k in ("p", "a", "b", "c", "d")]
+    for i, one in enumerate(team):
+        for other in team[i + 1:]:
+            apart_x = abs((one["x"] + one["w"] / 2) - (other["x"] + other["w"] / 2)) >= 18 - 1e-6
+            apart_y = abs((one["y"] + one["h"] / 2) - (other["y"] + other["h"] / 2)) >= 8 - 1e-6
+            assert apart_x or apart_y, (one, other)
+    assert out["titles"] == {"p": "Comparer", "a": "Prototype a", "x": "[coder] Mal marqué", "plain": "Sans rôle"}

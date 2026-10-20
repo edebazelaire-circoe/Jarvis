@@ -503,7 +503,16 @@ figures, relation marks, mission cache), `control_center_relation_board.js`
   from `GET /api/subagent-roles` (retried 30 s after a failure, logged
   `scene.<code>`); an id the registry does not know shows as is (badge from the
   id, generic dashed pictogram) — nothing is guessed from a title. A
-  `role_id` that is not an id (`[a-z][a-z0-9_-]{0,63}`) is ignored.
+  `role_id` that is not an id (`[a-z][a-z0-9_-]{0,63}`) is ignored. A leading
+  `[<role_id>]` in the title (the marker the brain wrote) leaves the drawn
+  title, since the pill says it — only that exact marker, nothing else is
+  read in the text. The resolver reserves room for the pill: an agent star
+  with a `role_ref` is placed with an 18 × 8 unit footprint (32 × 8 for a
+  Mission Owner, whose pill also carries the flag and the origin) instead of
+  6 × 6, so the stars of one team do not lay their pills on each other; the
+  drawn point stays at the centre (`DEFAULT_SIZE.rolePoint` / `ownerPoint`,
+  placements already stored are never moved). Under 900 px of width (200 %
+  zoom) the pill drops the origin text (still in the name and the board).
 - **Mission Owner** (D03/D04): `role_ref.mission_owner` adds a flag and a
   stronger pill; the pill also carries the mission's origin (`origin_kind`,
   in words: code, général, poste de travail, tâche rapide) and the name says
@@ -541,7 +550,9 @@ figures, relation marks, mission cache), `control_center_relation_board.js`
   [control-center-shell.md](control-center-shell.md)): kind, purpose, state and
   outcome, retained winner and summary, mission (objective, origin, status or
   « état inconnu »), participants with role, position and live Work State
-  status (« hors du suivi vivant » when Work State no longer has it), the
+  status (« hors du suivi vivant » when Work State no longer has it;
+  « responsable de la mission » from the tree's **current** owners, so a
+  handoff predecessor loses it), the
   handoff packet, and the thread of **deliberate messages** (`seq` order,
   type, author with role, time) from `GET /api/missions/relations/{id}?after=&limit=200`
   — nothing else, never private reasoning (D13; Core refuses it at write).

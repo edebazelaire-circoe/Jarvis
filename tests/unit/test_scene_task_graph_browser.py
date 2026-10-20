@@ -174,7 +174,7 @@ READ = """(()=>{
   const role=id=>{const n=document.querySelector(`#sceneLayer .sc-node[data-object-id="${id}"]`);if(!n)return null;
     const p=n.querySelector('.sc-role');return {label:n.getAttribute('aria-label'),badge:p&&p.querySelector('b')?p.querySelector('b').textContent:null,
       owner:!!(p&&p.classList.contains('sc-role-owner')),flag:!!(p&&p.querySelector('.sc-role-flag')),glyph:!!(p&&p.querySelector('.sc-role-glyph')),
-      extra:p&&p.querySelector('i')?p.querySelector('i').textContent:'',accent:n.style.getPropertyValue('--sc-role'),
+      extra:p?[...p.querySelectorAll('i')].map(i=>i.textContent).join(' '):'',accent:n.style.getPropertyValue('--sc-role'),
       color:p?getComputedStyle(p).color:null,hasRole:n.classList.contains('sc-has-role')}};
   const lines=[...document.querySelectorAll('#sceneLayer .sc-links line')].map(l=>{const cs=getComputedStyle(l);
     return {cls:l.getAttribute('class'),dash:cs.strokeDasharray,marker:cs.markerEnd,width:cs.strokeWidth,stroke:cs.stroke}});
@@ -182,7 +182,9 @@ READ = """(()=>{
     return {id:b.dataset.relationId,kind:b.dataset.relationKind,cls:b.className,label:b.getAttribute('aria-label'),tab:b.tabIndex,
       radius:cs.borderRadius,border:cs.borderStyle,w:r.width,h:r.height,l:r.left,t:r.top,r:r.right,b:r.bottom,
       glyph:b.querySelector('svg')?b.querySelector('svg').innerHTML.length:0}});
-  return {nodes:nodes.length,roles:Object.fromEntries(['lead','dev_a','web','doc','qa','next'].map(id=>[id,role(id)])),lines,marks,
+  const orbit={nodes:Object.fromEntries([...document.querySelectorAll('#sceneLayer .sc-node')].map(n=>[n.dataset.objectId,n.classList.contains('sc-orbit')])),
+    marks:Object.fromEntries([...document.querySelectorAll('#sceneLayer .sc-relmark')].map(b=>[b.dataset.relationId,b.classList.contains('sc-orbit')]))};
+  return {orbit,nodes:nodes.length,roles:Object.fromEntries(['lead','dev_a','web','doc','qa','next'].map(id=>[id,role(id)])),lines,marks,
     vw:innerWidth,vh:innerHeight};
 })()"""
 
@@ -195,6 +197,11 @@ BOARD = """(()=>{const p=document.getElementById('relationBoard');if(!p)return n
     imgs:p.querySelectorAll('img').length,xss:window.__xss===1,error:!!p.querySelector('.rb-error'),
     state:(p.querySelector('[data-rb-state]')||{}).textContent||'',empty:(p.querySelector('.rb-empty')||{}).textContent||'',
     rect:(()=>{const r=p.getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom}})()};})()"""
+
+
+#: Attendre que le tableau ait lu (ou dit son échec), au plus 8 s : jamais une attente fixe sous la charge.
+WAIT_BOARD = ("new Promise(r=>{const t0=Date.now();const f=()=>{const p=document.getElementById('relationBoard');"
+              "if((p&&p.querySelector('.rb-section,.rb-error'))||Date.now()-t0>8000)r(Date.now()-t0);else setTimeout(f,50)};f()})")
 
 
 def _no_errors(step: dict, allowed: tuple[str, ...] = ()) -> None:
@@ -226,6 +233,13 @@ def test_every_role_star_carries_its_registry_identity_and_the_owner_its_flag_an
     assert "rôle Développement" in roles["dev_a"]["label"] and "rôle Recherche web" in roles["web"]["label"]
     assert "rôle Recherche documentaire" in roles["doc"]["label"] and "rôle Contrôle qualité" in roles["qa"]["label"]
     assert "responsable de la mission" in roles["lead"]["label"] and "origine général" in roles["lead"]["label"]
+    # Les pastilles tournent avec leurs étoiles quand toutes leurs étoiles tournent, même après avoir été
+    # redessinées par la lecture du registre (qui change leur nom accessible).
+    members = {"rel_dlg_doc": ("lead", "doc"), "rel_comm": ("lead", "web", "doc"), "rel_adv": ("dev_a", "dev_b", "dev_c"),
+               "rel_qa": ("qa", "dev_a"), "rel_hof": ("lead", "next")}
+    turning = [rel for rel, who in members.items() if all(seen["orbit"]["nodes"].get(w) for w in who)]
+    assert turning, seen["orbit"]
+    assert all(seen["orbit"]["marks"][rel] for rel in turning), (turning, seen["orbit"]["marks"])
     assert any(call == "GET /api/subagent-roles" for call in step["calls"])
     assert step["calls"].count("GET /api/subagent-roles") == 1, step["calls"]
 
@@ -270,7 +284,8 @@ def test_each_relation_kind_has_its_own_figure_and_adversary_never_looks_like_qa
 def test_the_communication_mark_opens_its_board_from_the_keyboard_and_escape_returns_focus(tmp_path):
     [step] = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": _seed(), "actions": [
         ["eval", "focus", "(()=>{const b=document.querySelector('.sc-relmark-communication');b.focus();return document.activeElement===b})()", 100],
-        ["key", "enter", "Enter", 900],
+        ["key", "enter", "Enter", 100],
+        ["eval", "waitBoard", WAIT_BOARD, 50],
         ["eval", "board", BOARD, 50],
         ["eval", "expanded", "document.querySelector('.sc-relmark-communication').getAttribute('aria-expanded')", 50],
         ["key", "tab", "Tab", 120],
@@ -312,7 +327,8 @@ def test_hostile_text_in_a_message_stays_text(tmp_path):
     hostile = _seed()
     hostile["objects"][4]["payload"]["title"] = "<script>window.__xss=1</script>Benchmarks"
     [step] = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": hostile, "actions": [
-        ["click", "open", ".sc-relmark-communication", 900],
+        ["click", "open", ".sc-relmark-communication", 100],
+        ["eval", "waitBoard", WAIT_BOARD, 50],
         ["eval", "board", BOARD, 50],
         ["eval", "mark", "document.querySelector('.sc-relmark-communication').getAttribute('aria-label')", 50],
         ["eval", "scripts", "document.querySelectorAll('#sceneLayer script,#relationBoard script').length", 50],
@@ -336,12 +352,15 @@ def test_board_states_loading_counter_error_with_code_and_retry_then_empty(tmp_p
             ["eval", "wait", "new Promise(r=>setTimeout(r,1800))", 50],
             ["eval", "loaded", BOARD, 50]]},
         {"width": 1440, "height": 900, "seed": seed_fail, "actions": [
-            ["click", "open", ".sc-relmark-communication", 700],
+            ["click", "open", ".sc-relmark-communication", 100],
+            ["eval", "waitBoard", WAIT_BOARD, 50],
             ["eval", "failed", BOARD, 50], *_shot("05-board-error"),
-            ["eval", "heal", "(()=>{delete window.__sc.relationFail;document.querySelector('.rb-error .rb-btn').click();return 1})()", 700],
+            ["eval", "heal", "(()=>{delete window.__sc.relationFail;document.querySelector('.rb-error .rb-btn').click();return 1})()", 100],
+            ["eval", "waitHealed", "new Promise(r=>{const t0=Date.now();const f=()=>{if(document.querySelectorAll('#relationBoard .rb-msg').length||Date.now()-t0>8000)r(1);else setTimeout(f,50)};f()})", 50],
             ["eval", "healed", BOARD, 50]]},
         {"width": 1440, "height": 900, "seed": seed_empty, "actions": [
-            ["click", "open", ".sc-relmark-communication", 700],
+            ["click", "open", ".sc-relmark-communication", 100],
+            ["eval", "waitBoard", WAIT_BOARD, 50],
             ["eval", "empty", BOARD, 50], *_shot("06-board-empty")]},
     ])
     slow, fail, empty = (s["results"] for s in steps)
@@ -357,7 +376,8 @@ def test_board_states_loading_counter_error_with_code_and_retry_then_empty(tmp_p
 def test_a_live_unknown_mission_reads_unknown_never_running(tmp_path):
     [step] = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": _seed(live_unknown=True), "actions": [
         ["eval", "read", READ, 50],
-        ["click", "open", ".sc-relmark-communication", 900],
+        ["click", "open", ".sc-relmark-communication", 100],
+        ["eval", "waitBoard", WAIT_BOARD, 50],
         ["eval", "board", BOARD, 50], *_shot("07-live-unknown")]}])
     lead = step["results"]["read"]["roles"]["lead"]
     assert "état inconnu" in lead["extra"] and "mission : état inconnu" in lead["label"]
@@ -392,7 +412,8 @@ def test_a_dense_graph_at_200_percent_and_in_forced_colours_stays_usable(tmp_pat
     steps = _drive(tmp_path, [
         {"width": 720, "height": 450, "scale": 2, "seed": _seed(dense=30), "actions": [
             ["eval", "read", READ, 50], *_shot("08-dense-200pct"),
-            ["click", "open", '.sc-relmark[data-relation-id="rel_comm"]', 900],
+            ["click", "open", '.sc-relmark[data-relation-id="rel_comm"]', 100],
+            ["eval", "waitBoard", WAIT_BOARD, 50],
             ["eval", "board", BOARD, 50], *_shot("09-dense-200pct-board")]},
         {"width": 1440, "height": 900, "forcedColors": True, "seed": _seed(), "actions": [
             ["eval", "read", READ, 50],
@@ -443,7 +464,8 @@ def test_a_live_refresh_appends_new_messages_without_moving_the_keyboard_focus(t
            "author_instance_id:'ins_doc',type:'result_summary',text:'Limites relevées : trois.',created_at:'" + NOW + "',"
            "audience:[],artifact_refs:[],reply_to_message_id:null});return 1})()")
     [step] = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": _seed(), "actions": [
-        ["click", "open", ".sc-relmark-communication", 900],
+        ["click", "open", ".sc-relmark-communication", 100],
+        ["eval", "waitBoard", WAIT_BOARD, 50],
         ["eval", "focus", "(()=>{const m=document.querySelectorAll('.rb-msg')[1];m.focus();return m.dataset.seq})()", 50],
         ["eval", "idle", "new Promise(r=>setTimeout(()=>r(document.activeElement.dataset.seq),5600))", 50],
         ["eval", "add", add, 50],

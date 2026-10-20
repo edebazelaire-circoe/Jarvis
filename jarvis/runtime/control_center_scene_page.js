@@ -4297,7 +4297,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(!record.el.parentNode)marksEl.appendChild(record.el);
       const label=L.relationMarkLabel(mark,byId,words);
       const content=`${mark.kind}|${mark.state}|${mark.outcome}|${mark.missionId}|${label}`;
-      if(content!==record.content){Roles.fillMark(document,record.el,mark,label);record.content=content}
+      /* `fillMark` réécrit `className` : la classe du tour (`sc-orbit`) tombe avec, la place est donc reposée. */
+      if(content!==record.content){Roles.fillMark(document,record.el,mark,label);record.content=content;record.place=''}
       record.el.setAttribute('aria-expanded',openId&&openId===mark.id?'true':'false');
       record.mark=mark;
       const place=`${mark.x}|${mark.y}|${mark.turns}|${mark.mixed}|${shape}`;
@@ -4324,6 +4325,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const relations=new Set(edges.filter(edge=>edge.relationId).map(edge=>edge.relationId)).size;
     const compact=relations>MARK_COMPACT_FROM||vp.width<MARK_COMPACT_BELOW_PX;
     marksEl.classList.toggle('sc-relmarks-compact',compact);
+    /* Fenêtre étroite (200 % de zoom) : les pastilles de rôle gardent icône, drapeau et badge ; l'origine et
+       « état inconnu » restent dans le nom accessible et le tableau. */
+    root.classList.toggle('sc-roles-compact',vp.width<MARK_COMPACT_BELOW_PX);
     const obstacles=[];
     for(const node of lastModel?lastModel.nodes:[]){
       if(node.ghost||node.shape!=='point')continue;

@@ -50,6 +50,12 @@
     signal:Object.freeze({w:4,h:4}),
     capsule:Object.freeze({w:40,h:7}),
     window:Object.freeze({w:64,h:40}),
+    /* Étoile d'agent qui porte un rôle (organic-agent-orchestration Slice 09) : sa pastille de rôle (icône +
+       badge, à gauche de l'étoile) prend de la place ; le résolveur la lui réserve, pour que deux étoiles d'une
+       même équipe ne posent pas leurs pastilles l'une sur l'autre. Le point dessiné reste au centre. */
+    rolePoint:Object.freeze({w:18,h:8}),
+    /* Responsable de mission : sa pastille porte aussi le drapeau et l'origine de la mission, plus large. */
+    ownerPoint:Object.freeze({w:32,h:8}),
   });
   /* Travail maximal d'une passe (comparaisons de boîtes) : au-delà, les objets
      restants prennent leur premier emplacement admissible sans comparaison. */
@@ -1404,7 +1410,9 @@
   function sizeFor(item){
     if(item.representation==='window')return DEFAULT_SIZE.window;
     if(item.representation==='capsule')return DEFAULT_SIZE.capsule;
-    return item.kind==='attention'?DEFAULT_SIZE.signal:DEFAULT_SIZE.point;
+    if(item.kind==='attention')return DEFAULT_SIZE.signal;
+    if(item.kind!=='agent'||!item.role_ref||typeof item.role_ref.role_id!=='string')return DEFAULT_SIZE.point;
+    return item.role_ref.mission_owner===true?DEFAULT_SIZE.ownerPoint:DEFAULT_SIZE.rolePoint;
   }
 
   function workKey(ref){return ref&&typeof ref.source==='string'?`${ref.source}\n${ref.external_id}`:null}
@@ -1711,6 +1719,8 @@
   const RELATION_LANE_PX=7;
   /* Pastilles d'un même couple : espacées le long du fil, au plus de ce pas. */
   const RELATION_MARK_STEP_PX=26;
+  /* Écart maximal d'une pastille à plusieurs participants depuis leur barycentre. */
+  const RELATION_MARK_DRIFT_PX=40;
   const ROLE_ID_SHAPE=/^[a-z][a-z0-9_-]{0,63}$/;
   const LANE_ORDER=['parent_of','explains','groups',...AGENT_RELATION_KINDS];
   const isAgentRelation=kind=>AGENT_RELATION_KINDS.indexOf(kind)>=0;
@@ -1736,7 +1746,16 @@
       /* Origine : le profil du Mission Owner (`origin_kind`), en mots quand il est connu. */
       origin:owner&&info&&typeof info.origin==='string'&&info.origin
         ?(Object.prototype.hasOwnProperty.call(AGENT_TYPES,info.origin)?AGENT_TYPES[info.origin].label:cleanLine(info.origin,24)):'',
-      liveUnknown:!!(info&&info.liveUnknown===true)};
+      /* « État inconnu » de la mission : sur la pastille de son responsable seulement (l'en-tête de la mission) ;
+         l'état de chaque étoile reste celui de la scène (règle du redémarrage). */
+      liveUnknown:owner&&!!(info&&info.liveUnknown===true)};
+  }
+
+  function withoutRoleMarker(title,roleId){
+    const mark=`[${roleId}]`,text=String(title||'');
+    const trimmed=text.trimStart();
+    if(!trimmed.toLowerCase().startsWith(mark))return text;
+    return trimmed.slice(mark.length).trim()||text;
   }
 
   /* Fils qui joignent les deux mêmes étoiles : une voie chacun, décalée à la
@@ -1884,7 +1903,15 @@
       const t=Math.max(.15,Math.min(.85,mark.place.t+along/length));
       if(Math.abs(t-mark.place.t)<1e-4)return false;
       mark.place.t=t;
-    }else{mark.place.dx+=vx;mark.place.dy+=vy}
+    }else{
+      /* Au barycentre : jamais plus loin que `RELATION_MARK_DRIFT_PX` — au-delà, elle ne se lirait plus comme la
+         pastille de ses participants. */
+      let dx=mark.place.dx+vx,dy=(mark.place.dy||0)+vy;
+      const far=Math.hypot(dx,dy);
+      if(far>RELATION_MARK_DRIFT_PX){dx*=RELATION_MARK_DRIFT_PX/far;dy*=RELATION_MARK_DRIFT_PX/far}
+      if(Math.abs(dx-mark.place.dx)<1e-4&&Math.abs(dy-(mark.place.dy||0))<1e-4)return false;
+      mark.place.dx=dx;mark.place.dy=dy;
+    }
     const p=relationMarkPoint(mark,mark.points);mark.x=p.x;mark.y=p.y;
     return true;
   }
@@ -1972,7 +1999,10 @@
       const screen=drawn.box;
       const payload=item.payload||{};
       const typed=agentTypeOf(item,displayTitle(item,cleanLine(payload.title,160),errorLabels));
-      const title=typed.title;
+      const role=roleOf(item,options&&options.roleIdentity,options&&options.missionInfo);
+      /* Slice 09 : le marqueur du rôle (`[coder]`), redit par la pastille, quitte le titre — seulement s'il est
+         exactement l'id de `role_ref` ; rien d'autre n'est lu dans le texte. */
+      const title=role?withoutRoleMarker(typed.title,role.id):typed.title;
       /* Un titre écrit en markdown (`**Rapport**`) se dessine, il ne s'épelle
          pas : `titleSpans` porte les marques, `title` reste le texte nu que
          lisent le nom accessible, l'infobulle et `label`. */
@@ -1984,7 +2014,6 @@
       const artifact=item.kind==='artifact';
       const count=Array.isArray(payload.items)?Math.min(payload.items.length,32):0;
       const prefab=prefabOf(item);
-      const role=roleOf(item,options&&options.roleIdentity,options&&options.missionInfo);
       const node={
         id:item.object_id,kind:item.kind,representation,shape,compact:shape!==representation,
         category:cleanLine(item.category,32),tone:toneOf(item.category),
@@ -2014,7 +2043,7 @@
           /* Slice 09 : le rôle (nom), la responsabilité de mission, son origine et son état inconnu. */
           role?`rôle ${role.name}`:'',role&&role.owner?'responsable de la mission':'',role&&role.origin?`origine ${role.origin}`:'',
           role&&role.liveUnknown?'mission : état inconnu':'',
-          node.type&&node.type.kind!=='other'?node.type.label:'',node.execLabel,node.ephemeral?'éphémère':'',signal&&!node.live?'retiré':'',node.pinned?'épinglé':'',ghost?'masqué':''].filter(Boolean).join(' · ');
+          node.type&&node.type.kind!=='other'&&!(role&&role.origin===node.type.label)?node.type.label:'',node.execLabel,node.ephemeral?'éphémère':'',signal&&!node.live?'retiré':'',node.pinned?'épinglé':'',ghost?'masqué':''].filter(Boolean).join(' · ');
       /* Un fantôme ne fait que se montrer : ni fil, ni constellation, ni
          signal porté, ni compte « hors champ ». */
       if(ghost){node.live=false;node.urgency='none';nodes.push(node);continue}

@@ -1,0 +1,40 @@
+Slice 09 - essai réel en bac à sable (2026-10-20)
+
+Core + Control Center isolés depuis le worktree orch (ports 27653/27654, JARVIS_DATA_ROOT et JARVIS_RUNTIME_DIR
+dans le scratchpad, JARVIS_VISUALIZER_ENABLED=0, JARVIS_OPEN_BROWSER=0), cerveau sonnet hors du dépôt
+(lanceur s07/scripts/cc_launch.py), tours par la route du Chat (/api/chat/turns). Pilotage par
+tests/unit/_interaction_mode_browser.mjs sur http://127.0.0.1:27654/ (page servie réelle, vraies routes).
+
+RÉEL (run-real3, cerveau sonnet, un tour) : « Comparez sérieusement Postgres, SQLite et DuckDB pour un petit outil
+d'analyse local : mettez trois agents en concurrence, chacun défend une option, faites relire le gagnant par un
+contrôle qualité, puis recommandez-m'en une. »
+  - Mission Owner [general] [research-lead] « Comparer Postgres, SQLite, DuckDB » (origine general) ;
+  - trois [general] [web-research] défenseurs ; un [general] [qa] « Relecture du plaidoyer DuckDB » ;
+  - relations ouvertes et closes par les agents eux-mêmes (outils MCP de relation) : confrontation à trois
+    producteurs close « winner », contrôle qualité close « findings » avec un message « critique » réel ;
+  - fenêtre de résultat affichée par le Mission Owner (recommandation DuckDB).
+  Deux tours réels précédents (run-real, run-real2) : Mission Owner + trois [research] ; run-real2 avec une
+  confrontation réelle ouverte, sans contrôle qualité.
+
+SEMÉ PAR LES VRAIES ROUTES DE CORE (mission « Choisir une base de données ») : faits produits par le vrai hook
+(routing_hook.run sur un dossier de hook du bac à sable), POST /v1/missions/declarations, POST
+/v1/work/observations (source « sb09 », jamais celle du suivi du CLI), POST /v1/missions/relations,
+/messages, /close, POST /v1/missions/handoffs + billet de relais réclamé par le vrai hook du successeur [relais].
+  - Mission Owner research-lead ; trois [code] [coder], [web-research], [research], [qa] ;
+  - sous-mission [general] [research-lead] [mission] -> délégation rel_dlg_* créée par Core ;
+  - échange entre agents à trois membres avec messages proposal / message / decision ;
+  - confrontation à trois (messages, close winner), QA (critique, close findings), relais vers un successeur
+    (le drapeau passe au successeur, le prédécesseur garde son rôle).
+  Ce que ce semis remplace : seulement le choix des agents et le texte des messages ; la projection de scène,
+  les identités de rôle, les relations, le tableau et la page sont ceux de Core et du Control Center.
+
+ÉTATS : Core arrêté par PID et relancé sur les mêmes données (étoiles « état inconnu depuis le redémarrage »,
+participants « hors du suivi vivant ») ; 11 min plus tard, GET /v1/missions/{id} rend live_unknown=true pour la
+mission semée : « état inconnu » sur la pastille de ses responsables et dans le tableau.
+
+CAPTURES : sandbox-*.png (vraie page, vraies données) ; test-*.png (page servie, données doublées du test
+navigateur test_scene_task_graph_browser.py, dont le graphe dense à 200 % et les états du tableau).
+sandbox-06/07 (200 %) précèdent le retrait de l'origine dans les pastilles sous 900 px ; test-08/09 le montrent.
+
+Arrêt : Core et Control Center arrêtés par arbre de PID, ports 27653/27654 libres, JARVIS vivant (17653/17654)
+jamais sollicité.

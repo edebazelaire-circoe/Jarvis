@@ -5,31 +5,123 @@
       "id": "HV-ORG-09-01",
       "description": "At a glance identify at least Developer, Web Research, Document Research and QA roles in one populated task graph without opening details.",
       "status": "pending",
-      "evidence": null
+      "evidence": null,
+      "how_to_verify": {
+        "where": "Votre Control Center habituel (http://127.0.0.1:17654/) une fois la branche fusionnée et JARVIS relancé par vous ; ou un bac à sable lancé depuis le worktree (JARVIS_DATA_ROOT et JARVIS_RUNTIME_DIR temporaires, JARVIS_CORE_PORT=27653, JARVIS_UI_PORT=27654, JARVIS_VISUALIZER_ENABLED=0, JARVIS_OPEN_BROWSER=0), page http://127.0.0.1:27654/.",
+        "steps": [
+          "Demandez à Jarvis, par le Chat : « Comparez sérieusement Postgres, SQLite et DuckDB pour un petit outil d'analyse local : mettez trois agents en concurrence, chacun défend une option, faites relire le gagnant par un contrôle qualité, puis recommandez-m'en une. » Attendez que les étoiles apparaissent sur le Board.",
+          "Sans survoler ni cliquer, lisez la pastille à gauche de chaque étoile : un pictogramme et un badge (DIR, WEB, DOC, DEV, QA…) dans l'accent du rôle ; l'étoile prend le même accent.",
+          "Repérez le responsable de la mission : sa pastille porte un drapeau, un fond plus marqué et l'origine (« · général », « · code »).",
+          "Vérifiez qu'au moins quatre rôles se distinguent sans la couleur (pictogramme et lettres différents) : développement (DEV), recherche web (WEB), recherche documentaire (DOC), contrôle qualité (QA). Si votre mission n'a pas fait travailler un développeur, comparez avec la capture de référence.",
+          "Passez au thème Cosmos (Réglages > Apparence) et vérifiez que les pastilles restent lisibles."
+        ],
+        "expected": "Chaque étoile d'agent dit son rôle d'un coup d'œil (pictogramme + badge + accent), le responsable se repère à son drapeau, rien n'exige d'ouvrir un détail.",
+        "reference_captures": [
+          "evidence/sandbox-01-graph-circuit.png",
+          "evidence/sandbox-02-graph-cosmos.png",
+          "evidence/test-01-roles-relations-circuit.png",
+          "evidence/test-02-roles-relations-cosmos.png"
+        ],
+        "note": "Captures sandbox : la mission « Comparer Postgres, SQLite, DuckDB » est entièrement réelle (cerveau sonnet : Mission Owner, trois recherches web en confrontation, un contrôle qualité). La mission « Choisir une base de données » est semée par les vraies routes de Core avec les vrais faits du hook, pour réunir DEV, DOC, un échange, une délégation et un relais (voir LOG.md)."
+      }
     },
     {
       "id": "HV-ORG-09-02",
       "description": "Distinguish Delegation, Communication, Adversary, QA and Handoff links visually; confirm Adversary and QA cannot be confused.",
       "status": "pending",
-      "evidence": null
+      "evidence": null,
+      "how_to_verify": {
+        "where": "Même écran que HV-ORG-09-01.",
+        "steps": [
+          "Repérez les cinq figures : délégation = trait plein avec flèche pleine vers celui qui reçoit la sous-mission, pastille ronde à l'arborescence ; contrôle qualité = tirets avec chevron ouvert vers le travail relu, pastille carrée à la loupe ; relais = perles avec double chevron vers le successeur, pastille allongée « » » ; confrontation = double rail sans flèche entre les concurrents, pastille au double bord et aux lames croisées ; échange entre agents = trait fin sans flèche, pastille en bulle.",
+          "Comparez la confrontation et le contrôle qualité : trait (double rail plein / tirets), bout (aucun / chevron), pastille (lames croisées / loupe), couleur (corail / vert) — quatre différences, la couleur n'est pas la seule.",
+          "Survolez ou passez le focus clavier sur une pastille : son nom dit la nature, qui agit sur qui et l'état (par exemple « Contrôle qualité : … relit … · close, remarques »).",
+          "Activez les couleurs forcées de Windows (contraste élevé) : les figures restent distinctes par le trait, le bout et la forme de la pastille."
+        ],
+        "expected": "Les cinq relations se reconnaissent sans légende, la confrontation (concurrence entre pairs) et le contrôle qualité (relecture dirigée) ne se confondent jamais.",
+        "reference_captures": [
+          "evidence/sandbox-01-graph-circuit.png",
+          "evidence/sandbox-08-forced-colours.png",
+          "evidence/test-01-roles-relations-circuit.png",
+          "evidence/test-10-forced-colours.png"
+        ]
+      }
     },
     {
       "id": "HV-ORG-09-03",
       "description": "Click/focus the Communication relation message affordance and verify the correct readable relation board opens and keyboard navigation works.",
       "status": "pending",
-      "evidence": null
+      "evidence": null,
+      "how_to_verify": {
+        "where": "Même écran, avec une mission qui a un échange entre agents (pastille en bulle). Si votre mission n'en a pas, utilisez le bac à sable décrit dans LOG.md (Slice 09).",
+        "steps": [
+          "Cliquez la pastille en bulle : le panneau « Tableau · Échange entre agents » s'ouvre à droite avec l'objet de l'échange, la mission (objectif, origine, état), les participants (rôle, position, statut) et les messages dans l'ordre, chacun avec son type, son auteur et l'heure.",
+          "Fermez (×), puis au clavier : Tab jusqu'aux pastilles (un seul arrêt), flèches pour passer de l'une à l'autre, Entrée sur la bulle. Le titre du tableau prend le focus.",
+          "Tab jusqu'au premier message, puis flèches haut et bas, Début, Fin : le focus passe d'un message à l'autre et reste visible.",
+          "Laissez le tableau ouvert pendant que les agents publient : un nouveau message s'ajoute dans les 5 s sans déplacer votre focus.",
+          "Échap ferme le tableau et rend le focus à la pastille. Ouvrez aussi la pastille d'une confrontation : son tableau dit le gagnant retenu et la conclusion."
+        ],
+        "expected": "La bonne relation s'ouvre, son tableau est lisible (messages délibérés seulement, jamais de raisonnement privé), et tout se fait au clavier.",
+        "reference_captures": [
+          "evidence/sandbox-03-board-keyboard.png",
+          "evidence/sandbox-04-board-arrows.png",
+          "evidence/sandbox-05-board-adversary.png",
+          "evidence/test-03-board-open-keyboard.png",
+          "evidence/test-04-board-loading.png",
+          "evidence/test-05-board-error.png",
+          "evidence/test-06-board-empty.png"
+        ]
+      }
     },
     {
       "id": "HV-ORG-09-04",
       "description": "Observe a mission evolve and confirm only actual agents/relations appear; no speculative future plan nodes are shown.",
       "status": "pending",
-      "evidence": null
+      "evidence": null,
+      "how_to_verify": {
+        "where": "Même écran, pendant qu'une mission travaille.",
+        "steps": [
+          "Lancez la demande de HV-ORG-09-01 et regardez le Board pendant la mission : une étoile n'apparaît que quand son agent est lancé, un fil et sa pastille seulement quand la relation existe entre deux agents déjà présents.",
+          "Vérifiez qu'aucune étoile ni pastille n'annonce une étape à venir (pas de « prochain agent », pas de relation prévue).",
+          "À la fin, les étoiles et relations de la mission restent (historique), une relation close a un trait atténué et une pastille en tirets ; après un relais, le drapeau passe au successeur et le prédécesseur garde son rôle sans drapeau.",
+          "Relancez Core (vous) : les étoiles de la mission montrent « état inconnu depuis le redémarrage » (?), jamais « en cours » ; le tableau d'une relation dit « hors du suivi vivant » pour ses participants. Une mission restée ouverte sans agent connu se lit « état inconnu » sur la pastille du responsable après 10 minutes."
+        ],
+        "expected": "Le graphe ne montre que l'exécution réelle, en direct et en historique, sans nœud futur.",
+        "reference_captures": [
+          "evidence/sandbox-live0-graph.png",
+          "evidence/sandbox-01-graph-circuit.png",
+          "evidence/sandbox-restart-graph.png",
+          "evidence/sandbox-restart-board.png",
+          "evidence/sandbox-unknown-graph.png",
+          "evidence/test-07-live-unknown.png"
+        ]
+      }
     },
     {
       "id": "HV-ORG-09-05",
       "description": "At 200% zoom and a dense graph, confirm role labels, relation affordances and shell controls remain usable without major overlap.",
       "status": "pending",
-      "evidence": null
+      "evidence": null,
+      "how_to_verify": {
+        "where": "Même écran, navigateur zoomé à 200 % (Ctrl et +), et un Board qui porte plusieurs missions.",
+        "steps": [
+          "À 200 %, vérifiez que les pastilles de rôle restent lisibles (l'origine du responsable disparaît de la pastille ; elle reste dans le nom et le tableau) et que les pastilles de relation sont plus petites mais cliquables, jamais l'une sur l'autre.",
+          "Ouvrez un tableau à 200 % : il prend la largeur de la page, défile, et les commandes du haut (lanceur) restent atteignables.",
+          "Avec plusieurs missions sur le Board, vérifiez qu'aucune pastille de relation ne cache une autre pastille et que la carte Board, le Chat et le lanceur restent utilisables.",
+          "Notez les endroits où une pastille couvre encore une étiquette (voir residual_gaps)."
+        ],
+        "expected": "Rôles, pastilles de relation et commandes de la coque restent utilisables à 200 % et dans un graphe dense, sans chevauchement majeur.",
+        "reference_captures": [
+          "evidence/sandbox-06-zoom200.png",
+          "evidence/sandbox-07-zoom200-board.png",
+          "evidence/test-08-dense-200pct.png",
+          "evidence/test-09-dense-200pct-board.png"
+        ],
+        "residual_gaps": [
+          "Une équipe très serrée placée avant cette Slice (places enregistrées avec l'ancien encombrement de 6 × 6) garde des pastilles de rôle qui se recouvrent ; les nouvelles étoiles à rôle sont placées avec la place de leur pastille (18 × 8, 32 × 8 pour un responsable).",
+          "À 200 % de zoom, les pastilles gardent leur taille en pixels pendant que la scène se resserre : une pastille de relation peut couvrir une étiquette de rôle (jamais une autre pastille)."
+        ]
+      }
     }
   ],
   "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."

@@ -40,8 +40,10 @@
 .sc-role-owner{background:color-mix(in srgb,var(--sc-role,#a3b6c4) 26%,#061017);box-shadow:0 0 0 1.5px var(--sc-role,#a3b6c4),0 2px 8px rgba(0,0,0,.5)}
 .sc-role-owner .sc-role-flag{color:#f4fbfe}
 .sc-role-unknown{box-shadow:0 0 0 1px rgba(163,182,196,.7),0 2px 8px rgba(0,0,0,.5);border:1px dashed rgba(163,182,196,.9);padding:0 4px 0 2px}
-.sc-role-lost i{color:var(--sc-warn)}
+.sc-role-lost .sc-role-state{color:var(--sc-warn);max-width:none}
 .sc-capsule .sc-role{position:relative;right:auto;top:auto;flex:none}
+.scene.sc-roles-compact .sc-role{gap:2px;padding:0 4px 0 2px}
+.scene.sc-roles-compact .sc-role-origin{display:none}
 .sc-link.sc-link-delegation{stroke:var(--sc-rel-delegation);stroke-width:1.5;stroke-dasharray:none;marker-end:url(#sc-mk-delegation)}
 .sc-link.sc-link-qa{stroke:var(--sc-rel-qa);stroke-width:1.6;stroke-dasharray:7 4;marker-end:url(#sc-mk-qa)}
 .sc-link.sc-link-handoff{stroke:var(--sc-rel-handoff);stroke-width:3.2;stroke-dasharray:.1 6.5;stroke-linecap:round;marker-end:url(#sc-mk-handoff)}
@@ -135,8 +137,8 @@
     if(role.owner){const flag=svgFragment(doc,Identity.iconSvg('flag','sc-role-flag'));pill.appendChild(flag)}
     pill.appendChild(svgFragment(doc,Identity.iconSvg(role.icon,'sc-role-glyph')));
     pill.appendChild(el(doc,'b','',role.badge));
-    const extra=[role.owner&&role.origin?originLabel(role.origin):'',role.liveUnknown?'état inconnu':''].filter(Boolean).join(' · ');
-    if(extra)pill.appendChild(el(doc,'i','',`· ${extra}`));
+    if(role.owner&&role.origin)pill.appendChild(el(doc,'i','sc-role-origin',`· ${originLabel(role.origin)}`));
+    if(role.liveUnknown)pill.appendChild(el(doc,'i','sc-role-state','· état inconnu'));
     return pill;
   }
   /* Boîte (estimée, en pixels de scène) de la pastille de rôle d'une étoile dessinée en point : à gauche de
