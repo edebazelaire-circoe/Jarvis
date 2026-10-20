@@ -213,13 +213,23 @@ Câblés par la Slice 05 : hook source du fait, registre local, relais, route d'
 State, mission dans le contexte du cerveau, `health()` exposé, balayage périodique, clôture des missions
 ([agent-orchestration.md](agent-orchestration.md)).
 
+### Missions orphelines (note pour la Slice 08)
+
+Après un redémarrage complet, une mission dont ni le propriétaire ni aucun membre n'est connu de Work State reste
+`open` en base : rien n'est deviné ni clos d'office. `GET /v1/missions/{mission_id}` (et `/api/missions/...`)
+porte par mission `live_unknown` (dérivé, jamais persisté : vrai après `ORPHAN_GRACE_S` = 600 s depuis le
+démarrage de Core et la création de la mission), et `mission_history.mission_orphaned` est émis une fois. **La
+Slice 08 (et toute UI) affiche ces missions « état inconnu », jamais « en cours ».** Le balayage tournant
+(64 par passe, curseur croissant) revoit toute mission ouverte en un nombre borné de passes et clôt celle dont
+la fin, perdue par le bus, est encore lisible dans Work State.
+
 ## 11. Routes
 
 | Méthode | Route Core (jeton) | Control Center (lecture seule) | Réponse |
 | --- | --- | --- | --- |
 | POST | `/v1/missions/declarations` | — (relais seulement) | `{"store_id", "results": [{outcome, instance_id, code, message}]}` ; enveloppe stricte (400) ; un élément hors contrat = `refused` / `invalid_declaration` à sa place, les autres enregistrés |
 | GET | `/v1/missions/health` | `/api/missions/health` | `HistoryHealth` + `store_id` |
-| GET | `/v1/missions/{mission_id}` | `/api/missions/{mission_id}` | missions, instances (statut vivant ou `null`), relations, propriétaires, `truncated` ; 404 `mission_not_found` |
+| GET | `/v1/missions/{mission_id}` | `/api/missions/{mission_id}` | missions (chacune avec `live_unknown`), instances (statut vivant ou `null`), relations, propriétaires, `truncated` ; 404 `mission_not_found` |
 | GET | `/v1/missions/work/{work_source}/{work_external_id}` | `/api/missions/work/{work_source}/{work_external_id}` | l'instance retenue ; 404 `mission_instance_not_found` |
 
 Refus codés `{"error": {"code", "message"}}` côté Core (`mission_history_unavailable` 503,

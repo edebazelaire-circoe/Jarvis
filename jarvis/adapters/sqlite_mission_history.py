@@ -383,6 +383,24 @@ class SQLiteMissionHistoryRepository:
 
         return await self._run(read)
 
+    async def open_missions_after(self, after: tuple[datetime, str] | None, *, limit: int) -> tuple[Mission, ...]:
+        """Curseur du balayage (Slice 05, reprise QA) : ordre croissant `(created_at, mission_id)`, au plus `limit`."""
+
+        limit = max(1, min(int(limit), MAX_LIST_LIMIT))
+
+        def read(conn: sqlite3.Connection) -> tuple[Mission, ...]:
+            if after is None:
+                rows = conn.execute("SELECT * FROM missions WHERE status='open' ORDER BY created_at, mission_id "
+                                    "LIMIT ?", (limit,)).fetchall()
+            else:
+                key = utc_key(after[0])
+                rows = conn.execute("SELECT * FROM missions WHERE status='open' AND (created_at > ? OR "
+                                    "(created_at = ? AND mission_id > ?)) ORDER BY created_at, mission_id LIMIT ?",
+                                    (key, key, after[1], limit)).fetchall()
+            return tuple(_mission_row(row) for row in rows)
+
+        return await self._run(read)
+
     async def ownership(self, mission_id: str) -> tuple[OwnershipChange, ...]:
         def read(conn: sqlite3.Connection) -> tuple[OwnershipChange, ...]:
             return tuple(_ownership(conn, [mission_id]))

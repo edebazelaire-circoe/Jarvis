@@ -228,11 +228,11 @@ def test_a_crashing_hook_exits_0_lets_the_call_through_and_says_so(tmp_path, mon
 
 
 def test_the_guard_compares_general_purpose_without_case_and_keeps_its_note(tmp_path, monkeypatch):
-    for agent_type in ("General-Purpose", "GENERAL-PURPOSE", " general-purpose "):
+    for agent_type in ("General-Purpose", "GENERAL-PURPOSE", " general-purpose ", "claude", "Claude"):
         out = section(routing_hook.run(call("[general] [qa] Relire", tool_use_id=f"t{len(agent_type)}",
                                             subagent_type=agent_type), tmp_path, spawn_guard=True))
         assert out["updatedInput"]["subagent_type"] == NO_SPAWN_AGENT_TYPE
-    for agent_type in ("claude", "fork", "Explore", "mon-type"):
+    for agent_type in ("fork", "Explore", "Plan", "mon-type"):
         out = section(routing_hook.run(call("[general] [qa] Relire", tool_use_id=agent_type,
                                             subagent_type=agent_type), tmp_path, spawn_guard=True))
         assert out["updatedInput"]["subagent_type"] == agent_type

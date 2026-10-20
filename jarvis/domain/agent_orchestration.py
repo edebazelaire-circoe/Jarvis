@@ -49,7 +49,10 @@ from jarvis.domain.subagent_roles import ROLES, SPAWN_TOOL, SubagentRole
 NO_SPAWN_AGENT_TYPE = "jarvis-no-spawn"
 #: Types que le hook peut remplacer par le type restreint. Un autre type (`Explore`, un type de l'utilisateur) est
 #: laissé tel quel : le remplacer changerait ses outils et sa consigne ; la garde est alors consignée non appliquée.
-REWRITABLE_AGENT_TYPES = frozenset({"", "general-purpose"})
+#: `claude` (CLI 2.1.304) est le type fourre-tout, mêmes outils (`*`) que `general-purpose` : le remplacer par le
+#: type restreint ne lui retire que `Agent`/`Task` (reprise QA). `fork` hérite du contexte de l'appelant : il n'est
+#: pas équivalent et reste non garanti.
+REWRITABLE_AGENT_TYPES = frozenset({"", "general-purpose", "claude"})
 #: Outils retirés au type restreint : ceux qui lancent un sous-agent (`routing_hook.AGENT_TOOLS`).
 SPAWN_TOOLS = (SPAWN_TOOL, "Task")
 #: Activation de la garde (reprise QA M1) : variable d'environnement posée par `claude_local` sur le processus du
@@ -164,7 +167,7 @@ def decide_spawn_guard(event: Mapping[str, Any], role: SubagentRole | None, *, e
     Garanti : un rôle `can_spawn=False` lancé en `general-purpose` (toute casse) ou sans type part sous
     `NO_SPAWN_AGENT_TYPE`, et un appel émis depuis ce type est refusé. Non garanti (consigné
     `can_spawn_not_enforced`) : tout autre type demandé (`Explore`, `Plan`, `claude`, `fork`, types de
-    l'utilisateur), qui garde ses propres outils.
+    l'utilisateur), qui garde ses propres outils. `claude` est remplacé comme `general-purpose`.
     """
 
     if enforce and str(event.get("agent_type") or "") == NO_SPAWN_AGENT_TYPE:

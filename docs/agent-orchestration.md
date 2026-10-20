@@ -49,9 +49,11 @@ Pour chaque appel `Agent`/`Task` (`routing_hook.run`) :
    - borne de sûreté : au plus `MAX_SPAWNS_PER_WINDOW` (120) lancements par `SPAWN_WINDOW_S` (600 s), tous
      cerveaux du poste confondus, comptés sur les noms du registre local : refus `spawn_rate_cap` avec une
      raison lisible ;
-   - rôle `can_spawn=False` et type `general-purpose` (toute casse, blancs de bord ignorés) ou absent :
-     `subagent_type` réécrit en `jarvis-no-spawn` (`can_spawn_enforced`) ; tout autre type (`Explore`, `Plan`,
-     `claude`, `fork`, types de l'utilisateur) est laissé tel quel (`can_spawn_not_enforced`, consigné).
+   - rôle `can_spawn=False` et type `general-purpose` ou `claude` (toute casse, blancs de bord ignorés) ou
+     absent : `subagent_type` réécrit en `jarvis-no-spawn` (`can_spawn_enforced`). `claude` est le type
+     fourre-tout du CLI 2.1.304, aux mêmes outils (`*`) que `general-purpose` : le remplacer ne lui retire que
+     `Agent`/`Task`. Tout autre type (`Explore`, `Plan`, `fork` — qui hérite du contexte de l'appelant, donc pas
+     équivalent —, types de l'utilisateur) est laissé tel quel (`can_spawn_not_enforced`, consigné).
    **Activation** (reprise QA M1) : la garde ne s'arme que si l'environnement du hook porte
    `JARVIS_SPAWN_GUARD=jarvis-no-spawn@1`, posé par `claude_local` sur le CLI qu'il lance avec `--agents` et
    hérité par chaque hook (constaté sur le CLI 2.1.304, appel du cerveau et appel imbriqué). Aucun drapeau
@@ -61,7 +63,7 @@ Pour chaque appel `Agent`/`Task` (`routing_hook.run`) :
 
    | Garanti | Non garanti (consigné `can_spawn_not_enforced`) |
    | --- | --- |
-   | rôle `can_spawn=False` demandé en `general-purpose` (toute casse) ou sans type : part sous `jarvis-no-spawn`, sans `Agent`/`Task` | rôle `can_spawn=False` demandé sous un autre type : garde les outils de ce type |
+   | rôle `can_spawn=False` demandé en `general-purpose` ou `claude` (toute casse) ou sans type : part sous `jarvis-no-spawn`, sans `Agent`/`Task` | rôle `can_spawn=False` demandé sous un autre type (`fork`, `Explore`, `Plan`, type de l'utilisateur) : garde les outils de ce type |
    | appel `Agent` émis depuis `jarvis-no-spawn` : refusé (`caller_cannot_spawn`) | CLI lancé sans la variable (ancien lanceur) : rien n'est réécrit |
    | borne de débit pour tous les appels | rôle non déclaré : peut lancer, comme avant |
 2. **Consigne** : charte consciente du rôle (`agent_charter.sign_brief(can_spawn=, constrained_output=)` : un
@@ -151,6 +153,14 @@ le propriétaire courant (`completed`, `failed`, `cancelled` ; `interrupted` →
 fois l'équipe finie). Un propriétaire dont Core ne sait rien (redémarrage, aucune fin vue, élagué sans fin
 retenue) laisse la mission ouverte : rien n'est deviné. Après un relais explicite (`transfer_ownership`,
 Slice 06), seule la fin du propriétaire **courant** compte. Journal : `mission_history.mission_closed`.
+
+**Balayage tournant et missions orphelines.** Le balayage revoit au plus 64 missions ouvertes par passe, par un
+curseur `(created_at, mission_id)` croissant qui repart au début une fois la fin atteinte : chaque mission
+ouverte est revue au bout de ⌈ouvertes / 64⌉ passes. Une mission ouverte dont ni le propriétaire ni aucun membre
+n'est connu de Work State, plus vieille que `ORPHAN_GRACE_S` (600 s) alors que Core tourne depuis plus que ce
+délai (le relais a eu le temps de rejouer), et sans fin de propriétaire retenue, **n'est jamais close d'office** :
+aucune issue n'est inventée. Sa vue porte `live_unknown: true` (dérivé, jamais persisté) et
+`mission_history.mission_orphaned` est émis une fois.
 
 Déclaration arrivée après une clôture : l'instance est **toujours** enregistrée (D18). `[mission]` sous une
 mission close n'ouvre rien : instance retenue sans mission, diagnostic `mission_history.mission_parent_closed`

@@ -89,8 +89,13 @@ MISSION_HISTORY_CLOSE_FAILED_KIND = "mission_history.mission_close_failed"
 MISSION_HISTORY_CLOSE_DEFERRED_KIND = "mission_history.mission_close_deferred"
 MISSION_HISTORY_PARENT_CLOSED_KIND = "mission_history.mission_parent_closed"
 MISSION_HISTORY_MEMBER_AFTER_CLOSE_KIND = "mission_history.member_after_close"
-#: Missions ouvertes réévaluées par balayage, et profondeur de sous-missions réévaluée d'un coup.
+#: Missions ouvertes réévaluées par balayage, et profondeur de sous-missions réévaluée d'un coup. Le balayage
+#: tourne (curseur `(created_at, mission_id)`) : chaque mission ouverte est revue au bout de ⌈ouvertes / 64⌉ passes.
 MAX_SWEPT_MISSIONS = 64
+#: Délai de grâce après le démarrage de Core (relais du Control Center rejoué compris, sonde de 30 s) avant de dire
+#: « état inconnu » d'une mission ouverte dont ni le propriétaire ni aucun membre n'est connu de Work State.
+ORPHAN_GRACE_S = 600.0
+MISSION_HISTORY_ORPHANED_KIND = "mission_history.mission_orphaned"
 MAX_CLOSE_DEPTH = 16
 MISSION_HISTORY_SWEEP_FAILED_KIND = "mission_history.sweep_failed"
 
@@ -205,6 +210,10 @@ class MissionHistoryService:
         self._queue: asyncio.Queue[ProtocolEnvelope] | None = None
         self._task: asyncio.Task[None] | None = None
         self._sweeper: asyncio.Task[None] | None = None
+        #: Curseur du balayage tournant des missions ouvertes ; `None` = reprendre au début.
+        self._sweep_cursor: tuple[Any, str] | None = None
+        #: Naissance de ce service (≈ démarrage de Core) : le délai de grâce des missions orphelines part d'ici.
+        self._born = self._clock.now()
         self._sweep_interval_s = sweep_interval_s
         self._sweep_lock = asyncio.Lock()
 
@@ -675,6 +684,12 @@ class MissionHistoryService:
         owner_status = status_of(owner) if owner is not None else None
         if owner_status is None:
             owner_status = self._owner_ended.get(mission_id)
+        if owner_status is None and self._is_orphan(mission, instances, live):
+            # Aucune issue n'est inventée : la mission reste ouverte, sa vue dit « état inconnu » (`live_unknown`).
+            self._report(("orphaned", mission_id), MISSION_HISTORY_ORPHANED_KIND,
+                         "mission ouverte dont ni le propriétaire ni aucun membre n'est connu de Work State : "
+                         "état inconnu, rien n'est deviné", level="warning",
+                         data={"mission_id": mission_id, "grace_s": ORPHAN_GRACE_S})
         if owner_status is None or not owner_status.is_terminal:
             return False
         alive = [item.instance_id for item in instances if item.mission_id == mission_id
@@ -702,12 +717,36 @@ class MissionHistoryService:
             await self._try_close(closed.parent_mission_id, live=live)
         return True
 
+    def _is_orphan(self, mission: Mission, instances: list[AgentInstance], live: dict[WorkKey, WorkItem]) -> bool:
+        """Ouverte, plus vieille que le délai de grâce, Core né depuis plus que ce délai, aucune fin retenue, et ni
+        son propriétaire ni aucun membre connu de Work State. Dérivé, jamais persisté."""
+
+        now = self._clock.now()
+        if (mission.status.is_closed or mission.mission_id in self._owner_ended
+                or (now - self._born).total_seconds() < ORPHAN_GRACE_S
+                or (now - mission.created_at).total_seconds() < ORPHAN_GRACE_S):
+            return False
+        team = [item for item in instances if item.mission_id == mission.mission_id
+                or item.instance_id == mission.owner_instance_id]
+        return all(live.get(item.work_identity) is None for item in team)
+
+    def live_unknown(self, tree: MissionTree) -> frozenset[str]:
+        """Les missions de l'arbre dont l'état vivant est inconnu (`_is_orphan`), pour la vue. Sans E/S."""
+
+        live = self._live()
+        instances = [stored.instance for stored in tree.instances]
+        return frozenset(mission.mission_id for mission in tree.missions if self._is_orphan(mission, instances, live))
+
     async def _sweep_missions(self) -> None:
-        """Réévaluer les missions ouvertes : clôture différée, fin perdue (bus tolérant). Ne lève jamais."""
+        """Réévaluer les missions ouvertes, `MAX_SWEPT_MISSIONS` par passe, par un curseur qui tourne (reprise QA) :
+        clôture différée, fin perdue (bus tolérant), orphelines signalées. Ne lève jamais."""
 
         try:
-            missions = await self._guard("list_missions", self._repository.list_missions(open_only=True,
-                                                                                        limit=MAX_SWEPT_MISSIONS))
+            missions = await self._guard("open_missions_after", self._repository.open_missions_after(
+                self._sweep_cursor, limit=MAX_SWEPT_MISSIONS))
+            # Moins qu'une page : la fin est atteinte, la passe suivante reprend au début.
+            self._sweep_cursor = ((missions[-1].created_at, missions[-1].mission_id)
+                                  if len(missions) >= MAX_SWEPT_MISSIONS else None)
             live = self._live()
             for mission in missions:
                 await self._try_close(mission.mission_id, live=live)

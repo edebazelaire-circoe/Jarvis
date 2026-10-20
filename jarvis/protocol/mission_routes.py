@@ -209,9 +209,13 @@ class MissionProtocolRoutes:
         if view is None:
             raise LookupError("mission_not_found", f"mission {mission_id} is unknown")
         tree, instances = view
+        # `live_unknown` : dérivé, jamais persisté — ouverte, mais ni propriétaire ni membre connu de Work State
+        # après le délai de grâce. À montrer « état inconnu », jamais « en cours » (Slice 08).
+        unknown = self._service.live_unknown(tree)
         return web.json_response({
             "root_mission_id": tree.root_mission_id,
-            "missions": [mission.to_payload() for mission in tree.missions],
+            "missions": [{**mission.to_payload(), "live_unknown": mission.mission_id in unknown}
+                         for mission in tree.missions],
             "instances": [instance.to_payload() for instance in instances],
             "relations": [relation.to_payload() for relation in tree.relations],
             "ownership": [change.to_payload() for change in tree.ownership],
