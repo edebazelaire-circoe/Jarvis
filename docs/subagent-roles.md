@@ -262,7 +262,8 @@ Slice 07.
 
 | Sujet | Où |
 | --- | --- |
-| Transport de la déclaration du hook vers Core, rôle jusqu'à `WorkObservation`, historique durable | Slice 03 |
+| Contrat de la déclaration du hook (`AgentDeclarationFact`), `role_id` de `WorkObservation`, historique durable : faits ([mission-history.md](mission-history.md)) | Slice 03 |
+| Câblage du hook vers Core (le Control Center joint le fait à la tâche et le remet à Core) | Slice 05 |
 | Activation de `research-lead` et `qa`, loadout `qa` -> `reviewer`, catalogue de Work Methods | Slice 04 |
 | Outils d'orchestration du Mission Owner (spawn, délégation, relais) | Slice 05 |
 | Règles du cerveau (rôles proposés, éphémère élargie) | Slice 07 |

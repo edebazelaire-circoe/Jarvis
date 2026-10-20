@@ -126,6 +126,11 @@ définitif (`assistant`, `presentation` ou `meeting`) et perd ses clés de mode
 `jarvis.sqlite3.v8.bak`. Le code v8 refuse ensuite la base
 (`state DB schema 9 is newer than supported 8`). Règles et retour arrière :
 [boards.md](boards.md#persistence).
+v10 (2026-10-20) : historique durable des missions, **DDL seul** (sept tables
+neuves, aucune ligne produit, aucune colonne de statut d'exécution) ;
+sauvegarde `jarvis.sqlite3.v9.bak`. Le code v9 refuse ensuite la base
+(`state DB schema 10 is newer than supported 9`) ; retour arrière : restaurer
+`.v9.bak`. Contrat : [mission-history.md](mission-history.md).
 
 Le schéma de chaque version est figé dans `tests/schema/<base>.v<N>.sql`.
 `tests/unit/test_schema_migrations.py` échoue dès qu'un DDL change sans

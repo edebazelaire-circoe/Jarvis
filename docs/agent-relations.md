@@ -1,7 +1,8 @@
 # Relations entre agents, tableaux de relation et relais
 
 Page canonique des relations typées qu'un Mission Owner noue entre des instances d'agent, des messages
-explicites qu'elles échangent et du paquet de relais. Elle décrit le contrat ; la persistance (Slice 03),
+explicites qu'elles échangent et du paquet de relais. Elle décrit le contrat ; la persistance
+([mission-history.md](mission-history.md)),
 les outils qui créent ces relations (Slices 05 et 06) et leur affichage (Slices 08 et 09) sont signalés là
 où ils manquent encore.
 
@@ -221,7 +222,7 @@ JSON lisible n'est plus refusé en bloc.
 
 | Sujet | Où |
 | --- | --- |
-| Tables durables des relations, messages et paquets (`jarvis.sqlite3` v10), ordre du fil | Slice 03 |
+| Tables durables des relations, messages et paquets (`jarvis.sqlite3` v10), ordre du fil : faits ([mission-history.md](mission-history.md)) | Slice 03 |
 | Outils du Mission Owner qui nouent, alimentent et closent les relations | Slices 05 et 06 |
 | Opération « join » d'une communication en cours, si elle s'avère utile (§1) | Slice 06 |
 | Fraîcheur du successeur côté Work State (aucun travail porté), fil fourni à `check_message` | Slice 06 |

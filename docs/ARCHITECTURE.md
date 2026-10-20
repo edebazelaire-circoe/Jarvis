@@ -57,7 +57,7 @@ Key ports live under `jarvis/ports/`:
 
 Typed domain objects live under `jarvis/domain/`. The release verifier parses the core AST and fails if OpenAI/HTTP/audio/keyboard provider packages leak into `jarvis/core`.
 
-Tool Brain (UI decision owner: dedicated decider, action queue, executor, ownership and guardrails, timeline lane; off by default, `JARVIS_TOOL_BRAIN`): integration contracts and, from section 8, its stable behaviour contracts, replay/evaluation harness, performance baseline, rollout and the public intake for the presentation mode ([tool-brain-contracts.md](tool-brain-contracts.md); operator runbook: *Tool Brain: roll-out, checks and roll-back* in [OPERATIONS.md](OPERATIONS.md)). Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below), sub-agent roles, missions, Mission Owner and the head-marker grammar of `Agent` calls ([subagent-roles.md](subagent-roles.md)) with their heuristic Work Methods ([work-methods.md](work-methods.md)) and the typed relations between agent instances — delegation, communication, adversary, QA, handoff — with their relation boards, handoff packet and reasoning/privacy boundary ([agent-relations.md](agent-relations.md)) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics), Boards, Jarvis Sessions and their conversation bindings ([boards.md](boards.md): glossary, invariants, lifecycle, V1 limits), plus the Presentation session working set and its transcript tail ([presentation-working-set.md](presentation-working-set.md): bounds, eviction, provenance, resource temperature, lifecycle — bounded and session-scoped, never canonical memory),
+Tool Brain (UI decision owner: dedicated decider, action queue, executor, ownership and guardrails, timeline lane; off by default, `JARVIS_TOOL_BRAIN`): integration contracts and, from section 8, its stable behaviour contracts, replay/evaluation harness, performance baseline, rollout and the public intake for the presentation mode ([tool-brain-contracts.md](tool-brain-contracts.md); operator runbook: *Tool Brain: roll-out, checks and roll-back* in [OPERATIONS.md](OPERATIONS.md)). Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below) and the durable mission history beside it — missions, agent instances with a fixed role, ownership changes, typed relations, relation boards and handoff packets, no execution status ([mission-history.md](mission-history.md)), sub-agent roles, missions, Mission Owner and the head-marker grammar of `Agent` calls ([subagent-roles.md](subagent-roles.md)) with their heuristic Work Methods ([work-methods.md](work-methods.md)) and the typed relations between agent instances — delegation, communication, adversary, QA, handoff — with their relation boards, handoff packet and reasoning/privacy boundary ([agent-relations.md](agent-relations.md)) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics), Boards, Jarvis Sessions and their conversation bindings ([boards.md](boards.md): glossary, invariants, lifecycle, V1 limits), plus the Presentation session working set and its transcript tail ([presentation-working-set.md](presentation-working-set.md): bounds, eviction, provenance, resource temperature, lifecycle — bounded and session-scoped, never canonical memory),
 fed by the Presentation ambient lane ([presentation-ambient-lane.md](presentation-ambient-lane.md):
 segmentation, transcription seam, queue budgets, failure isolation) and by the
 Presentation speculative preparation lane
@@ -1532,7 +1532,7 @@ Neutral types in `jarvis/domain/work_state.py`, ports in
 | Type | Role |
 | --- | --- |
 | `WorkStatus` | `pending`, `running`, `blocked` (waits for the user), then four ends: `completed`, `failed`, `cancelled`, `interrupted` (its host vanished). `ALLOWED_WORK_TRANSITIONS` / `can_transition` define the allowed moves. |
-| `WorkObservation` | one observer's statement at one instant: `source`, `external_id`, `status`, `observed_at` and, when known, `kind`, `label`, `activity`, `summary`, `model`, `parent_external_id`, `link`, `progress_fraction` ∈ [0, 1], `error_class`, `tool_uses`, `tokens`, `background`, `started_at`. |
+| `WorkObservation` | one observer's statement at one instant: `source`, `external_id`, `status`, `observed_at` and, when known, `kind`, `label`, `activity`, `summary`, `model`, `parent_external_id`, `link`, `progress_fraction` ∈ [0, 1], `error_class`, `tool_uses`, `tokens`, `background`, `started_at`, `role_id` (canonical sub-agent role from the hook declaration, never read from a label; first asserted wins, a contradiction is a conflict — [mission-history.md](mission-history.md) §5). |
 | `WorkObservationBatch` | what crosses the process boundary: `source`, `producer_id` (one observer instance), 0–64 observations of that source. An empty batch (Slice 10) only claims the source for that producer. |
 | `WorkItem` | the state Core keeps for one piece of work: same public fields, plus `revision`, `started_at`, `updated_at`, `ended_at` (set exactly when the status is terminal). |
 | `WorkSnapshot` | global `revision`, `items` (at most `MAX_WORK_ITEMS` = 64, unique per `(source, external_id)`), `updated_at`. |
@@ -1690,7 +1690,12 @@ would never hand out twice.
 ### State lifetime and restart behaviour
 
 The store is in memory only; nothing is persisted (the SQLite `jobs` table stays
-the source of truth for jobs). `revision` is monotonic within one `store_id`
+the source of truth for jobs). What must outlive it — which agent instance had
+which role, owned or handed off which mission, and which typed relations and
+relation messages it took part in — is the durable mission history
+(`jarvis/core/mission_history.py`, `jarvis.sqlite3` v10,
+[mission-history.md](mission-history.md)): no execution status there, joined to
+this store by `(source, external_id)`, never ephemeral while ephemeral. `revision` is monotonic within one `store_id`
 only: a consumer that sees a new `store_id` drops what it holds and re-reads the
 snapshot.
 
