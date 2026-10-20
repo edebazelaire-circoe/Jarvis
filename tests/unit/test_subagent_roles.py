@@ -567,7 +567,11 @@ def test_the_brain_rules_teach_owners_and_relations_without_a_new_gate():
         assert text in notice, text
     # Une seule longueur orale (N4 iii), et la forme du résultat jamais imposée dans la consigne (N5).
     assert "- Une à trois phrases courtes par réponse (lancement, relais, résumé avant accord)" in BRAIN_SYSTEM_PROMPT
-    assert "jamais la forme ni la longueur de son résultat, que JARVIS lui donne" in BRAIN_SYSTEM_PROMPT
+    # Essai sonnet de la reprise : « écris le rapport dans un fichier, conclusion en trois phrases » a empêché
+    # l'affichage ; le support aussi est interdit, et FORMAT ORAL ne renvoie plus vers un fichier.
+    assert ("jamais la forme, la longueur ni le support de son résultat (fichier, format, nombre de phrases), que "
+            "JARVIS lui donne") in BRAIN_SYSTEM_PROMPT
+    assert "vont dans un fichier" not in BRAIN_SYSTEM_PROMPT
     assert "compte rendu court" not in BRAIN_SYSTEM_PROMPT
     # Le marqueur historique n'est plus enseigné ; il reste lu (alias, docs/legacy/subagent-role-aliases.md).
     assert "[reviewer]" not in BRAIN_SYSTEM_PROMPT and role_for("reviewer") is role_for("qa")

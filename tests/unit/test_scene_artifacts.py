@@ -596,9 +596,10 @@ def test_orphan_artifacts_are_bulk_archivable_and_linked_ones_never():
 #: Reprise QA Slice 07 (coupes N1-N5) : restitution fondue dans la règle de notification, une seule longueur
 #: orale, cas C réduit à la direction de recherche, puce « Second regard » fusionnée (relecture directe vs Mission
 #: Owner), plus d'exemple de Work Method, cas B sans écriture ni vérification dans le tour (l'Intervieweur crée le
-#: dossier, seulement les rôles utiles en parallèle), relecture de présentation demandée à l'auteur. 11 300 -> 10 599
+#: dossier, seulement les rôles utiles en parallèle), relecture de présentation demandée à l'auteur, ni forme ni support imposés
+#: au résultat (fichier compris). 11 300 -> 10 661
 #: caractères.
-BASE_SYSTEM_SHA256 = "917c8c1812391a245b8c47b1da974b4e8f0196836f4db155d6975f0b8992b259"
+BASE_SYSTEM_SHA256 = "a77e3de622317ed310b6361281bd21b1c06ce1aea34806da7cf915ade6dc3285"
 #: Réalignement baseline (main `f05ed24`, changement délibéré venu de main) : la
 #: consigne d'affichage nomme scene_update_many, scene_archive, scene_pin et
 #: donne au cerveau la main de l'utilisateur (archiver, épingler, déplacer).
