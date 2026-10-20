@@ -61,8 +61,10 @@ nature d'origine) : l'id de la mission est `fact.mission_id`, et **Core pose lui
 `ainst_<hex>` de l'instance qu'il crée pour cette déclaration), la racine (celle du parent) et la date
 (`fact.declared_at`) — l'appelant ne peut pas connaître l'id d'une instance qui n'existe pas encore. Une
 `Mission` complète est acceptée pour sa forme ; son propriétaire et sa racine sont remplacés de même. Refus :
-déclaration qui n'est pas Mission Owner de cette mission (`ownership_invalid`), parent inconnu
-(`mission_parent_missing`), objectif vide (`mission_invalid`). `work_external_id` est le `work_key` stable de la tâche (son premier
+déclaration qui n'est pas Mission Owner de cette mission (`ownership_invalid`, éphémère comprise : une
+ouverture n'est jamais ignorée en silence), parent inconnu (`mission_parent_missing`), parent clos
+(`mission_closed` : une mission close est gelée), objectif vide (`mission_invalid`). La racine d'une
+sous-mission est celle de son parent, à toute profondeur. `work_external_id` est le `work_key` stable de la tâche (son premier
 identifiant public, le `tool_use_id` de l'appel `Agent`), jamais l'`id` brut, qui passe au `task_id`, ni un
 libellé. Le même transport porte le rôle jusqu'à `WorkObservation.role_id` (§5). Aucun appel bloquant vers
 Core ne retarde le lancement.
@@ -102,7 +104,7 @@ relais, N8 de la Slice 01) : seul `missions.owner_instance_id` nomme le proprié
   même source (`parent_work_external_id`, c.-à-d. `WorkItem.parent_external_id`) ; un parent non retenu laisse
   l'instance sans parent durable. Mission inconnue -> `mission_unknown` ; parent absent ->
   `mission_parent_missing` ; chaîne plus profonde que 16 -> `mission_too_deep`.
-- **Missions.** Sous-mission : parent retenu, même racine. Clôture une fois (`mission_closed` ensuite).
+- **Missions.** Sous-mission : parent retenu et ouvert (`mission_closed` sinon), même racine. Clôture une fois (`mission_closed` ensuite).
   Changement de propriétaire : `transfer_ownership(mission_id, successor, handoff_relation_id=)` exige une
   relation `handoff` de cette mission, non retirée, du propriétaire **courant** vers le successeur, lui-même
   Mission Owner de la mission (`ownership_invalid` sinon) ; la mission et la ligne `mission_owners` sont
@@ -165,7 +167,9 @@ l'attente : rien de durable n'avait été écrit, le rejeu du producteur la reco
 
 | Panne | Comportement |
 | --- | --- |
-| SQLite refuse (verrou, E/S) | `MissionHistoryUnavailable` ; l'historique passe `degraded` (`health()`, diagnostic d'erreur `mission_history.degraded`, une fois par épisode) ; la déclaration rend `degraded`, l'écriture attend (256 au plus, la plus ancienne perdue avec une erreur `mission_history.pending_dropped`) et
+| SQLite refuse (verrou, E/S), lectures comprises | `MissionHistoryUnavailable` ; l'historique passe `degraded` (`health()`, diagnostic d'erreur `mission_history.degraded`, une fois par épisode) ; la déclaration rend `degraded` ; si même la lecture a échoué (panne totale : `find_instance`, ou
+`get_mission` du parent d'une ouverture), c'est le fait brut (fait, identité de travail, parent, ouverture)
+qui attend et que `sweep` rejoue intégralement ; sinon l'écriture prête attend (256 au plus, la plus ancienne perdue avec une erreur `mission_history.pending_dropped`) et
 est rejouée au balayage suivant ; une écriture rejouée que le magasin refuse alors (contrat) est retirée avec
 une erreur `mission_history.unsaved_refused` ; l'API d'écriture (Slices 05/06) lève, l'appelant voit le refus réel |
 | Retour du magasin | premier succès : `mission_history.recovered` (durée, écritures échouées, restantes, comptées après le retrait de l'écriture rejouée). Le diagnostic nomme l'opération réelle (`record_instance`...) |

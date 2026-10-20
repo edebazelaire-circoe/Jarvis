@@ -109,3 +109,10 @@
 - Mutants killed with new tests (`tests/unit/test_mission_history_rework.py`): M18 (transfer to someone other than the handoff successor), M03 (UPDATE on a closed mission refused by `missions_frozen`, plus the behaviour: no transfer, no re-close), M16/M17/M23 (oldest evicted at the 256 / 4096 / 256 bounds, with the diagnostic; new warning `mission_history.discarded_forgotten`), M10 (late replay of a succeeded ephemeral already evicted from Work State stays discarded).
 - N2: an unsaved write refused at replay is removed with an error `mission_history.unsaved_refused`. N3: the adapter names the real operation (`record_instance failed`, not `_transaction`); `recovered` is emitted after the replayed write is removed, so `unsaved` is exact. N4a: an ephemeral retained through the observation path emits `agent.declared` (`ephemeral_retained`).
 - For Slice 05 (not coded): N4b, `health()` is exposed by no route; N5, `sweep` only runs on the next `core.work.updated` — add a periodic sweep or one at start.
+
+## 2026-10-20 — Slice 03 last fix pass after QA re-verification (PASS_WITH_NOTES)
+
+- N1: a declaration made during a total outage (read refused: `find_instance`, or `get_mission` of an opening's parent) is no longer lost: the raw fact (fact, work identity, parent, opening) waits in the same bounded queue (256) and `sweep` replays it entirely. Recovery is now reported once the key has left the queue (`unsaved` exact, 0 in the test). Tests: plain declaration, root opening, sub-mission whose parent read fails.
+- N2: a sub-mission under a closed parent is refused with `mission_closed`, in the service and in the adapter (defence in depth).
+- N3: an ephemeral (or any non-owner) declaration carrying a `MissionOpening` is refused with `ownership_invalid`, never silently ignored.
+- N4: depth-2 opening test (`m1 -> m1.a -> m1.a.b`, root `m1`). Mutant M26 (root taken from `opening.parent_mission_id`) checked by a temporary manual mutation: the test fails; mutation reverted.

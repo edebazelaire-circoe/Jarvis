@@ -23,6 +23,7 @@ from jarvis.domain.mission_history import AGENT_DECLARED_KIND, MissionOpening
 from jarvis.domain.mission_history import DeclarationOutcome as O
 from jarvis.domain.missions import MissionError, MissionStatus
 from jarvis.domain.work_state import WorkStatus
+from jarvis.ports.mission_history import MissionHistoryUnavailable
 from tests.fakes.mission_history import SOURCE, at, fact, instance, mission, observation, open_store, packet, relation
 from tests.unit.test_mission_history_service import Clock, Flaky, Journal
 
@@ -290,3 +291,127 @@ async def test_an_ephemeral_retained_by_observation_is_announced_like_a_declarat
     announced = [data for _level, data in journal.kinds(AGENT_DECLARED_KIND)]
     assert [data["outcome"] for data in announced] == ["ephemeral_pending", "ephemeral_retained"]
     assert announced[-1]["instance_id"] is not None
+
+
+# ------------------------------------------------------------------ revérification QA : N1 à N4
+
+
+class Selective(Flaky):
+    """Le magasin réel, qui refuse seulement les opérations nommées tant que `down` est vrai."""
+
+    def __init__(self, inner, failing: set[str]) -> None:
+        super().__init__(inner)
+        self.failing = failing
+
+    def __getattr__(self, name):
+        attribute = getattr(self.inner, name)
+        if not callable(attribute):
+            return attribute
+
+        async def call(*args, **kwargs):
+            if self.down and name in self.failing:
+                raise MissionHistoryUnavailable(name, "OSError: disk I/O error")
+            return await attribute(*args, **kwargs)
+
+        return call
+
+
+async def _down_world(tmp_path, failing=None):
+    state, inner = await open_store(tmp_path / "jarvis.sqlite3")
+    store = Flaky(inner) if failing is None else Selective(inner, failing)
+    journal = Journal()
+    service = MissionHistoryService(store, work_state=WorkStateStore(clock=Clock()), diagnostics=journal,
+                                    clock=Clock())
+    return state, inner, store, service, journal
+
+
+async def test_a_declaration_made_during_a_total_outage_is_replayed_and_becomes_durable(tmp_path):
+    state, inner, store, service, journal = await _down_world(tmp_path)
+    try:
+        store.down = True  # lectures ET écritures refusées
+        result = await _declare(service, "toolu_1")
+        assert result.outcome is O.DEGRADED and len(service._unsaved) == 1
+        store.down = False
+        assert await service.sweep() == 1
+        stored = await inner.find_instance(SOURCE, "toolu_1")
+        assert stored is not None and stored.declaration == fact("toolu_1")
+        assert not service._unsaved and not service.degraded
+        [(_level, data)] = journal.kinds(MISSION_HISTORY_RECOVERED_KIND)
+        assert data["unsaved"] == 0
+        assert [d["outcome"] for _l, d in journal.kinds(AGENT_DECLARED_KIND)] == ["recorded"]
+    finally:
+        await state.close()
+
+
+async def test_a_mission_opening_made_during_a_total_outage_is_replayed_with_its_owner(tmp_path):
+    state, inner, store, service, _journal = await _down_world(tmp_path)
+    try:
+        store.down = True
+        result = await service.record_declaration(
+            fact("toolu_own", mission_id="m1", owner=True), work_source=SOURCE, work_external_id="toolu_own",
+            mission=MissionOpening(objective="Objectif"))
+        assert result.outcome is O.DEGRADED
+        store.down = False
+        assert await service.sweep() == 1
+        owner = await inner.find_instance(SOURCE, "toolu_own")
+        assert (await inner.get_mission("m1")).owner_instance_id == owner.instance.instance_id
+        assert not service._unsaved
+    finally:
+        await state.close()
+
+
+async def test_a_sub_mission_whose_parent_read_fails_is_replayed(tmp_path):
+    state, inner, store, service, _journal = await _down_world(tmp_path, failing={"get_mission"})
+    try:
+        await service.record_declaration(fact("toolu_own", mission_id="m1", owner=True), work_source=SOURCE,
+                                         work_external_id="toolu_own", mission=MissionOpening(objective="Racine"))
+        store.down = True
+        result = await service.record_declaration(
+            fact("toolu_sub", mission_id="m1.a", owner=True, minute=1), work_source=SOURCE,
+            work_external_id="toolu_sub", mission=MissionOpening(objective="Sous", parent_mission_id="m1"))
+        assert result.outcome is O.DEGRADED and len(service._unsaved) == 1
+        store.down = False
+        assert await service.sweep() == 1
+        assert (await inner.get_mission("m1.a")).root_mission_id == "m1"
+        assert not service._unsaved
+    finally:
+        await state.close()
+
+
+async def test_a_sub_mission_under_a_closed_parent_is_refused(public):
+    service, store, _work, _journal = public
+    await service.record_declaration(fact("toolu_own", mission_id="m1", owner=True), work_source=SOURCE,
+                                     work_external_id="toolu_own", mission=MissionOpening(objective="Racine"))
+    await service.close_mission("m1", MissionStatus.COMPLETED)
+    result = await service.record_declaration(
+        fact("toolu_sub", mission_id="m1.a", owner=True, minute=1), work_source=SOURCE, work_external_id="toolu_sub",
+        mission=MissionOpening(objective="Sous", parent_mission_id="m1"))
+    assert result.outcome is O.REFUSED and result.code == "mission_closed"
+    assert await store.get_mission("m1.a") is None and await store.find_instance(SOURCE, "toolu_sub") is None
+    # Même règle au magasin, défense en profondeur.
+    with pytest.raises(MissionError) as caught:
+        await store.record_instance(instance("sub", mission="m1.b", owner=True, minute=2),
+                                    mission=mission("m1.b", "sub", parent="m1", root="m1", minute=2))
+    assert caught.value.code == "mission_closed"
+
+
+async def test_an_ephemeral_non_owner_declaration_cannot_carry_a_mission_opening(public):
+    service, store, _work, _journal = public
+    result = await service.record_declaration(fact("toolu_e", ephemeral=True), work_source=SOURCE,
+                                              work_external_id="toolu_e", mission=MissionOpening(objective="x"))
+    assert result.outcome is O.REFUSED and result.code == "ownership_invalid"
+    assert service.health().pending_ephemeral == 0
+    assert (await store.counts())["missions"] == 0
+
+
+async def test_a_sub_sub_mission_takes_the_root_of_its_grandparent(public):
+    service, store, _work, _journal = public
+    for minute, (mission_id, parent) in enumerate((("m1", None), ("m1.a", "m1"), ("m1.a.b", "m1.a"))):
+        result = await service.record_declaration(
+            fact(f"toolu_{mission_id}", mission_id=mission_id, owner=True, minute=minute), work_source=SOURCE,
+            work_external_id=f"toolu_{mission_id}",
+            mission=MissionOpening(objective=f"Objectif {mission_id}", parent_mission_id=parent))
+        assert result.outcome is O.RECORDED, result
+    deepest = await store.get_mission("m1.a.b")
+    assert (deepest.parent_mission_id, deepest.root_mission_id) == ("m1.a", "m1")
+    assert [m.mission_id for m in (await store.mission_tree("m1.a.b")).missions] == ["m1", "m1.a", "m1.a.b"]

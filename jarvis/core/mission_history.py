@@ -112,10 +112,21 @@ class _Pending:
 
 @dataclass(slots=True)
 class _Unsaved:
+    """Une écriture d'instance prête, que le magasin a refusée (panne) : rejouée telle quelle."""
+
     instance: AgentInstance
     fact: AgentDeclarationFact | None
     lowered: bool
     mission: Mission | None
+
+
+@dataclass(slots=True)
+class _UnsavedDeclaration:
+    """Une déclaration que le magasin n'a même pas pu lire (panne totale) : rejouée intégralement."""
+
+    fact: AgentDeclarationFact
+    parent_work_external_id: str | None
+    mission: MissionOpening | Mission | None
 
 
 def new_instance_id() -> str:
@@ -145,7 +156,7 @@ class MissionHistoryService:
         self._queue_size = queue_size
         self._health = HistoryHealth()
         self._pending: OrderedDict[WorkKey, _Pending] = OrderedDict()
-        self._unsaved: OrderedDict[WorkKey, _Unsaved] = OrderedDict()
+        self._unsaved: OrderedDict[WorkKey, _Unsaved | _UnsavedDeclaration] = OrderedDict()
         self._discarded: OrderedDict[WorkKey, None] = OrderedDict()
         self._roles: OrderedDict[WorkKey, str] = OrderedDict()
         self._reported: set[tuple[str, ...]] = set()
@@ -227,6 +238,7 @@ class MissionHistoryService:
 
         key: WorkKey = (work_source, work_external_id)
         result = await self._declare(fact, key, parent_work_external_id, mission)
+        self._settled(key, result)
         self._count(result.outcome)
         if result.outcome is DeclarationOutcome.REFUSED:
             self._report(("refused", *key, result.code or ""), MISSION_HISTORY_DECLARATION_REFUSED_KIND,
@@ -236,6 +248,13 @@ class MissionHistoryService:
                                 DeclarationOutcome.EPHEMERAL_RETAINED):
             self._declared(key, fact, result)
         return result
+
+    def _settled(self, key: WorkKey, result: DeclarationResult) -> None:
+        """Le magasin a répondu (autre chose que `degraded`) : plus rien n'attend pour cette clé, état rétabli."""
+
+        if result.outcome is not DeclarationOutcome.DEGRADED:
+            self._unsaved.pop(key, None)
+            self._recover()
 
     def _declared(self, key: WorkKey, fact: AgentDeclarationFact, result: DeclarationResult) -> None:
         """`agent.declared` : une instance connue de Core, par la déclaration ou par l'observation qui la retient."""
@@ -267,10 +286,15 @@ class MissionHistoryService:
             raise MissionError("mission must be a MissionOpening", field="mission")
         root = None
         if opening.parent_mission_id is not None:
-            parent = await self._guard("get_mission", self._repository.get_mission(opening.parent_mission_id))
+            parent = await self._guard("get_mission", self._repository.get_mission(opening.parent_mission_id),
+                                       recover=False)
             if parent is None:
                 raise MissionError(f"parent mission {opening.parent_mission_id} is missing",
                                    code="mission_parent_missing", field="parent_mission_id")
+            if parent.status.is_closed:
+                # Une mission close est gelée : elle ne reçoit plus de sous-mission.
+                raise MissionError(f"parent mission {parent.mission_id} is {parent.status.value}",
+                                   code="mission_closed", field="parent_mission_id")
             root = parent.root_mission_id
         return opening.mission(mission_id=fact.mission_id, owner_instance_id=owner.instance_id,
                                created_at=fact.declared_at, root_mission_id=root)
@@ -284,13 +308,15 @@ class MissionHistoryService:
             # D08 : l'éphémère a bien fini ; son rejeu tardif ne lui donne pas de trace durable.
             return DeclarationResult(DeclarationOutcome.EPHEMERAL_DISCARDED)
         try:
-            stored = await self._guard("find_instance", self._repository.find_instance(*key))
+            stored = await self._guard("find_instance", self._repository.find_instance(*key), recover=False)
             parent_id = None
             if parent_work_external_id is not None and parent_work_external_id != key[1]:
-                parent = await self._guard("find_instance", self._repository.find_instance(key[0],
-                                                                                        parent_work_external_id))
+                parent = await self._guard("find_instance", self._repository.find_instance(
+                    key[0], parent_work_external_id), recover=False)
                 parent_id = parent.instance.instance_id if parent is not None else None
         except MissionHistoryUnavailable as exc:
+            # Panne totale : rien n'a pu être lu. Le fait brut attend et sera rejoué intégralement (`sweep`).
+            self._keep_unsaved(key, _UnsavedDeclaration(fact, parent_work_external_id, mission))
             return DeclarationResult(DeclarationOutcome.DEGRADED, code=exc.code, message=str(exc))
         except (MissionHistoryStoreError, MissionHistoryError) as exc:
             return DeclarationResult(DeclarationOutcome.REFUSED, code=getattr(exc, "code", None), message=str(exc))
@@ -302,6 +328,11 @@ class MissionHistoryService:
             )
         except MissionError as exc:
             return DeclarationResult(DeclarationOutcome.REFUSED, code=exc.code, message=str(exc))
+        if mission is not None and (not fact.mission_owner or fact.mission_id is None):
+            # Une ouverture de mission sans déclaration de Mission Owner est refusée, jamais ignorée en silence
+            # (éphémère comprise).
+            return DeclarationResult(DeclarationOutcome.REFUSED, instance, code="ownership_invalid",
+                                     message="only a mission owner declaration naming its mission opens a mission")
 
         if stored is not None:
             # Rejeu ou redémarrage : identique ou refusé, jamais réécrit (D01). Une éphémère retenue après un
@@ -339,6 +370,7 @@ class MissionHistoryService:
             try:
                 opened = await self._opened_mission(mission, fact, instance)
             except MissionHistoryUnavailable as exc:
+                self._keep_unsaved(key, _UnsavedDeclaration(fact, parent_work_external_id, mission))
                 return DeclarationResult(DeclarationOutcome.DEGRADED, instance, code=exc.code, message=str(exc))
             except (MissionError, MissionHistoryStoreError) as exc:
                 return DeclarationResult(DeclarationOutcome.REFUSED, instance, code=getattr(exc, "code", None),
@@ -466,7 +498,16 @@ class MissionHistoryService:
             if item is not None and await self.observe_work_item(item) is not None:
                 resolved += 1
         for key, unsaved in list(self._unsaved.items()):
-            result = await self._persist(key, unsaved.instance, unsaved.fact, unsaved.lowered, unsaved.mission)
+            if isinstance(unsaved, _UnsavedDeclaration):
+                result = await self._declare(unsaved.fact, key, unsaved.parent_work_external_id, unsaved.mission)
+                if result.outcome is not DeclarationOutcome.DEGRADED:
+                    self._settled(key, result)
+                    self._count(result.outcome)
+                    if result.outcome in (DeclarationOutcome.RECORDED, DeclarationOutcome.EPHEMERAL_PENDING,
+                                          DeclarationOutcome.EPHEMERAL_RETAINED):
+                        self._declared(key, unsaved.fact, result)
+            else:
+                result = await self._persist(key, unsaved.instance, unsaved.fact, unsaved.lowered, unsaved.mission)
             if result.outcome is DeclarationOutcome.DEGRADED:
                 break
             if result.outcome is DeclarationOutcome.REFUSED:

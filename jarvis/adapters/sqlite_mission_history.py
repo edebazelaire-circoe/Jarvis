@@ -200,6 +200,9 @@ def _check_new_mission(conn: sqlite3.Connection, mission: Mission) -> None:
     if parent is None:
         raise MissionError(f"parent mission {mission.parent_mission_id} is missing", code="mission_parent_missing",
                            field="parent_mission_id")
+    if parent.status.is_closed:
+        raise MissionError(f"parent mission {parent.mission_id} is {parent.status.value}: a closed mission is frozen",
+                           code="mission_closed", field="parent_mission_id")
     if parent.root_mission_id != mission.root_mission_id:
         raise MissionError(f"mission {mission.mission_id} declares root {mission.root_mission_id}, its chain ends at "
                            f"{parent.root_mission_id}", field="root_mission_id")
