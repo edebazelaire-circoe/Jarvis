@@ -555,34 +555,41 @@ forcées (contraste élevé de Windows). Le Control Center n'a pas de thème cla
 ## 9. Ce que le cerveau sait des rôles (Slice 07)
 
 Le cerveau vocal ne lit qu'une section générée du registre, `brain_rules()` (« TYPE DE DEMANDE », dans
-`BRAIN_SYSTEM_PROMPT`), plus deux règles voisines de `claude_local.py` (« Tâche éphémère ») et de
-`routing_hook.PROFILE_RULE`. Ce qu'elle enseigne :
+`BRAIN_SYSTEM_PROMPT`), plus des règles voisines de `claude_local.py` (consigne, notification, « Tâche
+éphémère », FORMAT ORAL) et `routing_hook.PROFILE_RULE`. Ce qu'elles enseignent :
 
 - **Catalogue** : chaque rôle proposé (`offered_to_brain`) avec son marqueur `[profil] [rôle]` et son
   `when_relevant`. `qa` : « relecture d'un résultat déjà produit » (un relecteur lancé par le cerveau n'a pas
-  de mission, donc pas de relation QA possible : `relation_no_mission`). Une Work Method se choisit en
-  écrivant son id après le rôle ; l'exemple est tiré du registre (`[general] [research-lead]
-  [comparative-research] …`).
+  de mission, donc pas de relation QA : `relation_no_mission`). Aucun exemple de Work Method : le cerveau ne
+  voit pas leur liste (un exemple à trois crochets a fait écrire `[general] [web-research] [research-lead]` à
+  haiku) ; le choix d'une méthode reste aux Mission Owners.
 - **A. Action claire** : un seul agent du bon rôle, ou une éphémère pour une petite correction évidente. Ni
   Intervieweur ni plan préalable : l'agent juge lui-même s'il lui faut de l'aide (organique, D05/D07/D19).
-- **B. Intention à cadrer** : dossier de mission écrit par le cerveau dans le dossier mémoire du Board actif
-  (chemin absolu transmis à chaque agent), Intervieweur en arrière-plan, et, dès qu'il y a de la matière à
-  trouver, recherches en parallèle qui versent leurs apports au dossier ; la réponse de l'utilisateur repart
-  par `SendMessage` avec en une ligne chaque trouvaille arrivée depuis la dernière question (D20).
-- **C. Plusieurs expertises** : comparer, choisir, faire l'état d'un sujet → un seul `[general]
-  [research-lead]`, qui porte la mission ; chercher et concevoir pendant un cadrage → plusieurs rôles en
-  parallèle sur le même dossier.
-- **Mission Owner** : `[code] [coder]` et `[general] [research-lead]`, lancés par le cerveau, portent leur
-  mission et décident de déléguer, de demander une QA, de mettre en concurrence des approches distinctes
-  (une consigne différente par producteur) ou de passer la main. `[mission]` et `[relais]` sont à eux ; le
-  cerveau n'organise ni ne tranche lui-même une QA, une concurrence ou un relais (il n'a que `relation_read`,
-  `BRAIN_WORKSPACE_PROMPT`) : il le demande au Mission Owner du travail (consigne ou `SendMessage`), ou en
-  lance un seul avec la demande. Une relecture demandée d'un résultat déjà rendu : `[general] [qa]`, ou
-  `[code] [qa]` pour du code.
-- **Restitution** (contrat de la section 5bis) : l'affichage d'un résultat structuré par un Mission Owner est
-  voulu ; le cerveau ne le dit jamais « non demandé », n'en demande pas le retrait, dit la conclusion en une
-  ou deux phrases et que le détail est à l'écran, sans lire un tableau. Sa consigne n'impose plus « un compte
-  rendu court » : la forme du rendu vient de JARVIS (charte, rôle, restitution).
+- **B. Intention à cadrer** : dans son tour, le cerveau n'écrit ni ne vérifie rien. Il compose sans outil le
+  chemin absolu du dossier de mission, `missions/<sujet-court>-<AAAAMMJJ>/mission.md` sous la ligne « Mémoire
+  du Board (boards/<id>/memory) : <chemin absolu> » de son contexte de tour (`board_brief.render_board_memory`),
+  et le donne à l'Intervieweur, qui le crée (`_DOSSIER`), et aux recherches utiles lancées en parallèle, qui y
+  versent leurs apports ; la réponse de l'utilisateur repart par `SendMessage` avec en une ligne chaque trouvaille
+  arrivée depuis la dernière question (D20). Le tour de console `/api/agent/send` ne porte pas ce contexte : le
+  chemin n'y est pas composable.
+- **C. Comparer, choisir, faire l'état d'un sujet** : un seul `[general] [research-lead]`, qui porte la mission.
+- **Second regard, concurrence, relais** : `[code] [coder]` et `[general] [research-lead]`, lancés par le
+  cerveau, sont Mission Owners ; eux seuls organisent une QA, des approches concurrentes (une consigne différente
+  par producteur) ou un relais, et tranchent (le cerveau n'a que `relation_read`, `BRAIN_WORKSPACE_PROMPT`).
+  Travail en cours : le cerveau le demande à son Mission Owner par `SendMessage` ; demande neuve : il lance un
+  seul Mission Owner avec les mots de l'utilisateur. Seule exception : la relecture d'un résultat déjà rendu,
+  hors de toute mission en cours, part directement chez `[general] [qa]` (`[code] [qa]` pour du code).
+- **Restitution** (contrat de la section 5bis), dans la règle de notification, là où se joue le tour de fin :
+  relais en une à trois phrases, la conclusion d'abord ; si l'agent a affiché son résultat (voulu, jamais « non
+  demandé »), la conclusion et « le détail est affiché », sans lire de liste ni de tableau.
+- **Consigne** : les mots exacts de l'utilisateur, l'observable, où chercher, ce qui a été refusé ; jamais la
+  forme, la longueur ni le support du résultat (fichier, format, nombre de phrases) : JARVIS les donne (charte,
+  rôle, restitution). Une consigne « écris le rapport dans un fichier, conclusion en trois phrases » a empêché
+  l'affichage d'un Mission Owner en essai réel.
+- **Une seule longueur orale** (FORMAT ORAL) : une à trois phrases courtes par réponse — lancement, relais,
+  résumé avant accord.
+- **Présentation** : le cerveau lance un seul auteur ; une relecture demandée se fait par l'auteur
+  (`[general] [presentation-review]`), plus par le cerveau.
 - **Passage à l'exécution** : `EXECUTION_GATE_RULE`, inchangée, seulement pour le cas B (après `PRÊT :`,
   accord oral). Aucune porte nouvelle (D21, I-003) ; un test vérifie qu'elle est la seule.
 
@@ -591,6 +598,11 @@ même rôle, même méthode, même loadout `reviewer` que l'alias. `[reviewer]` 
 cerveau mais reste lu (alias) ; condition de retrait :
 [legacy/subagent-role-aliases.md](legacy/subagent-role-aliases.md).
 
-Taille : `BRAIN_SYSTEM_PROMPT` 8 880 → 11 300 caractères, dont `brain_rules()` 2 412 → 4 495 (empreintes dans
-`tests/unit/test_scene_artifacts.py` et `tests/unit/test_subagent_roles.py`). Une conversation ouverte avant ce
-changement garde l'ancienne consigne jusqu'au redémarrage de JARVIS (`--system-prompt-snapshot`).
+**Second mot de rôle.** `[general] [web-research] [research-lead] …` se lit toujours `web-research`, le second
+mot restant dans le libellé (grammaire inchangée, `test_agent_markers_equivalence`). Le hook le consigne :
+`agent.role_applied` au niveau `warning`, `second_role_marker` = le mot, `diagnostics` = `["second_role_marker"]`
+(`agent_markers.second_role_marker`). L'appel n'est jamais refusé.
+
+Taille : `BRAIN_SYSTEM_PROMPT` 8 880 → 11 300 (première passe) → 10 661 caractères après la reprise QA ;
+`brain_rules()` 2 412 → 3 550 (empreinte dans `tests/unit/test_scene_artifacts.py`). Une conversation ouverte
+avant ce changement garde l'ancienne consigne jusqu'au redémarrage de JARVIS (`--system-prompt-snapshot`).
