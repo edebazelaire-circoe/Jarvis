@@ -442,14 +442,17 @@ v.state.confirmPromote='wmc-aaaaaaaaaaaaaaaa';v.render();const confirming=host.i
 await v.promote('wmc-aaaaaaaaaaaaaaaa');
 process.stdout.write(JSON.stringify({confirming,calls,notice:v.state.promoteNotice,html:host.innerHTML,errors,
   promote:v.state.promote}));""", candidates=_candidates())
-    assert "Confirmer la promotion" in out["confirming"] and "ne réécrit pas <code>deep-research@1</code>" in out["confirming"]
+    assert "Confirmer la promotion" in out["confirming"] and "<code>deep-research@1</code> reste" in out["confirming"]
+    # N5 : la confirmation montre ce qui sera publié, principes et relations compris.
+    assert "Principes publiés" in out["confirming"] and "<li>Un principe.</li>" in out["confirming"]
+    assert "Relations à envisager publiées" in out["confirming"]
     post = [c for c in out["calls"] if c[1] == "POST"]
     assert post == [["/api/work-methods/promotions", "POST", {
         "candidate_id": "wmc-aaaaaaaaaaaaaaaa", "expected_version": 1, "method": _candidates()["candidates"][0]["draft"]}]]
     assert "promoted_by" not in post[0][2]  # forcé par le serveur, jamais envoyé par la page
     assert out["calls"][-1][0] == "/api/work-methods/candidates"  # relu après l'écriture
     assert out["notice"]["tone"] == "ok" and "deep-research@2" in out["notice"]["text"]
-    assert "pas encore apposée" in out["notice"]["hint"]
+    assert "prochain sous-agent" in out["notice"]["hint"]
     assert out["promote"] is None and out["errors"] == []
 
 
@@ -497,3 +500,29 @@ process.stdout.write(JSON.stringify({notice:v.state.promoteNotice,calls,errors})
     assert out["notice"]["code"] == "subagent_settings_candidate_stale" and "Rien n’a été écrit" in out["notice"]["text"]
     assert not [c for c in out["calls"] if c[1] == "POST"]
     assert out["errors"][0][0] == "subagent_settings_promotion_failed"
+
+
+def test_a_promotion_not_yet_handed_to_the_hook_is_said(tmp_path):
+    out = run_node(tmp_path, roles_payload(tmp_path), """
+const answering=async(p,i)=>{if(i&&i.method==='POST')return {ok:true,method:{method_id:'deep-research',version:2},snapshot:{written:false,code:'PermissionError'}};return reply(p,i)};
+const v=M.create(host,{fetch:answering,...quiet});await v.load();await v.loadCandidates();v.select('research-lead');
+await v.promote('wmc-aaaaaaaaaaaaaaaa');
+process.stdout.write(JSON.stringify({notice:v.state.promoteNotice}));""", candidates=_candidates())
+    assert out["notice"]["tone"] == "bad" and out["notice"]["code"] == "PermissionError"
+    assert "pas encore transmise aux sous-agents" in out["notice"]["text"]
+
+
+def test_the_effective_promoted_version_is_marked_and_a_partial_reading_is_said(tmp_path):
+    payload = json.loads(json.dumps(roles_payload(tmp_path)))
+    for method in payload["work_methods"]:
+        if method["method_id"] == "deep-research":
+            method["version"] = 2
+            method["provenance"] = {"origin": "promoted", "candidate_id": "wmc-aaaaaaaaaaaaaaaa",
+                                    "promoted_by": "user", "promoted_at": "2026-10-20T10:00:00+00:00",
+                                    "evidence_refs": ["m1"]}
+    candidates = {**_candidates(), "scan": {"partial": True}}
+    out = run_node(tmp_path, payload, """
+const v=M.create(host,{fetch:reply,...quiet});await v.load();await v.loadCandidates();v.select('research-lead');
+process.stdout.write(JSON.stringify({html:host.innerHTML}));""", candidates=candidates)
+    assert "deep-research@2" in out["html"] and "version promue" in out["html"]
+    assert "Lecture partielle" in out["html"]

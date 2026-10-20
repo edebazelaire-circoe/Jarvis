@@ -205,6 +205,27 @@ def check():
                                                              encoding="utf-8")
 
 
+def hook(tool_use_id):
+    """Le vrai hook, comme le CLI l'appelle (`python -m jarvis routing-hook`), sur le runtime du bac à sable."""
+    runtime = state()["runtime"]
+    event = {"hook_event_name": "PreToolUse", "tool_name": "Agent", "tool_use_id": tool_use_id, "session_id": "sb12",
+             "tool_input": {"description": "[general] [research-lead] Comparer deux bibliothèques", "prompt": "Faites-le.",
+                            "subagent_type": "general-purpose", "run_in_background": True}}
+    done = subprocess.run([PY, "-m", "jarvis", "routing-hook", "--runtime-root", runtime], cwd=ORCH,
+                          input=json.dumps(event), capture_output=True, text=True, encoding="utf-8", timeout=60)
+    out = json.loads(done.stdout or "{}")
+    prompt = (out.get("hookSpecificOutput") or {}).get("updatedInput", {}).get("prompt", "")
+    line = next((l for l in prompt.splitlines() if l.startswith("MÉTHODE DE TRAVAIL")), None)
+    print("exit", done.returncode, "| applied:", line)
+    sys.path.insert(0, str(ORCH))
+    from jarvis.runtime import agent_declarations
+    facts = [i.fact for i in agent_declarations.scan(Path(runtime)).facts if i.fact.tool_use_id == tool_use_id]
+    print("fact work_method:", facts[-1].work_method if facts else None)
+    snap = Path(runtime) / "work-methods.json"
+    print("snapshot:", [f"{m['method_id']}@{m['version']}" for m in json.loads(snap.read_text(encoding="utf-8"))["methods"]]
+          if snap.exists() else "absent")
+
+
 def stop():
     st = state()
     for pid in (st.get("cc"), st.get("core")):
@@ -225,5 +246,7 @@ if __name__ == "__main__":
         seed(int(sys.argv[2]), sys.argv[3] if len(sys.argv) > 3 else "approved")
     elif cmd == "check":
         check()
+    elif cmd == "hook":
+        hook(sys.argv[2])
     elif cmd == "stop":
         stop()

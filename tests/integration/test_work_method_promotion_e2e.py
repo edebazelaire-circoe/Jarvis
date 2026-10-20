@@ -49,9 +49,10 @@ async def test_candidates_are_promoted_once_by_a_person_and_survive_a_restart(tm
         with pytest.raises(CoreProtocolError) as refused:
             await client.promote_work_method({"candidate_id": candidate["candidate_id"], "expected_version": 1,
                                               "promoted_by": "research-lead", "method": candidate["draft"]})
-        assert (refused.value.status, refused.value.code) == (403, "work_method_promoter_not_human")
+        assert (refused.value.status, refused.value.code) == (400, "invalid_request")  # jamais lu du corps
         promoted = await client.promote_work_method({"candidate_id": candidate["candidate_id"], "expected_version": 1,
-                                                     "promoted_by": "user", "method": candidate["draft"]})
+                                                     "method": candidate["draft"]})
+        assert promoted["method"]["provenance"]["promoted_by"] == "user"
         assert promoted["method"]["provenance"]["origin"] == "promoted"
     finally:
         await _down(core, server, client)

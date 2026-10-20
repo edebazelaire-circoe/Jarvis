@@ -9,12 +9,13 @@ Handoff jarvis-organic-agent-orchestration. Servies par `LocalProtocolServer`
 | --- | --- | --- |
 | GET | `/v1/work-methods` | `{"methods": [WorkMethod], "latest": {method_id: key}}` (livrées + promues) |
 | GET | `/v1/work-methods/candidates` | `{"candidates": [...], "scan": {...}, "thresholds": {...}}`, recalculés depuis l'historique |
-| POST | `/v1/work-methods/promotions` | `{candidate_id, expected_version, promoted_by, method}` → `{"method"}` |
+| POST | `/v1/work-methods/promotions` | `{candidate_id, expected_version, method}` → `{"method"}` |
 
-La promotion n'est appelée que par le Control Center, pour une personne
-(`promoted_by="user"`) ; aucun outil d'agent ne l'atteint. Refus :
+Le promoteur n'est jamais lu du corps : il est fixé ici (`PROMOTER = "user"`). La route
+est relayée par le Control Center ; le modèle de menace (ce qui est défendu, ce qui ne
+l'est pas) est dans `docs/work-methods.md` › *Promotion*. Refus :
 `{"error": {"code", "message"}}` — `invalid_request` 400, `work_method_candidate_unknown` 404,
-`work_method_revision_conflict` / `work_method_version_conflict` 409, `work_method_promoter_not_human` 403,
+`work_method_revision_conflict` / `work_method_version_conflict` 409,
 autre refus de contrat (`work_method_*`) 422, magasin indisponible 503, défaut 500. Chaque refus est journalisé
 (`core.work_methods.route_failed`) avec son code, jamais le corps.
 """
@@ -35,7 +36,9 @@ from jarvis.protocol.capture_routes import error_response
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 PREFIX = "/v1/work-methods"
 ROUTE_FAILED_KIND = "core.work_methods.route_failed"
-_PROMOTION_KEYS = frozenset({"candidate_id", "expected_version", "promoted_by", "method"})
+_PROMOTION_KEYS = frozenset({"candidate_id", "expected_version", "method"})
+#: Le promoteur de toute promotion reçue ici : une personne, posée par le serveur, jamais par le corps.
+PROMOTER = "user"
 _STATUS_OF = {
     "work_method_candidate_unknown": 404,
     "work_method_revision_conflict": 409,
@@ -118,7 +121,6 @@ class WorkMethodProtocolRoutes:
             raise ValueError(f"body keys must be exactly {sorted(_PROMOTION_KEYS)}")
         try:
             check_id("candidate_id", body["candidate_id"], required=True)
-            check_id("promoted_by", body["promoted_by"], required=True)
         except (TypeError, ValueError) as exc:
             raise ValueError(str(exc)) from exc
         expected = body["expected_version"]
@@ -127,5 +129,5 @@ class WorkMethodProtocolRoutes:
         if not isinstance(body["method"], dict):
             raise ValueError("method must be an object")
         method = await self._service.promote(body["candidate_id"], body["method"], expected_version=expected,
-                                             promoted_by=body["promoted_by"])
+                                             promoted_by=PROMOTER)
         return web.json_response({"method": method.to_payload()})

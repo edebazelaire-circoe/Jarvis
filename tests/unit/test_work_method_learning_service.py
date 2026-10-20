@@ -67,7 +67,7 @@ async def test_candidates_are_read_from_real_history_rows(learning):
     assert candidate.signature.relation_kinds == ("delegation", "adversary", "qa")
     assert (candidate.uses, candidate.positive) == (3, 3)
     assert reading.report.to_payload() == {"root_missions": 3, "missions": 3, "uses": 3, "skipped": {},
-                                           "truncated": False}
+                                           "truncated": False, "partial": False}
     assert learning.journal.kinds(CANDIDATES_READ_KIND)[-1]["eligible"] == 1
 
 
@@ -169,10 +169,14 @@ async def test_the_core_routes_read_and_promote(learning, core_client):
     body = await response.json()
     assert body["thresholds"]["min_uses"] == 3 and body["scan"]["uses"] == 3
     candidate = next(c for c in body["candidates"] if c["status"] == "candidate")
-    good = {"candidate_id": candidate["candidate_id"], "expected_version": 1, "promoted_by": "user",
-            "method": candidate["draft"]}
+    good = {"candidate_id": candidate["candidate_id"], "expected_version": 1, "method": candidate["draft"]}
     refusals = [
-        ({**good, "promoted_by": "qa"}, 403, "work_method_promoter_not_human"),
+        # N3 : le promoteur n'est jamais lu du corps ; le nommer est une enveloppe hors contrat.
+        ({**good, "promoted_by": "user"}, 400, "invalid_request"),
+        ({**good, "promoted_by": "qa"}, 400, "invalid_request"),
+        # N5 : la promotion publie la méthode de base du candidat, rien d'autre.
+        ({**good, "method": {**candidate["draft"], "method_id": "quick-research"}}, 422,
+         "work_method_not_candidate_base"),
         ({**good, "expected_version": 0}, 409, "work_method_revision_conflict"),
         ({**good, "method": {**candidate["draft"], "steps": ["a", "b"]}}, 422, "work_method_is_not_a_plan"),
         ({**good, "candidate_id": "wmc-ffffffffffffffff"}, 404, "work_method_candidate_unknown"),
@@ -192,7 +196,7 @@ async def test_the_core_routes_read_and_promote(learning, core_client):
     assert catalogue["latest"]["deep-research"] == "deep-research@2"
     assert (await core_client.get("/v1/work-methods?x=1")).status == 400
     failed = learning.journal.kinds("core.work_methods.route_failed")
-    assert {item["code"] for item in failed} >= {"work_method_promoter_not_human", "invalid_request"}
+    assert {item["code"] for item in failed} >= {"work_method_not_candidate_base", "invalid_request"}
 
 
 # ------------------------------------------------------------------ Control Center
@@ -247,7 +251,7 @@ async def test_the_control_center_promotes_for_the_user_only_from_its_page(cente
     assert response.status == 400 and view.promotions == []
     response = await client.post("/api/work-methods/promotions", json=body, headers=page)
     assert response.status == 200 and (await response.json())["ok"] is True
-    assert view.promotions == [{**body, "promoted_by": "user"}]
+    assert view.promotions == [body]  # le promoteur est posé par Core, jamais par la page ni le relais
     # Une autre origine locale est refusée par la garde du préfixe.
     response = await client.post("/api/work-methods/promotions", json=body,
                                  headers={"Origin": "http://127.0.0.1:1", "Sec-Fetch-Site": "same-origin"})

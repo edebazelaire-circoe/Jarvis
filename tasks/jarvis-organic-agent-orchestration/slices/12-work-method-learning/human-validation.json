@@ -3,17 +3,18 @@
   "checks": [
     {
       "id": "HV-ORG-12-01",
-      "description": "Promote a real Work Method candidate yourself from Settings > Sous-agents and confirm nothing was promoted before your action, the evidence and thresholds are understandable, and the new version is published without rewriting the old one.",
+      "description": "Promote a real Work Method candidate yourself from Settings > Sous-agents and confirm nothing was promoted before your action, the evidence and thresholds are understandable, and the new version is published without rewriting the old one, and that the next sub-agent of that role receives the promoted version.",
       "status": "pending",
       "evidence": null,
       "how_to_verify": {
-        "where": "Votre Control Center habituel (http://127.0.0.1:17654/) une fois la branche fusionnée et Core relancé par vous (migration v11 après sauvegarde jarvis.sqlite3.v10.bak) ; ou un bac à sable lancé depuis le worktree par evidence/sandbox_trial.py (start, seed 3, puis la page http://127.0.0.1:31654/, et stop).",
+        "where": "Votre Control Center habituel (http://127.0.0.1:17654/) une fois la branche fusionnée et Core relancé par vous : votre base est en v9, ce seul redémarrage applique v10 puis v11 après UNE sauvegarde jarvis.sqlite3.v9.bak (aucun .v10.bak) ; retour arrière : docs/local-data.md (restaurer .v9.bak, historique et versions promues depuis perdus). Ou un bac à sable lancé depuis le worktree par evidence/sandbox_trial.py (start, seed 3, page http://127.0.0.1:31654/, stop).",
         "steps": [
           "Avant toute action, ouvrez GET /api/work-methods : seules les versions livrées (…@1) y figurent.",
           "Ouvrez Réglages > Sous-agents > « Direction de recherche » et lisez le bloc « Approches observées » : statut, raison, comptes (missions closes, bonnes, mauvaises, non notées) et nombre de preuves.",
           "Vérifiez qu'une approche revenue une seule fois, ou sans verdict QA, est « En observation » et n'offre aucun bouton.",
           "Sur une approche « Candidate », cliquez « Promouvoir en <id>@<version> », lisez la confirmation (version publiée, relations, ancienne version non réécrite), puis confirmez.",
-          "Vérifiez la notice « Méthode … publiée », le statut « Promue », puis GET /api/work-methods : la nouvelle version est là, l'ancienne aussi, avec provenance promoted, promoted_by user et des evidence_refs (ids de missions et de relations QA)."
+          "Vérifiez la notice « Méthode … publiée », le statut « Promue », puis GET /api/work-methods : la nouvelle version est là, l'ancienne aussi, avec provenance promoted, promoted_by user et des evidence_refs (ids de missions et de relations QA).",
+          "Lancez ensuite un sous-agent de ce rôle (par exemple « [general] [research-lead] … ») : sa consigne porte « MÉTHODE DE TRAVAIL : … (deep-research@2) » et Réglages > Sous-agents montre la méthode « version promue »."
         ],
         "expected": "Aucune promotion sans votre clic confirmé ; les preuves et les seuils se comprennent ; la nouvelle version s'ajoute sans écraser l'ancienne.",
         "reference_captures": [
@@ -21,7 +22,7 @@
           "evidence/02-confirmation.png",
           "evidence/03-promue.png"
         ],
-        "note": "Une version promue n'est pas encore apposée par le hook sur les consignes des sous-agents (docs/work-methods.md › État)."
+        "note": "Une méthode neuve (candidate sans méthode de base) ne se promeut que par l'API et n'est rattachée à aucun rôle (docs/work-methods.md › Application)."
       }
     }
   ],

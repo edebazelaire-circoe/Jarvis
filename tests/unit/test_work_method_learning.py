@@ -322,3 +322,52 @@ def test_the_declaration_fact_carries_the_method_only_when_one_was_applied():
         replace(plain, work_method="quick-research")
     with pytest.raises(MissionHistoryError):
         replace(plain, work_method_chosen=True)
+
+
+# ------------------------------------------------------------------ reprise QA : seuils exacts (M09, M10, M11)
+
+
+def test_two_approved_uses_are_not_enough():
+    """M09 : `min_uses` est 3 ; deux réussites approuvées restent en observation."""
+
+    candidate = only(detect_candidates(uses_of(tree("m1"), tree("m2")), CATALOGUE))
+    assert (candidate.status, candidate.reason, candidate.positive) == (S.OBSERVING, "not_enough_uses", 2)
+
+
+def test_two_good_for_one_bad_is_insufficient_quality():
+    """M10 : 2 / 3 = 0,67 < 0,75 ; refusé, jamais proposé."""
+
+    candidate = only(detect_candidates(uses_of(tree("m1"), tree("m2"), tree("m3", qa=(O.REJECTED,))), CATALOGUE))
+    assert (candidate.status, candidate.reason) == (S.INSUFFICIENT_QUALITY, "positive_share_below_threshold")
+    assert (candidate.positive, candidate.negative) == (2, 1)
+
+
+def test_one_good_and_two_unrated_is_observing():
+    """M11 : `min_positive` est 2 ; les usages non notés ne comptent pas comme bons."""
+
+    trees = [tree("m1"), tree("m2", qa=(O.FINDINGS,)), tree("m3", qa=(O.FINDINGS,))]
+    candidate = only(detect_candidates(uses_of(*trees), CATALOGUE))
+    assert (candidate.status, candidate.reason) == (S.OBSERVING, "not_enough_quality_evidence")
+    assert (candidate.positive, candidate.unrated) == (1, 2)
+
+
+# ------------------------------------------------------------------ reprise QA N5 : contenu relié au candidat
+
+
+def test_a_promotion_publishes_the_candidate_base_method_only():
+    candidate = _eligible()
+    other = {**candidate.draft, "method_id": "comparative-research", "version": 2}
+    with pytest.raises(MethodError) as caught:
+        _promote(candidate, other, latest=CATALOGUE["comparative-research"])
+    assert caught.value.code == "work_method_not_candidate_base"
+
+
+def test_a_candidate_without_base_cannot_revise_an_existing_method():
+    trees = [tree(f"m{n}", role="coder", method=None, kinds=("delegation",)) for n in range(3)]
+    candidate = only(detect_candidates(uses_of(*trees), CATALOGUE))
+    payload = {**CATALOGUE["bug-investigation"].to_payload(), "version": 2}
+    payload.pop("provenance")
+    with pytest.raises(MethodError) as caught:
+        promoted_method(candidate, payload, latest=CATALOGUE["bug-investigation"], expected_version=1,
+                        promoted_by="user", promoted_at=NOW)
+    assert caught.value.code == "work_method_not_candidate_base"

@@ -204,13 +204,15 @@ class ScanReport:
     uses: int = 0
     skipped: dict[str, int] = field(default_factory=dict)
     truncated: bool = False
+    #: Vrai quand une partie de l'historique n'a pas pu être lue (ligne illisible) : le reste est rendu.
+    partial: bool = False
 
     def skip(self, reason: str) -> None:
         self.skipped[reason] = self.skipped.get(reason, 0) + 1
 
     def to_payload(self) -> dict[str, Any]:
         return {"root_missions": self.root_missions, "missions": self.missions, "uses": self.uses,
-                "skipped": dict(sorted(self.skipped.items())), "truncated": self.truncated}
+                "skipped": dict(sorted(self.skipped.items())), "truncated": self.truncated, "partial": self.partial}
 
 
 def uses_from_tree(tree: MissionTree, report: ScanReport | None = None) -> tuple[MethodUse, ...]:
@@ -374,7 +376,9 @@ def promoted_method(
     - `payload` est une méthode sans provenance (posée ici), sans clé de plan (`work_method_is_not_a_plan`) ;
     - révision optimiste : `expected_version` est la dernière version que la personne a vue (0 : aucune) ;
       elle doit être l'actuelle, et la nouvelle version la suit exactement (`check_revision`) ;
-    - la méthode s'applique au rôle du candidat.
+    - la méthode s'applique au rôle du candidat ;
+    - la méthode publiée est celle du candidat : sa méthode de base (`method_id` imposé), ou, sans base, une
+      méthode neuve dont l'id n'existe pas encore (`work_method_not_candidate_base` sinon).
     """
 
     if promoted_by not in HUMAN_PROMOTERS:
@@ -394,6 +398,11 @@ def promoted_method(
             origin=MethodOrigin.PROMOTED, candidate_id=candidate.candidate_id, promoted_by=promoted_by,
             promoted_at=promoted_at, evidence_refs=candidate.evidence_refs).to_payload()}
     method = WorkMethod.from_payload(payload)
+    base = candidate.signature.method_id
+    if (base is not None and method.method_id != base) or (base is None and latest is not None):
+        expected = base or "a method id that does not exist yet"
+        raise MethodError(f"candidate {candidate.candidate_id} publishes {expected}, not {method.method_id}",
+                          code="work_method_not_candidate_base")
     current = latest.version if latest is not None else 0
     if type(expected_version) is not int or expected_version != current:
         raise MethodError(f"{method.method_id} is now at version {current}, not {expected_version}: reload the "

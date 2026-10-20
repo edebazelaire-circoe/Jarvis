@@ -10,10 +10,13 @@
   (`WorkMethodRepository.publish`, append-only). Un verrou sérialise les
   promotions de ce processus ; la clé primaire refuse une course restante.
 
-Aucun agent n'atteint `promote` : seule la route Core `POST /v1/work-methods/promotions`
-l'appelle, relayée par le Control Center pour l'utilisateur (`promoted_by="user"`).
-Une version promue n'est pas encore apposée par le hook (suite documentée,
-`docs/work-methods.md` › *État*). Journal : `work_methods.candidates_read`,
+Seule la route Core `POST /v1/work-methods/promotions` appelle `promote`, avec un
+promoteur fixé côté serveur (`user`), relayée par le Control Center. Le Control Center
+recopie ensuite les versions promues dans l'instantané que lit le hook
+(`work_methods_snapshot`), qui appose la dernière. Modèle de menace :
+`docs/work-methods.md` › *Promotion*. Lecture tolérante : un arbre de mission dont une
+ligne est illisible est écarté avec un diagnostic (`work_methods.history_unreadable`) et
+la lecture est rendue `partial`. Journal : `work_methods.candidates_read`,
 `work_methods.promoted`, `work_methods.promotion_refused`.
 """
 
@@ -30,15 +33,14 @@ from jarvis.domain.work_method_learning import (
     uses_from_tree,
 )
 from jarvis.domain.work_methods import BUILTIN_METHODS, MethodError, WorkMethod, latest_methods
-from jarvis.ports.mission_history import MissionHistoryRepository
+from jarvis.ports.mission_history import MissionHistoryRepository, MissionHistoryStoreError, MissionHistoryUnavailable
 from jarvis.ports.v2 import Clock, DiagnosticSink
 from jarvis.ports.work_methods import WorkMethodRepository
 
 CANDIDATES_READ_KIND = "work_methods.candidates_read"
 PROMOTED_KIND = "work_methods.promoted"
 PROMOTION_REFUSED_KIND = "work_methods.promotion_refused"
-#: Missions lues pour retrouver les racines récentes (borne de l'adaptateur).
-_MISSION_LIST_LIMIT = 200
+HISTORY_UNREADABLE_KIND = "work_methods.history_unreadable"
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,15 +85,25 @@ class WorkMethodLearningService:
         versions, promoted = await self._all_versions()
         report = ScanReport()
         uses = []
-        roots: list[str] = []
-        for mission in await self._history.list_missions(limit=_MISSION_LIST_LIMIT):
-            if mission.root_mission_id not in roots:
-                roots.append(mission.root_mission_id)
+        # Ids seulement (aucune ligne décodée) : une ligne illisible ne peut pas faire échouer la liste.
+        roots = list(await self._history.recent_root_mission_ids(limit=self.thresholds.scan_root_missions + 1))
         if len(roots) > self.thresholds.scan_root_missions:
             report.truncated = True
             roots = roots[:self.thresholds.scan_root_missions]
         for root in roots:
-            tree = await self._history.mission_tree(root)
+            try:
+                tree = await self._history.mission_tree(root)
+            except MissionHistoryUnavailable:
+                raise  # the store itself refused: the whole read fails with its cause (503)
+            except MissionHistoryStoreError as exc:
+                # Une ligne illisible écarte son arbre, jamais toute la lecture (reprise QA N7) ; rien n'est réparé.
+                report.skip("history_unreadable")
+                report.partial = True
+                self._emit(HISTORY_UNREADABLE_KIND, "historique illisible : arbre de mission écarté des candidats",
+                           level="error", data={"root_mission_id": root, "table": getattr(exc, "table", None),
+                                                "key": str(getattr(exc, "key", ""))[:128],
+                                                "error": str(exc)[:300]})
+                continue
             if tree is None:  # intentional: a root listed a moment ago and gone now cannot happen (no delete); counted
                 report.skip("root_missing")
                 continue
@@ -125,7 +137,7 @@ class WorkMethodLearningService:
                 self._emit(PROMOTION_REFUSED_KIND, f"promotion de Work Method refusée : {exc.code}",
                            level="warning", data={"candidate_id": str(candidate_id)[:64], "code": exc.code})
                 raise
-        self._emit(PROMOTED_KIND, f"Work Method {published.key} promue par une personne", level="info",
+        self._emit(PROMOTED_KIND, f"Work Method {published.key} promue (promoteur posé par Core : {published.provenance.promoted_by})", level="info",
                    data={"candidate_id": candidate_id, "method": published.key,
                          "promoted_by": published.provenance.promoted_by,
                          "evidence_refs": len(published.provenance.evidence_refs)})

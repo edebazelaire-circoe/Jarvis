@@ -50,7 +50,9 @@ from typing import Any
 
 from jarvis.domain import routing
 from jarvis.domain.memory_settings import LOADOUT_ROLES
-from jarvis.domain.work_methods import BUILTIN_METHODS, builtin_method, check_role_methods, is_method_id, render_method
+from jarvis.domain.work_methods import (
+    BUILTIN_METHODS, WorkMethod, builtin_method, check_role_methods, is_method_id, render_method,
+)
 from jarvis.domain.work_methods import ROLE_ID as _METHOD_ROLE_ID
 
 #: Préfixe des prompts éditables qui portent les instructions d'un rôle.
@@ -605,19 +607,37 @@ def default_method_text(role: SubagentRole) -> str | None:
     return method_text(role, None)
 
 
-def method_text(role: SubagentRole, method_id: str | None) -> str | None:
+def effective_method(role: SubagentRole, method_id: str | None,
+                     promoted: Mapping[str, WorkMethod] | None = None) -> WorkMethod | None:
+    """La version apposée de `method_id` pour `role` (Slice 12) : la dernière version promue de cette méthode
+    (`promoted`, `{method_id: WorkMethod}` lu dans l'instantané `work_methods_snapshot`) si elle s'applique au
+    rôle, sinon la version livrée, ou `None`. Seul un id que le rôle cite arrive ici : une méthode neuve, citée
+    par aucun rôle, n'est jamais apposée."""
+
+    if not method_id:
+        return None
+    candidate = (promoted or {}).get(method_id)
+    if isinstance(candidate, WorkMethod) and candidate.method_id == method_id and candidate.applies_to(role.id):
+        return candidate
+    return builtin_method(method_id)
+
+
+def method_text(role: SubagentRole, method_id: str | None,
+                promoted: Mapping[str, WorkMethod] | None = None) -> str | None:
     """Le texte de la Work Method `method_id` si le rôle la permet, sinon celui de sa méthode par défaut, ou `None`.
 
     Le choix d'une méthode par l'appelant (`agent_orchestration.decide_method`, Slice 05) ne peut nommer qu'une
     méthode permise au rôle ; tout autre id retombe sur le défaut, jamais sur une méthode étrangère au rôle.
+    La version est celle d'`effective_method` : la dernière promue quand elle existe (Slice 12).
     """
 
     chosen = method_id if method_id in role.work_methods else role.default_work_method
-    method = builtin_method(chosen) if chosen else None
+    method = effective_method(role, chosen, promoted)
     return render_method(method) if method is not None else None
 
 
-def role_brief(role: SubagentRole, overrides: Mapping[str, str] | None = None, *, method: str | None = None) -> str:
+def role_brief(role: SubagentRole, overrides: Mapping[str, str] | None = None, *, method: str | None = None,
+               promoted: Mapping[str, WorkMethod] | None = None) -> str:
     """Ce que le hook appose pour un rôle : ses instructions (éditables), ses capacités, sa Work Method.
 
     La méthode est celle que l'appelant a choisie (`method`, si le rôle la permet), sinon celle par défaut.
@@ -627,20 +647,20 @@ def role_brief(role: SubagentRole, overrides: Mapping[str, str] | None = None, *
     """
 
     parts = [f"{ROLE_MARK} ({role.name})\n{instructions_for(role, overrides).strip()}", capabilities_text(role)]
-    text = method_text(role, method)
+    text = method_text(role, method, promoted)
     if text:
         parts.append(text)
     return "\n\n".join(parts)
 
 
 def with_role_instructions(prompt: str, marker: object, overrides: Mapping[str, str] | None = None, *,
-                           method: str | None = None) -> str | None:
+                           method: str | None = None, promoted: Mapping[str, WorkMethod] | None = None) -> str | None:
     """`prompt` suivi de ce que le rôle appose (`role_brief`), ou `None` s'il n'y a rien à ajouter. Jamais doublé."""
 
     role = role_for(marker)
     if role is None or ROLE_MARK in prompt:
         return None
-    return f"{prompt.rstrip()}\n\n{role_brief(role, overrides, method=method)}"
+    return f"{prompt.rstrip()}\n\n{role_brief(role, overrides, method=method, promoted=promoted)}"
 
 
 # ------------------------------------------------------------- prompt du cerveau

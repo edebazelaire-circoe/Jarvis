@@ -196,7 +196,7 @@
       const list=(title,items)=>Array.isArray(items)&&items.length?`<div class="sar-mlist"><span class="sar-mlabel">${esc(title)}</span><ul>${items.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></div>`:'';
       const rels=Array.isArray(m.useful_relations)?m.useful_relations:[];
       const rel=rels.length?`<div class="sar-mlist"><span class="sar-mlabel">Relations à envisager</span><p>${rels.map(k=>esc(relationLabel(k))).join(', ')}</p></div>`:'';
-      return `<li class="sar-method${isDefault?' default':''}"><details><summary><span class="sar-mname">${esc(m.name)}</span>${isDefault?chip('par défaut, apposée','ok'):chip('suggestion')}<code class="sar-mkey">${esc(m.method_id)}@${esc(m.version)}</code></summary>
+      return `<li class="sar-method${isDefault?' default':''}"><details><summary><span class="sar-mname">${esc(m.name)}</span>${isDefault?chip('par défaut, apposée','ok'):chip('suggestion')}${m.provenance&&m.provenance.origin==='promoted'?chip('version promue','ok','Promue par une personne depuis un candidat ; c’est la version que JARVIS appose.'):''}<code class="sar-mkey">${esc(m.method_id)}@${esc(m.version)}</code></summary>
         <p class="sar-msummary">${esc(m.summary)}</p>${list('Principes',m.principles)}${list('Critères de qualité',m.quality_checks)}${rel}
         <p class="hint">Des réflexes, pas des étapes : l'agent organise son travail selon ce qu'il découvre.</p></details></li>`;
     }
@@ -223,7 +223,11 @@
       let action='';
       if(c.status==='candidate'&&draft){
         action=`<div class="sar-actions"><button type="button" class="action${confirming?' primary':''}" data-sar-promote="${esc(c.candidate_id)}"${busy?' disabled':''}>${confirming?'Confirmer la promotion':'Promouvoir en '+esc(key)}</button>
-          ${confirming?`<button type="button" class="action" data-sar-promote-cancel>Annuler</button><span class="hint">La version <code>${esc(key)}</code> sera publiée, avec ses relations à envisager : ${esc((draft.useful_relations||[]).map(relationLabel).join(', ')||'aucune')}. Elle ne réécrit pas <code>${esc(c.base_method_key||'')}</code> et n’est pas encore apposée sur les consignes.</span>`:''}</div>`;
+          ${confirming?`<button type="button" class="action" data-sar-promote-cancel>Annuler</button>`:''}</div>
+          ${confirming?`<div class="sar-mlist" data-sar-promote-preview><p class="hint">La version <code>${esc(key)}</code> sera publiée telle quelle ; <code>${esc(c.base_method_key||'')}</code> reste, rien n’est réécrit. Elle sera apposée aux prochains sous-agents des rôles qui citent cette méthode.</p>
+            <span class="sar-mlabel">Principes publiés</span><ul>${(draft.principles||[]).map(t=>`<li>${esc(t)}</li>`).join('')}</ul>
+            ${(draft.quality_checks||[]).length?`<span class="sar-mlabel">Critères de qualité publiés</span><ul>${draft.quality_checks.map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`:''}
+            <span class="sar-mlabel">Relations à envisager publiées</span><p>${esc((draft.useful_relations||[]).map(relationLabel).join(', ')||'aucune')}</p></div>`:''}`;
       }else if(c.status==='candidate'){
         action='<p class="hint">Aucune méthode de base : la promotion demande d’écrire un nom, un résumé et des principes, ce que cet écran ne fait pas encore.</p>';
       }
@@ -239,8 +243,9 @@
       else if(l.phase==='error')body=`<div class="notice bad">Approches observées illisibles : ${esc(l.error&&l.error.message)}${codeLine(l.error&&l.error.code)}</div><div class="sar-actions"><button type="button" class="action" data-sar-learned-retry>Réessayer</button></div>`;
       else{
         const mine=l.items.filter(c=>c&&c.role_id===role.id);
-        body=mine.length?`<ul class="sar-methods">${mine.map(c=>candidateHtml(c,t)).join('')}</ul>`
-          :'<p class="hint">Aucune mission close de ce rôle dans l’historique récent.</p>';
+        const partial=l.scan&&l.scan.partial?'<div class="notice">Lecture partielle : une partie de l’historique est illisible et a été écartée (voir le journal des erreurs).</div>':'';
+        body=partial+(mine.length?`<ul class="sar-methods">${mine.map(c=>candidateHtml(c,t)).join('')}</ul>`
+          :'<p class="hint">Aucune mission close de ce rôle dans l’historique récent.</p>');
       }
       const n=st.promoteNotice;
       const notice=n?`<div class="notice ${n.tone==='bad'?'bad':'ok'}" data-sar-promote-notice>${esc(n.text)}${n.hint?`<div class="hint">${esc(n.hint)}</div>`:''}${codeLine(n.code)}</div>`:'';
@@ -469,7 +474,11 @@
         if(st.confirmPromote!==id){st.confirmPromote=id;st.promoteNotice=null;render();const again=host.querySelector(`[data-sar-promote="${id}"]`);if(again&&again.focus)again.focus();return}
         promote(id);
       }));
-      const cancel=host.querySelector('[data-sar-promote-cancel]');if(cancel)cancel.addEventListener('click',()=>{st.confirmPromote=null;render()});
+      const cancel=host.querySelector('[data-sar-promote-cancel]');if(cancel)cancel.addEventListener('click',()=>{
+        const id=st.confirmPromote;st.confirmPromote=null;render();
+        /* Le focus revient au bouton de promotion, jamais perdu en haut de page. */
+        const back=id&&host.querySelector(`[data-sar-promote="${id}"]`);if(back&&back.focus)back.focus();
+      });
     }
 
     /* --- E/S ------------------------------------------------------------- */
@@ -507,6 +516,7 @@
         if(st.destroyed)return;
         if(!data||!Array.isArray(data.candidates)){const e=new Error('réponse sans liste de candidats');e.code='subagent_settings_payload_invalid';throw e}
         st.learned={phase:'ready',error:null,items:data.candidates.filter(c=>c&&typeof c==='object'),
+          scan:data.scan&&typeof data.scan==='object'?data.scan:{},
           thresholds:data.thresholds&&typeof data.thresholds==='object'?data.thresholds:{}};
         logInfo('subagent_settings.candidates_loaded',{candidates:data.candidates.length});
       }catch(e){
@@ -529,10 +539,14 @@
       const key=`${draft.method_id}@${draft.version}`;
       st.promote={candidateId,startedAt:now()};st.confirmPromote=null;st.promoteNotice=null;render();
       try{
-        await fetchJson(PROMOTIONS_PATH,{method:'POST',headers:{'Content-Type':'application/json'},
+        const result=await fetchJson(PROMOTIONS_PATH,{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({candidate_id:candidateId,expected_version:Number(draft.version)-1,method:draft})});
         logInfo('subagent_settings.method_promoted',{candidate_id:candidateId,method:key});
-        st.promoteNotice={tone:'ok',text:`Méthode ${key} publiée.`,hint:'Elle est enregistrée et versionnée ; elle n’est pas encore apposée sur les consignes des sous-agents.'};
+        const snap=result&&result.snapshot;
+        st.promoteNotice=snap&&snap.written===false
+          ?{tone:'bad',code:snap.code||'',text:`Méthode ${key} publiée, mais pas encore transmise aux sous-agents.`,hint:'Le prochain sous-agent recevra encore l’ancienne version ; la transmission est retentée à la prochaine lecture des Work Methods ou au redémarrage du Control Center.'}
+          :{tone:'ok',text:`Méthode ${key} publiée.`,hint:'Elle s’applique au prochain sous-agent lancé avec un rôle qui cite cette méthode.'};
+        try{await refreshRoles()}catch(again){logError('subagent_settings_refresh_failed',again,{candidate_id:candidateId})}
       }catch(e){
         logError('subagent_settings_promotion_failed',e,{candidate_id:candidateId,code:e.code||null});
         st.promoteNotice=UNKNOWN_OUTCOME.has(e.code)
@@ -542,6 +556,8 @@
       }finally{
         st.promote=null;announce(st.promoteNotice&&st.promoteNotice.text);
         await loadCandidates();
+        /* Le focus va sur la notice qui dit ce qui s'est passé. */
+        const n=host.querySelector&&host.querySelector('[data-sar-promote-notice]');if(n&&n.focus){n.tabIndex=-1;n.focus()}
       }
     }
     async function refreshRoles(){

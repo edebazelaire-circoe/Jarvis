@@ -522,7 +522,11 @@ liste les approches de ce rôle : statut (`Candidate`, `En observation`, `Issues
 par la méthode`, `Promue`), raison réelle, comptes et nombre de preuves. Une candidate qui a un brouillon offre
 « Promouvoir en `<id>@<version>` », confirmé en deux temps ; l'écran poste
 `POST /api/work-methods/promotions` `{candidate_id, expected_version: version - 1, method: draft}` (jamais
-`promoted_by`), puis relit les candidats. Refus : texte et code du serveur, relecture quand la vue est
+`promoted_by`), puis relit les candidats et le registre. La confirmation montre les principes, critères et
+relations publiés ; « Annuler » rend le focus au bouton de promotion, et après une promotion le focus va sur
+la notice (qui dit aussi « pas encore transmise aux sous-agents » quand l'instantané n'a pas pu être écrit).
+Une méthode promue s'affiche dans sa version effective avec l'étiquette « version promue » ; une lecture
+partielle de l'historique est dite. Refus : texte et code du serveur, relecture quand la vue est
 périmée (`work_method_revision_conflict`...) ; sans réponse : « Résultat inconnu », relecture. Contrat :
 [work-methods.md](work-methods.md) › *Candidats* et *Promotion*.
 
