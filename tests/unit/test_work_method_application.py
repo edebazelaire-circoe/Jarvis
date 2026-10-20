@@ -262,3 +262,72 @@ async def test_one_unreadable_history_row_drops_its_tree_not_the_whole_reading(c
     assert diagnostic["root_mission_id"] == "m3" and diagnostic["table"] == "agent_instances"
     body = await (await chain.ui.get("/api/work-methods/candidates")).json()
     assert body["scan"]["partial"] is True
+
+
+# ------------------------------------------------------------------ reprise QA R-1, R-2 : clé déclarée véridique
+
+
+def _forge(tmp_path, method):
+    work_methods_snapshot.snapshot_path(tmp_path).write_text(
+        json.dumps({"schema": 1, "methods": [method.to_payload()]}), encoding="utf-8")
+
+
+def _assert_builtin_with_warning(tmp_path, expected_code_part):
+    prompt, fact, trace = run_hook(tmp_path)
+    assert "(deep-research@1)" in prompt and fact.work_method == "deep-research@1"
+    # Le texte apposé est bien celui livré, pas celui du fichier forgé.
+    assert "Texte forgé" not in prompt
+    [failed] = [line for line in trace if line.get("kind") == "agent.work_method.failed"]
+    assert failed["level"] == "warning" and failed["data"]["code"] == "work_methods_snapshot_failed"
+    with pytest.raises(ValueError) as caught:
+        work_methods_snapshot.read_promoted(tmp_path)
+    assert expected_code_part in str(caught.value)
+
+
+def test_a_version_promoted_by_someone_else_than_a_person_is_refused(tmp_path):
+    forged = promoted(2)
+    forged = replace(forged, principles=("Texte forgé par un agent.",),
+                     provenance=replace(forged.provenance, promoted_by="research-lead"))
+    _forge(tmp_path, forged)
+    _assert_builtin_with_warning(tmp_path, "work_method_promoter_not_human")
+    lead = subagent_roles.role_by_id("research-lead")
+    assert subagent_roles.effective_method(lead, "deep-research", {"deep-research": forged}).key == "deep-research@1"
+
+
+def test_a_promoted_version_not_after_the_builtin_one_is_refused(tmp_path):
+    forged = replace(promoted(1), principles=("Texte forgé qui se dit @1.",))
+    _forge(tmp_path, forged)
+    _assert_builtin_with_warning(tmp_path, "work_method_version_not_after_builtin")
+    lead = subagent_roles.role_by_id("research-lead")
+    effective = subagent_roles.effective_method(lead, "deep-research", {"deep-research": forged})
+    assert effective == builtin_method("deep-research")
+
+
+def test_an_oversized_snapshot_gives_the_builtin_version_and_a_warning(tmp_path, monkeypatch):
+    work_methods_snapshot.write_snapshot(tmp_path, [promoted(2)])
+    monkeypatch.setattr(work_methods_snapshot, "MAX_SNAPSHOT_BYTES",
+                        work_methods_snapshot.snapshot_path(tmp_path).stat().st_size - 1)
+    prompt, fact, trace = run_hook(tmp_path)
+    assert "(deep-research@1)" in prompt and fact.work_method == "deep-research@1"
+    [failed] = [line for line in trace if line.get("kind") == "agent.work_method.failed"]
+    assert failed["level"] == "warning" and failed["data"]["exception_type"] == "ValueError"
+
+
+def test_the_hook_entry_never_journals_into_the_current_directory(tmp_path, monkeypatch):
+    import io
+
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    configured = tmp_path / "configured-runtime"
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("JARVIS_RUNTIME_DIR", str(configured))
+    event = {"tool_name": "Agent", "tool_input": {"description": "[general] [research-lead] X", "prompt": "Faites."}}
+    for argv in ([], ["--runtime-root", ""], ["--runtime-root"]):
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(event)))
+        monkeypatch.setattr("sys.stdout", io.StringIO())
+        assert routing_hook.main(argv) == 0
+    assert not list(cwd.iterdir()), list(cwd.iterdir())
+    assert (configured / "trace.jsonl").exists()
+    monkeypatch.delenv("JARVIS_RUNTIME_DIR")
+    assert routing_hook.default_runtime_root().name == "runtime"
+    assert routing_hook.default_runtime_root() != cwd

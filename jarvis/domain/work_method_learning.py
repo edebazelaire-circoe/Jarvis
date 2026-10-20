@@ -43,14 +43,14 @@ from typing import Any
 from jarvis.domain.agent_relations import RELATION_KINDS, AgentRelation, AgentRelationKind, RelationOutcome, RelationStatus
 from jarvis.domain.mission_history import MissionTree, StoredInstance
 from jarvis.domain.missions import Mission, MissionStatus
+from jarvis.domain.work_methods import HUMAN_PROMOTERS as _HUMAN_PROMOTERS
 from jarvis.domain.work_methods import (
     FORBIDDEN_PLAN_KEYS, MAX_EVIDENCE_REFS, MethodError, MethodOrigin, MethodProvenance, WorkMethod,
     check_revision, parse_method_key,
 )
 
-#: Seule personne qui promeut aujourd'hui : l'utilisateur du Control Center. Un rôle d'agent n'est jamais un
-#: promoteur valable (`work_method_promoter_not_human`).
-HUMAN_PROMOTERS = frozenset({"user"})
+#: `work_methods.HUMAN_PROMOTERS`, réexporté : un rôle d'agent n'est jamais un promoteur (`work_method_promoter_not_human`).
+HUMAN_PROMOTERS = _HUMAN_PROMOTERS
 #: Préfixe des ids de candidat, dérivés de leur signature (stables d'une lecture à l'autre).
 CANDIDATE_PREFIX = "wmc-"
 

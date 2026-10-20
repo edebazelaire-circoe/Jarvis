@@ -51,7 +51,7 @@ from typing import Any
 from jarvis.domain import routing
 from jarvis.domain.memory_settings import LOADOUT_ROLES
 from jarvis.domain.work_methods import (
-    BUILTIN_METHODS, WorkMethod, builtin_method, check_role_methods, is_method_id, render_method,
+    BUILTIN_METHODS, WorkMethod, builtin_method, check_role_methods, is_method_id, promotion_refusal, render_method,
 )
 from jarvis.domain.work_methods import ROLE_ID as _METHOD_ROLE_ID
 
@@ -612,12 +612,15 @@ def effective_method(role: SubagentRole, method_id: str | None,
     """La version apposée de `method_id` pour `role` (Slice 12) : la dernière version promue de cette méthode
     (`promoted`, `{method_id: WorkMethod}` lu dans l'instantané `work_methods_snapshot`) si elle s'applique au
     rôle, sinon la version livrée, ou `None`. Seul un id que le rôle cite arrive ici : une méthode neuve, citée
-    par aucun rôle, n'est jamais apposée."""
+    par aucun rôle, n'est jamais apposée. Une version promue par un autre qu'une personne, ou qui ne suit pas
+    strictement la version livrée (`work_methods.promotion_refusal`), est ignorée : la version livrée s'applique
+    (l'avertissement est celui de la lecture de l'instantané, `work_methods_snapshot.read_promoted`)."""
 
     if not method_id:
         return None
     candidate = (promoted or {}).get(method_id)
-    if isinstance(candidate, WorkMethod) and candidate.method_id == method_id and candidate.applies_to(role.id):
+    if (isinstance(candidate, WorkMethod) and candidate.method_id == method_id and candidate.applies_to(role.id)
+            and promotion_refusal(candidate) is None):
         return candidate
     return builtin_method(method_id)
 

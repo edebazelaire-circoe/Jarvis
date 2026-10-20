@@ -11,7 +11,8 @@ le Control Center les recopie dans `work-methods.json`, à la racine runtime :
 - **lire** : `read_promoted(runtime_root)` rend `{method_id: dernière version promue}`.
   Fichier absent : `{}` (aucune promotion connue), les versions livrées s'appliquent. Le fichier
   est une entrée non fiable : taille bornée, schéma vérifié, chaque méthode décodée strictement
-  (`WorkMethod.from_payload`, clés de plan refusées) et de provenance `promoted` ; sinon
+  (`WorkMethod.from_payload`, clés de plan refusées), de provenance `promoted` par une personne
+  (`HUMAN_PROMOTERS`) et de version strictement après la version livrée ; sinon
   `ValueError`, et le hook se replie sur les versions livrées avec un diagnostic.
 
 Seules les versions promues y figurent : le défaut vit dans le code. Contrat : `docs/work-methods.md`.
@@ -27,7 +28,7 @@ from pathlib import Path
 import tempfile
 from typing import Any
 
-from jarvis.domain.work_methods import MethodOrigin, WorkMethod, latest_methods
+from jarvis.domain.work_methods import MethodOrigin, WorkMethod, latest_methods, promotion_refusal
 
 SNAPSHOT_FILE = "work-methods.json"
 SNAPSHOT_SCHEMA = 1
@@ -88,6 +89,10 @@ def read_promoted(runtime_root: Path) -> dict[str, WorkMethod]:
     if payloads is None:
         return {}
     methods = [WorkMethod.from_payload(item) for item in payloads]
-    if any(method.provenance.origin is not MethodOrigin.PROMOTED for method in methods):
-        raise ValueError(f"{SNAPSHOT_FILE} holds a version that was not promoted")
+    for method in methods:
+        # Reprise QA R-1 : non promue, promue par un autre qu'une personne, ou pas strictement après la version livrée
+        # — le fichier n'est pas le nôtre ; le hook se replie sur les versions livrées et le dit.
+        refusal = promotion_refusal(method)
+        if refusal is not None:
+            raise ValueError(f"{SNAPSHOT_FILE} refuses {method.key}: {refusal}")
     return dict(latest_methods(methods))

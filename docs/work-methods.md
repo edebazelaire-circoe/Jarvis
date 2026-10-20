@@ -218,8 +218,12 @@ livrée (`subagent_roles.effective_method`) :
   `work_method`, `agent.declared` et `agent.role_applied` portent la version réellement apposée
   (`deep-research@2`).
 - **Replis.** Fichier absent : version livrée, sans bruit. Fichier illisible (JSON, schéma, clé de plan,
-  version non promue, taille) : version livrée, avertissement `agent.work_method.failed`
-  (`work_methods_snapshot_failed`) ; l'appel n'est jamais retenu.
+  taille) ou version refusée par `work_methods.promotion_refusal` (non promue, promue par un autre qu'une
+  personne de `HUMAN_PROMOTERS`, ou pas strictement après la version livrée : un fichier forgé `@1` ne remplace
+  jamais le texte livré sous la même clé) : version livrée, avertissement `agent.work_method.failed`
+  (`work_methods_snapshot_failed`) ; l'appel n'est jamais retenu. `effective_method` applique la même garde.
+- **Racine runtime du hook.** `--runtime-root`, sinon `JARVIS_RUNTIME_DIR`, sinon `runtime/` du dépôt (ignoré
+  par git) : jamais le répertoire courant (`routing_hook.default_runtime_root`).
 - **Méthode neuve.** Promue depuis un candidat sans méthode de base (par l'API seulement : l'écran n'a pas de
   champ pour écrire nom, résumé et principes), elle est stockée et listée mais n'est rattachée à aucun rôle :
   aucun rôle ne la cite (`SubagentRole.work_methods` suit le code), donc le hook ne l'appose jamais, même nommée

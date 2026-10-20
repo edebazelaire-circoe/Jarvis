@@ -938,13 +938,23 @@ def _log(
         pass
 
 
+def default_runtime_root() -> Path:
+    """La racine runtime sans `--runtime-root` (ou avec une valeur vide) : `JARVIS_RUNTIME_DIR`, sinon le dossier
+    `runtime/` du dépôt (ignoré par git). Jamais le répertoire courant : le journal et le registre des
+    déclarations n'y tombent pas (reprise QA S12, `trace.jsonl` égaré à la racine d'un worktree)."""
+    configured = (os.environ.get("JARVIS_RUNTIME_DIR") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path(__file__).resolve().parents[2] / "runtime"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entrée du sous-commande `jarvis routing-hook`, branchée sur stdin/stdout."""
     args = list(argv if argv is not None else sys.argv[1:])
-    runtime_root = Path.cwd()
+    runtime_root = default_runtime_root()
     if "--runtime-root" in args:
         index = args.index("--runtime-root")
-        if index + 1 < len(args):
+        if index + 1 < len(args) and args[index + 1].strip():
             runtime_root = Path(args[index + 1])
     # Le manifeste porte des accents (Références, mémoire, rôle) : la sortie est de l'UTF-8
     # quelle que soit la page de code du poste, et une entrée mal codée ne fait pas tomber le hook.

@@ -308,7 +308,8 @@ async def test_a_forbidden_model_can_never_reach_a_subagent_launch(site, monkeyp
 async def test_the_whole_chain_stays_off_until_the_user_opens_it(site):
     """Aucun de ces morceaux ne s'active tout seul."""
 
-    _pool, _coordinator, _primary, _remote, _runtime = site
+    _pool, _coordinator, _primary, _remote, runtime = site
     assert self_dev.load_gate({}) == {"enabled": False, "auto_deploy": False}
     assert agent_routing.load_policy({}).enabled is False
-    assert routing_hook.run({"tool_name": "Agent", "tool_input": {"model": "n-importe-quoi"}}, Path(".")) == {}
+    # La racine runtime du site (temporaire), jamais le répertoire courant : le hook y journalise (reprise QA S12).
+    assert routing_hook.run({"tool_name": "Agent", "tool_input": {"model": "n-importe-quoi"}}, Path(runtime)) == {}
