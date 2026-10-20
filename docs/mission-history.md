@@ -47,6 +47,8 @@ hook `PreToolUse`, avant le lancement, sous un contrat Core : `AgentDeclarationF
 | `session_id`, `caller_agent_id` | non | événement du hook ; `caller_agent_id` n'existe que pour un appel imbriqué |
 | `subagent_type`, `run_in_background` | non | `tool_input` ; une valeur hors contrat est laissée vide, pas corrigée |
 | `mission_id`, `mission_owner` | non | annoncés par l'appelant (Slice 05) ; `mission_owner` exige `mission_id` |
+| `handoff_id` | non | relais repris par ce successeur (Slice 06) ; absent quand vide |
+| `work_method`, `work_method_chosen` | non | Slice 12 : la Work Method réellement apposée par le hook (`<id>@<version>`) et si l'appelant l'a nommée ; absents sans méthode. Preuve d'usage des candidats ([work-methods.md](work-methods.md) › *Candidats*) |
 
 Interdits : `prompt`, trace, arguments, raisonnement. Le décodage est strict (`from_payload` refuse toute clé
 inconnue). Le parsing `stream-json` du suivi des tâches (`agent_tasks.task_snapshot()["role"]`) reste un

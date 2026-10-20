@@ -4,9 +4,11 @@
    fiche détaillée (mission, capacités, savoirs, Work Methods, ordre de la consigne apposée), et les instances
    en cours lues dans `GET /api/agent/tasks` (champ `role`, le marqueur tel que le hook le lit).
 
-   Une seule écriture : les instructions d'un rôle, par la voie canonique des prompts
+   Écritures : les instructions d'un rôle, par la voie canonique des prompts
    `POST /api/prompts/subagent_role.<id>` (`edit` avec `base_revision` + `expected_effective_revision`,
-   ou `reset`). Tout le reste est en lecture seule et le dit : capacités et méthodes suivent le code.
+   ou `reset`) ; et, depuis la Slice 12, la promotion explicite d'un candidat de Work Method
+   (`GET /api/work-methods/candidates`, `POST /api/work-methods/promotions`, révision optimiste
+   `expected_version`). Tout le reste est en lecture seule et le dit : capacités et méthodes suivent le code.
 
    Identité visuelle : `visual.icon` / `visual.accent` / `visual.badge` sont des JETONS. L'accent devient la
    variable CSS `--role-accent-<jeton>` (définie dans `control_center.html`, partagée avec le graphe), jamais
@@ -22,6 +24,13 @@
   const ROLES_PATH='/api/subagent-roles';
   const TASKS_PATH='/api/agent/tasks';
   const PROMPT_PATH=id=>'/api/prompts/'+encodeURIComponent(id);
+  const CANDIDATES_PATH='/api/work-methods/candidates';
+  const PROMOTIONS_PATH='/api/work-methods/promotions';
+  /* Refus après lesquels les candidats sont relus : la vue de l'écran n'est plus celle du serveur. */
+  const STALE_CANDIDATE_CODES=new Set(['work_method_revision_conflict','work_method_version_conflict',
+    'work_method_candidate_not_eligible','work_method_candidate_unknown']);
+  const CANDIDATE_STATUS={candidate:['Candidate','ok'],observing:['En observation',''],
+    insufficient_quality:['Issues insuffisantes','bad'],matches_method:['Déjà décrite par la méthode',''],promoted:['Promue','ok']};
   const DEFAULT_TIMEOUT_MS=15000;
   /* Borne d'une surcharge de prompt : lue sur la route (`instructions_max_chars`), sinon cette valeur, qui est
      `prompt_registry.MAX_OVERRIDE_TEXT`. */
@@ -91,6 +100,9 @@
       save:null,                 // {id, action, startedAt}
       notice:{},                 // id -> {tone,text,code}
       tasks:{phase:'loading',error:null,items:[]},instancesOpen:false,
+      /* Slice 12 : candidats de Work Method (lecture indépendante) et promotion en cours / à confirmer. */
+      learned:{phase:'loading',error:null,items:[],thresholds:{},startedAt:now()},
+      promote:null,confirmPromote:null,promoteNotice:null,
       startedAt:now(),destroyed:false,
     };
     let ticker=null;
@@ -189,6 +201,54 @@
         <p class="hint">Des réflexes, pas des étapes : l'agent organise son travail selon ce qu'il découvre.</p></details></li>`;
     }
 
+    /* --- candidats de Work Method (Slice 12) ------------------------------ */
+    function candidateReason(c,t){
+      const n=v=>Number(v)||0;
+      switch(c.reason){
+        case 'not_enough_uses':return `Revenue ${n(c.uses)} fois sur ${n(t.min_uses)||3} requises.`;
+        case 'not_enough_quality_evidence':return `${n(c.positive)} bonne(s) issue(s) prouvée(s) sur ${n(t.min_positive)||2} requises ; une mission terminée sans verdict QA ne compte pas.`;
+        case 'positive_share_below_threshold':return `Trop d’issues mauvaises : ${n(c.positive)} bonne(s) pour ${n(c.negative)} mauvaise(s). Elle ne sera pas proposée.`;
+        case 'nothing_beyond_the_method':return 'Elle n’ajoute rien à la méthode apposée : rien à apprendre.';
+        case 'thresholds_met':return 'Seuils atteints : la promotion est possible, par vous seulement.';
+        case 'already_promoted':return 'Déjà promue : '+(Array.isArray(c.promoted_keys)?c.promoted_keys.join(', '):'');
+        default:return String(c.reason||'');
+      }
+    }
+    function candidateHtml(c,t){
+      const [label,tone]=CANDIDATE_STATUS[c.status]||[String(c.status||'?'),''];
+      const kinds=Array.isArray(c.relation_kinds)&&c.relation_kinds.length?c.relation_kinds.map(k=>esc(relationLabel(k))).join(', '):'aucune relation';
+      const draft=c.draft&&typeof c.draft==='object'?c.draft:null;
+      const key=draft?`${draft.method_id}@${draft.version}`:'';
+      const busy=!!st.promote,mine=st.promote&&st.promote.candidateId===c.candidate_id,confirming=st.confirmPromote===c.candidate_id;
+      let action='';
+      if(c.status==='candidate'&&draft){
+        action=`<div class="sar-actions"><button type="button" class="action${confirming?' primary':''}" data-sar-promote="${esc(c.candidate_id)}"${busy?' disabled':''}>${confirming?'Confirmer la promotion':'Promouvoir en '+esc(key)}</button>
+          ${confirming?`<button type="button" class="action" data-sar-promote-cancel>Annuler</button><span class="hint">La version <code>${esc(key)}</code> sera publiée, avec ses relations à envisager : ${esc((draft.useful_relations||[]).map(relationLabel).join(', ')||'aucune')}. Elle ne réécrit pas <code>${esc(c.base_method_key||'')}</code> et n’est pas encore apposée sur les consignes.</span>`:''}</div>`;
+      }else if(c.status==='candidate'){
+        action='<p class="hint">Aucune méthode de base : la promotion demande d’écrire un nom, un résumé et des principes, ce que cet écran ne fait pas encore.</p>';
+      }
+      return `<li class="sar-method" data-sar-candidate="${esc(c.candidate_id)}"><div><span class="sar-mname">${c.method_id?`Avec <code>${esc(c.method_id)}</code>`:'Sans méthode'} · relations : ${kinds}</span> ${chip(label,tone)}</div>
+        <p class="hint">${esc(candidateReason(c,t))}</p>
+        <p class="hint">${Number(c.uses)||0} mission(s) close(s) · ${Number(c.positive)||0} bonne(s) · ${Number(c.negative)||0} mauvaise(s) · ${Number(c.unrated)||0} non notée(s) · ${(c.evidence_refs||[]).length} preuve(s)</p>
+        ${mine?waitingHtml('Promotion en cours…',st.promote.startedAt):''}${action}</li>`;
+    }
+    function learnedHtml(role){
+      const l=st.learned,t=l.thresholds||{};
+      let body;
+      if(l.phase==='loading')body=waitingHtml('Lecture des approches observées…',l.startedAt||st.startedAt);
+      else if(l.phase==='error')body=`<div class="notice bad">Approches observées illisibles : ${esc(l.error&&l.error.message)}${codeLine(l.error&&l.error.code)}</div><div class="sar-actions"><button type="button" class="action" data-sar-learned-retry>Réessayer</button></div>`;
+      else{
+        const mine=l.items.filter(c=>c&&c.role_id===role.id);
+        body=mine.length?`<ul class="sar-methods">${mine.map(c=>candidateHtml(c,t)).join('')}</ul>`
+          :'<p class="hint">Aucune mission close de ce rôle dans l’historique récent.</p>';
+      }
+      const n=st.promoteNotice;
+      const notice=n?`<div class="notice ${n.tone==='bad'?'bad':'ok'}" data-sar-promote-notice>${esc(n.text)}${n.hint?`<div class="hint">${esc(n.hint)}</div>`:''}${codeLine(n.code)}</div>`:'';
+      return `<section class="sar-block" aria-labelledby="sar-learned"><h4 id="sar-learned">Approches observées ${chip('apprentissage explicite')}</h4>
+        <p class="hint">Tirées des missions closes : une approche qui revient (${Number(t.min_uses)||3} fois) avec de bonnes issues prouvées par un verdict QA devient candidate. Rien n’est promu sans vous.</p>
+        ${notice}${body}</section>`;
+    }
+
     function compositionHtml(role){
       const m=role.default_work_method?methodById(role.default_work_method):null;
       return `<ol class="sar-compose" aria-label="Ordre de la consigne apposée par JARVIS">
@@ -267,6 +327,7 @@
         <section class="sar-block" aria-labelledby="sar-methods"><h4 id="sar-methods">Work Methods ${chip('lecture seule')}</h4>
           ${methods.length?`<ul class="sar-methods">${ordered.map(id=>methodHtml(id,id===role.default_work_method)).join('')}</ul>`:'<p class="hint">Aucune Work Method : les instructions du rôle tiennent lieu de méthode.</p>'}
           ${methods.length&&!role.default_work_method?'<p class="hint">Aucune n’est apposée par défaut ; un Mission Owner pourra en choisir une.</p>':''}</section>
+        ${role.can_own_mission?learnedHtml(role):''}
         <section class="sar-block" aria-labelledby="sar-compose"><h4 id="sar-compose">Consigne transmise au sous-agent</h4>${compositionHtml(role)}</section>
         ${editorHtml(role)}
       </article>`;
@@ -340,7 +401,7 @@
 
     /* Compteur vivant des attentes : un seul minuteur, arrêté dès qu'aucune attente n'est affichée. */
     function tick(){
-      const waiting=!st.destroyed&&(st.phase==='loading'||st.tasks.phase==='loading'||!!st.save);
+      const waiting=!st.destroyed&&(st.phase==='loading'||st.tasks.phase==='loading'||!!st.save||st.learned.phase==='loading'||!!st.promote);
       if(waiting&&ticker==null)ticker=setTimer(()=>{
         if(!host.querySelectorAll)return;
         host.querySelectorAll('[data-sar-since]').forEach(el=>{el.textContent=elapsed(Number(el.dataset.sarSince))+' s'});
@@ -351,7 +412,7 @@
     const oneColumn=()=>!!(root.matchMedia&&root.matchMedia('(max-width: 900px)').matches);
     function select(id,focus){
       if(!roleById(id))return;
-      st.selected=id;st.confirmReset=null;render();
+      st.selected=id;st.confirmReset=null;st.confirmPromote=null;render();
       if(focus==='detail'&&oneColumn()){
         const title=host.querySelector('#sar-title'),card=host.querySelector('.sar-detail');
         if(card&&card.scrollIntoView)card.scrollIntoView({block:'start'});
@@ -402,6 +463,13 @@
       host.querySelectorAll('[data-sar-reread]').forEach(b=>b.addEventListener('click',()=>reread(b.dataset.sarReread)));
       const back=host.querySelector('[data-sar-back]');if(back)back.addEventListener('click',()=>{const b=host.querySelector(`[data-sar-role="${st.selected}"]`);if(b){if(b.scrollIntoView)b.scrollIntoView({block:'center'});b.focus()}});
       const cli=host.querySelector('[data-sar-open-cli]');if(cli)cli.addEventListener('click',()=>opts.openTab('cli'));
+      const learnedRetry=host.querySelector('[data-sar-learned-retry]');if(learnedRetry)learnedRetry.addEventListener('click',()=>loadCandidates());
+      host.querySelectorAll('[data-sar-promote]').forEach(b=>b.addEventListener('click',()=>{
+        const id=b.dataset.sarPromote;
+        if(st.confirmPromote!==id){st.confirmPromote=id;st.promoteNotice=null;render();const again=host.querySelector(`[data-sar-promote="${id}"]`);if(again&&again.focus)again.focus();return}
+        promote(id);
+      }));
+      const cancel=host.querySelector('[data-sar-promote-cancel]');if(cancel)cancel.addEventListener('click',()=>{st.confirmPromote=null;render()});
     }
 
     /* --- E/S ------------------------------------------------------------- */
@@ -417,7 +485,7 @@
         if(st.destroyed)return null;
         st.phase='error';st.error=e;logError('subagent_settings_load_failed',e,{path:ROLES_PATH});
       }finally{render()}
-      if(st.phase==='ready')loadTasks();
+      if(st.phase==='ready'){loadTasks();loadCandidates()}
       return st.payload;
     }
     async function loadTasks(){
@@ -431,6 +499,50 @@
         if(st.destroyed)return;
         st.tasks={phase:'error',error:e,items:[]};logError('subagent_settings_tasks_failed',e,{path:TASKS_PATH});
       }finally{render()}
+    }
+    async function loadCandidates(){
+      st.learned={...st.learned,phase:'loading',error:null,startedAt:now()};render();
+      try{
+        const data=await fetchJson(CANDIDATES_PATH);
+        if(st.destroyed)return;
+        if(!data||!Array.isArray(data.candidates)){const e=new Error('réponse sans liste de candidats');e.code='subagent_settings_payload_invalid';throw e}
+        st.learned={phase:'ready',error:null,items:data.candidates.filter(c=>c&&typeof c==='object'),
+          thresholds:data.thresholds&&typeof data.thresholds==='object'?data.thresholds:{}};
+        logInfo('subagent_settings.candidates_loaded',{candidates:data.candidates.length});
+      }catch(e){
+        if(st.destroyed)return;
+        st.learned={phase:'error',error:e,items:[],thresholds:{}};logError('subagent_settings_candidates_failed',e,{path:CANDIDATES_PATH});
+      }finally{render()}
+    }
+    /* Promotion d'un candidat, confirmée en deux temps : le brouillon tel que servi, la révision qu'il suit. */
+    async function promote(candidateId){
+      if(st.promote)return;
+      const c=st.learned.items.find(x=>x&&x.candidate_id===candidateId);
+      const draft=c&&c.draft&&typeof c.draft==='object'?c.draft:null;
+      if(!c||c.status!=='candidate'||!draft){
+        /* Jamais un bouton muet : l'écran dit pourquoi rien ne part, et relit. */
+        const e=new Error('candidat introuvable ou plus éligible dans la vue de l’écran');e.code='subagent_settings_candidate_stale';
+        logError('subagent_settings_promotion_failed',e,{candidate_id:candidateId});
+        st.promoteNotice={tone:'bad',code:e.code,text:'Promotion impossible : cette approche n’est plus candidate dans la vue de l’écran. Rien n’a été écrit.',hint:'Les approches sont relues.'};
+        st.confirmPromote=null;announce(st.promoteNotice.text);await loadCandidates();return;
+      }
+      const key=`${draft.method_id}@${draft.version}`;
+      st.promote={candidateId,startedAt:now()};st.confirmPromote=null;st.promoteNotice=null;render();
+      try{
+        await fetchJson(PROMOTIONS_PATH,{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({candidate_id:candidateId,expected_version:Number(draft.version)-1,method:draft})});
+        logInfo('subagent_settings.method_promoted',{candidate_id:candidateId,method:key});
+        st.promoteNotice={tone:'ok',text:`Méthode ${key} publiée.`,hint:'Elle est enregistrée et versionnée ; elle n’est pas encore apposée sur les consignes des sous-agents.'};
+      }catch(e){
+        logError('subagent_settings_promotion_failed',e,{candidate_id:candidateId,code:e.code||null});
+        st.promoteNotice=UNKNOWN_OUTCOME.has(e.code)
+          ?{tone:'bad',code:e.code,text:`Résultat inconnu : ${String(e.message||'').replace(/\.?$/,'.')}`,hint:'Les approches sont relues : si elle apparaît « Promue », la promotion a bien été enregistrée.'}
+          :{tone:'bad',code:e.code||'',text:`Promotion refusée. Refus du serveur : « ${e.message||'erreur sans message'} ».`,
+            hint:STALE_CANDIDATE_CODES.has(e.code)?'Les approches ont changé depuis l’ouverture de l’écran : elles sont relues.':'Rien n’a été écrit.'};
+      }finally{
+        st.promote=null;announce(st.promoteNotice&&st.promoteNotice.text);
+        await loadCandidates();
+      }
     }
     async function refreshRoles(){
       const data=await fetchJson(ROLES_PATH);
@@ -510,7 +622,7 @@
 
     host.setAttribute&&host.setAttribute('data-subagent-settings-host','1');
     render();
-    return {load,loadTasks,render,save,reset,reread,select,destroy,hasUnsaved,resolveMarker,state:st};
+    return {load,loadTasks,loadCandidates,promote,render,save,reset,reread,select,destroy,hasUnsaved,resolveMarker,state:st};
   }
 
   root.JarvisSubagentSettings=Object.freeze({mountId:MOUNT_ID,ICONS:Object.freeze(Object.keys(ICONS)),create,

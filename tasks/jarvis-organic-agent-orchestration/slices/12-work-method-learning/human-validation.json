@@ -1,5 +1,29 @@
 {
   "slice_id": "12-work-method-learning",
-  "checks": [],
+  "checks": [
+    {
+      "id": "HV-ORG-12-01",
+      "description": "Promote a real Work Method candidate yourself from Settings > Sous-agents and confirm nothing was promoted before your action, the evidence and thresholds are understandable, and the new version is published without rewriting the old one.",
+      "status": "pending",
+      "evidence": null,
+      "how_to_verify": {
+        "where": "Votre Control Center habituel (http://127.0.0.1:17654/) une fois la branche fusionnée et Core relancé par vous (migration v11 après sauvegarde jarvis.sqlite3.v10.bak) ; ou un bac à sable lancé depuis le worktree par evidence/sandbox_trial.py (start, seed 3, puis la page http://127.0.0.1:31654/, et stop).",
+        "steps": [
+          "Avant toute action, ouvrez GET /api/work-methods : seules les versions livrées (…@1) y figurent.",
+          "Ouvrez Réglages > Sous-agents > « Direction de recherche » et lisez le bloc « Approches observées » : statut, raison, comptes (missions closes, bonnes, mauvaises, non notées) et nombre de preuves.",
+          "Vérifiez qu'une approche revenue une seule fois, ou sans verdict QA, est « En observation » et n'offre aucun bouton.",
+          "Sur une approche « Candidate », cliquez « Promouvoir en <id>@<version> », lisez la confirmation (version publiée, relations, ancienne version non réécrite), puis confirmez.",
+          "Vérifiez la notice « Méthode … publiée », le statut « Promue », puis GET /api/work-methods : la nouvelle version est là, l'ancienne aussi, avec provenance promoted, promoted_by user et des evidence_refs (ids de missions et de relations QA)."
+        ],
+        "expected": "Aucune promotion sans votre clic confirmé ; les preuves et les seuils se comprennent ; la nouvelle version s'ajoute sans écraser l'ancienne.",
+        "reference_captures": [
+          "evidence/01-candidate.png",
+          "evidence/02-confirmation.png",
+          "evidence/03-promue.png"
+        ],
+        "note": "Une version promue n'est pas encore apposée par le hook sur les consignes des sous-agents (docs/work-methods.md › État)."
+      }
+    }
+  ],
   "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."
 }

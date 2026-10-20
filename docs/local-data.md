@@ -131,6 +131,12 @@ neuves, aucune ligne produit, aucune colonne de statut d'exécution) ;
 sauvegarde `jarvis.sqlite3.v9.bak`. Le code v9 refuse ensuite la base
 (`state DB schema 10 is newer than supported 9`) ; retour arrière : restaurer
 `.v9.bak`. Contrat : [mission-history.md](mission-history.md).
+v11 (2026-10-20) : versions de Work Method promues par une personne, **DDL seul**
+(une table neuve append-only `work_method_versions`, aucune ligne produit) ;
+sauvegarde `jarvis.sqlite3.v10.bak`. Le code v10 refuse ensuite la base
+(`state DB schema 11 is newer than supported 10`) ; retour arrière : restaurer
+`.v10.bak` (les versions promues depuis sont perdues, les missions non).
+Contrat : [work-methods.md](work-methods.md#promotion).
 
 Le schéma de chaque version est figé dans `tests/schema/<base>.v<N>.sql`.
 `tests/unit/test_schema_migrations.py` échoue dès qu'un DDL change sans

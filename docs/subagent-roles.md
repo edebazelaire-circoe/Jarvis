@@ -516,6 +516,16 @@ texte s'applique au prochain sous-agent lancé avec ce rôle. Si la réponse por
 `subagent_roles_snapshot.written: false`, l'écran dit que le texte est enregistré mais pas encore transmis au
 hook. Capacités et méthodes sont marquées « lecture seule » : aucune voie d'écriture n'existe pour elles.
 
+**Approches observées (Slice 12).** Pour un rôle qui peut porter une mission, la fiche lit
+`GET /api/work-methods/candidates` (lecture indépendante, compteur, erreur codée avec « Réessayer ») et
+liste les approches de ce rôle : statut (`Candidate`, `En observation`, `Issues insuffisantes`, `Déjà décrite
+par la méthode`, `Promue`), raison réelle, comptes et nombre de preuves. Une candidate qui a un brouillon offre
+« Promouvoir en `<id>@<version>` », confirmé en deux temps ; l'écran poste
+`POST /api/work-methods/promotions` `{candidate_id, expected_version: version - 1, method: draft}` (jamais
+`promoted_by`), puis relit les candidats. Refus : texte et code du serveur, relecture quand la vue est
+périmée (`work_method_revision_conflict`...) ; sans réponse : « Résultat inconnu », relecture. Contrat :
+[work-methods.md](work-methods.md) › *Candidats* et *Promotion*.
+
 **États.**
 
 | État | Ce qui s'affiche |

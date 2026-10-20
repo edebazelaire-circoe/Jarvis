@@ -1,0 +1,73 @@
+{
+ "candidates": [
+  {
+   "candidate_id": "wmc-745b2b1d4923ca40",
+   "role_id": "research-lead",
+   "method_id": "deep-research",
+   "relation_kinds": [
+    "adversary",
+    "qa"
+   ],
+   "status": "candidate",
+   "reason": "thresholds_met",
+   "uses": 3,
+   "positive": 3,
+   "negative": 0,
+   "unrated": 0,
+   "chosen": 0,
+   "first_seen": "2026-10-20T18:14:37.088494+00:00",
+   "last_seen": "2026-10-20T18:14:45.136792+00:00",
+   "evidence_refs": [
+    "mis_toolu_o200831",
+    "rel_2f2fd3f818d94953bcddb4acc83b1eb8",
+    "mis_toolu_o200830",
+    "rel_76d110c7057c4a5a9a9c57c278423dd8",
+    "mis_toolu_o200760",
+    "rel_a7211e832fff492bbdf9c8f90beff355"
+   ],
+   "base_method_key": "deep-research@1",
+   "draft": {
+    "method_id": "deep-research",
+    "version": 2,
+    "name": "Recherche approfondie",
+    "summary": "Faire le tour d'un sujet large jusqu'à une synthèse qui tient, en jugeant quand les preuves suffisent.",
+    "role_ids": [
+     "research-lead",
+     "research",
+     "web-research"
+    ],
+    "principles": [
+     "Juger l'ampleur de la question : quels angles et quelles sources changeraient la réponse.",
+     "Préférer les sources primaires, récentes et indépendantes de celui qui vend.",
+     "Chercher activement ce qui contredit la première réponse trouvée.",
+     "Répartir les angles entre plusieurs agents quand ils sont vraiment indépendants.",
+     "Arrêter quand une source de plus ne change plus la conclusion."
+    ],
+    "quality_checks": [
+     "Chaque affirmation de la synthèse a sa source.",
+     "Les contradictions entre sources sont exposées, pas tranchées en silence.",
+     "Ce qui reste incertain est dit."
+    ],
+    "useful_relations": [
+     "delegation",
+     "adversary",
+     "qa"
+    ]
+   },
+   "promoted_keys": []
+  }
+ ],
+ "scan": {
+  "root_missions": 3,
+  "missions": 3,
+  "uses": 3,
+  "skipped": {},
+  "truncated": false
+ },
+ "thresholds": {
+  "min_uses": 3,
+  "min_positive": 2,
+  "min_positive_share": 0.75,
+  "scan_root_missions": 64
+ }
+}

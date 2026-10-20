@@ -2832,6 +2832,21 @@ once the subtask has started, and Core records the agent instance with its fixed
 A sub-agent whose role launches no agent runs as the `jarvis-no-spawn` agent type (the Agents panel
 diagnostic shows it as the sub-agent type): that is the mechanical `can_spawn` guard, not an error.
 
+### Work Method candidates and promotion (Slice 12, organic orchestration)
+
+Candidates are recomputed from the durable mission history on every read; nothing is promoted without a
+person (contract: [work-methods.md](work-methods.md)).
+
+| Look at | Meaning |
+| --- | --- |
+| `GET /api/work-methods/candidates` | each observed approach (owner role, applied method, relation kinds used) with its `status` (`candidate`, `observing`, `insufficient_quality`, `matches_method`, `promoted`), `reason`, counts, `evidence_refs`, the proposed `draft`, the `thresholds` and what the `scan` read or skipped |
+| `GET /api/work-methods` | every Work Method version (builtin and promoted) and the latest key of each |
+| `POST /api/work-methods/promotions` | promotion by the user, from the Control Center page only (`Sec-Fetch-Site: same-origin`; `promotion_requires_browser` otherwise); body `{candidate_id, expected_version, method}`, the promoter is forced to `user` |
+| trace `work_methods.promotion_requested` then `work_methods.promotion_done` (Control Center), `work_methods.promoted` (Core) | the normal path, at info |
+| trace `work_methods.promotion_failed`, `work_methods.promotion_refused`, `core.work_methods.route_failed` | a refused promotion, with its code (`work_method_revision_conflict`: reload the candidates; `work_method_candidate_not_eligible`: thresholds no longer met or already promoted) |
+
+A promoted version is stored and listed; the hook does not apply it to briefs yet (see work-methods.md › *État*).
+
 ### What the Agents panel shows
 
 The sub-agent cards (status, label, current activity, model, start/end, elapsed
