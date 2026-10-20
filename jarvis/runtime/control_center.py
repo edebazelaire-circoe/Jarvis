@@ -316,13 +316,16 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: texte et pièces jointes — toutes les méthodes gardées.
 #: Lecture de l'historique des missions (organic-agent-orchestration, Slice 05).
 MISSIONS_ROUTE = "/api/missions"
+#: Work Methods, candidats appris et promotion (organic-agent-orchestration, Slice 12) : toutes les méthodes gardées
+#: comme l'historique des missions dont les candidats sont tirés.
+WORK_METHODS_ROUTE = "/api/work-methods"
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX, FULLSCREEN_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
                        MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES, *MEMORY_BRAIN_GUARDED_PREFIXES,
                        *PREFAB_GUARDED_PREFIXES, *REMOTION_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES,
                        *REMOTION_STUDIO_GUARDED_PREFIXES, *CHAT_GUARDED_PREFIXES, *DOSSIER_GUARDED_PREFIXES,
                        # Historique des missions (Slice 05) : objectifs et libellés viennent des demandes de l'utilisateur.
-                       MISSIONS_ROUTE)
+                       MISSIONS_ROUTE, WORK_METHODS_ROUTE)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -1571,6 +1574,10 @@ class ControlCenter:
             web.post("/api/missions/handoffs", self.relations_handoff),
             web.get("/api/missions/work/{work_source}/{work_external_id}", self.missions_for_work),
             web.get("/api/missions/{mission_id}", self.missions_get),
+            # Work Methods (Slice 12) : catalogue et candidats en lecture ; la promotion est un acte de l'utilisateur.
+            web.get(WORK_METHODS_ROUTE, self.work_methods_get),
+            web.get(WORK_METHODS_ROUTE + "/candidates", self.work_method_candidates),
+            web.post(WORK_METHODS_ROUTE + "/promotions", self.work_method_promote),
             web.get("/api/scene", self.scene),
             web.get("/api/scene/patches", self.scene_patches),
             web.post("/api/scene/commands", self.scene_command),
@@ -6256,6 +6263,62 @@ class ControlCenter:
         source = str(request.match_info.get("work_source") or "")
         external = str(request.match_info.get("work_external_id") or "")
         return await self._mission_read(lambda view: view.for_work(source, external))
+
+    # -- Work Methods (Slice 12)
+
+    #: Corps d'une promotion : une méthode bornée (12 principes et 12 critères de 300 caractères au plus).
+    WORK_METHOD_PROMOTION_MAX_BYTES = 32 * 1024
+    _PROMOTION_KEYS = frozenset({"candidate_id", "expected_version", "method"})
+
+    async def work_methods_get(self, request: web.Request) -> web.Response:
+        """Toutes les versions de Work Method (livrées et promues) et la dernière de chacune. Lecture seule."""
+        del request
+        return await self._mission_read(lambda view: view.work_methods())
+
+    async def work_method_candidates(self, request: web.Request) -> web.Response:
+        """Les candidats de Work Method recalculés depuis l'historique durable, avec seuils et lecture."""
+        del request
+        return await self._mission_read(lambda view: view.work_method_candidates())
+
+    async def work_method_promote(self, request: web.Request) -> web.Response:
+        """Promouvoir un candidat : un acte de l'utilisateur, depuis la page du Control Center seulement.
+
+        Le promoteur est forcé à `user` (jamais lu du corps). Au-delà de la garde de bouclage du préfixe, la
+        requête doit venir d'une page de même origine (`Sec-Fetch-Site: same-origin` et `Origin`), ce que pose un
+        navigateur et non un outil d'agent ; aucun outil MCP ni outil du cerveau n'appelle cette route.
+        """
+        def refuse(status: int, code: str, message: str) -> web.Response:
+            self.journal.emit("work_methods.promotion_failed", f"Promotion de Work Method refusée : {code}",
+                              level="warning", data={"code": code, "status": status})
+            return web.json_response(mission_failure(code, message), status=status)
+
+        if (request.headers.get("Sec-Fetch-Site") or "").strip().lower() != "same-origin" \
+                or not request.headers.get("Origin"):
+            return refuse(403, "promotion_requires_browser",
+                          "Une promotion se fait depuis la page du Control Center, par une personne.")
+        if self.mission_view is None:
+            return web.json_response(mission_failure(MISSIONS_NOT_CONFIGURED,
+                                                     "Work Methods non configurées (Core absent)."), status=503)
+        if request.content_length is not None and request.content_length > self.WORK_METHOD_PROMOTION_MAX_BYTES:
+            return refuse(413, "promotion_body_too_large",
+                          f"Corps de plus de {self.WORK_METHOD_PROMOTION_MAX_BYTES} octets.")
+        try:
+            body = await request.json()
+        except ValueError:
+            return refuse(400, "invalid_request", "Le corps doit être un objet JSON.")
+        if not isinstance(body, dict) or set(body) != self._PROMOTION_KEYS:
+            return refuse(400, "invalid_request",
+                          f"Le corps doit contenir exactement {sorted(self._PROMOTION_KEYS)}.")
+        self.journal.emit("work_methods.promotion_requested", "Promotion de Work Method demandée par l'utilisateur.",
+                          data={"candidate_id": str(body.get("candidate_id"))[:64]})
+        status, payload = await self.mission_view.promote_work_method({**body, "promoted_by": "user"})
+        if status == 200:
+            method = payload.get("method") if isinstance(payload, dict) else None
+            key = f"{method.get('method_id')}@{method.get('version')}" if isinstance(method, dict) else None
+            self.journal.emit("work_methods.promotion_done", f"Work Method {key} promue par l'utilisateur.",
+                              data={"candidate_id": str(body.get("candidate_id"))[:64], "method": key})
+            return web.json_response({"ok": True, **payload})
+        return web.json_response(payload, status=status)
 
     # ------------------------------------------------------------------ scène
 

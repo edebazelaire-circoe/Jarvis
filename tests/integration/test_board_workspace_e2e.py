@@ -272,18 +272,19 @@ async def test_a_v7_root_made_by_the_v7_code_migrates_once_keeps_everything_and_
 
     await up(bench)
 
-    # v7 -> v10 (v8 : une table neuve ; v9 : type fixé, données seules ; v10 : tables de l'historique des missions),
+    # v7 -> v11 (v8 : une table neuve ; v9 : type fixé, données seules ; v10 : tables de l'historique des missions ;
+    # v11 : versions promues de Work Method),
     # une sauvegarde v7 ligne pour ligne,
     # rien de perdu, aucun rattrapage.
-    assert _sql(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)] == [(10,)]
+    assert _sql(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)] == [(11,)]
     backup = db.parent / "jarvis.sqlite3.v7.bak"
     assert sorted(p.name for p in db.parent.glob("*.bak")) == [backup.name]
     assert _dump(backup) == v7_dump, "the backup is the v7 database, row for row"
     after = _counts(db)
     mission_history = {"missions", "agent_instances", "mission_owners", "agent_relations", "agent_relation_participants",
                        "agent_handoff_packets", "agent_relation_messages"}  # v10, empty
-    assert set(after) - set(before) == {"board_artifact_links", *mission_history}
-    assert all(after[table] == 0 for table in mission_history)
+    assert set(after) - set(before) == {"board_artifact_links", *mission_history, "work_method_versions"}
+    assert all(after[table] == 0 for table in (*mission_history, "work_method_versions"))
     assert {t: n for t, n in before.items() if after[t] < n} == {}, "a v7 row was lost"
     assert after["board_artifact_links"] == 0, "no backfill of pre-v8 artifacts"
 

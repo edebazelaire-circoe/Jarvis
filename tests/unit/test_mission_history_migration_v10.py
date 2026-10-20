@@ -94,7 +94,8 @@ def test_a_v9_file_migrates_to_v10_after_a_backup_and_keeps_its_rows(tmp_path):
     _build_v9_from_snapshot(old)
 
     repository = asyncio.run(_open(old))
-    assert repository.migrations_applied == [{"from": 9, "to": 10, "rows": 0}]
+    # v11 (Slice 12, versions promues de Work Method) suit : DDL seul.
+    assert repository.migrations_applied == [{"from": 9, "to": 10, "rows": 0}, {"from": 10, "to": 11, "rows": 0}]
     asyncio.run(repository.close())
 
     fresh = tmp_path / "fresh" / "jarvis.sqlite3"
@@ -103,7 +104,7 @@ def test_a_v9_file_migrates_to_v10_after_a_backup_and_keeps_its_rows(tmp_path):
 
     conn = sqlite3.connect(old)
     try:
-        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(10,)]
+        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(11,)]
         assert conn.execute("SELECT id, data FROM devices").fetchall() == [("dev-v9", '{"name": "poste"}')]
         assert conn.execute("SELECT board_id FROM work_boards").fetchall() == [("board-v9",)]
         for table in V10_TABLES:

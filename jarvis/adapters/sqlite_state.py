@@ -30,7 +30,8 @@ T = TypeVar("T")
 #: v8 (2026-10-02): Board-artifact links (`docs/artifacts.md` › *Board links*).
 #: v9 (2026-10-17): fixed Board type, data only (`docs/boards.md` › *Board type*, *Persistence*).
 #: v10 (2026-10-20): durable mission history, no execution status (`docs/mission-history.md`).
-_SCHEMA_VERSION = 10
+#: v11 (2026-10-20): promoted Work Method versions, append-only (`docs/work-methods.md` › *Promotion*).
+_SCHEMA_VERSION = 11
 
 #: Envelope ids with a partial index `(<id>, sequence)`; mirrors
 #: `conversation_event_store.LOOKUP_FIELDS` (checked by the store tests).
@@ -443,6 +444,33 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         "CREATE INDEX IF NOT EXISTS idx_agent_relation_messages_relation ON agent_relation_messages(relation_id, seq)",
         """CREATE TRIGGER IF NOT EXISTS agent_relation_messages_fixed BEFORE UPDATE ON agent_relation_messages
             BEGIN SELECT RAISE(ABORT, 'a relation message is never rewritten'); END""",
+    ),
+    11: (
+        # Promoted Work Method versions (handoff organic-agent-orchestration,
+        # Slice 12, D06/D24). Additive DDL only, no product row. One row per
+        # version a person explicitly promoted from a candidate; builtin
+        # versions stay in code (`work_methods.BUILTIN_METHODS`). `data` is the
+        # canonical `WorkMethod.to_payload()` (heuristics only, never a plan),
+        # the other columns are extracted copies cross-checked on read
+        # (`sqlite_work_methods`). Append-only: a published version is never
+        # rewritten nor removed (triggers), a new version is a new row, and the
+        # primary key refuses a second content for the same `id@version`.
+        """CREATE TABLE IF NOT EXISTS work_method_versions (
+            method_id TEXT NOT NULL,
+            version INTEGER NOT NULL CHECK (version BETWEEN 1 AND 9999),
+            candidate_id TEXT NOT NULL,
+            promoted_by TEXT NOT NULL,
+            promoted_at TEXT NOT NULL,
+            data TEXT NOT NULL,
+            PRIMARY KEY (method_id, version),
+            CHECK (json_extract(data, '$.method_id') = method_id),
+            CHECK (json_extract(data, '$.version') = version),
+            CHECK (json_extract(data, '$.provenance.origin') = 'promoted'))""",
+        "CREATE INDEX IF NOT EXISTS idx_work_method_versions_candidate ON work_method_versions(candidate_id)",
+        """CREATE TRIGGER IF NOT EXISTS work_method_versions_fixed BEFORE UPDATE ON work_method_versions
+            BEGIN SELECT RAISE(ABORT, 'a published work method version is never rewritten'); END""",
+        """CREATE TRIGGER IF NOT EXISTS work_method_versions_kept BEFORE DELETE ON work_method_versions
+            BEGIN SELECT RAISE(ABORT, 'a published work method version is never removed'); END""",
     ),
 }
 

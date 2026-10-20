@@ -16,7 +16,8 @@ Ce module fixe le contrat (Slice 01) :
   qui s'appliquent à eux.
 
 Le catalogue des méthodes livrées (Slice 04) est `BUILTIN_METHODS`, rendu sur
-une consigne par `render_method` ; leur apprentissage relève de la Slice 12. Contrat : `docs/work-methods.md`. Module pur, sans E/S.
+une consigne par `render_method` ; les candidats appris et leur promotion sont dans
+`work_method_learning` (Slice 12). Contrat : `docs/work-methods.md`. Module pur, sans E/S.
 """
 
 from __future__ import annotations
@@ -77,6 +78,17 @@ def _coded_text(name: str, value: object, limit: int) -> None:
 
 def is_method_id(value: object) -> bool:
     return isinstance(value, str) and bool(METHOD_ID.fullmatch(value))
+
+
+#: Référence exacte d'une version, `<method_id>@<version>` (`WorkMethod.key`).
+METHOD_KEY = re.compile(r"(?P<id>[a-z][a-z0-9-]{1,47})@(?P<version>[1-9][0-9]{0,3})\Z")
+
+
+def parse_method_key(value: object) -> tuple[str, int] | None:
+    """`(method_id, version)` d'une clé `<id>@<version>`, ou `None` si la valeur n'en est pas une."""
+
+    match = METHOD_KEY.fullmatch(value) if isinstance(value, str) else None
+    return (match["id"], int(match["version"])) if match else None
 
 
 class MethodOrigin(StrEnum):

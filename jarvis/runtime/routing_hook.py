@@ -657,7 +657,11 @@ def _declare(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJourn
         fact = fact_from_hook_event(event, declared_at=datetime.now(timezone.utc),
                                     mission_id=ticket.mission_id if ticket else orchestration.mission.mission_id,
                                     mission_owner=orchestration.mission.mission_owner,
-                                    handoff_id=ticket.handoff_id if ticket else None)
+                                    handoff_id=ticket.handoff_id if ticket else None,
+                                    # Slice 12 : la méthode apposée devient une preuve d'usage durable.
+                                    work_method=method_key(orchestration.method.method_id),
+                                    work_method_chosen=orchestration.method.chosen
+                                    and method_key(orchestration.method.method_id) is not None)
     except MissionHistoryError as exc:
         _emit(journal, "agent.declaration.failed", f"Déclaration du sous-agent hors contrat : {exc}", level="warning",
               data={"code": exc.code, "field": exc.field, "tool_use_id": str(event.get("tool_use_id") or "")[:128]})

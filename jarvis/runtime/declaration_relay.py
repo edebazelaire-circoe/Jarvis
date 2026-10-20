@@ -95,6 +95,17 @@ class CoreMissionTransport(CoreLoopbackTransport):
     async def prepare_handoff(self, body: dict[str, Any]) -> dict[str, Any]:
         return await self.replay_on_401(lambda client: client.prepare_handoff(body))
 
+    # Slice 12 : Work Methods (`mission_view.CoreMissionView`).
+
+    async def work_methods(self) -> dict[str, Any]:
+        return await self.replay_on_401(lambda client: client.work_methods())
+
+    async def work_method_candidates(self) -> dict[str, Any]:
+        return await self.replay_on_401(lambda client: client.work_method_candidates())
+
+    async def promote_work_method(self, body: dict[str, Any]) -> dict[str, Any]:
+        return await self.replay_on_401(lambda client: client.promote_work_method(body))
+
 
 class DeclarationRelay(CoreBatchForwarder):
     """Voir le docstring du module."""

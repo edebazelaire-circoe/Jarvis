@@ -468,6 +468,17 @@ class LocalCoreClient:
     async def prepare_handoff(self, body: dict[str, Any]) -> dict[str, Any]:
         return await self._post_json("/v1/missions/handoffs", body)
 
+    # Slice 12 : Work Methods (`work_method_routes.py`) — catalogue, candidats, promotion par une personne.
+
+    async def work_methods(self) -> dict[str, Any]:
+        return await self._get_json("/v1/work-methods", {})
+
+    async def work_method_candidates(self) -> dict[str, Any]:
+        return await self._get_json("/v1/work-methods/candidates", {})
+
+    async def promote_work_method(self, body: dict[str, Any]) -> dict[str, Any]:
+        return await self._post_json("/v1/work-methods/promotions", body)
+
     async def append_conversation_events(self, events: Sequence[ConversationEvent]) -> tuple[AppendResult, ...]:
         """Remettre 1 à 32 Conversation Events à Core (`POST /v1/conversation-events`).
 

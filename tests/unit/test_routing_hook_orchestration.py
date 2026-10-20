@@ -94,6 +94,18 @@ def test_the_chosen_method_is_applied_and_traced(tmp_path):
     assert trace(tmp_path, "agent.declared")[0]["data"]["work_method_chosen"] is True
 
 
+def test_the_applied_method_is_a_durable_part_of_the_declaration_fact(tmp_path):
+    """Slice 12 : la méthode apposée (choisie ou par défaut) part dans le fait, preuve d'usage des candidats."""
+    routing_hook.run(call("[general] [research] [quick-research] Chercher", tool_use_id="t1"), tmp_path)
+    routing_hook.run(call("[general] [research-lead] Comparer", tool_use_id="t2"), tmp_path)
+    routing_hook.run(call("[code] [coder] Corriger", tool_use_id="t3"), tmp_path)
+    by_id = {fact.tool_use_id: fact for fact in facts(tmp_path)}
+    assert (by_id["t1"].work_method, by_id["t1"].work_method_chosen) == ("quick-research@1", True)
+    assert (by_id["t2"].work_method, by_id["t2"].work_method_chosen) == ("deep-research@1", False)
+    assert (by_id["t3"].work_method, by_id["t3"].work_method_chosen) == (None, False)
+    assert "work_method" not in by_id["t3"].to_payload()
+
+
 def test_can_spawn_false_rewrites_the_agent_type_only_with_the_guard(tmp_path):
     guarded = section(routing_hook.run(call("[general] [qa] Relire"), tmp_path, spawn_guard=True))
     assert guarded["updatedInput"]["subagent_type"] == NO_SPAWN_AGENT_TYPE
