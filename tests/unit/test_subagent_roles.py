@@ -518,6 +518,10 @@ def test_the_brain_rules_teach_owners_relations_and_delivery_without_a_new_gate(
     # A : une tâche nette se fait directement, sans interview ni plan ; la petite correction évidente est éphémère.
     clear = _bullet(rules, "A. Action claire")
     assert "Pas d'Intervieweur ni de plan" in clear and "éphémère" in clear
+    # B : l'interview n'arrête rien ; une recherche part en parallèle dès qu'il y a de la matière à trouver (D20).
+    framing = _bullet(rules, "B. Intention à cadrer")
+    assert "lance aussi en parallèle [general] [research]" in framing and "ils avancent pendant l'interview" in framing
+    assert "au premier tour ou après une réponse" in framing
     # C : une comparaison sérieuse part chez la direction de recherche, qui porte la mission.
     assert "un seul [general] [research-lead], qui porte la mission" in _bullet(rules, "C. Plusieurs expertises")
     # Mission Owner : les gestes de relation sont aux propriétaires ; le cerveau les demande et ne fait que lire.

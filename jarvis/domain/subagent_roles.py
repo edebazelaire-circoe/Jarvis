@@ -700,7 +700,9 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
         "deux façons) : ne lance pas d'exécution. Crée toi-même le dossier de mission, un fichier court dans la "
         f"mémoire du Board, {MISSION_PATH_HINT}, avec ses mots exacts sous Intention : c'est ta seule écriture "
         f"permise. Lance en arrière-plan {interviewer} avec ses mots exacts et le chemin du dossier"
-        + (f" ; si c'est utile, en parallèle {helpers}, chacun avec le même chemin" if helpers else "")
+        + (f" ; dès qu'il y a de la matière à trouver (ce qui existe déjà, des références, une source nommée), "
+           f"au premier tour ou après une réponse, lance aussi en parallèle {helpers}, chacun avec le même chemin : "
+           "ils avancent pendant l'interview, l'Intervieweur ne cherche pas" if helpers else "")
         + f". Chaque « {QUESTION_PREFIX} » de l'Intervieweur se relaie en une phrase. La réponse repart à "
         "l'Intervieweur par SendMessage ; si la reprise échoue, relance-le avec le chemin du dossier, qui garde "
         "tout. Une trouvaille d'un agent de recherche se signale à l'Intervieweur au tour suivant.",
