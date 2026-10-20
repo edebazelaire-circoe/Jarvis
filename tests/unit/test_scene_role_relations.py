@@ -721,3 +721,37 @@ async def test_events_read_a_mission_at_most_once_per_interval(tmp_path):
     finally:
         await world.stop()
         await state.close()
+
+
+class IncoherentRelation:
+    """Relation au contenu incohérent, telle qu'une source défectueuse pourrait la rendre : ses extrémités lèvent."""
+
+    relation_id = "rel_bad"
+    mission_id = "mis_A"
+    kind = K.QA
+    status = RelationStatus.OPEN
+    outcome = None
+    is_open = True
+    participant_ids = ("ainst_A", "ainst_B")
+
+    def endpoints(self):
+        raise KeyError("reviewer position missing")
+
+
+async def test_a_relation_that_raises_is_reported_and_the_next_one_is_still_projected(tmp_path):
+    """M20 : la projection d'une relation lève vraiment ; l'échec est dit, la relation suivante de la passe est posée."""
+
+    tree = single_mission_tree(
+        IncoherentRelation(),
+        relation("rel_d", K.ADVERSARY, "mis_A", [("ainst_A", P.PRODUCER), ("ainst_B", P.PRODUCER)], minute=2),
+    )
+    world, state = await recorded_world(tmp_path, Recording(tree))
+    try:
+        await world.observe(agent_obs("A"), agent_obs("B"))
+        scene = await world.refreshed()
+        assert [link.relation_id for link in scene.relations] == ["adversary!rel_d!ainst_A~ainst_B"]
+        [(level, data)] = world.diagnostics.kinds(projector_module.SCENE_PROJECTION_FAILED_KIND)
+        assert level == "error" and data["where"] == "mission_relation" and "KeyError" in data["error"]
+    finally:
+        await world.stop()
+        await state.close()

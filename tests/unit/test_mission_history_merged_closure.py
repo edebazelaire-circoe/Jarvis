@@ -85,3 +85,28 @@ async def test_a_real_abnormal_end_still_retains_the_ephemeral(history):
     assert result is not None and result.outcome is O.EPHEMERAL_RETAINED
     stored = await store.find_instance(SOURCE, "S")
     assert stored is not None and stored.ephemeral_lowered
+
+
+async def test_a_replayed_declaration_after_eviction_is_discarded_by_the_retained_key(tmp_path):
+    """N2 : Work State a élagué l'éphémère close par fusion ; seule la clé retenue empêche le rejeu de la ressusciter."""
+
+    state, store = await open_store(tmp_path / "jarvis.sqlite3")
+    clock = Clock()
+    work = WorkStateStore(clock=clock, max_items=1)
+    service = MissionHistoryService(store, work_state=work, clock=clock, sweep_interval_s=None)
+    try:
+        await service.record_declaration(fact("E", ephemeral=True), work_source=SOURCE, work_external_id="E")
+        await observe(service, work, "E", WorkStatus.RUNNING, minute=0.1, ephemeral=True)
+        await observe(service, work, "E", WorkStatus.CANCELLED, minute=0.3, error_class=MERGED)
+        await observe(service, work, "X", WorkStatus.RUNNING, minute=0.4)  # au-delà de la borne : E est élaguée
+        assert [item.external_id for item in work.current_snapshot().items] == ["X"]
+        assert (SOURCE, "E") in service._discarded
+        replay = await service.record_declaration(fact("E", ephemeral=True), work_source=SOURCE, work_external_id="E")
+        assert replay.outcome is O.EPHEMERAL_DISCARDED
+        assert await store.find_instance(SOURCE, "E") is None
+        # Témoin : une clé jamais écartée, sans élément de Work State, attend son issue.
+        other = await service.record_declaration(fact("N", ephemeral=True), work_source=SOURCE, work_external_id="N")
+        assert other.outcome is O.EPHEMERAL_PENDING
+    finally:
+        await service.stop()
+        await state.close()
