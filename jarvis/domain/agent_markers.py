@@ -71,7 +71,7 @@ _EPHEMERAL = re.compile(re.escape(EPHEMERAL_MARKER) + r"[ \t]+")
 #: Les rôles qu'une description peut annoncer : ceux du loadout (`memory_settings.LOADOUT_ROLES`), les marqueurs
 #: des rôles **actifs** du registre (`subagent_roles`) et leurs alias de compatibilité. Un rôle désactivé n'est
 #: pas annoncé : son marqueur n'est pas consommé, ne masque pas le repli sur `prompt` et reste dans le libellé,
-#: exactement comme avant qu'il soit défini. L'activer (Slices 04/07) le rend lisible.
+#: exactement comme avant qu'il soit défini. Activés par la Slice 04, `qa` et `research-lead` y figurent.
 ANNOUNCED_ROLES: tuple[str, ...] = tuple(dict.fromkeys(
     (*LOADOUT_ROLES, *(role.marker for role in ROLES if role.enabled), *ROLE_ALIASES)))
 

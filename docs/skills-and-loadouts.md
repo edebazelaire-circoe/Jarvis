@@ -166,7 +166,12 @@ skills or settings change; the hook reads one manifest from it:
    head-marker grammar (profile, role, `[éphémère]` in any position of the head) is
    `jarvis/domain/agent_markers.py`, shared with the task tracker; the sub-agent role
    registry, its aliases (`reviewer` is the compatibility alias of the `qa` role) and each
-   role's `loadout_role` are described in [subagent-roles.md](subagent-roles.md);
+   role's `loadout_role` are described in [subagent-roles.md](subagent-roles.md). A registry
+   role whose marker is not itself a loadout role takes its contract's `loadout_role`:
+   `[code] [qa] ...` is `code:reviewer`, `[research-lead] ...` is `general:research`, and
+   a role without one (`[general] [interviewer] ...`) keeps its profile's key (`general`).
+   `LOADOUT_ROLES` is unchanged (`coder`, `reviewer`, `research`), so every saved
+   `memory.loadouts` rule still validates;
 3. a brief already holding the manifest mark `[loadout JARVIS]` is not given a second one;
 4. **any failure** (no file, unreadable or oversized file, wrong schema, missing key, a
    text without the mark, an exception) leaves the call exactly as the charter alone

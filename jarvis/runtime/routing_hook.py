@@ -35,7 +35,8 @@ from typing import Any, Mapping, Sequence
 from jarvis.domain import agent_markers, routing
 from jarvis.domain.agent_charter import sign_brief
 from jarvis.domain.loadout_view import MANIFEST_MARK
-from jarvis.domain.subagent_roles import ROLE_MARK, ROLE_MARKERS, with_role_instructions
+from jarvis.domain.work_methods import builtin_method
+from jarvis.domain.subagent_roles import ROLE_MARK, resolve_role, role_for, with_role_instructions
 # `ANNOUNCED_ROLES` : les rôles qu'une description peut annoncer (loadout, registre, alias), réexporté ici.
 from jarvis.domain.agent_markers import ANNOUNCED_ROLES, WORD_PATTERN  # noqa: F401
 from jarvis.domain.routing import (
@@ -485,7 +486,7 @@ def _role_overrides(event: Mapping[str, Any], runtime_root: Path, journal: Runti
     if str(event.get("tool_name") or "") not in AGENT_TOOLS:
         return {}
     tool_input = event.get("tool_input")
-    if read_role(tool_input if isinstance(tool_input, Mapping) else {}) not in ROLE_MARKERS:
+    if role_for(read_role(tool_input if isinstance(tool_input, Mapping) else {})) is None:
         return {}
     try:
         return subagent_roles_snapshot.read_overrides(runtime_root)
@@ -511,8 +512,10 @@ def _log_role(
 ) -> bool:
     """Consigne `agent.role_applied` quand la méthode d'un rôle vient d'être apposée ; rend si elle l'a été.
 
-    La preuve est faite de codes : le rôle, le profil, la source du texte (`override` ou `default`) et sa
-    taille, jamais le texte lui-même.
+    La preuve est faite de codes : le marqueur tel qu'écrit (`role`), l'id canonique et le statut de sa
+    résolution (`reviewer` -> `qa`, `alias`), le profil, la source des instructions (`override` ou `default`),
+    la Work Method apposée (`<id>@<version>` ou `None`), le rôle de loadout, la capacité de lancer des agents et
+    la taille du texte apposé, jamais le texte lui-même.
     """
     tool_input = event.get("tool_input")
     tool_input = tool_input if isinstance(tool_input, Mapping) else {}
@@ -521,6 +524,9 @@ def _log_role(
     if not isinstance(after, str) or ROLE_MARK not in after or (isinstance(before, str) and ROLE_MARK in before):
         return False
     role = read_role(tool_input)
+    resolution = resolve_role(role)
+    active = role_for(role)
+    method = active.default_work_method if active is not None else None
     try:
         journal.emit(
             "agent.role_applied",
@@ -529,14 +535,25 @@ def _log_role(
                 "code": "subagent_role_applied",
                 "tool_use_id": str(event.get("tool_use_id") or ""),
                 "role": role,
+                "role_id": resolution.role_id,
+                "role_status": resolution.status.value,
                 "profile": read_profile(tool_input),
-                "source": "override" if role in role_overrides else "default",
+                "source": "override" if resolution.role_id in role_overrides else "default",
+                "work_method": method_key(method),
+                "loadout_role": read_loadout_role(tool_input),
+                "can_spawn": bool(active and active.can_spawn),
                 "instructions_chars": len(after) - after.index(ROLE_MARK),
             },
         )
     except OSError:
         pass
     return True
+
+
+def method_key(method_id: str | None) -> str | None:
+    """`<id>@<version>` de la Work Method livrée apposée, ou `None`."""
+    method = builtin_method(method_id) if method_id else None
+    return method.key if method is not None else None
 
 
 def _log(

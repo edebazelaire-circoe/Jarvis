@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import fields, replace
 from datetime import datetime, timezone
+import re
 
 import pytest
 
@@ -12,6 +13,7 @@ from jarvis.domain.work_methods import (
     FORBIDDEN_PLAN_KEYS, MAX_PRINCIPLES, USEFUL_RELATION_KINDS, MethodError, MethodOrigin, MethodProvenance,
     WorkMethod, check_revision, check_role_methods, latest_methods,
 )
+from jarvis.domain.work_methods import BUILTIN_METHODS, RELATION_LABELS, builtin_method, render_method
 
 T0 = datetime(2026, 10, 20, 9, 0, tzinfo=timezone.utc)
 
@@ -116,5 +118,36 @@ def test_roles_cite_only_existing_applicable_methods():
     with pytest.raises(MethodError) as error:
         check_role_methods([coder], [method()])
     assert error.value.code == "work_method_not_applicable"
-    # Le registre livré ne cite encore aucune méthode : le catalogue est la Slice 04.
-    check_role_methods(subagent_roles.ROLES, [])
+    # Le registre livré cite le catalogue livré (Slice 04), et rien d'autre.
+    check_role_methods(subagent_roles.ROLES, BUILTIN_METHODS)
+    with pytest.raises(MethodError):
+        check_role_methods(subagent_roles.ROLES, [])
+
+
+# ---------------------------------------------------------------- catalogue livré (Slice 04)
+
+
+def test_the_builtin_catalogue_holds_the_initial_methods_as_heuristics():
+    ids = [item.method_id for item in BUILTIN_METHODS]
+    assert ids == ["quick-research", "deep-research", "comparative-research", "bug-investigation", "result-review"]
+    for item in BUILTIN_METHODS:
+        assert item.version == 1 and item.provenance == MethodProvenance()
+        # Le contrat de la Slice 01 tient : aller-retour strict, aucune clé de plan.
+        payload = item.to_payload()
+        assert WorkMethod.from_payload(payload) == item and not FORBIDDEN_PLAN_KEYS & payload.keys()
+        assert builtin_method(item.method_id) is item
+        # Des réflexes, pas des étapes : aucune entrée numérotée ni ordonnée.
+        for text in (*item.principles, *item.quality_checks):
+            assert not re.match(r"\s*(\d+[.)]|étape|d'abord|ensuite|puis|enfin)", text, re.IGNORECASE), text
+        for role_id in item.role_ids:
+            assert subagent_roles.role_by_id(role_id) is not None
+    assert builtin_method("inconnue") is None and builtin_method(None) is None
+
+
+def test_a_method_renders_as_reflexes_with_its_exact_key():
+    text = render_method(builtin_method("comparative-research"))
+    assert text.startswith("MÉTHODE DE TRAVAIL : Recherche comparative (comparative-research@1)\n")
+    assert "pas des étapes" in text and "confrontation" in text and "adversary" not in text
+    assert not re.search(r"^\s*\d+[.)]", text, re.MULTILINE)
+    assert "Critères de qualité" not in render_method(replace(builtin_method("quick-research"), quality_checks=()))
+    assert set(RELATION_LABELS) == set(USEFUL_RELATION_KINDS)

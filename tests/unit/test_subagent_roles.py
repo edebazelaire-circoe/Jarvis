@@ -23,7 +23,8 @@ from jarvis.domain.loadout_view import MANIFEST_MARK
 from jarvis.domain.memory_settings import LOADOUT_ROLES
 from jarvis.domain.prompt_registry import MAX_OVERRIDE_TEXT, PromptTarget, prompt_id
 from jarvis.domain.subagent_roles import (
-    EXECUTION_GATE_RULE, READY_PREFIX, QUESTION_PREFIX, ROLE_MARK, ROLES, brain_rules, role_for, with_role_instructions,
+    CAPABILITIES_MARK, EXECUTION_GATE_RULE, READY_PREFIX, QUESTION_PREFIX, ROLE_MARK, ROLES, brain_rules, role_brief,
+    role_for, with_role_instructions,
 )
 from jarvis.runtime import routing_hook, subagent_roles_snapshot
 from jarvis.runtime.claude_local import BRAIN_SYSTEM_PROMPT, PRESENTATION_PRODUCTION_RULE, ClaudeLocalAgent
@@ -55,11 +56,13 @@ def trace(root: Path, kind: str) -> list[dict]:
 
 def test_the_registry_holds_the_seven_roles_with_valid_unique_markers():
     # Les cinq ids d'origine indexent les surcharges enregistrées (`subagent_role.<id>`) : ils ne bougent pas.
-    # Direction de recherche et Contrôle qualité s'ajoutent, désactivés jusqu'à leur câblage (Slices 04 et 07).
+    # Direction de recherche et Contrôle qualité s'ajoutent, actifs depuis la Slice 04 mais pas encore proposés au
+    # cerveau (règle du cerveau : Slice 07).
     assert [role.marker for role in ROLES] == [
         "interviewer", "research", "web-research", "coder", "concept", "research-lead", "qa"]
     assert len({role.id for role in ROLES}) == len({role.marker for role in ROLES}) == 7
-    assert [role.id for role in ROLES if not role.enabled] == ["research-lead", "qa"]
+    assert all(role.enabled for role in ROLES)
+    assert [role.id for role in ROLES if not role.offered_to_brain] == ["research-lead", "qa"]
     for role in ROLES:
         # Lisible par le motif des marqueurs du hook, et jamais confondu avec un profil.
         assert routing_hook._BRACKET.fullmatch(f"[{role.marker}] ")
@@ -68,7 +71,8 @@ def test_the_registry_holds_the_seven_roles_with_valid_unique_markers():
         # Éditable en entier : le défaut tient dans la borne d'une surcharge.
         assert len(role.instructions) <= MAX_OVERRIDE_TEXT
         assert role_for(role.marker.upper()) is (role if role.enabled else None)
-    assert role_for("reviewer") is None and role_for("") is None
+    # L'alias résout son rôle ; rien ne se devine d'un vide.
+    assert role_for("reviewer") is role_for("qa") and role_for("") is None
     # Les deux rôles de loadout repris gardent leur nom.
     assert {"research", "coder"} <= set(LOADOUT_ROLES) & {role.marker for role in ROLES}
 
@@ -98,14 +102,16 @@ def test_the_interviewer_reads_the_dossier_asks_one_question_and_ends_with_quest
 
 def test_role_instructions_are_appended_once_with_the_override_when_there_is_one():
     once = with_role_instructions("Consigne.", "interviewer")
-    assert once.startswith("Consigne.\n\n" + ROLE_MARK + " (Intervieweur)\n")
-    assert once.endswith(role_for("interviewer").instructions.strip())
+    assert once.startswith("Consigne.\n\n" + ROLE_MARK + " (Intervieweur)\n" + role_for("interviewer").instructions)
+    assert once.endswith(role_brief(role_for("interviewer")))
     assert with_role_instructions(once, "interviewer") is None
     edited = with_role_instructions("Consigne.", "concept", {"concept": "Trois pistes, pas une de plus."})
-    assert edited.endswith("Trois pistes, pas une de plus.")
+    assert "\nTrois pistes, pas une de plus.\n\n" + CAPABILITIES_MARK in edited
+    assert role_for("concept").instructions not in edited
     # Une surcharge vide ne vaut pas un rôle muet : le défaut revient.
-    assert with_role_instructions("Consigne.", "coder", {"coder": "  "}).endswith(role_for("coder").instructions.strip())
-    assert with_role_instructions("Consigne.", "reviewer") is None
+    assert role_for("coder").instructions.strip() in with_role_instructions("Consigne.", "coder", {"coder": "  "})
+    # L'alias historique de la relecture reçoit la méthode du Contrôle qualité (Slice 04).
+    assert with_role_instructions("Consigne.", "reviewer") == f"Consigne.\n\n{role_brief(role_for('qa'))}"
 
 
 # ---------------------------------------------------------------- cerveau
@@ -173,7 +179,7 @@ def test_the_hook_appends_the_role_method_after_the_charter_and_logs_it(tmp_path
     brief = brief_of(output)
     assert brief.startswith(CHARTER_MARK)
     assert brief.index("Fais-le.") < brief.index(ROLE_MARK)
-    assert brief.endswith(role_for("interviewer").instructions.strip())
+    assert brief.endswith(role_brief(role_for("interviewer")))
     assert routing_hook.ROLE_NOTE in output["hookSpecificOutput"]["permissionDecisionReason"]
     [event] = trace(tmp_path, "agent.role_applied")
     assert event["data"]["role"] == "interviewer" and event["data"]["profile"] == "general"
@@ -196,7 +202,7 @@ def test_a_brief_already_carrying_the_method_is_not_given_a_second_one(tmp_path)
 def test_the_saved_override_reaches_the_subagent(tmp_path):
     subagent_roles_snapshot.write_snapshot(tmp_path, {"interviewer": "Posez une seule question, puis PRÊT."})
     brief = brief_of(routing_hook.run(call("[general] [interviewer] Cadrer"), tmp_path))
-    assert brief.endswith("Posez une seule question, puis PRÊT.")
+    assert brief.endswith(role_brief(role_for("interviewer"), {"interviewer": "Posez une seule question, puis PRÊT."}))
     assert role_for("interviewer").instructions not in brief
     assert trace(tmp_path, "agent.role_applied")[0]["data"]["source"] == "override"
 
@@ -204,7 +210,7 @@ def test_the_saved_override_reaches_the_subagent(tmp_path):
 def test_an_unreadable_snapshot_falls_back_to_the_code_default(tmp_path):
     (tmp_path / subagent_roles_snapshot.SNAPSHOT_FILE).write_text("{pas du json", encoding="utf-8")
     brief = brief_of(routing_hook.run(call("[general] [web-research] Chercher"), tmp_path))
-    assert brief.endswith(role_for("web-research").instructions.strip())
+    assert brief.endswith(role_brief(role_for("web-research")))
     [failure] = trace(tmp_path, "agent.role.failed")
     assert failure["data"]["code"] == "subagent_roles_snapshot_failed" and failure["level"] == "warning"
 
@@ -306,6 +312,20 @@ async def test_the_roles_route_lists_effective_instructions_and_an_edit_rewrites
         assert interviewer["instructions"] == interviewer["default_instructions"] == ROLES[0].instructions
         assert interviewer["prompt_id"] == "subagent_role.interviewer" and interviewer["tools"]
         assert view["execution_gate"] == EXECUTION_GATE_RULE
+        # Version 2 (Slice 04) : drapeaux d'offre et alias par rôle, catalogue des Work Methods, jetons partagés.
+        from jarvis.domain.work_methods import BUILTIN_METHODS
+        assert view["schema_version"] == 2
+        assert view["work_methods"] == [method.to_payload() for method in BUILTIN_METHODS]
+        assert view["aliases"] == {"reviewer": "qa"} and view["reserved_role_ids"] == ["undeclared", "unknown"]
+        assert view["accents"] == list(subagent_roles.ROLE_ACCENTS)
+        by_id = {role["id"]: role for role in view["roles"]}
+        assert by_id["qa"]["aliases"] == ["reviewer"] and by_id["qa"]["enabled"] is True
+        assert by_id["qa"]["offered_to_brain"] is False and by_id["qa"]["default_work_method"] == "result-review"
+        assert by_id["research-lead"]["loadout_role"] == "research"
+        assert by_id["interviewer"]["offered_to_subagents"] is False
+        method_ids = {method["method_id"] for method in view["work_methods"]}
+        for role in view["roles"]:
+            assert set(role["work_methods"]) <= method_ids and role["visual"]["accent"] in view["accents"]
 
         edited = await client.post("/api/prompts/subagent_role.interviewer", json={
             "action": "edit", "text": "Une question, puis PRÊT.",
@@ -382,8 +402,8 @@ def test_the_handoff_names_map_to_the_kept_ids():
         ("coder", "coder", "declared"),
         ("CODER", "coder", "declared"),
         ("reviewer", "qa", "alias"),
-        ("qa", "qa", "disabled"),
-        ("research-lead", "research-lead", "disabled"),
+        ("qa", "qa", "declared"),
+        ("research-lead", "research-lead", "declared"),
         ("zorg", "unknown", "unknown"),
         ("", "undeclared", "undeclared"),
         (None, "undeclared", "undeclared"),
@@ -432,26 +452,104 @@ def test_role_contract_fields_are_validated():
 
 
 def test_loadout_roles_of_the_registry_agree_with_what_the_hook_reads():
-    # Pour un rôle dont le marqueur est déjà un rôle de loadout, le hook lit ce loadout-là ; `qa` emprunte
-    # `reviewer` par contrat (câblage : Slice 04), et `[code] [reviewer]` garde son loadout d'aujourd'hui.
+    # Le hook lit le loadout du contrat de chaque rôle actif : `qa` emprunte `reviewer`, `research-lead`
+    # `research` (Slice 04), et `[code] [reviewer]` garde son loadout d'aujourd'hui.
     for role in ROLES:
-        read = routing_hook.read_loadout_role({"description": f"[general] [{role.marker}] x"})
-        if role.loadout_role == role.marker:
-            assert read == role.marker
-        elif role.loadout_role is None:
-            assert read is None
-    assert role_for("qa") is None and subagent_roles.role_by_id("qa").loadout_role == "reviewer"
+        assert routing_hook.read_loadout_role({"description": f"[general] [{role.marker}] x"}) == role.loadout_role
+    assert routing_hook.read_loadout_role({"description": "[code] [qa] Relire"}) == "reviewer"
+    assert routing_hook.read_loadout_role({"description": "[research-lead] Comparer"}) == "research"
     assert routing_hook.read_loadout_role({"description": "[code] [reviewer] Relire"}) == "reviewer"
 
 
-@pytest.mark.parametrize("marker", ["qa", "research-lead"])
-def test_disabled_new_roles_change_nothing_live(marker):
-    assert f"[{marker}]" not in brain_rules()
-    assert with_role_instructions("Consigne.", marker) is None
+# ---------------------------------------------------------------- registre câblé (Slice 04, orchestration organique)
+
+
+@pytest.mark.parametrize(("marker", "role_id", "loadout", "method"), [
+    ("qa", "qa", "reviewer", "result-review@1"),
+    ("research-lead", "research-lead", "research", "deep-research@1"),
+])
+def test_the_activated_roles_are_announced_given_their_method_and_their_loadout(tmp_path, marker, role_id, loadout,
+                                                                                 method):
     description = f"[code] [{marker}] Relire le diff"
-    # Rôle annoncé, libellé et loadout : exactement ceux d'avant la définition du rôle.
-    assert routing_hook.read_role({"description": description}) is None
-    assert routing_hook.strip_profile(description) == f"[{marker}] Relire le diff"
-    assert routing_hook.read_loadout_role({"description": description}) is None
-    assert routing_hook.read_loadout_role({"description": description, "prompt": "[code] [coder] x"}) == "coder"
-    assert routing_hook.read_profile({"description": description}) == "code"
+    assert routing_hook.read_role({"description": description}) == marker
+    assert routing_hook.strip_profile(description) == "Relire le diff"
+    assert routing_hook.read_loadout_role({"description": description}) == loadout
+    brief = brief_of(routing_hook.run(call(description), tmp_path))
+    assert brief.endswith(role_brief(role_for(marker)))
+    assert brief.count(ROLE_MARK) == 1 and f"({method})" in brief
+    [event] = trace(tmp_path, "agent.role_applied")
+    data = event["data"]
+    assert (data["role"], data["role_id"], data["role_status"]) == (marker, role_id, "declared")
+    assert (data["work_method"], data["loadout_role"], data["source"]) == (method, loadout, "default")
+    assert data["can_spawn"] is role_for(marker).can_spawn
+
+
+@pytest.mark.parametrize("marker", ["qa", "research-lead"])
+def test_the_activated_roles_are_not_offered_to_the_brain_until_slice_07(marker):
+    # La règle du cerveau (`brain_rules`, `claude_local.py`) relève de la Slice 07 : elle ne change pas ici.
+    assert f"[{marker}]" not in brain_rules()
+    assert f"[{marker}]" not in BRAIN_SYSTEM_PROMPT
+    offered = [role for role in ROLES if role.id != marker]
+    from dataclasses import replace
+    assert brain_rules(ROLES) == brain_rules([replace(role, offered_to_brain=False) if role.id == marker else role
+                                              for role in ROLES]) == brain_rules(offered)
+
+
+def test_the_alias_reviewer_gets_the_qa_method_and_keeps_its_loadout(tmp_path):
+    description = "[code] [reviewer] Relire le diff"
+    subagent_roles_snapshot.write_snapshot(tmp_path, {"qa": "Relisez, puis tranchez."})
+    brief = brief_of(routing_hook.run(call(description), tmp_path))
+    assert brief.endswith(role_brief(role_for("qa"), {"qa": "Relisez, puis tranchez."}))
+    assert routing_hook.read_loadout_role({"description": description}) == "reviewer"
+    [event] = trace(tmp_path, "agent.role_applied")
+    assert (event["data"]["role"], event["data"]["role_id"], event["data"]["role_status"]) == ("reviewer", "qa", "alias")
+    assert event["data"]["source"] == "override"
+
+
+def test_can_spawn_shapes_the_capabilities_given_to_the_agent():
+    from jarvis.domain.subagent_roles import SPAWN_TOOL, capabilities_text
+    for role in ROLES:
+        text = capabilities_text(role)
+        assert text.startswith(CAPABILITIES_MARK)
+        if role.can_spawn:
+            assert SPAWN_TOOL in text and f"[{role.marker}]" not in text
+            # L'Intervieweur ne parle que par le cerveau : un agent ne le lance pas.
+            assert "[interviewer]" not in text
+            for other in ROLES:
+                if other.id != role.id and other.offered_to_subagents:
+                    assert f"[{other.default_profile}] [{other.marker}]" in text
+        else:
+            assert "Vous ne lancez aucun autre agent" in text and "[" not in text
+
+
+def test_each_role_resolves_its_work_methods_from_the_catalogue():
+    from jarvis.domain.subagent_roles import default_method_text
+    from jarvis.domain.work_methods import BUILTIN_METHODS, builtin_method, render_method
+    assert {method.method_id for method in BUILTIN_METHODS} >= {
+        "quick-research", "deep-research", "comparative-research", "bug-investigation"}
+    for role in ROLES:
+        for method_id in role.work_methods:
+            assert builtin_method(method_id).applies_to(role.id)
+        method = builtin_method(role.default_work_method) if role.default_work_method else None
+        assert default_method_text(role) == (render_method(method) if method else None)
+        brief = role_brief(role)
+        assert (method is not None and method.key in brief) or "MÉTHODE DE TRAVAIL" not in brief
+    # Les rôles existants n'ont pas de méthode par défaut : leur consigne ne gagne que les capacités.
+    assert [role.id for role in ROLES if role.default_work_method] == ["research-lead", "qa"]
+
+
+def test_a_disabled_role_is_still_resolved_as_disabled_and_gets_nothing(monkeypatch):
+    from dataclasses import replace
+    disabled = replace(role_for("concept"), enabled=False)
+    monkeypatch.setitem(subagent_roles._BY_MARKER, "concept", disabled)
+    monkeypatch.setitem(subagent_roles._BY_ID, "concept", disabled)
+    assert subagent_roles.resolve_role("concept").status.value == "disabled"
+    assert role_for("concept") is None
+    assert with_role_instructions("Consigne.", "concept") is None
+    assert brain_rules([disabled]).count("[concept]") == 0
+
+
+def test_an_unknown_marker_never_gets_a_method():
+    assert role_for("zorg") is None and with_role_instructions("Consigne.", "zorg") is None
+    assert routing_hook.read_role({"description": "[code] [zorg] Relire"}) is None
+    assert routing_hook.strip_profile("[code] [zorg] Relire") == "[zorg] Relire"

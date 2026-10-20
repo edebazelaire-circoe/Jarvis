@@ -5065,8 +5065,14 @@ class ControlCenter:
         return {"written": True, "modified_roles": sorted(overrides)}
 
     def _subagent_roles_payload(self, settings: dict[str, Any]) -> dict[str, Any]:
-        """Le registre des rôles, chacun avec le texte effectif de ses instructions, sa révision et `modified`."""
-        from jarvis.domain import subagent_roles
+        """Le registre des rôles, chacun avec le texte effectif de ses instructions, sa révision et `modified`.
+
+        `schema_version` 2 (Slice 04 de jarvis-organic-agent-orchestration) : chaque rôle porte aussi
+        `offered_to_brain`, `offered_to_subagents` et `aliases` ; la charge utile ajoute le catalogue des
+        Work Methods livrées, les alias, les jetons d'accent et les ids réservés. Lecture seule : les
+        instructions s'éditent par `POST /api/prompts/subagent_role.<id>`.
+        """
+        from jarvis.domain import subagent_roles, work_methods
         from jarvis.runtime.prompt_catalog import default_prompt_registry
         from jarvis.runtime.prompt_overrides import stored_prompt_override_document
 
@@ -5088,8 +5094,12 @@ class ControlCenter:
                 "conflict": layer["conflict"],
             })
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "roles": roles,
+            "work_methods": [method.to_payload() for method in work_methods.BUILTIN_METHODS],
+            "aliases": dict(subagent_roles.ROLE_ALIASES),
+            "accents": list(subagent_roles.ROLE_ACCENTS),
+            "reserved_role_ids": sorted(subagent_roles.RESERVED_ROLE_IDS),
             "execution_gate": subagent_roles.EXECUTION_GATE_RULE,
             "mission_path": subagent_roles.MISSION_PATH_HINT,
             "application": "next_invocation",

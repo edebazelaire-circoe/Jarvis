@@ -14,6 +14,7 @@ from jarvis.domain import agent_markers
 from jarvis.domain.agent_markers import (
     ANNOUNCED_ROLES, EPHEMERAL_MARKER, declaration_from_hook_event, declaration_from_tool_input, parse_head,
 )
+from jarvis.domain.memory_settings import LOADOUT_ROLES
 from jarvis.domain.subagent_roles import RoleStatus
 from jarvis.runtime import agent_tasks, routing_hook
 from jarvis.runtime.agent_tasks import AgentTaskTracker, parse_ephemeral_description
@@ -132,8 +133,10 @@ def test_playbook_roles_are_read_across_the_ephemeral_marker():
 
 def test_the_announced_roles_cover_loadout_roles_active_registry_markers_and_aliases():
     assert {"coder", "reviewer", "research", "interviewer", "web-research", "concept"} <= set(ANNOUNCED_ROLES)
-    # Un rôle désactivé n'est pas annoncé : il se lit comme avant d'exister.
-    assert not {"research-lead", "qa"} & set(ANNOUNCED_ROLES)
+    # Activés par la Slice 04, `qa` et `research-lead` sont annoncés ; un rôle désactivé ne le serait pas.
+    assert {"research-lead", "qa"} <= set(ANNOUNCED_ROLES)
+    from jarvis.domain.subagent_roles import ROLES
+    assert set(ANNOUNCED_ROLES) == {*LOADOUT_ROLES, *(role.marker for role in ROLES if role.enabled), "reviewer"}
     assert routing_hook.ANNOUNCED_ROLES == ANNOUNCED_ROLES
 
 
@@ -164,14 +167,15 @@ def test_no_declaration_without_a_label_after_every_head_marker(description):
     assert head.ephemeral is False and head.description == description.strip()
 
 
-def test_a_disabled_role_in_the_description_does_not_hide_the_prompt_role_nor_its_loadout():
+def test_an_activated_role_in_the_description_wins_over_the_prompt_role():
+    # Écart voulu de la Slice 04 : `[qa]` est un rôle actif, il est lu dans la description, consommé du libellé,
+    # et c'est son loadout (`reviewer`) qui s'applique, plus celui de la consigne.
     call = {"description": "[code] [qa] Relire le diff", "prompt": "[code] [coder] Relis."}
-    assert routing_hook.read_role(call) == "coder"
-    assert routing_hook.read_loadout_role(call) == "coder"
-    assert routing_hook.strip_profile(call["description"]) == "[qa] Relire le diff"
-    # Le contrat sait déjà ce que vaudra `[qa]` : une résolution explicite, statut `disabled` aujourd'hui.
+    assert routing_hook.read_role(call) == "qa"
+    assert routing_hook.read_loadout_role(call) == "reviewer"
+    assert routing_hook.strip_profile(call["description"]) == "Relire le diff"
     from jarvis.domain.subagent_roles import resolve_role
-    assert resolve_role("qa").status is RoleStatus.DISABLED
+    assert resolve_role("qa").status is RoleStatus.DECLARED
 
 
 # ---------------------------------------------------------------- déclaration (D25)

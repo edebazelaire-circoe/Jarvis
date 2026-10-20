@@ -10,7 +10,12 @@ jamais suivre le code : il fige le comportement d'avant pour prouver que seuls l
   travers lui, y compris dans la consigne ;
 - le marqueur est accepté ailleurs qu'en premier dans la tête ;
 - un marqueur en double, ou sans libellé après tous les marqueurs de tête, ne déclare plus rien (côté sûr).
-Sans ce jeton, tout est identique, rôles désactivés `qa` et `research-lead` compris.
+Sans ce jeton, tout est identique, sauf l'activation voulue de `qa` et `research-lead` (Slice 04) :
+- `[qa]` et `[research-lead]` sont des rôles annoncés : lus comme rôle (dans la description, sinon la consigne),
+  consommés du libellé (`strip`) ;
+- leur loadout est celui de leur contrat : `qa` -> `reviewer`, `research-lead` -> `research`.
+Ces deux écarts sont exactement ceux de l'oracle « activé » (ancien oracle avec ces deux rôles annoncés) ; sans
+ces deux marqueurs, l'ancien oracle reste exact.
 """
 
 from __future__ import annotations
@@ -44,27 +49,31 @@ def old_profile(ti):
     return routing.GENERAL_PROFILE
 
 
-def old_markers(text):
+#: Écart voulu de la Slice 04 : les deux rôles activés et le loadout de leur contrat.
+_ACTIVATED = {"qa": "reviewer", "research-lead": "research"}
+
+
+def old_markers(text, announced=_OLD_ANNOUNCED):
     first = _OLD_PROFILE.match(text)
     if first is None:
         return 0, None
     word = first.group(1).strip().lower()
-    if word in _OLD_ANNOUNCED:
+    if word in announced:
         return first.end(), word
     if routing.is_profile(word):
         second = _OLD_BRACKET.match(text, first.end())
         if second is not None:
             name = second.group(1).strip().lower()
-            if name in _OLD_ANNOUNCED:
+            if name in announced:
                 return second.end(), name
             if name in PLAYBOOK_ROLES:
                 return second.end(), None
     return first.end(), None
 
 
-def old_role(ti):
+def old_role(ti, announced=_OLD_ANNOUNCED):
     for key in ("description", "prompt"):
-        role = old_markers(str(ti.get(key) or ""))[1]
+        role = old_markers(str(ti.get(key) or ""), announced)[1]
         if role is not None:
             return role
     return None
@@ -92,15 +101,18 @@ def old_ephemeral(description):
     return match.group(1).strip(), True
 
 
-def old_reading(ti):
-    role = old_role(ti)
+def old_reading(ti, *, activated=False):
+    """L'ancien oracle ; `activated` y ajoute seulement l'écart voulu de la Slice 04 (`_ACTIVATED`)."""
+    announced = (*_OLD_ANNOUNCED, *_ACTIVATED) if activated else _OLD_ANNOUNCED
+    role = old_role(ti, announced)
     description = ti["description"]
+    loadout = role if role in _OLD_LOADOUT else (_ACTIVATED.get(role) if activated else None)
     return {
         "profile": old_profile(ti),
         "role": role,
-        "loadout": role if role in _OLD_LOADOUT else None,
+        "loadout": loadout,
         "playbook": old_playbook(ti),
-        "strip": description[old_markers(description)[0]:].strip(),
+        "strip": description[old_markers(description, announced)[0]:].strip(),
         "eph": old_ephemeral(description),
     }
 
@@ -150,7 +162,23 @@ def test_without_the_ephemeral_token_every_reader_is_unchanged():
             if E in prompt:
                 continue
             ti = {"description": description, "prompt": prompt}
-            assert new_reading(ti) == old_reading(ti), ti
+            assert new_reading(ti) == old_reading(ti, activated=True), ti
+            if not any(f"[{marker}]" in text for marker in _ACTIVATED for text in (description, prompt)):
+                assert new_reading(ti) == old_reading(ti), ti
+
+
+def test_the_slice_04_activation_differences_are_pinned():
+    # Avant : `[qa]` restait dans le libellé et la consigne donnait le rôle ; désormais il est le rôle.
+    ti = {"description": "[code] [qa] Relire", "prompt": "[code] [coder] consigne"}
+    assert old_reading(ti)["role"] == "coder" and old_reading(ti)["strip"] == "[qa] Relire"
+    assert new_reading(ti)["role"] == "qa" and new_reading(ti)["strip"] == "Relire"
+    assert (old_reading(ti)["loadout"], new_reading(ti)["loadout"]) == ("coder", "reviewer")
+    ti = {"description": "[research-lead] Comparer", "prompt": ""}
+    assert (old_reading(ti)["role"], new_reading(ti)["role"]) == (None, "research-lead")
+    assert (old_reading(ti)["loadout"], new_reading(ti)["loadout"]) == (None, "research")
+    # Le profil, le rôle de production et l'éphémère ne bougent jamais.
+    for key in ("profile", "playbook", "eph"):
+        assert old_reading(ti)[key] == new_reading(ti)[key]
 
 
 def _only_head_markers(text):

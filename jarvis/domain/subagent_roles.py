@@ -10,9 +10,11 @@ voit pas le prompt du cerveau, et le cerveau écrit des consignes courtes.
 Ce module ne dépend de rien d'autre que du domaine :
 
 - `ROLES` et `role_for(marker)` : le registre, figé ;
-- `with_role_instructions(prompt, marker, overrides)` : la méthode apposée, une
-  seule fois (marque `ROLE_MARK`), texte surchargé par l'utilisateur sinon
-  défaut du code ;
+- `with_role_instructions(prompt, marker, overrides)` : ce que le hook appose,
+  une seule fois (marque `ROLE_MARK`) : `role_brief`, soit les instructions
+  (texte surchargé par l'utilisateur sinon défaut du code), les capacités
+  générées du registre (`capabilities_text` : lancer des agents ou non, et
+  lesquels) et la Work Method par défaut du rôle (`work_methods.render_method`) ;
 - `brain_rules(roles)` : la section « TYPE DE DEMANDE » du prompt du cerveau,
   générée depuis le même registre, avec la règle de passage à l'exécution
   isolée dans `EXECUTION_GATE_RULE` pour pouvoir la changer seule.
@@ -31,6 +33,10 @@ résout par `resolve_role` : rôle déclaré, alias de compatibilité
 jamais deviné d'un libellé. Mission Owner n'est pas un rôle : c'est un statut
 d'instance (`missions.AgentInstance.mission_owner`).
 
+Registre câblé (Slice 04) : tous les rôles sont actifs ; `offered_to_brain` dit
+si `brain_rules` les propose au cerveau (pas encore `research-lead` ni `qa`,
+Slice 07), `offered_to_subagents` si un agent qui lance des agents les voit.
+
 Contrat : `docs/subagent-roles.md`.
 """
 
@@ -44,8 +50,8 @@ from typing import Any
 
 from jarvis.domain import routing
 from jarvis.domain.memory_settings import LOADOUT_ROLES
+from jarvis.domain.work_methods import BUILTIN_METHODS, builtin_method, check_role_methods, is_method_id, render_method
 from jarvis.domain.work_methods import ROLE_ID as _METHOD_ROLE_ID
-from jarvis.domain.work_methods import is_method_id
 
 #: Préfixe des prompts éditables qui portent les instructions d'un rôle.
 PROMPT_PREFIX = "subagent_role."
@@ -129,6 +135,12 @@ class SubagentRole:
     default_work_method: str | None = None
     #: Rôle de loadout (`memory_settings.LOADOUT_ROLES`) dont ce rôle prend les savoirs, ou `None` (profil seul).
     loadout_role: str | None = None
+    #: Proposé au cerveau dans la section « TYPE DE DEMANDE » (`brain_rules`). Un rôle actif non proposé reste
+    #: lisible par le hook (méthode, loadout) quand un marqueur le déclare : seule la règle du cerveau l'omet.
+    offered_to_brain: bool = True
+    #: Proposé aux agents qui peuvent lancer d'autres agents (`can_spawn`), dans les capacités apposées sur leur
+    #: consigne. Faux pour un rôle qui n'a de sens qu'au premier niveau (l'Intervieweur parle par le cerveau).
+    offered_to_subagents: bool = True
 
     def __post_init__(self) -> None:
         for name in ("id", "marker"):
@@ -164,6 +176,9 @@ class SubagentRole:
             raise ValueError(f"subagent role {self.id}: default_work_method must be one of work_methods")
         if self.loadout_role is not None and self.loadout_role not in LOADOUT_ROLES:
             raise ValueError(f"subagent role {self.id}: loadout_role must be one of {list(LOADOUT_ROLES)}")
+        for name in ("enabled", "offered_to_brain", "offered_to_subagents"):
+            if not isinstance(getattr(self, name), bool):
+                raise TypeError(f"{name} must be a boolean")
 
     @property
     def prompt_id(self) -> str:
@@ -188,6 +203,9 @@ class SubagentRole:
             "work_methods": list(self.work_methods),
             "default_work_method": self.default_work_method,
             "loadout_role": self.loadout_role,
+            "offered_to_brain": self.offered_to_brain,
+            "offered_to_subagents": self.offered_to_subagents,
+            "aliases": sorted(alias for alias, target in ROLE_ALIASES.items() if target == self.id),
         }
 
 
@@ -350,6 +368,8 @@ ROLES: tuple[SubagentRole, ...] = (
         tools=("Read", "Edit", "Write"),
         when_relevant="Création, livrable important ou résultat attendu flou, avant toute exécution.",
         visual=RoleVisual(icon="question", accent="violet", badge="INT"),
+        # L'Intervieweur ne parle à l'utilisateur que par le cerveau : un agent ne le lance pas.
+        offered_to_subagents=False,
     ),
     SubagentRole(
         id="research",
@@ -361,6 +381,7 @@ ROLES: tuple[SubagentRole, ...] = (
         tools=("Read", "Grep", "Glob", "Edit", "board_memory_search", "memory_search", "knowledge_search"),
         when_relevant="Quand la matière existe probablement déjà dans le Board, la mémoire ou le dépôt.",
         visual=RoleVisual(icon="book", accent="teal", badge="DOC"),
+        work_methods=("quick-research", "deep-research", "comparative-research"),
         loadout_role="research",
     ),
     SubagentRole(
@@ -373,6 +394,7 @@ ROLES: tuple[SubagentRole, ...] = (
         tools=("WebSearch", "WebFetch", "Read", "Edit"),
         when_relevant="Quand il faut des sources extérieures que le poste n'a pas.",
         visual=RoleVisual(icon="globe", accent="sky", badge="WEB"),
+        work_methods=("quick-research", "deep-research", "comparative-research"),
     ),
     SubagentRole(
         id="coder",
@@ -389,6 +411,7 @@ ROLES: tuple[SubagentRole, ...] = (
         visual=RoleVisual(icon="code", accent="amber", badge="DEV"),
         can_own_mission=True,
         can_spawn=True,
+        work_methods=("bug-investigation",),
         loadout_role="coder",
     ),
     SubagentRole(
@@ -402,10 +425,10 @@ ROLES: tuple[SubagentRole, ...] = (
         when_relevant="Création ouverte où plusieurs directions sont possibles, en parallèle de l'Intervieweur.",
         visual=RoleVisual(icon="lightbulb", accent="rose", badge="CPT"),
     ),
-    # Rôles additifs du handoff jarvis-organic-agent-orchestration (Slice 01) : définis ici, désactivés tant que
-    # leur câblage n'est pas livré (méthode et loadout : Slice 04 ; règles du cerveau : Slice 07). Désactivés, ils
-    # n'apparaissent pas dans `brain_rules` et le hook n'appose pas leur méthode : le comportement vivant est
-    # inchangé. Condition d'activation : `enabled=True` dans la Slice qui les câble, avec ses tests.
+    # Rôles additifs du handoff jarvis-organic-agent-orchestration (Slice 01), actifs depuis la Slice 04 : le hook
+    # lit leur marqueur, appose leurs instructions, leurs capacités et leur Work Method par défaut, et donne leur
+    # loadout. Ils ne sont pas encore proposés au cerveau (`offered_to_brain=False`) : la règle du cerveau qui dit
+    # quand les lancer relève de la Slice 07, qui passera ce drapeau à vrai avec ses tests.
     SubagentRole(
         id="research-lead",
         marker="research-lead",
@@ -416,10 +439,14 @@ ROLES: tuple[SubagentRole, ...] = (
         instructions=RESEARCH_LEAD_INSTRUCTIONS,
         tools=("Read", "Edit", SPAWN_TOOL),
         when_relevant="Question qui demande plusieurs sources ou angles (comparer, choisir, faire l'état d'un sujet).",
-        enabled=False,
         visual=RoleVisual(icon="compass", accent="indigo", badge="DIR"),
         can_own_mission=True,
         can_spawn=True,
+        work_methods=("deep-research", "comparative-research", "quick-research"),
+        default_work_method="deep-research",
+        # Les savoirs de la recherche documentaire : la direction lit aussi les sources elle-même.
+        loadout_role="research",
+        offered_to_brain=False,
     ),
     SubagentRole(
         id="qa",
@@ -431,9 +458,11 @@ ROLES: tuple[SubagentRole, ...] = (
         instructions=QA_INSTRUCTIONS,
         tools=("Read", "Grep", "Glob", "Bash"),
         when_relevant="Résultat critique ou risqué qui mérite un second regard avant d'être rendu.",
-        enabled=False,
         visual=RoleVisual(icon="shield-check", accent="lime", badge="QA"),
+        work_methods=("result-review", "bug-investigation"),
+        default_work_method="result-review",
         loadout_role="reviewer",
+        offered_to_brain=False,
     ),
 )
 
@@ -453,12 +482,19 @@ for _alias, _target in ROLE_ALIASES.items():
 for _visual_key in ("icon", "accent", "badge"):
     if len({getattr(role.visual, _visual_key) for role in ROLES}) != len(ROLES):
         raise ValueError(f"each subagent role needs its own visual {_visual_key}")
+# Le catalogue des Work Methods et le registre se tiennent : un rôle ne cite qu'une méthode livrée qui s'applique à
+# lui, et une méthode livrée ne vise que des rôles du registre.
+check_role_methods(ROLES, BUILTIN_METHODS)
+for _method in BUILTIN_METHODS:
+    if not set(_method.role_ids) <= set(_BY_ID):
+        raise ValueError(f"work method {_method.key} names a role outside the registry")
 
 
 def role_for(marker: object) -> SubagentRole | None:
-    """Le rôle actif d'un marqueur, ou `None` (inconnu ou désactivé)."""
+    """Le rôle actif d'un marqueur ou d'un alias (`reviewer` -> `qa`), ou `None` (inconnu ou désactivé)."""
 
-    role = _BY_MARKER.get(str(marker or "").strip().lower())
+    raw = str(marker or "").strip().lower()
+    role = _BY_MARKER.get(raw) or _BY_ID.get(ROLE_ALIASES.get(raw, ""))
     return role if role is not None and role.enabled else None
 
 
@@ -525,13 +561,57 @@ def instructions_for(role: SubagentRole, overrides: Mapping[str, str] | None = N
     return text if isinstance(text, str) and text.strip() else role.instructions
 
 
+#: Tête des capacités apposées après les instructions d'un rôle.
+CAPABILITIES_MARK = "CAPACITÉS DU RÔLE"
+
+
+def capabilities_text(role: SubagentRole, roles: Sequence[SubagentRole] = ROLES) -> str:
+    """Ce que le rôle peut faire, généré du registre : lancer des agents (`can_spawn`) et lesquels.
+
+    Le CLI donne l'outil `Agent` à tout sous-agent `general-purpose` : tant qu'aucun type d'agent à outils
+    restreints n'est câblé (Slice 05), cette consigne est ce qui rend `can_spawn` effectif.
+    """
+
+    if not role.can_spawn:
+        return (f"{CAPABILITIES_MARK}\nVous ne lancez aucun autre agent : si un autre travail vous semble "
+                "nécessaire, dites-le dans votre compte rendu.")
+    offered = [item for item in roles if item.enabled and item.offered_to_subagents and item.id != role.id]
+    catalogue = " ; ".join(f"{_marker_of(item)} ({item.name.lower()})" for item in offered)
+    return (
+        f"{CAPABILITIES_MARK}\nVous pouvez lancer d'autres agents (outil {SPAWN_TOOL}) quand cela sert la mission, "
+        "pas davantage. Commencez la description de chacun par son profil puis son rôle entre crochets : JARVIS "
+        f"lui donne alors la méthode et les savoirs de ce rôle. Rôles disponibles : {catalogue}."
+    )
+
+
+def default_method_text(role: SubagentRole) -> str | None:
+    """Le texte de la Work Method par défaut du rôle (`work_methods.render_method`), ou `None`."""
+
+    method = builtin_method(role.default_work_method) if role.default_work_method else None
+    return render_method(method) if method is not None else None
+
+
+def role_brief(role: SubagentRole, overrides: Mapping[str, str] | None = None) -> str:
+    """Ce que le hook appose pour un rôle : ses instructions (éditables), ses capacités, sa Work Method par défaut.
+
+    Seules les instructions sont éditables (prompt `subagent_role.<id>`) ; capacités et méthode viennent du
+    registre et du catalogue, et suivent donc toujours le code.
+    """
+
+    parts = [f"{ROLE_MARK} ({role.name})\n{instructions_for(role, overrides).strip()}", capabilities_text(role)]
+    method = default_method_text(role)
+    if method:
+        parts.append(method)
+    return "\n\n".join(parts)
+
+
 def with_role_instructions(prompt: str, marker: object, overrides: Mapping[str, str] | None = None) -> str | None:
-    """`prompt` suivi de la méthode du rôle, ou `None` s'il n'y a rien à ajouter. Jamais doublée."""
+    """`prompt` suivi de ce que le rôle appose (`role_brief`), ou `None` s'il n'y a rien à ajouter. Jamais doublé."""
 
     role = role_for(marker)
     if role is None or ROLE_MARK in prompt:
         return None
-    return f"{prompt.rstrip()}\n\n{ROLE_MARK} ({role.name})\n{instructions_for(role, overrides).strip()}"
+    return f"{prompt.rstrip()}\n\n{role_brief(role, overrides)}"
 
 
 # ------------------------------------------------------------- prompt du cerveau
@@ -557,7 +637,7 @@ def _marker_of(role: SubagentRole) -> str:
 def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_GATE_RULE) -> str:
     """La section « TYPE DE DEMANDE » du prompt du cerveau, générée depuis le registre."""
 
-    active = [role for role in roles if role.enabled]
+    active = [role for role in roles if role.enabled and role.offered_to_brain]
     by_id = {role.id: role for role in active}
     catalogue = " ; ".join(f"{_marker_of(role)} ({role.name.lower()}) : {_lower_first(role.when_relevant)}" for role in active)
     interviewer = _marker_of(by_id["interviewer"]) if "interviewer" in by_id else "[general] [interviewer]"

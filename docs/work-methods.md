@@ -47,7 +47,35 @@ sa source canonique ; le contrat des relations est [agent-relations.md](agent-re
 défaut. `check_role_methods(roles, methods)` refuse une référence à une méthode inconnue
 (`work_method_unknown`) ou qui ne s'applique pas au rôle (`work_method_not_applicable`).
 
+## Catalogue livré
+
+`work_methods.BUILTIN_METHODS` (Slice 04), version 1, provenance `builtin`. `builtin_method(id)` rend une
+méthode livrée ou `None`.
+
+| `method_id` | Libellé | Nom dans le handoff | Rôles | Relations utiles |
+| --- | --- | --- | --- | --- |
+| `quick-research` | Recherche rapide | Quick Research | `research`, `web-research`, `research-lead` | — |
+| `deep-research` | Recherche approfondie | Deep Research | `research-lead`, `research`, `web-research` | délégation, contrôle qualité |
+| `comparative-research` | Recherche comparative | Comparative Research | `research-lead`, `web-research`, `research` | délégation, confrontation, contrôle qualité |
+| `bug-investigation` | Enquête sur un bug | Bug Investigation | `coder`, `qa` | contrôle qualité |
+| `result-review` | Revue d'un résultat | (QA) | `qa` | — |
+
+Les principes sont des réflexes indépendants (« Reproduire le défaut avant de chercher sa cause »), jamais
+numérotés ni enchaînés ; un test refuse une entrée qui commence par un numéro ou un connecteur d'ordre.
+
+**Rattachement aux rôles.** Chaque rôle liste ses méthodes permises et, au plus, une méthode par défaut
+([subagent-roles.md](subagent-roles.md), section 1). Seule la méthode par défaut est apposée par le hook sur
+la consigne, rendue par `render_method` : `MÉTHODE DE TRAVAIL : <libellé> (<id>@<version>)`, le résumé, la
+mention « des réflexes, pas des étapes », les principes, les critères de qualité et les relations à
+envisager en français (`RELATION_LABELS`). Aujourd'hui `research-lead` -> `deep-research` et
+`qa` -> `result-review` ; les autres rôles n'ont pas de défaut. Le journal `agent.role_applied` porte la
+clé `work_method`.
+
+**Lecture.** `GET /api/subagent-roles` (version 2) expose le catalogue (`work_methods[]`, charge utile
+`to_payload`). Les méthodes ne s'éditent pas : aucune voie d'écriture n'existe, et aucune promotion
+silencieuse.
+
 ## État
 
-Aucune méthode n'est encore livrée : le catalogue et son rattachement aux rôles relèvent de la Slice 04,
-les candidats appris et leur promotion de la Slice 12.
+Les candidats appris et leur promotion relèvent de la Slice 12 ; le choix d'une méthode autre que la
+méthode par défaut par un Mission Owner, de la Slice 05.

@@ -15,8 +15,8 @@ Ce module fixe le contrat (Slice 01) :
 - `check_role_methods` : les rôles ne citent que des méthodes qui existent et
   qui s'appliquent à eux.
 
-Le catalogue des méthodes livrées relève de la Slice 04, leur apprentissage de
-la Slice 12. Contrat : `docs/work-methods.md`. Module pur, sans E/S.
+Le catalogue des méthodes livrées (Slice 04) est `BUILTIN_METHODS`, rendu sur
+une consigne par `render_method` ; leur apprentissage relève de la Slice 12. Contrat : `docs/work-methods.md`. Module pur, sans E/S.
 """
 
 from __future__ import annotations
@@ -314,3 +314,140 @@ def check_role_methods(
                 raise MethodError(
                     f"work method {method_id!r} does not apply to role {role.id}", code="work_method_not_applicable",
                 )
+
+
+# ------------------------------------------------------------- catalogue livré (Slice 04)
+
+#: Libellés français des relations, pour le texte apposé sur la consigne d'un agent.
+RELATION_LABELS: Mapping[str, str] = {
+    "delegation": "délégation",
+    "communication": "échange entre agents",
+    "adversary": "confrontation",
+    "qa": "contrôle qualité",
+    "handoff": "relais",
+}
+if set(RELATION_LABELS) != set(USEFUL_RELATION_KINDS):
+    raise ValueError("RELATION_LABELS must name every relation kind")
+
+#: Les méthodes livrées avec JARVIS. Des réflexes, jamais des étapes : chaque entrée se lit seule, dans n'importe
+#: quel ordre (D06). Les rôles qui les citent sont vérifiés par `subagent_roles` au chargement.
+BUILTIN_METHODS: tuple[WorkMethod, ...] = (
+    WorkMethod(
+        method_id="quick-research",
+        version=1,
+        name="Recherche rapide",
+        summary="Répondre vite à une question ciblée avec une ou deux sources sûres, sans élargir le sujet.",
+        role_ids=("research", "web-research", "research-lead"),
+        principles=(
+            "Viser la source la plus directe : la documentation officielle, le fichier, la page qui fait foi.",
+            "S'arrêter dès que la réponse est sourcée et sans contradiction visible.",
+            "Dire ce qui n'a pas été vérifié plutôt que de le combler.",
+        ),
+        quality_checks=(
+            "La réponse cite sa source.",
+            "Une limite ou un doute est dit, pas tu.",
+        ),
+    ),
+    WorkMethod(
+        method_id="deep-research",
+        version=1,
+        name="Recherche approfondie",
+        summary="Faire le tour d'un sujet large jusqu'à une synthèse qui tient, en jugeant quand les preuves suffisent.",
+        role_ids=("research-lead", "research", "web-research"),
+        principles=(
+            "Juger l'ampleur de la question : quels angles et quelles sources changeraient la réponse.",
+            "Préférer les sources primaires, récentes et indépendantes de celui qui vend.",
+            "Chercher activement ce qui contredit la première réponse trouvée.",
+            "Répartir les angles entre plusieurs agents quand ils sont vraiment indépendants.",
+            "Arrêter quand une source de plus ne change plus la conclusion.",
+        ),
+        quality_checks=(
+            "Chaque affirmation de la synthèse a sa source.",
+            "Les contradictions entre sources sont exposées, pas tranchées en silence.",
+            "Ce qui reste incertain est dit.",
+        ),
+        useful_relations=("delegation", "qa"),
+    ),
+    WorkMethod(
+        method_id="comparative-research",
+        version=1,
+        name="Recherche comparative",
+        summary="Comparer des options sur des critères explicites et dire laquelle convient à quel usage.",
+        role_ids=("research-lead", "web-research", "research"),
+        principles=(
+            "Rendre les critères explicites avant de juger, et les mêmes pour chaque option.",
+            "Croiser caractéristiques, avis indépendants, prix et retours dans la durée.",
+            "Faire défendre une option contre une autre quand l'écart est mince.",
+            "Dire quand des usages différents donnent des gagnants différents.",
+        ),
+        quality_checks=(
+            "Chaque option est jugée sur les mêmes critères.",
+            "La recommandation dit pour qui et pourquoi, avec ses limites.",
+        ),
+        useful_relations=("delegation", "adversary", "qa"),
+    ),
+    WorkMethod(
+        method_id="bug-investigation",
+        version=1,
+        name="Enquête sur un bug",
+        summary="Trouver la cause réelle d'un défaut avant de le corriger, et prouver la correction.",
+        role_ids=("coder", "qa"),
+        principles=(
+            "Reproduire le défaut avant de chercher sa cause.",
+            "Lire la trace et le journal réels plutôt que deviner.",
+            "Distinguer la cause du symptôme : un correctif qui masque le symptôme n'en est pas un.",
+            "Écrire le test qui échoue avant le correctif et passe après.",
+            "Chercher les autres endroits où la même cause produit le même défaut.",
+        ),
+        quality_checks=(
+            "La cause est nommée avec sa preuve (fichier, ligne, sortie).",
+            "Un test échoue sans le correctif et passe avec.",
+        ),
+        useful_relations=("qa",),
+    ),
+    WorkMethod(
+        method_id="result-review",
+        version=1,
+        name="Revue d'un résultat",
+        summary="Dire si le résultat d'un autre agent tient, preuves à l'appui, sans refaire son travail.",
+        role_ids=("qa",),
+        principles=(
+            "Partir de la demande d'origine et de ses critères de réussite, pas du résultat.",
+            "Vérifier par soi-même : relancer, ouvrir les sources, relire le changement.",
+            "Séparer le bloquant du souhaitable.",
+            "Un doute non vérifié se dit doute, jamais défaut.",
+        ),
+        quality_checks=(
+            "Chaque constat porte sa preuve.",
+            "Le verdict est l'un de : tient, à corriger, ne tient pas.",
+        ),
+    ),
+)
+
+_BUILTIN = latest_methods(BUILTIN_METHODS)
+if len(_BUILTIN) != len(BUILTIN_METHODS):
+    raise ValueError("builtin work methods must have distinct ids")
+
+
+def builtin_method(method_id: object) -> WorkMethod | None:
+    """La méthode livrée de cet id, ou `None`."""
+
+    return _BUILTIN.get(str(method_id or ""))
+
+
+def render_method(method: WorkMethod) -> str:
+    """Le texte d'une méthode tel qu'il est apposé sur une consigne : des réflexes, explicitement pas un plan."""
+
+    lines = [
+        f"MÉTHODE DE TRAVAIL : {method.name} ({method.key})",
+        f"{method.summary} Ce sont des réflexes, pas des étapes : vous organisez le travail selon ce que vous "
+        "découvrez.",
+        "Principes :",
+        *(f"- {item}" for item in method.principles),
+    ]
+    if method.quality_checks:
+        lines += ["Critères de qualité :", *(f"- {item}" for item in method.quality_checks)]
+    if method.useful_relations:
+        labels = ", ".join(RELATION_LABELS[kind] for kind in method.useful_relations)
+        lines.append(f"Relations à envisager quand elles servent : {labels}.")
+    return "\n".join(lines)

@@ -6,7 +6,9 @@ affichage) est signalé là où il manque encore.
 
 | Contrat | Code | Tests |
 | --- | --- | --- |
-| Registre des rôles, résolution des marqueurs | `jarvis/domain/subagent_roles.py` | `tests/unit/test_subagent_roles.py` |
+| Registre des rôles, résolution des marqueurs, ce que le hook appose | `jarvis/domain/subagent_roles.py` | `tests/unit/test_subagent_roles.py` |
+| Hook `PreToolUse` (méthode, loadout, journal `agent.role_applied`) | `jarvis/runtime/routing_hook.py` | `tests/unit/test_subagent_roles.py`, `tests/unit/test_routing_hook.py` |
+| Lecture du registre pour Settings (`GET /api/subagent-roles`) | `jarvis/runtime/control_center.py` (`_subagent_roles_payload`) | `tests/unit/test_subagent_roles.py` |
 | Grammaire des marqueurs de tête, déclaration | `jarvis/domain/agent_markers.py` | `tests/unit/test_agent_markers.py` |
 | Missions, instances, Mission Owner, éphémère | `jarvis/domain/missions.py` | `tests/unit/test_missions.py` |
 | Work Methods | `jarvis/domain/work_methods.py`, voir [work-methods.md](work-methods.md) | `tests/unit/test_work_methods.py` |
@@ -21,15 +23,18 @@ Un rôle est l'identité fonctionnelle d'une instance d'agent. Le registre `suba
 seule source : identifiant, marqueur, libellé français, mission, instructions (méthode apposée par le hook),
 outils, profil par défaut, identité visuelle, capacités, Work Methods permises, rôle de loadout.
 
-| id = marqueur | Libellé | Nom dans le handoff | Profil | Mission Owner | Lance des agents | Loadout | Visuel (icône, accent, badge) | Actif |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `interviewer` | Intervieweur | Interviewer | general | non | non | profil | question, violet, INT | oui |
-| `research` | Recherche documentaire | Document Research | general | non | non | `research` | book, teal, DOC | oui |
-| `web-research` | Recherche web | Web Research | general | non | non | profil | globe, sky, WEB | oui |
-| `coder` | Développement | Developer | code | oui | oui | `coder` | code, amber, DEV | oui |
-| `concept` | Conceptualisation | Conceptualizer | general | non | non | profil | lightbulb, rose, CPT | oui |
-| `research-lead` | Direction de recherche | Research Lead | general | oui | oui | profil | compass, indigo, DIR | **non** |
-| `qa` | Contrôle qualité | QA / Quality Analyst | general | non | non | `reviewer` | shield-check, lime, QA | **non** |
+| id = marqueur | Libellé | Nom dans le handoff | Profil | Mission Owner | Lance des agents | Loadout | Work Methods (défaut en gras) | Visuel (icône, accent, badge) | Proposé au cerveau | Proposé aux agents |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `interviewer` | Intervieweur | Interviewer | general | non | non | profil | — | question, violet, INT | oui | **non** |
+| `research` | Recherche documentaire | Document Research | general | non | non | `research` | quick, deep, comparative | book, teal, DOC | oui | oui |
+| `web-research` | Recherche web | Web Research | general | non | non | profil | quick, deep, comparative | globe, sky, WEB | oui | oui |
+| `coder` | Développement | Developer | code | oui | oui | `coder` | bug-investigation | code, amber, DEV | oui | oui |
+| `concept` | Conceptualisation | Conceptualizer | general | non | non | profil | — | lightbulb, rose, CPT | oui | oui |
+| `research-lead` | Direction de recherche | Research Lead | general | oui | oui | `research` | **deep**, comparative, quick | compass, indigo, DIR | **non** (Slice 07) | oui |
+| `qa` | Contrôle qualité | QA / Quality Analyst | general | non | non | `reviewer` | **result-review**, bug-investigation | shield-check, lime, QA | **non** (Slice 07) | oui |
+
+Tous les rôles sont actifs (`enabled=True`). Les ids des méthodes sont abrégés : `quick-research`,
+`deep-research`, `comparative-research` ([work-methods.md](work-methods.md)).
 
 Règles :
 
@@ -38,13 +43,23 @@ Règles :
   Un nouveau rôle reçoit un nouvel id, additif.
 - **Les ids sont des données explicites**, jamais déduits d'un libellé : « Développeur : corriger le bug »
   ne déclare aucun rôle.
-- `research-lead` et `qa` sont définis mais **désactivés** (`enabled=False`) tant que leur câblage n'est pas
-  livré : méthode et loadout (Slice 04), règles du cerveau (Slice 07). Désactivé, un rôle n'apparaît pas
-  dans la section « TYPE DE DEMANDE » du cerveau (`brain_rules`), le hook n'appose pas sa méthode, et son
-  marqueur **n'est pas annoncé** (absent de `agent_markers.ANNOUNCED_ROLES`) : `[code] [qa] …` se lit
-  exactement comme avant que le rôle existe — `[qa]` n'est pas consommé, reste dans le libellé, ne masque
-  pas le rôle de la consigne et ne change pas le loadout. Seul un appel direct à `resolve_role("qa")` rend le
-  statut `disabled`. L'activation se fait dans la Slice qui le câble, avec ses tests.
+- **Actif, proposé, désactivé.** Trois drapeaux distincts :
+  - `enabled` : le rôle existe pour le hook. Son marqueur est annoncé (`agent_markers.ANNOUNCED_ROLES`),
+    consommé du libellé, et le hook appose sa méthode et son loadout. Désactivé, un rôle se lit comme un mot
+    inconnu (marqueur gardé dans le libellé, repli sur la consigne) et seul `resolve_role` direct rend
+    `disabled` ;
+  - `offered_to_brain` : le rôle figure dans la section « TYPE DE DEMANDE » du cerveau (`brain_rules`).
+    `research-lead` et `qa` sont actifs depuis la Slice 04 mais **pas encore proposés au cerveau** : la règle
+    qui dit au cerveau quand les lancer appartient à la Slice 07, qui passera ce drapeau à vrai. Le prompt du
+    cerveau est donc inchangé octet pour octet (`test_scene_artifacts.BASE_SYSTEM_SHA256`) ;
+  - `offered_to_subagents` : le rôle figure dans les capacités apposées sur la consigne d'un agent qui peut
+    lancer des agents (section 1bis). Faux pour l'Intervieweur, qui ne parle à l'utilisateur que par le
+    cerveau.
+- **Pourquoi activer `research-lead` et `qa` dès la Slice 04.** Leur câblage registre/hook est complet ici
+  (méthode, capacités, Work Method, loadout) et ne touche pas le prompt du cerveau. Effets immédiats : un
+  agent qui lance des agents (Développement, Direction de recherche) peut demander `[general] [qa]` ou
+  `[general] [research-lead]` et obtient la bonne méthode ; l'alias historique `[code] [reviewer]` que
+  `PROFILE_RULE` enseigne déjà au cerveau reçoit la méthode du Contrôle qualité.
 - Mission Owner **n'est pas un rôle** (section 5). Il n'existe ni rôle « Orchestrateur » ni rôle
   « Owner ».
 
@@ -57,8 +72,9 @@ Règles :
 | `reviewer` | `qa` | rôle de loadout historique de la relecture (`memory_settings.LOADOUT_ROLES`) |
 
 `coder` et `research` n'ont pas besoin d'alias : ce sont à la fois des rôles du registre et des rôles de
-loadout. Un alias n'est pas un rôle (`role_by_id("reviewer")` est `None`) et le hook continue de lire
-`[code] [reviewer]` comme la clé de loadout `code:reviewer`, comme avant. Condition de retrait de l'alias :
+loadout. Un alias n'est pas un rôle (`role_by_id("reviewer")` est `None`), mais il résout son rôle :
+`role_for("reviewer")` rend `qa`, et `[code] [reviewer]` reçoit la méthode du Contrôle qualité (Slice 04).
+Le hook continue de lire `[code] [reviewer]` comme la clé de loadout `code:reviewer`, comme avant. Condition de retrait de l'alias :
 [legacy/subagent-role-aliases.md](legacy/subagent-role-aliases.md).
 
 ### Résolution d'un marqueur
@@ -69,7 +85,7 @@ loadout. Un alias n'est pas un rôle (`role_by_id("reviewer")` est `None`) et le
 | --- | --- | --- |
 | absent ou vide | `undeclared` | `undeclared` |
 | marqueur d'un rôle actif (`coder`, casse ignorée) | son id | `declared` |
-| marqueur d'un rôle désactivé (`qa`) | son id | `disabled` |
+| marqueur d'un rôle désactivé (aucun aujourd'hui) | son id | `disabled` |
 | alias (`reviewer`) | l'id visé (`qa`) | `alias` |
 | tout autre mot (`zorg`) | `unknown` | `unknown`, marqueur gardé (24 caractères) |
 
@@ -102,16 +118,72 @@ Le frontend lit ces jetons, il ne les recopie pas dans des conditions.
 - `can_spawn` : l'instance peut lancer d'autres agents. Elle doit lister l'outil `Agent` (`SPAWN_TOOL`) dans
   `tools`, et réciproquement : le spawn imbriqué est prouvé sur le CLI installé, mais un type d'agent à
   outils restreints sans `Agent` ne pourrait pas lancer, d'où l'obligation de les garder d'accord.
-- `work_methods` / `default_work_method` : ids de [Work Methods](work-methods.md) permises et celle proposée
-  par défaut. Vides aujourd'hui : le catalogue est la Slice 04 (`work_methods.check_role_methods` vérifiera
-  les références).
+- `work_methods` / `default_work_method` : ids de [Work Methods](work-methods.md) livrées
+  (`work_methods.BUILTIN_METHODS`) permises et celle proposée par défaut. Vérifié au chargement du module :
+  un rôle ne cite qu'une méthode livrée qui s'applique à lui (`check_role_methods`), et une méthode ne vise
+  que des rôles du registre. Seule la méthode par défaut est apposée sur la consigne ; les autres sont des
+  suggestions lisibles dans Settings, qu'un Mission Owner pourra choisir (Slice 05). Les rôles existants
+  n'ont pas de méthode par défaut : leurs instructions sont déjà leur méthode.
 - `loadout_role` : rôle de loadout (`LOADOUT_ROLES`) dont l'instance prend les savoirs, ou rien (le loadout
-  du profil). Aujourd'hui le hook lit le loadout sur le marqueur ; `qa` -> `reviewer` est le contrat que la
-  Slice 04 câblera.
+  du profil). Le hook l'applique (`agent_markers.read_loadout_role`) : un marqueur qui est déjà un rôle de
+  loadout (`coder`, `reviewer`, `research`) est pris tel quel, sinon le `loadout_role` du rôle actif
+  (`qa` -> `reviewer`, `research-lead` -> `research`). `LOADOUT_ROLES` n'est pas étendu : aucun rôle n'a
+  besoin d'un loadout à lui, et les règles `memory.loadouts` enregistrées restent valides.
+- `tools` : les outils que le rôle utilise, affichés. Aucun consommateur ne s'en sert pour restreindre les
+  outils du CLI (section 1bis).
 
-Tous ces champs paraissent dans `SubagentRole.as_dict()`, donc dans `GET /api/subagent-roles` (ajout de
-champs, rétrocompatible). Une valeur existante change aussi : `coder.tools` gagne `Agent` (cohérence avec
-`can_spawn`). Le champ est seulement affiché ; aucun consommateur ne s'en sert pour restreindre les outils.
+Tous ces champs paraissent dans `SubagentRole.as_dict()`, donc dans `GET /api/subagent-roles` (section 1ter).
+
+### 1bis. Ce que le hook appose pour un rôle
+
+Le hook `PreToolUse` lit le marqueur de rôle (`read_role`), le résout (`role_for` : marqueur d'un rôle actif
+ou alias) et appose, après la charte et le playbook éventuel, une seule fois (marque `ROLE_MARK`), le texte
+de `subagent_roles.role_brief(role, overrides)` :
+
+1. `MÉTHODE DU RÔLE JARVIS (<libellé>)` suivi des **instructions** : la surcharge de l'utilisateur
+   (`subagent_role.<id>`, lue dans l'instantané `runtime/subagent-roles.json`) si elle est non vide, sinon le
+   défaut du code ;
+2. `CAPACITÉS DU RÔLE` (`capabilities_text`), généré du registre : pour un rôle `can_spawn`, il peut lancer
+   des agents (outil `Agent`), avec la liste des marqueurs `[profil] [rôle]` des rôles actifs
+   `offered_to_subagents` ; sinon « Vous ne lancez aucun autre agent » ;
+3. la **Work Method par défaut** du rôle (`work_methods.render_method`), s'il en a une : principes, critères
+   de qualité, relations à envisager, avec sa clé exacte `<id>@<version>` et la mention « des réflexes, pas
+   des étapes ».
+
+Seules les instructions sont éditables, par la voie existante `POST /api/prompts/subagent_role.<id>`
+(révisions optimistes) ; capacités et méthode suivent toujours le code. Aucune autre voie d'écriture.
+
+**`can_spawn` et l'outillage effectif.** Le CLI donne l'outil `Agent` à tout sous-agent `general-purpose` :
+`can_spawn` ne retire aucun outil aujourd'hui. Il est effectif par la consigne (bloc 2), et il reste lié à
+`tools` (`Agent` présent si et seulement si `can_spawn`). Le refus mécanique — un type d'agent personnalisé
+à liste d'outils réduite, sans `Agent` pour un rôle qui ne lance pas (`--agents` du CLI et réécriture de
+`subagent_type` par le hook) — n'est pas câblé : il n'est pas prouvé sur le CLI installé (la sonde de la
+Slice 04 n'a pas pu tourner) et relève de la Slice 05, en bac à sable. Le hook ne peut pas non plus refuser
+un appel imbriqué selon le rôle de l'appelant : l'événement porte l'`agent_id` de l'appelant, pas son rôle.
+
+**Journal `agent.role_applied`** (codes, jamais le texte) : `role` (marqueur tel qu'écrit), `role_id` et
+`role_status` (`declared`, ou `alias` pour `[reviewer]`), `profile`, `source` (`override` ou `default`, selon
+l'id canonique), `work_method` (`<id>@<version>` ou `null`), `loadout_role`, `can_spawn`,
+`instructions_chars` (taille du texte apposé), `tool_use_id`.
+
+Un marqueur inconnu (`[code] [zorg] …`) n'est pas un rôle : rien n'est apposé, le libellé le garde.
+
+### 1ter. Lecture pour Settings : `GET /api/subagent-roles`
+
+Route de lecture seule du Control Center (`_subagent_roles_payload`), **`schema_version` 2** depuis la
+Slice 04 :
+
+| Clé | Contenu |
+| --- | --- |
+| `roles[]` | `SubagentRole.as_dict()` (dont `enabled`, `offered_to_brain`, `offered_to_subagents`, `aliases`, `visual`, capacités, `work_methods`, `default_work_method`, `loadout_role`), plus `instructions` effectives, `default_instructions`, `modified`, `default_revision`, `revision`, `conflict` |
+| `work_methods[]` | `WorkMethod.to_payload()` de chaque méthode livrée |
+| `aliases` | `ROLE_ALIASES` (`{"reviewer": "qa"}`) |
+| `accents` | `ROLE_ACCENTS`, les jetons que le frontend traduit en variables CSS |
+| `reserved_role_ids` | `undeclared`, `unknown` : à afficher comme rôle général ou inconnu, jamais deviné |
+| `execution_gate`, `mission_path`, `application` | inchangés depuis la version 1 |
+
+Version 2 n'ajoute que des clés : un lecteur de la version 1 lit la même chose. Une valeur existante change
+depuis la Slice 01 : `coder.tools` contient `Agent`.
 
 ## 2. Les marqueurs de tête d'un appel `Agent`
 
@@ -151,7 +223,8 @@ grammaire, `agent_markers.parse_head`, lue à l'identique par le hook `PreToolUs
 | `[code] [inconnu] Relire` | code | aucun | non | [inconnu] Relire |
 | `[code] [coder] [Éphémère] Corriger` | code | coder | non | [Éphémère] Corriger |
 | `[éphémère] [code]` | code | aucun | non | (vide) |
-| `[code] [qa] Relire` (`qa` désactivé) | code | aucun (repli sur la consigne) | non | [qa] Relire |
+| `[code] [qa] Relire` | code | qa | non | Relire |
+| `[code] [zorg] Relire` | code | aucun (repli sur la consigne) | non | [zorg] Relire |
 
 Avant cette grammaire commune (I-005), le suivi exigeait `[éphémère]` en premier tandis que le hook ne
 lisait que des mots ASCII en tête : `[éphémère] [code] [coder] …` perdait profil et rôle côté hook,
@@ -163,6 +236,9 @@ il est accepté ailleurs qu'en premier, et deux formes autrefois déclarées ép
 sûr : un second marqueur plus loin dans la tête (`[éphémère] [code] [éphémère] x`, autrefois éphémère de
 description `[code] [éphémère] x`) et une tête sans libellé (`[éphémère] [code]`). Ces écarts sont figés par
 `tests/unit/test_agent_markers_equivalence.py`, qui garde une copie de l'ancien comportement comme oracle.
+Seul autre écart, voulu, de la Slice 04 : `[qa]` et `[research-lead]` sont désormais des rôles annoncés (lus,
+consommés du libellé, loadout `reviewer` et `research`) ; l'oracle « activé » du même test le fige, et sans ces
+deux marqueurs l'ancien oracle reste exact.
 
 Le suivi des tâches garde la description sans le seul marqueur éphémère (`[code] [coder] Corriger…`), pour
 que le rôle s'y relise comme le hook le lit (`task_snapshot["role"]`).
@@ -264,8 +340,8 @@ Slice 07.
 | --- | --- |
 | Contrat de la déclaration du hook (`AgentDeclarationFact`), `role_id` de `WorkObservation`, historique durable : faits ([mission-history.md](mission-history.md)) | Slice 03 |
 | Câblage du hook vers Core (le Control Center joint le fait à la tâche et le remet à Core) | Slice 05 |
-| Activation de `research-lead` et `qa`, loadout `qa` -> `reviewer`, catalogue de Work Methods | Slice 04 |
 | Outils d'orchestration du Mission Owner (spawn, délégation, relais) | Slice 05 |
-| Règles du cerveau (rôles proposés, éphémère élargie) | Slice 07 |
+| Règles du cerveau (rôles proposés : `offered_to_brain` de `research-lead` et `qa`, éphémère élargie) | Slice 07 |
+| `can_spawn` mécanique (type d'agent à outils réduits), choix d'une Work Method autre que celle par défaut | Slice 05 |
 | Rôle dans la scène, badge Mission Owner | Slice 08 |
 | Onglet Settings > Sous-agents | Slice 10 |
