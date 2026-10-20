@@ -591,8 +591,9 @@ def test_orphan_artifacts_are_bulk_archivable_and_linked_ones_never():
 #: lit) et « Restitution » (affichage voulu, résumé oral), méthode choisie, `[qa]` au lieu de `[reviewer]`, règle
 #: éphémère élargie aux corrections évidentes (I-004), recherche lancée en parallèle de l'interview dès qu'il y a
 #: de la matière à trouver, dossier de mission au chemin absolu, trouvaille jointe à la réponse, plus de
-#: « compte rendu court » imposé, Mission Owner lancé pour un geste demandé d'emblée. 8 880 -> 11 149 caractères.
-BASE_SYSTEM_SHA256 = "f704eceb9328dfbc42eeaf1bb45d5d55412f645487a98399e4be79afff268a80"
+#: « compte rendu court » imposé, le cerveau n'organise ni ne tranche une QA, une
+#: concurrence ou un relais (il les demande à un Mission Owner). 8 880 -> 11 300 caractères.
+BASE_SYSTEM_SHA256 = "9eb4ad505590530e569ce174c95b294c2b5b260d60e922fedff9dac21adc625b"
 #: Réalignement baseline (main `f05ed24`, changement délibéré venu de main) : la
 #: consigne d'affichage nomme scene_update_many, scene_archive, scene_pin et
 #: donne au cerveau la main de l'utilisateur (archiver, épingler, déplacer).

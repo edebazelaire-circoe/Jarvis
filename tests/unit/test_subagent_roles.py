@@ -531,9 +531,11 @@ def test_the_brain_rules_teach_owners_relations_and_delivery_without_a_new_gate(
     owner = _bullet(rules, "Mission Owner")
     assert "[code] [coder] et [general] [research-lead]" in owner
     for text in ("second regard (QA)", "approches distinctes (Adversary : une consigne différente par producteur)",
-                 "passer la main", "[mission] et [relais] sont à eux, jamais à toi", "SendMessage",
+                 "passer la main", "[mission] et [relais] sont à eux", "SendMessage",
                  "tu ne fais que lire les relations", "[code] [qa] pour du code",
-                 "demande-le au Mission Owner du travail", "lances-en un s'il n'y en a pas"):
+                 "Tu n'organises jamais toi-même un second regard, une concurrence ni un relais",
+                 "tu ne tranches pas entre des producteurs", "Demande-le au Mission Owner du travail",
+                 "lance-en un seul avec la demande de l'utilisateur : il lance lui-même les producteurs"):
         assert text in owner, text
     # Restitution (Slice 11) : l'affichage du Mission Owner est voulu ; le cerveau résume et renvoie à l'écran.
     delivery = _bullet(rules, "Restitution")

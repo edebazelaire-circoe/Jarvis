@@ -715,9 +715,10 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
             f"- Mission Owner : {' et '.join(_marker_of(role) for role in owners)}, lancés par toi, portent leur "
             "mission et décident en cours de route de déléguer, de demander un second regard (QA), de mettre en "
             "concurrence des approches distinctes (Adversary : une consigne différente par producteur) ou de passer "
-            "la main ; [mission] et [relais] sont à eux, jamais à toi. Si l'utilisateur veut l'un de ces gestes, "
-            "demande-le au Mission Owner du travail, dans sa consigne ou par SendMessage, et lances-en un s'il n'y en "
-            "a pas : toi, tu ne fais que lire les relations."
+            "la main ; [mission] et [relais] sont à eux. Tu n'organises jamais toi-même un second regard, une "
+            "concurrence ni un relais, et tu ne tranches pas entre des producteurs : tu ne fais que lire les relations. "
+            "Demande-le au Mission Owner du travail, dans sa consigne ou par SendMessage ; s'il n'y en a pas, lance-en "
+            "un seul avec la demande de l'utilisateur : il lance lui-même les producteurs ou le relecteur."
             + (f" Une relecture demandée d'un résultat déjà rendu : {_marker_of(qa)}, ou [code] [qa] pour du code, "
                "avec ce résultat et la demande d'origine." if qa else "")
         )
