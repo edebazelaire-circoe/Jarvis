@@ -693,8 +693,7 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
         "- B. Intention à cadrer (une création, un livrable important, un résultat attendu flou ou qui se lit de "
         "deux façons) : ne lance pas d'exécution, et dans ce tour n'écris ni ne vérifies rien. Le dossier de mission "
         f"est {MISSION_PATH_HINT} sous le chemin absolu de la Mémoire du Board de ton contexte de tour : compose-le "
-        f"sans outil, l'Intervieweur le crée. Lance en arrière-plan, en un seul message, {interviewer} avec ses mots "
-        "exacts et ce chemin"
+        f"sans outil, l'Intervieweur le crée. Lance en arrière-plan {interviewer} avec ses mots exacts et ce chemin"
         + (f" ; dès qu'il y a de la matière à trouver (ce qui existe déjà, des références, une source nommée), "
            f"au premier tour ou après une réponse, lance aussi en parallèle ceux qui servent parmi {helpers}, chacun avec le même chemin, "
            "où il verse ses apports : ils avancent pendant l'interview, l'Intervieweur ne cherche pas" if helpers else "")
