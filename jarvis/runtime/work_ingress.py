@@ -40,6 +40,7 @@ import uuid
 
 from jarvis.domain.work_state import (
     EPHEMERAL_WORK_STATUSES,
+    MERGED_CLOSURE,
     MAX_ACTIVITY_CHARS,
     MAX_LABEL_CHARS,
     MAX_MODEL_CHARS,
@@ -63,8 +64,9 @@ _CANCELLED_STATUSES = frozenset({"killed", "stopped", "cancelled"})
 _PENDING_STATUSES = frozenset({"pending", "queued"})
 #: `error_class` d'une tâche interrompue par l'arrêt de son processus.
 PROCESS_STOPPED = "process_stopped"
-#: `error_class` d'un doublon clos après la fusion de deux tâches.
-MERGED = "merged"
+#: `error_class` d'un doublon clos après la fusion de deux tâches : la valeur du
+#: domaine, que l'historique des missions et la scène reconnaissent (D08).
+MERGED = MERGED_CLOSURE
 #: Statut terminal inconnu du contrat : fin anormale, statut brut non transmis.
 UNKNOWN_STATUS = "unknown_status"
 

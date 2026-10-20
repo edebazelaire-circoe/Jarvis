@@ -78,7 +78,7 @@ from jarvis.domain.mission_history import (
 )
 from jarvis.domain.missions import (
     AgentInstance, Mission, MissionError, MissionStatus, instance_from_declaration, reconcile_instance,
-    retained_in_history,
+    discarded_without_trace, retained_in_history,
 )
 from jarvis.domain.v2 import ProtocolEnvelope
 from jarvis.domain.work_state import WorkItem, WorkSnapshot, WorkStatus
@@ -501,8 +501,8 @@ class MissionHistoryService:
 
         if instance.ephemeral:
             item = self._live().get(key)
-            if item is not None and not retained_in_history(instance, item.status):
-                if item.status is WorkStatus.COMPLETED:
+            if item is not None and not retained_in_history(instance, item.status, item.error_class):
+                if discarded_without_trace(item.status, item.error_class):
                     self._discard(key, instance)
                     return DeclarationResult(DeclarationOutcome.EPHEMERAL_DISCARDED)
             elif item is not None:
@@ -665,11 +665,12 @@ class MissionHistoryService:
         pending = self._pending.get(key)
         if pending is None:
             return None
-        if retained_in_history(pending.instance, item.status):
+        if retained_in_history(pending.instance, item.status, item.error_class):
             result = await self._retain_lowered(key, pending.instance, pending.fact)
             if result.outcome is DeclarationOutcome.EPHEMERAL_RETAINED:
                 self._declared(key, pending.fact, result)
-        elif item.status is WorkStatus.COMPLETED:
+        elif discarded_without_trace(item.status, item.error_class):
+            # Réussite, ou clôture d'un doublon fusionné (pas une fin du travail) : aucune trace durable.
             self._discard(key, pending.instance)
             result = DeclarationResult(DeclarationOutcome.EPHEMERAL_DISCARDED)
         else:

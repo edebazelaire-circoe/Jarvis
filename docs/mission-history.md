@@ -156,6 +156,10 @@ Aucune ligne durable n'est écrite pour une instance **tant qu'elle est éphém�
    - réussite (`completed`) -> oubliée (`ephemeral_discarded`), et la clé est retenue (4 096 au plus, la plus
      ancienne oubliée avec un avertissement `mission_history.discarded_forgotten`, une fois) pour qu'un rejeu
      tardif de la déclaration ou de l'observation ne la ressuscite pas, même quand Work State l'a déjà élaguée ;
+   - clôture d'un doublon fusionné (`cancelled` avec `error_class = merged`, `work_state.MERGED_CLOSURE`, envoyée
+     sans drapeau par le relais du Control Center) -> traitée comme une réussite : ce n'est pas une fin du
+     travail, l'éphémère est écartée (`ephemeral_discarded`) et sa clé retenue, jamais retenue en base
+     (`missions.discarded_without_trace`, `retained_in_history(..., error_class)` ; reprise S8 QA) ;
    - échec, arrêt, interruption ou blocage -> le drapeau est rabaissé (`missions.retained_in_history`, même
      règle que `work_state.EPHEMERAL_WORK_STATUSES`), l'instance devient ordinaire et est retenue avec
      `ephemeral_lowered = 1` ; la déclaration d'origine (`ephemeral = true`) reste dans `declaration` ;

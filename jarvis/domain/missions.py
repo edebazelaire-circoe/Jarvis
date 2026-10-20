@@ -48,7 +48,7 @@ from jarvis.domain.agent_markers import AgentDeclaration
 from jarvis.domain.subagent_roles import (
     MISSION_DIR, MISSION_FILE, RESERVED_ROLE_IDS, UNDECLARED_ROLE_ID, _MARKER as _ROLE_ID, role_by_id,
 )
-from jarvis.domain.work_state import EPHEMERAL_WORK_STATUSES, MAX_LABEL_CHARS, MAX_SOURCE_CHARS, WorkStatus, clip_text
+from jarvis.domain.work_state import EPHEMERAL_WORK_STATUSES, MAX_LABEL_CHARS, MAX_SOURCE_CHARS, WorkStatus, clip_text, is_merged_closure
 
 MAX_OBJECTIVE_CHARS = 1_000
 MAX_DOSSIER_PATH_CHARS = 200
@@ -358,14 +358,26 @@ def transfer_ownership(mission: Mission, successor: AgentInstance, *, handoff_re
     return replace(mission, owner_instance_id=successor.instance_id)
 
 
-def retained_in_history(instance: AgentInstance, status: WorkStatus) -> bool:
+def retained_in_history(instance: AgentInstance, status: WorkStatus, error_class: str | None = None) -> bool:
     """Une instance doit-elle rester dans l'historique, vu son statut Work State ?
 
     Une instance ordinaire, toujours. Une éphémère, seulement si son travail a fini autrement que bien
-    (échec, arrêt, interruption, blocage) : elle redevient alors ordinaire, comme dans `work_state`.
+    (échec, arrêt, interruption, blocage) : elle redevient alors ordinaire, comme dans `work_state`. La clôture
+    d'un doublon fusionné (`cancelled` / `merged`, `work_state.is_merged_closure`) n'est pas une fin du travail :
+    elle ne retient jamais une éphémère.
     """
 
-    return not instance.ephemeral or status not in EPHEMERAL_WORK_STATUSES
+    if not instance.ephemeral:
+        return True
+    if is_merged_closure(status, error_class):
+        return False
+    return status not in EPHEMERAL_WORK_STATUSES
+
+
+def discarded_without_trace(status: WorkStatus, error_class: str | None = None) -> bool:
+    """Une éphémère en attente doit-elle être écartée sans trace : réussite, ou clôture d'un doublon fusionné."""
+
+    return status is WorkStatus.COMPLETED or is_merged_closure(status, error_class)
 
 
 def _walk(start: str | None, parent_of: Mapping[str, str | None], kind: str) -> list[str]:

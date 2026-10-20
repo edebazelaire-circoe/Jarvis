@@ -66,7 +66,7 @@ Règles (voir `docs/ARCHITECTURE.md` › *Runtime scene projection*) :
   arrêté, interrompu ou bloqué, Work State rabaisse le drapeau et l'étoile naît
   alors comme une étoile ordinaire (signal compris). La clôture d'un doublon
   fusionné (`cancelled` / `merged`, sans drapeau) ne crée jamais d'étoile pour
-  un travail qui n'en avait pas (`MERGED_CLOSURE`). Une étoile déjà persistée
+  un travail qui n'en avait pas (`work_state.MERGED_CLOSURE`). Une étoile déjà persistée
   (scène v1, avant cette règle) n'est ni retirée ni archivée : la projection
   continue de la tenir à jour (Décision 12, aucun retrait automatique) ;
 - **rôles et relations** (Slice 08) : avec un historique des missions
@@ -138,7 +138,9 @@ from jarvis.domain.scene import (
     is_live_signal,
 )
 from jarvis.domain.v2 import ProtocolEnvelope
-from jarvis.domain.work_state import MAX_SUMMARY_CHARS, WorkItem, WorkSnapshot, WorkStatus, clip_text
+from jarvis.domain.work_state import (
+    MAX_SUMMARY_CHARS, MERGED_CLOSURE, WorkItem, WorkSnapshot, WorkStatus, clip_text, is_merged_closure,
+)
 from jarvis.domain.scene_purge import ScenePurgeCode, ScenePurgeError
 from jarvis.ports.mission_history import MissionHistoryStoreError, MissionHistoryUnavailable
 from jarvis.ports.scene import SceneStoreError
@@ -227,13 +229,11 @@ _RESTART_GRACE = "scene.projection.restart_grace"
 _RESTART_REQUESTED = "scene.projection.restart_requested"
 _MAX_REPORTED = 64
 _HASH_CHARS = 24
-#: `error_class` de la clôture d'un doublon fusionné par le relais du Control
-#: Center (`jarvis.runtime.work_ingress.MERGED`, même valeur, vérifiée par test) :
-#: `cancelled` sans drapeau éphémère, ce n'est pas un fait d'exécution à montrer.
-#: Elle ne crée jamais d'étoile pour un travail qui n'en avait pas (D08 : sinon
-#: une éphémère fusionnée laisserait une étoile `cancelled` persistée) ; une
-#: étoile qui existe déjà reçoit cet état comme toute autre fin.
-MERGED_CLOSURE = "merged"
+#: La clôture d'un doublon fusionné (`work_state.MERGED_CLOSURE`, partagée avec
+#: le relais et l'historique des missions) ne crée jamais d'étoile pour un
+#: travail qui n'en avait pas (D08 : sinon une éphémère fusionnée laisserait une
+#: étoile `cancelled` persistée) ; une étoile qui existe déjà reçoit cet état
+#: comme toute autre fin.
 #: Réveil de la boucle pour rafraîchir les missions suivies (même file, jamais le bus).
 _MISSION_REFRESH = "scene.projection.mission_refresh"
 #: Délai minimal entre deux lectures d'une même mission déclenchées par des
@@ -1329,7 +1329,7 @@ class SceneProjector:
                 # D08 : aucune ligne persistée pour un travail encore éphémère.
                 self._skip_ephemeral(item, star_id)
                 return
-            if item.status is WorkStatus.CANCELLED and item.error_class == MERGED_CLOSURE:
+            if is_merged_closure(item.status, item.error_class):
                 # Clôture d'un doublon fusionné jamais projeté : rien à montrer.
                 self.stats.skipped_merged += 1
                 self._emit(
