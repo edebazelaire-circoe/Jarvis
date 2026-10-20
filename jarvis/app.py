@@ -2071,7 +2071,12 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "remotion-mcp": return await _remotion_mcp()
     if command == "barehands-replay": return _barehands_replay(args)
     if command == "routing-hook":
-        from jarvis.runtime.routing_hook import main as routing_hook_main
+        try:
+            from jarvis.runtime.routing_hook import main as routing_hook_main
+        except Exception:  # noqa: BLE001 - argued: a broken hook import refuses relation tools (fail closed), else silent
+            from jarvis.runtime import hook_failsafe
+
+            return hook_failsafe.main()
 
         return routing_hook_main([*(["--runtime-root", args.runtime_root] if args.runtime_root else []),
                                   *(["--spawn-guard"] if args.spawn_guard else [])])

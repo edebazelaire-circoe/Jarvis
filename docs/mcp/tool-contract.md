@@ -1525,12 +1525,18 @@ tools (a delegated agent inherits the server); the brain only reads
 | `relation_close` | `POST /api/missions/relations/{id}/close {caller_agent_id, outcome, summary, winner}` | write / yes | `RelationCloseResult {…relation}` |
 | `relation_handoff` | `POST /api/missions/handoffs {caller_agent_id, purpose, packet}` | write / no | `RelationHandoffResult {handoff_id, mission_id, expires_at, next}` |
 
-- **Caller identity, never an argument.** The `PreToolUse` hook (matcher
-  `Agent|Task|mcp__jarvis-workspace__relation_.*`) writes `jarvis_caller
-  {stamped, agent_id, agent_type}` into `updatedInput`, overwriting any value;
-  the field is **not** in the advertised schema and the server strips it before
-  its strict argument check (`CURRENT_CALLER`). Missing → refused
-  `relation_caller_unstamped` before anything is sent.
+- **Caller identity, never an argument.** The `PreToolUse` hook (anchored matcher
+  `^(Agent|Task)$|^mcp__jarvis-workspace__relation_`) writes `jarvis_caller
+  {stamped, hook: "relation-stamp@1", agent_id, agent_type}` into `updatedInput`,
+  overwriting any value; the field is **not** in the advertised schema and the
+  server strips it before its strict argument check (`CURRENT_CALLER`). Missing
+  or another `hook` version → refused `relation_caller_unstamped` before
+  anything is sent. The hook fails **closed** for these tools only (explicit
+  `deny` on a crash or a broken import). Not a signature: threat model in
+  [../agent-relations.md](../agent-relations.md) §10.7.
+- **Reads** carry `caller_agent_id`: an agent reads a relation it takes part
+  in or whose mission (or an ancestor) it owns; the brain reads all
+  (`relation_read_not_allowed`, 403, otherwise).
 - **Agents** are named by the agentId the `Agent` tool returns, or `self`;
   the Control Center resolves them (`relation_relay.py`). Empty string / empty
   list = absent (compact schemas: no `anyOf null`).

@@ -6,16 +6,19 @@ Un relais se fait en deux gestes de l'agent qui passe la main :
    préparé ; le Control Center en dépose ici un **billet** :
    `<runtime>/agent-handoffs/<handoff_id>.json`, écrit atomiquement ;
 2. l'appel `Agent` du successeur, avec `[relais]` : le hook `PreToolUse`
-   (court, hors ligne) **réclame** le billet de son appelant (`claim`) par un
-   renommage atomique en `<handoff_id>.claimed.json` — deux appels simultanés
-   ne réclament jamais le même billet —, déclare le successeur Mission Owner de
+   (court, hors ligne) **réclame** le billet de son appelant (`claim`) par la
+   création exclusive d'un marqueur `<handoff_id>.claim` — deux appels
+   simultanés ne réclament jamais le même billet, Windows compris —, puis
+   l'efface ; il déclare le successeur Mission Owner de
    la mission reprise (`handoff_id` dans le fait) et appose le paquet sur sa
    consigne.
 
 Un billet ne porte que des identifiants, l'objet du relais et le paquet validé
 par Core (texte de collaboration borné, jamais un raisonnement). Borne : au
-plus `MAX_FILES` billets ; élagage après `RETENTION_S`. Un billet expiré
-(`HANDOFF_TTL_S`) n'est jamais réclamé : Core l'a oublié aussi. Un fichier
+plus `MAX_FILES` billets. Élagage (`prune`) à l'écriture, à la réclamation et
+au relais du Control Center : un billet réclamé ou expiré (`HANDOFF_TTL_S`)
+est effacé, un marqueur après `RETENTION_S`. Un billet expiré n'est jamais
+réclamé : Core l'a oublié aussi. Un fichier
 illisible n'est pas réparé : il est ignoré, puis élagué.
 
 Contrat : `docs/agent-relations.md` §10.
@@ -39,7 +42,8 @@ HANDOFFS_DIR = "agent-handoffs"
 MAX_FILES = 64
 RETENTION_S = 3_600
 MAX_TICKET_BYTES = 32_768
-CLAIMED_SUFFIX = ".claimed.json"
+#: Marqueur de réclamation, créé exclusivement (une seule réclamation par billet).
+CLAIM_MARKER_SUFFIX = ".claim"
 _ID = re.compile(re.escape(HANDOFF_ID_PREFIX) + r"[A-Za-z0-9_-]{8,64}\Z")
 
 
@@ -126,44 +130,67 @@ def _read(path: Path) -> HandoffTicket | None:
         return None  # intentional: an unreadable ticket is never claimed nor repaired; `prune` removes it later
 
 
+def _marker(path: Path, handoff_id: str) -> Path:
+    return path.with_name(f"{handoff_id}{CLAIM_MARKER_SUFFIX}")
+
+
 def claim(runtime_root: Path, predecessor_agent_id: str, *, now_ms: int | None = None) -> HandoffTicket | None:
     """Réclamer le billet le plus récent, non expiré, préparé par `predecessor_agent_id` (hook). `None` si aucun.
 
-    Le renommage atomique garantit qu'un billet n'est réclamé qu'une fois. Lève `OSError` si le dossier est
-    illisible : le hook le consigne et refuse l'appel `[relais]` avec une raison lisible.
+    Une seule réclamation par billet, y compris sous Windows : la réclamation est la **création exclusive** d'un
+    marqueur `<handoff_id>.claim` (`O_CREAT | O_EXCL`, atomique sur NTFS comme sur POSIX). Un renommage
+    (`os.replace`) ne suffisait pas : sous Windows il écrase une cible existante, et la QA a vu un billet réclamé
+    par quatre hooks simultanés. Le billet réclamé est ensuite effacé (son contenu est déjà lu) ; le marqueur reste
+    jusqu'à l'élagage, pour qu'un hook en retard qui aurait lu le billet avant l'effacement échoue à son tour.
+    Lève `OSError` si le dossier est illisible : le hook le consigne et refuse l'appel `[relais]`.
     """
 
     target_dir = folder(runtime_root)
     if not target_dir.is_dir():
         return None
     now = _now_ms() if now_ms is None else now_ms
+    prune(runtime_root, now_ms=now)
     candidates = []
     for path in target_dir.glob("hof_*.json"):
-        if path.name.endswith(CLAIMED_SUFFIX):
-            continue
         ticket = _read(path)
-        if ticket is not None and ticket.predecessor_agent_id == predecessor_agent_id and ticket.expires_at_ms > now:
+        if (ticket is not None and ticket.predecessor_agent_id == predecessor_agent_id and ticket.expires_at_ms > now
+                and not _marker(path, ticket.handoff_id).exists()):
             candidates.append((ticket.expires_at_ms, path, ticket))
     for _expires, path, ticket in sorted(candidates, key=lambda item: item[0], reverse=True):
         try:
-            os.replace(path, path.with_name(f"{ticket.handoff_id}{CLAIMED_SUFFIX}"))
-        except FileNotFoundError:
+            os.close(os.open(_marker(path, ticket.handoff_id), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        except FileExistsError:
             continue  # intentional: a concurrent hook claimed it first; try the next one
+        try:
+            path.unlink()
+        except OSError:
+            pass  # intentional: the marker already makes it claimed; `prune` removes a leftover ticket later
         return ticket
     return None
 
 
 def prune(runtime_root: Path, *, now_ms: int | None = None) -> int:
-    """Effacer les billets plus vieux que `RETENTION_S` (réclamés ou non). Rend le nombre effacé."""
+    """Effacer les billets expirés ou déjà réclamés, et les marqueurs plus vieux que `RETENTION_S`.
+
+    Appelé à l'écriture et à la réclamation d'un billet, et par le relais du Control Center à chaque élagage de son
+    registre (démarrage compris) : un billet réclamé ou expiré ne reste pas sur disque. Rend le nombre effacé.
+    """
 
     target_dir = folder(runtime_root)
     if not target_dir.is_dir():
         return 0
-    limit = (_now_ms() if now_ms is None else now_ms) / 1000 - RETENTION_S
+    now = _now_ms() if now_ms is None else now_ms
+    old = now / 1000 - RETENTION_S
     removed = 0
     for path in target_dir.iterdir():
         try:
-            if path.stat().st_mtime < limit:
+            if path.name.endswith(".json") and path.name.startswith("hof_"):
+                ticket = _read(path)
+                stale = (ticket is None and path.stat().st_mtime < old) or (
+                    ticket is not None and (ticket.expires_at_ms <= now or _marker(path, ticket.handoff_id).exists()))
+            else:
+                stale = path.stat().st_mtime < old  # marqueurs et temporaires orphelins
+            if stale:
                 path.unlink()
                 removed += 1
         except OSError:

@@ -123,7 +123,8 @@ def decode_declarations(body: object) -> list[Decoded | ValueError]:
 
 
 #: Refus d'autorité (403) du runtime des relations ; les autres refus de contrat sont des conflits (409).
-_AUTHORITY_CODES = frozenset({"relation_not_owner", "relation_caller_not_instance", "handoff_not_owner"})
+_AUTHORITY_CODES = frozenset({"relation_not_owner", "relation_caller_not_instance", "handoff_not_owner",
+                              "relation_read_not_allowed"})
 _REF_KEYS = frozenset({"work_source", "work_external_id"})
 
 
@@ -297,7 +298,7 @@ class MissionProtocolRoutes:
 
     async def relation_read(self, request: web.Request) -> web.Response:
         relation_id = _id("relation_id", request.match_info["relation_id"], required=True)
-        unknown = set(request.query) - {"after", "limit"}
+        unknown = set(request.query) - {"after", "limit", "caller_work_source", "caller_work_external_id"}
         if unknown:
             raise ValueError(f"unexpected query parameters: {sorted(unknown)}")
         try:
@@ -305,8 +306,13 @@ class MissionProtocolRoutes:
             limit = int(request.query.get("limit", "100"))
         except ValueError as exc:
             raise ValueError("after and limit are integers") from exc
-        relation, thread, participants = await self._service.read_relation(relation_id, after=max(0, after),
-                                                                           limit=max(1, min(limit, 200)))
+        caller = None
+        if "caller_work_source" in request.query or "caller_work_external_id" in request.query:
+            # Reprise QA N7 : un agent lit seulement ce qui le concerne ; sans lecteur, le cerveau ou l'interface.
+            caller = _ref("caller", {"work_source": request.query.get("caller_work_source"),
+                                     "work_external_id": request.query.get("caller_work_external_id")})
+        relation, thread, participants = await self._service.read_relation(
+            relation_id, caller=caller, after=max(0, after), limit=max(1, min(limit, 200)))
         return web.json_response({
             "relation": relation.to_payload(),
             "messages": [{"seq": seq, **message.to_payload()} for seq, message in thread],

@@ -210,7 +210,9 @@ def _normal_key(key: str) -> str:
 #: éventuellement suffixées (`<thinking_process>`, `<reasoning-content>`), ouvrantes ou fermantes. Le texte est
 #: normalisé avant (`_normalize_text`). Un mot entre crochets (`[thinking]`) n'est pas une balise.
 _PRIVATE_TAG = re.compile(
-    r"<\s*/?\s*(?:antml:)?(?:redacted_thinking|thinking|think|reasoning|scratchpad|chain[ _-]?of[ _-]?thought)"
+    # `ant` : `<antThinking>` et ses variantes (`ant_thinking`, `ant-thinking`), reprise QA N8 de la Slice 06.
+    r"<\s*/?\s*(?:antml:)?(?:ant[ _-]?)?(?:redacted_thinking|thinking|think|reasoning|scratchpad|"
+    r"chain[ _-]?of[ _-]?thought)"
     r"(?:[_-]\w*)?(?!\w)",
     re.IGNORECASE,
 )

@@ -140,9 +140,12 @@ class RelationTools:
                 "type": message.get("type"), "published": True}
 
     async def read(self, *, relation_id: str, after: int = 0, limit: int = 20) -> dict[str, Any]:
-        self._caller("relation_read")  # lecture permise au cerveau aussi ; l'identité doit tout de même avoir été apposée
-        body = await self._send("relation_read", "GET", f"{RELATIONS_ROUTE}/{_q(relation_id)}",
-                                params={"after": str(after), "limit": str(min(limit, MAX_READ))},
+        # Le cerveau lit tout ; un agent, seulement ce qui le concerne (Core en juge, reprise QA N7).
+        caller = self._caller("relation_read")
+        params = {"after": str(after), "limit": str(min(limit, MAX_READ))}
+        if caller.agent_id is not None:
+            params["caller_agent_id"] = caller.agent_id
+        body = await self._send("relation_read", "GET", f"{RELATIONS_ROUTE}/{_q(relation_id)}", params=params,
                                 timeout_s=READ_TIMEOUT_S)
         relation = body.get("relation") or {}
         agents = body.get("agents") or {}
@@ -183,7 +186,8 @@ class RelationTools:
         return {"handoff_id": handoff.get("handoff_id"), "mission_id": handoff.get("mission_id"),
                 "expires_at": handoff.get("expires_at"),
                 "next": ("Lancez maintenant le successeur avec l'outil Agent, au premier plan, en ajoutant [relais] après "
-                         "son rôle (par exemple « [code] [coder] [relais] Suite »). Il reçoit ce paquet et devient "
+                         "son rôle (par exemple « [code] [coder] [relais] Suite »). Le rôle doit pouvoir porter une "
+                         "mission (coder, research-lead), sans [éphémère] ni [mission]. Il reçoit ce paquet et devient "
                          "Mission Owner dès son lancement ; restez disponible jusqu'à son compte rendu.")}
 
 

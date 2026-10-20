@@ -59,7 +59,8 @@ def test_the_hook_stamps_the_real_caller_and_overwrites_a_forged_one(tmp_path):
     out = section(routing_hook.run(relation_call("relation_open", forged, agent_id="a2a69a1d01cba9282"), tmp_path))
     assert out["permissionDecision"] == "allow"
     stamp = out["updatedInput"][rr.CALLER_STAMP_KEY]
-    assert stamp == {"stamped": True, "agent_id": "a2a69a1d01cba9282", "agent_type": "general-purpose"}
+    assert stamp == {"stamped": True, "hook": rr.STAMP_VERSION, "agent_id": "a2a69a1d01cba9282",
+                     "agent_type": "general-purpose"}
     assert out["updatedInput"]["kind"] == "qa"
     brain = section(routing_hook.run(relation_call("relation_read", {"relation_id": "rel_1"}), tmp_path))
     assert brain["updatedInput"][rr.CALLER_STAMP_KEY]["agent_id"] is None  # le cerveau : apposé, sans agent

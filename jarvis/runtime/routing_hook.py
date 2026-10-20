@@ -57,7 +57,7 @@ from jarvis.domain.routing import (
     RoutingPolicy,
 )
 from jarvis.runtime import (
-    agent_declarations, agent_handoffs, agent_routing, cli_catalog, credentials, loadout_snapshot,
+    agent_declarations, agent_handoffs, hook_failsafe, agent_routing, cli_catalog, credentials, loadout_snapshot,
     subagent_roles_snapshot,
 )
 from jarvis.runtime.catalog_view import ProviderCatalogSnapshot
@@ -69,9 +69,11 @@ from jarvis.runtime.presentation_playbooks import PLAYBOOK_ROLES, with_playbook
 #: des tâches reconnaît (`agent_tasks.AGENT_TOOLS`).
 AGENT_TOOLS = ("Agent", "Task")
 #: Slice 06 : les outils de relation (`relation_runtime.RELATION_TOOLS`) passent aussi par le hook, qui y appose
-#: l'identité de l'appelant. Un motif du matcher du CLI (expression régulière).
-RELATION_TOOLS_MATCHER = relation_runtime.RELATION_TOOL_PREFIX + ".*"
-HOOK_MATCHER = "|".join((*AGENT_TOOLS, RELATION_TOOLS_MATCHER))
+#: l'identité de l'appelant. Le matcher du CLI est une expression régulière : il est **ancré** (reprise QA N3),
+#: sinon `TaskStop`, `TaskOutput` contiendraient `Task` et lanceraient le hook (constaté sur le CLI 2.1.304 :
+#: avec ce motif, `Glob` ne le lance pas, `Agent` et un outil MCP préfixé si).
+RELATION_TOOLS_MATCHER = "^" + relation_runtime.RELATION_TOOL_PREFIX
+HOOK_MATCHER = f"^({'|'.join(AGENT_TOOLS)})$|{RELATION_TOOLS_MATCHER}"
 
 #: Le CLI qui exécute réellement les sous-agents. L'outil `Agent` tourne dans
 #: le processus Claude : aucune politique ne peut en faire sortir un sous-agent.
@@ -487,6 +489,14 @@ def run(event: Mapping[str, Any], runtime_root: Path, *, spawn_guard: bool = Fal
     if guard.deny:
         _log_declared(journal, event, orchestration, guard, written=False)
         return _output("deny", guard.reason)
+    if orchestration is not None and orchestration.head.handoff and not orchestration.mission.handoff:
+        # Reprise QA B1 : un `[relais]` impossible à honorer est refusé, jamais ignoré en silence ; et avant toute
+        # réclamation, pour que le billet reste à un appel correct.
+        _emit(journal, "agent.handoff.failed", "[relais] impossible à honorer : appel refusé.", level="warning",
+              data={"code": orchestration.mission.refused or "handoff_impossible",
+                    "tool_use_id": str(event.get("tool_use_id") or "")[:128]})
+        _log_declared(journal, event, orchestration, guard, written=False)
+        return _output("deny", HANDOFF_IMPOSSIBLE_REASON)
     ticket = None
     if orchestration is not None and orchestration.mission.handoff:
         ticket, refusal = _claim_handoff(event, runtime_root, journal)
@@ -521,6 +531,10 @@ def run(event: Mapping[str, Any], runtime_root: Path, *, spawn_guard: bool = Fal
 # ------------------------------------------------------------------ relations (Slice 06)
 
 
+HANDOFF_IMPOSSIBLE_REASON = (
+    "[relais] refusé : un relais se fait vers un rôle qui peut porter une mission (coder, research-lead), sans "
+    "[éphémère] ni [mission], depuis le Mission Owner qui l'a préparé. Corrigez la description, par exemple "
+    "« [code] [coder] [relais] Suite », puis relancez l'appel Agent : le relais préparé vous attend.")
 HANDOFF_MISSING_REASON = (
     "[relais] demandé, mais aucun relais préparé par vous n'attend de successeur (ou il a expiré). Appelez d'abord "
     f"mcp__{relation_runtime.RELATION_SERVER}__relation_handoff avec le paquet de relais, puis relancez cet appel "
@@ -913,10 +927,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         output = run(event if isinstance(event, dict) else {}, runtime_root, spawn_guard=spawn_guard)
     except Exception as exc:  # noqa: BLE001 - la frontière du hook : toute panne laisse l'appel partir intact
         # Reprise QA : un hook qui lève ou sort autrement qu'en 0 ferait refuser l'appel `Agent` par le CLI. La
-        # panne est consignée ; aucune sortie = le CLI garde la consigne d'origine.
+        # panne est consignée ; aucune sortie = le CLI garde la consigne d'origine. Exception (Slice 06, reprise
+        # QA N2) : un outil de relation échoue FERMÉ, refus explicite, car il partirait sans identité apposée.
+        relation = hook_failsafe.is_relation_call(event if isinstance(event, dict) else None)
         _emit(RuntimeJournal(runtime_root), "agent.routing.failed",
-              f"Hook des sous-agents en panne ({type(exc).__name__}) : l'appel part sans réécriture.", level="error",
-              data={"code": "routing_hook_crashed", "exception_type": type(exc).__name__})
+              f"Hook des sous-agents en panne ({type(exc).__name__}) : "
+              + ("outil de relation refusé." if relation else "l'appel part sans réécriture."), level="error",
+              data={"code": "routing_hook_crashed", "exception_type": type(exc).__name__, "fail_closed": relation})
+        if relation:
+            sys.stdout.write(json.dumps(hook_failsafe.deny(), ensure_ascii=False))
         return 0
     if output:
         sys.stdout.write(json.dumps(output, ensure_ascii=False))

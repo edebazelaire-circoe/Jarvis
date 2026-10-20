@@ -452,9 +452,12 @@ class LocalCoreClient:
     async def open_relation(self, body: dict[str, Any]) -> dict[str, Any]:
         return await self._post_json("/v1/missions/relations", body)
 
-    async def read_relation(self, relation_id: str, *, after: int = 0, limit: int = 100) -> dict[str, Any]:
-        return await self._get_json(f"/v1/missions/relations/{quote(relation_id, safe='')}",
-                                    {"after": after, "limit": limit})
+    async def read_relation(self, relation_id: str, *, after: int = 0, limit: int = 100,
+                            caller: dict[str, str] | None = None) -> dict[str, Any]:
+        params: dict[str, object] = {"after": after, "limit": limit}
+        if caller is not None:
+            params.update(caller_work_source=caller["work_source"], caller_work_external_id=caller["work_external_id"])
+        return await self._get_json(f"/v1/missions/relations/{quote(relation_id, safe='')}", params)
 
     async def post_relation_message(self, relation_id: str, body: dict[str, Any]) -> dict[str, Any]:
         return await self._post_json(f"/v1/missions/relations/{quote(relation_id, safe='')}/messages", body)

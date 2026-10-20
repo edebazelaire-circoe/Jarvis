@@ -52,6 +52,10 @@ CALLER_STAMP_KEY = "jarvis_caller"
 RELATION_SERVER = "jarvis-workspace"
 RELATION_TOOLS = ("relation_open", "relation_post", "relation_read", "relation_close", "relation_handoff")
 RELATION_TOOL_PREFIX = f"mcp__{RELATION_SERVER}__relation_"
+#: Version de l'apposition (reprise QA N2) : le serveur refuse une identité sans elle ou d'une autre version, donc
+#: un champ écrit par le modèle sous un CLI sans le hook à jour. Ce n'est pas une signature (voir le modèle de
+#: menace, `docs/agent-relations.md` §10.7).
+STAMP_VERSION = "relation-stamp@1"
 #: Ce qui, dans une liste de participants, désigne l'agent qui appelle.
 SELF_REF = "self"
 #: Un agentId du CLI (`a2a69a1d01cba9282`) : ASCII court, jamais un chemin.
@@ -69,6 +73,9 @@ HANDOFF_ID_PREFIX = "hof_"
 #: normalement. Une borne de ressources, pas un protocole.
 HANDOFF_TTL_S = 600
 MAX_PENDING_HANDOFFS = 64
+#: Après la clôture d'une mission, ses relations encore ouvertes acceptent messages et clôtures ce délai durant ;
+#: ensuite refus `mission_closed`, et le balayage les retire (`withdrawn`). Reprise QA N4.
+CLOSED_MISSION_GRACE_S = 600
 #: Résumés de relation par instance dans le contexte du cerveau.
 MAX_BRAIN_RELATIONS = 4
 MAX_SUMMARY_CHARS = 120
@@ -123,7 +130,11 @@ NEXT_STEPS: Mapping[str, str] = {
     "relation_mission_mismatch": "les participants travaillent pour cette mission ou l'une de ses sous-missions",
     "ephemeral_relation_participant": "un agent éphémère ne laisse aucune trace : relancez-le sans [éphémère]",
     "relation_participant_missing": "cet agent n'est pas retenu par JARVIS : réessayez dans quelques secondes",
-    "mission_closed": "la mission est close : elle ne reçoit plus de relation ni de message",
+    "mission_closed": "la mission est close : elle ne reçoit plus de nouvelle relation, et ses relations ouvertes "
+                      "ne reçoivent plus rien 10 min après la clôture ; rendez ce que vous aviez à dire dans votre "
+                      "compte rendu",
+    "relation_read_not_allowed": "seuls les participants de la relation et les Mission Owners de sa mission (ou d'une "
+                                 "mission parente) la lisent ; demandez-la à votre Mission Owner",
     "handoff_not_owner": "seul le Mission Owner courant passe la main",
     "handoff_fan_out": "vous avez déjà passé la main une fois : la propriété ne se transfère qu'une fois",
     "handoff_packet_incomplete": "le paquet de relais exige objectif, travail fait et action suivante recommandée",
@@ -165,6 +176,9 @@ def read_caller_stamp(arguments: Mapping[str, Any]) -> CallerStamp:
     stamp = arguments.get(CALLER_STAMP_KEY)
     if not isinstance(stamp, Mapping) or stamp.get("stamped") is not True:
         raise _fail("caller identity missing", "relation_caller_unstamped", CALLER_STAMP_KEY)
+    if stamp.get("hook") != STAMP_VERSION:
+        raise _fail(f"caller identity was not stamped by the current hook ({preview(stamp.get('hook'))})",
+                    "relation_caller_unstamped", CALLER_STAMP_KEY)
     agent_id = stamp.get("agent_id")
     agent_type = stamp.get("agent_type")
     if agent_id is not None and (not isinstance(agent_id, str) or not AGENT_REF.fullmatch(agent_id)):
@@ -180,6 +194,7 @@ def caller_stamp(event: Mapping[str, Any]) -> dict[str, Any]:
     agent_type = event.get("agent_type")
     return {
         "stamped": True,
+        "hook": STAMP_VERSION,
         "agent_id": agent_id if isinstance(agent_id, str) and AGENT_REF.fullmatch(agent_id) else None,
         "agent_type": agent_type if isinstance(agent_type, str) and len(agent_type) <= 64 else None,
     }

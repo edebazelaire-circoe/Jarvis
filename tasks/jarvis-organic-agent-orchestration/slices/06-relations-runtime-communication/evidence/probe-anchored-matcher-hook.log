@@ -1,0 +1,2 @@
+{"hook_event_name": "PreToolUse", "tool_name": "mcp__probe__echo", "agent_id": null, "agent_type": null, "tool_use_id": "toolu_015XxVaon3GVbvDpiZxN8W7z", "tool_input": {"text": "anc"}}
+{"hook_event_name": "PreToolUse", "tool_name": "Agent", "agent_id": null, "agent_type": null, "tool_use_id": "toolu_0149qyDJtoKWtKbQBQreuiUf", "tool_input": {"description": "sonde", "prompt": "R\u00e9ponds OK", "subagent_type": "general-purpose", "run_in_background": false}}

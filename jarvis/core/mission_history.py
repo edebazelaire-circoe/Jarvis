@@ -60,6 +60,7 @@ import asyncio
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from datetime import timedelta
 from typing import Any, Protocol, TypeVar
 import uuid
 
@@ -121,6 +122,7 @@ MISSION_HISTORY_HANDOFF_TRANSFERRED_KIND = "mission_history.handoff_transferred"
 MISSION_HISTORY_HANDOFF_FAILED_KIND = "mission_history.handoff_failed"
 MISSION_HISTORY_DELEGATION_FAILED_KIND = "mission_history.delegation_failed"
 MISSION_HISTORY_MESSAGE_AFTER_CLOSE_KIND = "mission_history.relation_message_after_close"
+MISSION_HISTORY_RELATION_WITHDRAWN_KIND = "mission_history.relation_withdrawn_after_close"
 #: Relations retenues par instance pour les résumés du cerveau ; instances suivies ; lectures de réchauffage par
 #: balayage (après un redémarrage, le cache se remplit des travaux vivants, sans tout relire d'un coup).
 MAX_RELATIONS_PER_INSTANCE = 8
@@ -474,6 +476,11 @@ class MissionHistoryService:
                     and not stored.instance.mission_owner):
                 # Sous-mission refusée à la première fois (parent clos) : son rejeu est la même instance.
                 incoming = replace(incoming, mission_id=None, mission_owner=False)
+            if fact.handoff_id is not None and stored.instance.mission_id == incoming.mission_id \
+                    and not stored.instance.mission_owner:
+                # Successeur d'un relais qui n'a pas abouti : retenu sans la propriété (reprise QA N5) ; son rejeu
+                # est la même instance.
+                incoming = replace(incoming, mission_owner=False)
             try:
                 reconcile_instance(stored.instance, incoming)
             except MissionError as exc:
@@ -851,6 +858,7 @@ class MissionHistoryService:
                            data={"work_source": key[0], "work_external_id": key[1], "code": result.code})
             resolved += 1
         self._expire_handoffs()
+        await self._withdraw_stale_relations()
         await self._warm_relations(items)
         await self._sweep_missions()
         return resolved
@@ -949,6 +957,7 @@ class MissionHistoryService:
             author = await self._caller(caller)
             relation = await self._relation(relation_id)
             mission = await self._guard("get_mission", self._repository.get_mission(relation.mission_id))
+            self._check_grace(mission, relation, "post")
             targets = [await self._instance_for(ref, "audience") for ref in audience]
             message = RelationMessage(
                 message_id=_new_id(relation_runtime.MESSAGE_ID_PREFIX), relation_id=relation.relation_id,
@@ -964,15 +973,27 @@ class MissionHistoryService:
         self._emit(MISSION_HISTORY_RELATION_MESSAGE_KIND, "message publié sur un tableau de relation", data={
             "relation_id": relation.relation_id, "message_id": message.message_id, "seq": seq, "type": message.type.value,
             "chars": len(message.text), "author_instance_id": author.instance_id})
-        if mission is not None and mission.status.is_closed:
-            # Constaté en bac à sable : un agent repris par SendMessage après la fin de sa tâche travaille encore
-            # quand la mission se clôt (Work State ne le voit plus vivant). Sa relation ouverte garde ce qu'il dit
-            # (D18, comme un membre tardif) ; c'est dit au journal.
-            self._report(("message_after_close", relation.relation_id), MISSION_HISTORY_MESSAGE_AFTER_CLOSE_KIND,
-                         "message publié sur une relation ouverte d'une mission close : retenu", level="warning",
-                         data={"relation_id": relation.relation_id, "mission_id": mission.mission_id,
-                               "mission_status": mission.status.value})
         return seq, message
+
+    def _check_grace(self, mission: Mission | None, relation: AgentRelation, operation: str) -> None:
+        """Une mission close accepte encore, `relation_runtime.CLOSED_MISSION_GRACE_S` durant, messages et clôtures
+        sur ses relations ouvertes (reprise QA N4) ; après, refus `mission_closed`.
+
+        Constaté en bac à sable : un agent repris par SendMessage après la fin de sa tâche travaille encore quand la
+        mission se clôt (Work State ne le voit plus vivant). Ce qu'il dit pendant la grâce est gardé et dit au journal.
+        """
+
+        if mission is None or not mission.status.is_closed or mission.closed_at is None:
+            return
+        late = (self._clock.now() - mission.closed_at).total_seconds()
+        if late > relation_runtime.CLOSED_MISSION_GRACE_S:
+            raise RelationError(f"mission {mission.mission_id} closed {int(late)} s ago "
+                                f"(grace {relation_runtime.CLOSED_MISSION_GRACE_S} s)", code="mission_closed",
+                                field="relation_id")
+        self._report(("after_close", operation, relation.relation_id), MISSION_HISTORY_MESSAGE_AFTER_CLOSE_KIND,
+                     "geste sur une relation ouverte d'une mission close, pendant la grâce : retenu", level="warning",
+                     data={"relation_id": relation.relation_id, "mission_id": mission.mission_id, "operation": operation,
+                           "mission_status": mission.status.value, "late_s": int(late)})
 
     async def finish_relation(self, *, caller: WorkKey | None, relation_id: str, outcome: RelationOutcome,
                               summary: str = "", winner: WorkKey | None = None) -> AgentRelation:
@@ -981,6 +1002,8 @@ class MissionHistoryService:
         try:
             author = await self._caller(caller)
             relation = await self._relation(relation_id)
+            self._check_grace(await self._guard("get_mission", self._repository.get_mission(relation.mission_id)),
+                              relation, "close")
             winner_instance = await self._instance_for(winner, "winner")
             relation_runtime.check_close_authority(author, relation, outcome, await self._scope(relation.mission_id))
             closed = await self.close_relation(relation.relation_id, outcome, summary=summary,
@@ -995,11 +1018,26 @@ class MissionHistoryService:
             "closed_by_instance_id": closed.closed_by_instance_id, "winner_instance_id": closed.winner_instance_id})
         return closed
 
-    async def read_relation(self, relation_id: str, *, after: int = 0, limit: int = 100
+    async def read_relation(self, relation_id: str, *, caller: WorkKey | None = None, after: int = 0, limit: int = 100
                             ) -> tuple[AgentRelation, tuple[tuple[int, RelationMessage], ...], tuple[InstanceView, ...]]:
-        """Une relation, son fil (à partir du rang `after`) et ses participants avec leur statut vivant."""
+        """Une relation, son fil (à partir du rang `after`) et ses participants avec leur statut vivant.
+
+        Reprise QA N7 : `caller` (un agent) doit être participant ou Mission Owner courant de la mission ou d'une
+        mission ancêtre ; `None` = le cerveau ou l'interface, qui lisent tout. Refus `relation_read_not_allowed`.
+        """
 
         relation = await self._relation(relation_id)
+        if caller is not None:
+            reader = await self._caller(caller)
+            if reader.instance_id not in relation.participant_ids:
+                missions = await self._scope(relation.mission_id)
+                mission = missions.get(relation.mission_id)
+                if mission is None or not relation_runtime.current_owner_of_scope(reader, mission, missions):
+                    error = RelationError(f"instance {reader.instance_id} neither takes part in relation "
+                                          f"{relation.relation_id} nor owns its mission",
+                                          code="relation_read_not_allowed", field="caller")
+                    self._refuse("read", error, relation_id=relation_id)
+                    raise error
         thread = await self.thread(relation.relation_id, after=after, limit=limit)
         live = self._live()
         views = []
@@ -1061,6 +1099,28 @@ class MissionHistoryService:
         return next((item for item in self._handoffs.values()
                      if item.mission_id == mission_id and not item.expired(now)), None)
 
+    async def _withdraw_stale_relations(self) -> None:
+        """Clore `withdrawn` les relations encore ouvertes d'une mission close depuis plus que la grâce (reprise QA
+        N4) : aucun verdict ni vainqueur inventé, c'est dit au journal. Ne lève jamais."""
+
+        cutoff = self._clock.now() - timedelta(seconds=relation_runtime.CLOSED_MISSION_GRACE_S)
+        try:
+            stale = await self._guard("stale_open_relations", self._repository.stale_open_relations(
+                cutoff, limit=MAX_SWEPT_MISSIONS))
+            for relation in stale:
+                closed = await self.close_relation(
+                    relation.relation_id, RelationOutcome.WITHDRAWN,
+                    summary="Mission close depuis plus de 10 min : relation retirée sans verdict ni issue.")
+                self._note_relation(closed)
+                self._emit(MISSION_HISTORY_RELATION_WITHDRAWN_KIND, "relation retirée après la clôture de sa mission",
+                           level="warning", data={"relation_id": closed.relation_id, "kind": closed.kind.value,
+                                                  "mission_id": closed.mission_id})
+        except (MissionError, RelationError, MissionHistoryError, MissionHistoryUnavailable,
+                MissionHistoryStoreError) as exc:
+            self._report(("withdraw_stale", type(exc).__name__), MISSION_HISTORY_CLOSE_FAILED_KIND,
+                         f"retrait des relations d'une mission close en échec : {exc}", level="warning",
+                         data={"code": getattr(exc, "code", None)})
+
     def _expire_handoffs(self) -> None:
         now = self._clock.now()
         for handoff_id, pending in list(self._handoffs.items()):
@@ -1118,7 +1178,9 @@ class MissionHistoryService:
                      f"relais non transféré ({problem}) : le successeur est retenu sans la propriété de la mission",
                      level="error", data={"work_source": key[0], "work_external_id": key[1], "code": problem,
                                           "handoff_id": fact.handoff_id, "detail": detail})
-        return await self._persist(key, instance, fact, False, None)
+        # Reprise QA N5 : sans relais transféré, le successeur n'est pas Mission Owner (sinon il passerait pour un
+        # propriétaire déclaré sans l'être).
+        return await self._persist(key, replace(instance, mission_owner=False), fact, False, None)
 
     # -- délégation alignée sur `[mission]`
 

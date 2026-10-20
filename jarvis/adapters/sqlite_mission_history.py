@@ -416,6 +416,20 @@ class SQLiteMissionHistoryRepository:
 
         return await self._transaction(write)
 
+    async def stale_open_relations(self, closed_before: datetime, *, limit: int = 64) -> tuple[AgentRelation, ...]:
+        """Relations ouvertes d'une mission close avant `closed_before`, les plus anciennes d'abord."""
+
+        limit = max(1, min(int(limit), MAX_LIST_LIMIT))
+
+        def read(conn: sqlite3.Connection) -> tuple[AgentRelation, ...]:
+            rows = conn.execute(
+                "SELECT r.* FROM agent_relations r JOIN missions m ON m.mission_id = r.mission_id "
+                "WHERE r.status='open' AND m.status<>'open' AND m.closed_at < ? "
+                "ORDER BY m.closed_at, r.relation_id LIMIT ?", (utc_key(closed_before), limit)).fetchall()
+            return tuple(_relations(conn, rows))
+
+        return await self._run(read)
+
     async def relations_of_instance(self, instance_id: str, *, limit: int = 16) -> tuple[AgentRelation, ...]:
         """Les relations où figure une instance, les plus récentes d'abord (résumés du contexte du cerveau)."""
 

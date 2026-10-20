@@ -107,6 +107,10 @@ class MissionHistoryRepository(Protocol):
         `transferred` en **une** transaction : tout ou rien."""
         ...
 
+    async def stale_open_relations(self, closed_before: datetime, *, limit: int = 64) -> tuple[AgentRelation, ...]:
+        """Relations encore ouvertes d'une mission close avant `closed_before` (reprise QA N4, balayage)."""
+        ...
+
     async def relations_of_instance(self, instance_id: str, *, limit: int = 16) -> tuple[AgentRelation, ...]:
         """Les relations où figure l'instance, les plus récentes d'abord (Slice 06, résumés du cerveau)."""
         ...

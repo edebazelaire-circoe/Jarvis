@@ -227,7 +227,7 @@ JSON lisible n'est plus refusé en bloc.
 Runtime (Slice 06, §10) : `relation_caller_unstamped`, `relation_caller_not_instance`, `relation_agent_unknown`,
 `relation_agent_not_recorded`, `relation_not_owner`, `relation_no_mission`, `relation_kind_not_opened_by_agent`,
 `relation_closed_by_core`, `relation_unknown`, `mission_closed`, `handoff_not_owner`, `handoff_unknown`,
-`handoff_wrong_predecessor`, `handoff_expired`, `handoff_ticket_missing` (hook).
+`handoff_wrong_predecessor`, `handoff_expired`, `relation_read_not_allowed`, `handoff_ticket_missing` et `handoff_impossible` (hook).
 
 ## 9. Ce qui reste à câbler
 
@@ -257,17 +257,22 @@ Un agent noue, alimente, lit ou clôt une relation, ou passe la main, par cinq o
 - **l'appel est synchrone** : le refus codé de Core revient à l'agent qui publie, avec ce qu'il doit corriger. Un
   fait déposé par le hook (comme les déclarations) ne le pourrait pas ;
 - **D25** : la sémantique vit dans les contrats de Core ; le hook n'appose qu'une **identité**. Pour chaque appel
-  `mcp__jarvis-workspace__relation_*` (matcher du hook étendu, `routing_hook.HOOK_MATCHER`), il écrit
-  `jarvis_caller = {stamped, agent_id, agent_type}` dans `updatedInput`, depuis son événement (l'`agent_id` du CLI,
+  `mcp__jarvis-workspace__relation_*` (matcher du hook étendu et **ancré**, `routing_hook.HOOK_MATCHER` =
+  `^(Agent|Task)$|^mcp__jarvis-workspace__relation_` : `TaskStop`, `TaskOutput`, `SendMessage`, `Glob` ne lancent
+  pas le hook ; constaté sur le CLI 2.1.304), il écrit
+  `jarvis_caller = {stamped, hook, agent_id, agent_type}` dans `updatedInput` (`hook` = `relation_runtime.STAMP_VERSION`,
+  `relation-stamp@1`), depuis son événement (l'`agent_id` du CLI,
   `None` pour le cerveau), en **écrasant** toute valeur écrite par le modèle. Il reste court et hors ligne : ni
   disque ni réseau. Le champ n'est pas dans le schéma montré au modèle ; le serveur le retire avant le contrôle
-  strict des arguments (`CURRENT_CALLER`). Sans lui (CLI lancé avec un ancien réglage), refus
-  `relation_caller_unstamped` : rien n'est deviné. Constaté sur le CLI 2.1.304 (sonde du 2026-10-20) : l'`agent_id`
+  strict des arguments (`CURRENT_CALLER`). Sans lui, ou sans la version `hook` attendue (CLI lancé avec un ancien
+  hook, champ écrit par le modèle), refus `relation_caller_unstamped` : rien n'est deviné. Le hook **échoue fermé**
+  pour ces seuls outils : une panne (exception, import du hook cassé, `jarvis/runtime/hook_failsafe.py`) rend un
+  refus explicite au lieu d'une sortie vide ; tout autre outil reste *fail-open*. Un hook tué par son délai ne
+  pose rien : le serveur refuse alors l'appel. Constaté sur le CLI 2.1.304 (sonde du 2026-10-20) : l'`agent_id`
   du hook est le `task_id` de `task_started` et l'« agentId » que l'outil `Agent` rend à l'appelant ;
   `updatedInput` est honoré pour un outil MCP, même avec un champ hors schéma.
 
-Limite assumée : le champ apposé n'est pas signé. Un modèle qui l'écrirait lui-même serait écrasé par le hook ; il
-ne passerait que sur un CLI lancé sans le hook à jour, où l'identité n'est de toute façon pas garantie.
+Le modèle de menace est en §10.7.
 
 Chemin : outil MCP → Control Center `POST /api/missions/relations`, `.../{id}/messages`, `.../{id}/close`,
 `GET /api/missions/relations/{id}`, `POST /api/missions/handoffs` (`relation_relay.py`) → Core
@@ -282,10 +287,10 @@ refus de Core. Core parle d'identités de travail, jamais d'agentId (D25).
 | --- | --- |
 | nouer une communication ou un Adversary | le propriétaire courant de la mission de l'appelant, ou d'une mission ancêtre (D04) |
 | nouer une QA | ce propriétaire, ou le relecteur lui-même (`reviewer = self`) : le Mission Owner décide en lançant un relecteur sur un travail nommé, le relecteur l'enregistre |
-| publier | un participant (`relation_not_participant` sinon), tant que la relation est ouverte ; sur une relation encore ouverte d'une mission close, le message est retenu et dit au journal (`relation_message_after_close` : un agent repris par `SendMessage` peut travailler après la clôture, constaté en bac à sable) |
+| publier, clore | un participant (`relation_not_participant` sinon), tant que la relation est ouverte. Mission close : pendant `CLOSED_MISSION_GRACE_S` (600 s) après la clôture, le geste est retenu et dit au journal (`relation_message_after_close` : un agent repris par `SendMessage` peut travailler après la clôture, constaté en bac à sable) ; ensuite refus `mission_closed`, et le balayage clôt `withdrawn` les relations encore ouvertes (`relation_withdrawn_after_close`, aucun verdict ni vainqueur inventé) |
 | clore | verdict QA : le relecteur ; issue d'un Adversary : le propriétaire ou le créateur ; fin d'une communication : un membre aussi ; `withdrawn` : le créateur ou le propriétaire |
 | délégation, relais | Core seulement (`relation_kind_not_opened_by_agent`, `relation_closed_by_core`) |
-| lire | tout appelant apposé, le cerveau compris |
+| lire | un participant, ou le Mission Owner courant de la mission ou d'une mission ancêtre ; le cerveau (et l'interface, sans lecteur) lit tout ; sinon refus `relation_read_not_allowed` (403) |
 
 La relation est nouée dans la mission de l'appelant (`relation_no_mission` s'il n'en a pas). Les règles du
 contrat (§1, §6) s'appliquent ensuite dans la transaction du magasin.
@@ -311,10 +316,15 @@ contrat (§1, §6) s'appliquent ensuite dans la transaction du magasin.
    `handoff_fan_out`, `mission_closed`, `handoff_packet_incomplete`), puis garde un **relais préparé**
    (`PendingHandoff`, mémoire de Core, 64 au plus, `HANDOFF_TTL_S` = 600 s). **Rien de durable** n'est écrit : un
    relais jamais lancé ne laisse aucune trace (D15). Le Control Center dépose un **billet**
-   (`<runtime>/agent-handoffs/<handoff_id>.json`, `agent_handoffs.py`, 64 au plus, élagués après 1 h).
+   (`<runtime>/agent-handoffs/<handoff_id>.json`, `agent_handoffs.py`, 64 au plus). Un billet réclamé ou expiré est
+   effacé (élagage à l'écriture, à la réclamation et par le relais du Control Center, démarrage compris) ; un
+   marqueur de réclamation, après 1 h.
 2. Il lance le successeur avec `[relais]` après son rôle (`[code] [coder] [relais] Suite`), modificateur
-   d'orchestration de `agent_markers` (rôle `can_own_mission` exigé ; ignoré et consigné depuis le cerveau ou avec
-   `[mission]`). Le hook **réclame** le billet de son appelant par un renommage atomique (une seule fois), déclare
+   d'orchestration de `agent_markers`. Un `[relais]` impossible à honorer — rôle sans `can_own_mission`,
+   `[éphémère]`, `[mission]` en plus, appel du cerveau — est **refusé** avec la règle (`HANDOFF_IMPOSSIBLE_REASON`),
+   avant toute réclamation : le billet attend l'appel corrigé ; `relation_handoff` le dit dès la préparation. Le hook
+   **réclame** le billet de son appelant par la création exclusive d'un marqueur `<handoff_id>.claim`
+   (`O_CREAT | O_EXCL`, une seule réclamation même sous Windows, où un renommage écrase sa cible), déclare
    le successeur Mission Owner de la mission reprise (`AgentDeclarationFact.handoff_id`) et appose le paquet sur
    sa consigne (`RELAIS DE MISSION (JARVIS)`). Sans billet : l'appel `Agent` est **refusé** avec ce qu'il faut
    faire.
@@ -326,8 +336,8 @@ contrat (§1, §6) s'appliquent ensuite dans la transaction du magasin.
    relais préparé attend, la clôture de la mission est différée (`mission_close_deferred` avec `handoff_id`), même
    si le prédécesseur finit le premier. Ensuite seule la fin du propriétaire courant compte (Slice 05).
 5. Relais inconnu, expiré, d'une autre mission, d'un autre prédécesseur (le successeur doit être lancé par lui),
-   ou refusé par le magasin : le successeur est quand même retenu (D18), **sans** la propriété, et c'est dit à
-   l'erreur (`mission_history.handoff_failed`, code). Un relais préparé vit en mémoire de Core : un redémarrage
+   ou refusé par le magasin : le successeur est quand même retenu (D18), **sans** la propriété (`mission_owner`
+   faux), et c'est dit à l'erreur (`mission_history.handoff_failed`, code). Un relais préparé vit en mémoire de Core : un redémarrage
    de Core entre la préparation et le lancement le perd (même dégradation, dite).
 
 ### 10.5 Délégation alignée sur `[mission]`
@@ -345,3 +355,18 @@ E/S (`MissionHistoryService.relation_refs`, cache borné, réchauffé au balayag
 `mission_history.relation_opened|relation_message|relation_closed|relation_refused|handoff_prepared|`
 `handoff_transferred|handoff_failed|delegation_failed` (ids, codes, tailles — jamais un texte) ; Control Center :
 `missions.relation_relayed|relation_failed` ; hook : `agent.relation_call`, `agent.handoff.claimed|failed`.
+
+### 10.7 Modèle de menace de l'identité apposée
+
+Ce qui est défendu : **les erreurs du modèle et un hook absent ou ancien.** Un `jarvis_caller` écrit par le modèle
+est écrasé par le hook ; sous un CLI sans le hook à jour, il n'a pas la version `relation-stamp@1` et le serveur le
+refuse ; une panne du hook pendant un appel de relation rend un refus explicite. Core applique ensuite l'autorité
+(§10.2) sur l'identité résolue : un agent ne publie que là où il participe, ne tranche que ce qu'il possède.
+
+Ce qui ne l'est pas : **un agent malveillant sous le même utilisateur du système.** Un sous-agent a Bash : il peut
+lire l'environnement et le dossier runtime, écrire un `jarvis_caller` à la bonne version, ou appeler directement les
+routes du Control Center (`/api/missions/relations*`, en bouclage, sans jeton) en se faisant passer pour un autre
+agentId. Aucun secret local ne résisterait à cet accès : la version n'est donc pas une signature, et aucune n'est
+prétendue. La frontière reste celle de JARVIS en général (le poste et son utilisateur) ; le journal garde, pour
+chaque geste, l'agentId apposé et l'identité résolue, de quoi reconstituer un abus après coup.
+

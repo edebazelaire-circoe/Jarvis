@@ -1,0 +1,24 @@
+== instances
+  toolu_012kcgk913iJ9ni5r6xJo8kQ | [code] [coder] Sonde S06 Relais refusé | completed | role=coder | mission=mis_toolu_012kcgk913iJ9ni5r6xJo8kQ owner=True | inst=ainst_e24b852c9343417dbf70c2b4d167085c
+  toolu_01XqwoJiyfBczkFQ1SNxRxiK | [code] [coder] [relais] Suite | completed | role=coder | mission=mis_toolu_012kcgk913iJ9ni5r6xJo8kQ owner=True | inst=ainst_ff899b0ebbc244c2a0399f388ed713f8
+  toolu_01ByxDryR3xDPTWVJCP3SGe7 | [code] [qa] [relais] Suite S06 | failed | role=None | mission=None owner=None | inst=None
+== missions
+  mis_toolu_012kcgk913iJ9ni5r6xJo8kQ status=completed owner=ainst_ff899b0ebbc244c2a0399f388ed713f8 parent=None
+    owner change -> {'mission_id': 'mis_toolu_012kcgk913iJ9ni5r6xJo8kQ', 'owner_instance_id': 'ainst_e24b852c9343417dbf70c2b4d167085c', 'at': '2026-10-20T15:24:25.247719+00:00', 'handoff_relation_id': None}
+    owner change -> {'mission_id': 'mis_toolu_012kcgk913iJ9ni5r6xJo8kQ', 'owner_instance_id': 'ainst_ff899b0ebbc244c2a0399f388ed713f8', 'at': '2026-10-20T15:24:38.756419+00:00', 'handoff_relation_id': 'rel_58c8ee6592074f4fa0940c46169c2f68'}
+== relations
+  rel_58c8ee6592074f4fa0940c46169c2f68 kind=handoff status=closed outcome=transferred winner=None closed_by=None created_by=ainst_e24b852c9343417dbf70c2b4d167085c
+    purpose='Essai de relais' summary='Propriété de la mission transférée au successeur.'
+    participant ainst_e24b852c9343417dbf70c2b4d167085c predecessor
+    participant ainst_ff899b0ebbc244c2a0399f388ed713f8 successor
+    packet={"objective": "Vérifier le relais", "completed_work": "Rien encore", "recommended_next_action": "Répondre RELAIS_OK", "key_decisions": [], "open_points": [], "artifact_refs": [], "evidence_refs": []}
+    CC agents={'ainst_e24b852c9343417dbf70c2b4d167085c': 'aeaf68a4eae9face1', 'ainst_ff899b0ebbc244c2a0399f388ed713f8': 'a626627f361ada513'}
+== trace (relation/handoff)
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_handoff", "tool_use_id": "toolu_01NdaJrVPFagtcCBXPyYcK9m", "caller_agent_id": "aeaf68a4eae9face1"}
+  mission_history.handoff_prepared {"handoff_id": "hof_46f1401cc8ba47418188b5e65cdfc36e", "mission_id": "mis_toolu_012kcgk913iJ9ni5r6xJo8kQ", "predecessor_instance_id": "ainst_e24b852c9343417dbf70c2b4d167085c"}
+  missions.relation_relayed {"operation": "handoff"}
+  missions.relation_relayed {"operation": "handoff_ticket", "handoff_id": "hof_46f1401cc8ba47418188b5e65cdfc36e", "mission_id": "mis_toolu_012kcgk913iJ9ni5r6xJo8kQ"}
+  agent.handoff.failed {"code": "role_cannot_own_mission", "tool_use_id": "toolu_01ByxDryR3xDPTWVJCP3SGe7"}
+  agent.handoff.claimed {"code": "handoff_ticket_claimed", "handoff_id": "hof_46f1401cc8ba47418188b5e65cdfc36e", "mission_id": "mis_toolu_012kcgk913iJ9ni5r6xJo8kQ", "caller_agent_id": "aeaf68a4eae9face1", "tool_use_id": "toolu_01XqwoJiyfBczkFQ1SNxRxiK"}
+  mission_history.handoff_transferred {"handoff_id": "hof_46f1401cc8ba47418188b5e65cdfc36e", "relation_id": "rel_58c8ee6592074f4fa0940c46169c2f68", "mission_id": "mis_toolu_012kcgk913iJ9ni5r6xJo8kQ", "predecessor_instance_id": "ainst_e24b852c9343417dbf70c2b4d167085c", "successor_instance_id": "ainst_ff899b0ebbc244c2a0399f388ed713f8"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_58c8ee6592074f4fa0940c46169c2f68"}

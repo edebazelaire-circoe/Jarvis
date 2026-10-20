@@ -36,7 +36,7 @@ from typing import Any
 
 from jarvis.domain.mission_history import AgentDeclarationFact
 from jarvis.protocol.client import CoreProtocolError
-from jarvis.runtime import agent_declarations
+from jarvis.runtime import agent_declarations, agent_handoffs
 from jarvis.runtime.agent_tasks import AgentTask, AgentTaskTracker
 from jarvis.runtime.core_forwarder import CoreBatchForwarder, CoreBatchRejected, CoreLoopbackTransport
 from jarvis.runtime.journal import RuntimeJournal
@@ -81,8 +81,10 @@ class CoreMissionTransport(CoreLoopbackTransport):
     async def open_relation(self, body: dict[str, Any]) -> dict[str, Any]:
         return await self.replay_on_401(lambda client: client.open_relation(body))
 
-    async def read_relation(self, relation_id: str, *, after: int = 0, limit: int = 100) -> dict[str, Any]:
-        return await self.replay_on_401(lambda client: client.read_relation(relation_id, after=after, limit=limit))
+    async def read_relation(self, relation_id: str, *, after: int = 0, limit: int = 100,
+                            caller: dict[str, str] | None = None) -> dict[str, Any]:
+        return await self.replay_on_401(lambda client: client.read_relation(relation_id, after=after, limit=limit,
+                                                                           caller=caller))
 
     async def post_relation_message(self, relation_id: str, body: dict[str, Any]) -> dict[str, Any]:
         return await self.replay_on_401(lambda client: client.post_relation_message(relation_id, body))
@@ -177,6 +179,8 @@ class DeclarationRelay(CoreBatchForwarder):
             if loop.time() - self._last_prune >= PRUNE_INTERVAL_S:
                 self._last_prune = loop.time()
                 await asyncio.to_thread(agent_declarations.prune, self.runtime_root)
+                # Slice 06 : les billets de relais réclamés ou expirés ne restent pas sur disque.
+                await asyncio.to_thread(agent_handoffs.prune, self.runtime_root)
             result = await asyncio.to_thread(agent_declarations.scan, self.runtime_root, seen=set(self._seen))
         except OSError as exc:
             if not self._scan_failed:

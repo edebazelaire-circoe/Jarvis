@@ -6228,7 +6228,8 @@ class ControlCenter:
         relation_id = str(request.match_info.get("relation_id") or "")
         return await self._relation_call(request, "read", lambda relay, _body: relay.read(
             relation_id=relation_id, after=int(request.query.get("after", "0") or 0),
-            limit=int(request.query.get("limit", "50") or 50)))
+            limit=int(request.query.get("limit", "50") or 50),
+            caller=request.query.get("caller_agent_id") or None))
 
     async def relations_post(self, request: web.Request) -> web.Response:
         """Publier un message délibéré sur le tableau d'une relation."""

@@ -170,8 +170,12 @@ class RelationRelay:
                                   {"relation_id": relation_id, "outcome": outcome})
         return self._with_agents(result)
 
-    async def read(self, *, relation_id: str, after: int, limit: int) -> dict[str, Any]:
-        result = await self._call("read", lambda: self.transport.read_relation(relation_id, after=after, limit=limit),
+    async def read(self, *, relation_id: str, after: int, limit: int, caller: str | None = None) -> dict[str, Any]:
+        """`caller` : l'agentId apposé (lecture restreinte chez Core) ; `None` = le cerveau ou l'interface."""
+
+        reader = self._caller(caller)
+        result = await self._call("read", lambda: self.transport.read_relation(relation_id, after=after, limit=limit,
+                                                                               caller=reader),
                                   {"relation_id": relation_id})
         return self._with_agents(result)
 

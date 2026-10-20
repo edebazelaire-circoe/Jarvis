@@ -20,7 +20,7 @@ from tests.fakes.mission_history import SOURCE
 from tests.unit.test_relations_runtime_service import core, member, owner, packet, run  # noqa: F401 - fixture
 from tests.unit.test_workspace_mcp import fake_cc  # noqa: F401 - fixture réutilisée
 
-STAMP = {"stamped": True, "agent_id": "a1b2c3d4e5f6a7b8c", "agent_type": "general-purpose"}
+STAMP = {"stamped": True, "hook": "relation-stamp@1", "agent_id": "a1b2c3d4e5f6a7b8c", "agent_type": "general-purpose"}
 
 
 # ------------------------------------------------------------------ outils MCP
@@ -116,9 +116,11 @@ class CoreHttp:
     async def open_relation(self, body):
         return await self._json(await self.client.post("/v1/missions/relations", json=body))
 
-    async def read_relation(self, relation_id, *, after=0, limit=100):
-        return await self._json(await self.client.get(f"/v1/missions/relations/{relation_id}",
-                                                      params={"after": after, "limit": limit}))
+    async def read_relation(self, relation_id, *, after=0, limit=100, caller=None):
+        params = {"after": after, "limit": limit}
+        if caller is not None:
+            params.update(caller_work_source=caller["work_source"], caller_work_external_id=caller["work_external_id"])
+        return await self._json(await self.client.get(f"/v1/missions/relations/{relation_id}", params=params))
 
     async def post_relation_message(self, relation_id, body):
         return await self._json(await self.client.post(f"/v1/missions/relations/{relation_id}/messages", json=body))
@@ -159,7 +161,7 @@ async def test_the_relay_resolves_agent_ids_and_self_then_core_records_the_relat
                                     text="Le test du cas vide manque.", audience=["agentB"], artifact_refs=[],
                                     reply_to_message_id=None)
     assert posted["seq"] >= 1
-    read = await relay.relay.read(relation_id=relation["relation_id"], after=0, limit=10)
+    read = await relay.relay.read(relation_id=relation["relation_id"], after=0, limit=10, caller="agentB")
     assert [item["text"] for item in read["messages"]] == ["Le test du cas vide manque."]
     assert set(read["agents"].values()) == {"agentQ", "agentB"}
     closed = await relay.relay.close(caller="agentQ", relation_id=relation["relation_id"], outcome="findings",
