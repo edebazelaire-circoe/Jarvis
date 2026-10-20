@@ -240,6 +240,28 @@ def fact_from_hook_event(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class MissionOpening:
+    """La mission qu'une déclaration de Mission Owner ouvre, telle que l'appelant la connaît.
+
+    L'id est celui du fait (`AgentDeclarationFact.mission_id`) ; le propriétaire (l'instance que Core crée pour
+    cette déclaration), la racine (celle du parent, ou la mission elle-même) et la date (`declared_at`) sont
+    posés par Core : l'appelant ne peut pas connaître l'id d'une instance qui n'existe pas encore. Les champs
+    sont validés à la construction de la `missions.Mission`.
+    """
+
+    objective: str
+    parent_mission_id: str | None = None
+    dossier_path: str | None = None
+    origin_kind: str | None = None
+
+    def mission(self, *, mission_id: str, owner_instance_id: str, created_at: datetime,
+                root_mission_id: str | None) -> Mission:
+        return Mission(mission_id=mission_id, objective=self.objective, owner_instance_id=owner_instance_id,
+                       created_at=created_at, parent_mission_id=self.parent_mission_id,
+                       root_mission_id=root_mission_id, dossier_path=self.dossier_path, origin_kind=self.origin_kind)
+
+
 class DeclarationOutcome(StrEnum):
     """Ce que Core a fait d'une déclaration (rendu à l'appelant, compté, jamais un statut d'exécution)."""
 

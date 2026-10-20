@@ -214,7 +214,7 @@ class SQLiteMissionHistoryRepository:
     def __init__(self, state: SQLiteStateRepository) -> None:
         self._state = state
 
-    async def _run(self, fn: Callable[[sqlite3.Connection], T]) -> T:
+    async def _run(self, fn: Callable[[sqlite3.Connection], T], *, operation: str | None = None) -> T:
         try:
             return await self._state.run_serialized(fn)
         except sqlite3.IntegrityError as exc:
@@ -222,12 +222,13 @@ class SQLiteMissionHistoryRepository:
             raise MissionHistoryError(f"mission history constraint refused the write: {exc}",
                                       code="mission_history_constraint") from exc
         except sqlite3.Error as exc:
-            operation = getattr(fn, "__qualname__", "operation").split(".<locals>")[0].rsplit(".", 1)[-1]
-            raise MissionHistoryUnavailable(operation, f"{type(exc).__name__}: {exc}") from exc
+            raise MissionHistoryUnavailable(operation or _operation_of(fn), f"{type(exc).__name__}: {exc}") from exc
 
     async def _transaction(self, write: Callable[[sqlite3.Connection], T]) -> T:
         result: list[T] = []
-        await self._run(lambda c: immediate_transaction(c, lambda conn: result.append(write(conn))))
+        # Le nom de l'opération est celui de la méthode qui écrit (`record_instance`...), pas celui de la lambda.
+        await self._run(lambda c: immediate_transaction(c, lambda conn: result.append(write(conn))),
+                        operation=_operation_of(write))
         return result[0]
 
     # ------------------------------------------------------------ instances
@@ -544,6 +545,12 @@ class SQLiteMissionHistoryRepository:
             return {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in _TABLES}
 
         return await self._run(read)
+
+
+def _operation_of(fn: Callable[..., object]) -> str:
+    """`SQLiteMissionHistoryRepository.record_instance.<locals>.write` -> `record_instance`."""
+
+    return getattr(fn, "__qualname__", "operation").split(".<locals>")[0].rsplit(".", 1)[-1]
 
 
 _TABLES = ("missions", "agent_instances", "mission_owners", "agent_relations", "agent_relation_participants",

@@ -60,7 +60,7 @@ from jarvis.core.work_state import CORE_WORK_UPDATED
 from jarvis.domain.agent_relations import AgentRelation, RelationError, RelationMessage, RelationOutcome
 from jarvis.domain.mission_history import (
     AGENT_DECLARED_KIND, AgentDeclarationFact, DeclarationOutcome, DeclarationResult, HistoryHealth, InstanceView,
-    MissionHistoryError, MissionTree, StoredInstance, join_live, live_status,
+    MissionHistoryError, MissionOpening, MissionTree, StoredInstance, join_live, live_status,
 )
 from jarvis.domain.missions import (
     AgentInstance, Mission, MissionError, MissionStatus, instance_from_declaration, reconcile_instance,
@@ -82,6 +82,8 @@ MISSION_HISTORY_EPHEMERAL_DISCARDED_KIND = "mission_history.ephemeral_discarded"
 MISSION_HISTORY_EPHEMERAL_RETAINED_KIND = "mission_history.ephemeral_retained"
 MISSION_HISTORY_PENDING_DROPPED_KIND = "mission_history.pending_dropped"
 MISSION_HISTORY_EVENT_FAILED_KIND = "mission_history.event_failed"
+MISSION_HISTORY_DISCARDED_FORGOTTEN_KIND = "mission_history.discarded_forgotten"
+MISSION_HISTORY_UNSAVED_REFUSED_KIND = "mission_history.unsaved_refused"
 
 #: Déclarations éphémères en attente d'issue (en mémoire seulement). Au-delà, la plus ancienne est oubliée :
 #: elle ne laissera aucune trace, même si elle échoue ensuite — c'est dit au diagnostic.
@@ -210,13 +212,17 @@ class MissionHistoryService:
         work_source: str,
         work_external_id: str,
         parent_work_external_id: str | None = None,
-        mission: Mission | None = None,
+        mission: MissionOpening | Mission | None = None,
     ) -> DeclarationResult:
         """Accepter la déclaration d'un sous-agent. Ne lève jamais : l'issue est rendue, comptée, journalisée.
 
         `parent_work_external_id` : l'identité de travail du parent dans la même source (`WorkItem.parent_external_id`) ;
         le parent devient `parent_instance_id` s'il est retenu, sinon l'instance n'a pas de parent durable.
-        `mission` : la mission que cette instance ouvre et possède (`fact.mission_owner`).
+        `mission` : la mission que cette instance ouvre et possède (`fact.mission_owner`, id `fact.mission_id`),
+        normalement une `MissionOpening` (objectif, mission parente). Core pose lui-même le propriétaire (l'id de
+        l'instance qu'il crée ici), la racine (celle du parent) et la date (`fact.declared_at`). Une `Mission`
+        complète est acceptée pour sa forme, mais son `owner_instance_id` et sa racine sont remplacés de même :
+        l'appelant ne peut pas connaître l'id d'une instance qui n'existe pas encore.
         """
 
         key: WorkKey = (work_source, work_external_id)
@@ -228,16 +234,49 @@ class MissionHistoryService:
                          data={"work_source": key[0], "work_external_id": key[1], "code": result.code})
         elif result.outcome in (DeclarationOutcome.RECORDED, DeclarationOutcome.EPHEMERAL_PENDING,
                                 DeclarationOutcome.EPHEMERAL_RETAINED):
-            self._emit(AGENT_DECLARED_KIND, "sous-agent déclaré", data={
-                "work_source": key[0], "work_external_id": key[1], "role_id": fact.role_id,
-                "role_status": fact.role_status.value, "ephemeral": fact.ephemeral,
-                "mission_id": fact.mission_id, "outcome": result.outcome.value,
-                "instance_id": result.instance.instance_id if result.instance else None,
-            })
+            self._declared(key, fact, result)
         return result
 
+    def _declared(self, key: WorkKey, fact: AgentDeclarationFact, result: DeclarationResult) -> None:
+        """`agent.declared` : une instance connue de Core, par la déclaration ou par l'observation qui la retient."""
+
+        self._emit(AGENT_DECLARED_KIND, "sous-agent déclaré", data={
+            "work_source": key[0], "work_external_id": key[1], "role_id": fact.role_id,
+            "role_status": fact.role_status.value, "ephemeral": fact.ephemeral,
+            "mission_id": fact.mission_id, "outcome": result.outcome.value,
+            "instance_id": result.instance.instance_id if result.instance else None,
+        })
+
+    async def _opened_mission(self, opening: MissionOpening | Mission, fact: AgentDeclarationFact,
+                              owner: AgentInstance) -> Mission:
+        """La `Mission` que `owner` ouvre : id du fait, propriétaire = l'instance créée, racine = celle du parent.
+
+        Lève `MissionError` (contrat) ou une erreur du magasin (lecture du parent), rendue par l'appelant.
+        """
+
+        if not fact.mission_owner or fact.mission_id is None:
+            raise MissionError("only a mission owner declaration naming its mission opens a mission",
+                               code="ownership_invalid", field="mission_owner")
+        if isinstance(opening, Mission):
+            if opening.mission_id != fact.mission_id:
+                raise MissionError(f"the mission opened ({opening.mission_id}) is not the declared one "
+                                   f"({fact.mission_id})", field="mission_id")
+            opening = MissionOpening(objective=opening.objective, parent_mission_id=opening.parent_mission_id,
+                                     dossier_path=opening.dossier_path, origin_kind=opening.origin_kind)
+        if not isinstance(opening, MissionOpening):
+            raise MissionError("mission must be a MissionOpening", field="mission")
+        root = None
+        if opening.parent_mission_id is not None:
+            parent = await self._guard("get_mission", self._repository.get_mission(opening.parent_mission_id))
+            if parent is None:
+                raise MissionError(f"parent mission {opening.parent_mission_id} is missing",
+                                   code="mission_parent_missing", field="parent_mission_id")
+            root = parent.root_mission_id
+        return opening.mission(mission_id=fact.mission_id, owner_instance_id=owner.instance_id,
+                               created_at=fact.declared_at, root_mission_id=root)
+
     async def _declare(self, fact: AgentDeclarationFact, key: WorkKey, parent_work_external_id: str | None,
-                       mission: Mission | None) -> DeclarationResult:
+                       mission: MissionOpening | Mission | None) -> DeclarationResult:
         if not isinstance(fact, AgentDeclarationFact):
             return DeclarationResult(DeclarationOutcome.REFUSED, code="mission_history_invalid",
                                      message="expected an AgentDeclarationFact")
@@ -295,21 +334,35 @@ class MissionHistoryService:
                 return await self._retain_lowered(key, instance, fact)
             self._hold(key, _Pending(instance, fact))
             return DeclarationResult(DeclarationOutcome.EPHEMERAL_PENDING, instance)
-        return await self._persist(key, instance, fact, False, mission)
+        opened = None
+        if mission is not None:
+            try:
+                opened = await self._opened_mission(mission, fact, instance)
+            except MissionHistoryUnavailable as exc:
+                return DeclarationResult(DeclarationOutcome.DEGRADED, instance, code=exc.code, message=str(exc))
+            except (MissionError, MissionHistoryStoreError) as exc:
+                return DeclarationResult(DeclarationOutcome.REFUSED, instance, code=getattr(exc, "code", None),
+                                         message=str(exc))
+        return await self._persist(key, instance, fact, False, opened)
 
     async def _persist(self, key: WorkKey, instance: AgentInstance, fact: AgentDeclarationFact | None, lowered: bool,
                        mission: Mission | None) -> DeclarationResult:
         try:
             stored, created = await self._guard(
                 "record_instance",
-                self._repository.record_instance(instance, declaration=fact, ephemeral_lowered=lowered, mission=mission))
+                self._repository.record_instance(instance, declaration=fact, ephemeral_lowered=lowered, mission=mission),
+                recover=False)
         except MissionHistoryUnavailable as exc:
             self._keep_unsaved(key, _Unsaved(instance, fact, lowered, mission))
             return DeclarationResult(DeclarationOutcome.DEGRADED, instance, code=exc.code, message=str(exc))
         except (MissionError, RelationError, MissionHistoryError, MissionHistoryStoreError) as exc:
+            self._unsaved.pop(key, None)
+            self._recover()  # the store answered: it is reachable again
             return DeclarationResult(DeclarationOutcome.REFUSED, instance, code=getattr(exc, "code", None),
                                      message=str(exc))
+        # Retiré avant `_recover`, pour que `recovered` compte exactement ce qui reste en attente.
         self._unsaved.pop(key, None)
+        self._recover()
         self._remember_role(key, stored.instance.role_id)
         if lowered and created:
             return DeclarationResult(DeclarationOutcome.EPHEMERAL_RETAINED, stored.instance)
@@ -333,7 +386,13 @@ class MissionHistoryService:
         self._discarded[key] = None
         self._discarded.move_to_end(key)
         while len(self._discarded) > MAX_DISCARDED_KEYS:
-            self._discarded.popitem(last=False)
+            forgotten, _ = self._discarded.popitem(last=False)
+            # Une fois par vie du service : la borne est atteinte, la plus ancienne clé ne protège plus d'un rejeu.
+            self._report(("discarded_forgotten",), MISSION_HISTORY_DISCARDED_FORGOTTEN_KIND,
+                         "mémoire des éphémères écartées pleine : les plus anciennes ne sont plus protégées d'un "
+                         "rejeu tardif", level="warning",
+                         data={"work_source": forgotten[0], "work_external_id": forgotten[1],
+                               "max_discarded": MAX_DISCARDED_KEYS})
         self._emit(MISSION_HISTORY_EPHEMERAL_DISCARDED_KIND, "éphémère terminée : aucune trace durable",
                    data={"work_source": key[0], "work_external_id": key[1], "role_id": instance.role_id})
 
@@ -383,6 +442,8 @@ class MissionHistoryService:
             return None
         if retained_in_history(pending.instance, item.status):
             result = await self._retain_lowered(key, pending.instance, pending.fact)
+            if result.outcome is DeclarationOutcome.EPHEMERAL_RETAINED:
+                self._declared(key, pending.fact, result)
         elif item.status is WorkStatus.COMPLETED:
             self._discard(key, pending.instance)
             result = DeclarationResult(DeclarationOutcome.EPHEMERAL_DISCARDED)
@@ -408,7 +469,11 @@ class MissionHistoryService:
             result = await self._persist(key, unsaved.instance, unsaved.fact, unsaved.lowered, unsaved.mission)
             if result.outcome is DeclarationOutcome.DEGRADED:
                 break
-            self._unsaved.pop(key, None)
+            if result.outcome is DeclarationOutcome.REFUSED:
+                # L'écriture attendue est perdue : le magasin la refuse maintenant (contrat), on le dit.
+                self._emit(MISSION_HISTORY_UNSAVED_REFUSED_KIND,
+                           f"écriture d'historique en attente refusée au rejeu : {result.message}", level="error",
+                           data={"work_source": key[0], "work_external_id": key[1], "code": result.code})
             resolved += 1
         return resolved
 
@@ -463,8 +528,9 @@ class MissionHistoryService:
 
     # ------------------------------------------------------------ dégradation
 
-    async def _guard(self, operation: str, call: Awaitable[T]) -> T:
-        """Exécuter un appel du magasin : un refus de SQLite marque l'historique dégradé, un succès le rétablit."""
+    async def _guard(self, operation: str, call: Awaitable[T], *, recover: bool = True) -> T:
+        """Exécuter un appel du magasin : un refus de SQLite marque l'historique dégradé, un succès le rétablit
+        (`recover=False` : l'appelant rétablit lui-même, après avoir mis à jour ce qui reste en attente)."""
 
         try:
             result = await call
@@ -477,7 +543,8 @@ class MissionHistoryService:
                          f"historique des missions illisible : {exc}", level="error",
                          data={"operation": operation, "table": exc.table, "key": exc.key})
             raise
-        self._recover()
+        if recover:
+            self._recover()
         return result
 
     def _degrade(self, operation: str, exc: Exception) -> None:

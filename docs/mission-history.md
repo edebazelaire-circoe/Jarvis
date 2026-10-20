@@ -7,12 +7,12 @@ marqueurs de tête) et [agent-relations.md](agent-relations.md) (relations, tabl
 
 | Contrat | Code | Tests |
 | --- | --- | --- |
-| Fait de déclaration du hook, issues, lecture jointe | `jarvis/domain/mission_history.py` | `tests/unit/test_mission_history_contracts.py` |
+| Fait de déclaration du hook, ouverture de mission (`MissionOpening`), issues, lecture jointe | `jarvis/domain/mission_history.py` | `tests/unit/test_mission_history_contracts.py` |
 | Rôle explicite dans Work State | `jarvis/domain/work_state.py` (`role_id`) | idem, `test_work_state_contracts.py` |
 | Port du magasin | `jarvis/ports/mission_history.py` | — |
 | Tables v10 de `jarvis.sqlite3` | `jarvis/adapters/sqlite_state.py` (`_MIGRATIONS[10]`), `tests/schema/jarvis_state.v10.sql` | `test_mission_history_migration_v10.py`, `test_schema_migrations.py` |
 | Adaptateur SQLite | `jarvis/adapters/sqlite_mission_history.py` | `test_mission_history_store.py` |
-| Service Core | `jarvis/core/mission_history.py` (`MissionHistoryService`, câblé dans `v2_app.py`) | `test_mission_history_service.py` |
+| Service Core | `jarvis/core/mission_history.py` (`MissionHistoryService`, câblé dans `v2_app.py`) | `test_mission_history_service.py`, `test_mission_history_rework.py` |
 
 ## 1. Deux vérités, deux natures
 
@@ -56,7 +56,13 @@ plus (audit N6) : ce sont des registres de diagnostic, pas des nœuds d'historiq
 **Transport (contrat ; câblage Slice 05).** Le hook est un processus court, sans réseau : il écrit le fait
 borné ; le Control Center le rattache à l'observation de la tâche de même `tool_use_id` et le remet à Core,
 qui appelle `MissionHistoryService.record_declaration(fact, work_source=, work_external_id=,
-parent_work_external_id=, mission=)`. `work_external_id` est le `work_key` stable de la tâche (son premier
+parent_work_external_id=, mission=)`. `mission` est une `MissionOpening` (objectif, mission parente, dossier,
+nature d'origine) : l'id de la mission est `fact.mission_id`, et **Core pose lui-même** le propriétaire (l'id
+`ainst_<hex>` de l'instance qu'il crée pour cette déclaration), la racine (celle du parent) et la date
+(`fact.declared_at`) — l'appelant ne peut pas connaître l'id d'une instance qui n'existe pas encore. Une
+`Mission` complète est acceptée pour sa forme ; son propriétaire et sa racine sont remplacés de même. Refus :
+déclaration qui n'est pas Mission Owner de cette mission (`ownership_invalid`), parent inconnu
+(`mission_parent_missing`), objectif vide (`mission_invalid`). `work_external_id` est le `work_key` stable de la tâche (son premier
 identifiant public, le `tool_use_id` de l'appel `Agent`), jamais l'`id` brut, qui passe au `task_id`, ni un
 libellé. Le même transport porte le rôle jusqu'à `WorkObservation.role_id` (§5). Aucun appel bloquant vers
 Core ne retarde le lancement.
@@ -82,8 +88,8 @@ lecture (`MissionHistoryStoreError`, jamais réparé). Dates en clés UTC de lar
 | `agent_relation_messages` | `RelationMessage` | `seq` AUTOINCREMENT = ordre du fil (ordre d'acceptation) ; jamais réécrit |
 
 Missions et propriétaires se référencent mutuellement : les deux clés étrangères sont `DEFERRABLE` et une
-mission naît **avec** l'instance qui la possède, dans une transaction (`record_instance(..., mission=)`) ; il
-n'y a pas d'ouverture de mission isolée, puisque `Mission.owner_instance_id` est requis et que cette instance
+mission naît **avec** l'instance qui la possède, dans une transaction (`record_instance(..., mission=)` au port ; au service,
+`record_declaration(..., mission=MissionOpening(...))`) ; il n'y a pas d'ouverture de mission isolée, puisque `Mission.owner_instance_id` est requis et que cette instance
 nomme la mission. Plusieurs instances peuvent porter `mission_owner` pour une même mission (successeurs après
 relais, N8 de la Slice 01) : seul `missions.owner_instance_id` nomme le propriétaire courant.
 
@@ -130,11 +136,14 @@ Aucune ligne durable n'est écrite pour une instance **tant qu'elle est éphém�
 1. la déclaration éphémère attend en mémoire (au plus 256, la plus ancienne oubliée avec diagnostic) ;
 2. Work State dit l'issue (abonnement tolérant à `core.work.updated`, plus un balayage contre l'instantané
    pour un événement perdu) :
-   - réussite (`completed`) -> oubliée (`ephemeral_discarded`), et la clé est retenue (4 096 au plus) pour
-     qu'un rejeu tardif de la déclaration ou de l'observation ne la ressuscite pas ;
+   - réussite (`completed`) -> oubliée (`ephemeral_discarded`), et la clé est retenue (4 096 au plus, la plus
+     ancienne oubliée avec un avertissement `mission_history.discarded_forgotten`, une fois) pour qu'un rejeu
+     tardif de la déclaration ou de l'observation ne la ressuscite pas, même quand Work State l'a déjà élaguée ;
    - échec, arrêt, interruption ou blocage -> le drapeau est rabaissé (`missions.retained_in_history`, même
      règle que `work_state.EPHEMERAL_WORK_STATUSES`), l'instance devient ordinaire et est retenue avec
      `ephemeral_lowered = 1` ; la déclaration d'origine (`ephemeral = true`) reste dans `declaration` ;
+     `agent.declared` est émis (issue `ephemeral_retained`), quelle que soit la voie (déclaration ou
+     observation) ;
 3. une déclaration éphémère qui arrive après l'issue suit le statut vivant du moment.
 
 Une éphémère ne possède pas de mission (`ephemeral_mission_owner`) et n'est jamais participante d'une
@@ -156,8 +165,10 @@ l'attente : rien de durable n'avait été écrit, le rejeu du producteur la reco
 
 | Panne | Comportement |
 | --- | --- |
-| SQLite refuse (verrou, E/S) | `MissionHistoryUnavailable` ; l'historique passe `degraded` (`health()`, diagnostic d'erreur `mission_history.degraded`, une fois par épisode) ; la déclaration rend `degraded`, l'écriture attend (256 au plus) et est rejouée au balayage suivant ; l'API d'écriture (Slices 05/06) lève, l'appelant voit le refus réel |
-| Retour du magasin | premier succès : `mission_history.recovered` (durée, écritures échouées, restantes) |
+| SQLite refuse (verrou, E/S) | `MissionHistoryUnavailable` ; l'historique passe `degraded` (`health()`, diagnostic d'erreur `mission_history.degraded`, une fois par épisode) ; la déclaration rend `degraded`, l'écriture attend (256 au plus, la plus ancienne perdue avec une erreur `mission_history.pending_dropped`) et
+est rejouée au balayage suivant ; une écriture rejouée que le magasin refuse alors (contrat) est retirée avec
+une erreur `mission_history.unsaved_refused` ; l'API d'écriture (Slices 05/06) lève, l'appelant voit le refus réel |
+| Retour du magasin | premier succès : `mission_history.recovered` (durée, écritures échouées, restantes, comptées après le retrait de l'écriture rejouée). Le diagnostic nomme l'opération réelle (`record_instance`...) |
 | Ligne illisible | `MissionHistoryStoreError`, signalée à l'erreur, jamais réparée |
 | Work State indisponible ou vidé | l'historique reste lisible ; `work_status` = `None` |
 | Journal indisponible | ignoré (même règle que `WorkStateStore`) |
@@ -173,7 +184,8 @@ démarre même si l'historique est refusé.
 | Outils du Mission Owner (spawn, mission annoncée, délégation, relais) sur `MissionHistoryService` | Slices 05 et 06 |
 | Résumés de mission et de relations dans le contexte du cerveau (seul `role_id` y est aujourd'hui) | Slice 05 |
 | Projection dans la scène (rôles, relations, absence des éphémères terminées) | Slice 08 |
-| Lecture HTTP de l'historique pour l'UI | Slices 08 à 10 |
+| Lecture HTTP de l'historique pour l'UI ; `health()` exposé par une route | Slices 05, 08 à 10 |
+| Balayage périodique (ou au démarrage) : aujourd'hui `sweep` ne part qu'au `core.work.updated` suivant | Slice 05 |
 
 ## 10. Mise en service
 
