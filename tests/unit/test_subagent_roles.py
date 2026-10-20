@@ -535,7 +535,8 @@ def test_the_brain_rules_teach_owners_and_relations_without_a_new_gate():
     assert "Pas d'Intervieweur ni de plan" in clear and "éphémère" in clear
     # B : l'interview n'arrête rien ; une recherche part en parallèle dès qu'il y a de la matière à trouver (D20).
     framing = _bullet(rules, "B. Intention à cadrer")
-    assert "lance aussi en parallèle [general] [research]" in framing and "ils avancent pendant l'interview" in framing
+    assert "lance aussi en parallèle ceux qui servent parmi [general] [research]" in framing
+    assert "Lance en arrière-plan, en un seul message, [general] [interviewer]" in framing and "ils avancent pendant l'interview" in framing
     assert "au premier tour ou après une réponse" in framing
     # Reprise QA (N2) : le premier tour ne fait aucun outil en ligne ; le chemin se compose, l'Intervieweur crée.
     assert "dans ce tour n'écris ni ne vérifies rien" in framing
