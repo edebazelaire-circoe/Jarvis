@@ -53,8 +53,10 @@ inconnue). Le parsing `stream-json` du suivi des tâches (`agent_tasks.task_snap
 affichage de diagnostic et n'alimente jamais l'historique ; les spans `subagent.*` de Conversation Events non
 plus (audit N6) : ce sont des registres de diagnostic, pas des nœuds d'historique au sens de D08.
 
-**Transport (contrat ; câblage Slice 05).** Le hook est un processus court, sans réseau : il écrit le fait
-borné ; le Control Center le rattache à l'observation de la tâche de même `tool_use_id` et le remet à Core,
+**Transport (câblé par la Slice 05, [agent-orchestration.md](agent-orchestration.md) §5-§6).** Le hook est
+un processus court, sans réseau : il dépose le fait borné dans le registre local
+`<runtime>/agent-declarations/` ; le relais du Control Center le rattache à la tâche suivie de même
+`tool_use_id`, une fois démarrée, et le remet à Core (`POST /v1/missions/declarations`),
 qui appelle `MissionHistoryService.record_declaration(fact, work_source=, work_external_id=,
 parent_work_external_id=, mission=)`. `mission` est une `MissionOpening` (objectif, mission parente, dossier,
 nature d'origine) : l'id de la mission est `fact.mission_id`, et **Core pose lui-même** le propriétaire (l'id
@@ -65,12 +67,18 @@ déclaration qui n'est pas Mission Owner de cette mission (`ownership_invalid`, 
 ouverture n'est jamais ignorée en silence), parent inconnu (`mission_parent_missing`), parent clos
 (`mission_closed` : une mission close est gelée), objectif vide (`mission_invalid`). La racine d'une
 sous-mission est celle de son parent, à toute profondeur. `work_external_id` est le `work_key` stable de la tâche (son premier
-identifiant public, le `tool_use_id` de l'appel `Agent`), jamais l'`id` brut, qui passe au `task_id`, ni un
-libellé. Le même transport porte le rôle jusqu'à `WorkObservation.role_id` (§5). Aucun appel bloquant vers
+identifiant public), jamais l'`id` brut ni un libellé. **Constat du bac à sable (Slice 05) : ce n'est pas
+toujours le `tool_use_id`.** Quand `task_started` précède l'appel (toujours au niveau 3, dont l'appel n'est pas
+dans le flux), la clé est le `task_id` ; la jointure se fait donc sur le `tool_use_id` de la tâche suivie, et
+c'est sa `work_key` qui part comme `work_external_id`. La route d'ingestion passe `inherit_mission=True` : un
+membre hérite de la mission de son appelant retenu, une `MissionOpening(parent_from_caller=True)` prend pour
+parente cette même mission. Le même transport porte le rôle jusqu'à `WorkObservation.role_id` (§5). Aucun appel bloquant vers
 Core ne retarde le lancement.
 
 `AGENT_DECLARED_KIND` (`agent.declared`) : événement de diagnostic d'une déclaration acceptée, avec
-`role_id` canonique, `role_status`, `ephemeral`, `mission_id`, l'issue et l'instance.
+`role_id` canonique, `role_status`, `ephemeral`, `mission_id` (celle de l'instance, héritée comprise),
+`mission_owner`, l'issue et l'instance. Le hook écrit un événement de même nom dans le journal du runtime
+(fait déposé ou non, garde, méthode).
 
 ## 3. Ce qui est retenu (schéma v10)
 
@@ -129,7 +137,9 @@ affirmé fait foi : une observation qui en annonce un autre est appliquée sans 
 est rendue dans `WorkUpdate.conflicts` (`core.work.observation_conflict`), comme `work_id` ou `board_id`.
 `BrainWorkEntry.role_id` le montre au cerveau (quelques octets dans le budget de 6 000 caractères) et
 `work_brief` l'écrit « rôle : <id> ». Work State ne porte ni mission ni relation : ce sont des faits
-d'historique, lus par jointure.
+d'historique, lus par jointure. Depuis la Slice 05, le relais du Control Center pose `role_id` (rôle du fait
+joint, `undeclared` compris) et le contexte du cerveau joint la mission (`BrainWorkEntry.mission_id`,
+`mission_owner`, absents sans mission) par `MissionHistoryService.mission_ref`, mémoire bornée sans E/S.
 
 ## 6. Éphémère (D08)
 
@@ -161,7 +171,17 @@ l'attente : rien de durable n'avait été écrit, le rejeu du producteur la reco
 - L'historique ne contredit pas Work State : il ne porte aucun statut, et un `WorkItem.role_id` différent de
   celui de l'instance retenue est signalé (`mission_history.role_mismatch`, avertissement) sans rien réécrire
   d'un côté ni de l'autre.
-- Le démarrage journalise `mission_history.ready` avec le nombre de lignes de chaque table.
+- Le démarrage journalise `mission_history.ready` avec le nombre de lignes de chaque table, puis lance un
+  balayage (`sweep`) aussitôt et toutes les `SWEEP_INTERVAL_S` (30 s), en plus de celui qui suit chaque
+  `core.work.updated` ; un seul balayage à la fois ; un échec est signalé (`mission_history.sweep_failed`) et
+  n'arrête pas la boucle.
+- **Contrat de rejeu du producteur** : les éphémères en attente vivent en mémoire de Core et disparaissent à
+  son redémarrage ; le relais du Control Center reconnaît le nouveau `store_id` et renvoie les déclarations
+  des tâches encore suivies ; les durables répondent `duplicate`.
+- **Clôture** : une mission se clôt avec la fin du travail de son propriétaire **courant** (`completed`,
+  `failed`, `cancelled` ; `interrupted` → `cancelled`), une fois, même si la fin précède la déclaration ou
+  survient après un redémarrage de Core (lecture de l'instance). Après un relais explicite, la fin du
+  prédécesseur ne clôt rien. `mission_history.mission_closed`, ou `mission_history.mission_close_failed`.
 
 ## 8. Fournisseur dégradé
 
@@ -184,12 +204,27 @@ démarre même si l'historique est refusé.
 
 | Sujet | Où |
 | --- | --- |
-| Hook `PreToolUse` qui écrit le fait, Control Center qui le joint et le remet à Core, `role_id` posé sur les observations ; route d'ingress | Slice 05 |
-| Outils du Mission Owner (spawn, mission annoncée, délégation, relais) sur `MissionHistoryService` | Slices 05 et 06 |
-| Résumés de mission et de relations dans le contexte du cerveau (seul `role_id` y est aujourd'hui) | Slice 05 |
-| Projection dans la scène (rôles, relations, absence des éphémères terminées) | Slice 08 |
-| Lecture HTTP de l'historique pour l'UI ; `health()` exposé par une route | Slices 05, 08 à 10 |
-| Balayage périodique (ou au démarrage) : aujourd'hui `sweep` ne part qu'au `core.work.updated` suivant | Slice 05 |
+| Relations au runtime (communication, QA, adversaire, relais) sur `create_relation`/`post_message`/`transfer_ownership` ; leurs résumés dans le contexte du cerveau | Slice 06 |
+| Projection dans la scène (rôles, relations, absence des éphémères terminées) depuis `mission_view` | Slice 08 |
+| Lecture de l'historique dans l'UI (graphe, Settings) | Slices 09, 10 |
+
+Câblés par la Slice 05 : hook source du fait, registre local, relais, route d'ingestion, `role_id` sur Work
+State, mission dans le contexte du cerveau, `health()` exposé, balayage périodique, clôture des missions
+([agent-orchestration.md](agent-orchestration.md)).
+
+## 11. Routes
+
+| Méthode | Route Core (jeton) | Control Center (lecture seule) | Réponse |
+| --- | --- | --- | --- |
+| POST | `/v1/missions/declarations` | — (relais seulement) | `{"store_id", "results": [{outcome, instance_id, code, message}]}` ; 400 strict, rien d'écrit |
+| GET | `/v1/missions/health` | `/api/missions/health` | `HistoryHealth` + `store_id` |
+| GET | `/v1/missions/{mission_id}` | `/api/missions/{mission_id}` | missions, instances (statut vivant ou `null`), relations, propriétaires, `truncated` ; 404 `mission_not_found` |
+| GET | `/v1/missions/work/{work_source}/{work_external_id}` | `/api/missions/work/{work_source}/{work_external_id}` | l'instance retenue ; 404 `mission_instance_not_found` |
+
+Refus codés `{"error": {"code", "message"}}` côté Core (`mission_history_unavailable` 503,
+`mission_history_failed` 500, `invalid_request` 400), journalisés `core.missions.route_failed` avec leur code ;
+côté Control Center `{"ok": false, "code", "error"}`, `core_unreachable` 503 après 3 s, journalisé
+`missions.read_failed`.
 
 ## 10. Mise en service
 

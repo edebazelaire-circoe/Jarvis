@@ -81,6 +81,9 @@ def _entry_line(item: dict[str, Any]) -> str:
         value = _text(item.get(key))
         if value:
             parts.append(f"{name} : {value}")
+    mission = _text(item.get("mission_id"))
+    if mission:
+        parts.append(f"mission : {mission}" + (" (responsable)" if item.get("mission_owner") is True else ""))
     fraction = item.get("progress_fraction")
     if isinstance(fraction, (int, float)) and not isinstance(fraction, bool) and 0 <= fraction <= 1:
         parts.append(f"avancement {round(fraction * 100)} %")

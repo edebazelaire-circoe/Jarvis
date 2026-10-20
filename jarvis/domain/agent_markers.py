@@ -32,6 +32,13 @@ Grammaire (contrat : `docs/subagent-roles.md`, « Marqueurs de tête ») :
   nomme un profil, le second mot est consommé s'il nomme un rôle annoncé (ou un
   rôle de production passé par `extra_consumed`), sinon il reste dans le
   libellé ;
+- **modificateurs d'orchestration** (Slice 05) : seulement après un rôle
+  consommé, les mots suivants sont consommés tant qu'ils sont `[mission]`
+  (l'agent lancé ouvre et possède une sous-mission) ou l'id d'une Work Method
+  livrée (`[quick-research]`, méthode choisie au lieu de celle par défaut),
+  chacun une fois. Sans rôle consommé, ils restent dans le libellé, comme
+  avant. Leur validité (rôle capable de porter une mission, méthode permise au
+  rôle) n'est pas jugée ici : le hook la juge et consigne le refus ;
 - les rôles annoncés sont ceux des loadouts, des rôles **actifs** du registre
   et leurs alias : un rôle désactivé se lit comme un mot inconnu ;
 - tout le reste — casse ou accents différents, marqueur collé au libellé,
@@ -55,13 +62,24 @@ from typing import Any
 from jarvis.domain import routing
 from jarvis.domain.memory_settings import LOADOUT_ROLES
 from jarvis.domain.subagent_roles import ROLE_ALIASES, ROLES, RoleResolution, resolve_role, role_for
+from jarvis.domain.work_methods import BUILTIN_METHODS
 
 #: Marqueur de tâche éphémère : jeton exact, voir la grammaire du module.
 EPHEMERAL_MARKER = "[éphémère]"
 
-#: Groupes lus en tête : trois mots (profil, rôle, rôle de production) et le marqueur éphémère.
-MAX_HEAD_MARKERS = 4
-MAX_HEAD_WORDS = 3
+#: Groupes lus en tête : quatre mots (profil, rôle ou rôle de production, `[mission]`, méthode) et le marqueur
+#: éphémère. Les modificateurs ne se lisent qu'après un rôle : sans eux, la tête se lit comme avant (trois mots).
+MAX_HEAD_MARKERS = 5
+MAX_HEAD_WORDS = 4
+#: Mots de tête historiques : le rôle de production se cherche parmi eux seulement (`routing_hook.read_playbook_role`).
+LEGACY_HEAD_WORDS = 3
+
+#: Modificateur : l'agent lancé ouvre et possède une sous-mission de la mission de son appelant (Slice 05).
+MISSION_MARKER = "mission"
+#: Modificateur : une Work Method livrée choisie par l'appelant (son id, `work_methods.BUILTIN_METHODS`).
+METHOD_MARKERS: frozenset[str] = frozenset(method.method_id for method in BUILTIN_METHODS)
+if MISSION_MARKER in METHOD_MARKERS:
+    raise ValueError("a work method cannot be named like the mission marker")
 
 #: Un mot de marqueur : ASCII, 2 à 24 caractères. Les marqueurs de rôle (`subagent_roles`) y tiennent.
 WORD_PATTERN = r"[A-Za-z_-]{2,24}"
@@ -83,6 +101,8 @@ class HeadMarkers:
     - `words` : les mots de marqueur ASCII de la tête, en minuscules, dans l'ordre, éphémère exclu ;
     - `profile` : le profil annoncé, ou `None` (le hook prend alors `general` ou se rabat sur `prompt`) ;
     - `role` : le marqueur de rôle annoncé, tel qu'écrit (`reviewer` reste `reviewer`), ou `None` ;
+    - `mission` : `[mission]` suit le rôle (modificateur d'orchestration) ;
+    - `method` : l'id de Work Method qui suit le rôle, ou `None` ;
     - `ephemeral` : le marqueur éphémère est déclaré, bien formé ;
     - `description` : le texte sans le marqueur éphémère (les autres marqueurs restent), borné par `strip` ;
     - `label` : le texte sans aucun marqueur consommé, ce que l'utilisateur lit ;
@@ -97,6 +117,8 @@ class HeadMarkers:
     description: str
     label: str
     head_end: int
+    mission: bool = False
+    method: str | None = None
 
 
 def parse_head(text: object, *, extra_consumed: Iterable[str] = ()) -> HeadMarkers:
@@ -133,6 +155,17 @@ def parse_head(text: object, *, extra_consumed: Iterable[str] = ()) -> HeadMarke
         words = [word for word in words if word[1] < ephemeral_spans[0][0]]
 
     consumed, profile, role = _interpret([word for word, _start, _end in words], frozenset(extra_consumed))
+    mission, method = False, None
+    if role is not None:
+        # Modificateurs : après le rôle seulement, chacun une fois, dans n'importe quel ordre.
+        for word, _start, _end in words[consumed:]:
+            if word == MISSION_MARKER and not mission:
+                mission = True
+            elif word in METHOD_MARKERS and method is None:
+                method = word
+            else:
+                break
+            consumed += 1
     head_end = words[consumed - 1][2] if consumed else (len(raw) - len(raw.lstrip()))
     # Le marqueur éphémère appartient à la tête consommée s'il précède ou suit directement ses mots.
     if span is not None and sum(1 for word in words if word[1] < span[0]) <= consumed:
@@ -149,6 +182,8 @@ def parse_head(text: object, *, extra_consumed: Iterable[str] = ()) -> HeadMarke
         description=clean.strip(),
         label=clean[label_start:].strip(),
         head_end=head_end,
+        mission=mission,
+        method=method,
     )
 
 

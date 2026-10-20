@@ -41,6 +41,13 @@ sa source canonique ; le contrat des relations est [agent-relations.md](agent-re
   fuseau) et des références de preuve bornées (`evidence_refs` : ids de mission, de relation QA,
   d'artefact ; jamais de raisonnement). La promotion est un acte explicite, jamais un effet de bord (D24).
 
+## Choix par l'appelant
+
+Depuis la Slice 05, l'agent qui lance un sous-agent peut nommer une méthode après le rôle
+(`[general] [research] [quick-research] …`, [subagent-roles.md](subagent-roles.md) §2). Le hook l'appose si le
+rôle la permet (`work_methods` du rôle), sinon il appose la méthode par défaut et consigne
+`method_not_allowed` ; `agent.role_applied` dit la méthode réellement apposée.
+
 ## Rôles
 
 `SubagentRole.work_methods` liste les méthodes permises et `default_work_method` celle proposée par

@@ -246,7 +246,7 @@ def default_prompt_registry() -> PromptRegistry:
         # qu'elle est visible du modèle ; elle n'est appliquée par aucun
         # programme, le hook étant un processus court qui lit la constante.
         _descriptor("agent.task.charter", agent_charter, "AGENT_TASK_CHARTER",
-                    agent_charter.AGENT_TASK_CHARTER, variables=("brief",), apply_policy="read_only"),
+                    agent_charter.AGENT_TASK_CHARTER, variables=("brief", "delegation"), apply_policy="read_only"),
         # Méthode de chaque rôle de sous-agent (`subagent_roles`), apposée par le même hook après la charte.
         # Éditable (Settings > Sous-agents) : la surcharge rejoint le hook par l'instantané `subagent-roles.json`,
         # réécrit après chaque édition et au lancement du CLI ; elle vaut donc dès le prochain sous-agent lancé.

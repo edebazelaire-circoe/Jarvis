@@ -24,6 +24,7 @@ Conduite en cas de doute :
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -32,11 +33,14 @@ import shutil
 import sys
 from typing import Any, Mapping, Sequence
 
-from jarvis.domain import agent_markers, routing
+from jarvis.domain import agent_markers, agent_orchestration, routing
 from jarvis.domain.agent_charter import sign_brief
 from jarvis.domain.loadout_view import MANIFEST_MARK
+from jarvis.domain.mission_history import MissionHistoryError, fact_from_hook_event
 from jarvis.domain.work_methods import builtin_method
-from jarvis.domain.subagent_roles import ROLE_MARK, instructions_for, resolve_role, role_for, with_role_instructions
+from jarvis.domain.subagent_roles import (
+    ROLE_MARK, SubagentRole, instructions_for, resolve_role, role_for, with_role_instructions,
+)
 # `ANNOUNCED_ROLES` : les rôles qu'une description peut annoncer (loadout, registre, alias), réexporté ici.
 from jarvis.domain.agent_markers import ANNOUNCED_ROLES, WORD_PATTERN  # noqa: F401
 from jarvis.domain.routing import (
@@ -48,7 +52,9 @@ from jarvis.domain.routing import (
     RoutingIntent,
     RoutingPolicy,
 )
-from jarvis.runtime import agent_routing, cli_catalog, credentials, loadout_snapshot, subagent_roles_snapshot
+from jarvis.runtime import (
+    agent_declarations, agent_routing, cli_catalog, credentials, loadout_snapshot, subagent_roles_snapshot,
+)
 from jarvis.runtime.catalog_view import ProviderCatalogSnapshot
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.model_catalog import ModelCatalog, filter_by_role
@@ -119,7 +125,8 @@ def read_playbook_role(tool_input: Mapping[str, Any]) -> str | None:
     ou `[presentation-author] ...`. `[éphémère]` ne compte pas parmi eux.
     """
     for key in ("description", "prompt"):
-        for word in agent_markers.parse_head(str(tool_input.get(key) or "")).words:
+        # Parmi les trois premiers mots seulement, comme avant les modificateurs d'orchestration (Slice 05).
+        for word in agent_markers.parse_head(str(tool_input.get(key) or "")).words[:agent_markers.LEGACY_HEAD_WORDS]:
             if word in PLAYBOOK_ROLES:
                 return word
     return None
@@ -145,6 +152,35 @@ def _allow() -> dict[str, Any]:
     return {}
 
 
+@dataclass(frozen=True, slots=True)
+class Orchestration:
+    """Ce que le hook lit et décide d'un appel `Agent` (Slice 05, `agent_orchestration`). Pur, sans E/S."""
+
+    head: agent_markers.HeadMarkers
+    role: SubagentRole | None
+    nested: bool
+    mission: agent_orchestration.MissionDecision
+    method: agent_orchestration.MethodDecision
+
+
+def orchestration_of(event: Mapping[str, Any]) -> Orchestration:
+    """Marqueurs de la description, rôle actif, appel imbriqué ou non, mission et méthode décidées."""
+
+    tool_input = event.get("tool_input")
+    tool_input = tool_input if isinstance(tool_input, Mapping) else {}
+    head = agent_markers.parse_head(str(tool_input.get("description") or ""), extra_consumed=PLAYBOOK_ROLES)
+    role = role_for(read_role(tool_input))
+    caller = event.get("agent_id")
+    nested = isinstance(caller, str) and bool(caller)
+    tool_use_id = event.get("tool_use_id")
+    tool_use_id = tool_use_id if isinstance(tool_use_id, str) and tool_use_id else None
+    return Orchestration(
+        head=head, role=role, nested=nested,
+        mission=agent_orchestration.decide_mission(head, role, tool_use_id=tool_use_id, nested=nested),
+        method=agent_orchestration.decide_method(head, role),
+    )
+
+
 def charter_input(
     event: Mapping[str, Any], role_overrides: Mapping[str, str] | None = None
 ) -> dict[str, Any] | None:
@@ -167,16 +203,24 @@ def charter_input(
     brief = tool_input.get("prompt")
     if not isinstance(brief, str) or not brief.strip():
         return None  # Sans consigne, il n'y a pas de chantier à cadrer.
+    orchestration = orchestration_of(event)
     # Le marqueur de profil reste en tête : c'est là que le lit tout ce qui
     # relit la consigne après coup, et la charte ne doit pas l'enterrer.
     head = brief[:_markers(brief)[0]]
-    signed = head + sign_brief(brief[len(head):])
+    # Charte consciente du rôle (Slice 05) : un rôle qui ne lance pas n'est pas invité à déléguer.
+    can_spawn = orchestration.role is None or orchestration.role.can_spawn
+    signed = head + sign_brief(brief[len(head):], can_spawn=can_spawn)
     # La méthode de production d'une présentation : apposée ici, sur l'appel lui-même, parce qu'un sous-agent ne
     # voit pas le prompt du cerveau et que ce prompt demande des consignes courtes.
     signed = with_playbook(signed, read_playbook_role(tool_input)) or signed
     # La méthode du rôle annoncé (`subagent_roles`), pour la même raison : texte enregistré par l'utilisateur,
-    # sinon défaut du code. Jamais doublée.
-    signed = with_role_instructions(signed, read_role(tool_input), role_overrides) or signed
+    # sinon défaut du code ; Work Method choisie par l'appelant si le rôle la permet. Jamais doublée.
+    signed = with_role_instructions(signed, read_role(tool_input), role_overrides,
+                                    method=orchestration.method.method_id) or signed
+    # La responsabilité de mission d'un Mission Owner (Slice 05), apposée en dernier. Jamais doublée.
+    mission = agent_orchestration.mission_brief(orchestration.mission)
+    if mission and agent_orchestration.MISSION_MARK not in signed:
+        signed = f"{signed.rstrip()}\n\n{mission}"
     return None if signed == brief else {"prompt": signed}
 
 
@@ -364,15 +408,24 @@ def load_settings(runtime_root: Path) -> dict[str, Any]:
 # --------------------------------------------------------------- déclaration
 
 
-def hook_settings(runtime_root: Path, *, python: str | None = None) -> str:
+#: Option du hook : le CLI qui l'a lancé déclare le type d'agent restreint (`--agents`), la garde peut s'appliquer.
+SPAWN_GUARD_FLAG = "--spawn-guard"
+
+
+def hook_settings(runtime_root: Path, *, python: str | None = None, spawn_guard: bool = False) -> str:
     """Le `--settings` passé au CLI : ce hook-ci, et rien d'autre.
 
     Déclaré en ligne de commande plutôt que dans le fichier de réglages de
     l'utilisateur : JARVIS n'a pas à modifier la configuration personnelle de
     quelqu'un pour appliquer la sienne, et le hook meurt avec le processus.
+    `spawn_guard` : le même lancement passe `--agents` avec le type restreint
+    (`agent_orchestration.agents_argument`) ; sans lui, le hook ne réécrit
+    jamais `subagent_type` (un type inconnu du CLI ferait échouer l'appel).
     """
     executable = python or sys.executable
     command = f'"{executable}" -m jarvis routing-hook --runtime-root "{runtime_root}"'
+    if spawn_guard:
+        command += f" {SPAWN_GUARD_FLAG}"
     return json.dumps(
         {
             "hooks": {
@@ -388,14 +441,31 @@ def hook_settings(runtime_root: Path, *, python: str | None = None) -> str:
 # ------------------------------------------------------------------- exécution
 
 
-def run(event: Mapping[str, Any], runtime_root: Path) -> dict[str, Any]:
+GUARD_NOTE = "Type d'agent restreint imposé : ce rôle ne lance aucun autre agent."
+
+
+def run(event: Mapping[str, Any], runtime_root: Path, *, spawn_guard: bool = False) -> dict[str, Any]:
     """Décider et consigner. Toute panne interne se solde par un silence.
 
     La charte du chantier est calculée d'abord, et apposée quoi qu'il arrive à
     l'aiguillage : elle ne dépend d'aucun réglage, et une politique éteinte ne
     doit pas rendre les sous-agents muets sur leur propre rôle.
+
+    Slice 05 : la garde de lancement (`agent_orchestration.decide_spawn_guard`)
+    refuse ou restreint avant tout ; puis, pour un appel qui part vraiment (pas
+    refusé), le fait de déclaration est déposé dans le registre local
+    (`agent_declarations`), sans réseau, pour que le Control Center le remette à
+    Core. Une panne de ce dépôt est consignée et ne retient jamais l'appel.
     """
     journal = RuntimeJournal(runtime_root)
+    try:
+        orchestration = orchestration_of(event) if str(event.get("tool_name") or "") in AGENT_TOOLS else None
+    except Exception:  # noqa: BLE001 - une lecture qui lève ne vaut pas un outil perdu ; rien n'est déclaré
+        orchestration = None
+    guard = _spawn_guard(event, runtime_root, journal, orchestration, enforce=spawn_guard)
+    if guard.deny:
+        _log_declared(journal, event, orchestration, guard, written=False)
+        return _output("deny", guard.reason)
     role_overrides = _role_overrides(event, runtime_root, journal)
     try:
         charter = charter_input(event, role_overrides)
@@ -404,11 +474,27 @@ def run(event: Mapping[str, Any], runtime_root: Path) -> dict[str, Any]:
     role = _log_role(journal, event, charter, role_overrides)
     brief, loadout = _brief_change(event, runtime_root, charter, journal)
     note = _brief_note(charter is not None, loadout, role=role)
+    guarded = {"subagent_type": guard.rewrite_agent_type} if guard.rewrite_agent_type else None
+    if guarded:
+        note = f"{note} {GUARD_NOTE}".strip()
+    output = _route(event, runtime_root, journal, charter is not None)
+    # La note de la garde voyage avec celle de la consigne (`_merge` ne note que sa réécriture) ; la ligne
+    # `agent.declared` consigne la garde dans tous les cas.
+    final = _merge(event, output, brief, guarded, note=note)
+    denied = ((final.get("hookSpecificOutput") or {}).get("permissionDecision") == "deny") if final else False
+    if orchestration is not None and not denied:
+        written = _declare(event, runtime_root, journal, orchestration)
+        _log_declared(journal, event, orchestration, guard, written=written)
+    return final
+
+
+def _route(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJournal, charter: bool) -> dict[str, Any]:
+    """La décision d'aiguillage du modèle (inchangée), ou `{}` quand la politique se tait ou tombe en panne."""
     try:
         settings = load_settings(runtime_root)
         policy = agent_routing.load_policy(settings)
         if not policy.enabled:
-            return _merge(event, _allow(), brief, note=note)
+            return _allow()
         candidates = offline_candidates(runtime_root, policy, settings=settings)
         output, decision = decide(event, policy, candidates)
     except Exception as exc:  # noqa: BLE001 - un hook qui lève bloquerait l'outil
@@ -421,10 +507,101 @@ def run(event: Mapping[str, Any], runtime_root: Path) -> dict[str, Any]:
             )
         except OSError:
             pass
-        return _merge(event, _allow(), brief, note=note)
+        return _allow()
+    _log(journal, event, output, decision, charter=charter)
+    return output
 
-    _log(journal, event, output, decision, charter=charter is not None)
-    return _merge(event, output, brief, note=note)
+
+def _spawn_guard(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJournal,
+                 orchestration: Orchestration | None, *, enforce: bool) -> agent_orchestration.SpawnGuard:
+    """La garde de lancement, avec le compte des lancements récents (registre local). Ne lève jamais.
+
+    Le compte illisible laisse passer (la borne est une sûreté, pas une autorisation) et se dit au journal.
+    L'élagage des faits anciens se fait ici, à chaque appel : le dossier reste borné même sans Control Center.
+    """
+    if orchestration is None:
+        return agent_orchestration.SpawnGuard()
+    recent = None
+    try:
+        agent_declarations.prune(runtime_root)
+        recent = agent_declarations.recent_count(runtime_root, agent_orchestration.SPAWN_WINDOW_S)
+    except OSError as exc:
+        _emit(journal, "agent.declaration.failed", "Registre des déclarations illisible : borne de sûreté non "
+              "vérifiée pour ce lancement.", level="warning",
+              data={"code": "declaration_ledger_unreadable", "exception_type": type(exc).__name__})
+    try:
+        return agent_orchestration.decide_spawn_guard(event, orchestration.role, enforce=enforce,
+                                                      recent_spawns=recent)
+    except Exception as exc:  # noqa: BLE001 - une garde qui lève ne vaut pas un outil perdu
+        _emit(journal, "agent.declaration.failed", "Garde de lancement en panne : l'appel part sans garde.",
+              level="error", data={"code": "spawn_guard_failed", "exception_type": type(exc).__name__})
+        return agent_orchestration.SpawnGuard()
+
+
+def _declare(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJournal,
+             orchestration: Orchestration) -> bool:
+    """Déposer le fait de déclaration (contrat v1) ; rend s'il est écrit. Ne lève jamais, consigne chaque panne."""
+    try:
+        fact = fact_from_hook_event(event, declared_at=datetime.now(timezone.utc),
+                                    mission_id=orchestration.mission.mission_id,
+                                    mission_owner=orchestration.mission.mission_owner)
+    except MissionHistoryError as exc:
+        _emit(journal, "agent.declaration.failed", f"Déclaration du sous-agent hors contrat : {exc}", level="warning",
+              data={"code": exc.code, "field": exc.field, "tool_use_id": str(event.get("tool_use_id") or "")[:128]})
+        return False
+    try:
+        agent_declarations.write_fact(runtime_root, fact)
+    except agent_declarations.DeclarationLedgerFull as exc:
+        _emit(journal, "agent.declaration.failed", f"Registre des déclarations plein : {exc}", level="error",
+              data={"code": "declaration_ledger_full", "tool_use_id": fact.tool_use_id})
+        return False
+    except OSError as exc:
+        _emit(journal, "agent.declaration.failed", f"Déclaration du sous-agent non écrite : {type(exc).__name__}",
+              level="error", data={"code": "declaration_write_failed", "tool_use_id": fact.tool_use_id,
+                                   "exception_type": type(exc).__name__})
+        return False
+    return True
+
+
+def _log_declared(journal: RuntimeJournal, event: Mapping[str, Any], orchestration: Orchestration | None,
+                  guard: agent_orchestration.SpawnGuard, *, written: bool) -> None:
+    """`agent.declared` (fait déposé) ou `agent.spawn_refused` (garde) : des codes et des ids, jamais un texte."""
+    if orchestration is None and not guard.deny:
+        return
+    role = orchestration.role if orchestration is not None else None
+    mission = orchestration.mission if orchestration is not None else agent_orchestration.MissionDecision()
+    method = orchestration.method if orchestration is not None else agent_orchestration.MethodDecision(None)
+    caller = event.get("agent_id")
+    data = {
+        "code": guard.code if guard.deny else "agent_declared",
+        "tool_use_id": str(event.get("tool_use_id") or "")[:128],
+        "role_id": role.id if role is not None else None,
+        "caller_agent_id": caller if isinstance(caller, str) and caller else None,
+        "caller_agent_type": str(event.get("agent_type") or "") or None,
+        "ephemeral": bool(orchestration and orchestration.head.ephemeral),
+        "mission_owner": mission.mission_owner,
+        "mission_id": mission.mission_id,
+        "sub_mission": mission.sub_mission,
+        "mission_refused": mission.refused,
+        "work_method": method_key(method.method_id),
+        "work_method_chosen": method.chosen,
+        "work_method_refused": method.refused,
+        "spawn_guard": guard.code,
+        "written": written,
+    }
+    if guard.deny:
+        _emit(journal, "agent.spawn_refused", f"Lancement refusé par JARVIS : {guard.reason}", level="warning",
+              data=data)
+    else:
+        _emit(journal, "agent.declared", "Sous-agent déclaré pour Core.", level="info" if written else "warning",
+              data=data)
+
+
+def _emit(journal: RuntimeJournal, kind: str, message: str, *, level: str, data: dict[str, Any]) -> None:
+    try:
+        journal.emit(kind, message, level=level, data=data)
+    except OSError:
+        pass  # intentional: an unwritable journal never blocks the CLI tool call (module rule: the hook stays silent)
 
 
 def _brief_change(
@@ -529,7 +706,10 @@ def _log_role(
     role = read_role(tool_input)
     resolution = resolve_role(role)
     active = role_for(role)
-    method = active.default_work_method if active is not None else None
+    # La méthode réellement apposée : celle choisie par l'appelant si le rôle la permet, sinon le défaut (Slice 05).
+    method = agent_orchestration.decide_method(
+        agent_markers.parse_head(str(tool_input.get("description") or ""), extra_consumed=PLAYBOOK_ROLES), active,
+    ).method_id
     caller = event.get("agent_id")
     try:
         journal.emit(
@@ -627,7 +807,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         event = json.loads(sys.stdin.read().lstrip("﻿") or "{}")
     except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         event = {}
-    output = run(event if isinstance(event, dict) else {}, runtime_root)
+    output = run(event if isinstance(event, dict) else {}, runtime_root, spawn_guard=SPAWN_GUARD_FLAG in args)
     if output:
         sys.stdout.write(json.dumps(output, ensure_ascii=False))
     return 0

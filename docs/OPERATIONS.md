@@ -2813,6 +2813,25 @@ the agent: the trace shows `work.ingress_unavailable` (warning, once) then
 `work.ingress_restored`. An `agent.work_state_failed` or `work.ingress_rejected`
 error in the ERR panel is a relay bug, not an agent failure.
 
+### Sub-agent declarations and missions (Slice 05, organic orchestration)
+
+Every `Agent` call that really starts leaves a declaration: the `PreToolUse` hook drops one small file per
+call in `<runtime>/agent-declarations/` (no network, never a prompt), the Control Center relays it to Core
+once the subtask has started, and Core records the agent instance with its fixed role and mission
+(contract: [agent-orchestration.md](agent-orchestration.md)). To check it on a running pair:
+
+| Look at | Meaning |
+| --- | --- |
+| `GET /api/missions/health` | `state` `ok`/`degraded`, writes waiting, outcomes counted (`recorded`, `duplicate`, `ephemeral_discarded`...) and Core's `store_id` |
+| `GET /api/missions/work/{work_source}/{work_external_id}` | the instance recorded for a Core work item (`claude` and the `external_id` shown by `/api/work`): `role_id`, `mission_id`, `mission_owner`, `parent_instance_id`; 404 for an ephemeral agent that succeeded (by design) |
+| `GET /api/missions/{mission_id}` | the mission tree: sub-missions, members, live status from Work State |
+| trace `agent.declared` (hook) then `missions.declarations_sent` (relay) then `core.missions.declarations` (Core) | the normal path, at info |
+| trace `agent.spawn_refused` | the hook refused a call: `caller_cannot_spawn` (a role that launches no agent tried to) or `spawn_rate_cap` (more than 120 launches in 10 min) |
+| trace `agent.declaration.failed`, `missions.ledger_unreadable`, `missions.relay_unavailable` | declaration not written, ledger unreadable, Core unreachable (the relay waits and retries; agents keep running) |
+
+A sub-agent whose role launches no agent runs as the `jarvis-no-spawn` agent type (the Agents panel
+diagnostic shows it as the sub-agent type): that is the mechanical `can_spawn` guard, not an error.
+
 ### What the Agents panel shows
 
 The sub-agent cards (status, label, current activity, model, start/end, elapsed

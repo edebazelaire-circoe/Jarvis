@@ -19,6 +19,7 @@ import pytest
 
 from jarvis.domain import subagent_roles
 from jarvis.domain.agent_charter import CHARTER_MARK
+from jarvis.domain.agent_orchestration import MissionDecision, mission_brief
 from jarvis.domain.loadout_view import MANIFEST_MARK
 from jarvis.domain.memory_settings import LOADOUT_ROLES
 from jarvis.domain.prompt_registry import MAX_OVERRIDE_TEXT, PromptTarget, prompt_id
@@ -475,7 +476,11 @@ def test_the_activated_roles_are_announced_given_their_method_and_their_loadout(
     assert routing_hook.strip_profile(description) == "Relire le diff"
     assert routing_hook.read_loadout_role({"description": description}) == loadout
     brief = brief_of(routing_hook.run(call(description), tmp_path))
-    assert brief.endswith(role_brief(role_for(marker)))
+    # Slice 05 : un rôle qui peut porter une mission, lancé par le cerveau, la possède ; le bloc de mission suit
+    # alors celui du rôle, en dernier.
+    mission = mission_brief(MissionDecision(mission_owner=True, mission_id="mis_x"))
+    expected = role_brief(role_for(marker)) + (f"\n\n{mission}" if role_for(marker).can_own_mission else "")
+    assert brief.endswith(expected)
     assert brief.count(ROLE_MARK) == 1 and f"({method})" in brief
     [event] = trace(tmp_path, "agent.role_applied")
     data = event["data"]
@@ -571,19 +576,24 @@ def test_no_role_brief_contradicts_a_constrained_final_output():
         assert role.as_dict()["constrained_output"] is role.constrained_output
 
 
-def test_a_non_spawning_role_brief_overrides_the_charter_delegation_in_assembly_order(tmp_path):
-    from jarvis.domain.agent_charter import AGENT_TASK_CHARTER
+def test_a_non_spawning_role_gets_a_charter_without_the_delegation_invitation(tmp_path):
+    # Slice 05 : la charte est consciente du rôle. Un rôle qui ne lance pas n'est plus invité à déléguer (le
+    # bloc des capacités ne contredit donc plus rien) ; un rôle qui lance, ou une tâche sans rôle, l'est toujours.
+    from jarvis.domain.agent_charter import DELEGATION_PARAGRAPH, NO_DELEGATION_PARAGRAPH
     delegation = "délègue à tes propres sous-agents"
-    assert delegation in AGENT_TASK_CHARTER.replace("\n", " ")
+    assert delegation in DELEGATION_PARAGRAPH.replace("\n", " ")
     for marker in ("qa", "interviewer", "research", "web-research", "concept"):
         assert not role_for(marker).can_spawn
         brief = brief_of(routing_hook.run(call(f"[general] [{marker}] Faire"), tmp_path))
         flat = brief.replace("\n", " ")
-        # Ordre réel : charte, consigne, puis le rôle ; le bloc des capacités dit qu'il prime sur la charte.
-        assert flat.index(delegation) < flat.index(ROLE_MARK) < flat.index(CAPABILITIES_MARK)
+        assert delegation not in flat and NO_DELEGATION_PARAGRAPH.replace("\n", " ") in flat
+        assert flat.index(CHARTER_MARK) < flat.index(ROLE_MARK) < flat.index(CAPABILITIES_MARK)
         capabilities = flat[flat.index(CAPABILITIES_MARK):]
         assert "Vous ne lancez aucun autre agent" in capabilities and "prime sur" in capabilities
         assert "Vous pouvez lancer" not in flat
+    for description in ("[code] [coder] Faire", "[general] Faire"):
+        flat = brief_of(routing_hook.run(call(description), tmp_path)).replace("\n", " ")
+        assert delegation in flat and NO_DELEGATION_PARAGRAPH.replace("\n", " ") not in flat
 
 
 def test_role_applied_traces_the_nested_caller_and_both_sizes(tmp_path):

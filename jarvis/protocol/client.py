@@ -418,6 +418,29 @@ class LocalCoreClient:
         async with session.post(self.base_url + "/v1/work/observations", headers=self.headers, json=batch) as response:
             return await self._json(response)
 
+    # -- Historique des missions (organic-agent-orchestration, Slice 05, `mission_routes.py`) --------------
+
+    async def append_mission_declarations(self, declarations: list[dict[str, Any]]) -> dict[str, Any]:
+        """Remettre 1 à 32 déclarations de sous-agents (`POST /v1/missions/declarations`).
+
+        `CoreProtocolError` : `status=400` lot refusé (le rejouer ne sert à rien), `401` jeton périmé.
+        """
+
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/missions/declarations", headers=self.headers,
+                                json={"declarations": declarations}) as response:
+            return await self._json(response)
+
+    async def mission_health(self) -> dict[str, Any]:
+        return await self._get_json("/v1/missions/health", {})
+
+    async def mission_view(self, mission_id: str) -> dict[str, Any]:
+        return await self._get_json(f"/v1/missions/{quote(mission_id, safe='')}", {})
+
+    async def mission_for_work(self, work_source: str, work_external_id: str) -> dict[str, Any]:
+        return await self._get_json(
+            f"/v1/missions/work/{quote(work_source, safe='')}/{quote(work_external_id, safe='')}", {})
+
     async def append_conversation_events(self, events: Sequence[ConversationEvent]) -> tuple[AppendResult, ...]:
         """Remettre 1 à 32 Conversation Events à Core (`POST /v1/conversation-events`).
 

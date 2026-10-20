@@ -84,6 +84,20 @@ MISSION_HISTORY_PENDING_DROPPED_KIND = "mission_history.pending_dropped"
 MISSION_HISTORY_EVENT_FAILED_KIND = "mission_history.event_failed"
 MISSION_HISTORY_DISCARDED_FORGOTTEN_KIND = "mission_history.discarded_forgotten"
 MISSION_HISTORY_UNSAVED_REFUSED_KIND = "mission_history.unsaved_refused"
+MISSION_HISTORY_MISSION_CLOSED_KIND = "mission_history.mission_closed"
+MISSION_HISTORY_CLOSE_FAILED_KIND = "mission_history.mission_close_failed"
+MISSION_HISTORY_SWEEP_FAILED_KIND = "mission_history.sweep_failed"
+
+#: Balayage périodique (Slice 05, note N5 de la Slice 03) : rattrape un événement perdu ou un magasin rétabli même
+#: quand aucun travail ne bouge. Un balayage a aussi lieu au démarrage.
+SWEEP_INTERVAL_S = 30.0
+#: Issue d'une mission quand le travail de son propriétaire courant se termine (Slice 05).
+MISSION_STATUS_FOR_WORK = {
+    WorkStatus.COMPLETED: MissionStatus.COMPLETED,
+    WorkStatus.FAILED: MissionStatus.FAILED,
+    WorkStatus.CANCELLED: MissionStatus.CANCELLED,
+    WorkStatus.INTERRUPTED: MissionStatus.CANCELLED,
+}
 
 #: Déclarations éphémères en attente d'issue (en mémoire seulement). Au-delà, la plus ancienne est oubliée :
 #: elle ne laissera aucune trace, même si elle échoue ensuite — c'est dit au diagnostic.
@@ -95,6 +109,8 @@ MAX_UNSAVED = 256
 MAX_DISCARDED_KEYS = 4_096
 #: Rôles connus par identité de travail, pour le contrôle de cohérence avec Work State.
 MAX_ROLE_CACHE = 1_024
+#: Appartenance de mission connue par identité de travail (`mission_ref`, clôture à la fin du propriétaire).
+MAX_MISSION_CACHE = 1_024
 _MAX_REPORTED = 256
 
 WorkKey = tuple[str, str]
@@ -102,6 +118,15 @@ WorkKey = tuple[str, str]
 
 class WorkSnapshotReader(Protocol):
     def current_snapshot(self) -> WorkSnapshot: ...
+
+
+@dataclass(frozen=True, slots=True)
+class MissionRef:
+    """L'appartenance de mission d'une instance retenue : ce que le contexte du cerveau et la clôture lisent."""
+
+    instance_id: str
+    mission_id: str | None
+    mission_owner: bool
 
 
 @dataclass(slots=True)
@@ -127,6 +152,7 @@ class _UnsavedDeclaration:
     fact: AgentDeclarationFact
     parent_work_external_id: str | None
     mission: MissionOpening | Mission | None
+    inherit_mission: bool = False
 
 
 def new_instance_id() -> str:
@@ -146,6 +172,7 @@ class MissionHistoryService:
         clock: Clock | None = None,
         instance_ids: Callable[[], str] = new_instance_id,
         queue_size: int = 256,
+        sweep_interval_s: float | None = SWEEP_INTERVAL_S,
     ) -> None:
         self._repository = repository
         self._work_state = work_state
@@ -159,9 +186,14 @@ class MissionHistoryService:
         self._unsaved: OrderedDict[WorkKey, _Unsaved | _UnsavedDeclaration] = OrderedDict()
         self._discarded: OrderedDict[WorkKey, None] = OrderedDict()
         self._roles: OrderedDict[WorkKey, str] = OrderedDict()
+        #: identité de travail -> (instance, mission ou None, propriétaire) ; `None` = aucune instance retenue.
+        self._missions: OrderedDict[WorkKey, MissionRef | None] = OrderedDict()
         self._reported: set[tuple[str, ...]] = set()
         self._queue: asyncio.Queue[ProtocolEnvelope] | None = None
         self._task: asyncio.Task[None] | None = None
+        self._sweeper: asyncio.Task[None] | None = None
+        self._sweep_interval_s = sweep_interval_s
+        self._sweep_lock = asyncio.Lock()
 
     # ------------------------------------------------------------ état
 
@@ -190,15 +222,32 @@ class MissionHistoryService:
         if self._events is not None and self._task is None:
             self._queue = self._events.subscribe(max_queue=self._queue_size, lossy=True)
             self._task = asyncio.get_running_loop().create_task(self._run(self._queue), name="jarvis-mission-history")
+        if self._sweep_interval_s is not None and self._sweeper is None:
+            self._sweeper = asyncio.get_running_loop().create_task(self._sweep_periodically(),
+                                                                   name="jarvis-mission-history-sweep")
 
     async def stop(self) -> None:
         task, self._task = self._task, None
+        sweeper, self._sweeper = self._sweeper, None
         queue, self._queue = self._queue, None
         if queue is not None and self._events is not None:
             self._events.unsubscribe(queue)
-        if task is not None:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        for running in (task, sweeper):
+            if running is not None:
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+
+    async def _sweep_periodically(self) -> None:
+        """Un balayage au démarrage, puis toutes les `sweep_interval_s` secondes. Survit à un balayage en échec."""
+
+        while True:
+            try:
+                await self.sweep()
+            except Exception as exc:  # the periodic sweep must survive; the failure is reported once per type
+                self._report(("sweep", type(exc).__name__), MISSION_HISTORY_SWEEP_FAILED_KIND,
+                             "balayage de l'historique des missions en échec", level="error",
+                             data={"error": type(exc).__name__, "detail": str(exc)[:200]})
+            await asyncio.sleep(self._sweep_interval_s or SWEEP_INTERVAL_S)
 
     async def _run(self, queue: asyncio.Queue[ProtocolEnvelope]) -> None:
         while True:
@@ -224,6 +273,7 @@ class MissionHistoryService:
         work_external_id: str,
         parent_work_external_id: str | None = None,
         mission: MissionOpening | Mission | None = None,
+        inherit_mission: bool = False,
     ) -> DeclarationResult:
         """Accepter la déclaration d'un sous-agent. Ne lève jamais : l'issue est rendue, comptée, journalisée.
 
@@ -234,10 +284,13 @@ class MissionHistoryService:
         l'instance qu'il crée ici), la racine (celle du parent) et la date (`fact.declared_at`). Une `Mission`
         complète est acceptée pour sa forme, mais son `owner_instance_id` et sa racine sont remplacés de même :
         l'appelant ne peut pas connaître l'id d'une instance qui n'existe pas encore.
+        `inherit_mission` (Slice 05, ingestion du hook) : une instance qui n'ouvre pas de mission et n'en nomme pas
+        devient membre de la mission de son parent retenu ; une `MissionOpening(parent_from_caller=True)` prend
+        pour parente cette même mission. Sans parent retenu (ou parent sans mission) : pas de mission, ou racine.
         """
 
         key: WorkKey = (work_source, work_external_id)
-        result = await self._declare(fact, key, parent_work_external_id, mission)
+        result = await self._declare(fact, key, parent_work_external_id, mission, inherit_mission)
         self._settled(key, result)
         self._count(result.outcome)
         if result.outcome is DeclarationOutcome.REFUSED:
@@ -247,6 +300,12 @@ class MissionHistoryService:
         elif result.outcome in (DeclarationOutcome.RECORDED, DeclarationOutcome.EPHEMERAL_PENDING,
                                 DeclarationOutcome.EPHEMERAL_RETAINED):
             self._declared(key, fact, result)
+        if result.outcome is DeclarationOutcome.RECORDED and fact.mission_owner:
+            # La fin du travail a pu arriver avant la déclaration (deux relais distincts) : la mission ouverte
+            # se clôt aussitôt, sinon elle resterait ouverte pour toujours.
+            item = self._live().get(key)
+            if item is not None and item.status.is_terminal:
+                await self._close_owned_mission(key, item.status)
         return result
 
     def _settled(self, key: WorkKey, result: DeclarationResult) -> None:
@@ -262,7 +321,9 @@ class MissionHistoryService:
         self._emit(AGENT_DECLARED_KIND, "sous-agent déclaré", data={
             "work_source": key[0], "work_external_id": key[1], "role_id": fact.role_id,
             "role_status": fact.role_status.value, "ephemeral": fact.ephemeral,
-            "mission_id": fact.mission_id, "outcome": result.outcome.value,
+            # La mission de l'instance (héritée de l'appelant pour un membre, Slice 05), sinon celle du fait.
+            "mission_id": result.instance.mission_id if result.instance else fact.mission_id,
+            "mission_owner": fact.mission_owner, "outcome": result.outcome.value,
             "instance_id": result.instance.instance_id if result.instance else None,
         })
 
@@ -300,7 +361,7 @@ class MissionHistoryService:
                                created_at=fact.declared_at, root_mission_id=root)
 
     async def _declare(self, fact: AgentDeclarationFact, key: WorkKey, parent_work_external_id: str | None,
-                       mission: MissionOpening | Mission | None) -> DeclarationResult:
+                       mission: MissionOpening | Mission | None, inherit_mission: bool = False) -> DeclarationResult:
         if not isinstance(fact, AgentDeclarationFact):
             return DeclarationResult(DeclarationOutcome.REFUSED, code="mission_history_invalid",
                                      message="expected an AgentDeclarationFact")
@@ -309,21 +370,28 @@ class MissionHistoryService:
             return DeclarationResult(DeclarationOutcome.EPHEMERAL_DISCARDED)
         try:
             stored = await self._guard("find_instance", self._repository.find_instance(*key), recover=False)
-            parent_id = None
+            parent = None
             if parent_work_external_id is not None and parent_work_external_id != key[1]:
                 parent = await self._guard("find_instance", self._repository.find_instance(
                     key[0], parent_work_external_id), recover=False)
-                parent_id = parent.instance.instance_id if parent is not None else None
+            parent_id = parent.instance.instance_id if parent is not None else None
         except MissionHistoryUnavailable as exc:
             # Panne totale : rien n'a pu être lu. Le fait brut attend et sera rejoué intégralement (`sweep`).
-            self._keep_unsaved(key, _UnsavedDeclaration(fact, parent_work_external_id, mission))
+            self._keep_unsaved(key, _UnsavedDeclaration(fact, parent_work_external_id, mission, inherit_mission))
             return DeclarationResult(DeclarationOutcome.DEGRADED, code=exc.code, message=str(exc))
         except (MissionHistoryStoreError, MissionHistoryError) as exc:
             return DeclarationResult(DeclarationOutcome.REFUSED, code=getattr(exc, "code", None), message=str(exc))
+        caller_mission = parent.instance.mission_id if parent is not None else None
+        mission_id = fact.mission_id
+        if inherit_mission and mission_id is None and not fact.mission_owner:
+            mission_id = caller_mission  # membre de la mission de son appelant (Slice 05)
+        if (isinstance(mission, MissionOpening) and mission.parent_from_caller and mission.parent_mission_id is None
+                and caller_mission is not None):
+            mission = replace(mission, parent_mission_id=caller_mission)
         try:
             instance = instance_from_declaration(
                 fact.declaration(), instance_id=stored.instance.instance_id if stored else self._instance_ids(),
-                work_source=key[0], work_external_id=key[1], created_at=fact.declared_at, mission_id=fact.mission_id,
+                work_source=key[0], work_external_id=key[1], created_at=fact.declared_at, mission_id=mission_id,
                 mission_owner=fact.mission_owner, parent_instance_id=parent_id,
             )
         except MissionError as exc:
@@ -370,7 +438,7 @@ class MissionHistoryService:
             try:
                 opened = await self._opened_mission(mission, fact, instance)
             except MissionHistoryUnavailable as exc:
-                self._keep_unsaved(key, _UnsavedDeclaration(fact, parent_work_external_id, mission))
+                self._keep_unsaved(key, _UnsavedDeclaration(fact, parent_work_external_id, mission, inherit_mission))
                 return DeclarationResult(DeclarationOutcome.DEGRADED, instance, code=exc.code, message=str(exc))
             except (MissionError, MissionHistoryStoreError) as exc:
                 return DeclarationResult(DeclarationOutcome.REFUSED, instance, code=getattr(exc, "code", None),
@@ -396,6 +464,7 @@ class MissionHistoryService:
         self._unsaved.pop(key, None)
         self._recover()
         self._remember_role(key, stored.instance.role_id)
+        self._remember_mission(key, stored.instance)
         if lowered and created:
             return DeclarationResult(DeclarationOutcome.EPHEMERAL_RETAINED, stored.instance)
         return DeclarationResult(DeclarationOutcome.RECORDED if created else DeclarationOutcome.DUPLICATE,
@@ -448,6 +517,21 @@ class MissionHistoryService:
                          level="error", data={"work_source": dropped[0], "work_external_id": dropped[1],
                                               "max_unsaved": MAX_UNSAVED})
 
+    def _remember_mission(self, key: WorkKey, instance: AgentInstance | None) -> None:
+        self._missions[key] = (MissionRef(instance.instance_id, instance.mission_id, instance.mission_owner)
+                               if instance is not None else None)
+        self._missions.move_to_end(key)
+        while len(self._missions) > MAX_MISSION_CACHE:
+            self._missions.popitem(last=False)
+
+    def mission_ref(self, work_source: str, work_external_id: str) -> MissionRef | None:
+        """L'appartenance de mission connue d'un travail (mémoire bornée, sans E/S), ou `None`.
+
+        Lecture synchrone pour le contexte du cerveau : elle ne dit que ce que ce Core a déjà enregistré ou lu.
+        """
+
+        return self._missions.get((work_source, work_external_id))
+
     def _remember_role(self, key: WorkKey, role_id: str) -> None:
         self._roles[key] = role_id
         self._roles.move_to_end(key)
@@ -469,6 +553,8 @@ class MissionHistoryService:
                          "le rôle porté par Work State contredit l'historique : aucun des deux n'est réécrit",
                          level="warning", data={"work_source": key[0], "work_external_id": key[1],
                                                 "history_role_id": known, "work_role_id": item.role_id})
+        if item.status.is_terminal:
+            await self._close_owned_mission(key, item.status)
         pending = self._pending.get(key)
         if pending is None:
             return None
@@ -484,13 +570,49 @@ class MissionHistoryService:
         self._count(result.outcome)
         return result
 
+    async def _close_owned_mission(self, key: WorkKey, status: WorkStatus) -> None:
+        """Clore la mission dont ce travail est le propriétaire **courant**, avec l'issue de ce travail. Ne lève jamais.
+
+        Règle (Slice 05) : une mission vit tant que son propriétaire courant travaille. Après un relais explicite
+        (`transfer_ownership`, Slice 06), la fin du prédécesseur ne clôt rien : il n'est plus le propriétaire.
+        Une mission déjà close reste telle quelle (fin rejouée, redémarrage).
+        """
+
+        if key not in self._missions:
+            try:
+                stored = await self._guard("find_instance", self._repository.find_instance(*key))
+            except (MissionHistoryUnavailable, MissionHistoryStoreError, MissionHistoryError):
+                return  # intentional: `_guard` reported it; the next terminal replay or sweep retries nothing here
+            self._remember_mission(key, stored.instance if stored is not None else None)
+        ref = self._missions.get(key)
+        if ref is None or not ref.mission_owner or ref.mission_id is None:
+            return
+        try:
+            mission = await self._guard("get_mission", self._repository.get_mission(ref.mission_id))
+            if mission is None or mission.status.is_closed or mission.owner_instance_id != ref.instance_id:
+                return
+            closed = await self.close_mission(mission.mission_id, MISSION_STATUS_FOR_WORK[status])
+        except (MissionError, MissionHistoryUnavailable, MissionHistoryStoreError, MissionHistoryError) as exc:
+            self._report(("close", ref.mission_id), MISSION_HISTORY_CLOSE_FAILED_KIND,
+                         f"mission non close à la fin de son propriétaire : {exc}", level="warning",
+                         data={"mission_id": ref.mission_id, "work_source": key[0], "work_external_id": key[1],
+                               "code": getattr(exc, "code", None)})
+            return
+        self._emit(MISSION_HISTORY_MISSION_CLOSED_KIND, "mission close à la fin de son propriétaire",
+                   data={"mission_id": closed.mission_id, "status": closed.status.value,
+                         "work_source": key[0], "work_external_id": key[1], "work_status": status.value})
+
     async def sweep(self) -> int:
         """Rattraper ce qu'un événement perdu (bus tolérant) ou un magasin indisponible a laissé en attente.
 
         Éphémères en attente comparées à l'instantané de Work State, puis écritures non enregistrées rejouées.
-        Rend le nombre d'entrées résolues. Ne lève jamais.
+        Rend le nombre d'entrées résolues. Ne lève jamais. Un seul balayage à la fois (événement et minuterie).
         """
 
+        async with self._sweep_lock:
+            return await self._sweep()
+
+    async def _sweep(self) -> int:
         resolved = 0
         items = self._live()
         for key in list(self._pending):
@@ -499,7 +621,8 @@ class MissionHistoryService:
                 resolved += 1
         for key, unsaved in list(self._unsaved.items()):
             if isinstance(unsaved, _UnsavedDeclaration):
-                result = await self._declare(unsaved.fact, key, unsaved.parent_work_external_id, unsaved.mission)
+                result = await self._declare(unsaved.fact, key, unsaved.parent_work_external_id, unsaved.mission,
+                                             unsaved.inherit_mission)
                 if result.outcome is not DeclarationOutcome.DEGRADED:
                     self._settled(key, result)
                     self._count(result.outcome)

@@ -91,11 +91,14 @@ def task_status(raw: str) -> tuple[WorkStatus, str | None]:
     return WorkStatus.FAILED, UNKNOWN_STATUS
 
 
-def task_observation(task: AgentTask, *, source: str, parent_key: str | None, now_ms: int) -> WorkObservation:
+def task_observation(task: AgentTask, *, source: str, parent_key: str | None, now_ms: int,
+                     role_id: str | None = None) -> WorkObservation:
     """Constat normalisé d'une tâche, à l'instant `now_ms`.
 
     Une tâche finie est datée de sa fin : renvoyée plus tard (reprise après un
     redémarrage de Core), elle garde sa vraie date de fin et reste un doublon.
+    `role_id` : le rôle canonique du fait de déclaration joint (Slice 05,
+    `declaration_relay.role_for`), jamais lu du libellé ni du flux.
     """
 
     status, error_class = task_status(task.status)
@@ -118,16 +121,17 @@ def task_observation(task: AgentTask, *, source: str, parent_key: str | None, no
         background=task.background,
         started_at=_utc(min(task.started_ms, observed_ms)),
         ephemeral=task.ephemeral and status in EPHEMERAL_WORK_STATUSES,
+        role_id=role_id,
     )
 
 
-def _signature(task: AgentTask, parent_key: str | None) -> tuple[Any, ...]:
-    """Ce qui, changé, mérite une nouvelle observation."""
+def _signature(task: AgentTask, parent_key: str | None, role_id: str | None = None) -> tuple[Any, ...]:
+    """Ce qui, changé, mérite une nouvelle observation (le rôle joint compris : il arrive après la tâche)."""
 
     return (
         task.status, task.kind, task.description, task.activity if task.running else "", task.summary,
         task.model, parent_key, task.tokens, task.tool_uses, task.background, task.started_ms, task.ended_ms,
-        task.ephemeral,
+        task.ephemeral, role_id,
     )
 
 
@@ -142,13 +146,18 @@ class TrackerWorkObserver:
     `board_id` (handoff board-session, Slice 04b) : le Board de l'agent du pool
     qui porte ce tracker, relu à chaque envoi (l'agent foreground de départ
     n'est lié qu'à l'adoption). `None` : observations non attribuées.
+
+    `role_of` (organic-agent-orchestration, Slice 05) : le rôle canonique de la
+    déclaration jointe à la tâche (`DeclarationRelay.role_for`), ou `None`.
     """
 
     def __init__(self, tracker: AgentTaskTracker, emit: Callable[[WorkObservation], None],
-                 *, board_id: Callable[[], str | None] | None = None) -> None:
+                 *, board_id: Callable[[], str | None] | None = None,
+                 role_of: Callable[[AgentTask], str | None] | None = None) -> None:
         self.tracker = tracker
         self._emit_raw = emit
         self._board_id = board_id
+        self._role_of = role_of
         self._sent: dict[str, tuple[Any, ...]] = {}
 
     def _emit(self, observation: WorkObservation) -> None:
@@ -184,14 +193,16 @@ class TrackerWorkObserver:
             live.add(key)
             parent = tracker.parent_of(task)
             parent_key = parent.work_key if parent is not None and parent.work_key not in ("", key) else None
-            signature = _signature(task, parent_key)
+            role_id = self._role_of(task) if self._role_of is not None else None
+            signature = _signature(task, parent_key, role_id)
             if self._sent.get(key) == signature:
                 continue
             # Noté avant l'envoi : une tâche indescriptible n'est pas retentée
             # à chaque événement du flux.
             self._sent[key] = signature
             try:
-                self._emit(task_observation(task, source=tracker.provider, parent_key=parent_key, now_ms=now_ms))
+                self._emit(task_observation(task, source=tracker.provider, parent_key=parent_key, now_ms=now_ms,
+                                            role_id=role_id))
                 emitted += 1
             except (TypeError, ValueError) as exc:
                 errors.append(exc)

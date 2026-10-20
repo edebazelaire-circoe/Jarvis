@@ -120,13 +120,16 @@ Le frontend lit ces jetons, il ne les recopie pas dans des conditions.
 
 - `can_own_mission` : l'instance peut porter la responsabilité d'une mission (section 5). Exige `can_spawn`.
 - `can_spawn` : l'instance peut lancer d'autres agents. Elle doit lister l'outil `Agent` (`SPAWN_TOOL`) dans
-  `tools`, et réciproquement : le spawn imbriqué est prouvé sur le CLI installé, mais un type d'agent à
-  outils restreints sans `Agent` ne pourrait pas lancer, d'où l'obligation de les garder d'accord.
+  `tools`, et réciproquement. **Mécanique depuis la Slice 05** : un rôle `can_spawn=False` part sous le type
+  d'agent restreint `jarvis-no-spawn` (sans `Agent`/`Task`), imposé par le hook, et un appel `Agent` émis
+  depuis ce type est refusé ; sa charte ne l'invite plus à déléguer
+  ([agent-orchestration.md](agent-orchestration.md) §3).
 - `work_methods` / `default_work_method` : ids de [Work Methods](work-methods.md) livrées
   (`work_methods.BUILTIN_METHODS`) permises et celle proposée par défaut. Vérifié au chargement du module :
   un rôle ne cite qu'une méthode livrée qui s'applique à lui (`check_role_methods`), et une méthode ne vise
-  que des rôles du registre. Seule la méthode par défaut est apposée sur la consigne ; les autres sont des
-  suggestions lisibles dans Settings, qu'un Mission Owner pourra choisir (Slice 05). Les rôles existants
+  que des rôles du registre. La méthode par défaut est apposée sur la consigne, sauf si l'appelant en
+  choisit une autre permise au rôle par un marqueur de tête (`[general] [research] [quick-research] …`,
+  section 2) ; une méthode non permise retombe sur le défaut (`method_not_allowed`, consigné). Les rôles existants
   n'ont pas de méthode par défaut : leurs instructions sont déjà leur méthode.
 - `loadout_role` : rôle de loadout (`LOADOUT_ROLES`) dont l'instance prend les savoirs, ou rien (le loadout
   du profil). Le hook l'applique (`agent_markers.read_loadout_role`) : un marqueur qui est déjà un rôle de
@@ -203,7 +206,7 @@ JARVIS doit savoir d'un sous-agent par des marqueurs entre crochets en tête de 
 grammaire, `agent_markers.parse_head`, lue à l'identique par le hook `PreToolUse`
 (`jarvis/runtime/routing_hook.py`) et par le suivi des tâches (`jarvis/runtime/agent_tasks.py`).
 
-- La **tête** est la suite des groupes entre crochets au début du texte, au plus quatre : trois mots et le
+- La **tête** est la suite des groupes entre crochets au début du texte, au plus cinq : quatre mots et le
   marqueur éphémère.
 - Un **mot** est un groupe ASCII `[mot]` de 2 à 24 lettres, `_` ou `-`, blancs internes tolérés.
 - Le **premier mot** est toujours consommé. S'il nomme un rôle annoncé, c'est le rôle et le profil reste
@@ -220,6 +223,12 @@ grammaire, `agent_markers.parse_head`, lue à l'identique par le hook `PreToolUs
   en double (deux dans la tête, ou un second juste après, même collé ou en fin de texte), marqueur au milieu
   du libellé, aucun libellé après la tête : rien n'est déclaré, le texte reste intact, la tâche est
   ordinaire, visible et annoncée.
+- **Modificateurs d'orchestration** (Slice 05) : seulement après un rôle consommé, les mots suivants sont
+  consommés tant qu'ils sont `[mission]` (l'agent ouvre et possède une sous-mission de la mission de son
+  appelant) ou l'id d'une Work Method livrée (méthode choisie), chacun une fois, dans n'importe quel ordre.
+  Sans rôle, ils restent dans le libellé, comme avant. Leur validité est jugée par le hook
+  ([agent-orchestration.md](agent-orchestration.md) §3) ; le rôle de production de présentation ne se cherche
+  que parmi les trois premiers mots, comme avant.
 - Le drapeau éphémère ne se lit que sur la `description`. Le repli historique du hook sur la clé `prompt`
   ne vaut que pour le profil et le rôle.
 
@@ -236,6 +245,9 @@ grammaire, `agent_markers.parse_head`, lue à l'identique par le hook `PreToolUs
 | `[éphémère] [code]` | code | aucun | non | (vide) |
 | `[code] [qa] Relire` | code | qa | non | Relire |
 | `[code] [zorg] Relire` | code | aucun (repli sur la consigne) | non | [zorg] Relire |
+| `[general] [research-lead] [mission] Comparer` | general | research-lead, `[mission]` | non | Comparer |
+| `[general] [research] [quick-research] Chercher` | general | research, méthode `quick-research` | non | Chercher |
+| `[general] [mission] Comparer` | general | aucun | non | [mission] Comparer |
 
 Avant cette grammaire commune (I-005), le suivi exigeait `[éphémère]` en premier tandis que le hook ne
 lisait que des mots ASCII en tête : `[éphémère] [code] [coder] …` perdait profil et rôle côté hook,
@@ -260,8 +272,10 @@ que le rôle s'y relise comme le hook le lit (`task_snapshot["role"]`).
 (`role_id`, `role_marker`, `role_status`), drapeau éphémère, libellé, `tool_use_id` et `caller_agent_id`
 (l'`agent_id` du sous-agent appelant, présent pour un appel imbriqué). `to_payload()` en est la forme
 stable. Le hook `PreToolUse` est la source de ces faits pour Core ; le parsing du flux `stream-json`
-reste un affichage diagnostique. Le transport vers Core relève des Slices 03 (contrat) et 05 (câblage) :
-aujourd'hui le hook ne l'émet pas encore.
+reste un affichage diagnostique. Depuis la Slice 05, le hook dépose `AgentDeclarationFact` (avec la mission
+décidée) dans le registre local, que le Control Center relaie à Core
+([agent-orchestration.md](agent-orchestration.md) §5). Un mot inconnu n'est pas un rôle : la déclaration
+porte `undeclared`, jamais `unknown` (réservé à un id de forme valide que le registre ne connaît pas).
 
 ## 3. Missions et sous-missions
 
@@ -318,6 +332,10 @@ Développement ou une Direction de recherche peut porter une mission en gardant 
 
 - Il exige une mission (`mission_id`) et un rôle capable (`can_own_mission`), sinon
   `role_cannot_own_mission`.
+- **Qui le devient** (Slice 05) : un agent d'un rôle capable lancé par le cerveau (mission racine, objectif =
+  libellé) ou lancé avec `[mission]` par un autre agent (sous-mission de la mission de l'appelant). Tout autre
+  agent est membre de la mission de son appelant. Le hook lui appose « RESPONSABILITÉ DE MISSION (JARVIS) » ;
+  sa mission se clôt avec la fin de son travail ([agent-orchestration.md](agent-orchestration.md)).
 - Il est récursif (D04) : le propriétaire d'une sous-mission est une instance Mission Owner de cette
   sous-mission, qui peut à son tour organiser sa propre équipe ; le propriétaire de la mission parente garde
   le résultat d'ensemble. Le contrat impose la cohérence (pas de boucle, propriétaire de la bonne mission),
@@ -350,9 +368,8 @@ Slice 07.
 | Sujet | Où |
 | --- | --- |
 | Contrat de la déclaration du hook (`AgentDeclarationFact`), `role_id` de `WorkObservation`, historique durable : faits ([mission-history.md](mission-history.md)) | Slice 03 |
-| Câblage du hook vers Core (le Control Center joint le fait à la tâche et le remet à Core) | Slice 05 |
-| Outils d'orchestration du Mission Owner (spawn, délégation, relais) | Slice 05 |
-| Règles du cerveau (rôles proposés : `offered_to_brain` de `research-lead` et `qa`, éphémère élargie) | Slice 07 |
-| `can_spawn` mécanique (type d'agent à outils réduits), choix d'une Work Method autre que celle par défaut | Slice 05 |
+| Câblage du hook vers Core, outils du Mission Owner (`[mission]`, méthode choisie, `SendMessage`/`TaskStop`), `can_spawn` mécanique, charte consciente du rôle | fait (Slice 05, [agent-orchestration.md](agent-orchestration.md)) |
+| Relations au runtime (communication, QA, adversaire, relais) | Slice 06 |
+| Règles du cerveau (rôles proposés : `offered_to_brain` de `research-lead` et `qa`, éphémère élargie, `[mission]` enseigné au cerveau) | Slice 07 |
 | Rôle dans la scène, badge Mission Owner | Slice 08 |
 | Onglet Settings > Sous-agents | Slice 10 |

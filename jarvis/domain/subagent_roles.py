@@ -574,18 +574,18 @@ CAPABILITIES_MARK = "CAPACITÉS DU RÔLE"
 def capabilities_text(role: SubagentRole, roles: Sequence[SubagentRole] = ROLES) -> str:
     """Ce que le rôle peut faire, généré du registre : lancer des agents (`can_spawn`) et lesquels.
 
-    Le CLI donne l'outil `Agent` à tout sous-agent `general-purpose` : tant qu'aucun type d'agent à outils
-    restreints n'est câblé (Slice 05), cette consigne est ce qui rend `can_spawn` effectif. Le hook l'appose
-    après la charte du chantier (`agent_charter`), qui invite tout sous-agent à déléguer : pour un rôle qui ne
-    lance pas, le texte dit qu'il prime sur cette règle. Un rôle à sortie contrainte (`constrained_output`)
-    n'est jamais invité à ajouter quoi que ce soit à son compte rendu.
+    Depuis la Slice 05, `can_spawn` est mécanique : un rôle qui ne lance pas part sous le type d'agent restreint
+    `agent_orchestration.NO_SPAWN_AGENT_TYPE`, sans l'outil `Agent`, et la charte du chantier ne l'invite plus à
+    déléguer (`agent_charter.NO_DELEGATION_PARAGRAPH`). Ce texte reste la règle lisible, et la seule là où la
+    garde n'est pas appliquée (CLI lancé sans le type restreint, type d'agent choisi non remplaçable). Un rôle à
+    sortie contrainte (`constrained_output`) n'est jamais invité à ajouter quoi que ce soit à son compte rendu.
     """
 
     if not role.can_spawn:
         where = ("notez-le dans le dossier de mission ; votre réponse finale garde la seule forme que vos "
                  "instructions imposent" if role.constrained_output else "dites-le dans votre compte rendu")
-        return (f"{CAPABILITIES_MARK}\nVous ne lancez aucun autre agent (outil {SPAWN_TOOL}) : pour ce rôle, "
-                "cette règle prime sur l'invitation à déléguer de la charte du chantier. Si un autre travail vous "
+        return (f"{CAPABILITIES_MARK}\nVous ne lancez aucun autre agent (outil {SPAWN_TOOL}) : ce rôle travaille "
+                "seul, et cette règle prime sur toute invitation à déléguer. Si un autre travail vous "
                 f"semble nécessaire, {where}.")
     offered = [item for item in roles if item.enabled and item.offered_to_subagents and item.id != role.id]
     catalogue = " ; ".join(f"{_marker_of(item)} ({item.name.lower()})" for item in offered)
@@ -599,31 +599,45 @@ def capabilities_text(role: SubagentRole, roles: Sequence[SubagentRole] = ROLES)
 def default_method_text(role: SubagentRole) -> str | None:
     """Le texte de la Work Method par défaut du rôle (`work_methods.render_method`), ou `None`."""
 
-    method = builtin_method(role.default_work_method) if role.default_work_method else None
+    return method_text(role, None)
+
+
+def method_text(role: SubagentRole, method_id: str | None) -> str | None:
+    """Le texte de la Work Method `method_id` si le rôle la permet, sinon celui de sa méthode par défaut, ou `None`.
+
+    Le choix d'une méthode par l'appelant (`agent_orchestration.decide_method`, Slice 05) ne peut nommer qu'une
+    méthode permise au rôle ; tout autre id retombe sur le défaut, jamais sur une méthode étrangère au rôle.
+    """
+
+    chosen = method_id if method_id in role.work_methods else role.default_work_method
+    method = builtin_method(chosen) if chosen else None
     return render_method(method) if method is not None else None
 
 
-def role_brief(role: SubagentRole, overrides: Mapping[str, str] | None = None) -> str:
-    """Ce que le hook appose pour un rôle : ses instructions (éditables), ses capacités, sa Work Method par défaut.
+def role_brief(role: SubagentRole, overrides: Mapping[str, str] | None = None, *, method: str | None = None) -> str:
+    """Ce que le hook appose pour un rôle : ses instructions (éditables), ses capacités, sa Work Method.
+
+    La méthode est celle que l'appelant a choisie (`method`, si le rôle la permet), sinon celle par défaut.
 
     Seules les instructions sont éditables (prompt `subagent_role.<id>`) ; capacités et méthode viennent du
     registre et du catalogue, et suivent donc toujours le code.
     """
 
     parts = [f"{ROLE_MARK} ({role.name})\n{instructions_for(role, overrides).strip()}", capabilities_text(role)]
-    method = default_method_text(role)
-    if method:
-        parts.append(method)
+    text = method_text(role, method)
+    if text:
+        parts.append(text)
     return "\n\n".join(parts)
 
 
-def with_role_instructions(prompt: str, marker: object, overrides: Mapping[str, str] | None = None) -> str | None:
+def with_role_instructions(prompt: str, marker: object, overrides: Mapping[str, str] | None = None, *,
+                           method: str | None = None) -> str | None:
     """`prompt` suivi de ce que le rôle appose (`role_brief`), ou `None` s'il n'y a rien à ajouter. Jamais doublé."""
 
     role = role_for(marker)
     if role is None or ROLE_MARK in prompt:
         return None
-    return f"{prompt.rstrip()}\n\n{role_brief(role, overrides)}"
+    return f"{prompt.rstrip()}\n\n{role_brief(role, overrides, method=method)}"
 
 
 # ------------------------------------------------------------- prompt du cerveau

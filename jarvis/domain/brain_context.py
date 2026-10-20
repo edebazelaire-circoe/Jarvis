@@ -26,7 +26,7 @@ jamais rendu partiellement.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 import json
@@ -137,6 +137,10 @@ class BrainWorkEntry:
     #: Rôle canonique de l'agent (`WorkItem.role_id`, Slice 03 organic-agent-orchestration) : `None` si aucune
     #: déclaration n'est connue. Un id court : il ne pèse presque rien dans le budget.
     role_id: str | None = None
+    #: Mission de l'instance (historique des missions, Slice 05) et sa responsabilité : `None` si aucune instance
+    #: retenue ou aucune mission. Absents de la charge utile tant qu'ils sont vides : rien ne change sans mission.
+    mission_id: str | None = None
+    mission_owner: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, WorkStatus):
@@ -150,8 +154,10 @@ class BrainWorkEntry:
             raise ValueError("ended_at is set exactly when the status is terminal")
 
     @classmethod
-    def from_item(cls, item: WorkItem, *, now: datetime) -> BrainWorkEntry:
+    def from_item(cls, item: WorkItem, *, now: datetime,
+                  mission: tuple[str | None, bool] | None = None) -> BrainWorkEntry:
         end = item.ended_at or max(now, item.started_at)
+        mission_id, mission_owner = mission if mission is not None else (None, False)
         return cls(
             source=item.source,
             external_id=item.external_id,
@@ -170,10 +176,12 @@ class BrainWorkEntry:
             progress_fraction=item.progress_fraction,
             background=item.background,
             role_id=item.role_id,
+            mission_id=mission_id,
+            mission_owner=bool(mission_owner and mission_id),
         )
 
     def to_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "source": self.source,
             "external_id": self.external_id,
             "status": self.status.value,
@@ -192,6 +200,10 @@ class BrainWorkEntry:
             "background": self.background,
             "role_id": self.role_id,
         }
+        if self.mission_id is not None:
+            payload["mission_id"] = self.mission_id
+            payload["mission_owner"] = self.mission_owner
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,6 +323,7 @@ def build_brain_work_context(
     store_id: str | None = None,
     attention: tuple[WorkAttention, ...] = (),
     max_chars: int = MAX_BRAIN_WORK_CONTEXT_CHARS,
+    missions: Callable[[WorkItem], tuple[str | None, bool] | None] | None = None,
 ) -> BrainWorkContext:
     """Réduire un instantané Core au contexte borné d'un tour. Fonction pure.
 
@@ -325,7 +338,13 @@ def build_brain_work_context(
     interrompu ou attend l'utilisateur : un poste chargé (beaucoup d'actifs
     aux longs libellés) est exactement le cas où ils seraient perdus. Un
     travail actif qui ne tient pas reste, lui, visible au tour suivant.
+
+    `missions` (Slice 05) : l'appartenance de mission connue d'un travail (`(mission_id, responsable)`), comptée
+    dans le budget comme le reste de l'entrée.
     """
+
+    def entry(item: WorkItem) -> BrainWorkEntry:
+        return BrainWorkEntry.from_item(item, now=now, mission=missions(item) if missions is not None else None)
 
     active = sorted(
         (item for item in snapshot.items if not item.status.is_terminal),
@@ -357,8 +376,8 @@ def build_brain_work_context(
         return kept
 
     notes = take(list(attention[-MAX_BRAIN_WORK_ATTENTION:])[::-1], MAX_BRAIN_WORK_ATTENTION)[::-1]
-    listed_active = take([BrainWorkEntry.from_item(item, now=now) for item in active[:MAX_BRAIN_WORK_ACTIVE]], MAX_BRAIN_WORK_ACTIVE)
-    listed_finished = take([BrainWorkEntry.from_item(item, now=now) for item in finished[:MAX_BRAIN_WORK_FINISHED]], MAX_BRAIN_WORK_FINISHED)
+    listed_active = take([entry(item) for item in active[:MAX_BRAIN_WORK_ACTIVE]], MAX_BRAIN_WORK_ACTIVE)
+    listed_finished = take([entry(item) for item in finished[:MAX_BRAIN_WORK_FINISHED]], MAX_BRAIN_WORK_FINISHED)
     return BrainWorkContext(
         revision=snapshot.revision,
         generated_at=now,

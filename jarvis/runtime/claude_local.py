@@ -11,6 +11,7 @@ from typing import Any, Mapping, Sequence
 import uuid
 
 from jarvis.adapters import global_context, safe_folders
+from jarvis.domain import agent_orchestration
 from jarvis.domain.brain_notice import NoticeTyping
 from jarvis.domain.subagent_roles import brain_rules
 from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, SpeechKind
@@ -1145,7 +1146,12 @@ class ClaudeLocalAgent:
             # profil ; ce hook impose le modèle.
             restricted = self.execution_profile in RESTRICTED_PROFILES
             speculative = self.execution_profile == "speculative_analysis"
-            routing_args = [] if restricted else ["--settings", routing_hook.hook_settings(self.runtime_root)]
+            # Slice 05 (organic-agent-orchestration) : le type d'agent restreint (sans l'outil `Agent`) est déclaré
+            # au même lancement que le hook, qui ne l'impose que s'il sait le CLI informé (`--spawn-guard`).
+            routing_args = [] if restricted else [
+                "--settings", routing_hook.hook_settings(self.runtime_root, spawn_guard=True),
+                "--agents", agent_orchestration.agents_argument(),
+            ]
             if not restricted:
                 # Le hook lit les instructions des rôles dans un instantané, sans réseau : il est réécrit à
                 # chaque lancement pour suivre les surcharges enregistrées.

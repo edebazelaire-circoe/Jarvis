@@ -96,6 +96,8 @@ def _parser() -> argparse.ArgumentParser:
     # l'appel d'outil sur stdin et rend la décision d'aiguillage sur stdout.
     routing_hook = sub.add_parser("routing-hook", help="Apply the sub-agent routing policy to one agent CLI tool call")
     routing_hook.add_argument("--runtime-root", default="")
+    # Slice 05 (organic-agent-orchestration) : le CLI qui lance ce hook déclare le type d'agent restreint.
+    routing_hook.add_argument("--spawn-guard", action="store_true")
     from jarvis.runtime.owner_voice import add_parser as add_owner_voice_parser
 
     add_owner_voice_parser(sub)
@@ -1702,6 +1704,22 @@ async def _run_control_center_v2() -> int:
     # Mémoire des Boards (board-memory-workspace-inspector, Slice 03) : même racine.
     from jarvis.domain.board_memory import BOARDS_DIR
 
+    # Déclarations des sous-agents (hook `PreToolUse`, registre local) vers l'historique des missions de Core
+    # (organic-agent-orchestration, Slice 05), et sa lecture seule pour `/api/missions*`. Chacun sa connexion.
+    from jarvis.runtime.declaration_relay import CoreMissionTransport, DeclarationRelay
+    from jarvis.runtime.mission_view import CoreMissionView
+
+    declaration_relay = DeclarationRelay(
+        runtime_root=runtime_root,
+        source="claude",
+        transport=CoreMissionTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
+        journal=journal,
+    )
+    mission_view = CoreMissionView(
+        CoreMissionTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
+        journal=journal,
+    )
+
     control = ControlCenter(
         global_context_dir=global_context_root(settings.data_root),
         boards_dir=Path(settings.data_root).expanduser().resolve() / BOARDS_DIR,
@@ -1712,6 +1730,8 @@ async def _run_control_center_v2() -> int:
         visualizer_url=visualizer_url,
         work_ingress=work_ingress,
         conversation_events=conversation_events,
+        declaration_relay=declaration_relay,
+        mission_view=mission_view,
         conversation_event_view=conversation_event_view,
         work_view=work_view,
         live_view=live_view,
@@ -2038,7 +2058,8 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "routing-hook":
         from jarvis.runtime.routing_hook import main as routing_hook_main
 
-        return routing_hook_main(["--runtime-root", args.runtime_root] if args.runtime_root else [])
+        return routing_hook_main([*(["--runtime-root", args.runtime_root] if args.runtime_root else []),
+                                  *(["--spawn-guard"] if args.spawn_guard else [])])
     if command == "owner-voice":
         from jarvis.runtime.owner_voice import run_cli
         return run_cli(args)

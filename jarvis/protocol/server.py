@@ -44,6 +44,7 @@ from jarvis.protocol.presentation_render_routes import PresentationRenderProtoco
 from jarvis.protocol.remotion_studio_routes import RemotionStudioProtocolRoutes
 from jarvis.protocol.prefab_routes import PrefabProtocolRoutes
 from jarvis.protocol.memory_routes import MemoryProtocolRoutes
+from jarvis.protocol.mission_routes import MissionProtocolRoutes
 from jarvis.protocol.presentation_studio_playback_routes import PresentationStudioPlaybackRoutes
 from jarvis.protocol.presentation_studio_authoring_routes import PresentationStudioAuthoringRoutes
 from jarvis.protocol.presentation_studio_rail_routes import PresentationStudioRailRoutes
@@ -277,6 +278,9 @@ class LocalProtocolServer:
             *UploadProtocolRoutes(getattr(self.core, "uploads", None)).routes(),
             # Mémoire à long terme (jarvis-memory-intelligence-knowledge, Slice 05) : lectures seules, `memory_routes.py`.
             *MemoryProtocolRoutes(self.core).routes(),
+            # Historique des missions et déclarations de sous-agents (organic-agent-orchestration, Slice 05) :
+            # `mission_routes.py`, ingestion stricte du relais du Control Center et lectures.
+            *MissionProtocolRoutes(self.core).routes(),
             # Catalogue des prefabs (jarvis-scene-window-prefab-foundation, Slice 03) : lectures ; les routes
             # à segment fixe des Slices 04/07 s'insèrent avant `{prefab_id}` dans `prefab_routes.py`.
             *PrefabProtocolRoutes(self.core).routes(),

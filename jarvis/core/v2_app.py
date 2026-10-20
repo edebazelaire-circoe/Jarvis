@@ -120,6 +120,7 @@ from jarvis.core.v2_services import (
 from jarvis.core.v2_tools import CoreToolRouter
 from jarvis.core.mission_history import MissionHistoryService
 from jarvis.core.work_state import WorkStateStore
+from jarvis.domain.work_state import WorkItem
 from jarvis.core.voice_ledger import VoiceLedgerService
 from jarvis.core.live_lifecycle import LiveLifecycleService
 from jarvis.core.live_reaper import LiveLifecycleWatchdog
@@ -649,6 +650,8 @@ class JarvisCoreApplication:
             attention=self.work_attention,
             diagnostics=diagnostics,
             active_board=lambda: self.speech_authority.board_id,
+            # Slice 05 (organic-agent-orchestration) : la mission de chaque sous-agent retenu, sans E/S.
+            missions=self._mission_of,
         )
         self.notifications =NotificationService(self.state, notification_delivery or NullNotificationDelivery())
         self.calendar = CalendarService(calendar_backend or InMemoryCalendarBackend())
@@ -727,6 +730,12 @@ class JarvisCoreApplication:
         self._host_align_task: asyncio.Task[bool] | None = None
         self._work_attention_task: asyncio.Task[None] | None = None
         self._work_attention_queue: asyncio.Queue[ProtocolEnvelope] | None = None
+
+    def _mission_of(self, item: WorkItem) -> tuple[str | None, bool] | None:
+        """L'appartenance de mission connue d'un travail, pour le contexte du cerveau (`MissionHistoryService.mission_ref`)."""
+
+        ref = self.mission_history.mission_ref(item.source, item.external_id)
+        return (ref.mission_id, ref.mission_owner) if ref is not None and ref.mission_id is not None else None
 
     async def start(self) -> None:
         if self.health.ready:

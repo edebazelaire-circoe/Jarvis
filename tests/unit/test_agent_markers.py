@@ -224,4 +224,5 @@ def test_the_tracker_keeps_the_flag_and_the_role_in_every_order():
 
 def test_the_module_is_the_only_owner_of_the_grammar():
     assert not hasattr(agent_tasks, "_EPHEMERAL_RE")
-    assert agent_markers.MAX_HEAD_MARKERS == 4
+    # Slice 05 : quatre mots (profil, rôle, `[mission]`, méthode) et le marqueur éphémère.
+    assert agent_markers.MAX_HEAD_MARKERS == 5

@@ -254,6 +254,9 @@ class MissionOpening:
     parent_mission_id: str | None = None
     dossier_path: str | None = None
     origin_kind: str | None = None
+    #: Slice 05 : sans `parent_mission_id`, la mission parente est celle de l'instance appelante (résolue par Core
+    #: depuis `parent_work_external_id`) ; sans appelant retenu ou sans mission chez lui, la mission est racine.
+    parent_from_caller: bool = False
 
     def mission(self, *, mission_id: str, owner_instance_id: str, created_at: datetime,
                 root_mission_id: str | None) -> Mission:

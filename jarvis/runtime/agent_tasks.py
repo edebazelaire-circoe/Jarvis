@@ -611,6 +611,14 @@ class AgentTaskTracker:
         depth = _int(event.get("spawn_depth"))
         if depth is not None and depth > 0:
             task.depth = depth
+        # Au-delà du niveau 2, le flux ne montre pas l'appel `Agent` du sous-agent parent : seul `task_started`
+        # nomme le parent, par son `task_id` (`parent_task_id`, constaté sur le CLI 2.1.304 en bac à sable,
+        # Slice 05 organic-agent-orchestration). Sans cela, l'agent de niveau 3 n'avait pas de parent.
+        parent_task_id = _text(event.get("parent_task_id"))
+        if parent_task_id and not task.parent_tool_use_id:
+            parent = self._by_task_id.get(parent_task_id)
+            if parent is not None and parent is not task and parent.tool_use_id:
+                task.parent_tool_use_id = parent.tool_use_id
 
     def _apply_progress(self, task: AgentTask, event: dict[str, Any]) -> None:
         # Ici `description` décrit l'activité courante, pas la tâche.

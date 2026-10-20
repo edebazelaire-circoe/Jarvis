@@ -112,6 +112,9 @@ from jarvis.domain.conversation_event_search import SEARCH_PARAMS, encode_search
 from jarvis.runtime.conversation_event_trace import TraceNotApplicable, drill_down
 from jarvis.runtime.conversation_event_view import ConversationEventView, ConversationEventViewError
 from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarder
+from jarvis.runtime.declaration_relay import DeclarationRelay
+from jarvis.runtime.mission_view import NOT_CONFIGURED as MISSIONS_NOT_CONFIGURED, CoreMissionView
+from jarvis.runtime.mission_view import failure as mission_failure
 from jarvis.runtime.board_brains import BoardBrain, BoardBrainPool, agent_session_id
 from jarvis.runtime.board_routes import BoardSessionRoutes
 from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PREFIXES, CaptureRelayRoutes
@@ -310,11 +313,15 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: les méthodes gardées ; la seule écriture relayée est `.../edits`, acteur forcé à `user`.
 #: Chat (jarvis-unified-chat-and-board-drop, Slice 04, `chat_relay.py`) : état du Chat, canal vocal, puis tours
 #: texte et pièces jointes — toutes les méthodes gardées.
+#: Lecture de l'historique des missions (organic-agent-orchestration, Slice 05).
+MISSIONS_ROUTE = "/api/missions"
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX, FULLSCREEN_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
                        MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES, *MEMORY_BRAIN_GUARDED_PREFIXES,
                        *PREFAB_GUARDED_PREFIXES, *REMOTION_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES,
-                       *REMOTION_STUDIO_GUARDED_PREFIXES, *CHAT_GUARDED_PREFIXES, *DOSSIER_GUARDED_PREFIXES)
+                       *REMOTION_STUDIO_GUARDED_PREFIXES, *CHAT_GUARDED_PREFIXES, *DOSSIER_GUARDED_PREFIXES,
+                       # Historique des missions (Slice 05) : objectifs et libellés viennent des demandes de l'utilisateur.
+                       MISSIONS_ROUTE)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -1184,6 +1191,8 @@ class ControlCenter:
         audio_diagnostics: SoundDeviceAudioDiagnostics | None = None,
         work_ingress: WorkIngressForwarder | None = None,
         conversation_events: ConversationEventForwarder | None = None,
+        declaration_relay: DeclarationRelay | None = None,
+        mission_view: CoreMissionView | None = None,
         conversation_event_view: ConversationEventView | None = None,
         work_view: CoreWorkView | None = None,
         live_view: CoreLiveStatusView | None = None,
@@ -1265,6 +1274,14 @@ class ControlCenter:
         # Conversation Events des sous-agents Claude (handoff
         # conversation-observability, Slice 03b). Absent, rien ne part.
         self.conversation_events = conversation_events
+        # Déclarations des sous-agents (hook `PreToolUse`) vers l'historique des missions de Core
+        # (organic-agent-orchestration, Slice 05). Absent, rien ne part : les sous-agents restent sans rôle
+        # dans Work State, comme avant.
+        self.declaration_relay = declaration_relay
+        if declaration_relay is not None:
+            declaration_relay.on_joined = self._sync_work_observers
+        # Lecture seule de l'historique des missions (`/api/missions*`).
+        self.mission_view = mission_view
         # Lecture des Conversation Events tenus par Core (Slice 04), pour la
         # timeline : le navigateur ne parle jamais à Core. Absent, les routes
         # `/api/conversations...` répondent `not_configured`.
@@ -1536,6 +1553,10 @@ class ControlCenter:
             web.get("/api/agent", self.agent_status),
             web.get("/api/agent/transcript", self.agent_transcript),
             web.get("/api/work", self.work),
+            # Historique des missions (Slice 05) : lecture seule, relayée vers Core. Segments fixes d'abord.
+            web.get("/api/missions/health", self.missions_health),
+            web.get("/api/missions/work/{work_source}/{work_external_id}", self.missions_for_work),
+            web.get("/api/missions/{mission_id}", self.missions_get),
             web.get("/api/scene", self.scene),
             web.get("/api/scene/patches", self.scene_patches),
             web.post("/api/scene/commands", self.scene_command),
@@ -1634,10 +1655,14 @@ class ControlCenter:
             # vérifié, rien n'est inventé pour lui.
             return
         agent.subtasks.conversation_events = self.conversation_events
+        if self.declaration_relay is not None:
+            self.declaration_relay.attach(agent.subtasks)
         if self.work_ingress is not None:
-            # Slice 04b : chaque observation porte le Board de son agent.
+            # Slice 04b : chaque observation porte le Board de son agent ; Slice 05 (organic-agent-orchestration) :
+            # et le rôle de la déclaration jointe, quand le relais des déclarations est branché.
+            role_of = self.declaration_relay.role_for if self.declaration_relay is not None else None
             observer = TrackerWorkObserver(agent.subtasks, self.work_ingress.offer,
-                                           board_id=lambda: entry.board_id)
+                                           board_id=lambda: entry.board_id, role_of=role_of)
             agent.subtasks.subscribe(observer.sync)
             self._work_observers[id(agent)] = observer
             # Un seul abonné côté relais, qui renvoie l'état de **tous** les agents.
@@ -1660,10 +1685,28 @@ class ControlCenter:
             raise errors[0]
         return emitted
 
+    def _sync_work_observers(self) -> int:
+        """`declaration_relay.on_joined` : renvoyer ce qui a changé (le rôle d'une tâche vient d'être joint).
+
+        Un observateur qui échoue n'empêche pas les autres ; la première erreur est relevée après le parcours.
+        """
+        emitted = 0
+        errors: list[Exception] = []
+        for observer in tuple(self._work_observers.values()):
+            try:
+                emitted += observer.sync()
+            except Exception as exc:  # noqa: BLE001 - relevée ci-dessous, après les autres agents
+                errors.append(exc)
+        if errors:
+            raise errors[0]
+        return emitted
+
     def _forget_agents(self, entry: BoardBrain) -> None:
         """Entrée oubliée par le pool (Session close, CLI suspendu) : son relais part avec elle."""
         for agent in entry.agents.values():
             self._work_observers.pop(id(agent), None)
+            if self.declaration_relay is not None and hasattr(agent, "subtasks"):
+                self.declaration_relay.detach(agent.subtasks)
         if entry.binding is not None:
             # Liaison oubliée : son dernier rapport aussi (reprise QA 04a, borne mémoire).
             self._binding_reports.pop(entry.binding.key, None)
@@ -2243,6 +2286,8 @@ class ControlCenter:
             self.work_ingress.start()
         if self.conversation_events is not None:
             self.conversation_events.start()
+        if self.declaration_relay is not None:
+            self.declaration_relay.start()
         try:
             await self.agent.start()
         except RuntimeError as exc:
@@ -2286,6 +2331,14 @@ class ControlCenter:
             # Après les agents, pour la même raison : leurs sous-agents
             # interrompus sont des fins de span à remettre à Core.
             await self.conversation_events.aclose()
+        if self.declaration_relay is not None:
+            # Les déclarations non remises restent dans le registre local : relues au prochain démarrage.
+            await self.declaration_relay.aclose()
+        if self.mission_view is not None:
+            try:
+                await self.mission_view.close()
+            except Exception:  # noqa: BLE001 - argued: shutdown must never hang on a closing HTTP session
+                pass
         # Avant l'arrêt du serveur : une lecture longue en cours vers Core est
         # interrompue au lieu de retenir l'arrêt jusqu'à son délai.
         await self.conversation_event_view.aclose()
@@ -6072,6 +6125,31 @@ class ControlCenter:
         body["agent_cli"] = self._agent_id
         body["subtasks_supported"] = self._agent_id == "claude" and self.work_ingress is not None
         return web.json_response(body)
+
+    # ------------------------------------------------------------------ missions (Slice 05)
+
+    async def _mission_read(self, read) -> web.Response:  # noqa: ANN001 - `read(view)` est une coroutine de la vue
+        if self.mission_view is None:
+            return web.json_response(mission_failure(MISSIONS_NOT_CONFIGURED,
+                                                     "Lecture de l'historique des missions non configurée."), status=503)
+        status, body = await read(self.mission_view)
+        return web.json_response(body, status=status)
+
+    async def missions_health(self, request: web.Request) -> web.Response:
+        """État de l'historique des missions de Core (`ok`/`degraded`, écritures en attente). Lecture seule."""
+        del request
+        return await self._mission_read(lambda view: view.health())
+
+    async def missions_get(self, request: web.Request) -> web.Response:
+        """L'arbre d'une mission : missions, instances (statut vivant de Work State), relations. Lecture seule."""
+        mission_id = str(request.match_info.get("mission_id") or "")
+        return await self._mission_read(lambda view: view.mission(mission_id))
+
+    async def missions_for_work(self, request: web.Request) -> web.Response:
+        """L'instance d'agent retenue pour un travail de Work State, ou 404. Lecture seule."""
+        source = str(request.match_info.get("work_source") or "")
+        external = str(request.match_info.get("work_external_id") or "")
+        return await self._mission_read(lambda view: view.for_work(source, external))
 
     # ------------------------------------------------------------------ scène
 
