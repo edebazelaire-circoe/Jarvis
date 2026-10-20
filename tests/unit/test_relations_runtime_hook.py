@@ -164,6 +164,14 @@ def test_the_relation_blocks_teach_tools_not_a_protocol():
         assert tool in rr.relations_brief(), tool
 
 
+def test_the_adversary_line_asks_for_distinct_briefs():
+    # Slice 07 (constat de l'essai QA de la Slice 06) : deux producteurs à consigne identique ne sont pas une
+    # concurrence (D10) ; chacun reçoit une approche différente, nommée dans sa consigne.
+    [line] = [line for line in rr.relations_brief().splitlines() if line.startswith("- Approches concurrentes")]
+    assert "chacun avec une approche différente nommée dans sa consigne" in line
+    assert "deux consignes identiques ne font pas une concurrence" in line
+
+
 def test_the_real_hook_process_stamps_a_relation_call_offline(tmp_path):
     """Le vrai sous-processus `jarvis routing-hook` : sortie 0, identité apposée, sans réseau."""
 

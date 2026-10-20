@@ -34,8 +34,8 @@ jamais deviné d'un libellé. Mission Owner n'est pas un rôle : c'est un statut
 d'instance (`missions.AgentInstance.mission_owner`).
 
 Registre câblé (Slice 04) : tous les rôles sont actifs ; `offered_to_brain` dit
-si `brain_rules` les propose au cerveau (pas encore `research-lead` ni `qa`,
-Slice 07), `offered_to_subagents` si un agent qui lance des agents les voit.
+si `brain_rules` les propose au cerveau (tous depuis la Slice 07),
+`offered_to_subagents` si un agent qui lance des agents les voit.
 
 Contrat : `docs/subagent-roles.md`.
 """
@@ -435,8 +435,8 @@ ROLES: tuple[SubagentRole, ...] = (
     ),
     # Rôles additifs du handoff jarvis-organic-agent-orchestration (Slice 01), actifs depuis la Slice 04 : le hook
     # lit leur marqueur, appose leurs instructions, leurs capacités et leur Work Method par défaut, et donne leur
-    # loadout. Ils ne sont pas encore proposés au cerveau (`offered_to_brain=False`) : la règle du cerveau qui dit
-    # quand les lancer relève de la Slice 07, qui passera ce drapeau à vrai avec ses tests.
+    # loadout. Proposés au cerveau depuis la Slice 07 (`brain_rules` : cas C pour la direction de recherche,
+    # relecture demandée pour le contrôle qualité).
     SubagentRole(
         id="research-lead",
         marker="research-lead",
@@ -454,7 +454,6 @@ ROLES: tuple[SubagentRole, ...] = (
         default_work_method="deep-research",
         # Les savoirs de la recherche documentaire : la direction lit aussi les sources elle-même.
         loadout_role="research",
-        offered_to_brain=False,
     ),
     SubagentRole(
         id="qa",
@@ -465,12 +464,14 @@ ROLES: tuple[SubagentRole, ...] = (
                 "demander une correction, sans produire un travail concurrent.",
         instructions=QA_INSTRUCTIONS,
         tools=("Read", "Grep", "Glob", "Bash"),
-        when_relevant="Résultat critique ou risqué qui mérite un second regard avant d'être rendu.",
+        # Slice 07 : lu par le cerveau dans son catalogue. Un relecteur lancé par le cerveau n'a pas de mission, donc
+        # pas de relation QA possible (`relation_no_mission`) : le second regard sur le travail d'un Mission Owner se
+        # demande à ce Mission Owner (`brain_rules`, puce « Mission Owner »).
+        when_relevant="Relecture d'un résultat déjà produit (code, document, synthèse) pour dire s'il tient.",
         visual=RoleVisual(icon="shield-check", accent="lime", badge="QA"),
         work_methods=("result-review", "bug-investigation"),
         default_work_method="result-review",
         loadout_role="reviewer",
-        offered_to_brain=False,
     ),
 )
 
@@ -663,21 +664,38 @@ def _marker_of(role: SubagentRole) -> str:
 
 
 def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_GATE_RULE) -> str:
-    """La section « TYPE DE DEMANDE » du prompt du cerveau, générée depuis le registre."""
+    """La section « TYPE DE DEMANDE » du prompt du cerveau, générée depuis le registre.
+
+    Slice 07 (jarvis-organic-agent-orchestration) : la direction de recherche et le contrôle qualité y sont
+    proposés ; la puce « Mission Owner » dit ce qui appartient aux propriétaires de mission (relations, `[mission]`,
+    `[relais]`) et ce que le cerveau leur demande ; la puce « Restitution » porte le contrat d'affichage de la
+    Slice 11. Aucune porte nouvelle : seule `gate` (cas B) attend un accord (D21, I-003).
+    """
 
     active = [role for role in roles if role.enabled and role.offered_to_brain]
     by_id = {role.id: role for role in active}
     catalogue = " ; ".join(f"{_marker_of(role)} ({role.name.lower()}) : {_lower_first(role.when_relevant)}" for role in active)
     interviewer = _marker_of(by_id["interviewer"]) if "interviewer" in by_id else "[general] [interviewer]"
     helpers = ", ".join(_marker_of(by_id[key]) for key in ("research", "web-research", "concept") if key in by_id)
-    return (
+    owners = [role for role in active if role.can_own_mission]
+    lead, qa = by_id.get("research-lead"), by_id.get("qa")
+    # Un exemple de méthode choisie, pris dans le registre : un rôle proposé qui a une méthode par défaut et une autre.
+    chosen = next((f"{_marker_of(role)} [{method}]" for role in active if role.default_work_method
+                   for method in role.work_methods if method != role.default_work_method), None)
+    expertise = (f"pour comparer, choisir ou faire l'état d'un sujet, un seul {_marker_of(lead)}, qui porte la "
+                 "mission et organise lui-même ses recherches ; pour chercher et concevoir à la fois pendant un "
+                 "cadrage, " if lead else "")
+    lines = [
         "TYPE DE DEMANDE\n"
         "Avant de lancer quoi que ce soit, classe la demande : tu es le seul à avoir le micro, et un chantier lancé "
         "sur une lecture incertaine se refait. Rôles de sous-agent disponibles, à écrire après le "
         f"profil dans la description : {catalogue}. JARVIS donne lui-même à chaque agent la méthode de son rôle : "
-        "ne la recopie pas.\n"
+        "ne la recopie pas"
+        + (f" ; pour une autre méthode du rôle, écris son id après le rôle ({chosen} …)" if chosen else "")
+        + ".",
         "- A. Action claire (un bug précis, une modification nommée, une recherche ciblée) : un seul agent du rôle "
-        "adapté, par exemple [code] [coder] pour un bug. Pas d'Intervieweur.\n"
+        "adapté, par exemple [code] [coder] pour un bug, ou une tâche éphémère pour une petite correction évidente. "
+        "Pas d'Intervieweur ni de plan : l'agent juge lui-même s'il lui faut de l'aide.",
         "- B. Intention à cadrer (une création, un livrable important, un résultat attendu flou ou qui se lit de "
         "deux façons) : ne lance pas d'exécution. Crée toi-même le dossier de mission, un fichier court dans la "
         f"mémoire du Board, {MISSION_PATH_HINT}, avec ses mots exacts sous Intention : c'est ta seule écriture "
@@ -685,8 +703,25 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
         + (f" ; si c'est utile, en parallèle {helpers}, chacun avec le même chemin" if helpers else "")
         + f". Chaque « {QUESTION_PREFIX} » de l'Intervieweur se relaie en une phrase. La réponse repart à "
         "l'Intervieweur par SendMessage ; si la reprise échoue, relance-le avec le chemin du dossier, qui garde "
-        "tout. Une trouvaille d'un agent de recherche se signale à l'Intervieweur au tour suivant.\n"
-        "- C. Plusieurs expertises utiles (comparer, chercher et concevoir à la fois) : plusieurs rôles en "
-        "parallèle, chacun avec le chemin du même dossier de mission, et tu relaies au fil de l'eau ce qui arrive.\n"
-        f"- {gate}"
-    )
+        "tout. Une trouvaille d'un agent de recherche se signale à l'Intervieweur au tour suivant.",
+        f"- C. Plusieurs expertises utiles : {expertise}plusieurs rôles en parallèle, chacun avec le chemin du même "
+        "dossier de mission, et tu relaies au fil de l'eau ce qui arrive.",
+    ]
+    if owners:
+        lines.append(
+            f"- Mission Owner : {' et '.join(_marker_of(role) for role in owners)}, lancés par toi, portent leur "
+            "mission et décident en cours de route de déléguer, de demander un second regard (QA), de mettre en "
+            "concurrence des approches distinctes (Adversary : une consigne différente par producteur) ou de passer "
+            "la main ; [mission] et [relais] sont à eux, jamais à toi. Si l'utilisateur veut l'un de ces gestes sur "
+            "leur travail, demande-le-leur, dans la consigne ou par SendMessage : toi, tu ne fais que lire les "
+            "relations."
+            + (f" Une relecture demandée d'un résultat déjà rendu : {_marker_of(qa)}, ou [code] [qa] pour du code, "
+               "avec ce résultat et la demande d'origine." if qa else "")
+        )
+        lines.append(
+            "- Restitution : un Mission Owner affiche lui-même un résultat structuré (tableau, document) ; c'est "
+            "voulu, ne le dis jamais « non demandé » et n'en demande pas le retrait. À sa fin, dis la conclusion en "
+            "une ou deux phrases et que le détail est à l'écran ; ne lis pas un tableau à voix haute."
+        )
+    lines.append(f"- {gate}")
+    return "\n".join(lines)

@@ -93,7 +93,7 @@ PROFILE_RULE = (
     "[code] pour écrire ou corriger du code, [desktop] pour piloter le navigateur ou "
     "des fichiers ouverts, [fast] pour résumer, classer ou reformuler, [general] "
     "sinon. JARVIS choisit le modèle à partir de ce profil et de tes réglages. "
-    "Pour une relecture, ajoute [reviewer] après le profil ([code] [reviewer] ...) ; "
+    "Pour une relecture, ajoute [qa] après le profil ([code] [qa] ...) ; "
     "pour une recherche documentaire, [research] ([general] [research] ...) : "
     "JARVIS donne alors au sous-agent les savoirs de ce rôle."
 )

@@ -58,13 +58,13 @@ def trace(root: Path, kind: str) -> list[dict]:
 
 def test_the_registry_holds_the_seven_roles_with_valid_unique_markers():
     # Les cinq ids d'origine indexent les surcharges enregistrées (`subagent_role.<id>`) : ils ne bougent pas.
-    # Direction de recherche et Contrôle qualité s'ajoutent, actifs depuis la Slice 04 mais pas encore proposés au
-    # cerveau (règle du cerveau : Slice 07).
+    # Direction de recherche et Contrôle qualité s'ajoutent, actifs depuis la Slice 04 et proposés au cerveau
+    # depuis la Slice 07.
     assert [role.marker for role in ROLES] == [
         "interviewer", "research", "web-research", "coder", "concept", "research-lead", "qa"]
     assert len({role.id for role in ROLES}) == len({role.marker for role in ROLES}) == 7
     assert all(role.enabled for role in ROLES)
-    assert [role.id for role in ROLES if not role.offered_to_brain] == ["research-lead", "qa"]
+    assert [role.id for role in ROLES if not role.offered_to_brain] == []
     for role in ROLES:
         # Lisible par le motif des marqueurs du hook, et jamais confondu avec un profil.
         assert routing_hook._BRACKET.fullmatch(f"[{role.marker}] ")
@@ -322,7 +322,7 @@ async def test_the_roles_route_lists_effective_instructions_and_an_edit_rewrites
         assert view["accents"] == list(subagent_roles.ROLE_ACCENTS)
         by_id = {role["id"]: role for role in view["roles"]}
         assert by_id["qa"]["aliases"] == ["reviewer"] and by_id["qa"]["enabled"] is True
-        assert by_id["qa"]["offered_to_brain"] is False and by_id["qa"]["default_work_method"] == "result-review"
+        assert by_id["qa"]["offered_to_brain"] is True and by_id["qa"]["default_work_method"] == "result-review"
         assert by_id["research-lead"]["loadout_role"] == "research"
         assert by_id["interviewer"]["offered_to_subagents"] is False
         method_ids = {method["method_id"] for method in view["work_methods"]}
@@ -495,14 +495,58 @@ def test_the_activated_roles_are_announced_given_their_method_and_their_loadout(
 
 
 @pytest.mark.parametrize("marker", ["qa", "research-lead"])
-def test_the_activated_roles_are_not_offered_to_the_brain_until_slice_07(marker):
-    # La règle du cerveau (`brain_rules`, `claude_local.py`) relève de la Slice 07 : elle ne change pas ici.
-    assert f"[{marker}]" not in brain_rules()
-    assert f"[{marker}]" not in BRAIN_SYSTEM_PROMPT
-    offered = [role for role in ROLES if role.id != marker]
+def test_the_activated_roles_are_offered_to_the_brain_since_slice_07(marker):
+    # Slice 07 : le drapeau est levé avec la règle du cerveau ; le baisser retire le rôle de la règle, et rien d'autre.
+    assert f"[{marker}]" in brain_rules()
+    assert f"[{marker}]" in BRAIN_SYSTEM_PROMPT
     from dataclasses import replace
-    assert brain_rules(ROLES) == brain_rules([replace(role, offered_to_brain=False) if role.id == marker else role
-                                              for role in ROLES]) == brain_rules(offered)
+    hidden = brain_rules([replace(role, offered_to_brain=False) if role.id == marker else role for role in ROLES])
+    assert f"[{marker}]" not in hidden
+    assert hidden == brain_rules([role for role in ROLES if role.id != marker])
+
+
+def _bullet(rules: str, head: str) -> str:
+    [line] = [line for line in rules.splitlines() if line.startswith(f"- {head}")]
+    return line
+
+
+def test_the_brain_rules_teach_owners_relations_and_delivery_without_a_new_gate():
+    rules = brain_rules()
+    # Une seule porte, la règle d'exécution existante du cas B (D21, I-003) : ni généralisée ni dupliquée.
+    assert rules.count(EXECUTION_GATE_RULE) == 1 and rules.endswith(f"- {EXECUTION_GATE_RULE}")
+    assert rules.count("accord") == 1 and "PRÊT" not in rules.replace(f"« {READY_PREFIX} »", "")
+    # A : une tâche nette se fait directement, sans interview ni plan ; la petite correction évidente est éphémère.
+    clear = _bullet(rules, "A. Action claire")
+    assert "Pas d'Intervieweur ni de plan" in clear and "éphémère" in clear
+    # C : une comparaison sérieuse part chez la direction de recherche, qui porte la mission.
+    assert "un seul [general] [research-lead], qui porte la mission" in _bullet(rules, "C. Plusieurs expertises")
+    # Mission Owner : les gestes de relation sont aux propriétaires ; le cerveau les demande et ne fait que lire.
+    owner = _bullet(rules, "Mission Owner")
+    assert "[code] [coder] et [general] [research-lead]" in owner
+    for text in ("second regard (QA)", "approches distinctes (Adversary : une consigne différente par producteur)",
+                 "passer la main", "[mission] et [relais] sont à eux, jamais à toi", "SendMessage",
+                 "tu ne fais que lire les relations", "[code] [qa] pour du code"):
+        assert text in owner, text
+    # Restitution (Slice 11) : l'affichage du Mission Owner est voulu ; le cerveau résume et renvoie à l'écran.
+    delivery = _bullet(rules, "Restitution")
+    for text in ("« non demandé »", "n'en demande pas le retrait", "le détail est à l'écran",
+                 "ne lis pas un tableau à voix haute"):
+        assert text in delivery, text
+    # Work Method choisie : l'exemple vient du registre et se relit comme le hook le lit.
+    assert "écris son id après le rôle ([general] [research-lead] [comparative-research] …)" in rules
+    from jarvis.domain import agent_markers
+    head = agent_markers.parse_head("[general] [research-lead] [comparative-research] Comparer")
+    assert (head.role, head.method) == ("research-lead", "comparative-research")
+    # Le marqueur historique n'est plus enseigné ; il reste lu (alias, docs/legacy/subagent-role-aliases.md).
+    assert "[reviewer]" not in BRAIN_SYSTEM_PROMPT and role_for("reviewer") is role_for("qa")
+
+
+def test_without_owner_roles_the_rules_keep_their_old_shape():
+    roles = [role for role in ROLES if not role.can_own_mission and role.id != "qa"]
+    rules = brain_rules(roles)
+    assert "Mission Owner" not in rules and "Restitution" not in rules and "research-lead" not in rules
+    assert "- C. Plusieurs expertises utiles : plusieurs rôles en parallèle" in rules
+    assert rules.endswith(f"- {EXECUTION_GATE_RULE}")
 
 
 def test_the_alias_reviewer_gets_the_qa_method_and_keeps_its_loadout(tmp_path):

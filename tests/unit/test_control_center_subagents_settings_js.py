@@ -75,9 +75,21 @@ process.stdout.write(JSON.stringify({pages,errors,infos}));""")
             assert "s’ajoute <strong>après</strong> vos instructions" in page
         assert f'data-sar-text="{role.id}"' in page
     lead = out["pages"]["research-lead"]
-    assert "pas encore proposé au cerveau" in lead and "deep-research@1" in lead
+    # Slice 07 : tous les rôles sont proposés au cerveau ; l'avis ne vient que d'un drapeau faux (test suivant).
+    assert "pas encore proposé au cerveau" not in lead and "deep-research@1" in lead
     assert "délégation" in lead  # libellé de relation servi par la route, jamais recopié
     assert "[reviewer]" in out["pages"]["qa"] and "alias historique" in out["pages"]["qa"]
+
+
+def test_a_role_not_offered_to_the_brain_says_so(tmp_path):
+    payload = roles_payload(tmp_path)
+    for role in payload["roles"]:
+        if role["id"] == "qa":
+            role["offered_to_brain"] = False
+    out = run_node(tmp_path, payload, """
+const v=M.create(host,{fetch:reply,...quiet});await v.load();v.select('qa');
+process.stdout.write(JSON.stringify({page:host.innerHTML,errors}));""")
+    assert out["errors"] == [] and "pas encore proposé au cerveau" in out["page"]
 
 
 def test_accents_are_tokens_mapped_once_to_theme_variables():

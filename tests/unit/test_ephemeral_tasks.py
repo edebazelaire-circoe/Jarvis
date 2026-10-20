@@ -76,6 +76,23 @@ def test_the_brain_prompt_teaches_the_exact_marker_and_keeps_failures_audible():
     assert "échec" in lowered[lowered.index(EPHEMERAL_MARKER.casefold()):]
 
 
+def test_the_brain_rule_widens_to_self_evident_corrections_but_not_to_awaited_fixes():
+    """I-004 (agent 0, Slice 07) : un seul drapeau, silence gardé ; une petite correction évidente dont le
+    changement visible suffit est éphémère, un correctif dont la confirmation est attendue reste ordinaire."""
+
+    [rule] = [line for line in BRAIN_SYSTEM_PROMPT.splitlines() if line.startswith("- Tâche éphémère")]
+    assert "le changement visible suffit comme compte rendu" in rule
+    assert "corriger une coquille ou une erreur évidente" in rule
+    assert "ni pour un correctif dont il attend la confirmation : c'est une tâche ordinaire, à un seul agent" in rule
+    assert "rien n'est dit à l'oral" in rule and "relaie cet échec" in rule
+    # L'exemple composé se lit à l'identique par la grammaire commune (I-005) : éphémère, profil et rôle gardés.
+    from jarvis.domain import agent_markers
+    example = f"{EPHEMERAL_MARKER} [code] [coder] Corriger la coquille du titre"
+    assert f"« {example} »" in rule
+    head = agent_markers.parse_head(example)
+    assert head.ephemeral and head.role == "coder"
+
+
 # --------------------------------------------------------------------- tracker
 
 

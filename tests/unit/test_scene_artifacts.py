@@ -586,7 +586,11 @@ def test_orphan_artifacts_are_bulk_archivable_and_linked_ones_never():
 #: demande peut se lire de deux façons » devient la section « TYPE DE DEMANDE » générée par
 #: `subagent_roles.brain_rules()` (action claire, intention à cadrer par l'Intervieweur, expertises en
 #: parallèle, accord oral avant exécution).
-BASE_SYSTEM_SHA256 = "0cde112f1aa5ffd2aa0e9b3c174d90e767833b1b2cd5dcca1e284d9c1ecbd9f7"
+#: Orchestration organique (jarvis-organic-agent-orchestration, Slice 07, changement délibéré hors scène) :
+#: `research-lead` et `qa` proposés au cerveau, puces « Mission Owner » (relations aux propriétaires, le cerveau
+#: lit) et « Restitution » (affichage voulu, résumé oral), méthode choisie, `[qa]` au lieu de `[reviewer]`, règle
+#: éphémère élargie aux corrections évidentes (I-004), plus de « compte rendu court » imposé. 8 880 -> 10 767 car.
+BASE_SYSTEM_SHA256 = "e9e376f6bcfa3ed6590077b2a41b2c5e187bc1ef578080950434da78848cee04"
 #: Réalignement baseline (main `f05ed24`, changement délibéré venu de main) : la
 #: consigne d'affichage nomme scene_update_many, scene_archive, scene_pin et
 #: donne au cerveau la main de l'utilisateur (archiver, épingler, déplacer).

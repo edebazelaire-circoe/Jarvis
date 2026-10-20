@@ -414,8 +414,8 @@ def relations_brief() -> str:
         f"- Second regard sur un résultat : lancez un relecteur ([code] [qa] …) en lui donnant l'agentId du travail "
         f"à relire ; il ouvre la relation QA ({_tool('relation_open')}, kind qa) et rend son verdict "
         f"({_tool('relation_close')}).",
-        "- Approches concurrentes : lancez au moins deux producteurs sur des approches différentes, puis "
-        "relation_open (kind adversary, producteurs = leurs agentId) ; faites-les défendre leur travail l'un face à "
+        "- Approches concurrentes : lancez au moins deux producteurs, chacun avec une approche différente nommée "
+        "dans sa consigne (deux consignes identiques ne font pas une concurrence), puis relation_open (kind adversary, producteurs = leurs agentId) ; faites-les défendre leur travail l'un face à "
         "l'autre et tranchez par relation_close (winner, synthesis, unresolved, escalated).",
         f"- Coordination explicite : relation_open (kind communication, membres) ; chacun publie ses messages "
         f"délibérés avec {_tool('relation_post')} et lit le fil avec {_tool('relation_read')}. SendMessage reste le "

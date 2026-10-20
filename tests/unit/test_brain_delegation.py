@@ -54,7 +54,7 @@ from jarvis.domain.v2 import (
     utc_now,
 )
 from jarvis.runtime import claude_local
-from jarvis.runtime.claude_local import BRAIN_SYSTEM_PROMPT, ClaudeLocalAgent, cli_prompt_argument
+from jarvis.runtime.claude_local import BRAIN_SYSTEM_PROMPT, ClaudeLocalAgent, cli_prompt_argument, launched_append_prompt
 from jarvis.runtime.control_center import BRIEF_DELEGATION_REMINDER, ControlCenter, build_agent_brief
 from jarvis.runtime.journal import read_jsonl_tail
 
@@ -136,8 +136,12 @@ async def test_the_voice_agent_starts_with_the_rule_and_with_the_agent_tool_avai
     await agent.start()
 
     argv = started[0]
-    index = argv.index("--append-system-prompt")
-    assert argv[index + 1] == cli_prompt_argument(BRAIN_SYSTEM_PROMPT, argv[0])
+    # La consigne commence par la règle ; le programme de conversation y ajoute ensuite les sections toujours
+    # déclarées (réglages, captures, Boards, Drive), d'où un préfixe et non une égalité (Slice 07 : le test
+    # exigeait encore l'égalité d'avant ces sections). Longue, elle part par fichier (`append_prompt_args`).
+    launched = launched_append_prompt(argv)
+    assert launched is not None
+    assert launched.startswith(cli_prompt_argument(BRAIN_SYSTEM_PROMPT, argv[0]))
     # Rien ne restreint les outils du brain : l'outil Agent (sous-agents) reste
     # disponible, et le mode par défaut ne demande aucune approbation.
     for restriction in ("--tools", "--allowedTools", "--allowed-tools", "--disallowedTools", "--disallowed-tools", "--restricted"):
