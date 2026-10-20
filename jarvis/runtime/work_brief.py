@@ -76,7 +76,8 @@ def _entry_line(item: dict[str, Any]) -> str:
     else:
         head = f"{head} il y a {_duration(item.get('ended_ago_s'))} (durée {_duration(item.get('elapsed_s'))})"
     parts = [f"- {head} : « {label} »"]
-    for key, name in (("activity", "activité"), ("model", "modèle"), ("error_class", "erreur"), ("summary", "résumé")):
+    for key, name in (("role_id", "rôle"), ("activity", "activité"), ("model", "modèle"), ("error_class", "erreur"),
+                      ("summary", "résumé")):
         value = _text(item.get(key))
         if value:
             parts.append(f"{name} : {value}")

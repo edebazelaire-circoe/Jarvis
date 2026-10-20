@@ -70,6 +70,10 @@ CORE_ADAPTER_IMPORT_EXCEPTIONS: dict[str, frozenset[str]] = {
             # connection; injected into `CaptureService` through its port,
             # constructed only. No capture source adapter is wired here.
             "jarvis.adapters.sqlite_captures",
+            # Durable mission history (Slice 03 of organic-agent-orchestration):
+            # shares the `sqlite_state` connection (v10); injected into
+            # `MissionHistoryService` through its port, constructed only.
+            "jarvis.adapters.sqlite_mission_history",
             "jarvis.adapters.windows_notifications",
             # Board memory folders and Board-artifact links (Slices 02-04 of
             # board-memory-workspace-inspector): the folder store is

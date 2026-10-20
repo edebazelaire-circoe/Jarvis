@@ -25,7 +25,13 @@ Invariants transverses :
 - `board_id` (handoff board-session, Slice 04b) : le Board dont le cerveau a
   lancé ce travail, posé par l'émetteur (observateur de chaque agent du pool,
   jobs Core résolus par leur conversation). `None` = non attribué : un tel
-  travail reste visible de tous les Boards. Le premier Board affirmé fait foi.
+  travail reste visible de tous les Boards. Le premier Board affirmé fait foi ;
+- `role_id` (handoff organic-agent-orchestration, Slice 03) : l'id canonique du
+  rôle de l'agent (`subagent_roles`), tel que la déclaration du hook
+  `PreToolUse` l'a donné à l'émetteur. Jamais lu d'un libellé ; `None` = aucune
+  déclaration connue. Le premier rôle affirmé fait foi (D01), une
+  contradiction est rendue comme conflit. L'historique durable des missions
+  (`jarvis/core/mission_history.py`) porte la même valeur, sans statut.
 
 Les règles d'application (`apply_observation`) sont des fonctions pures : le
 futur `WorkStateStore` (tâche 11) se contente de les appliquer et d'avancer
@@ -44,6 +50,7 @@ from jarvis.domain._checks import MAX_ID_CHARS
 from jarvis.domain._checks import check_id as _check_id
 from jarvis.domain._checks import check_text as _check_text
 from jarvis.domain._checks import check_token as _check_token
+from jarvis.domain._checks import ROLE_ID as _ROLE_ID
 
 # Bornes des champs publics. Choisies pour contenir ce que `AgentTaskTracker`
 # conserve déjà (libellé 160, résumé 1 000) sans laisser passer une trace.
@@ -199,6 +206,8 @@ def _check_public_fields(value: WorkObservation | WorkItem) -> None:
     _check_count("tokens", value.tokens)
     if not isinstance(value.ephemeral, bool):
         raise TypeError("ephemeral must be a boolean")
+    if value.role_id is not None and (not isinstance(value.role_id, str) or not _ROLE_ID.fullmatch(value.role_id)):
+        raise ValueError("role_id must be a canonical role id (lowercase, 2-24 chars) or None")
     if value.status.is_terminal and value.activity:
         # L'activité décrit un instant du travail en cours : un travail fini
         # ne « fait » plus rien.
@@ -265,6 +274,7 @@ def _public_payload(value: WorkObservation | WorkItem) -> dict[str, Any]:
         "tool_uses": value.tool_uses,
         "tokens": value.tokens,
         "ephemeral": value.ephemeral,
+        "role_id": value.role_id,
     }
 
 
@@ -275,6 +285,7 @@ OBSERVATION_WIRE_KEYS = frozenset(
         "source", "external_id", "status", "kind", "label", "activity", "summary", "model",
         "parent_external_id", "work_id", "correlation_id", "progress_fraction", "error_class",
         "tool_uses", "tokens", "background", "observed_at", "started_at", "board_id", "ephemeral",
+        "role_id",
     }
 )
 _BATCH_WIRE_KEYS = frozenset({"source", "producer_id", "observations"})
@@ -307,6 +318,7 @@ def _public_kwargs(payload: dict[str, Any]) -> dict[str, Any]:
         "tool_uses": payload.get("tool_uses"),
         "tokens": payload.get("tokens"),
         "ephemeral": bool(_payload_optional_bool(payload, "ephemeral")),
+        "role_id": _payload_optional_id(payload, "role_id"),
     }
 
 
@@ -397,6 +409,7 @@ class WorkObservation:
     started_at: datetime | None = None
     board_id: str | None = None
     ephemeral: bool = False
+    role_id: str | None = None
 
     def __post_init__(self) -> None:
         _check_public_fields(self)
@@ -534,6 +547,7 @@ class WorkItem:
     ended_at: datetime | None = None
     board_id: str | None = None
     ephemeral: bool = False
+    role_id: str | None = None
 
     def __post_init__(self) -> None:
         _check_public_fields(self)
@@ -585,6 +599,7 @@ class WorkItem:
             ended_at=observation.observed_at if observation.status.is_terminal else None,
             board_id=observation.board_id,
             ephemeral=observation.ephemeral and observation.status in EPHEMERAL_WORK_STATUSES,
+            role_id=observation.role_id,
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -690,7 +705,7 @@ class WorkUpdate:
     """Résultat de `apply_observation` : l'état retenu et ce qui s'est passé.
 
     `conflicts` nomme les champs d'identité (`work_id`, `correlation_id`,
-    `parent_external_id`) que l'observation contredisait : la valeur établie
+    `parent_external_id`, `board_id`, `role_id`) que l'observation contredisait : la valeur établie
     est gardée, la contradiction est rendue pour diagnostic.
     """
 
@@ -765,6 +780,14 @@ def _merge(current: WorkItem, observation: WorkObservation) -> tuple[WorkItem, t
         elif board_id != observation.board_id:
             conflicts = (*conflicts, "board_id")
 
+    role_id = current.role_id
+    if observation.role_id is not None:
+        if role_id is None:
+            role_id = observation.role_id
+        elif role_id != observation.role_id:
+            # D01 : le rôle d'une instance ne change pas ; un rejeu ou un constat tardif ne le réécrit pas.
+            conflicts = (*conflicts, "role_id")
+
     status = observation.status
     started_at = current.started_at
     if observation.started_at is not None and observation.started_at < started_at:
@@ -794,6 +817,7 @@ def _merge(current: WorkItem, observation: WorkObservation) -> tuple[WorkItem, t
         board_id=board_id,
         # Dernier constat du producteur, rabaissé hors des statuts éphémères.
         ephemeral=observation.ephemeral and status in EPHEMERAL_WORK_STATUSES,
+        role_id=role_id,
     )
     return merged, conflicts
 

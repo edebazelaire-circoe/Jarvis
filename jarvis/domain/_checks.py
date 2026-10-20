@@ -28,6 +28,10 @@ MAX_PREVIEW_CHARS = 80
 # sans ambiguïté dans un journal.
 TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 _ELLIPSIS = "…"
+#: Id canonique d'un rôle de sous-agent (`subagent_roles`) : ASCII minuscule, 2 à 24 caractères, lisible par
+#: la grammaire des marqueurs de tête. Ici pour que `work_state`, `work_methods` et `subagent_roles` partagent
+#: un seul motif sans cycle d'import (`work_state` est importé par `voice_state`, que `work_methods` atteint).
+ROLE_ID = re.compile(r"[a-z][a-z_-]{1,23}\Z")
 
 # Grammaire des prefabs (handoff jarvis-scene-window-prefab-foundation) : ici
 # pour que `scene` (bloc `prefab` d'une fenêtre, Slice 04) et `prefab`

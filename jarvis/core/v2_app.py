@@ -28,6 +28,7 @@ from jarvis.adapters.file_presentation_template_store import FilePresentationTem
 from jarvis.adapters.sqlite_board_artifact_links import SQLiteBoardArtifactLinks
 from jarvis.adapters.artifact_payloads import FileArtifactPayloads
 from jarvis.adapters.sqlite_artifacts import SQLiteArtifactRepository
+from jarvis.adapters.sqlite_mission_history import SQLiteMissionHistoryRepository
 from jarvis.adapters.sqlite_session_activity import SQLiteActivityLedger
 from jarvis.adapters.sqlite_captures import SQLiteCaptureRepository
 from jarvis.core.artifact_service import ArtifactService
@@ -117,6 +118,7 @@ from jarvis.core.v2_services import (
     ConversationService, CoreEventBus, JobService, NotificationService, NullDiagnosticSink, SchedulerService,
 )
 from jarvis.core.v2_tools import CoreToolRouter
+from jarvis.core.mission_history import MissionHistoryService
 from jarvis.core.work_state import WorkStateStore
 from jarvis.core.voice_ledger import VoiceLedgerService
 from jarvis.core.live_lifecycle import LiveLifecycleService
@@ -338,6 +340,12 @@ class JarvisCoreApplication:
         # 11) : alimenté par les jobs et par l'ingress `/v1/work/observations`,
         # en mémoire seulement (voir `jarvis/core/work_state.py`).
         self.work_state = WorkStateStore(events=self.events, diagnostics=diagnostics)
+        # Historique durable des missions (handoff organic-agent-orchestration, Slice 03, D18) : même base v10,
+        # même connexion ; aucun statut d'exécution, il se lit dans `work_state`. Abonné tolérant au bus pour la
+        # seule règle éphémère. Les déclarations du hook arrivent à la Slice 05 (`record_declaration`).
+        self.mission_history = MissionHistoryService(
+            SQLiteMissionHistoryRepository(self.state), work_state=self.work_state, events=self.events,
+            diagnostics=diagnostics)
         self.jobs = JobService(self.state, self.events, workers or {}, diagnostics=diagnostics, work_state=self.work_state,
                                board_of=self.sessions.board_of)
         # Scène constellation (handoff jarvis-constellation-scene-runtime,
@@ -833,6 +841,9 @@ class JarvisCoreApplication:
             # pire une note — le statut du travail, lui, reste dans l'instantané.
             self._work_attention_queue = self.events.subscribe(max_queue=ATTENTION_QUEUE_SIZE, lossy=True)
             self._work_attention_task = asyncio.create_task(self.work_attention.run(self._work_attention_queue), name="jarvis-work-attention")
+            # Historique des missions : journalise son état, s'abonne au bus ; ne lève pas (magasin refusé :
+            # historique `degraded`, Core démarre quand même).
+            await self.mission_history.start()
             await self.notifications.recover()
             await self.jobs.recover()
             await self._ensure_system_schedules()
@@ -858,6 +869,7 @@ class JarvisCoreApplication:
             await self.live_reaper.stop()
             await self._stop_notification_loop()
             await self._stop_work_attention()
+            await self.mission_history.stop()
             await self._stop_scene()
             try:
                 await self.state.close()
@@ -1168,6 +1180,7 @@ class JarvisCoreApplication:
             await asyncio.gather(align, return_exceptions=True)
         # La politique d'état de travail aussi : un réveil pourrait nourrir le cerveau.
         await self._stop_work_attention()
+        await self.mission_history.stop()
         await self.brain.stop()
         await self._stop_notification_loop()
         await self.scheduler.stop()

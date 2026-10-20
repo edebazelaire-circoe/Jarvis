@@ -134,6 +134,9 @@ class BrainWorkEntry:
     parent_external_id: str | None = None
     progress_fraction: float | None = None
     background: bool = False
+    #: Rôle canonique de l'agent (`WorkItem.role_id`, Slice 03 organic-agent-orchestration) : `None` si aucune
+    #: déclaration n'est connue. Un id court : il ne pèse presque rien dans le budget.
+    role_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, WorkStatus):
@@ -166,6 +169,7 @@ class BrainWorkEntry:
             parent_external_id=item.parent_external_id,
             progress_fraction=item.progress_fraction,
             background=item.background,
+            role_id=item.role_id,
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -186,6 +190,7 @@ class BrainWorkEntry:
             "parent_external_id": self.parent_external_id,
             "progress_fraction": self.progress_fraction,
             "background": self.background,
+            "role_id": self.role_id,
         }
 
 

@@ -29,7 +29,8 @@ T = TypeVar("T")
 #: v7 (2026-10-01): capture owner (`docs/capture.md`).
 #: v8 (2026-10-02): Board-artifact links (`docs/artifacts.md` › *Board links*).
 #: v9 (2026-10-17): fixed Board type, data only (`docs/boards.md` › *Board type*, *Persistence*).
-_SCHEMA_VERSION = 9
+#: v10 (2026-10-20): durable mission history, no execution status (`docs/mission-history.md`).
+_SCHEMA_VERSION = 10
 
 #: Envelope ids with a partial index `(<id>, sequence)`; mirrors
 #: `conversation_event_store.LOOKUP_FIELDS` (checked by the store tests).
@@ -311,6 +312,137 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
               AND (json_type(data, '$.board_kind') IS NULL OR json_extract(data, '$.board_kind') = 'empty'
                    OR json_type(data, '$.interaction_mode') IS NOT NULL
                    OR json_type(data, '$.interaction_mode_origin') IS NOT NULL)""",
+    ),
+    10: (
+        # Durable mission history (handoff organic-agent-orchestration, Slice 03,
+        # D18, readiness I-002). Additive DDL only, no product row. Same shape as
+        # v3-v8: `data` is the canonical `to_payload()` of the domain value
+        # (`missions`, `agent_relations`), the other columns are extracted copies
+        # cross-checked on read (`sqlite_mission_history`). Time columns are
+        # fixed-width UTC keys. **No execution status column anywhere**: live
+        # status stays in Core Work State (D16), joined by
+        # `(work_source, work_external_id)`. No provider blob: `declaration` is
+        # the bounded `AgentDeclarationFact` (no prompt, no trace).
+        # Missions and their owner instance reference each other: both foreign
+        # keys are DEFERRABLE so a mission and the instance that opens it are
+        # inserted in one transaction.
+        """CREATE TABLE IF NOT EXISTS missions (
+            mission_id TEXT PRIMARY KEY,
+            parent_mission_id TEXT REFERENCES missions(mission_id),
+            root_mission_id TEXT NOT NULL REFERENCES missions(mission_id) DEFERRABLE INITIALLY DEFERRED,
+            owner_instance_id TEXT NOT NULL REFERENCES agent_instances(instance_id) DEFERRABLE INITIALLY DEFERRED,
+            status TEXT NOT NULL CHECK (status IN ('open', 'completed', 'cancelled', 'failed')),
+            created_at TEXT NOT NULL,
+            closed_at TEXT,
+            data TEXT NOT NULL,
+            CHECK ((status = 'open') = (closed_at IS NULL)),
+            CHECK ((parent_mission_id IS NULL) = (root_mission_id = mission_id)))""",
+        "CREATE INDEX IF NOT EXISTS idx_missions_root ON missions(root_mission_id, created_at, mission_id)",
+        "CREATE INDEX IF NOT EXISTS idx_missions_time ON missions(created_at, mission_id)",
+        # Identity, parent and creation are fixed; a closed mission is frozen
+        # (owner included): only an open mission changes owner or closes.
+        """CREATE TRIGGER IF NOT EXISTS missions_frozen BEFORE UPDATE ON missions
+            WHEN NEW.mission_id IS NOT OLD.mission_id OR NEW.parent_mission_id IS NOT OLD.parent_mission_id
+              OR NEW.root_mission_id IS NOT OLD.root_mission_id OR NEW.created_at IS NOT OLD.created_at
+              OR OLD.status <> 'open'
+            BEGIN SELECT RAISE(ABORT, 'mission identity is immutable and a closed mission is frozen'); END""",
+        # One row per agent instance that history retains. D08: never a row for
+        # an instance while it is ephemeral (`data.ephemeral` must be false); an
+        # ephemeral instance whose work ended badly is retained with
+        # `ephemeral_lowered = 1`. D01: role, work identity and assignment are
+        # written once (trigger); `data.role_id` must equal the column.
+        """CREATE TABLE IF NOT EXISTS agent_instances (
+            instance_id TEXT PRIMARY KEY,
+            work_source TEXT NOT NULL,
+            work_external_id TEXT NOT NULL,
+            role_id TEXT NOT NULL,
+            mission_id TEXT REFERENCES missions(mission_id) DEFERRABLE INITIALLY DEFERRED,
+            mission_owner INTEGER NOT NULL CHECK (mission_owner IN (0, 1)),
+            parent_instance_id TEXT REFERENCES agent_instances(instance_id),
+            ephemeral_lowered INTEGER NOT NULL DEFAULT 0 CHECK (ephemeral_lowered IN (0, 1)),
+            created_at TEXT NOT NULL,
+            declaration TEXT,
+            data TEXT NOT NULL,
+            UNIQUE (work_source, work_external_id),
+            CHECK (mission_owner = 0 OR mission_id IS NOT NULL),
+            CHECK (json_extract(data, '$.ephemeral') = 0),
+            CHECK (json_extract(data, '$.role_id') = role_id))""",
+        "CREATE INDEX IF NOT EXISTS idx_agent_instances_mission ON agent_instances(mission_id, created_at, "
+        "instance_id) WHERE mission_id IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_agent_instances_time ON agent_instances(created_at, instance_id)",
+        """CREATE TRIGGER IF NOT EXISTS agent_instances_immutable BEFORE UPDATE ON agent_instances
+            WHEN NEW.instance_id IS NOT OLD.instance_id OR NEW.work_source IS NOT OLD.work_source
+              OR NEW.work_external_id IS NOT OLD.work_external_id OR NEW.role_id IS NOT OLD.role_id
+              OR NEW.mission_id IS NOT OLD.mission_id OR NEW.mission_owner IS NOT OLD.mission_owner
+              OR NEW.parent_instance_id IS NOT OLD.parent_instance_id
+              OR NEW.ephemeral_lowered IS NOT OLD.ephemeral_lowered OR NEW.created_at IS NOT OLD.created_at
+            BEGIN SELECT RAISE(ABORT, 'agent instance role, identity and assignment are immutable'); END""",
+        # Ownership changes of a mission, append-only: the first owner at
+        # opening, then one row per explicit handoff (`handoff_relation_id`).
+        # `missions.owner_instance_id` is the current owner (Slice 01 N8).
+        """CREATE TABLE IF NOT EXISTS mission_owners (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            mission_id TEXT NOT NULL REFERENCES missions(mission_id) DEFERRABLE INITIALLY DEFERRED,
+            owner_instance_id TEXT NOT NULL REFERENCES agent_instances(instance_id) DEFERRABLE INITIALLY DEFERRED,
+            handoff_relation_id TEXT REFERENCES agent_relations(relation_id),
+            at TEXT NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS idx_mission_owners_mission ON mission_owners(mission_id, seq)",
+        """CREATE TRIGGER IF NOT EXISTS mission_owners_append_only BEFORE UPDATE ON mission_owners
+            BEGIN SELECT RAISE(ABORT, 'mission ownership history is append-only'); END""",
+        # Typed relations (D09). No CHECK on `kind`: the closed set lives in the
+        # domain (`AgentRelationKind`), like `artifacts.kind`. Kind, mission and
+        # creation are fixed; a closed relation is frozen.
+        """CREATE TABLE IF NOT EXISTS agent_relations (
+            relation_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            mission_id TEXT NOT NULL REFERENCES missions(mission_id),
+            status TEXT NOT NULL CHECK (status IN ('open', 'closed')),
+            created_at TEXT NOT NULL,
+            closed_at TEXT,
+            data TEXT NOT NULL,
+            CHECK ((status = 'open') = (closed_at IS NULL)))""",
+        "CREATE INDEX IF NOT EXISTS idx_agent_relations_mission ON agent_relations(mission_id, created_at, "
+        "relation_id)",
+        """CREATE TRIGGER IF NOT EXISTS agent_relations_frozen BEFORE UPDATE ON agent_relations
+            WHEN NEW.relation_id IS NOT OLD.relation_id OR NEW.kind IS NOT OLD.kind
+              OR NEW.mission_id IS NOT OLD.mission_id OR NEW.created_at IS NOT OLD.created_at
+              OR OLD.status <> 'open'
+            BEGIN SELECT RAISE(ABORT, 'relation identity is immutable and a closed relation is frozen'); END""",
+        # Participants are fixed at creation (`docs/agent-relations.md`).
+        """CREATE TABLE IF NOT EXISTS agent_relation_participants (
+            relation_id TEXT NOT NULL REFERENCES agent_relations(relation_id),
+            instance_id TEXT NOT NULL REFERENCES agent_instances(instance_id),
+            position TEXT NOT NULL,
+            PRIMARY KEY (relation_id, instance_id))""",
+        "CREATE INDEX IF NOT EXISTS idx_agent_relation_participants_instance ON agent_relation_participants("
+        "instance_id, relation_id)",
+        """CREATE TRIGGER IF NOT EXISTS agent_relation_participants_fixed BEFORE UPDATE ON agent_relation_participants
+            BEGIN SELECT RAISE(ABORT, 'relation participants are fixed at creation'); END""",
+        # The handoff packet, written with its relation (extracted copy of
+        # `agent_relations.data.handoff`, cross-checked on read).
+        """CREATE TABLE IF NOT EXISTS agent_handoff_packets (
+            relation_id TEXT PRIMARY KEY REFERENCES agent_relations(relation_id),
+            predecessor_instance_id TEXT NOT NULL REFERENCES agent_instances(instance_id),
+            successor_instance_id TEXT NOT NULL REFERENCES agent_instances(instance_id),
+            data TEXT NOT NULL,
+            CHECK (predecessor_instance_id <> successor_instance_id))""",
+        "CREATE INDEX IF NOT EXISTS idx_agent_handoff_packets_successor ON agent_handoff_packets("
+        "successor_instance_id)",
+        """CREATE TRIGGER IF NOT EXISTS agent_handoff_packets_fixed BEFORE UPDATE ON agent_handoff_packets
+            BEGIN SELECT RAISE(ABORT, 'a handoff packet is fixed at creation'); END""",
+        # Relation boards (D13): explicit messages only. AUTOINCREMENT: the
+        # thread order is the acceptance order and a rank is never reused.
+        """CREATE TABLE IF NOT EXISTS agent_relation_messages (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id TEXT NOT NULL UNIQUE,
+            relation_id TEXT NOT NULL REFERENCES agent_relations(relation_id),
+            author_instance_id TEXT NOT NULL REFERENCES agent_instances(instance_id),
+            type TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            data TEXT NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS idx_agent_relation_messages_relation ON agent_relation_messages(relation_id, seq)",
+        """CREATE TRIGGER IF NOT EXISTS agent_relation_messages_fixed BEFORE UPDATE ON agent_relation_messages
+            BEGIN SELECT RAISE(ABORT, 'a relation message is never rewritten'); END""",
     ),
 }
 
@@ -596,7 +728,7 @@ class SQLiteStateRepository:
         the same cancellation guarantee as every repository method. Not part of the
         `StateRepository` port; its users are `sqlite_conversation_events`,
         `sqlite_workspace_board`, `sqlite_mcp_plugins`, `sqlite_session_context`,
-        `sqlite_artifacts` and `sqlite_session_activity`.
+        `sqlite_artifacts`, `sqlite_session_activity` and `sqlite_mission_history`.
 
         The connection is shared, so a callback may not leave a transaction open:
         on failure it is rolled back (original error kept); on success it is rolled

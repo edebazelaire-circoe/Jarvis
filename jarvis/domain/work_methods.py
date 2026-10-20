@@ -28,6 +28,7 @@ from enum import StrEnum
 import re
 from typing import Any
 
+from jarvis.domain._checks import ROLE_ID as _ROLE_ID
 from jarvis.domain._checks import check_aware, parse_dt, parse_enum, preview, recode, strict_keys
 from jarvis.domain._checks import check_id as _check_id
 from jarvis.domain._checks import check_text as _check_text
@@ -43,9 +44,8 @@ MAX_QUALITY_CHECKS = 12
 MAX_METHOD_ROLES = 16
 MAX_EVIDENCE_REFS = 16
 MAX_METHOD_VERSION = 9999
-#: Un id de rôle cité par une méthode : même motif que `subagent_roles` (`_MARKER`), qui importe ce module et ne
-#: peut donc pas être importé ici. L'égalité des deux motifs est vérifiée par un test.
-ROLE_ID = re.compile(r"[a-z][a-z_-]{1,23}\Z")
+#: Un id de rôle cité par une méthode : le motif partagé `_checks.ROLE_ID` (celui de `subagent_roles._MARKER`).
+ROLE_ID = _ROLE_ID
 
 #: Les types de relation qu'une méthode peut suggérer (D09) : le vocabulaire canonique des relations
 #: (`agent_relations.AgentRelationKind`), importé, jamais redéfini ici.

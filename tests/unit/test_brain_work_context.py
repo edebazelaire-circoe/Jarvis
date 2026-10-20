@@ -336,8 +336,11 @@ async def test_the_wire_form_carries_declared_public_fields_only():
     assert set(entry) == {
         "source", "external_id", "status", "label", "activity", "summary", "model", "started_at", "ended_at",
         "elapsed_s", "ended_ago_s", "error_class", "work_id", "parent_external_id", "progress_fraction", "background",
+        # Slice 03 organic-agent-orchestration : rôle canonique déclaré, `None` sans déclaration.
+        "role_id",
     }
     assert entry["work_id"] == "work-7"
+    assert entry["role_id"] is None
     assert set(context.to_payload()) == {"revision", "store_id", "generated_at", "active_total", "finished_total", "items", "attention"}
     for contract in (BrainWorkEntry, WorkAttention, BrainWorkContext, BrainContext):
         for name in (f.name for f in dataclasses.fields(contract)):

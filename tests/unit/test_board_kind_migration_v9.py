@@ -125,7 +125,8 @@ def test_every_legacy_payload_gets_its_fixed_type_and_loses_its_mode_keys(migrat
     after = _rows(path)
     conn = sqlite3.connect(path)
     try:
-        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(9,)]
+        # v9 puis les étapes suivantes (v10 : historique des missions, DDL seul, `work_boards` intact).
+        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(sqlite_state._SCHEMA_VERSION,)]
     finally:
         conn.close()
     for board_id, _, _, _, expected in MATRIX:
@@ -280,7 +281,8 @@ def test_the_applied_step_is_reported_with_its_row_count_and_a_rerun_reports_not
             await repository.close()
 
     first = asyncio.run(run())
-    assert first == [{"from": 8, "to": 9, "rows": len(MATRIX)}], first
+    # v10 (historique des missions) suit : DDL seul, aucune ligne changée.
+    assert first == [{"from": 8, "to": 9, "rows": len(MATRIX)}, {"from": 9, "to": 10, "rows": 0}], first
     assert asyncio.run(run()) == []
 
 
