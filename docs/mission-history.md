@@ -156,6 +156,10 @@ Aucune ligne durable n'est écrite pour une instance **tant qu'elle est éphém�
    - réussite (`completed`) -> oubliée (`ephemeral_discarded`), et la clé est retenue (4 096 au plus, la plus
      ancienne oubliée avec un avertissement `mission_history.discarded_forgotten`, une fois) pour qu'un rejeu
      tardif de la déclaration ou de l'observation ne la ressuscite pas, même quand Work State l'a déjà élaguée ;
+   - clôture d'un doublon fusionné (`cancelled` avec `error_class = merged`, `work_state.MERGED_CLOSURE`, envoyée
+     sans drapeau par le relais du Control Center) -> traitée comme une réussite : ce n'est pas une fin du
+     travail, l'éphémère est écartée (`ephemeral_discarded`) et sa clé retenue, jamais retenue en base
+     (`missions.discarded_without_trace`, `retained_in_history(..., error_class)` ; reprise S8 QA) ;
    - échec, arrêt, interruption ou blocage -> le drapeau est rabaissé (`missions.retained_in_history`, même
      règle que `work_state.EPHEMERAL_WORK_STATUSES`), l'instance devient ordinaire et est retenue avec
      `ephemeral_lowered = 1` ; la déclaration d'origine (`ephemeral = true`) reste dans `declaration` ;
@@ -211,7 +215,7 @@ démarre même si l'historique est refusé.
 | Sujet | Où |
 | --- | --- |
 | Relations au runtime (communication, QA, adversaire, relais, délégation alignée) ; leurs résumés dans le contexte du cerveau | fait (Slice 06, [agent-relations.md](agent-relations.md) §10) |
-| Projection dans la scène (rôles, relations, absence des éphémères terminées) depuis `mission_view` | Slice 08 |
+| Projection dans la scène (rôles, relations, absence des éphémères terminées) depuis `mission_view` | fait (Slice 08, [scene-model.md](scene-model.md) › *Roles and agent relations*) |
 | Lecture de l'historique dans l'UI (graphe, Settings) | Slices 09, 10 |
 
 Câblés par la Slice 05 : hook source du fait, registre local, relais, route d'ingestion, `role_id` sur Work
@@ -224,7 +228,9 @@ Après un redémarrage complet, une mission dont ni le propriétaire ni aucun me
 `open` en base : rien n'est deviné ni clos d'office. `GET /v1/missions/{mission_id}` (et `/api/missions/...`)
 porte par mission `live_unknown` (dérivé, jamais persisté : vrai après `ORPHAN_GRACE_S` = 600 s depuis le
 démarrage de Core et la création de la mission), et `mission_history.mission_orphaned` est émis une fois. **La
-Slice 08 (et toute UI) affiche ces missions « état inconnu », jamais « en cours ».** Le balayage tournant
+Slice 08 (et toute UI) affiche ces missions « état inconnu », jamais « en cours ».** (Slice 08 : la scène ne
+recopie pas l'état des missions ; la projection n'écrit jamais `exec_state` depuis l'historique, et l'UI lit
+`live_unknown` dans cette route.) Le balayage tournant
 (64 par passe, curseur croissant) revoit toute mission ouverte en un nombre borné de passes et clôt celle dont
 la fin, perdue par le bus, est encore lisible dans Work State.
 

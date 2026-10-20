@@ -85,7 +85,17 @@ les migrations que Core applique au démarrage :
   Core journalise une ligne `core.state.migrated` par étape appliquée (de, vers,
   lignes changées) ;
 - `scene.sqlite3` : même mécanisme dans `jarvis/adapters/sqlite_scene.py`.
-  Sauvegarde `scene.sqlite3.v<N>.bak`.
+  Sauvegarde `scene.sqlite3.v<N>.bak` ; Core journalise une ligne
+  `core.scene.migrated` par étape (de, vers, sauvegarde). v2
+  (organic-agent-orchestration, Slice 08) ne réécrit aucune ligne : elle monte
+  la version du fichier (rôles et liens d'agent dans les colonnes `data`).
+  Retour arrière vers un Core antérieur : JARVIS arrêté, mettre de côté
+  `scene.sqlite3` (avec son `-wal` et son `-shm`, sans les effacer), puis
+  remettre `scene.sqlite3.v1.bak` à sa place. Tout ce qui a été écrit dans la
+  scène après la migration est perdu (étoiles, rôles, liens, placements,
+  archivages). Ne jamais redescendre `schema_version` à la main dans le fichier
+  v2 : un Core plus ancien lirait des charges inconnues et refuserait la base
+  comme `corrupted`.
 
 Règles :
 

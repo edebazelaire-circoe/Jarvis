@@ -1,0 +1,97 @@
+17:58:40 base de scène v1 construite : C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\7314dd51-936a-4614-8684-8f4233075b7c\scratchpad\s08\data\state\scene.sqlite3
+17:58:41 core pid 16596
+17:58:45 control center pid 14164
+17:58:49 agent prêt : True
+17:59:05 envoi qa: 200
+18:00:05 travail qa terminé : True après 60 s
+18:00:30 envoi ephemeral: 200
+18:00:51 travail ephemeral terminé : True après 21 s
+18:00:53 observation eph-ok running: 200 {'created': 1}
+18:00:54 observation eph-ok completed: 200 {'updated': 1}
+18:00:55 observation eph-fail running: 200 {'created': 1}
+18:00:56 observation eph-fail failed: 200 {'updated': 1}
+18:01:15 taskkill 16596: 0 Op‚ration r‚ussieÿ: le processus de PID 34128 (processus enfant de PID 19648) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 19648 (processus enfant de PID 16596) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 16596 (processus enfant de PID 10112) a ‚t‚
+arrˆt‚. 
+18:01:16 port 30653 après arrêt : False
+18:01:16 core relancé pid 34404
+18:01:19 core en bonne santé : True
+18:02:35 taskkill 14164: 0 Op‚ration r‚ussieÿ: le processus de PID 13996 (processus enfant de PID 25288) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 15552 (processus enfant de PID 17460) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 7720 (processus enfant de PID 26884) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 19796 (processus enfant de PID 25288) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 12132 (processus enfant de PID 17460) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 27636 (processus enfant de PID 26884) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 9232 (processus enfant de PID 32428) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 34644 (processus enfant de PID 32428) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 33308 (processus enfant de PID 30816) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 34088 (processus enfant de PID 30816) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 18072 (processus enfant de PID 18836) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 36624 (processus enfant de PID 18836) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 10824 (processus enfant de PID 14884) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 15276 (processus enfant de PID 14884) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 24532 (processus enfant de PID 8216) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 19844 (processus enfant de PID 8216) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 6596 (processus enfant de PID 33464) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 20260 (processus enfant de PID 33464) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 7900 (processus enfant de PID 29816) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 23732 (processus enfant de PID 29816) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 25288 (processus enfant de PID 18012) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 17460 (processus enfant de PID 18012) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 26884 (processus enfant de PID 18012) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 32428 (processus enfant de PID 18012) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 30816 (processus enfant de PID 18012) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 18836 (processus enfant de PID 18012) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 14884 (processus enfant de PID 18012) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 8216 (processus enfant de PID 18012) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 33464 (processus enfant de PID 18012) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 29816 (processus enfant de PID 18012) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 32000 (processus enfant de PID 27160) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 18012 (processus enfant de PID 27160) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 27160 (processus enfant de PID 14164) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 14164 (processus enfant de PID 10112) a ‚t‚
+arrˆt‚. 
+18:02:35 taskkill 34404: 0 Op‚ration r‚ussieÿ: le processus de PID 27156 (processus enfant de PID 33436) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 33436 (processus enfant de PID 34404) a ‚t‚
+arrˆt‚.
+Op‚ration r‚ussieÿ: le processus de PID 34404 (processus enfant de PID 30500) a ‚t‚
+arrˆt‚. 
+18:02:39 port 30653 à l'écoute : False
+18:02:39 port 30654 à l'écoute : False

@@ -32,11 +32,12 @@ composition, user constraints and the user's disposition of finished work.
 | `constraints` | `placed_by` (`runtime` \| `brain` \| `user` \| `resolver`) and `pinned_by_user`. Set by the reducer only. |
 | `origin` | actor that created the object (`runtime` \| `brain` \| `user`). Set once by the reducer, never writable, on the wire. An `agent`/`job` always has `origin = runtime`. |
 | `work_ref` | `{source, external_id, work_id?}` — the Core `WorkItem` identity the node projects. |
+| `role_ref` | `agent` stars only, optional (absent from the wire when `null`): `{role_id, instance_id?, mission_id?, mission_owner}` — the explicit role id (D01) and the mission responsibility (D03, **current** owner) projected from Core (organic-agent-orchestration Slice 08, see *Roles and agent relations*). An execution field: runtime writes it, brain and user never (`execution_truth`). Never derived from `category`, a label or a title. |
 | `payload` | `{title ≤ 160, summary ≤ 2 000 (multi-line), items ≤ 32 [{label, ref, url}]}`; `url` is `http(s)` only; compact UTF-8 JSON ≤ 16 KiB. `title`, `label`, `ref`, `url` are single printable lines; `summary` accepts `\n` and `\t` but no other C0 control character. `title` and `summary` are rendered as markdown (see *Markdown in the payload*). |
 
 ## Relations
 
-`SceneRelation {relation_id, kind, from_id, to_id, layer = 50}`, directed, two
+`SceneRelation {relation_id, kind, from_id, to_id, layer = 50, ref?}`, directed, two
 distinct **active** objects.
 
 | Kind | Typical use |
@@ -44,6 +45,7 @@ distinct **active** objects.
 | `parent_of` | execution topology (parent sub-agent/job → child), written by runtime |
 | `explains` | artifact → star (or object) it explains, written with the artifact by `attach_artifact` (Slice 07); also signal → node it is attached to |
 | `groups` | group → member |
+| `delegation`, `communication`, `adversary`, `qa`, `handoff` | **agent relations** (D09, organic-agent-orchestration Slice 08): one actual relation of Core's mission history between two agent stars, written by runtime only, always with its `ref` `{relation_id, mission_id, state: open\|closed, outcome?}` (and only these kinds carry one). See *Roles and agent relations* |
 
 A signal (`attach_signal`) has exactly one target; its `explains` relation
 carries the signal's own id as `relation_id` (`is_signal_relation`). A signal is
@@ -220,7 +222,10 @@ reservation on `pin`/`unpin` are lifted: they sent the gesture back to the user,
 which he refuses. What is still refused to the brain is never "this belongs to
 the user" but a truth of another layer: `runtime` is not a person but Core's
 projector, and `exec_state` / `work_ref` are read in Core instead of being
-written from the scene (decision 17).
+written from the scene (decision 17). Since organic-agent-orchestration Slice 08
+the same holds for `role_ref` and for the agent relations (`delegation`,
+`communication`, `adversary`, `qa`, `handoff`) and their `ref`: they project
+Core's mission history.
 
 Operation level (`ALLOWED_SCENE_OPS`):
 
@@ -257,7 +262,9 @@ Rules:
 - **runtime** writes only `agent`/`job`/`attention` objects (`runtime_kind`),
   never a composition field — `representation`, `geometry`, `layer`, `order`,
   `visibility` — nor a relation layer (`runtime_composition`); links only
-  `parent_of` between execution nodes; unlinks only a `parent_of` between two
+  `parent_of` and the agent relations (with their `ref`; a `link` on the same id
+  and endpoints with another `ref` updates it and keeps the stored layer) between
+  execution nodes; never unlinks an agent relation; unlinks only a `parent_of` between two
   runtime execution nodes, or a relation **shaped like a signal link**
   (`explains` whose `relation_id` equals its `from_id`) from a runtime
   `attention` object to a runtime execution node — the retirement of a signal,
@@ -278,8 +285,11 @@ Rules:
   existing stars (category, payload, layout, visibility, links). `attention`
   signals are creatable by all three actors: runtime for execution facts, brain
   to point at something worth a look, user to mark something for themselves.
-- **Execution truth**: only runtime changes `exec_state` or `work_ref`
-  (`execution_truth`, decision 17).
+- **Execution truth**: only runtime changes `exec_state`, `work_ref` or
+  `role_ref` (`execution_truth`, decision 17), or the `ref` of an agent relation
+  (a brain/user `link` that relayers one must repeat its `ref` unchanged,
+  `execution_truth` otherwise). `role_ref` on anything but an `agent` star is
+  `invalid` / `role_ref_kind`.
 - **Runtime-owned relations** (Slice 06 QA rework, decisions 3 and 17): brain
   and user never `unlink` a `parent_of` between two execution nodes, nor a
   signal-shaped `explains` (`relation_id == from_id`) from a runtime `attention`
@@ -287,7 +297,10 @@ Rules:
   on shape and endpoints (relations have no origin). Brain and user cannot
   **create** a `parent_of` between two execution nodes either (`runtime_owned`
   at `link`, Slice 06 final follow-up): such a link could never be removed
-  again, so a brain mistake would leave false topology. What stays open: the
+  again, so a brain mistake would leave false topology. The agent relations are
+  runtime-owned the same way, and brain and user create none of them, whatever
+  the endpoints (`runtime_owned`, D09/D15: a relation is never inferred nor
+  composed, only projected from an actual one). What stays open: the
   user dismisses by archiving the star or the signal (archive removes the object's
   relations); brain and user may hide the signal object (`set_visibility`) and
   change a runtime relation's layer (`link` on the same id and endpoints).
@@ -298,7 +311,8 @@ Rules:
   relation whose id has the form the runtime projector builds
   (`is_runtime_reserved_id`: any `:` as in `<source>:<external_id>` and its
   hashed form, or a `attention!` / `attention#` / `parent_of!` / `parent_of#`
-  head): `reserved_id`. Otherwise an object or relation created first under such
+  head, or an agent-relation head `delegation!`, `communication!`, `adversary!`,
+  `qa!`, `handoff!` and their `#` hashed forms): `reserved_id`. Otherwise an object or relation created first under such
   an id would stop the projector from placing the star, the `parent_of` link or
   the failure signal (`relation_conflict`, `projection_conflict`). Composing what
   runtime created under those ids (patch, hide, relayer an existing relation)
@@ -417,6 +431,88 @@ Residual risks (accepted by the PM after Slice 04 QA):
   producer data or brain/user links; renderers walking parents must guard
   against them (Slice 05: the AutoResolver's anchor walk stops at the first
   repeated id).
+
+## Roles and agent relations
+
+Organic-agent-orchestration Slice 08. The scene **projects** the actual,
+non-ephemeral execution with its role identity and its typed relations; Core
+Work State stays the live truth (D16), Core's mission history
+(`jarvis/core/mission_history.py`, [mission-history.md](mission-history.md))
+the durable semantic truth (D18). The projector reads only
+`MissionHistoryService.instance_for_work` and `mission_view` — never Conversation
+Events, never a label.
+
+- **Role** (`role_ref`): set on an `agent` star by `patch_object` once its
+  instance is known: `role_id`, `instance_id`, `mission_id`, `mission_owner` =
+  "this instance is the mission's **current** owner" (after a handoff the
+  successor carries it, the predecessor keeps its role and loses the
+  responsibility, D03/D14). An agent with no retained instance (history
+  degraded, undeclared) gets `{role_id}` from `WorkItem.role_id` alone, and only
+  if the star has no role yet: history always wins. `jarvis-no-spawn` is a
+  provider sub-agent type, not a role, and never appears here.
+- **Relations**: every relation of the instance's root mission tree becomes
+  links between the stars of its participants. Directed kinds (`delegation`
+  delegator → delegatee, `qa` reviewer → reviewed, `handoff` predecessor →
+  successor) give one link `<kind>!<relation id>`; peer kinds (`adversary`
+  producers, `communication` members, N ≥ 2) give one link per pair, in
+  participant order, `<kind>!<relation id>!<instance a>~<instance b>`. Every link
+  of one relation carries the same `ref`, which groups them. Ids are
+  deterministic, hashed beyond 128 characters like stars. `ref.state` /
+  `ref.outcome` follow the history (a relation may stay open in a closed mission,
+  then `withdrawn` after the 600 s grace; a handoff is closed `transferred` at
+  creation; a delegation `rel_dlg_*` closes `returned` with its sub-mission).
+- **Nothing planned** (D15): a link exists only when **both** participant stars
+  exist; no star and no link is ever created from history alone (a star is born
+  from Work State only). A participant whose work was never observed, or an
+  archived star, leaves the relation unprojected.
+- **No live status from history**: the mission pass never writes `exec_state`.
+  A mission that `GET /v1/missions/{id}` reports `live_unknown` (orphan after a
+  restart) shows « état inconnu » there; its stars keep the scene's own
+  restart rule (`unknown`, then `interrupted` after the grace), never "running".
+  Mission status is **not** copied into the scene: it is derived and read from
+  the mission route.
+- **Cadence**: on a work event of an agent star, its mission is read at most
+  every `mission_min_interval_s` (1 s); missions with something open are
+  re-read every `mission_refresh_s` (5 s), at most 16 per pass, 64 followed;
+  at start the missions carried by persisted stars are re-read once (what
+  changed while Core was stopped). Failures of the history are reported once
+  (`core.scene.mission_projection_failed`, warning) and leave the stars as they
+  are; a pass that changed something logs `core.scene.mission_projected`
+  (info). A full relation table (`relation_limit`) refuses the link (logged by
+  `SceneService`); the next pass retries.
+
+### Ephemeral work (D08)
+
+A work item that is **still ephemeral** (`WorkItem.ephemeral`: pending, running
+or completed successfully) gets **no scene row at all**: no star, no signal, no
+link, nothing persisted, nothing to resurrect after a restart. It is visible
+live in the Agents panel only. When it fails, is stopped, interrupted or blocked,
+Work State lowers the flag and the star is created then, as an ordinary one with
+its signal (`core.scene.star_created` carries `ephemeral_lowered: true`). Each
+skipped item logs `core.scene.ephemeral_skipped` once (info). The mission
+history follows the same rule (no instance while ephemeral), so an ephemeral
+never appears in a relation either.
+
+- A **merged-duplicate closure** (`cancelled` with `error_class = merged`, sent
+  by the Control Center relay when it retires a duplicate key,
+  `jarvis/runtime/work_ingress.py`) carries no ephemeral flag, so Work State
+  lowers it. It is not an execution fact to show: it **never creates** a star
+  for work that had none (`core.scene.merged_skipped`, debug). A star that
+  already exists receives it like any end (`cancelled`).
+- An ephemeral **interrupted by a Control Center stop** (`interrupted` /
+  `process_stopped`) is a non-successful end: by the rule, the flag is lowered
+  and it gets a star, like a failure.
+
+Stars of ephemeral tasks **persisted before this rule** (scene file v1) are
+accepted as **legacy** (agent 0 decision, Slice 08 rework), with no automatic
+removal: nothing in a scene row says that a star was ephemeral (the flag lives in
+Core's in-memory Work State), and guessing it from a label is excluded. They are
+ordinary finished stars, still projected (Decision 12), that the user clears with
+the existing archive or « archiver les terminés ». The page hides them only
+while the work table still marks them ephemeral (`ephemeralVisibility`): after
+a full restart (Core and Control Center) the table no longer knows them and
+they **become visible again, exactly as on main**. New ephemerals never reach
+the file.
 
 ## Finish marker
 
@@ -900,6 +996,24 @@ state, not a log of patches, so nothing stored is replayed through
 `apply_scene_patch`. Any change to the wire or storage shape requires bumping
 `SCENE_SCHEMA_VERSION` (stored as `wire_schema_version`) or the file's
 `schema_version`; a reader refuses any version it does not know.
+
+File schema **v2** (organic-agent-orchestration Slice 08): same tables, new
+vocabulary in the `data` columns (`role_ref`, the agent relation kinds and their
+`ref`). `_MIGRATIONS[2]` rewrites no row: it only raises the file version, after
+the automatic `scene.sqlite3.v1.bak`, so that an older Core refuses the file as
+`schema_newer` instead of calling it `corrupted` at the first relation kind it
+does not know. The wire stays `SCENE_SCHEMA_VERSION = 1`: both new keys are
+optional and absent when empty, so a v1 row, command or patch decodes unchanged
+and every client (page, MCP) keeps sending version 1. Frozen schema:
+`tests/schema/scene.v2.sql`. A running JARVIS takes the migration at its next
+Core start (the user restarts it).
+
+**Rollback** (going back to a Core older than v2): stop JARVIS, set the current
+`scene.sqlite3` aside (with its `-wal` and `-shm`, never deleted), then put
+`scene.sqlite3.v1.bak` back as `scene.sqlite3`. This **loses everything written
+to the scene after the migration** (new stars, roles, links, placements,
+archives). Never lower `schema_version` by hand in the v2 file: an older Core
+would then read payloads it does not know and refuse the file as `corrupted`.
 
 ## Transport
 

@@ -126,13 +126,28 @@ T = TypeVar("T")
 #: Version de la disposition des tables de ce fichier. Une version plus
 #: récente ou inconnue est refusée ; une version plus ancienne est migrée par
 #: `_MIGRATIONS`, jamais autrement (règle du dépôt, `CLAUDE.md`).
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 #: Migrations avant seulement, une transaction chacune, indexées par la
 #: version qu'elles produisent. `_DDL` est la v1 figée : un changement de
 #: schéma s'ajoute ici (et incrémente `_SCHEMA_VERSION`), jamais dans `_DDL`.
 #: Une base neuve suit le même chemin qu'une base migrée. Garde :
 #: `tests/unit/test_schema_migrations.py`.
-_MIGRATIONS: dict[int, tuple[str, ...]] = {}
+#:
+#: v2 (handoff organic-agent-orchestration, Slice 08) : **vocabulaire des
+#: colonnes `data`**, tables inchangées. Une étoile `agent` peut porter
+#: `role_ref`, un lien peut être `delegation` / `communication` / `adversary`
+#: / `qa` / `handoff` avec sa `ref` (`jarvis/domain/scene.py`). Les lignes v1
+#: se lisent telles quelles (clés absentes = `None`) : l'étape ne réécrit
+#: aucune ligne, elle ne fait que monter la version, après la sauvegarde
+#: automatique `scene.sqlite3.v1.bak`. Raison d'être : un Core plus ancien
+#: refuse alors ce fichier en `schema_newer` au lieu de le déclarer
+#: `corrupted` à la première nature de lien qu'il ne connaît pas.
+#: Les étoiles d'éphémères persistées par la v1 ne sont **pas** retirées :
+#: rien dans une ligne de scène ne dit qu'une étoile était éphémère (le
+#: drapeau vit dans l'état de travail de Core, en mémoire), et la deviner d'un
+#: libellé est exclu ; elles restent des étoiles terminées ordinaires, que
+#: l'utilisateur range par l'archivage existant (`docs/scene-model.md`).
+_MIGRATIONS: dict[int, tuple[str, ...]] = {2: ()}
 #: Lecture d'historique : bornée, jamais un fichier entier en mémoire.
 MAX_HISTORY_READ = 1_000
 #: Âge minimal d'un temporaire de création pour être balayé : une création en
@@ -235,6 +250,10 @@ class SQLiteSceneRepository:
         #: Chemins où le dernier `initialize` a mis de côté un `-wal`/`-shm`
         #: orphelin (base disparue) ; vide sinon.
         self.set_aside: tuple[str, ...] = ()
+        #: Étapes de migration appliquées par le dernier `initialize` :
+        #: `{from, to, backup}` (nom de la sauvegarde) ; le service les journalise
+        #: (`core.scene.migrated`), comme `core.state.migrated` pour l'état.
+        self.migrations_applied: list[dict[str, object]] = []
 
     @property
     def _wal_path(self) -> Path:
@@ -337,6 +356,7 @@ class SQLiteSceneRepository:
                 SceneStoreErrorCode.STORAGE_IO, f"scene store {self.path} cannot be opened: {type(exc).__name__}: {exc}"
             ) from exc
         self.set_aside = ()
+        self.migrations_applied = []
         if not exists:
             if wal_exists:
                 self.set_aside = self._set_aside_orphans()
@@ -485,7 +505,8 @@ class SQLiteSceneRepository:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 current = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-                if current < target:
+                applied = current < target
+                if applied:
                     for statement in _MIGRATIONS[target]:
                         conn.execute(statement)
                     conn.execute("UPDATE schema_version SET version = ?", (target,))
@@ -493,6 +514,8 @@ class SQLiteSceneRepository:
             except BaseException as exc:
                 _rollback(conn, exc)
                 raise
+            if applied:
+                self.migrations_applied.append({"from": target - 1, "to": target, "backup": target_backup.name})
 
     def _refusal(self, exc: sqlite3.Error) -> SceneStoreError:
         code = _sqlite_code(exc)

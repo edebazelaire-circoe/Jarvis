@@ -2277,6 +2277,9 @@ Projection authority. The projector issues only what decision 3 grants runtime
 | --- | --- |
 | `kind = agent` (Claude sub-agent) or `kind = job` (Core job, back-brain jobs included; speculative jobs are never observed) | star `agent` / `job`, `category` = the kind token, `exec_state` = `status`, `work_ref` = `{source, external_id, work_id}`, `payload.title` = label (clipped to 160, one printable line), `payload.summary` = summary (C0 controls other than `\n`/`\t` replaced, `\r\n` → `\n`); unplaced (`geometry = null`, the renderer places it) |
 | `kind = shell`, `other`, empty | nothing (decision 4); a task whose kind later becomes `agent` gets its star then |
+| `ephemeral = true` (pending, running, or completed successfully; organic-agent-orchestration Slice 08, D08) | **nothing**: no star, no signal, no link, no row persisted (`core.scene.ephemeral_skipped`, once per item). Once Work State lowers the flag (failed, stopped, interrupted, blocked) the star is created then, as an ordinary one |
+| retained instance in Core's mission history (Slice 08) | `role_ref` `{role_id, instance_id, mission_id, mission_owner}` on the `agent` star (current owner of the mission); without an instance, `{role_id}` from `WorkItem.role_id` |
+| actual relation of the instance's mission tree (Slice 08) | one typed link per relation (`delegation`, `qa`, `handoff`) or per participant pair (`adversary`, `communication`), between existing stars only, with its `ref` (state, outcome); see [scene-model.md](scene-model.md) › *Roles and agent relations* |
 | status change | `exec_state` only; never visibility nor disposition (decision 12) |
 | label / summary change | payload refreshed only while the star still carries the payload the projector wrote. In memory (per star, up to 1 024 stars) the rule is exact: a payload the brain or user changed is left alone. Without that memory (after a Core restart, or once forgotten) the projector treats a payload with an empty title or the same title as its own, so a brain or user edit that kept the title (a rewritten summary only) **can be overwritten** by the next refresh. Category is announced at creation only and never rewritten |
 | `parent_external_id` (same source) | `parent_of` parent → child once both stars exist, whichever arrives first (child first: linked when the parent star is born, by scanning the ≤ 64 work items). A parent without a star (a shell task) gives no link and no star |
@@ -2320,13 +2323,23 @@ Notes for the renderer (Slice 05, applied in *Scene renderer*):
   links whatever parents the producers report, while brain and user may add
   their own `parent_of`. A layout that walks parents must guard against cycles.
 
-Nuance for ephemeral tasks (see *Ephemeral tasks* below): Decision 12 is about
-**data**. A completed ephemeral task is still never removed, archived or
-rewritten (database, scene, journal and timeline keep it); the page merely
-**stops displaying** it a few seconds after the end (`EPHEMERAL_LINGER_MS`), or
-never displays it with the browser setting off. "No longer displayed" is a view
-decision taken in the browser, not a projector action, and it never applies to a
-failure.
+Ephemeral tasks (see *Ephemeral tasks* below; organic-agent-orchestration
+Slice 08, D08): the projector **never writes** a scene row for a work item that
+is still ephemeral, so a successful ephemeral leaves nothing in `scene.sqlite3`
+to remove, hide or resurrect after a restart; a failure lowers the flag and is
+projected then. Decision 12 still holds for what *is* in the scene: stars of
+ephemeral tasks persisted before this rule (scene file v1) are never removed,
+archived or rewritten by the projector (nothing in a row says it was ephemeral);
+the page keeps hiding them while the work table marks them ephemeral, and the
+user archives them like any finished star.
+
+Roles and relations (Slice 08): the projector also reads Core's mission
+history (`MissionHistoryService.instance_for_work`, `mission_view`; never
+Conversation Events) and writes `role_ref` on agent stars and the typed agent
+relations between existing stars. It never derives `exec_state` from history,
+never creates a star or a link for a participant that has no star (no planned
+node, D15), and re-reads followed missions every 5 s while something in them is
+open. Contract: [scene-model.md](scene-model.md) › *Roles and agent relations*.
 
 Saturation. Decision 12 stays: completed work is never removed automatically,
 so a long-lived scene fills up (QA measured about 400 sub-agents at a realistic
@@ -3537,9 +3550,10 @@ preparations (sacrificial and already silent): they share the word only.
   observation, since refusing a failure report would hide the failure).
 - *Wire.* The flag crosses as `ephemeral` on `WorkObservation` / `WorkItem` (added
   to `OBSERVATION_WIRE_KEYS`; `from_payload` defaults it to false). **No SQLite
-  migration**: work state lives in Core's memory, and the scene schema is
-  untouched — the page joins stars to work items by `work_ref`
-  (`source|external_id`).
+  migration** for the flag itself: work state lives in Core's memory. Since
+  organic-agent-orchestration Slice 08 the scene projector reads it: no star is
+  created while it is true (D08), so a successful ephemeral never reaches
+  `scene.sqlite3` (see *Runtime scene projection*).
 - *Silence decided by code.* `AgentTaskTracker.take_relayed_work()` returns the
   relayed `work_key` and a `silent` flag, true only when **every** background task
   finished since the last `result` is a successful ephemeral. `_push_notice` then
@@ -3552,10 +3566,12 @@ preparations (sacrificial and already silent): they share the word only.
   rule for the Agents panel (`listHtml`, `activeAgents`, completion toasts) and the
   scene (`viewModel(..., {workView})`, fed by `JarvisScene.setWork` from
   `fetchTasks`): a successful ephemeral leaves `EPHEMERAL_LINGER_MS` (6 s) after
-  its end; with `showEphemeral` off it is never shown, even while running; the
-  scene star is skipped by the view model only (it stays in the scene state,
-  `visibility` untouched, not counted in `hidden`). The scene status wins over the
-  work table so a late table can never keep a failure masked.
+  its end; with `showEphemeral` off it is never shown, even while running. In the
+  scene this filter now only concerns stars persisted before Slice 08 (the
+  projector creates none for an ephemeral): such a star is skipped by the view
+  model only (it stays in the scene state, `visibility` untouched, not counted in
+  `hidden`). The scene status wins over the work table so a late table can never
+  keep a failure masked.
 - *Look.* The tone follows the work table (`setWork`, fed by `fetchTasks`), so a
   new star may show its ordinary tone for about one second before turning blue.
   The star's accessible label names it in words (`éphémère`), not by colour alone.

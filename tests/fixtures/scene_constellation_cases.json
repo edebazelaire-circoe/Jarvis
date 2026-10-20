@@ -1,5 +1,5 @@
 {
-  "contract": "docs/scene-selection-batch.md §2 — canonical constellation. Run by tests/unit/test_scene_constellation.py against jarvis.domain.scene_selection.constellation_of (every case) and control_center_scene_interact.js constellationOf (depth-absent cases). Compact scene form: objects [{id, kind, origin?, visibility?, work?: [source, external_id]}], relations [[relation_id, kind, from_id, to_id]]; defaults origin runtime for agent/job/attention, brain otherwise; visibility visible.",
+  "contract": "docs/scene-selection-batch.md §2 — canonical constellation. Run by tests/unit/test_scene_constellation.py against jarvis.domain.scene_selection.constellation_of (every case) and control_center_scene_interact.js constellationOf (depth-absent cases). Compact scene form: objects [{id, kind, origin?, visibility?, work?: [source, external_id]}], relations [[relation_id, kind, from_id, to_id]]; defaults origin runtime for agent/job/attention, brain otherwise; visibility visible. Agent relation kinds (delegation, communication, adversary, qa, handoff; Slice 08 organic-agent-orchestration) get a RelationRef derived by the test (relation_id rel_<id>, mission mis_fixture): the walk ignores it, like the kind and the direction.",
   "scenes": {
     "figure": {
       "objects": [
@@ -33,6 +33,24 @@
         ["x1", "explains", "a", "b"],
         ["x2", "explains", "c", "a"],
         ["x3", "groups", "d", "c"]
+      ],
+      "archived_ids": []
+    },
+    "agent-relations": {
+      "objects": [
+        {"id": "claude:owner", "kind": "agent", "work": ["claude", "owner"]},
+        {"id": "claude:coder", "kind": "agent", "work": ["claude", "coder"]},
+        {"id": "claude:reviewer", "kind": "agent", "work": ["claude", "reviewer"]},
+        {"id": "claude:successor", "kind": "agent", "work": ["claude", "successor"]},
+        {"id": "claude:producer-a", "kind": "agent", "work": ["claude", "producer-a"]},
+        {"id": "claude:producer-b", "kind": "agent", "work": ["claude", "producer-b"]}
+      ],
+      "relations": [
+        ["delegation!r", "delegation", "claude:owner", "claude:coder"],
+        ["qa!r", "qa", "claude:reviewer", "claude:coder"],
+        ["handoff!r", "handoff", "claude:coder", "claude:successor"],
+        ["communication!r", "communication", "claude:successor", "claude:producer-a"],
+        ["adversary!r", "adversary", "claude:producer-a", "claude:producer-b"]
       ],
       "archived_ids": []
     }
@@ -82,6 +100,24 @@
      "expected": ["d", "c", "a", "b"]},
     {"name": "depth bounds a chain",
      "scene": "reverse-order", "root": "d", "depth": 2,
-     "expected": ["d", "c", "a"]}
+     "expected": ["d", "c", "a"]},
+    {"name": "agent relations: delegation from its delegator",
+     "scene": "agent-relations", "root": "claude:owner", "depth": null,
+     "expected": ["claude:owner", "claude:coder", "claude:reviewer", "claude:successor", "claude:producer-a", "claude:producer-b"]},
+    {"name": "agent relations: qa from its reviewer",
+     "scene": "agent-relations", "root": "claude:reviewer", "depth": null,
+     "expected": ["claude:reviewer", "claude:coder", "claude:owner", "claude:successor", "claude:producer-a", "claude:producer-b"]},
+    {"name": "agent relations: delegation, qa and handoff from their shared star",
+     "scene": "agent-relations", "root": "claude:coder", "depth": null,
+     "expected": ["claude:coder", "claude:owner", "claude:reviewer", "claude:successor", "claude:producer-a", "claude:producer-b"]},
+    {"name": "agent relations: handoff from its successor, communication from a member",
+     "scene": "agent-relations", "root": "claude:successor", "depth": null,
+     "expected": ["claude:successor", "claude:coder", "claude:producer-a", "claude:owner", "claude:reviewer", "claude:producer-b"]},
+    {"name": "agent relations: communication and adversary from a shared participant",
+     "scene": "agent-relations", "root": "claude:producer-a", "depth": null,
+     "expected": ["claude:producer-a", "claude:successor", "claude:producer-b", "claude:coder", "claude:owner", "claude:reviewer"]},
+    {"name": "agent relations: adversary from the second producer",
+     "scene": "agent-relations", "root": "claude:producer-b", "depth": null,
+     "expected": ["claude:producer-b", "claude:producer-a", "claude:successor", "claude:coder", "claude:owner", "claude:reviewer"]}
   ]
 }

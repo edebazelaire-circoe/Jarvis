@@ -110,6 +110,19 @@ ERROR_WORK_STATUSES = frozenset({WorkStatus.FAILED, WorkStatus.CANCELLED, WorkSt
 #: un constat d'échec pour un drapeau en trop le rendrait invisible.
 EPHEMERAL_WORK_STATUSES = frozenset({WorkStatus.PENDING, WorkStatus.RUNNING, WorkStatus.COMPLETED})
 
+#: `error_class` de la clôture d'un doublon fusionné : le relais du Control
+#: Center retire la clé d'une tâche fusionnée avec une autre par `cancelled`
+#: (`jarvis/runtime/work_ingress.py`), sans drapeau éphémère. Ce n'est pas une
+#: fin du travail : ni l'historique des missions ni la scène n'en tirent une
+#: trace durable pour une éphémère (D08, Slices 03 et 08).
+MERGED_CLOSURE = "merged"
+
+
+def is_merged_closure(status: WorkStatus, error_class: str | None) -> bool:
+    """Vrai pour la clôture `cancelled` / `merged` d'un doublon fusionné."""
+
+    return status is WorkStatus.CANCELLED and error_class == MERGED_CLOSURE
+
 #: Transitions permises depuis un statut non terminal. Rester dans le même
 #: statut est permis (l'activité change). Revenir à `PENDING` ne l'est pas :
 #: un travail commencé ne redevient pas « pas encore commencé ». Un statut

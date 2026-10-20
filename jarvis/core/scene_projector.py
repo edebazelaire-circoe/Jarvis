@@ -58,7 +58,32 @@ Règles (voir `docs/ARCHITECTURE.md` › *Runtime scene projection*) :
   d'abord (Décision 4), puis travail terminé, les plus anciens d'abord dans
   chaque groupe. L'avertissement de saturation est limité à un toutes les
   `SATURATION_WARNING_INTERVAL_S`. Décision 12 : rien n'est retiré
-  automatiquement.
+  automatiquement ;
+- **éphémère** (handoff organic-agent-orchestration, Slice 08, D08) : un
+  travail encore éphémère (`WorkItem.ephemeral`, vrai seulement en attente,
+  en cours ou après une réussite) ne crée **aucune** étoile : sa vie se voit
+  dans le panneau Agents, jamais dans la scène persistée. S'il échoue, est
+  arrêté, interrompu ou bloqué, Work State rabaisse le drapeau et l'étoile naît
+  alors comme une étoile ordinaire (signal compris). La clôture d'un doublon
+  fusionné (`cancelled` / `merged`, sans drapeau) ne crée jamais d'étoile pour
+  un travail qui n'en avait pas (`work_state.MERGED_CLOSURE`). Une étoile déjà persistée
+  (scène v1, avant cette règle) n'est ni retirée ni archivée : la projection
+  continue de la tenir à jour (Décision 12, aucun retrait automatique) ;
+- **rôles et relations** (Slice 08) : avec un historique des missions
+  (`missions`, `MissionHistoryService`), chaque étoile `agent` dont
+  l'instance est retenue reçoit `role_ref` (rôle explicite, instance,
+  mission, propriétaire **courant**), et chaque relation réelle de son arbre de
+  missions devient un lien typé (`delegation`, `qa`, `handoff` : un lien
+  dirigé ; `communication`, `adversary` : un lien par paire de participants),
+  porteur de sa `RelationRef` (état, issue). Lecture par `mission_view` et
+  `instance_for_work` seulement : jamais Conversation Events, jamais un
+  libellé. Aucune étoile ni aucun lien n'est créé pour ce qui n'a pas d'étoile
+  (pas de nœud futur, D15) ; `exec_state` n'est jamais tiré de l'historique
+  (une mission `live_unknown` ne fait rien passer « en cours »). Lectures
+  bornées : une mission au plus toutes les `mission_min_interval_s` sur
+  événement, et un rafraîchissement toutes les `mission_refresh_s` des
+  missions suivies (au plus `MAX_MISSIONS_PER_REFRESH` par tour) tant qu'une
+  mission ou une relation y reste ouverte.
 
 Robustesse : l'abonnement est tolérant (`lossy=True`), jamais évincé et sans
 effet sur les autres abonnés. Un saut de révision, un autre `store_id` ou le
@@ -83,13 +108,19 @@ from typing import Callable, Protocol
 from jarvis.core.v2_services import JOB_WORK_SOURCE, CoreEventBus, NullDiagnosticSink
 from jarvis.core.work_state import CORE_WORK_UPDATED
 from jarvis.domain._checks import MAX_ID_CHARS
+from jarvis.domain.agent_relations import AgentRelation
+from jarvis.domain.mission_history import InstanceView, MissionTree
+from jarvis.domain.missions import AgentInstance
 from jarvis.domain.scene import (
     EXECUTION_KINDS,
     MAX_PAYLOAD_SUMMARY_CHARS,
     MAX_SCENE_OBJECTS,
     MAX_TITLE_CHARS,
+    AgentRelationState,
     ExecState,
     RelationKind,
+    RelationRef,
+    RoleRef,
     SceneActor,
     SceneCommand,
     SceneCommandOutcome,
@@ -107,8 +138,11 @@ from jarvis.domain.scene import (
     is_live_signal,
 )
 from jarvis.domain.v2 import ProtocolEnvelope
-from jarvis.domain.work_state import MAX_SUMMARY_CHARS, WorkItem, WorkSnapshot, WorkStatus, clip_text
+from jarvis.domain.work_state import (
+    MAX_SUMMARY_CHARS, MERGED_CLOSURE, WorkItem, WorkSnapshot, WorkStatus, clip_text, is_merged_closure,
+)
 from jarvis.domain.scene_purge import ScenePurgeCode, ScenePurgeError
+from jarvis.ports.mission_history import MissionHistoryStoreError, MissionHistoryUnavailable
 from jarvis.ports.scene import SceneStoreError
 from jarvis.ports.v2 import DiagnosticSink
 
@@ -133,6 +167,14 @@ SCENE_PROJECTION_PENDING_OVERFLOW_KIND = "core.scene.projection_pending_overflow
 SCENE_RESTART_MARKED_KIND = "core.scene.restart_marked"
 SCENE_RESTART_GRACE_EXPIRED_KIND = "core.scene.restart_grace_expired"
 SCENE_RESTART_STAR_KIND = "core.scene.restart_star"
+#: Slice 08 (orchestration) : un travail éphémère n'a pas d'étoile (une ligne
+#: par travail, au premier constat) ; projection des rôles et relations d'une
+#: mission (une ligne quand quelque chose a changé) ; historique illisible
+#: (une fois par type de panne, la projection des étoiles continue).
+SCENE_EPHEMERAL_SKIPPED_KIND = "core.scene.ephemeral_skipped"
+SCENE_MERGED_SKIPPED_KIND = "core.scene.merged_skipped"
+SCENE_MISSION_PROJECTED_KIND = "core.scene.mission_projected"
+SCENE_MISSION_PROJECTION_FAILED_KIND = "core.scene.mission_projection_failed"
 
 #: `error_class` (titre du signal) d'une étoile jamais revue après un
 #: redémarrage de Core, au terme de la grâce.
@@ -187,6 +229,28 @@ _RESTART_GRACE = "scene.projection.restart_grace"
 _RESTART_REQUESTED = "scene.projection.restart_requested"
 _MAX_REPORTED = 64
 _HASH_CHARS = 24
+#: La clôture d'un doublon fusionné (`work_state.MERGED_CLOSURE`, partagée avec
+#: le relais et l'historique des missions) ne crée jamais d'étoile pour un
+#: travail qui n'en avait pas (D08 : sinon une éphémère fusionnée laisserait une
+#: étoile `cancelled` persistée) ; une étoile qui existe déjà reçoit cet état
+#: comme toute autre fin.
+#: Réveil de la boucle pour rafraîchir les missions suivies (même file, jamais le bus).
+_MISSION_REFRESH = "scene.projection.mission_refresh"
+#: Délai minimal entre deux lectures d'une même mission déclenchées par des
+#: événements de travail (un agent actif en émet un par outil) ; la lecture
+#: manquée est faite au rafraîchissement suivant.
+MISSION_MIN_INTERVAL_S = 1.0
+#: Rafraîchissement des missions suivies : une relation s'ouvre, se clôt ou
+#: change de propriétaire par un outil d'agent, sans événement de travail sûr.
+MISSION_REFRESH_S = 5.0
+#: Missions relues par tour de rafraîchissement, au plus.
+MAX_MISSIONS_PER_REFRESH = 16
+#: Missions suivies retenues ; au-delà, la plus ancienne est oubliée (elle
+#: revient au prochain événement d'un de ses membres).
+MAX_WATCHED_MISSIONS = 64
+#: Identités d'instance retenues (travail → instance), et travaux éphémères
+#: déjà signalés.
+MAX_REMEMBERED_IDENTITIES = 1_024
 
 
 # ------------------------------------------------------------------ identités
@@ -241,6 +305,37 @@ def parent_relation_id(child_star_id: str) -> str:
     return _bounded_id("parent_of", "!", child_star_id, child_star_id)
 
 
+def agent_relation_links(relation: AgentRelation) -> tuple[tuple[str, str, str], ...]:
+    """Liens de scène d'une relation de mission : `(relation_id de scène, instance source, instance cible)`.
+
+    Relation dirigée (délégation, QA, relais) : un lien, de la position source
+    à la position cible (`AgentRelation.endpoints`), d'identifiant
+    `<nature>!<relation>`. Relation entre pairs (Adversary, Communication, N
+    participants) : un lien par paire, dans l'ordre des participants, de
+    `<nature>!<relation>!<a>~<b>` ; tous portent la même `RelationRef`, qui
+    permet de les regrouper. Déterministe, au plus 128 caractères (forme
+    hachée au-delà, comme les étoiles).
+    """
+
+    kind = relation.kind.value
+    endpoints = relation.endpoints()
+    if endpoints is not None:
+        source, target = endpoints
+        return ((_bounded_id(kind, "!", relation.relation_id, f"{kind}\x00{relation.relation_id}"), source, target),)
+    members = relation.participant_ids
+    return tuple(
+        (_bounded_id(kind, "!", f"{relation.relation_id}!{a}~{b}", f"{kind}\x00{relation.relation_id}\x00{a}\x00{b}"), a, b)
+        for index, a in enumerate(members) for b in members[index + 1:]
+    )
+
+
+def relation_ref(relation: AgentRelation) -> RelationRef:
+    return RelationRef(
+        relation_id=relation.relation_id, mission_id=relation.mission_id, state=AgentRelationState(relation.status.value),
+        outcome=relation.outcome.value if relation.outcome is not None else None,
+    )
+
+
 # ------------------------------------------------------------------ ports
 
 
@@ -250,6 +345,19 @@ class WorkProjectionSource(Protocol):
     store_id: str
 
     async def snapshot(self) -> WorkSnapshot: ...
+
+
+class MissionProjectionSource(Protocol):
+    """Ce que la projection lit de l'historique des missions : `MissionHistoryService` le fournit.
+
+    Lectures seulement. Une panne lève `MissionHistoryUnavailable` ou
+    `MissionHistoryStoreError` (déjà signalée par le service) : la projection
+    des étoiles continue, la mission est relue plus tard.
+    """
+
+    async def instance_for_work(self, work_source: str, work_external_id: str) -> InstanceView | None: ...
+
+    async def mission_view(self, mission_id: str) -> tuple[MissionTree, tuple[InstanceView, ...]] | None: ...
 
 
 #: Remet à l'état de travail l'issue persistée de jobs terminés ; rend le
@@ -289,6 +397,10 @@ class SceneProjectionStats:
     restart_marked: int = 0
     restart_reobserved: int = 0
     restart_interrupted: int = 0
+    skipped_ephemeral: int = 0
+    skipped_merged: int = 0
+    missions_projected: int = 0
+    mission_failures: int = 0
 
 
 # ------------------------------------------------------------------ texte
@@ -356,11 +468,14 @@ class SceneProjector:
         monotonic: Callable[[], float] = time.monotonic,
         restart_grace_s: float = RESTART_GRACE_S,
         job_outcomes: JobOutcomeSource | None = None,
+        missions: MissionProjectionSource | None = None,
+        mission_min_interval_s: float = MISSION_MIN_INTERVAL_S,
+        mission_refresh_s: float = MISSION_REFRESH_S,
     ) -> None:
         if (
             queue_size < 1 or retry_min_s <= 0 or retry_max_s < retry_min_s or stop_drain_s < 0
             or max_pending < 1 or saturation_retry_s <= 0 or saturation_warning_interval_s < 0
-            or not restart_grace_s > 0
+            or not restart_grace_s > 0 or mission_min_interval_s < 0 or not mission_refresh_s > 0
         ):
             raise ValueError("invalid scene projector bounds")
         self._work = work
@@ -416,6 +531,25 @@ class SceneProjector:
         self._unobserved: dict[tuple[str, str], tuple[WorkItem, str]] = {}
         #: Démarrage de la boucle (`monotonic`) : base du délai de `retained_archive_ids`.
         self._started_at: float | None = None
+        # Rôles et relations (Slice 08 orchestration).
+        self._missions = missions
+        self._mission_min_interval_s = mission_min_interval_s
+        self._mission_refresh_s = mission_refresh_s
+        #: travail → (instance retenue ou `None`, `(statut, role_id)` du dernier
+        #: constat). Une instance connue ne change plus (D01) ; `None` est relu
+        #: quand le constat change (la déclaration peut arriver après le travail).
+        self._identities: OrderedDict[tuple[str, str], tuple[AgentInstance | None, tuple[str, str | None]]] = OrderedDict()
+        #: Missions à relire (événement trop rapproché, panne) et missions suivies
+        #: (encore ouvertes, ou une relation ouverte), dans l'ordre d'arrivée.
+        self._missions_due: OrderedDict[str, None] = OrderedDict()
+        self._missions_watched: OrderedDict[str, None] = OrderedDict()
+        #: Dernière lecture de chaque mission (`monotonic`).
+        self._mission_read_at: OrderedDict[str, float] = OrderedDict()
+        self._mission_tick: asyncio.Task[None] | None = None
+        #: Missions des étoiles persistées à relire à la première réconciliation réussie.
+        self._persisted_missions_due = False
+        #: Travaux éphémères déjà signalés (une ligne de journal chacun).
+        self._ephemeral_seen: OrderedDict[tuple[str, str], None] = OrderedDict()
         self.stats = SceneProjectionStats()
 
     @property
@@ -484,6 +618,7 @@ class SceneProjector:
         self._queue = self._events.subscribe(max_queue=self._queue_size, lossy=True)
         self._stopping = False
         self._started_at = self._monotonic()
+        self._persisted_missions_due = self._missions is not None
         self._dirty = "start"
         self._task = asyncio.get_running_loop().create_task(self._run(self._queue), name="jarvis-scene-projector")
 
@@ -498,6 +633,7 @@ class SceneProjector:
         if task is None:
             await self._stop_watch()
             await self._stop_grace()
+            await self._stop_mission_tick()
             return
         if not task.done() and self._stop_drain_s > 0:
             # Les fins posées pendant l'arrêt (jobs annulés) sont déjà en file :
@@ -514,6 +650,13 @@ class SceneProjector:
         # Après le vidage et la boucle : aucune veille ni minuterie de grâce ne leur survit.
         await self._stop_watch()
         await self._stop_grace()
+        await self._stop_mission_tick()
+
+    async def _stop_mission_tick(self) -> None:
+        tick, self._mission_tick = self._mission_tick, None
+        if tick is not None:
+            tick.cancel()
+            await asyncio.gather(tick, return_exceptions=True)
 
     async def _stop_grace(self) -> None:
         grace, self._grace = self._grace, None
@@ -592,6 +735,13 @@ class SceneProjector:
     async def _handle(self, envelope: ProtocolEnvelope) -> None:
         if envelope.message_type in (_RESTART_GRACE, _RESTART_REQUESTED):
             return  # simple réveil : la boucle traite `_grace_due` / le marquage en tête de tour
+        if envelope.message_type == _MISSION_REFRESH:
+            if self._dirty is None:
+                try:
+                    await self._refresh_missions()
+                except SceneStoreError as exc:
+                    self._outage(exc)
+            return
         if envelope.message_type == _SPACE_CHECK:
             if self._pending and self._dirty is None:
                 try:
@@ -668,7 +818,14 @@ class SceneProjector:
         work = await self._work.snapshot()
         before = (self.stats.applied, self.stats.refused)
         try:
-            await self._scene.snapshot()  # sonde : lève si la scène est indisponible
+            probe = await self._scene.snapshot()  # sonde : lève si la scène est indisponible
+            if self._persisted_missions_due:
+                # Redémarrage (Slice 08) : les missions que portent les étoiles
+                # persistées sont relues, pour rattraper ce qui a changé pendant
+                # l'arrêt (relation close, relais) sans rien inventer. Une fois
+                # par démarrage, même si la première réconciliation a échoué.
+                self._persisted_missions_due = False
+                self._watch_persisted_missions(probe)
             for item in work.items:
                 try:
                     await self._project(item)
@@ -1168,6 +1325,22 @@ class SceneProjector:
             kind = STAR_WORK_KINDS.get(item.kind)
             if kind is None:
                 return
+            if item.ephemeral:
+                # D08 : aucune ligne persistée pour un travail encore éphémère.
+                self._skip_ephemeral(item, star_id)
+                return
+            if is_merged_closure(item.status, item.error_class):
+                # Clôture d'un doublon fusionné jamais projeté : rien à montrer.
+                self.stats.skipped_merged += 1
+                self._emit(
+                    SCENE_MERGED_SKIPPED_KIND,
+                    "doublon fusionné clos sans étoile : aucune ligne créée",
+                    level="debug",
+                    data={"object_id": star_id, "source": item.source,
+                          "was_ephemeral": item.key in self._ephemeral_seen},
+                )
+                self._ephemeral_seen.pop(item.key, None)
+                return
             if len(scene.objects) >= MAX_SCENE_OBJECTS:
                 self._defer(item, len(scene.objects))
                 return
@@ -1194,10 +1367,14 @@ class SceneProjector:
         if current is None:
             if not update.changed:
                 return
+            # Éphémère rabaissée (échec, arrêt...) : l'étoile naît à ce moment-là.
+            lowered = item.key in self._ephemeral_seen
+            self._ephemeral_seen.pop(item.key, None)
             self._emit(
                 SCENE_STAR_CREATED_KIND,
                 "étoile créée pour un travail en cours",
-                data={"object_id": star_id, "kind": fields.kind.value, "source": item.source, "status": item.status.value},
+                data={"object_id": star_id, "kind": fields.kind.value, "source": item.source, "status": item.status.value,
+                      **({"ephemeral_lowered": True} if lowered else {})},
             )
             await self._link_children(item, star_id)
         reached = ExecState(item.status.value)
@@ -1213,6 +1390,247 @@ class SceneProjector:
         if item.parent_external_id is not None:
             await self._link_parent(item)
         await self._project_signal(item, star_id, fields.work_ref)
+        if fields.kind is SceneObjectKind.AGENT or (current is not None and current.kind is SceneObjectKind.AGENT):
+            await self._project_identity(item, star_id)
+
+    def _skip_ephemeral(self, item: WorkItem, star_id: str) -> None:
+        self.stats.skipped_ephemeral += 1
+        if item.key in self._ephemeral_seen:
+            return
+        self._ephemeral_seen[item.key] = None
+        while len(self._ephemeral_seen) > MAX_REMEMBERED_IDENTITIES:
+            self._ephemeral_seen.popitem(last=False)
+        self._emit(
+            SCENE_EPHEMERAL_SKIPPED_KIND,
+            "travail éphémère : aucune étoile persistée (visible dans le panneau Agents)",
+            data={"object_id": star_id, "source": item.source, "status": item.status.value},
+        )
+
+    # ------------------------------------------------------------ rôles et relations (Slice 08 orchestration)
+
+    async def _project_identity(self, item: WorkItem, star_id: str) -> None:
+        """Poser le rôle d'une étoile `agent` et faire relire sa mission. Ne lève que `SceneStoreError`.
+
+        L'historique des missions fait foi (instance, mission, propriétaire) ;
+        sans instance retenue, le `role_id` de Work State suffit, et il ne
+        remplace jamais un rôle venu de l'historique. Une panne de l'historique
+        est dite une fois et laisse l'étoile telle quelle : la lecture est
+        refaite au constat suivant.
+        """
+
+        instance: AgentInstance | None = None
+        if self._missions is not None:
+            known = self._identities.get(item.key)
+            probe = (item.status.value, item.role_id)
+            if known is not None and (known[0] is not None or known[1] == probe):
+                instance = known[0]
+            else:
+                try:
+                    view = await self._missions.instance_for_work(item.source, item.external_id)
+                except (MissionHistoryUnavailable, MissionHistoryStoreError) as exc:
+                    self._mission_failed("instance_for_work", exc)
+                    return
+                instance = view.stored.instance if view is not None else None
+                self._remember_identity(item.key, instance, probe)
+        if instance is None:
+            if item.role_id is not None:
+                await self._write_role(star_id, RoleRef(role_id=item.role_id), only_if_empty=True)
+            return
+        if instance.mission_id is None:
+            await self._write_role(star_id, RoleRef(role_id=instance.role_id, instance_id=instance.instance_id))
+            return
+        mission_id = instance.mission_id
+        self._watch_mission(mission_id)
+        read_at = self._mission_read_at.get(mission_id)
+        if read_at is not None and self._monotonic() - read_at < self._mission_min_interval_s:
+            self._mission_due(mission_id)
+            return
+        await self._project_mission(mission_id)
+
+    def _remember_identity(self, key: tuple[str, str], instance: AgentInstance | None, probe: tuple[str, str | None]) -> None:
+        self._identities[key] = (instance, probe)
+        self._identities.move_to_end(key)
+        while len(self._identities) > MAX_REMEMBERED_IDENTITIES:
+            self._identities.popitem(last=False)
+
+    async def _write_role(self, star_id: str, wanted: RoleRef, *, only_if_empty: bool = False) -> None:
+        scene = await self._scene.snapshot()
+        star = scene.get_object(star_id)
+        if star is None or star.kind is not SceneObjectKind.AGENT or star.origin is not SceneActor.RUNTIME:
+            return
+        if star.role_ref == wanted or (only_if_empty and star.role_ref is not None):
+            return
+        await self._apply(
+            SceneCommand(op=SceneOp.PATCH_OBJECT, actor=SceneActor.RUNTIME, object_id=star_id,
+                         fields=SceneObjectFields(role_ref=wanted))
+        )
+
+    def _watch_mission(self, mission_id: str) -> None:
+        self._missions_watched[mission_id] = None
+        self._missions_watched.move_to_end(mission_id)
+        while len(self._missions_watched) > MAX_WATCHED_MISSIONS:
+            self._missions_watched.popitem(last=False)
+        self._arm_mission_tick()
+
+    def _mission_due(self, mission_id: str) -> None:
+        self._missions_due[mission_id] = None
+        while len(self._missions_due) > MAX_WATCHED_MISSIONS:
+            self._missions_due.popitem(last=False)
+        self._arm_mission_tick()
+
+    def _watch_persisted_missions(self, scene: SceneSnapshot) -> None:
+        """Suivre les missions que portent les étoiles persistées (les plus récentes d'abord, bornées)."""
+
+        if self._missions is None:
+            return
+        seen: dict[str, None] = {}
+        for star in reversed(scene.objects):
+            ref = star.role_ref
+            if ref is not None and ref.mission_id is not None and star.origin is SceneActor.RUNTIME:
+                seen.setdefault(ref.mission_id, None)
+            if len(seen) >= MAX_WATCHED_MISSIONS:
+                break
+        for mission_id in reversed(list(seen)):
+            self._watch_mission(mission_id)
+            self._mission_due(mission_id)
+
+    def _arm_mission_tick(self) -> None:
+        if self._stopping or self._queue is None or (self._mission_tick is not None and not self._mission_tick.done()):
+            return
+        self._mission_tick = asyncio.get_running_loop().create_task(self._mission_ticks(), name="jarvis-scene-missions")
+
+    async def _mission_ticks(self) -> None:
+        """Réveiller la boucle toutes les `mission_refresh_s` tant qu'une mission est à relire ou suivie."""
+
+        while (self._missions_due or self._missions_watched) and not self._stopping:
+            await asyncio.sleep(self._mission_refresh_s)
+            queue = self._queue
+            if queue is None:
+                return
+            try:
+                queue.put_nowait(ProtocolEnvelope(message_type=_MISSION_REFRESH, payload={}))
+            except asyncio.QueueFull:
+                # intentional: une file pleine veut dire une boucle occupée ; le
+                # tour suivant de cette minuterie la réveille de nouveau.
+                pass
+
+    async def _refresh_missions(self) -> None:
+        """Relire les missions à relire, puis les suivies, `MAX_MISSIONS_PER_REFRESH` au plus, en tournant."""
+
+        budget = MAX_MISSIONS_PER_REFRESH
+        order = list(self._missions_due) + [mission for mission in self._missions_watched if mission not in self._missions_due]
+        for mission_id in order[:budget]:
+            await self._project_mission(mission_id)
+            if mission_id in self._missions_watched:
+                # En fin de file : la passe suivante commence par les autres.
+                self._missions_watched.move_to_end(mission_id)
+
+    async def _project_mission(self, mission_id: str) -> None:
+        """Projeter les rôles et les relations réelles de l'arbre de `mission_id` sur les étoiles existantes.
+
+        Rien n'est créé pour une instance sans étoile (pas de nœud futur ni
+        d'éphémère), aucun `exec_state` n'est écrit. Ne lève que
+        `SceneStoreError` : une panne de l'historique laisse la mission à relire.
+        """
+
+        if self._missions is None:
+            return
+        self._mission_read_at[mission_id] = self._monotonic()
+        self._mission_read_at.move_to_end(mission_id)
+        while len(self._mission_read_at) > MAX_REMEMBERED_IDENTITIES:
+            self._mission_read_at.popitem(last=False)
+        try:
+            view = await self._missions.mission_view(mission_id)
+        except (MissionHistoryUnavailable, MissionHistoryStoreError) as exc:
+            self._mission_failed("mission_view", exc)
+            self._mission_due(mission_id)
+            return
+        self._missions_due.pop(mission_id, None)
+        if view is None:
+            self._missions_watched.pop(mission_id, None)
+            return
+        tree, _views = view
+        self.stats.missions_projected += 1
+        applied_before = self.stats.applied
+        owners = {mission.mission_id: mission.owner_instance_id for mission in tree.missions}
+        scene = await self._scene.snapshot()
+        stars: dict[str, str] = {}
+        roles = 0
+        for stored in tree.instances:
+            instance = stored.instance
+            star_id = star_object_id(instance.work_source, instance.work_external_id)
+            star = scene.get_object(star_id)
+            if star is None or star.kind is not SceneObjectKind.AGENT or star.origin is not SceneActor.RUNTIME:
+                continue
+            stars[instance.instance_id] = star_id
+            self._remember_identity(instance.work_identity, instance, ("", None))
+            wanted = RoleRef(
+                role_id=instance.role_id, instance_id=instance.instance_id, mission_id=instance.mission_id,
+                mission_owner=instance.mission_id is not None and owners.get(instance.mission_id) == instance.instance_id,
+            )
+            if star.role_ref != wanted:
+                update = await self._apply(
+                    SceneCommand(op=SceneOp.PATCH_OBJECT, actor=SceneActor.RUNTIME, object_id=star_id,
+                                 fields=SceneObjectFields(role_ref=wanted))
+                )
+                roles += update.changed
+        links = 0
+        for relation in tree.relations:
+            try:
+                links += await self._project_relation(scene, relation, stars)
+            except (KeyError, ValueError) as exc:
+                # Une relation qu'on ne sait pas projeter ne fait pas perdre les
+                # suivantes de la passe : dite (une fois par type), puis ignorée.
+                self._failed("mission_relation", exc)
+        if tree.truncated:
+            self._report_once(
+                f"mission_truncated:{tree.root_mission_id}", SCENE_MISSION_PROJECTION_FAILED_KIND,
+                "arbre de mission tronqué par sa borne de lecture : une partie des rôles et relations n'est pas projetée",
+                level="warning", data={"mission_id": mission_id, "root_mission_id": tree.root_mission_id},
+            )
+        settled = all(mission.status.is_closed for mission in tree.missions) and not any(
+            relation.is_open for relation in tree.relations
+        )
+        if settled:
+            # Plus rien d'ouvert : la mission n'est plus relue d'elle-même.
+            self._missions_watched.pop(mission_id, None)
+        else:
+            self._watch_mission(mission_id)
+        if self.stats.applied > applied_before:
+            self._emit(
+                SCENE_MISSION_PROJECTED_KIND,
+                "rôles et relations de mission projetés sur la scène",
+                data={"mission_id": mission_id, "root_mission_id": tree.root_mission_id, "stars": len(stars),
+                      "roles_written": roles, "links_written": links, "relations": len(tree.relations),
+                      "settled": settled},
+            )
+
+    async def _project_relation(self, scene: SceneSnapshot, relation: AgentRelation, stars: dict[str, str]) -> int:
+        """Poser ou mettre à jour les liens d'une relation entre étoiles existantes ; rend le nombre de liens écrits."""
+
+        ref = relation_ref(relation)
+        kind = RelationKind(relation.kind.value)
+        written = 0
+        for link_id, source, target in agent_relation_links(relation):
+            if source not in stars or target not in stars:
+                continue  # une extrémité sans étoile : rien de supposé (D15)
+            wanted_link = SceneRelation(link_id, kind, stars[source], stars[target], ref=ref)
+            existing = scene.get_relation(link_id)
+            if existing is not None and existing.endpoints == wanted_link.endpoints and existing.ref == ref:
+                continue
+            update = await self._apply(SceneCommand(op=SceneOp.LINK, actor=SceneActor.RUNTIME, relation=wanted_link))
+            written += update.changed
+        return written
+
+    def _mission_failed(self, where: str, exc: Exception) -> None:
+        self.stats.mission_failures += 1
+        self._report_once(
+            f"mission:{where}:{type(exc).__name__}",
+            SCENE_MISSION_PROJECTION_FAILED_KIND,
+            "historique des missions illisible : rôles et relations en attente, les étoiles restent projetées",
+            level="warning",
+            data={"where": where, "error": f"{type(exc).__name__}: {exc}"[:300]},
+        )
 
     def _owns_payload(self, current: SceneObject, wanted: ScenePayload) -> bool:
         """Vrai si la charge de l'étoile est encore celle de la projection.

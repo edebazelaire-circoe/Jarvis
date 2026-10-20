@@ -308,10 +308,14 @@ REFUSAL_EXPLANATIONS: dict[str, str] = {
         "Une commande explicite passe : renvoie la géométrie telle que tu la veux, ou désépingle-le avec scene_pin."
     ),
     SceneRefusal.EXECUTION_NODE: "Les étoiles agent/job naissent seulement du runtime : ne les recrée pas, crée un artifact.",
-    SceneRefusal.EXECUTION_TRUTH: "exec_state et work_ref reflètent Core : tu ne peux pas les écrire.",
+    SceneRefusal.EXECUTION_TRUTH: (
+        "exec_state, work_ref et role_ref reflètent Core, comme la référence de mission d'un lien d'agent : "
+        "tu ne peux pas les écrire."
+    ),
     SceneRefusal.RUNTIME_OWNED: (
-        "La parenté entre étoiles et le lien d'un signal de tâche appartiennent au runtime : tu ne peux ni les retirer, "
-        "ni relier deux étoiles par parent_of. Tu peux masquer le signal avec scene_update_object, "
+        "La parenté entre étoiles, les liens d'agent (delegation, communication, adversary, qa, handoff) et le lien "
+        "d'un signal de tâche appartiennent au runtime : tu ne peux ni les retirer, ni relier deux étoiles par "
+        "parent_of, ni poser un lien d'agent. Tu peux masquer le signal avec scene_update_object, "
         "ou le retirer pour de bon avec scene_archive."
     ),
     SceneRefusal.RESERVED_ID: "Identifiant de la forme réservée au runtime : laisse l'outil générer l'identifiant.",
@@ -331,6 +335,7 @@ REFUSAL_EXPLANATIONS: dict[str, str] = {
         "pas être réutilisé. Crée un nouvel objet si besoin."
     ),
     SceneRefusal.KIND_IMMUTABLE: "La nature d'un objet ne change pas.",
+    SceneRefusal.ROLE_REF_KIND: "role_ref ne se pose que sur une étoile agent, et par le runtime seul.",
     SceneRefusal.INCOMPLETE_OBJECT: "Création incomplète : kind et category sont requis.",
     SceneRefusal.UNPLACED: (
         "L'objet n'a pas encore de géométrie : épingler ou déplacer exige une place ; donne-la d'abord avec "

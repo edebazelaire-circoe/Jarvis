@@ -21,7 +21,15 @@ Invariants transverses :
 - l'autorité est appliquée par le réducteur, jamais par l'appelant : une
   commande hors droits rend `rejected_authority`, quel que soit le catalogue
   d'outils qui l'a émise (Décision 14) ;
-- `exec_state` et `work_ref` reflètent Core : seul `runtime` les écrit ;
+- `exec_state`, `work_ref` et `role_ref` reflètent Core : seul `runtime` les
+  écrit (`role_ref` : identité de rôle et de mission d'une étoile `agent`,
+  lue dans l'historique des missions, handoff organic-agent-orchestration,
+  Slice 08) ;
+- les liens d'agent (`delegation`, `communication`, `adversary`, `qa`,
+  `handoff`, D09) projettent une relation réelle de l'historique des missions
+  (`RelationRef`) : seul `runtime` les pose ou met à jour leur référence ;
+  `brain` et `user` ne les créent ni ne les délient, ils n'en changent que la
+  couche ;
 - un signal d'exécution est vivant tant que son lien `explains` existe :
   `runtime` retire ses propres signaux en déliant ce lien (Slice 04), sans
   jamais archiver, masquer ni placer ;
@@ -60,7 +68,7 @@ import math
 from typing import TYPE_CHECKING, Any, Callable
 
 from jarvis.domain._checks import (
-    MAX_ID_CHARS, MAX_PREFAB_VERSION, check_id, check_prefixed_id, check_text, check_token, is_prefab_id,
+    MAX_ID_CHARS, MAX_PREFAB_VERSION, ROLE_ID, check_id, check_prefixed_id, check_text, check_token, is_prefab_id,
     is_prefab_version, preview,
 )
 from jarvis.domain.work_state import MAX_SOURCE_CHARS
@@ -234,11 +242,38 @@ class PlacedBy(StrEnum):
 
 
 class RelationKind(StrEnum):
-    """Nature fermée d'un lien. `explains` relie aussi un signal à son nœud."""
+    """Nature fermée d'un lien. `explains` relie aussi un signal à son nœud.
+
+    Les cinq dernières (handoff organic-agent-orchestration, Slice 08) sont les
+    natures de relation d'agent de D09, mêmes valeurs que
+    `agent_relations.AgentRelationKind` : chacune projette une relation réelle
+    de l'historique des missions, jamais une relation envisagée (D15).
+    """
 
     PARENT_OF = "parent_of"
     EXPLAINS = "explains"
     GROUPS = "groups"
+    DELEGATION = "delegation"
+    COMMUNICATION = "communication"
+    ADVERSARY = "adversary"
+    QA = "qa"
+    HANDOFF = "handoff"
+
+
+#: Liens d'agent : posés par le seul `runtime`, entre étoiles d'exécution, et
+#: porteurs d'une `RelationRef` (ils n'existent que pour une relation réelle).
+AGENT_RELATION_KINDS = frozenset({
+    RelationKind.DELEGATION, RelationKind.COMMUNICATION, RelationKind.ADVERSARY, RelationKind.QA, RelationKind.HANDOFF,
+})
+#: Liens que `runtime` a le droit de poser.
+RUNTIME_RELATION_KINDS = AGENT_RELATION_KINDS | {RelationKind.PARENT_OF}
+
+
+class AgentRelationState(StrEnum):
+    """État d'une relation d'agent, recopié de l'historique des missions (`RelationStatus`)."""
+
+    OPEN = "open"
+    CLOSED = "closed"
 
 
 class SceneActor(StrEnum):
@@ -313,8 +348,10 @@ ALLOWED_SCENE_OPS: dict[SceneActor, frozenset[SceneOp]] = {
     SceneActor.USER: frozenset(SceneOp),
 }
 
-#: Champs qui reflètent Core : écrits par `runtime` seulement.
-EXECUTION_FIELDS = frozenset({"exec_state", "work_ref"})
+#: Champs qui reflètent Core : écrits par `runtime` seulement. `role_ref`
+#: (Slice 08 orchestration) : un champ réservé au runtime, jamais `category`,
+#: que le cerveau et l'utilisateur peuvent réécrire.
+EXECUTION_FIELDS = frozenset({"exec_state", "work_ref", "role_ref"})
 #: Champs de composition : jamais écrits par `runtime` (Décision 3).
 COMPOSITION_FIELDS = frozenset({"representation", "geometry", "layer", "order", "visibility"})
 _WRITABLE_FIELDS = ("category", "payload", *sorted(EXECUTION_FIELDS), *sorted(COMPOSITION_FIELDS))
@@ -504,6 +541,90 @@ class WorkRef:
     def from_payload(cls, payload: object) -> WorkRef:
         data = check_wire_keys("work_ref", payload, frozenset({"source", "external_id"}), frozenset({"work_id"}))
         return cls(source=data["source"], external_id=data["external_id"], work_id=data.get("work_id"))
+
+
+@dataclass(frozen=True, slots=True)
+class RoleRef:
+    """Identité de rôle d'une étoile `agent`, projetée depuis Core (handoff organic-agent-orchestration, Slice 08).
+
+    - `role_id` : l'id canonique explicite (`subagent_roles`, D01), tel que
+      l'historique des missions ou Work State le portent ; jamais lu d'un
+      libellé ni d'une `category` ;
+    - `instance_id` : l'instance d'agent durable (`ainst_…`), `None` si
+      l'historique ne la connaît pas (rôle lu dans Work State seul) ;
+    - `mission_id` / `mission_owner` : la mission de l'instance et si elle en
+      est **le propriétaire courant** (D03 : une responsabilité, pas un rôle ;
+      après un relais, c'est le successeur).
+
+    Aucun statut : ni de travail (`exec_state`), ni de mission (lu dans
+    `GET /v1/missions/{id}`, `live_unknown` compris, jamais recopié ici).
+    """
+
+    role_id: str
+    instance_id: str | None = None
+    mission_id: str | None = None
+    mission_owner: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.role_id, str) or not ROLE_ID.fullmatch(self.role_id):
+            raise ValueError(f"role_ref.role_id must be a canonical role id, got {preview(self.role_id)}")
+        check_id("role_ref.instance_id", self.instance_id, required=False)
+        check_id("role_ref.mission_id", self.mission_id, required=False)
+        if not isinstance(self.mission_owner, bool):
+            raise TypeError("role_ref.mission_owner must be a boolean")
+        if self.mission_owner and self.mission_id is None:
+            raise ValueError("a mission owner names its mission")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"role_id": self.role_id, "instance_id": self.instance_id, "mission_id": self.mission_id,
+                "mission_owner": self.mission_owner}
+
+    @classmethod
+    def from_payload(cls, payload: object) -> RoleRef:
+        data = check_wire_keys("role_ref", payload, frozenset({"role_id"}),
+                               frozenset({"instance_id", "mission_id", "mission_owner"}))
+        return cls(role_id=data["role_id"], instance_id=data.get("instance_id"), mission_id=data.get("mission_id"),
+                   mission_owner=data.get("mission_owner", False))
+
+
+#: Borne d'un jeton d'issue de relation (`agent_relations.RelationOutcome`).
+MAX_RELATION_OUTCOME_CHARS = 32
+
+
+@dataclass(frozen=True, slots=True)
+class RelationRef:
+    """Relation réelle de l'historique des missions qu'un lien d'agent projette (Slice 08 orchestration).
+
+    `relation_id` est l'id de la relation de mission (`rel_…`, `rel_dlg_…`) :
+    tous les liens d'une relation entre pairs (Adversary, Communication à N
+    membres, un lien par paire) le partagent. `state` et `outcome` recopient
+    l'historique (une relation peut rester ouverte dans une mission close,
+    puis passer `withdrawn`) ; ce ne sont pas des statuts d'exécution.
+    """
+
+    relation_id: str
+    mission_id: str
+    state: AgentRelationState = AgentRelationState.OPEN
+    outcome: str | None = None
+
+    def __post_init__(self) -> None:
+        check_id("relation_ref.relation_id", self.relation_id, required=True)
+        check_id("relation_ref.mission_id", self.mission_id, required=True)
+        _check_enum("relation_ref.state", self.state, AgentRelationState)
+        if self.outcome is not None:
+            check_token("relation_ref.outcome", self.outcome, MAX_RELATION_OUTCOME_CHARS, required=True)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"relation_id": self.relation_id, "mission_id": self.mission_id, "state": self.state.value,
+                "outcome": self.outcome}
+
+    @classmethod
+    def from_payload(cls, payload: object) -> RelationRef:
+        data = check_wire_keys("relation_ref", payload, frozenset({"relation_id", "mission_id", "state"}),
+                               frozenset({"outcome"}))
+        return cls(relation_id=data["relation_id"], mission_id=data["mission_id"],
+                   state=parse_enum(AgentRelationState, data["state"], "relation_ref.state"),
+                   outcome=data.get("outcome"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -786,6 +907,10 @@ class SceneObject:
     disposition: Disposition = Disposition.ACTIVE
     work_ref: WorkRef | None = None
     payload: ScenePayload = field(default_factory=ScenePayload)
+    #: Identité de rôle d'une étoile `agent` (Slice 08 orchestration) ; champ
+    #: d'exécution (`EXECUTION_FIELDS`). Absent du fil quand il vaut `None` : la
+    #: forme d'un objet sans rôle reste exactement celle d'avant.
+    role_ref: RoleRef | None = None
 
     def __post_init__(self) -> None:
         check_id("object_id", self.object_id, required=True)
@@ -811,6 +936,10 @@ class SceneObject:
         if self.payload.prefab is not None and self.kind is not SceneObjectKind.WINDOW:
             # La représentation reste libre (point, capsule) ; la nature non.
             raise ValueError(PREFAB_KIND_MESSAGE)
+        if self.role_ref is not None:
+            _check_instance("role_ref", self.role_ref, RoleRef)
+            if self.kind is not SceneObjectKind.AGENT:
+                raise ValueError(ROLE_REF_KIND_MESSAGE)
 
     @property
     def active(self) -> bool:
@@ -832,11 +961,12 @@ class SceneObject:
             "disposition": self.disposition.value,
             "work_ref": _wire(self.work_ref),
             "payload": self.payload.to_payload(),
+            **({"role_ref": self.role_ref.to_payload()} if self.role_ref is not None else {}),
         }
 
     @classmethod
     def from_payload(cls, payload: object) -> SceneObject:
-        data = check_wire_keys("object", payload, _OBJECT_WIRE_KEYS)
+        data = check_wire_keys("object", payload, _OBJECT_WIRE_KEYS, frozenset({"role_ref"}))
         return cls(
             object_id=data["object_id"],
             kind=parse_enum(SceneObjectKind, data["kind"], "kind"),
@@ -852,10 +982,12 @@ class SceneObject:
             disposition=parse_enum(Disposition, data["disposition"], "disposition"),
             work_ref=_optional_nested(WorkRef, data, "work_ref"),
             payload=ScenePayload.from_payload(data["payload"]),
+            role_ref=_optional_nested(RoleRef, data, "role_ref"),
         )
 
 
-#: Forme stockée : toutes les clés sont requises.
+ROLE_REF_KIND_MESSAGE = "a role_ref lives only on an agent star"
+#: Forme stockée : toutes les clés sont requises (`role_ref`, facultative, en plus).
 _OBJECT_WIRE_KEYS = frozenset(
     {
         "object_id", "kind", "category", "constraints", "origin", "exec_state", "representation", "geometry",
@@ -873,6 +1005,10 @@ class SceneRelation:
     from_id: str
     to_id: str
     layer: int = DEFAULT_RELATION_LAYER
+    #: Relation de mission projetée : requise pour un lien d'agent
+    #: (`AGENT_RELATION_KINDS`), interdite ailleurs. Absente du fil quand elle
+    #: vaut `None`.
+    ref: RelationRef | None = None
 
     def __post_init__(self) -> None:
         check_id("relation_id", self.relation_id, required=True)
@@ -882,6 +1018,10 @@ class SceneRelation:
         if self.from_id == self.to_id:
             raise ValueError("a relation cannot link an object to itself")
         _check_layer(self.layer)
+        if self.ref is not None:
+            _check_instance("ref", self.ref, RelationRef)
+        if (self.kind in AGENT_RELATION_KINDS) != (self.ref is not None):
+            raise ValueError("an agent relation carries its mission relation ref, and only an agent relation does")
 
     @property
     def endpoints(self) -> tuple[RelationKind, str, str]:
@@ -894,17 +1034,20 @@ class SceneRelation:
             "from_id": self.from_id,
             "to_id": self.to_id,
             "layer": self.layer,
+            **({"ref": self.ref.to_payload()} if self.ref is not None else {}),
         }
 
     @classmethod
     def from_payload(cls, payload: object) -> SceneRelation:
-        data = check_wire_keys("relation", payload, frozenset({"relation_id", "kind", "from_id", "to_id"}), frozenset({"layer"}))
+        data = check_wire_keys("relation", payload, frozenset({"relation_id", "kind", "from_id", "to_id"}),
+                               frozenset({"layer", "ref"}))
         return cls(
             relation_id=data["relation_id"],
             kind=parse_enum(RelationKind, data["kind"], "kind"),
             from_id=data["from_id"],
             to_id=data["to_id"],
             layer=data.get("layer", DEFAULT_RELATION_LAYER),
+            ref=_optional_nested(RelationRef, data, "ref"),
         )
 
 
@@ -1018,6 +1161,7 @@ class SceneObjectFields:
     visibility: Visibility | None = None
     work_ref: WorkRef | None = None
     payload: ScenePayload | None = None
+    role_ref: RoleRef | None = None
 
     def __post_init__(self) -> None:
         if self.kind is not None:
@@ -1040,6 +1184,8 @@ class SceneObjectFields:
             _check_instance("work_ref", self.work_ref, WorkRef)
         if self.payload is not None:
             _check_instance("payload", self.payload, ScenePayload)
+        if self.role_ref is not None:
+            _check_instance("role_ref", self.role_ref, RoleRef)
 
     def to_payload(self) -> dict[str, Any]:
         return {name: _wire(getattr(self, name)) for name in _FIELDS_WIRE_KEYS if getattr(self, name) is not None}
@@ -1058,11 +1204,13 @@ class SceneObjectFields:
             visibility=_optional_enum(Visibility, data, "visibility"),
             work_ref=_optional_nested(WorkRef, data, "work_ref"),
             payload=_optional_nested(ScenePayload, data, "payload"),
+            role_ref=_optional_nested(RoleRef, data, "role_ref"),
         )
 
 
 _FIELDS_WIRE_KEYS = frozenset(
-    {"kind", "category", "exec_state", "representation", "geometry", "layer", "order", "visibility", "work_ref", "payload"}
+    {"kind", "category", "exec_state", "representation", "geometry", "layer", "order", "visibility", "work_ref", "payload",
+     "role_ref"}
 )
 
 #: Arguments requis et facultatifs de chaque opération ; tout autre argument
@@ -1429,6 +1577,9 @@ class SceneRefusal(StrEnum):
     SCENE_FULL = "scene_full"
     RELATION_LIMIT = "relation_limit"
     RELATION_CONFLICT = "relation_conflict"
+    #: `role_ref` annoncé pour un objet qui n'est pas une étoile `agent`
+    #: (Slice 08 orchestration) : refus du réducteur, jamais une exception.
+    ROLE_REF_KIND = "role_ref_kind"
     #: `archive_many` : un identifiant n'est ni un nœud d'exécution terminé,
     #: ni le signal runtime d'un nœud archivé par la même commande, ni un
     #: signal runtime orphelin (`bulk_archivable`). Toute la commande est
@@ -1560,15 +1711,19 @@ def apply_scene_command(snapshot: SceneSnapshot, command: SceneCommand) -> Scene
 
 #: Têtes des identifiants de signal et de lien `parent_of` du projecteur
 #: runtime (`jarvis/core/scene_projector.py`), forme courte (`!`) ou hachée (`#`).
-_RUNTIME_RESERVED_PREFIXES = ("attention!", "attention#", "parent_of!", "parent_of#")
+_RUNTIME_RESERVED_PREFIXES = ("attention!", "attention#", "parent_of!", "parent_of#") + tuple(
+    f"{kind.value}{mark}" for kind in sorted(AGENT_RELATION_KINDS) for mark in ("!", "#")
+)
 
 
 def is_runtime_reserved_id(identifier: str) -> bool:
     """Vrai pour un identifiant de la forme que le runtime fabrique.
 
     Étoile : `<source>:<external_id>` ou `<source>#<hachage>:…` (toujours un
-    `:`) ; signal : `attention!…` ; lien de parenté : `parent_of!…` (ou leurs
-    formes hachées en `#`). `brain` et `user` ne créent rien sous ces formes.
+    `:`) ; signal : `attention!…` ; lien de parenté : `parent_of!…` ; lien
+    d'agent : `<nature>!…` (`delegation!…`, `qa!…`, Slice 08 orchestration ;
+    ou leurs formes hachées en `#`). `brain` et `user` ne créent rien sous ces
+    formes.
     """
 
     return ":" in identifier or identifier.startswith(_RUNTIME_RESERVED_PREFIXES)
@@ -1586,7 +1741,9 @@ def is_runtime_owned_relation(snapshot: SceneSnapshot, relation: SceneRelation) 
     source, target = snapshot.get_object(relation.from_id), snapshot.get_object(relation.to_id)
     if source is None or target is None or target.kind not in EXECUTION_KINDS:
         return False
-    if relation.kind is RelationKind.PARENT_OF:
+    if relation.kind is RelationKind.PARENT_OF or relation.kind in AGENT_RELATION_KINDS:
+        # Lien d'agent (Slice 08 orchestration) : projection d'une relation
+        # réelle de l'historique des missions, que la scène ne peut pas défaire.
         return source.kind in EXECUTION_KINDS
     return (
         is_signal_relation(relation)
@@ -1649,6 +1806,8 @@ def _plan_object_write(
         # Refus du réducteur plutôt que `ValueError` de `SceneObject` : une
         # commande bien formée n'est jamais une exception.
         raise _invalid(SceneRefusal.PREFAB_INVALID, PREFAB_KIND_MESSAGE)
+    if fields.role_ref is not None and before.kind is not SceneObjectKind.AGENT:
+        raise _invalid(SceneRefusal.ROLE_REF_KIND, ROLE_REF_KIND_MESSAGE)
     after = replace(
         before,
         **{name: getattr(fields, name) for name in _WRITABLE_FIELDS if getattr(fields, name) is not None},
@@ -1909,13 +2068,18 @@ def _plan_archive_many(snapshot: SceneSnapshot, command: SceneCommand) -> list[S
 
 
 def _plan_relation_put(
-    snapshot: SceneSnapshot, relation: SceneRelation, *, layer_announced: bool
+    snapshot: SceneSnapshot, relation: SceneRelation, *, layer_announced: bool, runtime: bool = False
 ) -> list[ScenePatchOp]:
     """Plan commun d'une relation posée par `link` ou `attach_signal`.
 
     Même identifiant, autres extrémités : conflit. Mêmes extrémités : seule la
     couche peut changer, et seulement si la commande l'annonce ; sinon la
     couche retenue (choisie par le cerveau ou l'utilisateur) est gardée.
+
+    Lien d'agent (Slice 08 orchestration) : sa `ref` (état et issue de la
+    relation de mission) n'est réécrite que par `runtime`, couche retenue
+    gardée ; `brain` / `user` qui annoncent une autre `ref` sont refusés
+    (`execution_truth`), jamais ignorés en silence.
     """
 
     existing = snapshot.get_relation(relation.relation_id)
@@ -1925,9 +2089,16 @@ def _plan_relation_put(
         return [ScenePatchOp(PatchOpKind.PUT_RELATION, relation=relation)]
     if existing.endpoints != relation.endpoints:
         raise _invalid(SceneRefusal.RELATION_CONFLICT)
-    if not layer_announced or existing.layer == relation.layer:
+    after = existing
+    if existing.ref != relation.ref:
+        if not runtime:
+            raise _rejected(SceneRefusal.EXECUTION_TRUTH)
+        after = replace(after, ref=relation.ref)
+    if layer_announced and existing.layer != relation.layer:
+        after = replace(after, layer=relation.layer)
+    if after == existing:
         return []
-    return [ScenePatchOp(PatchOpKind.PUT_RELATION, relation=relation)]
+    return [ScenePatchOp(PatchOpKind.PUT_RELATION, relation=after)]
 
 
 def _plan_link(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
@@ -1935,7 +2106,7 @@ def _plan_link(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatc
     assert relation is not None
     runtime = command.actor is SceneActor.RUNTIME
     if runtime:
-        if relation.kind is not RelationKind.PARENT_OF:
+        if relation.kind not in RUNTIME_RELATION_KINDS:
             raise _rejected(SceneRefusal.RUNTIME_RELATION)
         if relation.layer != DEFAULT_RELATION_LAYER:
             # La couche est de la composition : `runtime` n'en annonce pas.
@@ -1952,11 +2123,15 @@ def _plan_link(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatc
         # retirée (`runtime_owned` au `unlink`).
         if is_runtime_reserved_id(relation.relation_id):
             raise _rejected(SceneRefusal.RESERVED_ID)
+        if relation.kind in AGENT_RELATION_KINDS:
+            # Une relation d'agent ne naît que d'une relation réelle de
+            # l'historique des missions (D09, D15) : jamais d'une composition.
+            raise _rejected(SceneRefusal.RUNTIME_OWNED)
         if relation.kind is RelationKind.PARENT_OF and source.kind in EXECUTION_KINDS and target.kind in EXECUTION_KINDS:
             raise _rejected(SceneRefusal.RUNTIME_OWNED)
         if is_signal_relation(relation) and source.kind is not SceneObjectKind.ATTENTION:
             raise _rejected(SceneRefusal.SIGNAL_SHAPE)
-    return _plan_relation_put(snapshot, relation, layer_announced=not runtime)
+    return _plan_relation_put(snapshot, relation, layer_announced=not runtime, runtime=runtime)
 
 
 def _plan_unlink(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:

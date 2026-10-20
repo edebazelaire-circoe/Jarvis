@@ -1,0 +1,256 @@
+{
+ "scene_id": "scene-s08-v1",
+ "epoch": "590d1a0e0f7143c3ac659a081f39ecb9",
+ "revision": 18,
+ "snapshot": {
+  "schema_version": 1,
+  "scene_id": "scene-s08-v1",
+  "revision": 18,
+  "objects": [
+   {
+    "object_id": "claude:toolu_v1_ephemere",
+    "kind": "agent",
+    "category": "agent",
+    "constraints": {
+     "placed_by": "runtime",
+     "pinned_by_user": false
+    },
+    "origin": "runtime",
+    "exec_state": "completed",
+    "representation": "point",
+    "geometry": null,
+    "layer": 100,
+    "order": 0,
+    "visibility": "visible",
+    "disposition": "active",
+    "work_ref": {
+     "source": "claude",
+     "external_id": "toolu_v1_ephemere",
+     "work_id": null
+    },
+    "payload": {
+     "title": "Liste de courses (éphémère v1)",
+     "summary": "",
+     "items": []
+    }
+   },
+   {
+    "object_id": "claude:toolu_v1_ordinaire",
+    "kind": "agent",
+    "category": "agent",
+    "constraints": {
+     "placed_by": "runtime",
+     "pinned_by_user": false
+    },
+    "origin": "runtime",
+    "exec_state": "completed",
+    "representation": "point",
+    "geometry": null,
+    "layer": 100,
+    "order": 0,
+    "visibility": "visible",
+    "disposition": "active",
+    "work_ref": {
+     "source": "claude",
+     "external_id": "toolu_v1_ordinaire",
+     "work_id": null
+    },
+    "payload": {
+     "title": "Audit ordinaire v1",
+     "summary": "",
+     "items": []
+    }
+   },
+   {
+    "object_id": "claude:toolu_01VzQpG7rwvit8m5ojNpkt73",
+    "kind": "agent",
+    "category": "agent",
+    "constraints": {
+     "placed_by": "runtime",
+     "pinned_by_user": false
+    },
+    "origin": "runtime",
+    "exec_state": "completed",
+    "representation": "point",
+    "geometry": null,
+    "layer": 100,
+    "order": 0,
+    "visibility": "visible",
+    "disposition": "active",
+    "work_ref": {
+     "source": "claude",
+     "external_id": "toolu_01VzQpG7rwvit8m5ojNpkt73",
+     "work_id": null
+    },
+    "payload": {
+     "title": "[code] [coder] Sonde S08 QA",
+     "summary": "Le relais S08 a bien tourné : le producteur a rendu le code, le relecteur a ouvert la relation QA, publié un constat et clos son verdict. J'ai relu la relation dans JARVIS et elle correspond au compte rendu.\n\n- **Producteur** (`[code] [coder] Producteur S08`) : agentId `a76bb4d3a64181c34`. Il a rendu une fonction `is_palindrome(s)` qui normalise la casse et ne garde que les caractères alphanumériques, puis compare la chaîne à son inverse.\n- **Relecteur** (`[code] [qa] Relecture S08`) : agentId `ad7676ac36457bff2`. Il a testé 14 cas et en a relevé un qui échoue.\n- **Verdict** : correction demandée, mineure. `is_palindrome(\"İ\")` renvoie `False`, car `lower()` transforme U+0130 en deux points de code et le retournement sépare le point combinant de sa lettre. Même échec sur `\"İİ\"`, `\"aİa\"` et `\"İİİ\"`.\n- **Identifiant de la relation** : `rel_6be5cb8213cc47f7a38d6b72f3e3bbf3` (kind `qa`, statut `closed`, outcome `correction_requested`).\n\nOuvert : le relecteur signale aussi que `isalnum()` i…",
+     "items": []
+    },
+    "role_ref": {
+     "role_id": "coder",
+     "instance_id": "ainst_b7d7cec5183e4e668f52c3d306396b85",
+     "mission_id": "mis_toolu_01VzQpG7rwvit8m5ojNpkt73",
+     "mission_owner": true
+    }
+   },
+   {
+    "object_id": "claude:toolu_01GydYzisYNoHVwqMjHhn2K3",
+    "kind": "agent",
+    "category": "agent",
+    "constraints": {
+     "placed_by": "runtime",
+     "pinned_by_user": false
+    },
+    "origin": "runtime",
+    "exec_state": "completed",
+    "representation": "point",
+    "geometry": null,
+    "layer": 100,
+    "order": 0,
+    "visibility": "visible",
+    "disposition": "active",
+    "work_ref": {
+     "source": "claude",
+     "external_id": "toolu_01GydYzisYNoHVwqMjHhn2K3",
+     "work_id": null
+    },
+    "payload": {
+     "title": "[code] [coder] Producteur S08",
+     "summary": "```python\ndef is_palindrome(s):\n    t = ''.join(c.lower() for c in s if c.isalnum())\n    return t == t[::-1]\n```",
+     "items": []
+    },
+    "role_ref": {
+     "role_id": "coder",
+     "instance_id": "ainst_9ab8f21661dc4826ba45fb5e4de9f6cb",
+     "mission_id": "mis_toolu_01VzQpG7rwvit8m5ojNpkt73",
+     "mission_owner": false
+    }
+   },
+   {
+    "object_id": "claude:toolu_01HJ52wkfqiekVLz7RKsN1da",
+    "kind": "agent",
+    "category": "agent",
+    "constraints": {
+     "placed_by": "runtime",
+     "pinned_by_user": false
+    },
+    "origin": "runtime",
+    "exec_state": "completed",
+    "representation": "point",
+    "geometry": null,
+    "layer": 100,
+    "order": 0,
+    "visibility": "visible",
+    "disposition": "active",
+    "work_ref": {
+     "source": "claude",
+     "external_id": "toolu_01HJ52wkfqiekVLz7RKsN1da",
+     "work_id": null
+    },
+    "payload": {
+     "title": "[code] [qa] Relecture S08",
+     "summary": "**Verdict : à corriger (mineur).** Relation QA `rel_6be5cb8213cc47f7a38d6b72f3e3bbf3`, fermée en `correction_requested`, reviewer « self », relue : agent `a76bb4d3a64181c34`.\n\n**Constats**\n\n1. **À corriger : lettre turque majuscule.** `is_palindrome(\"İ\")` renvoie `False`, alors qu'un caractère seul est un palindrome. Cause : `str.lower()` transforme U+0130 en `i` + U+0307 (deux code points), et `[::-1]` sépare alors le point combinant de sa lettre. Même échec sur `\"İİ\"`, `\"aİa\"` et `\"İİİ\"`. Preuve : sortie de `python -I` sur ces entrées, par exemple `'\\u0130\\u0130'` donne `'i\\u0307i\\u0307'` puis `False`.\n2. **Décision à prendre, pas un défaut avéré : marques combinantes.** `isalnum()` écarte les accents combinants, donc `\"e\\u0301e\"` est jugé palindrome. C'est cohérent si la règle est « lettres et chiffres seulement », mais la consigne ne le dit pas.\n\n**Tests exécutés** : 14 cas (vide, phrase canonique « A man, a plan, a canal: Panama », « race a car », « 0P », ponctuation seule, « Été…",
+     "items": []
+    },
+    "role_ref": {
+     "role_id": "qa",
+     "instance_id": "ainst_ce08bbbb26014292a706b633e48d4f52",
+     "mission_id": "mis_toolu_01VzQpG7rwvit8m5ojNpkt73",
+     "mission_owner": false
+    }
+   },
+   {
+    "object_id": "sandbox:eph-fail",
+    "kind": "agent",
+    "category": "agent",
+    "constraints": {
+     "placed_by": "runtime",
+     "pinned_by_user": false
+    },
+    "origin": "runtime",
+    "exec_state": "failed",
+    "representation": "point",
+    "geometry": null,
+    "layer": 100,
+    "order": 0,
+    "visibility": "visible",
+    "disposition": "active",
+    "work_ref": {
+     "source": "sandbox",
+     "external_id": "eph-fail",
+     "work_id": null
+    },
+    "payload": {
+     "title": "Éphémère synthétique échouée",
+     "summary": "échec provoqué par la sonde S08",
+     "items": []
+    }
+   },
+   {
+    "object_id": "attention!sandbox:eph-fail",
+    "kind": "attention",
+    "category": "failed",
+    "constraints": {
+     "placed_by": "runtime",
+     "pinned_by_user": false
+    },
+    "origin": "runtime",
+    "exec_state": "failed",
+    "representation": "point",
+    "geometry": null,
+    "layer": 300,
+    "order": 0,
+    "visibility": "visible",
+    "disposition": "active",
+    "work_ref": {
+     "source": "sandbox",
+     "external_id": "eph-fail",
+     "work_id": null
+    },
+    "payload": {
+     "title": "probe_failure",
+     "summary": "échec provoqué par la sonde S08",
+     "items": []
+    }
+   }
+  ],
+  "relations": [
+   {
+    "relation_id": "parent_of!claude:toolu_01GydYzisYNoHVwqMjHhn2K3",
+    "kind": "parent_of",
+    "from_id": "claude:toolu_01VzQpG7rwvit8m5ojNpkt73",
+    "to_id": "claude:toolu_01GydYzisYNoHVwqMjHhn2K3",
+    "layer": 50
+   },
+   {
+    "relation_id": "parent_of!claude:toolu_01HJ52wkfqiekVLz7RKsN1da",
+    "kind": "parent_of",
+    "from_id": "claude:toolu_01VzQpG7rwvit8m5ojNpkt73",
+    "to_id": "claude:toolu_01HJ52wkfqiekVLz7RKsN1da",
+    "layer": 50
+   },
+   {
+    "relation_id": "qa!rel_6be5cb8213cc47f7a38d6b72f3e3bbf3",
+    "kind": "qa",
+    "from_id": "claude:toolu_01HJ52wkfqiekVLz7RKsN1da",
+    "to_id": "claude:toolu_01GydYzisYNoHVwqMjHhn2K3",
+    "layer": 50,
+    "ref": {
+     "relation_id": "rel_6be5cb8213cc47f7a38d6b72f3e3bbf3",
+     "mission_id": "mis_toolu_01VzQpG7rwvit8m5ojNpkt73",
+     "state": "closed",
+     "outcome": "correction_requested"
+    }
+   },
+   {
+    "relation_id": "attention!sandbox:eph-fail",
+    "kind": "explains",
+    "from_id": "attention!sandbox:eph-fail",
+    "to_id": "sandbox:eph-fail",
+    "layer": 50
+   }
+  ],
+  "archived_ids": []
+ }
+}

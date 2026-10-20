@@ -16,10 +16,12 @@ from typing import Any
 import pytest
 
 from jarvis.domain.scene import (
+    AGENT_RELATION_KINDS,
     DEFAULT_LAYERS,
     ExecState,
     PlacedBy,
     RelationKind,
+    RelationRef,
     SceneActor,
     SceneConstraints,
     SceneObject,
@@ -55,7 +57,11 @@ def build_scene(spec: dict[str, Any]) -> SceneSnapshot:
             work_ref=None if work is None else WorkRef(source=work[0], external_id=work[1]),
             payload=ScenePayload(title=entry["id"]),
         ))
-    relations = tuple(SceneRelation(relation_id=rid, kind=RelationKind(kind), from_id=a, to_id=b)
+    # Lien d'agent (Slice 08 orchestration) : il porte toujours sa relation de
+    # mission ; la fixture compacte la dérive de son identifiant.
+    relations = tuple(SceneRelation(relation_id=rid, kind=RelationKind(kind), from_id=a, to_id=b,
+                                    ref=RelationRef(relation_id=f"rel_{rid}", mission_id="mis_fixture")
+                                    if RelationKind(kind) in AGENT_RELATION_KINDS else None)
                       for rid, kind, a, b in spec["relations"])
     return SceneSnapshot(scene_id="scene", revision=3, objects=tuple(objects), relations=relations,
                          archived_ids=tuple(spec["archived_ids"]))
