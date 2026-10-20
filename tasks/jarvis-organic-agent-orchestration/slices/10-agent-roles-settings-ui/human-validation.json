@@ -5,13 +5,56 @@
       "id": "HV-ORG-10-01",
       "description": "Open Settings > agent roles and confirm the role catalogue is visually structured, readable and consistent with graph identity rather than a raw wall of prompt text.",
       "status": "pending",
-      "evidence": null
+      "evidence": null,
+      "how_to_verify": {
+        "where": "Votre Control Center habituel (http://127.0.0.1:17654/) une fois la branche fusionnée et JARVIS relancé par vous ; ou un bac à sable lancé depuis le worktree par evidence/sandbox.ps1 (JARVIS_DATA_ROOT et JARVIS_RUNTIME_DIR temporaires, JARVIS_CORE_PORT=28653, JARVIS_UI_PORT=28654, JARVIS_VISUALIZER_ENABLED=0, JARVIS_OPEN_BROWSER=0), page http://127.0.0.1:28654/.",
+        "steps": [
+          "Ouvrez les Réglages (roue d'outils > Paramètres, ou le bouton Réglages), puis l'onglet « Sous-agents », après « Mémoire ».",
+          "Vérifiez que la liste montre les 7 rôles, chacun avec un pictogramme, un badge de 2 à 4 lettres (INT, DOC, WEB, DEV, CPT, DIR, QA), son libellé et son marqueur entre crochets.",
+          "Vérifiez que deux rôles se distinguent sans la couleur : pictogramme et badge différents.",
+          "Parcourez la liste au clavier : Tab jusqu'à la liste, puis flèches haut et bas, Début, Fin ; la fiche suit et le focus reste visible.",
+          "Vérifiez qu'aucun texte d'instructions n'est déplié par défaut : il est derrière « Afficher et modifier les instructions (N caractères) ».",
+          "Changez de thème (onglet Apparence : Circuit imprimé puis Cosmos) et revenez : l'onglet reste lisible dans les deux."
+        ],
+        "expected": "Un catalogue structuré et facile à parcourir, une identité (pictogramme, badge, accent) cohérente d'un rôle à l'autre, aucun mur de texte.",
+        "reference_captures": [
+          "evidence/01-catalogue-circuit-research-lead.png",
+          "evidence/03-catalogue-cosmos-qa-alias.png",
+          "evidence/04-clavier-focus-web-research.png",
+          "evidence/09-etroit-760.png",
+          "evidence/12-couleurs-forcees-contraste.png"
+        ],
+        "note": "Le graphe des tâches ne lit pas encore ces jetons (Slice 08) : la table --role-accent-* de control_center.html est celle qu'il devra reprendre. Le Control Center n'a pas de thème clair : les deux thèmes livrés sont sombres."
+      }
     },
     {
       "id": "HV-ORG-10-02",
       "description": "Inspect a role and verify mission, skills/loadout, capabilities and Work Methods are understandable; unavailable/edit-disabled fields are honestly read-only.",
       "status": "pending",
-      "evidence": null
+      "evidence": null,
+      "how_to_verify": {
+        "where": "Même écran que HV-ORG-10-01.",
+        "steps": [
+          "Choisissez « Direction de recherche » : lisez mission, « Quand l'employer », capacités (Lance des agents : Oui, Mission Owner : Peut porter une mission), savoirs (loadout research) et la note « pas encore proposé au cerveau ».",
+          "Dans Work Methods, dépliez « Recherche approfondie » (par défaut, apposée) : principes, critères de qualité, relations à envisager (délégation, contrôle qualité).",
+          "Dans « Consigne transmise au sous-agent », vérifiez l'ordre : 1 vos instructions (modifiable), 2 capacités du rôle (générées), 3 Work Method par défaut (non modifiable), avec la mention qu'elle s'ajoute après vos instructions.",
+          "Vérifiez que Capacités et Work Methods portent « lecture seule » et n'offrent aucun champ modifiable.",
+          "Choisissez « Contrôle qualité » : l'alias [reviewer] est indiqué comme alias historique.",
+          "Choisissez « Conceptualisation », dépliez les instructions, modifiez le texte, enregistrez : message « Instructions enregistrées… », étiquette « modifié » dans la liste. Puis « Revenir au défaut » (deux clics) : l'étiquette disparaît.",
+          "Facultatif (conflit) : ouvrez le même onglet dans deux fenêtres, enregistrez un texte dans la première, puis un autre dans la seconde sans recharger : la seconde dit que les instructions ont été modifiées ailleurs et garde votre texte dans le champ."
+        ],
+        "expected": "Chaque champ est compréhensible ; seules les instructions sont modifiables et le disent ; la méthode non modifiable est annoncée après elles ; un conflit ne perd pas le texte saisi.",
+        "reference_captures": [
+          "evidence/02-work-method-ouverte-circuit.png",
+          "evidence/05-edition-brouillon.png",
+          "evidence/06-edition-enregistree.png",
+          "evidence/07-conflit-revision.png",
+          "evidence/08-instances-fixture.png",
+          "evidence/10-erreur-registre.png",
+          "evidence/11-reprise-apres-erreur.png"
+        ],
+        "note": "08-instances-fixture.png montre des instances simulées (réponse de /api/agent/tasks remplacée dans la page) : aucune tâche réelle ne tournait dans le bac à sable. Sur votre poste, remettez « Conceptualisation » au défaut après l'essai si vous ne voulez pas garder le texte d'essai."
+      }
     }
   ],
   "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."

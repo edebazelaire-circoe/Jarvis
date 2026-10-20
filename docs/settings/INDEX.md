@@ -9,6 +9,7 @@
 | `jarvis/runtime/prompt_overrides.py` | Keep saved prompt edits separate from runtime-only behavior merge into shared backend turn composition | `stored_prompt_override_document`, `prompt_override_document` |
 | `jarvis/runtime/prompt_runtime.py` | One bounded Agent-turn composition for ask, direct send and owned jobs | `compose_agent_turn` |
 | `jarvis/runtime/memory_settings.py` | Memory settings (`memory` key): tolerant read, strict whole-request write, server-described schema, `has_secret` only; see [`memory.md`](memory.md) | `read_memory_settings`, `validate_memory_settings_write`, `describe_memory_settings`, `read_loadout_policy` (`memory.loadouts`, Slice 09) |
+| `jarvis/runtime/control_center_subagents_settings.js` | Settings tab `Sous-agents`: role catalogue, role sheet, Work Methods, order of the appended brief, running instances; only writes role instructions through `POST /api/prompts/subagent_role.<id>`; see [`../subagent-roles.md`](../subagent-roles.md) § 8 | `JarvisSubagentSettings.create`, `show` |
 | `jarvis/runtime/control_center.py` | `/api/settings` projection/save, alias conflict rejection, active-agent refresh | `_settings_payload`, `save_settings`, `_apply_cli`, `agent_ask` |
 | `jarvis/runtime/agent_settings.py` + `back_brain_worker.py` | Carry and consume behavior choice for owned background agent executions | `resolve_agent_execution`, `execute_with_progress` |
 
@@ -63,6 +64,17 @@ edits, so generated behavior cannot masquerade as or duplicate a user override.
 The saved turn addition plus generated behavior share the existing 8,192
 character override bound. Both Settings save and Prompts edit validate the
 combined layer before their atomic writer runs.
+
+## Sous-agents tab
+
+Tab `subagents` (label `Sous-agents`, no footer save button), after `Mémoire`. It reads
+`GET /api/subagent-roles` (v2) and `GET /api/agent/tasks`, and writes nothing but role instructions, through
+the existing prompt route with optimistic revisions (`base_revision` + `expected_effective_revision`).
+Capabilities and Work Methods are labelled read-only. A non-editable default Work Method is shown as
+appended after the editable instructions. Not to be confused with the `Sous-agents / Modèles` section of
+the `Agent / CLI` tab, which routes models. Full contract, states and error codes:
+[`../subagent-roles.md`](../subagent-roles.md) § 8. Regression: `tests/unit/test_control_center_subagents_settings_js.py`,
+`tests/integration/test_settings_redesign_migration.py` (assembled navigation).
 
 ## Observability / Test Contract
 
