@@ -42,6 +42,7 @@ from dataclasses import dataclass
 import json
 from typing import Any
 
+from jarvis.domain import delivery_quality
 from jarvis.domain.agent_markers import HeadMarkers
 from jarvis.domain.subagent_roles import ROLES, SPAWN_TOOL, SubagentRole
 
@@ -215,11 +216,13 @@ def _owner_markers(roles: Sequence[SubagentRole]) -> str:
     return ", ".join(f"[{role.default_profile}] [{role.marker}]" for role in owners)
 
 
-def mission_brief(decision: MissionDecision, roles: Sequence[SubagentRole] = ROLES) -> str | None:
+def mission_brief(decision: MissionDecision, roles: Sequence[SubagentRole] = ROLES, *,
+                  request: str = "") -> str | None:
     """Le bloc apposé sur la consigne d'un Mission Owner, ou `None` pour tout autre agent.
 
     Il enseigne quand les outils peuvent servir, jamais un ordre ni un nombre d'agents (D05) ; il rappelle que
-    seul ce qui est réellement lancé laisse une trace (D15).
+    seul ce qui est réellement lancé laisse une trace (D15). `request` (description et consigne de l'appelant)
+    nourrit l'indice de forme du paragraphe de restitution (Slice 11, `delivery_quality`).
     """
 
     if not decision.mission_owner:
@@ -244,4 +247,7 @@ def mission_brief(decision: MissionDecision, roles: Sequence[SubagentRole] = ROL
         "([code] [qa] …) ou comparez des approches : ne vous arrêtez pas à la première réponse plausible.",
         "- Rendez le résultat sous une forme lisible pour son usage ; une réponse simple reste simple.",
         "JARVIS retient les agents que vous lancez réellement, rien de ce que vous ne faites qu'envisager.",
+        # Slice 11 : la restitution (surface, affichage, repli), paragraphe distinct tenu par `delivery_quality`.
+        "",
+        delivery_quality.delivery_brief(request),
     ))

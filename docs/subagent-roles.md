@@ -347,6 +347,56 @@ Développement ou une Direction de recherche peut porter une mission en gardant 
   exige l'id du relais et un successeur Mission Owner de la même mission ; une mission close ne change plus
   de propriétaire.
 
+### 5bis. Restitution du Mission Owner (Slice 11)
+
+Décision D23 du handoff jarvis-organic-agent-orchestration : un rapport ou une comparaison sérieuse se livre
+sur une surface riche **existante**, une réponse simple reste simple. Politique : module pur
+`jarvis/domain/delivery_quality.py` ; tests `tests/unit/test_delivery_quality.py`.
+
+**Ce que le hook appose.** Le bloc « RESPONSABILITÉ DE MISSION (JARVIS) » (`agent_orchestration.mission_brief`)
+se termine par un paragraphe distinct « RESTITUTION (JARVIS) » (`delivery_quality.delivery_brief`), apposé
+une seule fois, au Mission Owner seulement (ni membre, ni agent sans mission). Il dit :
+
+- pourquoi : l'utilisateur ne lit pas le compte rendu d'un sous-agent, le cerveau vocal le lui résume ; ce qui
+  doit être lu n'atteint l'utilisateur que s'il est affiché ;
+- quelle surface selon l'usage du résultat : fait, chiffre, petite correction → réponse directe, sans fenêtre ;
+  comparaison sérieuse → `jarvis.table` (recommandation longue dans un `jarvis.document` à côté) ; rapport,
+  synthèse, recherche approfondie → `jarvis.document` ; actions à cocher → `jarvis.checklist` ; une surface
+  plus riche peut se chercher par `prefab_search`. Formes et bornes (`data`) reprises des manifestes livrés,
+  égalité vérifiée par test ;
+- comment : `mcp__jarvis-display__scene_create_object` (kind `window`, `prefab {prefab_id, data}`), chargé par
+  `ToolSearch` s'il est différé ;
+- quand la livraison est faite : seulement si l'outil rend un `object_id`. Sur refus, erreur ou outils absents,
+  le contenu part en Markdown structuré dans le compte rendu avec une phrase sur l'échec ;
+- le compte rendu après un affichage réussi : l'`object_id` et la conclusion, sans recopier l'affiché.
+
+Un **indice** de forme termine le paragraphe quand la demande de l'appelant (description et consigne d'origine,
+jamais la charte ni les blocs apposés) ressemble à une comparaison, un rapport ou une liste à cocher
+(`classify_delivery`, mots repérés sans accents ; « par rapport à » et « compte rendu » ne comptent pas) :
+« affichez …, sauf si le résultat réel tient en une phrase ». Une demande simple ne reçoit aucun indice. Ni
+gabarit imposé, ni nombre d'artefacts, ni doctrine de complexité minimale (D05) : le Mission Owner juge sur le
+résultat réel, et juge aussi la suffisance des preuves avant de rendre (paragraphe précédent du bloc, D22).
+
+**Repli d'un affichage qui échoue.** `SceneDisplayTools.create_object` / `update_object` avec un argument
+`prefab` : toute `DisplayToolError` (refus `prefab_invalid` de Core, `unknown_prefab`, `prefab_unavailable`,
+Core injoignable…) garde son code et sa phrase et reçoit `delivery_quality.fallback_note` : « REPLI DE
+RESTITUTION (JARVIS) », rien n'est à l'écran, ne pas le prétendre, corriger si la cause est claire, sinon livrer
+le contenu sous une forme lisible, et le contenu prêt à livrer (`readable_content` : tableau Markdown pour
+`jarvis.table`, corps pour `jarvis.document`/`window`/`browser`, cases pour `jarvis.checklist`, JSON indenté
+sinon ; borné à 6000 caractères, coupure dite). L'échec reste journalisé une fois (`display.tool_refused` ou
+`display.tool_failed`) ; `display.prefab_fallback` (info : outil, code, motif, `prefab_id`, jamais le contenu)
+dit qu'un repli a été proposé. Un échec sans `prefab` est inchangé.
+
+**Voie réelle de livraison** (bac à sable du 2026-10-20, CLI 2.1.304, haiku) : un sous-agent `general-purpose`
+lancé par le cerveau a les outils `jarvis-display` du cerveau, différés (`deferred_tools_delta`), chargés par
+`ToolSearch` ; ses appels sont journalisés avec l'acteur `brain` (aucune distinction d'acteur pour un
+sous-agent). Sans `scene.enabled`, le serveur n'est pas déclaré : le Mission Owner livre en Markdown.
+
+**Limite.** Seul un Mission Owner reçoit la consigne : le cerveau propose aujourd'hui `[code] [coder]` et
+`[general] [research]` ; une recherche confiée à `[research]` (rôle qui ne porte pas de mission) ne la reçoit pas tant
+que la Slice 07 n'offre pas `research-lead` au cerveau. La beauté du rendu reste un jugement humain
+(`HV-ORG-11-01`, `HV-ORG-11-02`).
+
 ## 6. Éphémère
 
 Un seul drapeau (décision I-004 de l'agent 0, 2026-10-20) : une tâche courte dont la réussite est

@@ -5,13 +5,40 @@
       "id": "HV-ORG-11-01",
       "description": "Ask for a serious comparative research result and verify JARVIS delivers a polished structured comparison/report using appropriate prefab surfaces rather than an ugly raw text dump.",
       "status": "pending",
-      "evidence": null
+      "evidence": null,
+      "how_to_verify": {
+        "where": "Votre JARVIS habituel une fois la branche fusionnée et JARVIS relancé par vous (le hook, la consigne et les outils d'affichage ne changent qu'au redémarrage complet) ; ou le bac à sable evidence/sandbox.py lancé depuis le worktree (Core 29653, Control Center 29654, JARVIS_DATA_ROOT et JARVIS_RUNTIME_DIR temporaires, JARVIS_VISUALIZER_ENABLED=0, JARVIS_OPEN_BROWSER=0, cerveau haiku), page http://127.0.0.1:29654/.",
+        "steps": [
+          "Vérifiez que la scène est allumée (Réglages > Scène) : sans elle, les outils d'affichage ne sont pas déclarés et la restitution passe en Markdown.",
+          "Demandez à voix ou dans le chat une comparaison sérieuse confiée à un Mission Owner, par exemple : « Lance un [general] [research-lead] : compare pydantic, attrs et marshmallow sur la performance, l'ergonomie, la validation, l'écosystème et la licence, pour choisir celle de mon prochain service. » (le cerveau ne propose pas encore research-lead de lui-même : Slice 07).",
+          "Attendez la fin de la tâche (panneau Agents), puis regardez la scène : une fenêtre « tableau » (jarvis.table) doit porter la comparaison, et, si la recommandation est longue, une fenêtre « document » (jarvis.document) à côté.",
+          "Agrandissez chaque fenêtre si besoin : en-têtes lisibles, cellules courtes qui se replient, défilement dans la fenêtre, aucune colonne impossible à lire.",
+          "Écoutez ou lisez la réponse du cerveau : elle résume la conclusion en quelques phrases et ne relit pas le tableau.",
+          "Demandez ensuite un rapport (« Lance un [general] [research-lead] : fais une synthèse des licences de Piper, Coqui XTTS et Kokoro ») et vérifiez qu'il arrive dans une fenêtre document structurée (titres, listes, sources ou limites), pas en mur de texte."
+        ],
+        "expected": "Comparaison et rapport livrés dans des surfaces structurées et soignées (tableau, document), que vous jugez agréables à lire ; aucun mur de texte brut à l'écran.",
+        "reference_captures": [
+          "evidence/01-comparaison-table-et-document.png"
+        ],
+        "note": "Capture de référence : bac à sable du 2026-10-20, fenêtres créées par le Mission Owner (haiku) à leur taille par défaut. La dernière colonne du tableau y est coupée à droite par la largeur par défaut de la fenêtre : dites si c'est acceptable une fois la fenêtre agrandie, ou si la largeur par défaut d'un tableau doit changer (suite hors Slice 11 : nouvelle version du prefab de base ou géométrie conseillée)."
+      }
     },
     {
       "id": "HV-ORG-11-02",
       "description": "Ask for a trivial short result and confirm JARVIS does not force an unnecessary heavy report/prefab.",
       "status": "pending",
-      "evidence": null
+      "evidence": null,
+      "how_to_verify": {
+        "where": "Même installation que HV-ORG-11-01.",
+        "steps": [
+          "Posez une question courte : « Combien de fichiers Markdown y a-t-il dans docs/legacy ? » ; la réponse est un nombre, sans fenêtre nouvelle dans la scène.",
+          "Confiez une tâche courte à un Mission Owner : « Lance un [code] [coder] qui compte les fichiers Markdown de docs/legacy et me donne le nombre. » ; la réponse reste un nombre, sans fenêtre tableau ni document.",
+          "Facultatif, repli : « Lance un [general] [research-lead] : compare VS Code, Zed et Neovim sur dix critères, un seul tableau jarvis.table avec une colonne par critère, n'essaie aucune autre forme d'affichage. » Le tableau est refusé (8 colonnes au plus) : la réponse doit dire que rien n'est affiché, en donner la cause, et livrer la comparaison sous une forme lisible (tableau Markdown dans le chat). Le journal d'exécution (trace.jsonl) garde le refus, display.tool_refused, et display.prefab_fallback."
+        ],
+        "expected": "Une question simple reçoit une réponse simple, sans artefact ; un affichage refusé est dit honnêtement et le contenu arrive quand même sous une forme lisible.",
+        "reference_captures": [],
+        "note": "Trace de référence (bac à sable du 2026-10-20) : question directe → « 6 » sans sous-agent ; [code] [coder] → « 6 », aucun appel d'outil d'affichage ; repli : display.tool_refused (prefab_invalid) puis display.prefab_fallback, compte rendu en tableau Markdown avec la cause."
+      }
     }
   ],
   "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."

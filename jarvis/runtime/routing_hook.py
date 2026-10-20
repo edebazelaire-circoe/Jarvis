@@ -220,7 +220,9 @@ def charter_input(
     signed = with_role_instructions(signed, read_role(tool_input), role_overrides,
                                     method=orchestration.method.method_id) or signed
     # La responsabilité de mission d'un Mission Owner (Slice 05), apposée en dernier. Jamais doublée.
-    mission = agent_orchestration.mission_brief(orchestration.mission)
+    # L'indice de restitution (Slice 11) lit la demande de l'appelant, jamais la charte ni les blocs apposés.
+    request = f"{tool_input.get('description') or ''}\n{brief}"
+    mission = agent_orchestration.mission_brief(orchestration.mission, request=request)
     if mission and agent_orchestration.MISSION_MARK not in signed:
         signed = f"{signed.rstrip()}\n\n{mission}"
     return None if signed == brief else {"prompt": signed}
