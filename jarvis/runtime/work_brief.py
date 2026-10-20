@@ -84,6 +84,12 @@ def _entry_line(item: dict[str, Any]) -> str:
     mission = _text(item.get("mission_id"))
     if mission:
         parts.append(f"mission : {mission}" + (" (responsable)" if item.get("mission_owner") is True else ""))
+    relations = item.get("relations")
+    if isinstance(relations, list):
+        # Slice 06 : les relations connues de l'agent (nature, position, id, état), jamais leur contenu.
+        shown = [_text(summary) for summary in relations[:4] if _text(summary)]
+        if shown:
+            parts.append("relations : " + " ; ".join(shown))
     fraction = item.get("progress_fraction")
     if isinstance(fraction, (int, float)) and not isinstance(fraction, bool) and 0 <= fraction <= 1:
         parts.append(f"avancement {round(fraction * 100)} %")

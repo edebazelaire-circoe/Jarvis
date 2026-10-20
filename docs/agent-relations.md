@@ -1,10 +1,9 @@
 # Relations entre agents, tableaux de relation et relais
 
 Page canonique des relations typées qu'un Mission Owner noue entre des instances d'agent, des messages
-explicites qu'elles échangent et du paquet de relais. Elle décrit le contrat ; la persistance
-([mission-history.md](mission-history.md)),
-les outils qui créent ces relations (Slices 05 et 06) et leur affichage (Slices 08 et 09) sont signalés là
-où ils manquent encore.
+explicites qu'elles échangent et du paquet de relais. Elle décrit le contrat (§1-§8) et son runtime (§10,
+Slice 06 : outils des agents, autorité, relais en une transaction) ; la persistance est dans
+[mission-history.md](mission-history.md), l'affichage (Slices 08 et 09) est signalé là où il manque encore.
 
 | Contrat | Code | Tests |
 | --- | --- | --- |
@@ -12,6 +11,9 @@ où ils manquent encore.
 | Messages de relation | `RelationMessage`, `check_message` | idem |
 | Paquet de relais | `HandoffPacket`, `check_handoff_chain` | idem |
 | Frontière de confidentialité | `scan_private_keys`, `check_collaboration_text` | idem |
+| Runtime : autorité, relais préparé, résumés, consignes (§10) | `jarvis/domain/relation_runtime.py` | `tests/unit/test_relations_runtime_hook.py` |
+| Runtime : service Core, routes | `jarvis/core/mission_history.py`, `jarvis/protocol/mission_routes.py` | `tests/unit/test_relations_runtime_service.py` |
+| Runtime : outils MCP, relais du Control Center, billets, hook | `jarvis/runtime/relations_mcp_tools.py`, `relation_relay.py`, `agent_handoffs.py`, `routing_hook.py` | `tests/unit/test_relations_runtime_relay.py`, `test_relations_runtime_hook.py` |
 
 Les instances et missions que ces relations relient sont celles de [subagent-roles.md](subagent-roles.md)
 (`missions.AgentInstance`, `missions.Mission`). Décisions produit : D09 à D15 du handoff
@@ -36,9 +38,10 @@ Chaque participant tient une **position** (`ParticipantPosition`) qui dit la for
 | `handoff` | dirigée | `predecessor` -> `successor` | la mission continue dans une instance neuve (D14) |
 
 Au plus `MAX_PARTICIPANTS` (12) ; une instance n'apparaît qu'une fois. Dans ce contrat, les participants
-sont fixés à la création : changer l'ensemble, c'est nouer une autre relation. Si la Slice 06 prouve qu'il
-faut faire entrer un membre dans une communication en cours, elle l'ajoutera comme une opération explicite et
-datée (« join ») **en plus** de ce contrat, sans réécrire l'ensemble initial ni casser son décodage.
+sont fixés à la création : changer l'ensemble, c'est nouer une autre relation. La Slice 06 n'a **pas** ajouté
+de « join » : le Mission Owner noue une nouvelle communication avec le nouvel ensemble (un appel), ce qui garde
+chaque fil fermé à ceux qui y étaient. Une opération explicite et datée reste possible plus tard, **en plus** de
+ce contrat, sans réécrire l'ensemble initial ni casser son décodage.
 
 **Adversary n'est pas QA.** Adversary relie au moins deux producteurs pairs, tous en `producer`, sans
 source ni cible (`endpoints()` vaut `None`) ; QA relie exactement un `reviewer` et un `reviewed`. Aucune
@@ -131,9 +134,11 @@ relation (`handoff_mission_mismatch`) ; le rôle peut changer. **Instance neuve*
 - le successeur n'est pas plus ancien que son prédécesseur ;
 - avec `relations=` (les relations connues de la mission), il n'a pris part à **aucune** relation de la
   mission nouée avant ce relais ;
-- qu'il ne porte pas déjà de travail ne se voit pas dans ce contrat (c'est Work State) : l'aide de relais de
-  la Slice 06 garantit cette fraîcheur en créant le successeur pour le relais. Sans `relations`, un pair créé
-  après le prédécesseur et déjà au travail n'est donc pas détecté ici.
+- qu'il ne porte pas déjà de travail ne se voit pas dans ce contrat (c'est Work State) : le runtime de la
+  Slice 06 le garantit (§10.4) — le successeur est l'instance **créée par sa propre déclaration** `[relais]`,
+  écrite dans la même transaction que le relais (`record_handoff` refuse une instance déjà retenue,
+  `handoff_successor_not_fresh`). Sans `relations`, un pair créé après le prédécesseur et déjà au travail n'est
+  donc pas détecté par ce seul contrat.
 
 Sur un ensemble (`check_handoff_chain`), les relais forment des **chaînes** : une instance ne reçoit qu'un
 relais (`handoff_successor_reused`), un prédécesseur ne transmet qu'une fois (`handoff_fan_out` : pas
@@ -168,8 +173,9 @@ brute du fournisseur :
   détectable ici.
 
 Ce contrôle du contenu est une défense en profondeur. La vraie frontière est la voie d'entrée : un message
-n'entre sur un tableau que par un outil explicite qu'un agent appelle pour le publier (Slice 06), jamais par
-une copie du flux du fournisseur (`agent.event`, blocs de réflexion).
+n'entre sur un tableau que par un outil explicite qu'un agent appelle pour le publier (`relation_post`, §10),
+jamais par une copie du flux du fournisseur (`agent.event`, blocs de réflexion). Le refus revient à l'agent qui
+publie, avec ce qu'il doit corriger (`relation_runtime.actionable`).
 
 ## 6. Participants et périmètre de mission
 
@@ -218,13 +224,124 @@ message d'erreur demande de les fournir.
 `relation_raw_payload` ne couvre plus que les octets bruts et le JSON trop imbriqué pour être vérifié : un
 JSON lisible n'est plus refusé en bloc.
 
+Runtime (Slice 06, §10) : `relation_caller_unstamped`, `relation_caller_not_instance`, `relation_agent_unknown`,
+`relation_agent_not_recorded`, `relation_not_owner`, `relation_no_mission`, `relation_kind_not_opened_by_agent`,
+`relation_closed_by_core`, `relation_unknown`, `mission_closed`, `handoff_not_owner`, `handoff_unknown`,
+`handoff_wrong_predecessor`, `handoff_expired`, `handoff_ticket_missing` (hook).
+
 ## 9. Ce qui reste à câbler
 
 | Sujet | Où |
 | --- | --- |
 | Tables durables des relations, messages et paquets (`jarvis.sqlite3` v10), ordre du fil : faits ([mission-history.md](mission-history.md)) | Slice 03 |
-| Outils du Mission Owner qui nouent, alimentent et closent les relations | Slices 05 et 06 |
-| Opération « join » d'une communication en cours, si elle s'avère utile (§1) | Slice 06 |
-| Fraîcheur du successeur côté Work State (aucun travail porté), fil fourni à `check_message` | Slice 06 |
+| Outils qui nouent, alimentent et closent les relations ; relais ; délégation alignée ; fraîcheur du successeur ; fil fourni à `check_message` | fait (Slice 06, §10) |
+| Opération « join » d'une communication en cours | non ajoutée (§1) : une nouvelle communication la remplace |
+| Enseigner au cerveau quand demander une QA, un Adversary, un relais à ses agents racines | Slice 07 |
 | Projection dans la scène et styles de lien | Slice 08 |
 | Graphe et ouverture du tableau depuis une relation | Slice 09 |
+
+## 10. Runtime des relations (Slice 06)
+
+### 10.1 Voie d'entrée : des outils explicites, l'identité apposée par le hook
+
+Un agent noue, alimente, lit ou clôt une relation, ou passe la main, par cinq outils MCP du serveur
+`jarvis-workspace` (`jarvis/runtime/relations_mcp_tools.py`) : `relation_open`, `relation_post`, `relation_read`,
+`relation_close`, `relation_handoff`. Pourquoi cette voie :
+
+- **un sous-agent hérite des serveurs MCP du cerveau** (constaté en Slice 05) ; `jarvis-workspace` est déclaré à
+  chaque lancement, sans interrupteur. Le test de parité (`test_brain_capability_parity`) exige que chaque outil
+  d'un serveur déclaré soit nommé dans la consigne du cerveau : une ligne de `BRAIN_WORKSPACE_PROMPT` (consigne du
+  serveur, pas la consigne système) les nomme et dit que le cerveau ne fait que lire (`relation_read`).
+  `BRAIN_SYSTEM_PROMPT` et `brain_rules()` ne changent pas : enseigner au cerveau quand s'en servir relève de la
+  Slice 07 ;
+- **l'appel est synchrone** : le refus codé de Core revient à l'agent qui publie, avec ce qu'il doit corriger. Un
+  fait déposé par le hook (comme les déclarations) ne le pourrait pas ;
+- **D25** : la sémantique vit dans les contrats de Core ; le hook n'appose qu'une **identité**. Pour chaque appel
+  `mcp__jarvis-workspace__relation_*` (matcher du hook étendu, `routing_hook.HOOK_MATCHER`), il écrit
+  `jarvis_caller = {stamped, agent_id, agent_type}` dans `updatedInput`, depuis son événement (l'`agent_id` du CLI,
+  `None` pour le cerveau), en **écrasant** toute valeur écrite par le modèle. Il reste court et hors ligne : ni
+  disque ni réseau. Le champ n'est pas dans le schéma montré au modèle ; le serveur le retire avant le contrôle
+  strict des arguments (`CURRENT_CALLER`). Sans lui (CLI lancé avec un ancien réglage), refus
+  `relation_caller_unstamped` : rien n'est deviné. Constaté sur le CLI 2.1.304 (sonde du 2026-10-20) : l'`agent_id`
+  du hook est le `task_id` de `task_started` et l'« agentId » que l'outil `Agent` rend à l'appelant ;
+  `updatedInput` est honoré pour un outil MCP, même avec un champ hors schéma.
+
+Limite assumée : le champ apposé n'est pas signé. Un modèle qui l'écrirait lui-même serait écrasé par le hook ; il
+ne passerait que sur un CLI lancé sans le hook à jour, où l'identité n'est de toute façon pas garantie.
+
+Chemin : outil MCP → Control Center `POST /api/missions/relations`, `.../{id}/messages`, `.../{id}/close`,
+`GET /api/missions/relations/{id}`, `POST /api/missions/handoffs` (`relation_relay.py`) → Core
+`/v1/missions/relations*`, `/v1/missions/handoffs` (`mission_routes.py`) → `MissionHistoryService`. Le Control
+Center résout chaque agentId (et `self`) en identité de travail par le suivi des tâches
+(`DeclarationRelay.task_for_agent`), remet d'abord les déclarations en attente (`settle`), et rend tel quel le
+refus de Core. Core parle d'identités de travail, jamais d'agentId (D25).
+
+### 10.2 Autorité (`relation_runtime`)
+
+| Geste | Qui |
+| --- | --- |
+| nouer une communication ou un Adversary | le propriétaire courant de la mission de l'appelant, ou d'une mission ancêtre (D04) |
+| nouer une QA | ce propriétaire, ou le relecteur lui-même (`reviewer = self`) : le Mission Owner décide en lançant un relecteur sur un travail nommé, le relecteur l'enregistre |
+| publier | un participant (`relation_not_participant` sinon), tant que la relation est ouverte ; sur une relation encore ouverte d'une mission close, le message est retenu et dit au journal (`relation_message_after_close` : un agent repris par `SendMessage` peut travailler après la clôture, constaté en bac à sable) |
+| clore | verdict QA : le relecteur ; issue d'un Adversary : le propriétaire ou le créateur ; fin d'une communication : un membre aussi ; `withdrawn` : le créateur ou le propriétaire |
+| délégation, relais | Core seulement (`relation_kind_not_opened_by_agent`, `relation_closed_by_core`) |
+| lire | tout appelant apposé, le cerveau compris |
+
+La relation est nouée dans la mission de l'appelant (`relation_no_mission` s'il n'en a pas). Les règles du
+contrat (§1, §6) s'appliquent ensuite dans la transaction du magasin.
+
+### 10.3 Sémantique au runtime, sans protocole
+
+- **QA** (asymétrique, D11) : un relecteur de rôle `qa` relit le travail d'un autre ; il publie ses constats
+  (`critique`) et rend un verdict (`approved`, `findings`, `correction_requested`, `rejected`). Le hook appose sur
+  la consigne d'un relecteur le bloc `RELATION QA (JARVIS)` (`reviewer_brief`).
+- **Adversary** (symétrique, D10) : au moins deux producteurs pairs, aucun relecteur ; ils publient leurs
+  propositions et leurs critiques mutuelles ; le propriétaire tranche (`winner` + vainqueur, `synthesis`,
+  `unresolved`, `escalated`).
+- **Communication** (D13) : un fil de messages délibérés. `SendMessage` (CLI) reste le moyen de joindre un agent
+  (amendement de readiness) ; le tableau garde ce qui a été dit.
+- Aucun outil ne compte ni n'ordonne des tours ; une relation se clôt quand l'issue est connue, avec ou sans
+  messages. Le Mission Owner reçoit le bloc `RELATIONS ENTRE AGENTS (JARVIS)` (`relations_brief`), apposé par le
+  hook **après** la responsabilité de mission, en bloc distinct : quand chaque outil sert, jamais un ordre.
+
+### 10.4 Relais : une instance neuve, un paquet complet, la propriété avant la fin
+
+1. Le propriétaire courant appelle `relation_handoff` (objet + paquet complet). Core vérifie qu'il est le
+   propriétaire courant d'une mission ouverte et qu'il n'a jamais passé la main (`handoff_not_owner`,
+   `handoff_fan_out`, `mission_closed`, `handoff_packet_incomplete`), puis garde un **relais préparé**
+   (`PendingHandoff`, mémoire de Core, 64 au plus, `HANDOFF_TTL_S` = 600 s). **Rien de durable** n'est écrit : un
+   relais jamais lancé ne laisse aucune trace (D15). Le Control Center dépose un **billet**
+   (`<runtime>/agent-handoffs/<handoff_id>.json`, `agent_handoffs.py`, 64 au plus, élagués après 1 h).
+2. Il lance le successeur avec `[relais]` après son rôle (`[code] [coder] [relais] Suite`), modificateur
+   d'orchestration de `agent_markers` (rôle `can_own_mission` exigé ; ignoré et consigné depuis le cerveau ou avec
+   `[mission]`). Le hook **réclame** le billet de son appelant par un renommage atomique (une seule fois), déclare
+   le successeur Mission Owner de la mission reprise (`AgentDeclarationFact.handoff_id`) et appose le paquet sur
+   sa consigne (`RELAIS DE MISSION (JARVIS)`). Sans billet : l'appel `Agent` est **refusé** avec ce qu'il faut
+   faire.
+3. À la déclaration du successeur, Core écrit **en une transaction** (`record_handoff`) : l'instance neuve, la
+   relation `handoff` et son paquet, le transfert de propriété (`mission_owners`) et la clôture `transferred`.
+   Tout ou rien : un successeur n'est jamais propriétaire sans paquet complet. Le successeur est l'instance créée
+   par cette déclaration (fraîcheur garantie : `handoff_successor_not_fresh` si elle existait).
+4. **Avant la fin du prédécesseur** : la déclaration part dès que la tâche du successeur a démarré ; et tant qu'un
+   relais préparé attend, la clôture de la mission est différée (`mission_close_deferred` avec `handoff_id`), même
+   si le prédécesseur finit le premier. Ensuite seule la fin du propriétaire courant compte (Slice 05).
+5. Relais inconnu, expiré, d'une autre mission, d'un autre prédécesseur (le successeur doit être lancé par lui),
+   ou refusé par le magasin : le successeur est quand même retenu (D18), **sans** la propriété, et c'est dit à
+   l'erreur (`mission_history.handoff_failed`, code). Un relais préparé vit en mémoire de Core : un redémarrage
+   de Core entre la préparation et le lancement le perd (même dégradation, dite).
+
+### 10.5 Délégation alignée sur `[mission]`
+
+Quand `[mission]` ouvre une sous-mission, Core noue avec elle la délégation `delegator` (l'instance appelante)
+→ `delegatee` (le nouveau Mission Owner), `sub_mission_id`, id déterministe `rel_dlg_<sous-mission>` (un rejeu la
+retrouve identique). Elle est close `returned` quand la sous-mission se clôt. Un échec est dit
+(`mission_history.delegation_failed`) et ne refuse jamais la déclaration.
+
+### 10.6 Ce que voit le cerveau, ce qui est journalisé
+
+`BrainWorkEntry.relations` (quatre lignes au plus : nature, position, id, état — `relation_summary`), lues sans
+E/S (`MissionHistoryService.relation_refs`, cache borné, réchauffé au balayage après un redémarrage) ;
+`work_brief` les écrit « relations : … ». Jamais le texte d'un message. Journal de Core :
+`mission_history.relation_opened|relation_message|relation_closed|relation_refused|handoff_prepared|`
+`handoff_transferred|handoff_failed|delegation_failed` (ids, codes, tailles — jamais un texte) ; Control Center :
+`missions.relation_relayed|relation_failed` ; hook : `agent.relation_call`, `agent.handoff.claimed|failed`.

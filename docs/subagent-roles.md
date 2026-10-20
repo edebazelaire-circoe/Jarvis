@@ -228,7 +228,9 @@ grammaire, `agent_markers.parse_head`, lue à l'identique par le hook `PreToolUs
   ordinaire, visible et annoncée.
 - **Modificateurs d'orchestration** (Slice 05) : seulement après un rôle consommé, les mots suivants sont
   consommés tant qu'ils sont `[mission]` (l'agent ouvre et possède une sous-mission de la mission de son
-  appelant) ou l'id d'une Work Method livrée (méthode choisie), chacun une fois, dans n'importe quel ordre.
+  appelant), `[relais]` (Slice 06 : l'agent reprend la mission de son appelant par le relais que celui-ci a
+  préparé, [agent-relations.md](agent-relations.md) §10.4) ou l'id d'une Work Method livrée (méthode choisie),
+  chacun une fois, dans n'importe quel ordre.
   Sans rôle, ils restent dans le libellé, comme avant. Leur validité est jugée par le hook
   ([agent-orchestration.md](agent-orchestration.md) §3) ; le rôle de production de présentation ne se cherche
   que parmi les trois premiers mots, comme avant.
@@ -251,6 +253,7 @@ grammaire, `agent_markers.parse_head`, lue à l'identique par le hook `PreToolUs
 | `[general] [research-lead] [mission] Comparer` | general | research-lead, `[mission]` | non | Comparer |
 | `[general] [research] [quick-research] Chercher` | general | research, méthode `quick-research` | non | Chercher |
 | `[general] [mission] Comparer` | general | aucun | non | [mission] Comparer |
+| `[code] [coder] [relais] Suite du correctif` | code | coder, `[relais]` | non | Suite du correctif |
 
 Avant cette grammaire commune (I-005), le suivi exigeait `[éphémère]` en premier tandis que le hook ne
 lisait que des mots ASCII en tête : `[éphémère] [code] [coder] …` perdait profil et rôle côté hook,

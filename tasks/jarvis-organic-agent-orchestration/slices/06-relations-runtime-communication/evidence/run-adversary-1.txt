@@ -1,0 +1,38 @@
+== instances
+  toolu_017wRGriPE1jKNC2nbDzUSFU | [code] [coder] Sonde S06 Adversary | completed | role=coder | mission=mis_toolu_017wRGriPE1jKNC2nbDzUSFU owner=True | inst=ainst_f06d14822f3848e284d2463e253370b2
+  toolu_01E24UqQmrFkgq2xXdPSvfxj | [code] [coder] Producteur B | completed | role=coder | mission=mis_toolu_017wRGriPE1jKNC2nbDzUSFU owner=False | inst=ainst_e16b3f4ca02a468ea4069bc76744a742
+  toolu_01YXVVva1P32YtxyUqrPhmyh | [code] [coder] Producteur A | completed | role=coder | mission=mis_toolu_017wRGriPE1jKNC2nbDzUSFU owner=False | inst=ainst_407541c829bf4410a9b82ecb8ca6ecc4
+== missions
+  mis_toolu_017wRGriPE1jKNC2nbDzUSFU status=completed owner=ainst_f06d14822f3848e284d2463e253370b2 parent=None
+    owner change -> {'mission_id': 'mis_toolu_017wRGriPE1jKNC2nbDzUSFU', 'owner_instance_id': 'ainst_f06d14822f3848e284d2463e253370b2', 'at': '2026-10-20T14:01:47.190616+00:00', 'handoff_relation_id': None}
+== relations
+  rel_2f6bf95f4bc44cf2996aee1893e9c9d8 kind=adversary status=open outcome=None winner=None closed_by=None created_by=ainst_f06d14822f3848e284d2463e253370b2
+    purpose="Comparer deux stratégies de cache pour une API lente : LRU (Producteur A) contre TTL (Producteur B), défendues l'une face à l'autre." summary=''
+    participant ainst_407541c829bf4410a9b82ecb8ca6ecc4 producer
+    participant ainst_e16b3f4ca02a468ea4069bc76744a742 producer
+    MSG #1 proposal by ainst_e16b3f4ca02a468ea4069bc76744a742: "Proposition TTL : cache à durée de vie par clé de requête normalisée, TTL court (60 à 300 s selon la fraîcheur tolérée), avec service de la valeur expirée pendant son rafraîchissement en arrière-plan (stale-while-revalidate). Les appels répétés n'attendent pas l'API lente, et une seule requête par clé part vers le fournisseur. Le TTL doit être fixé d'après la fréquence de changement réel de la don"
+    MSG #2 critique by ainst_e16b3f4ca02a468ea4069bc76744a742: "Critique de l'approche LRU : (1) une éviction LRU se fait par récence, pas par coût de recalcul ; une requête rare mais très lente sort du cache et paie à nouveau toute la latence de l'API. (2) Le TTL seul fait attendre l'utilisateur à chaque expiration ; sans service de la valeur périmée pendant le rafraîchissement, la lenteur réapparaît en pointe. (3) La coalescence single-flight est bonne, mais"
+    CC agents={'ainst_407541c829bf4410a9b82ecb8ca6ecc4': 'a659ace7963194501', 'ainst_e16b3f4ca02a468ea4069bc76744a742': 'abd8e4dfdef38d1e4'}
+== trace (relation/handoff)
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_open", "tool_use_id": "toolu_01GX8htX4Qkipk155PknzR3C", "caller_agent_id": "ae07376e8c962ab2a"}
+  mission_history.relation_opened {"relation_id": "rel_2f6bf95f4bc44cf2996aee1893e9c9d8", "kind": "adversary", "mission_id": "mis_toolu_017wRGriPE1jKNC2nbDzUSFU", "participants": 2, "created_by_instance_id": "ainst_f06d14822f3848e284d2463e253370b2"}
+  missions.relation_relayed {"operation": "open", "kind": "adversary", "participants": 2}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_read", "tool_use_id": "toolu_015M9h3eZFHpVFPEVZcxNYjV", "caller_agent_id": "ae07376e8c962ab2a"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_2f6bf95f4bc44cf2996aee1893e9c9d8"}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_read", "tool_use_id": "toolu_015UsUkDjz4fKVBH5hNwadAe", "caller_agent_id": "ae07376e8c962ab2a"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_2f6bf95f4bc44cf2996aee1893e9c9d8"}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_post", "tool_use_id": "toolu_01ES4w2bRsTudDudarxzpxhp", "caller_agent_id": "abd8e4dfdef38d1e4"}
+  mission_history.relation_message {"relation_id": "rel_2f6bf95f4bc44cf2996aee1893e9c9d8", "message_id": "msg_9cb4e7d8ff1d4fa098e70231d120890f", "seq": 1, "type": "proposal", "chars": 404, "author_instance_id": "ainst_e16b3f4ca02a468ea4069bc76744a742"}
+  missions.relation_relayed {"operation": "post", "relation_id": "rel_2f6bf95f4bc44cf2996aee1893e9c9d8", "type": "proposal", "chars": 404}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_post", "tool_use_id": "toolu_01FoZYa4Ueqt8PEEXXxP3uVZ", "caller_agent_id": "abd8e4dfdef38d1e4"}
+  mission_history.relation_message {"relation_id": "rel_2f6bf95f4bc44cf2996aee1893e9c9d8", "message_id": "msg_2cd19848f4754eb1ac0e4cca40520de9", "seq": 2, "type": "critique", "chars": 653, "author_instance_id": "ainst_e16b3f4ca02a468ea4069bc76744a742"}
+  missions.relation_relayed {"operation": "post", "relation_id": "rel_2f6bf95f4bc44cf2996aee1893e9c9d8", "type": "critique", "chars": 653}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_read", "tool_use_id": "toolu_01UmzsVtw34t3NBfb7o7HYA5", "caller_agent_id": "ae07376e8c962ab2a"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_2f6bf95f4bc44cf2996aee1893e9c9d8"}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_read", "tool_use_id": "toolu_01C6hn8inbMbmNQZyFNUm12C", "caller_agent_id": "ae07376e8c962ab2a"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_2f6bf95f4bc44cf2996aee1893e9c9d8"}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_read", "tool_use_id": "toolu_01RZkxaL4TT4HoqM92mjmxvp", "caller_agent_id": "ae07376e8c962ab2a"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_2f6bf95f4bc44cf2996aee1893e9c9d8"}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_read", "tool_use_id": "toolu_012X1UeQyktjVS9x78JHM3Sx", "caller_agent_id": "ae07376e8c962ab2a"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_2f6bf95f4bc44cf2996aee1893e9c9d8"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_2f6bf95f4bc44cf2996aee1893e9c9d8"}

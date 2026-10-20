@@ -93,6 +93,9 @@ class AgentDeclarationFact:
     - `ephemeral` : le marqueur `[éphémère]` tel que lu, jamais déduit d'une durée ;
     - `session_id`, `caller_agent_id` (appel imbriqué), `subagent_type`, `run_in_background` : ceux de
       l'événement du hook ; `mission_id` / `mission_owner` : annoncés par l'appelant (Slice 05) ;
+    - `handoff_id` (Slice 06) : le relais préparé que ce successeur reprend (`[relais]`) ; il exige
+      `mission_owner` et la mission reprise. Absent de la charge utile quand il est vide : un fait ordinaire
+      garde exactement sa forme d'avant ;
     - `declared_at` : l'horloge du hook ; `contract_version` : `DECLARATION_CONTRACT_VERSION`.
     """
 
@@ -110,6 +113,7 @@ class AgentDeclarationFact:
     run_in_background: bool | None = None
     mission_id: str | None = None
     mission_owner: bool = False
+    handoff_id: str | None = None
     contract_version: int = DECLARATION_CONTRACT_VERSION
 
     def __post_init__(self) -> None:
@@ -134,12 +138,15 @@ class AgentDeclarationFact:
             raise MissionHistoryError("run_in_background must be a boolean or None", field="run_in_background")
         _check("profile", check_token, self.profile, MAX_PROFILE_CHARS, required=False)
         _check("label", check_text, self.label, MAX_LABEL_CHARS)
-        for name in ("session_id", "caller_agent_id", "mission_id"):
+        for name in ("session_id", "caller_agent_id", "mission_id", "handoff_id"):
             _check(name, check_id, getattr(self, name), required=False)
         if self.subagent_type is not None:
             _check("subagent_type", check_token, self.subagent_type, MAX_SUBAGENT_TYPE_CHARS, required=True)
         if self.mission_owner and self.mission_id is None:
             raise MissionHistoryError("a mission owner declaration names its mission", field="mission_id")
+        if self.handoff_id is not None and (not self.mission_owner or self.ephemeral):
+            raise MissionHistoryError("a handoff successor is a non-ephemeral mission owner of the handed-off mission",
+                                      field="handoff_id")
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -158,6 +165,7 @@ class AgentDeclarationFact:
             "run_in_background": self.run_in_background,
             "mission_id": self.mission_id,
             "mission_owner": self.mission_owner,
+            **({"handoff_id": self.handoff_id} if self.handoff_id is not None else {}),
         }
 
     @classmethod
@@ -181,6 +189,7 @@ class AgentDeclarationFact:
             run_in_background=data.get("run_in_background"),
             mission_id=data.get("mission_id"),
             mission_owner=data.get("mission_owner", False),
+            handoff_id=data.get("handoff_id"),
         )
 
     def declaration(self) -> AgentDeclaration:
@@ -196,13 +205,14 @@ class AgentDeclarationFact:
 _FACT_KEYS = frozenset({
     "contract_version", "tool_use_id", "declared_at", "role_id", "role_status", "role_marker", "ephemeral",
     "profile", "label", "session_id", "caller_agent_id", "subagent_type", "run_in_background", "mission_id",
-    "mission_owner",
+    "mission_owner", "handoff_id",
 })
 _FACT_REQUIRED = frozenset({"contract_version", "tool_use_id", "declared_at", "role_id", "role_status"})
 
 
 def fact_from_hook_event(
     event: Mapping[str, Any], *, declared_at: datetime, mission_id: str | None = None, mission_owner: bool = False,
+    handoff_id: str | None = None,
 ) -> AgentDeclarationFact:
     """Le fait qu'un hook `PreToolUse` produit pour un appel `Agent` (lecture : `agent_markers`).
 
@@ -237,6 +247,7 @@ def fact_from_hook_event(
         run_in_background=background if isinstance(background, bool) else None,
         mission_id=mission_id,
         mission_owner=mission_owner,
+        handoff_id=handoff_id,
     )
 
 

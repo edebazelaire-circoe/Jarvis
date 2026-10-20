@@ -30,7 +30,7 @@ everything else is unchanged and shipped.
 | `jarvis-display` | `jarvis/runtime/display_mcp.py:2208` (`build_server`) | 13 | `scene.enabled` true and Core target known (`control_center.py:1212-1224`) | Core `/v1/scene/*`, actor `brain` |
 | `jarvis-surface` *(Tool Brain handoff, Slice 07, §10.14)* | `jarvis/runtime/surface_mcp.py` (`build_server`) | 5 | **never** (`registration = "tool_brain"`: catalogued, executed only by the Tool Brain executor) | Core `/v1/scene/*` (windows of prefab `jarvis.browser`), actor `brain` |
 | `jarvis-console` | `jarvis/runtime/settings_mcp.py` (`build_server`) | 3 | always (no switch: it carries the other switches, `control_center.py` `_configure_agent`) | Control Center settings API (the nine Board/Session tools of §10.9 moved to `jarvis-workspace`, §10.12) |
-| `jarvis-workspace` *(board-memory-workspace-inspector, Slice 06, §10.12)* | `jarvis/runtime/workspace_mcp.py` (`build_server`) | 20 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/boards*`, `/api/sessions*` (`board_routes.py`), `/api/workspace/*` (`workspace_relay.py`) |
+| `jarvis-workspace` *(board-memory-workspace-inspector, Slice 06, §10.12; Dossier §10.18; relations §10.19)* | `jarvis/runtime/workspace_mcp.py` (`build_server`) | 29 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/boards*`, `/api/sessions*` (`board_routes.py`), `/api/workspace/*` (`workspace_relay.py`) |
 | `jarvis-presentation` *(interactive-presentation-studio, Slice 21, §10.15)* | `jarvis/runtime/presentation_studio_mcp.py` (`build_server`) | 12 | with the display: `scene.enabled` true and Core target known; Claude conversation profile only | Core `/v1/presentation-studio/*` (actor `brain`, set by the server) and the Control Center explorer / full-screen / turn-attestation routes |
 | `jarvis-remotion` *(jarvis-remotion-presentation-integration, Slice 21, §10.17)* | `jarvis/runtime/remotion_mcp.py` (`build_server`) | 6 | with `jarvis-presentation` (`scene.enabled`, same target); Claude conversation profile only | Core `/v1/local-capabilities/remotion*`, `/v1/remotion/imports*`, `/v1/presentation-studio/.../upgrades*`, `/v1/presentation-studio/engine` (read), the same routes as the Control Center cards; Control Center `/api/presentation-studio/agent/turn` (attestation) |
 | `jarvis-memory` *(memory-intelligence-knowledge, Slice 05b, §10.16)* | `jarvis/runtime/memory_mcp.py` (`build_server`) | 5 | always for the Claude conversation profile (no switch); never Codex, never the reflex or voice model | Control Center `/api/memory/brain/*` (`memory_relay.py`), relay of Core `/v1/memory/*` |
@@ -1506,3 +1506,39 @@ content. Server instructions unchanged (894 B, budget 950 B). Tests:
 Core: human view, dry run, origin brain in the ledger, codes, a simulated page
 answering `dossier_view`, `no_visible_page`), `tests/unit/test_mcp_catalog.py`
 (order, classes, budgets).
+
+### 10.19 Organic-agent-orchestration, Slice 06 — relation tools on `jarvis-workspace`
+
+Handoff `tasks/jarvis-organic-agent-orchestration/`. Contract of the semantics,
+authority, handoff and codes: [../agent-relations.md](../agent-relations.md) §10.
+Five tools appended to `jarvis-workspace` after `dossier_view`
+(`jarvis/runtime/relations_mcp_tools.py`, registered by `workspace_mcp.build_server`),
+category `workspace`, all `structured`, no `ui_surface`. They are the **sub-agents'**
+tools (a delegated agent inherits the server); the brain only reads
+(`BRAIN_WORKSPACE_PROMPT` names them in one line, budget 1 900 B).
+
+| Tool | Route(s) | Class / idempotent | Result (`mcp_results`) |
+| --- | --- | --- | --- |
+| `relation_open` | `POST /api/missions/relations {caller_agent_id, kind, purpose, participants[{agent, position}], target_refs}` | write / no | `RelationOpenResult {relation_id, kind, mission_id, purpose, status, created_by_instance_id?, target_refs?, participants[{agent_id, instance_id, position}], next}` |
+| `relation_post` | `POST /api/missions/relations/{id}/messages {caller_agent_id, type, text, audience[agent], artifact_refs, reply_to_message_id}` | write / no | `RelationPostResult {relation_id, seq, message_id, type, published}` |
+| `relation_read` | `GET /api/missions/relations/{id}?after&limit≤50` | read / yes | `RelationReadResult {…relation, participants[{agent_id, instance_id, position, role_id, work_status}], messages[{seq, message_id, author_agent_id, author_instance_id, type, text, created_at, reply_to_message_id?}], next_after}` |
+| `relation_close` | `POST /api/missions/relations/{id}/close {caller_agent_id, outcome, summary, winner}` | write / yes | `RelationCloseResult {…relation}` |
+| `relation_handoff` | `POST /api/missions/handoffs {caller_agent_id, purpose, packet}` | write / no | `RelationHandoffResult {handoff_id, mission_id, expires_at, next}` |
+
+- **Caller identity, never an argument.** The `PreToolUse` hook (matcher
+  `Agent|Task|mcp__jarvis-workspace__relation_.*`) writes `jarvis_caller
+  {stamped, agent_id, agent_type}` into `updatedInput`, overwriting any value;
+  the field is **not** in the advertised schema and the server strips it before
+  its strict argument check (`CURRENT_CALLER`). Missing → refused
+  `relation_caller_unstamped` before anything is sent.
+- **Agents** are named by the agentId the `Agent` tool returns, or `self`;
+  the Control Center resolves them (`relation_relay.py`). Empty string / empty
+  list = absent (compact schemas: no `anyOf null`).
+- **Errors.** The §10.12 format; the detail is Core's actionable message
+  (`relation_runtime.actionable`: what to fix), status 404 `relation_unknown`,
+  403 authority, 409 contract, 400 envelope; `relation_agent_unknown` (404) and
+  `relation_caller_not_instance` (403) come from the Control Center.
+- **Context cost.** +4 381 B (`relation_open` 1 045, `relation_post` 939,
+  `relation_read` 458, `relation_close` 776, `relation_handoff` 1 163):
+  `jarvis-workspace` 20 897 B (budget 21 000 B), declared native surface
+  121 429 B (budget 121 500 B).

@@ -248,51 +248,8 @@ class SQLiteMissionHistoryRepository:
         if mission is not None and mission.mission_id != instance.mission_id:
             raise MissionError("the mission opened with an instance is that instance's mission", field="mission_id")
 
-        def write(conn: sqlite3.Connection) -> tuple[StoredInstance, bool]:
-            row = conn.execute("SELECT * FROM agent_instances WHERE work_source=? AND work_external_id=?",
-                               instance.work_identity).fetchone()
-            if row is not None:
-                existing = _instance_row(row)
-                merged = reconcile_instance(existing.instance, replace(instance, instance_id=existing.instance.instance_id))
-                if merged != existing.instance:
-                    conn.execute("UPDATE agent_instances SET data=? WHERE instance_id=?",
-                                 (dump_json(merged.to_payload()), merged.instance_id))
-                return replace(existing, instance=merged), False
-            if instance.parent_instance_id is not None:
-                if _fetch_instance(conn, instance.parent_instance_id) is None:
-                    raise MissionError(f"parent instance {instance.parent_instance_id} is missing",
-                                       code="mission_parent_missing", field="parent_instance_id")
-                if _chain_depth(conn, "agent_instances", "instance_id", "parent_instance_id",
-                                instance.parent_instance_id) >= MAX_MISSION_DEPTH:
-                    raise MissionError(f"agent instance chain deeper than {MAX_MISSION_DEPTH}",
-                                       code="mission_too_deep", field="parent_instance_id")
-            if mission is not None:
-                if _fetch_mission(conn, mission.mission_id) is not None:
-                    raise MissionError(f"mission {mission.mission_id} is already open", code="mission_conflict",
-                                       field="mission_id")
-                if (mission.owner_instance_id != instance.instance_id or not instance.mission_owner):
-                    raise MissionError(f"mission {mission.mission_id} is opened by its own mission owner instance",
-                                       code="ownership_invalid", field="owner_instance_id")
-                _check_new_mission(conn, mission)
-            elif instance.mission_id is not None and _fetch_mission(conn, instance.mission_id) is None:
-                raise MissionError(f"mission {instance.mission_id} is unknown: open it with its owner instance",
-                                   code="mission_unknown", field="mission_id")
-            try:
-                conn.execute(
-                    "INSERT INTO agent_instances(instance_id,work_source,work_external_id,role_id,mission_id,"
-                    "mission_owner,parent_instance_id,ephemeral_lowered,created_at,declaration,data) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                    (instance.instance_id, instance.work_source, instance.work_external_id, instance.role_id,
-                     instance.mission_id, int(instance.mission_owner), instance.parent_instance_id,
-                     int(ephemeral_lowered), utc_key(instance.created_at),
-                     dump_json(declaration.to_payload()) if declaration is not None else None,
-                     dump_json(instance.to_payload())))
-            except sqlite3.IntegrityError as exc:
-                raise MissionError(f"instance {instance.instance_id} refused by the store: {exc}",
-                                   code="instance_conflict", field="instance_id") from exc
-            if mission is not None:
-                _insert_mission(conn, mission)
-            return StoredInstance(instance, ephemeral_lowered=ephemeral_lowered, declaration=declaration), True
+        def write(conn: sqlite3.Connection):
+            return _write_instance(conn, instance, declaration, ephemeral_lowered, mission)
 
         return await self._transaction(write)
 
@@ -338,31 +295,8 @@ class SQLiteMissionHistoryRepository:
 
     async def transfer_ownership(self, mission_id: str, successor_instance_id: str, *, handoff_relation_id: str,
                                  at: datetime) -> Mission:
-        def write(conn: sqlite3.Connection) -> Mission:
-            mission = _fetch_mission(conn, mission_id)
-            if mission is None:
-                raise MissionError(f"mission {mission_id} is unknown", code="mission_unknown", field="mission_id")
-            successor = _fetch_instance(conn, successor_instance_id)
-            if successor is None:
-                raise MissionError(f"instance {successor_instance_id} is unknown", code="ownership_invalid",
-                                   field="owner_instance_id")
-            relation = _fetch_relation(conn, handoff_relation_id)
-            if (relation is None or relation.kind is not AgentRelationKind.HANDOFF or relation.mission_id != mission_id
-                    or relation.outcome is RelationOutcome.WITHDRAWN
-                    or relation.endpoints() != (mission.owner_instance_id, successor_instance_id)):
-                raise MissionError(
-                    "an ownership change needs a handoff relation of this mission, not withdrawn, from the current "
-                    f"owner {mission.owner_instance_id} to {successor_instance_id}",
-                    code="ownership_invalid", field="handoff_ref")
-            if at < relation.created_at:
-                raise MissionError("an ownership change cannot precede its handoff", code="ownership_invalid",
-                                   field="at")
-            moved = transfer_ownership(mission, successor.instance, handoff_ref=handoff_relation_id)
-            conn.execute("UPDATE missions SET owner_instance_id=?, data=? WHERE mission_id=?",
-                         (moved.owner_instance_id, dump_json(moved.to_payload()), mission_id))
-            conn.execute("INSERT INTO mission_owners(mission_id,owner_instance_id,handoff_relation_id,at) "
-                         "VALUES(?,?,?,?)", (mission_id, moved.owner_instance_id, handoff_relation_id, utc_key(at)))
-            return moved
+        def write(conn: sqlite3.Connection):
+            return _write_transfer(conn, mission_id, successor_instance_id, handoff_relation_id, at)
 
         return await self._transaction(write)
 
@@ -437,51 +371,8 @@ class SQLiteMissionHistoryRepository:
         if not isinstance(relation, AgentRelation):
             raise RelationError("expected an AgentRelation")
 
-        def write(conn: sqlite3.Connection) -> AgentRelation:
-            existing = _fetch_relation(conn, relation.relation_id)
-            if existing is not None:
-                if existing == relation:
-                    return existing
-                raise RelationError(f"relation {relation.relation_id} already exists with other content",
-                                    code="relation_conflict", field="relation_id")
-            mission = _fetch_mission(conn, relation.mission_id)
-            if mission is None:
-                raise RelationError(f"mission {relation.mission_id} is missing", code="relation_mission_missing",
-                                    field="mission_id")
-            if mission.status.is_closed:
-                raise RelationError(f"mission {relation.mission_id} is closed", code="mission_closed",
-                                    field="mission_id")
-            missions = {item.mission_id: item for item in _tree_missions(conn, mission.root_mission_id)}
-            instances = {}
-            for instance_id in relation.participant_ids:
-                found = _fetch_instance(conn, instance_id)
-                if found is not None:
-                    instances[instance_id] = found.instance
-            if relation.created_by_instance_id is not None and _fetch_instance(
-                    conn, relation.created_by_instance_id) is None:
-                raise RelationError(f"creator {relation.created_by_instance_id} is not a known agent instance",
-                                    code="relation_participant_missing", field="created_by_instance_id")
-            rows = conn.execute("SELECT * FROM agent_relations WHERE mission_id=? ORDER BY created_at, relation_id",
-                                (relation.mission_id,)).fetchall()
-            siblings = _relations(conn, rows)
-            check_relation_participants(relation, instances, missions=missions, relations=siblings)
-            if relation.kind is AgentRelationKind.HANDOFF:
-                check_handoff_chain([*siblings, relation])
-            conn.execute(
-                "INSERT INTO agent_relations(relation_id,kind,mission_id,status,created_at,closed_at,data) "
-                "VALUES(?,?,?,?,?,?,?)",
-                (relation.relation_id, relation.kind.value, relation.mission_id, relation.status.value,
-                 utc_key(relation.created_at), _opt_key(relation.closed_at), dump_json(relation.to_payload())))
-            conn.executemany(
-                "INSERT INTO agent_relation_participants(relation_id,instance_id,position) VALUES(?,?,?)",
-                [(relation.relation_id, p.instance_id, p.position.value) for p in relation.participants])
-            if relation.handoff is not None:
-                predecessor, successor = relation.endpoints()
-                conn.execute(
-                    "INSERT INTO agent_handoff_packets(relation_id,predecessor_instance_id,successor_instance_id,data) "
-                    "VALUES(?,?,?,?)", (relation.relation_id, predecessor, successor,
-                                        dump_json(relation.handoff.to_payload())))
-            return relation
+        def write(conn: sqlite3.Connection):
+            return _write_relation(conn, relation)
 
         return await self._transaction(write)
 
@@ -489,23 +380,55 @@ class SQLiteMissionHistoryRepository:
         self, relation_id: str, outcome: RelationOutcome, at: datetime, *, summary: str = "",
         winner_instance_id: str | None = None, closed_by: str | None = None,
     ) -> AgentRelation:
-        def write(conn: sqlite3.Connection) -> AgentRelation:
-            current = _fetch_relation(conn, relation_id)
-            if current is None:
-                raise RelationError(f"relation {relation_id} is unknown", code="relation_unknown", field="relation_id")
-            closed = current.close(outcome, at, summary=summary, winner_instance_id=winner_instance_id,
-                                   closed_by=closed_by)
-            if closed != current:
-                if closed_by is not None and closed_by not in current.participant_ids and _fetch_instance(
-                        conn, closed_by) is None:
-                    raise RelationError(f"closed_by {closed_by} is not a known agent instance",
-                                        code="relation_participant_missing", field="closed_by_instance_id")
-                conn.execute("UPDATE agent_relations SET status=?, closed_at=?, data=? WHERE relation_id=?",
-                             (closed.status.value, utc_key(closed.closed_at), dump_json(closed.to_payload()),
-                              relation_id))
-            return closed
+        def write(conn: sqlite3.Connection):
+            return _write_close(conn, relation_id, outcome, at, summary=summary, winner_instance_id=winner_instance_id, closed_by=closed_by)
 
         return await self._transaction(write)
+
+    async def record_handoff(
+        self, instance: AgentInstance, *, declaration: AgentDeclarationFact | None, relation: AgentRelation,
+        at: datetime, summary: str,
+    ) -> tuple[StoredInstance, AgentRelation, Mission]:
+        """Le successeur d'un relais, sa relation (paquet compris), le transfert de propriété et la clôture
+        `transferred`, en **une** transaction (Slice 06) : tout est écrit, ou rien. Un successeur ne peut donc
+        jamais être retenu propriétaire sans paquet complet, ni le paquet exister sans successeur."""
+
+        if not isinstance(instance, AgentInstance) or not isinstance(relation, AgentRelation):
+            raise MissionError("expected an AgentInstance and an AgentRelation")
+        if relation.kind is not AgentRelationKind.HANDOFF or relation.endpoints()[1] != instance.instance_id:
+            raise RelationError("the relation is the handoff to this successor", code="handoff_mission_mismatch",
+                                field="relation")
+        if instance.ephemeral or not instance.mission_owner or instance.mission_id != relation.mission_id:
+            raise MissionError("a handoff successor is a non-ephemeral mission owner of the handed-off mission",
+                               code="ownership_invalid", field="mission_owner")
+
+        def write(conn: sqlite3.Connection) -> tuple[StoredInstance, AgentRelation, Mission]:
+            stored, created = _write_instance(conn, instance, declaration, False, None)
+            if not created:
+                raise MissionError(f"instance {stored.instance.instance_id} already exists: a handoff goes to a fresh "
+                                   "instance", code="handoff_successor_not_fresh", field="instance_id")
+            written = _write_relation(conn, relation)
+            mission = _write_transfer(conn, relation.mission_id, instance.instance_id, relation.relation_id, at)
+            closed = _write_close(conn, relation.relation_id, RelationOutcome.TRANSFERRED, at, summary=summary,
+                                  winner_instance_id=None, closed_by=None)
+            del written
+            return stored, closed, mission
+
+        return await self._transaction(write)
+
+    async def relations_of_instance(self, instance_id: str, *, limit: int = 16) -> tuple[AgentRelation, ...]:
+        """Les relations où figure une instance, les plus récentes d'abord (résumés du contexte du cerveau)."""
+
+        limit = max(1, min(int(limit), MAX_LIST_LIMIT))
+
+        def read(conn: sqlite3.Connection) -> tuple[AgentRelation, ...]:
+            rows = conn.execute(
+                "SELECT r.* FROM agent_relations r JOIN agent_relation_participants p ON p.relation_id = r.relation_id "
+                "WHERE p.instance_id=? ORDER BY r.created_at DESC, r.relation_id DESC LIMIT ?",
+                (instance_id, limit)).fetchall()
+            return tuple(_relations(conn, rows))
+
+        return await self._run(read)
 
     async def get_relation(self, relation_id: str) -> AgentRelation | None:
         def read(conn: sqlite3.Connection) -> AgentRelation | None:
@@ -566,6 +489,147 @@ class SQLiteMissionHistoryRepository:
             return {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in _TABLES}
 
         return await self._run(read)
+
+
+def _write_instance(conn: sqlite3.Connection, instance: AgentInstance, declaration: AgentDeclarationFact | None,
+                    ephemeral_lowered: bool, mission: Mission | None) -> tuple[StoredInstance, bool]:
+    row = conn.execute("SELECT * FROM agent_instances WHERE work_source=? AND work_external_id=?",
+                       instance.work_identity).fetchone()
+    if row is not None:
+        existing = _instance_row(row)
+        merged = reconcile_instance(existing.instance, replace(instance, instance_id=existing.instance.instance_id))
+        if merged != existing.instance:
+            conn.execute("UPDATE agent_instances SET data=? WHERE instance_id=?",
+                         (dump_json(merged.to_payload()), merged.instance_id))
+        return replace(existing, instance=merged), False
+    if instance.parent_instance_id is not None:
+        if _fetch_instance(conn, instance.parent_instance_id) is None:
+            raise MissionError(f"parent instance {instance.parent_instance_id} is missing",
+                               code="mission_parent_missing", field="parent_instance_id")
+        if _chain_depth(conn, "agent_instances", "instance_id", "parent_instance_id",
+                        instance.parent_instance_id) >= MAX_MISSION_DEPTH:
+            raise MissionError(f"agent instance chain deeper than {MAX_MISSION_DEPTH}",
+                               code="mission_too_deep", field="parent_instance_id")
+    if mission is not None:
+        if _fetch_mission(conn, mission.mission_id) is not None:
+            raise MissionError(f"mission {mission.mission_id} is already open", code="mission_conflict",
+                               field="mission_id")
+        if (mission.owner_instance_id != instance.instance_id or not instance.mission_owner):
+            raise MissionError(f"mission {mission.mission_id} is opened by its own mission owner instance",
+                               code="ownership_invalid", field="owner_instance_id")
+        _check_new_mission(conn, mission)
+    elif instance.mission_id is not None and _fetch_mission(conn, instance.mission_id) is None:
+        raise MissionError(f"mission {instance.mission_id} is unknown: open it with its owner instance",
+                           code="mission_unknown", field="mission_id")
+    try:
+        conn.execute(
+            "INSERT INTO agent_instances(instance_id,work_source,work_external_id,role_id,mission_id,"
+            "mission_owner,parent_instance_id,ephemeral_lowered,created_at,declaration,data) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (instance.instance_id, instance.work_source, instance.work_external_id, instance.role_id,
+             instance.mission_id, int(instance.mission_owner), instance.parent_instance_id,
+             int(ephemeral_lowered), utc_key(instance.created_at),
+             dump_json(declaration.to_payload()) if declaration is not None else None,
+             dump_json(instance.to_payload())))
+    except sqlite3.IntegrityError as exc:
+        raise MissionError(f"instance {instance.instance_id} refused by the store: {exc}",
+                           code="instance_conflict", field="instance_id") from exc
+    if mission is not None:
+        _insert_mission(conn, mission)
+    return StoredInstance(instance, ephemeral_lowered=ephemeral_lowered, declaration=declaration), True
+
+
+def _write_transfer(conn: sqlite3.Connection, mission_id: str, successor_instance_id: str,
+                    handoff_relation_id: str, at: datetime) -> Mission:
+    mission = _fetch_mission(conn, mission_id)
+    if mission is None:
+        raise MissionError(f"mission {mission_id} is unknown", code="mission_unknown", field="mission_id")
+    successor = _fetch_instance(conn, successor_instance_id)
+    if successor is None:
+        raise MissionError(f"instance {successor_instance_id} is unknown", code="ownership_invalid",
+                           field="owner_instance_id")
+    relation = _fetch_relation(conn, handoff_relation_id)
+    if (relation is None or relation.kind is not AgentRelationKind.HANDOFF or relation.mission_id != mission_id
+            or relation.outcome is RelationOutcome.WITHDRAWN
+            or relation.endpoints() != (mission.owner_instance_id, successor_instance_id)):
+        raise MissionError(
+            "an ownership change needs a handoff relation of this mission, not withdrawn, from the current "
+            f"owner {mission.owner_instance_id} to {successor_instance_id}",
+            code="ownership_invalid", field="handoff_ref")
+    if at < relation.created_at:
+        raise MissionError("an ownership change cannot precede its handoff", code="ownership_invalid",
+                           field="at")
+    moved = transfer_ownership(mission, successor.instance, handoff_ref=handoff_relation_id)
+    conn.execute("UPDATE missions SET owner_instance_id=?, data=? WHERE mission_id=?",
+                 (moved.owner_instance_id, dump_json(moved.to_payload()), mission_id))
+    conn.execute("INSERT INTO mission_owners(mission_id,owner_instance_id,handoff_relation_id,at) "
+                 "VALUES(?,?,?,?)", (mission_id, moved.owner_instance_id, handoff_relation_id, utc_key(at)))
+    return moved
+
+
+def _write_relation(conn: sqlite3.Connection, relation: AgentRelation) -> AgentRelation:
+    existing = _fetch_relation(conn, relation.relation_id)
+    if existing is not None:
+        if existing == relation:
+            return existing
+        raise RelationError(f"relation {relation.relation_id} already exists with other content",
+                            code="relation_conflict", field="relation_id")
+    mission = _fetch_mission(conn, relation.mission_id)
+    if mission is None:
+        raise RelationError(f"mission {relation.mission_id} is missing", code="relation_mission_missing",
+                            field="mission_id")
+    if mission.status.is_closed:
+        raise RelationError(f"mission {relation.mission_id} is closed", code="mission_closed",
+                            field="mission_id")
+    missions = {item.mission_id: item for item in _tree_missions(conn, mission.root_mission_id)}
+    instances = {}
+    for instance_id in relation.participant_ids:
+        found = _fetch_instance(conn, instance_id)
+        if found is not None:
+            instances[instance_id] = found.instance
+    if relation.created_by_instance_id is not None and _fetch_instance(
+            conn, relation.created_by_instance_id) is None:
+        raise RelationError(f"creator {relation.created_by_instance_id} is not a known agent instance",
+                            code="relation_participant_missing", field="created_by_instance_id")
+    rows = conn.execute("SELECT * FROM agent_relations WHERE mission_id=? ORDER BY created_at, relation_id",
+                        (relation.mission_id,)).fetchall()
+    siblings = _relations(conn, rows)
+    check_relation_participants(relation, instances, missions=missions, relations=siblings)
+    if relation.kind is AgentRelationKind.HANDOFF:
+        check_handoff_chain([*siblings, relation])
+    conn.execute(
+        "INSERT INTO agent_relations(relation_id,kind,mission_id,status,created_at,closed_at,data) "
+        "VALUES(?,?,?,?,?,?,?)",
+        (relation.relation_id, relation.kind.value, relation.mission_id, relation.status.value,
+         utc_key(relation.created_at), _opt_key(relation.closed_at), dump_json(relation.to_payload())))
+    conn.executemany(
+        "INSERT INTO agent_relation_participants(relation_id,instance_id,position) VALUES(?,?,?)",
+        [(relation.relation_id, p.instance_id, p.position.value) for p in relation.participants])
+    if relation.handoff is not None:
+        predecessor, successor = relation.endpoints()
+        conn.execute(
+            "INSERT INTO agent_handoff_packets(relation_id,predecessor_instance_id,successor_instance_id,data) "
+            "VALUES(?,?,?,?)", (relation.relation_id, predecessor, successor,
+                                dump_json(relation.handoff.to_payload())))
+    return relation
+
+
+def _write_close(conn: sqlite3.Connection, relation_id: str, outcome: RelationOutcome, at: datetime, *,
+                 summary: str, winner_instance_id: str | None, closed_by: str | None) -> AgentRelation:
+    current = _fetch_relation(conn, relation_id)
+    if current is None:
+        raise RelationError(f"relation {relation_id} is unknown", code="relation_unknown", field="relation_id")
+    closed = current.close(outcome, at, summary=summary, winner_instance_id=winner_instance_id,
+                           closed_by=closed_by)
+    if closed != current:
+        if closed_by is not None and closed_by not in current.participant_ids and _fetch_instance(
+                conn, closed_by) is None:
+            raise RelationError(f"closed_by {closed_by} is not a known agent instance",
+                                code="relation_participant_missing", field="closed_by_instance_id")
+        conn.execute("UPDATE agent_relations SET status=?, closed_at=?, data=? WHERE relation_id=?",
+                     (closed.status.value, utc_key(closed.closed_at), dump_json(closed.to_payload()),
+                      relation_id))
+    return closed
 
 
 def _operation_of(fn: Callable[..., object]) -> str:

@@ -76,6 +76,23 @@ class CoreMissionTransport(CoreLoopbackTransport):
     async def for_work(self, work_source: str, work_external_id: str) -> dict[str, Any]:
         return await self.replay_on_401(lambda client: client.mission_for_work(work_source, work_external_id))
 
+    # Slice 06 : runtime des relations (`relation_relay.py`).
+
+    async def open_relation(self, body: dict[str, Any]) -> dict[str, Any]:
+        return await self.replay_on_401(lambda client: client.open_relation(body))
+
+    async def read_relation(self, relation_id: str, *, after: int = 0, limit: int = 100) -> dict[str, Any]:
+        return await self.replay_on_401(lambda client: client.read_relation(relation_id, after=after, limit=limit))
+
+    async def post_relation_message(self, relation_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return await self.replay_on_401(lambda client: client.post_relation_message(relation_id, body))
+
+    async def close_relation(self, relation_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return await self.replay_on_401(lambda client: client.close_relation(relation_id, body))
+
+    async def prepare_handoff(self, body: dict[str, Any]) -> dict[str, Any]:
+        return await self.replay_on_401(lambda client: client.prepare_handoff(body))
+
 
 class DeclarationRelay(CoreBatchForwarder):
     """Voir le docstring du module."""
@@ -125,6 +142,8 @@ class DeclarationRelay(CoreBatchForwarder):
         self._last_prune = 0.0
         self._last_probe = 0.0
         self._scan_failed = False
+        #: Slice 06 : un envoi à la fois (boucle du relais et `settle` demandé par le runtime des relations).
+        self._flush_lock = asyncio.Lock()
 
     # ------------------------------------------------------------ branchement
 
@@ -236,7 +255,30 @@ class DeclarationRelay(CoreBatchForwarder):
 
     # ------------------------------------------------------------ envoi
 
+    def task_for_agent(self, agent_id: str) -> tuple[str, AgentTask] | None:
+        """`(source, tâche suivie)` dont le `task_id` est l'agentId du CLI (Slice 06) ; `None` si inconnu. Sans E/S.
+
+        Constaté sur le CLI 2.1.304 : l'`agent_id` d'un événement de hook est le `task_id` de `task_started`, et
+        c'est l'« agentId » que l'outil Agent rend à l'appelant.
+        """
+
+        for tracker in tuple(self._trackers.values()):
+            task = tracker.find(agent_id)
+            if task is not None and task.task_id == agent_id and task.work_key:
+                return self.source, task
+        return None
+
+    async def settle(self) -> bool:
+        """Joindre et remettre tout de suite les déclarations en attente (Slice 06) : un agent qui noue une relation
+        juste après en avoir lancé un autre trouve celui-ci retenu par Core. Faux si Core est injoignable."""
+
+        return await self.flush()
+
     async def flush(self) -> bool:
+        async with self._flush_lock:
+            return await self._flush()
+
+    async def _flush(self) -> bool:
         await self._scan()
         self.join()
         if not self._pending and not await self._probe():

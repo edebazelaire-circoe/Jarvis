@@ -23,6 +23,12 @@ ni la bascule, ni les liaisons, ni l'autorité de parole (`docs/boards.md` ›
 (`--mcp-config` du CLI, hérité par l'outil `Agent`) : il peut lire un ancien
 Board pendant que la conversation reste où elle est.
 
+**Relations entre agents** (organic-agent-orchestration, Slice 06,
+`relations_mcp_tools.py`) : `relation_open|post|read|close|handoff`, outils des
+sous-agents de mission (le cerveau ne fait que lire). Le hook `PreToolUse` y
+appose l'identité de l'appelant (`relation_runtime.CALLER_STAMP_KEY`), retirée
+ici avant le contrôle strict des arguments.
+
 **Mutations du cerveau.** `board_memory_write|move|delete` et
 `board_artifact_link` envoient `origin: "brain"` : la ligne `board.*` du ledger
 dit qui a écrit. Toujours sur un Board **nommé** ; un Board archivé refuse
@@ -48,7 +54,10 @@ from urllib.parse import quote
 
 import aiohttp
 
+from jarvis.domain.relation_runtime import CALLER_STAMP_KEY, RELATION_TOOLS
 from jarvis.runtime.capture_mcp import artifact_item
+from jarvis.runtime.relations_mcp_tools import CURRENT_CALLER, RelationTools
+from jarvis.runtime.relations_mcp_tools import register as register_relation_tools
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.mcp_tool_meta import tool_annotations, tool_names
 from jarvis.runtime.settings_mcp import ConsoleMcpTarget
@@ -552,6 +561,17 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
             return listed
 
         async def call_tool(self, name: str, arguments: dict[str, Any]):  # noqa: ANN201 - type de FastMCP
+            if name in RELATION_TOOLS:
+                # Slice 06 : l'identité apposée par le hook, absente du schéma montré, retirée avant le contrôle strict.
+                arguments = dict(arguments or {})
+                token = CURRENT_CALLER.set(arguments.pop(CALLER_STAMP_KEY, None))
+                try:
+                    return await self._strict_call(name, arguments)
+                finally:
+                    CURRENT_CALLER.reset(token)
+            return await self._strict_call(name, arguments)
+
+        async def _strict_call(self, name: str, arguments: dict[str, Any]):  # noqa: ANN202 - type de FastMCP
             known = {tool.name: tool for tool in await self.list_tools()}
             if name == "board_update" and "board_kind" in (arguments or {}):
                 # Le type ne change jamais (D02) : la vraie raison, pas « argument inconnu ».
@@ -843,6 +863,11 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
         """Montrer une entrée du Dossier à l'écran (une par appel, deux côte à côte) ; rend le reçu de la page."""
         return await ws.dossier_view(board_id, entry_id)
 
+    # ------------------------------------------------------------ relations entre agents (organic S06)
+    # Transport lu à l'appel, jamais à la construction : l'introspection du catalogue ne touche aucun outil.
+    register_relation_tools(mcp, RelationTools(lambda *args, **kwargs: ws.boards.call(*args, **kwargs),
+                                               WorkspaceToolError, emit=lambda *args, **kwargs: ws._emit(*args, **kwargs)),
+                            annotations=lambda name: tool_annotations(SERVER_NAME, name))
     return mcp
 
 

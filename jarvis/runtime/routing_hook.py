@@ -34,9 +34,10 @@ import shutil
 import sys
 from typing import Any, Mapping, Sequence
 
-from jarvis.domain import agent_markers, agent_orchestration, routing
+from jarvis.domain import agent_markers, agent_orchestration, relation_runtime, routing
 from jarvis.domain.agent_charter import sign_brief
 from jarvis.domain.loadout_view import MANIFEST_MARK
+from jarvis.domain.agent_relations import QA_REVIEWER_ROLE_IDS
 from jarvis.domain.mission_history import MissionHistoryError, fact_from_hook_event
 from jarvis.domain.work_methods import builtin_method
 from jarvis.domain.subagent_roles import (
@@ -54,7 +55,8 @@ from jarvis.domain.routing import (
     RoutingPolicy,
 )
 from jarvis.runtime import (
-    agent_declarations, agent_routing, cli_catalog, credentials, loadout_snapshot, subagent_roles_snapshot,
+    agent_declarations, agent_handoffs, agent_routing, cli_catalog, credentials, loadout_snapshot,
+    subagent_roles_snapshot,
 )
 from jarvis.runtime.catalog_view import ProviderCatalogSnapshot
 from jarvis.runtime.journal import RuntimeJournal
@@ -64,7 +66,10 @@ from jarvis.runtime.presentation_playbooks import PLAYBOOK_ROLES, with_playbook
 #: Outils du CLI qui lancent un sous-agent. Mêmes noms que ceux que le suivi
 #: des tâches reconnaît (`agent_tasks.AGENT_TOOLS`).
 AGENT_TOOLS = ("Agent", "Task")
-HOOK_MATCHER = "|".join(AGENT_TOOLS)
+#: Slice 06 : les outils de relation (`relation_runtime.RELATION_TOOLS`) passent aussi par le hook, qui y appose
+#: l'identité de l'appelant. Un motif du matcher du CLI (expression régulière).
+RELATION_TOOLS_MATCHER = relation_runtime.RELATION_TOOL_PREFIX + ".*"
+HOOK_MATCHER = "|".join((*AGENT_TOOLS, RELATION_TOOLS_MATCHER))
 
 #: Le CLI qui exécute réellement les sous-agents. L'outil `Agent` tourne dans
 #: le processus Claude : aucune politique ne peut en faire sortir un sous-agent.
@@ -223,6 +228,13 @@ def charter_input(
     mission = agent_orchestration.mission_brief(orchestration.mission)
     if mission and agent_orchestration.MISSION_MARK not in signed:
         signed = f"{signed.rstrip()}\n\n{mission}"
+    # Slice 06 : les relations entre agents, en bloc distinct après la responsabilité de mission ; et la revue
+    # asymétrique pour un relecteur QA. Jamais doublés.
+    if orchestration.mission.mission_owner and relation_runtime.RELATIONS_MARK not in signed:
+        signed = f"{signed.rstrip()}\n\n{relation_runtime.relations_brief()}"
+    if (orchestration.role is not None and orchestration.role.id in QA_REVIEWER_ROLE_IDS
+            and relation_runtime.REVIEWER_MARK not in signed):
+        signed = f"{signed.rstrip()}\n\n{relation_runtime.reviewer_brief()}"
     return None if signed == brief else {"prompt": signed}
 
 
@@ -459,6 +471,8 @@ def run(event: Mapping[str, Any], runtime_root: Path, *, spawn_guard: bool = Fal
     Core. Une panne de ce dépôt est consignée et ne retient jamais l'appel.
     """
     journal = RuntimeJournal(runtime_root)
+    if relation_runtime.is_relation_tool(event.get("tool_name")):
+        return _stamp_relation_call(event, journal)
     try:
         orchestration = orchestration_of(event) if str(event.get("tool_name") or "") in AGENT_TOOLS else None
     except Exception:  # noqa: BLE001 - une lecture qui lève ne vaut pas un outil perdu ; rien n'est déclaré
@@ -467,11 +481,19 @@ def run(event: Mapping[str, Any], runtime_root: Path, *, spawn_guard: bool = Fal
     if guard.deny:
         _log_declared(journal, event, orchestration, guard, written=False)
         return _output("deny", guard.reason)
+    ticket = None
+    if orchestration is not None and orchestration.mission.handoff:
+        ticket, refusal = _claim_handoff(event, runtime_root, journal)
+        if refusal:
+            _log_declared(journal, event, orchestration, guard, written=False)
+            return _output("deny", refusal)
     role_overrides = _role_overrides(event, runtime_root, journal)
     try:
         charter = charter_input(event, role_overrides)
     except Exception:  # noqa: BLE001 - une charte qui lève ne vaut pas un outil perdu
         charter = None
+    if ticket is not None:
+        charter = _with_handoff_packet(event, charter, ticket)
     role = _log_role(journal, event, charter, role_overrides)
     brief, loadout = _brief_change(event, runtime_root, charter, journal)
     note = _brief_note(charter is not None, loadout, role=role)
@@ -485,9 +507,71 @@ def run(event: Mapping[str, Any], runtime_root: Path, *, spawn_guard: bool = Fal
     final = _merge(event, output, brief, guarded, note=note)
     denied = ((final.get("hookSpecificOutput") or {}).get("permissionDecision") == "deny") if final else False
     if orchestration is not None and not denied:
-        written = _declare(event, runtime_root, journal, orchestration)
-        _log_declared(journal, event, orchestration, guard, written=written)
+        written = _declare(event, runtime_root, journal, orchestration, ticket)
+        _log_declared(journal, event, orchestration, guard, written=written, ticket=ticket)
     return final
+
+
+# ------------------------------------------------------------------ relations (Slice 06)
+
+
+HANDOFF_MISSING_REASON = (
+    "[relais] demandé, mais aucun relais préparé par vous n'attend de successeur (ou il a expiré). Appelez d'abord "
+    f"mcp__{relation_runtime.RELATION_SERVER}__relation_handoff avec le paquet de relais, puis relancez cet appel "
+    "Agent avec [relais] après le rôle.")
+
+
+def _stamp_relation_call(event: Mapping[str, Any], journal: RuntimeJournal) -> dict[str, Any]:
+    """Apposer l'identité de l'appelant sur un outil de relation (écrase toute valeur écrite par le modèle).
+
+    Sans réseau ni disque : l'`agent_id` vient de l'événement du CLI (`None` pour le cerveau). Le serveur MCP lit
+    ce champ, absent du schéma montré au modèle ; sans lui il refuse (`relation_caller_unstamped`).
+    """
+    tool_input = event.get("tool_input")
+    updated = dict(tool_input) if isinstance(tool_input, Mapping) else {}
+    stamp = relation_runtime.caller_stamp(event)
+    updated[relation_runtime.CALLER_STAMP_KEY] = stamp
+    _emit(journal, "agent.relation_call", "Identité de l'appelant apposée sur un outil de relation.", level="info",
+          data={"code": "relation_caller_stamped", "tool": str(event.get("tool_name") or "")[:96],
+                "tool_use_id": str(event.get("tool_use_id") or "")[:128], "caller_agent_id": stamp["agent_id"]})
+    return _output("allow", "Identité de l'appelant apposée par JARVIS.", updated)
+
+
+def _claim_handoff(event: Mapping[str, Any], runtime_root: Path,
+                   journal: RuntimeJournal) -> tuple[agent_handoffs.HandoffTicket | None, str]:
+    """Le billet du relais que l'appelant a préparé, réclamé une fois ; sinon la raison du refus de l'appel."""
+    caller = event.get("agent_id")
+    if not isinstance(caller, str) or not caller:
+        return None, HANDOFF_MISSING_REASON
+    try:
+        ticket = agent_handoffs.claim(runtime_root, caller)
+    except OSError as exc:
+        _emit(journal, "agent.handoff.failed", f"Billets de relais illisibles : {type(exc).__name__}", level="error",
+              data={"code": "handoff_tickets_unreadable", "exception_type": type(exc).__name__})
+        return None, ("Les relais préparés sont illisibles sur ce poste ; le successeur n'est pas lancé. Réessayez, "
+                      "ou passez la suite dans votre compte rendu.")
+    if ticket is None:
+        _emit(journal, "agent.handoff.failed", "[relais] sans relais préparé : appel refusé.", level="warning",
+              data={"code": "handoff_ticket_missing", "caller_agent_id": caller[:96],
+                    "tool_use_id": str(event.get("tool_use_id") or "")[:128]})
+        return None, HANDOFF_MISSING_REASON
+    _emit(journal, "agent.handoff.claimed", "Relais préparé réclamé par son successeur.", level="info",
+          data={"code": "handoff_ticket_claimed", "handoff_id": ticket.handoff_id, "mission_id": ticket.mission_id,
+                "caller_agent_id": caller[:96], "tool_use_id": str(event.get("tool_use_id") or "")[:128]})
+    return ticket, ""
+
+
+def _with_handoff_packet(event: Mapping[str, Any], charter: Mapping[str, Any] | None,
+                         ticket: agent_handoffs.HandoffTicket) -> dict[str, Any] | None:
+    """La consigne du successeur avec son paquet de relais en bloc distinct (jamais doublé)."""
+    tool_input = event.get("tool_input")
+    tool_input = tool_input if isinstance(tool_input, Mapping) else {}
+    base = charter["prompt"] if charter else tool_input.get("prompt")
+    if not isinstance(base, str) or relation_runtime.HANDOFF_MARK in base:
+        return dict(charter) if charter else None
+    block = relation_runtime.handoff_brief(handoff_id=ticket.handoff_id, mission_id=ticket.mission_id,
+                                           purpose=ticket.purpose, packet=ticket.packet)
+    return {**(dict(charter) if charter else {}), "prompt": f"{base.rstrip()}\n\n{block}"}
 
 
 def _route(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJournal, charter: bool) -> dict[str, Any]:
@@ -544,12 +628,16 @@ def _spawn_guard(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJ
 
 
 def _declare(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJournal,
-             orchestration: Orchestration) -> bool:
-    """Déposer le fait de déclaration (contrat v1) ; rend s'il est écrit. Ne lève jamais, consigne chaque panne."""
+             orchestration: Orchestration, ticket: agent_handoffs.HandoffTicket | None = None) -> bool:
+    """Déposer le fait de déclaration (contrat v1) ; rend s'il est écrit. Ne lève jamais, consigne chaque panne.
+
+    Successeur d'un relais (Slice 06) : Mission Owner de la mission reprise, avec l'id du relais réclamé.
+    """
     try:
         fact = fact_from_hook_event(event, declared_at=datetime.now(timezone.utc),
-                                    mission_id=orchestration.mission.mission_id,
-                                    mission_owner=orchestration.mission.mission_owner)
+                                    mission_id=ticket.mission_id if ticket else orchestration.mission.mission_id,
+                                    mission_owner=orchestration.mission.mission_owner,
+                                    handoff_id=ticket.handoff_id if ticket else None)
     except MissionHistoryError as exc:
         _emit(journal, "agent.declaration.failed", f"Déclaration du sous-agent hors contrat : {exc}", level="warning",
               data={"code": exc.code, "field": exc.field, "tool_use_id": str(event.get("tool_use_id") or "")[:128]})
@@ -569,7 +657,8 @@ def _declare(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJourn
 
 
 def _log_declared(journal: RuntimeJournal, event: Mapping[str, Any], orchestration: Orchestration | None,
-                  guard: agent_orchestration.SpawnGuard, *, written: bool) -> None:
+                  guard: agent_orchestration.SpawnGuard, *, written: bool,
+                  ticket: agent_handoffs.HandoffTicket | None = None) -> None:
     """`agent.declared` (fait déposé) ou `agent.spawn_refused` (garde) : des codes et des ids, jamais un texte."""
     if orchestration is None and not guard.deny:
         return
@@ -585,8 +674,9 @@ def _log_declared(journal: RuntimeJournal, event: Mapping[str, Any], orchestrati
         "caller_agent_type": str(event.get("agent_type") or "") or None,
         "ephemeral": bool(orchestration and orchestration.head.ephemeral),
         "mission_owner": mission.mission_owner,
-        "mission_id": mission.mission_id,
+        "mission_id": ticket.mission_id if ticket else mission.mission_id,
         "sub_mission": mission.sub_mission,
+        "handoff_id": ticket.handoff_id if ticket else None,
         "mission_refused": mission.refused,
         "work_method": method_key(method.method_id),
         "work_method_chosen": method.chosen,

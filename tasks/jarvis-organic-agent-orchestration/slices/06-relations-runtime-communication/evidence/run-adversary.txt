@@ -1,0 +1,47 @@
+== instances
+  toolu_01XTj6EoZaBVoCJDa6Xyroz6 | [code] [coder] Sonde S06 Adversary | completed | role=coder | mission=mis_toolu_01XTj6EoZaBVoCJDa6Xyroz6 owner=True | inst=ainst_943c4f2fab2e4e48ae7298d6661f3683
+  toolu_01YbFPJhE8htw24ZgkLwhPaS | [code] [coder] Producteur B | completed | role=coder | mission=mis_toolu_01XTj6EoZaBVoCJDa6Xyroz6 owner=False | inst=ainst_d4f3d89799684c4f8bd3ae2a934be967
+  toolu_01UGa8KR1QE5PPRNL2Tg6kKE | [code] [coder] Producteur A | completed | role=coder | mission=mis_toolu_01XTj6EoZaBVoCJDa6Xyroz6 owner=False | inst=ainst_20f25a9b2e924eb0a9ad7e77f5e98972
+== missions
+  mis_toolu_01XTj6EoZaBVoCJDa6Xyroz6 status=completed owner=ainst_943c4f2fab2e4e48ae7298d6661f3683 parent=None
+    owner change -> {'mission_id': 'mis_toolu_01XTj6EoZaBVoCJDa6Xyroz6', 'owner_instance_id': 'ainst_943c4f2fab2e4e48ae7298d6661f3683', 'at': '2026-10-20T14:05:26.198250+00:00', 'handoff_relation_id': None}
+== relations
+  rel_00b19ddd6fe14831931aea48ec1adc59 kind=adversary status=closed outcome=synthesis winner=None closed_by=ainst_943c4f2fab2e4e48ae7298d6661f3683 created_by=ainst_943c4f2fab2e4e48ae7298d6661f3683
+    purpose='Comparer cache LRU (A, a92616724ca7887ba... ) et cache TTL (B) pour une API lente ; trancher par relation_close.' summary="Pas de gagnant net : chaque critique relève des trous réels chez l'autre. Synthèse retenue : cache en mémoire borné (LRU) indexé par requête normalisée, avec TTL, stale-while-revalidate et un seul rafraîchissement par clé sous verrou doté d'un délai d'attente ; pas de mise en cache des erreurs ni des réponses partielles ; déduplication des requêtes en vol avec délai maximal. Aucune mesure sur API réelle : arguments de conception seulement."
+    participant ainst_20f25a9b2e924eb0a9ad7e77f5e98972 producer
+    participant ainst_d4f3d89799684c4f8bd3ae2a934be967 producer
+    MSG #1 proposal by ainst_20f25a9b2e924eb0a9ad7e77f5e98972: "Proposition LRU (Producteur A) : un cache LRU en mémoire, de taille bornée (par exemple 1 000 entrées), placé devant l'API lente et indexé par la requête normalisée, avec une expiration courte (TTL) et une déduplication des requêtes identiques en cours (une seule requête part vers l'API, les autres attendent son résultat). Les requêtes répétées répondent en quelques microsecondes, et l'éviction de"
+    MSG #2 proposal by ainst_d4f3d89799684c4f8bd3ae2a934be967: "Proposition (Producteur B) : mettre en cache chaque réponse de l'API lente, indexée par la requête normalisée, avec une durée de vie fixe (TTL) de quelques minutes ; pendant qu'une valeur expirée est encore servie, un seul rafraîchissement par clé est lancé en arrière-plan (verrou par clé, pour éviter la ruée sur l'API). Ne pas mettre en cache les erreurs ni les réponses partielles.\n\nDéfense : un "
+    MSG #3 critique by ainst_20f25a9b2e924eb0a9ad7e77f5e98972: "Critique de l'approche B (TTL de quelques minutes, indexation par requête normalisée, stale-while-revalidate avec une seule actualisation par clé en arrière-plan et verrou par clé, sans mise en cache des erreurs ni des réponses partielles). Points solides : pas de mise en cache des erreurs, verrou par clé qui évite la rafale vers l'API lente, et réponse immédiate même pendant le rafraîchissement. "
+    MSG #4 critique by ainst_d4f3d89799684c4f8bd3ae2a934be967: "Critique de l'approche A (cache LRU borné d'environ 1 000 entrées, indexé par requête normalisée, expiration courte, déduplication des requêtes identiques en cours) :\n\nPoints forts : la borne LRU empêche la croissance mémoire ; la déduplication des requêtes en vol supprime la ruée sans logique d'expiration complexe ; l'expiration courte limite le risque de données périmées.\n\nPoints faibles : (1) a"
+    CC agents={'ainst_20f25a9b2e924eb0a9ad7e77f5e98972': 'a76f46a5a00862dc2', 'ainst_d4f3d89799684c4f8bd3ae2a934be967': 'a92616724ca7887ba'}
+== trace (relation/handoff)
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_open", "tool_use_id": "toolu_01JFbn1wxDUbdBEA12DWwyS6", "caller_agent_id": "aad85d951991787f0"}
+  mission_history.relation_opened {"relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59", "kind": "adversary", "mission_id": "mis_toolu_01XTj6EoZaBVoCJDa6Xyroz6", "participants": 2, "created_by_instance_id": "ainst_943c4f2fab2e4e48ae7298d6661f3683"}
+  missions.relation_relayed {"operation": "open", "kind": "adversary", "participants": 2}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_read", "tool_use_id": "toolu_01S9MKFMX5QkryxenpFxZSjC", "caller_agent_id": "aad85d951991787f0"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59"}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_read", "tool_use_id": "toolu_017KPLYtLNQr17z9TK7Se12M", "caller_agent_id": "aad85d951991787f0"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59"}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_post", "tool_use_id": "toolu_01Lpe6YSjqbxFHDMPGgkdAtE", "caller_agent_id": "a76f46a5a00862dc2"}
+  mission_history.relation_message {"relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59", "message_id": "msg_b71321ef7f2c454f94e2c3c303c36672", "seq": 1, "type": "proposal", "chars": 1004, "author_instance_id": "ainst_20f25a9b2e924eb0a9ad7e77f5e98972"}
+  missions.relation_relayed {"operation": "post", "relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59", "type": "proposal", "chars": 1004}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_post", "tool_use_id": "toolu_01TDb1rsPgQYCNnr2dSExFfJ", "caller_agent_id": "a92616724ca7887ba"}
+  mission_history.relation_message {"relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59", "message_id": "msg_6645ef2c8c72494884ea305c46bba62f", "seq": 2, "type": "proposal", "chars": 1222, "author_instance_id": "ainst_d4f3d89799684c4f8bd3ae2a934be967"}
+  missions.relation_relayed {"operation": "post", "relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59", "type": "proposal", "chars": 1222}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_post", "tool_use_id": "toolu_01NNxHfnJEYUpkuUHcr5kcKu", "caller_agent_id": "a76f46a5a00862dc2"}
+  mission_history.relation_message {"relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59", "message_id": "msg_81ced9366679477890fe6acab42214ba", "seq": 3, "type": "critique", "chars": 1239, "author_instance_id": "ainst_20f25a9b2e924eb0a9ad7e77f5e98972"}
+  missions.relation_relayed {"operation": "post", "relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59", "type": "critique", "chars": 1239}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_read", "tool_use_id": "toolu_01EVjMskVhMZxhT5gCdKWqit", "caller_agent_id": "aad85d951991787f0"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59"}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_post", "tool_use_id": "toolu_01RRV5wRwHrg8D6WUTnt41EQ", "caller_agent_id": "a92616724ca7887ba"}
+  mission_history.relation_message {"relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59", "message_id": "msg_a08db99de4074ecfbee00ae5d48ff5fa", "seq": 4, "type": "critique", "chars": 1365, "author_instance_id": "ainst_d4f3d89799684c4f8bd3ae2a934be967"}
+  missions.relation_relayed {"operation": "post", "relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59", "type": "critique", "chars": 1365}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_read", "tool_use_id": "toolu_01WMwE1FUB9UXeKJF2yg8Sgw", "caller_agent_id": "aad85d951991787f0"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59"}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_read", "tool_use_id": "toolu_01EmZmARyawE8bd43AWyzHpg", "caller_agent_id": "aad85d951991787f0"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59"}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_close", "tool_use_id": "toolu_01TwF1xu6iLjKF6uyMZHBPUq", "caller_agent_id": "aad85d951991787f0"}
+  mission_history.relation_closed {"relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59", "kind": "adversary", "outcome": "synthesis", "closed_by_instance_id": "ainst_943c4f2fab2e4e48ae7298d6661f3683", "winner_instance_id": null}
+  missions.relation_relayed {"operation": "close", "relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59", "outcome": "synthesis"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_00b19ddd6fe14831931aea48ec1adc59"}

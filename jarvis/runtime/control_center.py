@@ -113,6 +113,7 @@ from jarvis.runtime.conversation_event_trace import TraceNotApplicable, drill_do
 from jarvis.runtime.conversation_event_view import ConversationEventView, ConversationEventViewError
 from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarder
 from jarvis.runtime.declaration_relay import DeclarationRelay
+from jarvis.runtime.relation_relay import RelationRelay, RelationRelayError
 from jarvis.runtime.mission_view import NOT_CONFIGURED as MISSIONS_NOT_CONFIGURED, CoreMissionView
 from jarvis.runtime.mission_view import failure as mission_failure
 from jarvis.runtime.board_brains import BoardBrain, BoardBrainPool, agent_session_id
@@ -1197,6 +1198,7 @@ class ControlCenter:
         conversation_events: ConversationEventForwarder | None = None,
         declaration_relay: DeclarationRelay | None = None,
         mission_view: CoreMissionView | None = None,
+        relation_relay: RelationRelay | None = None,
         conversation_event_view: ConversationEventView | None = None,
         work_view: CoreWorkView | None = None,
         live_view: CoreLiveStatusView | None = None,
@@ -1286,6 +1288,8 @@ class ControlCenter:
             declaration_relay.on_joined = self._sync_work_observers
         # Lecture seule de l'historique des missions (`/api/missions*`).
         self.mission_view = mission_view
+        # Runtime des relations (Slice 06) : les outils de relation des agents passent par ici vers Core.
+        self.relation_relay = relation_relay
         # Lecture des Conversation Events tenus par Core (Slice 04), pour la
         # timeline : le navigateur ne parle jamais à Core. Absent, les routes
         # `/api/conversations...` répondent `not_configured`.
@@ -1559,6 +1563,12 @@ class ControlCenter:
             web.get("/api/work", self.work),
             # Historique des missions (Slice 05) : lecture seule, relayée vers Core. Segments fixes d'abord.
             web.get("/api/missions/health", self.missions_health),
+            # Runtime des relations (Slice 06) : appelé par les outils MCP de relation (`relations_mcp_tools.py`).
+            web.post("/api/missions/relations", self.relations_open),
+            web.get("/api/missions/relations/{relation_id}", self.relations_read),
+            web.post("/api/missions/relations/{relation_id}/messages", self.relations_post),
+            web.post("/api/missions/relations/{relation_id}/close", self.relations_close),
+            web.post("/api/missions/handoffs", self.relations_handoff),
             web.get("/api/missions/work/{work_source}/{work_external_id}", self.missions_for_work),
             web.get("/api/missions/{mission_id}", self.missions_get),
             web.get("/api/scene", self.scene),
@@ -2341,6 +2351,11 @@ class ControlCenter:
         if self.mission_view is not None:
             try:
                 await self.mission_view.close()
+            except Exception:  # noqa: BLE001 - argued: shutdown must never hang on a closing HTTP session
+                pass
+        if self.relation_relay is not None:
+            try:
+                await self.relation_relay.close_transport()
             except Exception:  # noqa: BLE001 - argued: shutdown must never hang on a closing HTTP session
                 pass
         # Avant l'arrêt du serveur : une lecture longue en cours vers Core est
@@ -6155,6 +6170,85 @@ class ControlCenter:
         """L'arbre d'une mission : missions, instances (statut vivant de Work State), relations. Lecture seule."""
         mission_id = str(request.match_info.get("mission_id") or "")
         return await self._mission_read(lambda view: view.mission(mission_id))
+
+    # -- runtime des relations (Slice 06)
+
+    #: Corps d'une demande de relation : borné (texte d'un message 4 000 caractères, paquet de relais ~16 Kio).
+    RELATION_MAX_BYTES = 64 * 1024
+
+    async def _relation_call(self, request: web.Request, operation: str, call) -> web.Response:  # noqa: ANN001
+        """Point d'entrée commun : corps borné et décodé, refus codé et consigné, jamais un 500 muet."""
+        if self.relation_relay is None:
+            return web.json_response(mission_failure(MISSIONS_NOT_CONFIGURED,
+                                                     "Runtime des relations non configuré."), status=503)
+        try:
+            payload: dict[str, Any] = {}
+            if request.method == "POST":
+                if request.content_length is not None and request.content_length > self.RELATION_MAX_BYTES:
+                    raise RelationRelayError(413, "relation_body_too_large",
+                                             f"Corps de plus de {self.RELATION_MAX_BYTES} octets : abrégez le message.")
+                try:
+                    payload = await request.json()
+                except ValueError:
+                    raise RelationRelayError(400, "invalid_request", "Le corps doit être un objet JSON.") from None
+                if not isinstance(payload, dict):
+                    raise RelationRelayError(400, "invalid_request", "Le corps doit être un objet JSON.")
+            body = await call(self.relation_relay, payload)
+        except RelationRelayError as exc:
+            return web.json_response(mission_failure(exc.code, exc.message), status=exc.status)
+        except (KeyError, TypeError, ValueError) as exc:
+            self.journal.emit("missions.relation_failed", f"Demande de relation hors contrat ({operation}).",
+                              level="warning", data={"operation": operation, "code": "invalid_request",
+                                                     "error": f"{type(exc).__name__}: {exc}"[:200]})
+            return web.json_response(mission_failure("invalid_request", f"Demande hors contrat : {exc}"), status=400)
+        except Exception as exc:  # noqa: BLE001 - the route boundary: logged with its type, answered 500
+            self.journal.emit("missions.relation_failed", f"Relation en échec ({operation}) : {type(exc).__name__}",
+                              level="error", data={"operation": operation, "code": "relation_relay_failed",
+                                                   "error": f"{type(exc).__name__}: {exc}"[:200]})
+            return web.json_response(mission_failure("relation_relay_failed", f"{type(exc).__name__}: {exc}"),
+                                     status=500)
+        return web.json_response({"ok": True, **body})
+
+    @staticmethod
+    def _caller_of(payload: dict[str, Any]) -> str | None:
+        caller = payload.get("caller_agent_id")
+        if caller is not None and not isinstance(caller, str):
+            raise TypeError("caller_agent_id must be a string or null")
+        return caller
+
+    async def relations_open(self, request: web.Request) -> web.Response:
+        """Nouer une relation (communication, Adversary, QA) demandée par un agent."""
+        return await self._relation_call(request, "open", lambda relay, body: relay.open(
+            caller=self._caller_of(body), kind=str(body["kind"]),
+            participants=[(str(item["agent"]), str(item["position"])) for item in body["participants"]],
+            purpose=str(body["purpose"]), target_refs=list(body.get("target_refs") or [])))
+
+    async def relations_read(self, request: web.Request) -> web.Response:
+        """Une relation, son fil et ses participants (agentId quand le suivi les connaît encore)."""
+        relation_id = str(request.match_info.get("relation_id") or "")
+        return await self._relation_call(request, "read", lambda relay, _body: relay.read(
+            relation_id=relation_id, after=int(request.query.get("after", "0") or 0),
+            limit=int(request.query.get("limit", "50") or 50)))
+
+    async def relations_post(self, request: web.Request) -> web.Response:
+        """Publier un message délibéré sur le tableau d'une relation."""
+        relation_id = str(request.match_info.get("relation_id") or "")
+        return await self._relation_call(request, "post", lambda relay, body: relay.post(
+            caller=self._caller_of(body), relation_id=relation_id, type=str(body["type"]), text=str(body["text"]),
+            audience=[str(item) for item in body.get("audience") or []],
+            artifact_refs=list(body.get("artifact_refs") or []), reply_to_message_id=body.get("reply_to_message_id")))
+
+    async def relations_close(self, request: web.Request) -> web.Response:
+        """Clore une relation (verdict QA, issue d'un Adversary, fin d'une communication)."""
+        relation_id = str(request.match_info.get("relation_id") or "")
+        return await self._relation_call(request, "close", lambda relay, body: relay.close(
+            caller=self._caller_of(body), relation_id=relation_id, outcome=str(body["outcome"]),
+            summary=str(body.get("summary") or ""), winner=body.get("winner")))
+
+    async def relations_handoff(self, request: web.Request) -> web.Response:
+        """Préparer un relais : paquet validé par Core, billet déposé pour le hook du successeur."""
+        return await self._relation_call(request, "handoff", lambda relay, body: relay.handoff(
+            caller=self._caller_of(body), purpose=str(body["purpose"]), packet=body["packet"]))
 
     async def missions_for_work(self, request: web.Request) -> web.Response:
         """L'instance d'agent retenue pour un travail de Work State, ou 404. Lecture seule."""

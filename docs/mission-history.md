@@ -125,6 +125,11 @@ relais, N8 de la Slice 01) : seul `missions.owner_instance_id` nomme le proprié
   antérieur du même fil, frontière de confidentialité) ; ordre du fil = ordre d'acceptation ; au plus
   `MAX_MESSAGES_PER_RELATION` (1 000) par relation, borne de stockage et non protocole (`relation_board_full`) ;
   rejeu identique sans effet, contenu différent -> `message_conflict`.
+- **Relais (Slice 06).** `record_handoff(instance, declaration=, relation=, at=, summary=)` écrit en **une**
+  transaction l'instance neuve du successeur, la relation `handoff` (paquet compris), le transfert
+  (`mission_owners`) et la clôture `transferred` ; une instance déjà retenue est refusée
+  (`handoff_successor_not_fresh`). Les écritures de l'adaptateur sont des fonctions de module
+  (`_write_instance`, `_write_relation`, `_write_transfer`, `_write_close`) composées dans cette transaction.
 - Une contrainte SQLite qui refuserait une écriture déjà validée par le domaine est un défaut :
   `mission_history_constraint`. Tout autre refus SQLite est `MissionHistoryUnavailable` (cause SQLite dans le
   message).
@@ -139,7 +144,7 @@ est rendue dans `WorkUpdate.conflicts` (`core.work.observation_conflict`), comme
 `work_brief` l'écrit « rôle : <id> ». Work State ne porte ni mission ni relation : ce sont des faits
 d'historique, lus par jointure. Depuis la Slice 05, le relais du Control Center pose `role_id` (rôle du fait
 joint, `undeclared` compris) et le contexte du cerveau joint la mission (`BrainWorkEntry.mission_id`,
-`mission_owner`, absents sans mission) par `MissionHistoryService.mission_ref`, mémoire bornée sans E/S.
+`mission_owner`, absents sans mission) par `MissionHistoryService.mission_ref`, mémoire bornée sans E/S. Depuis la Slice 06, il joint aussi les relations connues de l'instance (`BrainWorkEntry.relations`, quatre lignes au plus, `relation_refs`, sans E/S ; [agent-relations.md](agent-relations.md) §10.6).
 
 ## 6. Éphémère (D08)
 
@@ -205,7 +210,7 @@ démarre même si l'historique est refusé.
 
 | Sujet | Où |
 | --- | --- |
-| Relations au runtime (communication, QA, adversaire, relais) sur `create_relation`/`post_message`/`transfer_ownership` ; leurs résumés dans le contexte du cerveau | Slice 06 |
+| Relations au runtime (communication, QA, adversaire, relais, délégation alignée) ; leurs résumés dans le contexte du cerveau | fait (Slice 06, [agent-relations.md](agent-relations.md) §10) |
 | Projection dans la scène (rôles, relations, absence des éphémères terminées) depuis `mission_view` | Slice 08 |
 | Lecture de l'historique dans l'UI (graphe, Settings) | Slices 09, 10 |
 
@@ -225,12 +230,17 @@ la fin, perdue par le bus, est encore lisible dans Work State.
 
 ## 11. Routes
 
-| Méthode | Route Core (jeton) | Control Center (lecture seule) | Réponse |
+| Méthode | Route Core (jeton) | Control Center (lecture seule, sauf relations : Slice 06) | Réponse |
 | --- | --- | --- | --- |
 | POST | `/v1/missions/declarations` | — (relais seulement) | `{"store_id", "results": [{outcome, instance_id, code, message}]}` ; enveloppe stricte (400) ; un élément hors contrat = `refused` / `invalid_declaration` à sa place, les autres enregistrés |
 | GET | `/v1/missions/health` | `/api/missions/health` | `HistoryHealth` + `store_id` |
 | GET | `/v1/missions/{mission_id}` | `/api/missions/{mission_id}` | missions (chacune avec `live_unknown`), instances (statut vivant ou `null`), relations, propriétaires, `truncated` ; 404 `mission_not_found` |
 | GET | `/v1/missions/work/{work_source}/{work_external_id}` | `/api/missions/work/{work_source}/{work_external_id}` | l'instance retenue ; 404 `mission_instance_not_found` |
+| POST | `/v1/missions/relations` | `/api/missions/relations` (outils de relation, agentId résolus) | Slice 06 : `{"relation"}` ; 403 autorité, 409 contrat (message actionnable), 400 enveloppe |
+| GET | `/v1/missions/relations/{relation_id}?after&limit` | `/api/missions/relations/{relation_id}` | la relation, `messages` (avec `seq`), `participants` (statut vivant) ; 404 `relation_unknown` |
+| POST | `/v1/missions/relations/{relation_id}/messages` | idem | `{"seq", "message"}` |
+| POST | `/v1/missions/relations/{relation_id}/close` | idem | `{"relation"}` |
+| POST | `/v1/missions/handoffs` | `/api/missions/handoffs` (dépose aussi le billet du hook) | `{"handoff"}` : relais préparé, en mémoire de Core jusqu'au successeur |
 
 Refus codés `{"error": {"code", "message"}}` côté Core (`mission_history_unavailable` 503,
 `mission_history_failed` 500, `invalid_request` 400), journalisés `core.missions.route_failed` avec leur code ;

@@ -441,6 +441,30 @@ class LocalCoreClient:
         return await self._get_json(
             f"/v1/missions/work/{quote(work_source, safe='')}/{quote(work_external_id, safe='')}", {})
 
+    # Slice 06 : runtime des relations (`mission_routes.py`). `CoreProtocolError` porte le code et le message
+    # actionnable de Core (404 `relation_unknown`, 403 autorité, 409 contrat, 400 enveloppe).
+
+    async def _post_json(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        session = await self._http()
+        async with session.post(self.base_url + path, headers=self.headers, json=body) as response:
+            return await self._json(response)
+
+    async def open_relation(self, body: dict[str, Any]) -> dict[str, Any]:
+        return await self._post_json("/v1/missions/relations", body)
+
+    async def read_relation(self, relation_id: str, *, after: int = 0, limit: int = 100) -> dict[str, Any]:
+        return await self._get_json(f"/v1/missions/relations/{quote(relation_id, safe='')}",
+                                    {"after": after, "limit": limit})
+
+    async def post_relation_message(self, relation_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return await self._post_json(f"/v1/missions/relations/{quote(relation_id, safe='')}/messages", body)
+
+    async def close_relation(self, relation_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return await self._post_json(f"/v1/missions/relations/{quote(relation_id, safe='')}/close", body)
+
+    async def prepare_handoff(self, body: dict[str, Any]) -> dict[str, Any]:
+        return await self._post_json("/v1/missions/handoffs", body)
+
     async def append_conversation_events(self, events: Sequence[ConversationEvent]) -> tuple[AppendResult, ...]:
         """Remettre 1 à 32 Conversation Events à Core (`POST /v1/conversation-events`).
 

@@ -1,0 +1,15 @@
+{
+ "session_files": 29,
+ "thinking_blocks": 0,
+ "snippets": 0,
+ "databases": [
+  "<scratchpad>\\s06\\run-adversary-1792504885\\data\\state\\jarvis.sqlite3",
+  "<scratchpad>\\s06\\run-adversary-1792505099\\data\\state\\jarvis.sqlite3",
+  "<scratchpad>\\s06\\run-communication-1792505347\\data\\state\\jarvis.sqlite3",
+  "<scratchpad>\\s06\\run-handoff-1792505606\\data\\state\\jarvis.sqlite3",
+  "<scratchpad>\\s06\\run-qa-1792504629\\data\\state\\jarvis.sqlite3",
+  "<scratchpad>\\s06\\run-qa-1792505236\\data\\state\\jarvis.sqlite3"
+ ],
+ "relation_messages": 11,
+ "leaks": []
+}

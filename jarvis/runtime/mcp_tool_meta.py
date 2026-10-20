@@ -492,6 +492,26 @@ WORKSPACE = ServerMeta(
             "Ouvrir une entrée du Dossier à l'écran", "write", True, "single_request", "structured",
             parameter_rules=("entry_id de dossier_list",),
             output_notes=("state = reçu de la page ; no_visible_page : aucune page n'a répondu",)),
+        # Relations entre agents (organic-agent-orchestration, Slice 06, `relations_mcp_tools.py`) : outils des
+        # sous-agents de mission ; l'appelant est apposé par le hook, jamais un argument du modèle.
+        "relation_open": ToolMeta(
+            "Nouer une relation entre agents", "write", False, "single_request", "structured",
+            parameter_rules=("qa : reviewer + reviewed ; adversary : ≥ 2 producers ; communication : ≥ 2 members",
+                             "agentId rendu par l'outil Agent, ou self"),
+            output_notes=("relation_id neuf à chaque appel",)),
+        "relation_post": ToolMeta(
+            "Publier sur le tableau d'une relation", "write", False, "single_request", "structured",
+            parameter_rules=("participant seulement", "message délibéré, jamais un raisonnement privé"),
+            output_notes=("seq = ordre d'acceptation du fil",)),
+        "relation_read": ToolMeta("Lire une relation et son fil", "read", True, "none", "structured",
+                                  output_notes=("≤ 50 messages par appel ; next_after pour la suite",)),
+        "relation_close": ToolMeta(
+            "Clore une relation", "write", True, "single_request", "structured",
+            parameter_rules=("verdict QA : le relecteur ; winner : un des producteurs",)),
+        "relation_handoff": ToolMeta(
+            "Préparer un relais de mission", "write", False, "single_request", "structured",
+            parameter_rules=("Mission Owner courant, une fois", "puis Agent avec [relais] après le rôle"),
+            output_notes=("expire sans successeur après 10 min",)),
     },
 )
 

@@ -33,9 +33,15 @@ du CLI Claude ; le seul point contraignant est le hook `PreToolUse`, qui voit ch
 | Arrêter un agent lancé en fond | `TaskStop` (CLI) | autorité existante ; la fin part dans Work State (`cancelled`) |
 | Relire le travail d'un enfant | son compte rendu, `TaskOutput` (CLI) | — |
 | Inspecter une mission, sa trace, son état | `GET /api/missions/{id}` (Control Center), `GET /v1/missions/{id}` (Core) | lecture seule (§6) |
+| Second regard, approches concurrentes, coordination explicite (Slice 06) | `mcp__jarvis-workspace__relation_open` / `relation_post` / `relation_read` / `relation_close` | Core (autorité, contrat), identité apposée par le hook ([agent-relations.md](agent-relations.md) §10) |
+| Passer la mission à une instance neuve (Slice 06) | `relation_handoff`, puis `Agent` avec `[relais]` après le rôle | hook (billet réclamé, paquet apposé), Core (une transaction, avant la fin du prédécesseur) |
 
-Aucun outil MCP nouveau n'est déclaré au cerveau : un outil d'un serveur déclaré doit être documenté dans sa
-consigne (`test_brain_capability_parity`), et la consigne du cerveau appartient à la Slice 07. Le bloc
+Slice 05 : aucun outil MCP nouveau pour le cerveau. Slice 06 : les outils de relation sont sur `jarvis-workspace`,
+pour les sous-agents ; le test de parité exige qu'ils soient nommés dans la consigne du cerveau, ce que fait une
+ligne de `BRAIN_WORKSPACE_PROMPT` (« à eux ; toi, relation_read seulement ») ; `BRAIN_SYSTEM_PROMPT` et
+`brain_rules()` ne changent pas (Slice 07). Le bloc « RELATIONS ENTRE AGENTS (JARVIS) »
+(`relation_runtime.relations_brief`) suit, en bloc distinct, la responsabilité de mission ; un relecteur QA reçoit
+« RELATION QA (JARVIS) ». Le bloc
 « RESPONSABILITÉ DE MISSION (JARVIS) » (`agent_orchestration.mission_brief`) est apposé par le hook, en
 dernier, sur la consigne d'un Mission Owner seulement : propriété du résultat et de sa qualité (D22),
 outils ci-dessus, « une tâche nette se fait seul », « rien de ce que vous ne faites qu'envisager ».
@@ -193,6 +199,8 @@ dégrade, rien n'est deviné ni réécrit. Aucun libellé n'est lu pour deviner 
   seul un Core à jour (route `/v1/missions/declarations`, schéma v10) les enregistre : la mise en service
   demande un redémarrage complet, fait par l'utilisateur.
 - Codex ne relaie aucune sous-tâche (`subtasks_supported` faux) : ni déclaration ni mission.
-- Outils de relation (communication, QA, adversaire, relais) : Slice 06, qui doit faire précéder la fin du
-  prédécesseur par `transfer_ownership` ; sinon la fin du prédécesseur, propriétaire courant, clôt la mission
-  dès que l'équipe a fini.
+- Outils de relation (communication, QA, adversaire, relais) : faits en Slice 06 ([agent-relations.md](agent-relations.md)
+  §10). Le transfert de propriété d'un relais est écrit à la déclaration du successeur, et un relais préparé
+  diffère la clôture de la mission : la fin du prédécesseur ne la clôt pas. Un relais préparé vit en mémoire de
+  Core : un redémarrage de Core entre la préparation et le lancement le perd (le successeur est retenu sans la
+  propriété, dit à l'erreur).

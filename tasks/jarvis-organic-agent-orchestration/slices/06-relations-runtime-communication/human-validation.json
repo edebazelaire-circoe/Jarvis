@@ -5,19 +5,19 @@
       "id": "HV-ORG-06-01",
       "description": "Inspect a real Adversary run and confirm participants are competing producers defending different work, not one producer plus reviewer.",
       "status": "pending",
-      "evidence": null
+      "evidence": "Prepared, not passed: evidence/run-adversary.txt (two coder producers, 2 proposals + 2 mutual critiques, owner closed synthesis). To check live: after the restart, ask JARVIS for two competing approaches; read GET /api/missions/relations/<rel_id>: two producers, no reviewer, each defends its own work."
     },
     {
       "id": "HV-ORG-06-02",
       "description": "Inspect a real QA run and confirm the Quality Analyst is reviewing existing work asymmetrically.",
       "status": "pending",
-      "evidence": null
+      "evidence": "Prepared, not passed: evidence/run-qa.txt (reviewer role qa opened the QA on the producer agentId, two critiques, verdict correction_requested given by the reviewer). To check live: ask for a second look on a result; the QA relation has reviewer -> reviewed and the verdict is the reviewer's."
     },
     {
       "id": "HV-ORG-06-03",
       "description": "Open a collaboration record and confirm it contains deliberate messages/decisions but no private reasoning/thinking transcript.",
       "status": "pending",
-      "evidence": null
+      "evidence": "Prepared, not passed: evidence/run-communication.txt and run-adversary.txt (boards hold proposal/critique/decision messages only), evidence/privacy-probe.json (allowlisted keys, no reasoning tag). To check live: open GET /api/missions/relations/<rel_id> and read the messages: deliberate text, no thinking transcript."
     }
   ],
   "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."

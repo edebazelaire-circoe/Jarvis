@@ -652,6 +652,8 @@ class JarvisCoreApplication:
             active_board=lambda: self.speech_authority.board_id,
             # Slice 05 (organic-agent-orchestration) : la mission de chaque sous-agent retenu, sans E/S.
             missions=self._mission_of,
+            # Slice 06 : les relations connues de chaque sous-agent retenu, une ligne chacune, sans E/S.
+            relations=self._relations_of,
         )
         self.notifications =NotificationService(self.state, notification_delivery or NullNotificationDelivery())
         self.calendar = CalendarService(calendar_backend or InMemoryCalendarBackend())
@@ -736,6 +738,11 @@ class JarvisCoreApplication:
 
         ref = self.mission_history.mission_ref(item.source, item.external_id)
         return (ref.mission_id, ref.mission_owner) if ref is not None and ref.mission_id is not None else None
+
+    def _relations_of(self, item: WorkItem) -> tuple[str, ...]:
+        """Les relations connues d'un travail, pour le contexte du cerveau (`MissionHistoryService.relation_refs`)."""
+
+        return self.mission_history.relation_refs(item.source, item.external_id)
 
     async def start(self) -> None:
         if self.health.ready:

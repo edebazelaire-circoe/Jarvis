@@ -1241,5 +1241,8 @@ def test_the_brain_prompt_says_how_to_look_at_another_board_without_switching():
     # 2026-10-18 (board-ui-wheel-dossier-refactor S07) : 1550 -> 1800. Le Dossier n'y était pas nommé : le cerveau
     # répondait « montre-moi les deux notes » par dossier_present (fenêtres sous le Dossier ouvert) ou par Read sur
     # un chemin absolu (trace du bac à sable S07) ; une ligne dit dossier_view, son reçu, et board_memory_read.
-    assert len(BRAIN_WORKSPACE_PROMPT.encode("utf-8")) <= 1800
+    # 2026-10-20 (organic-agent-orchestration S06) : 1800 -> 1900. Les cinq outils de relation entre sous-agents
+    # (`relations_mcp_tools.py`) sont sur ce serveur : une ligne les nomme et dit que le cerveau ne fait que lire.
+    assert len(BRAIN_WORKSPACE_PROMPT.encode("utf-8")) <= 1900
+    assert "relation_read seulement" in BRAIN_WORKSPACE_PROMPT
     assert "dossier_view" in BRAIN_WORKSPACE_PROMPT and "dossier_present seulement sur demande" in BRAIN_WORKSPACE_PROMPT

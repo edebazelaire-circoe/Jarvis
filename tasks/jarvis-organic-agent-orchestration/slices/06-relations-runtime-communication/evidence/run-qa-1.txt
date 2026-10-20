@@ -1,0 +1,28 @@
+== instances
+  toolu_015uCzKEGRbJha7YmSDRHDu1 | [code] [coder] Sonde S06 QA | completed | role=coder | mission=mis_toolu_015uCzKEGRbJha7YmSDRHDu1 owner=True | inst=ainst_f12d8f1138cd4594ac4fa7d527549ba7
+  toolu_01FjP5CVJzCEZpooMzzejCG3 | [code] [qa] Relecture S06 | completed | role=qa | mission=mis_toolu_015uCzKEGRbJha7YmSDRHDu1 owner=False | inst=ainst_70b368a793304152891e5528b578d33a
+  toolu_01FbzR2mbpBCjWPDPpPQFHAS | [code] [coder] Producteur S06 | completed | role=coder | mission=mis_toolu_015uCzKEGRbJha7YmSDRHDu1 owner=False | inst=ainst_b905bfa6049b44119253f70917136992
+== missions
+  mis_toolu_015uCzKEGRbJha7YmSDRHDu1 status=completed owner=ainst_f12d8f1138cd4594ac4fa7d527549ba7 parent=None
+    owner change -> {'mission_id': 'mis_toolu_015uCzKEGRbJha7YmSDRHDu1', 'owner_instance_id': 'ainst_f12d8f1138cd4594ac4fa7d527549ba7', 'at': '2026-10-20T13:57:30.228205+00:00', 'handoff_relation_id': None}
+== relations
+  rel_3493ca0350114b82ac4be915bc3a4611 kind=qa status=closed outcome=approved winner=None closed_by=ainst_70b368a793304152891e5528b578d33a created_by=ainst_70b368a793304152891e5528b578d33a
+    purpose='Relecture S06 de is_palindrome' summary="Tient pour l'égalité stricte chaîne/inverse (vérifié: '', 'a', 'aba', 'racecar', [1,2,1] -> True ; 'ab' -> False). Points à confirmer: normalisation casse/espaces si la définition est « phrase palindrome » ; None -> TypeError non géré. Aucun fichier modifié."
+    participant ainst_70b368a793304152891e5528b578d33a reviewer
+    participant ainst_b905bfa6049b44119253f70917136992 reviewed
+    CC agents={'ainst_70b368a793304152891e5528b578d33a': 'a8c869489668e6993', 'ainst_b905bfa6049b44119253f70917136992': 'a05ae356b464af529'}
+== trace (relation/handoff)
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_open", "tool_use_id": "toolu_01H8ZhTALw9Znhh82u22K7mn", "caller_agent_id": "a8c869489668e6993"}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_open", "tool_use_id": "toolu_013uhcpN1diVC1TDyQWfeYH2", "caller_agent_id": "a8c869489668e6993"}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_open", "tool_use_id": "toolu_01T7E9oQafgSd7zdB1mrZm8a", "caller_agent_id": "a8c869489668e6993"}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_open", "tool_use_id": "toolu_011h8iL2QPTXS3eYZooLUWfC", "caller_agent_id": "a8c869489668e6993"}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_open", "tool_use_id": "toolu_01Djmm3icD5TobHW3uzC1FM9", "caller_agent_id": "a8c869489668e6993"}
+  mission_history.relation_opened {"relation_id": "rel_3493ca0350114b82ac4be915bc3a4611", "kind": "qa", "mission_id": "mis_toolu_015uCzKEGRbJha7YmSDRHDu1", "participants": 2, "created_by_instance_id": "ainst_70b368a793304152891e5528b578d33a"}
+  missions.relation_relayed {"operation": "open", "kind": "qa", "participants": 2}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_post", "tool_use_id": "toolu_015NnU6pnXj1P9g1qHxqXt9x", "caller_agent_id": "a8c869489668e6993"}
+  mission_history.relation_refused {"operation": "post", "code": "mission_closed", "field": "relation_id", "relation_id": "rel_3493ca0350114b82ac4be915bc3a4611"}
+  missions.relation_failed {"operation": "post", "status": 409, "code": "mission_closed", "relation_id": "rel_3493ca0350114b82ac4be915bc3a4611", "type": "critique", "chars": 479}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_close", "tool_use_id": "toolu_01PgiY7UNHdKt6ZZEfX2c2gi", "caller_agent_id": "a8c869489668e6993"}
+  mission_history.relation_closed {"relation_id": "rel_3493ca0350114b82ac4be915bc3a4611", "kind": "qa", "outcome": "approved", "closed_by_instance_id": "ainst_70b368a793304152891e5528b578d33a", "winner_instance_id": null}
+  missions.relation_relayed {"operation": "close", "relation_id": "rel_3493ca0350114b82ac4be915bc3a4611", "outcome": "approved"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_3493ca0350114b82ac4be915bc3a4611"}

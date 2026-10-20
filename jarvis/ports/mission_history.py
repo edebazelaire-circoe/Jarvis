@@ -99,6 +99,18 @@ class MissionHistoryRepository(Protocol):
 
     async def get_relation(self, relation_id: str) -> AgentRelation | None: ...
 
+    async def record_handoff(
+        self, instance: AgentInstance, *, declaration: AgentDeclarationFact | None, relation: AgentRelation,
+        at: datetime, summary: str,
+    ) -> tuple[StoredInstance, AgentRelation, Mission]:
+        """Slice 06 : le successeur d'un relais, sa relation (paquet), le transfert de propriété et la clôture
+        `transferred` en **une** transaction : tout ou rien."""
+        ...
+
+    async def relations_of_instance(self, instance_id: str, *, limit: int = 16) -> tuple[AgentRelation, ...]:
+        """Les relations où figure l'instance, les plus récentes d'abord (Slice 06, résumés du cerveau)."""
+        ...
+
     async def append_message(self, message: RelationMessage) -> int:
         """Poster sur le fil de la relation (`check_message`) ; rend le rang d'acceptation (ordre du fil)."""
         ...

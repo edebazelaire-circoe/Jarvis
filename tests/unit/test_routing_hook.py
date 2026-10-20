@@ -386,7 +386,8 @@ def test_the_cli_is_handed_this_hook_and_nothing_else(tmp_path):
     declared = json.loads(routing_hook.hook_settings(tmp_path, python="C:/py.exe"))
 
     [entry] = declared["hooks"]["PreToolUse"]
-    assert entry["matcher"] == "Agent|Task"
+    # Slice 06 : les outils de relation passent aussi par le hook (identité de l'appelant apposée).
+    assert entry["matcher"] == "Agent|Task|mcp__jarvis-workspace__relation_.*"
     command = entry["hooks"][0]["command"]
     assert "routing-hook" in command and str(tmp_path) in command
     # Chemins entre guillemets : un dossier avec une espace ne doit pas couper
@@ -429,7 +430,7 @@ def test_the_running_brain_is_launched_with_that_hook(tmp_path, monkeypatch):
 
     argv = started[0]
     declared = json.loads(argv[argv.index("--settings") + 1])
-    assert declared["hooks"]["PreToolUse"][0]["matcher"] == "Agent|Task"
+    assert declared["hooks"]["PreToolUse"][0]["matcher"] == "Agent|Task|mcp__jarvis-workspace__relation_.*"
 
 
 async def _start(agent) -> None:  # noqa: ANN001

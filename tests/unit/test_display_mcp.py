@@ -640,7 +640,7 @@ async def test_the_conversation_brain_gets_the_display_server_only_when_enabled(
                       + "\n" + claude_local.BRAIN_PREFAB_PROMPT)
     assert "--chrome" in on
     hook = json.loads(_prompt(on, "--settings"))
-    assert hook["hooks"]["PreToolUse"][0]["matcher"] == "Agent|Task"
+    assert hook["hooks"]["PreToolUse"][0]["matcher"] == "Agent|Task|mcp__jarvis-workspace__relation_.*"  # Slice 06 organic
     starts = [e for e in read_jsonl_tail(runtime / "trace.jsonl", limit=50) if e["kind"] == "agent.start"]
     assert [e["data"]["display_mcp"] for e in starts] == [False, True]
     prompts = [e for e in read_jsonl_tail(runtime / "trace.jsonl", limit=50) if e["kind"] == "agent.prompt"]

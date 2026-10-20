@@ -1719,6 +1719,15 @@ async def _run_control_center_v2() -> int:
         CoreMissionTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
         journal=journal,
     )
+    # Runtime des relations (Slice 06) : outils de relation des agents -> Core, sa propre connexion.
+    from jarvis.runtime.relation_relay import RelationRelay
+
+    relation_relay = RelationRelay(
+        declarations=declaration_relay,
+        transport=CoreMissionTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
+        runtime_root=runtime_root,
+        journal=journal,
+    )
 
     control = ControlCenter(
         global_context_dir=global_context_root(settings.data_root),
@@ -1732,6 +1741,7 @@ async def _run_control_center_v2() -> int:
         conversation_events=conversation_events,
         declaration_relay=declaration_relay,
         mission_view=mission_view,
+        relation_relay=relation_relay,
         conversation_event_view=conversation_event_view,
         work_view=work_view,
         live_view=live_view,

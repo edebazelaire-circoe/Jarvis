@@ -1,0 +1,29 @@
+== instances
+  toolu_01FiJCxF6S3c9FsMvcUvHeHw | [code] [coder] Sonde S06 QA | completed | role=coder | mission=mis_toolu_01FiJCxF6S3c9FsMvcUvHeHw owner=True | inst=ainst_6c9b70d36aa8413fa9392562e1a08e4c
+  toolu_016SvzGxrPE6JQc8PBJ3Kyqc | [code] [qa] Relecture S06 | completed | role=qa | mission=mis_toolu_01FiJCxF6S3c9FsMvcUvHeHw owner=False | inst=ainst_9134faf7d17a4f9fa9b96adfcdc846fb
+  toolu_01HZrktirQ5kwBj9xf1DuYZS | [code] [coder] Producteur S06 | completed | role=coder | mission=mis_toolu_01FiJCxF6S3c9FsMvcUvHeHw owner=False | inst=ainst_cb6336c237c940f5a4442fd38c160691
+== missions
+  mis_toolu_01FiJCxF6S3c9FsMvcUvHeHw status=completed owner=ainst_6c9b70d36aa8413fa9392562e1a08e4c parent=None
+    owner change -> {'mission_id': 'mis_toolu_01FiJCxF6S3c9FsMvcUvHeHw', 'owner_instance_id': 'ainst_6c9b70d36aa8413fa9392562e1a08e4c', 'at': '2026-10-20T14:07:36.972509+00:00', 'handoff_relation_id': None}
+== relations
+  rel_8809c1df47ae4bbb81208f5c41b94e89 kind=qa status=closed outcome=correction_requested winner=None closed_by=ainst_9134faf7d17a4f9fa9b96adfcdc846fb created_by=ainst_9134faf7d17a4f9fa9b96adfcdc846fb
+    purpose="Revue QA de la fonction is_palindrome écrite par l'agent a73aefbd98094a893" summary="Verdict : à corriger. Cas bloquant aucun ; un défaut mineur confirmé : is_palindrome rend False pour 'İ' et 'aİa' (expansion de lower() sur U+0130 suivie d'inversion). Le reste des cas courants est correct."
+    participant ainst_9134faf7d17a4f9fa9b96adfcdc846fb reviewer
+    participant ainst_cb6336c237c940f5a4442fd38c160691 reviewed
+    MSG #1 critique by ainst_9134faf7d17a4f9fa9b96adfcdc846fb: "Constat à corriger (mineur) : is_palindrome('İ') et is_palindrome('aİa') rendent False alors que ces chaînes sont des palindromes. Cause : c.lower() sur U+0130 produit 'i' + U+0307 (deux caractères), le point combinant se retrouve avant le 'i' après inversion. Vérifié avec python -X utf8 : lower-joined = ['0x69','0x307'], résultat False. Les cas 'Été', 'ǅ', 'Ⅻ', chiffres arabes, 'ª' et ''/'  ' ren"
+    MSG #2 critique by ainst_9134faf7d17a4f9fa9b96adfcdc846fb: "Remarque (non bloquante) : les marques combinantes décomposées sont retirées par isalnum (ex. 'éte' -> 'ete', True). Comportement défendable, à documenter si la règle compte. Aucun fichier du dépôt n'a été modifié."
+    CC agents={'ainst_9134faf7d17a4f9fa9b96adfcdc846fb': 'ad74f9c1fb0a7a7b3', 'ainst_cb6336c237c940f5a4442fd38c160691': 'a73aefbd98094a893'}
+== trace (relation/handoff)
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_open", "tool_use_id": "toolu_011XciFML3kETEPo23S9y3KW", "caller_agent_id": "ad74f9c1fb0a7a7b3"}
+  mission_history.relation_opened {"relation_id": "rel_8809c1df47ae4bbb81208f5c41b94e89", "kind": "qa", "mission_id": "mis_toolu_01FiJCxF6S3c9FsMvcUvHeHw", "participants": 2, "created_by_instance_id": "ainst_9134faf7d17a4f9fa9b96adfcdc846fb"}
+  missions.relation_relayed {"operation": "open", "kind": "qa", "participants": 2}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_post", "tool_use_id": "toolu_01GLLLzwz6coQ9MfEDbQ5Tdd", "caller_agent_id": "ad74f9c1fb0a7a7b3"}
+  mission_history.relation_message {"relation_id": "rel_8809c1df47ae4bbb81208f5c41b94e89", "message_id": "msg_eb12e10fb52b4550ad2b98370f2b7371", "seq": 1, "type": "critique", "chars": 490, "author_instance_id": "ainst_9134faf7d17a4f9fa9b96adfcdc846fb"}
+  missions.relation_relayed {"operation": "post", "relation_id": "rel_8809c1df47ae4bbb81208f5c41b94e89", "type": "critique", "chars": 490}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_post", "tool_use_id": "toolu_01PV6R4CZGXimX2G5BDsLYDL", "caller_agent_id": "ad74f9c1fb0a7a7b3"}
+  mission_history.relation_message {"relation_id": "rel_8809c1df47ae4bbb81208f5c41b94e89", "message_id": "msg_e6d7c1062cfb4cb88ab5cdab536dbb78", "seq": 2, "type": "critique", "chars": 215, "author_instance_id": "ainst_9134faf7d17a4f9fa9b96adfcdc846fb"}
+  missions.relation_relayed {"operation": "post", "relation_id": "rel_8809c1df47ae4bbb81208f5c41b94e89", "type": "critique", "chars": 215}
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_close", "tool_use_id": "toolu_011v5GfeFjvcW7z8xB3v8AcC", "caller_agent_id": "ad74f9c1fb0a7a7b3"}
+  mission_history.relation_closed {"relation_id": "rel_8809c1df47ae4bbb81208f5c41b94e89", "kind": "qa", "outcome": "correction_requested", "closed_by_instance_id": "ainst_9134faf7d17a4f9fa9b96adfcdc846fb", "winner_instance_id": null}
+  missions.relation_relayed {"operation": "close", "relation_id": "rel_8809c1df47ae4bbb81208f5c41b94e89", "outcome": "correction_requested"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_8809c1df47ae4bbb81208f5c41b94e89"}

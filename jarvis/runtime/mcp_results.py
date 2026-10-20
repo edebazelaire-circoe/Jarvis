@@ -950,6 +950,79 @@ class DossierViewResult(ToolResult):
     explanation: str
 
 
+# ------------------------------------------------------------------ relations entre agents
+# `jarvis-workspace`, outils `relation_*` (organic-agent-orchestration, Slice 06, `relations_mcp_tools.py`).
+
+
+class RelationParticipantItem(ToolResult):
+    #: agentId du CLI quand le suivi des tâches le connaît encore ; `None` sinon (agent fini et élagué).
+    agent_id: str | None
+    instance_id: str
+    position: str
+    role_id: str | None = None  # type: ignore[assignment]
+    #: Statut vivant lu dans Work State (`None` : Work State ne connaît pas ou plus ce travail).
+    work_status: str | None = None  # type: ignore[assignment]
+
+
+class RelationFields(ToolResult):
+    """Ce que l'agent lit d'une relation : nature, mission, objet, état ; jamais son paquet de relais entier."""
+
+    relation_id: str
+    kind: str
+    mission_id: str
+    purpose: str
+    status: Literal["open", "closed"]
+    outcome: str = None  # type: ignore[assignment]
+    outcome_summary: str = None  # type: ignore[assignment]
+    winner_instance_id: str = None  # type: ignore[assignment]
+    closed_by_instance_id: str = None  # type: ignore[assignment]
+    created_by_instance_id: str = None  # type: ignore[assignment]
+    target_refs: list[str] = None  # type: ignore[assignment]
+
+
+class RelationOpenResult(RelationFields):
+    participants: list[RelationParticipantItem]
+    next: str
+
+
+class RelationMessageItem(ToolResult):
+    seq: int
+    #: L'id à passer en `reply_to_message_id` pour répondre à ce message (le rang `seq` n'en est pas un).
+    message_id: str
+    author_agent_id: str | None
+    author_instance_id: str
+    type: str
+    text: str
+    created_at: str
+    reply_to_message_id: str = None  # type: ignore[assignment]
+
+
+class RelationReadResult(RelationFields):
+    participants: list[RelationParticipantItem]
+    messages: list[RelationMessageItem]
+    #: Rang à passer en `after` pour la suite du fil.
+    next_after: int
+
+
+class RelationPostResult(ToolResult):
+    relation_id: str
+    seq: int
+    message_id: str
+    type: str
+    published: bool
+
+
+class RelationCloseResult(RelationFields):
+    pass
+
+
+class RelationHandoffResult(ToolResult):
+    handoff_id: str
+    mission_id: str
+    expires_at: str
+    next: str
+
+
 # ------------------------------------------------------------------ violation du contrat de sortie
 
 # ------------------------------------------------------------------ mémoire à long terme et connaissance

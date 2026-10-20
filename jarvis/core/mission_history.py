@@ -18,7 +18,15 @@ Entrées :
 - `close_mission`, `transfer_ownership`, `create_relation`, `close_relation`,
   `post_message` : l'API d'écriture des Slices 05/06. Un refus de contrat lève
   l'erreur codée du domaine ; un magasin indisponible lève
-  `MissionHistoryUnavailable` après avoir marqué l'historique dégradé.
+  `MissionHistoryUnavailable` après avoir marqué l'historique dégradé ;
+- Slice 06, runtime des relations (`relation_runtime`) : `open_relation`,
+  `publish_message`, `finish_relation`, `read_relation` (ce que les outils des
+  agents demandent, appelant résolu par son identité de travail), `prepare_handoff`
+  puis la reprise du successeur dans `record_declaration` (instance, relation,
+  paquet, transfert et clôture en une transaction, avant toute fin du
+  prédécesseur : la clôture de la mission attend un relais préparé), la
+  délégation alignée sur l'ouverture d'une sous-mission `[mission]` et close à
+  sa fin, et `relation_refs` (résumés du contexte du cerveau, sans E/S).
 
 Règles :
 
@@ -57,7 +65,12 @@ import uuid
 
 from jarvis.core.v2_services import CoreEventBus, NullDiagnosticSink, SystemClock
 from jarvis.core.work_state import CORE_WORK_UPDATED
-from jarvis.domain.agent_relations import AgentRelation, RelationError, RelationMessage, RelationOutcome
+from jarvis.domain.agent_relations import (
+    AgentRelation, AgentRelationKind, HandoffPacket, ParticipantPosition, RelationError, RelationMessage,
+    RelationMessageType, RelationOutcome, RelationParticipant,
+)
+from jarvis.domain import relation_runtime
+from jarvis.domain.relation_runtime import PendingHandoff
 from jarvis.domain.mission_history import (
     AGENT_DECLARED_KIND, AgentDeclarationFact, DeclarationOutcome, DeclarationResult, HistoryHealth, InstanceView,
     MissionHistoryError, MissionOpening, MissionTree, StoredInstance, join_live, live_status,
@@ -98,6 +111,21 @@ ORPHAN_GRACE_S = 600.0
 MISSION_HISTORY_ORPHANED_KIND = "mission_history.mission_orphaned"
 MAX_CLOSE_DEPTH = 16
 MISSION_HISTORY_SWEEP_FAILED_KIND = "mission_history.sweep_failed"
+#: Slice 06 : runtime des relations. Des ids, des codes et des tailles au journal, jamais un texte de message.
+MISSION_HISTORY_RELATION_OPENED_KIND = "mission_history.relation_opened"
+MISSION_HISTORY_RELATION_MESSAGE_KIND = "mission_history.relation_message"
+MISSION_HISTORY_RELATION_CLOSED_KIND = "mission_history.relation_closed"
+MISSION_HISTORY_RELATION_REFUSED_KIND = "mission_history.relation_refused"
+MISSION_HISTORY_HANDOFF_PREPARED_KIND = "mission_history.handoff_prepared"
+MISSION_HISTORY_HANDOFF_TRANSFERRED_KIND = "mission_history.handoff_transferred"
+MISSION_HISTORY_HANDOFF_FAILED_KIND = "mission_history.handoff_failed"
+MISSION_HISTORY_DELEGATION_FAILED_KIND = "mission_history.delegation_failed"
+MISSION_HISTORY_MESSAGE_AFTER_CLOSE_KIND = "mission_history.relation_message_after_close"
+#: Relations retenues par instance pour les résumés du cerveau ; instances suivies ; lectures de réchauffage par
+#: balayage (après un redémarrage, le cache se remplit des travaux vivants, sans tout relire d'un coup).
+MAX_RELATIONS_PER_INSTANCE = 8
+MAX_RELATION_CACHE = 1_024
+MAX_RELATION_WARMUPS = 16
 
 #: Balayage périodique (Slice 05, note N5 de la Slice 03) : rattrape un événement perdu ou un magasin rétabli même
 #: quand aucun travail ne bouge. Un balayage a aussi lieu au démarrage.
@@ -125,6 +153,10 @@ MAX_MISSION_CACHE = 1_024
 _MAX_REPORTED = 256
 
 WorkKey = tuple[str, str]
+
+
+def _new_id(prefix: str) -> str:
+    return f"{prefix}{uuid.uuid4().hex}"
 
 
 class WorkSnapshotReader(Protocol):
@@ -216,6 +248,10 @@ class MissionHistoryService:
         self._born = self._clock.now()
         self._sweep_interval_s = sweep_interval_s
         self._sweep_lock = asyncio.Lock()
+        #: Slice 06 : relais préparés en attente de leur successeur (mémoire seulement, bornés, expirés au balayage).
+        self._handoffs: OrderedDict[str, PendingHandoff] = OrderedDict()
+        #: instance -> ses relations connues (les plus récentes en fin), pour `relation_refs` sans E/S.
+        self._relations: OrderedDict[str, OrderedDict[str, AgentRelation]] = OrderedDict()
 
     # ------------------------------------------------------------ état
 
@@ -424,6 +460,9 @@ class MissionHistoryService:
             return DeclarationResult(DeclarationOutcome.REFUSED, instance, code="ownership_invalid",
                                      message="only a mission owner declaration naming its mission opens a mission")
 
+        if stored is None and fact.handoff_id is not None and not instance.ephemeral:
+            # Slice 06 : le successeur d'un relais préparé reprend la mission, en une transaction.
+            return await self._take_over(key, instance, fact, parent_work_external_id, inherit_mission)
         if stored is not None:
             # Rejeu ou redémarrage : identique ou refusé, jamais réécrit (D01). Une éphémère retenue après un
             # échec se rejoue avec son drapeau d'origine : c'est la même déclaration.
@@ -439,7 +478,11 @@ class MissionHistoryService:
                 reconcile_instance(stored.instance, incoming)
             except MissionError as exc:
                 return DeclarationResult(DeclarationOutcome.REFUSED, stored.instance, code=exc.code, message=str(exc))
-            return await self._persist(key, incoming, fact, stored.ephemeral_lowered, None)
+            result = await self._persist(key, incoming, fact, stored.ephemeral_lowered, None)
+            if result.outcome is DeclarationOutcome.DUPLICATE and stored.instance.mission_owner and _from_caller(mission):
+                # Rejeu : la délégation d'une sous-mission a pu manquer (panne entre deux écritures). Idempotent.
+                await self._align_delegation(stored.instance)
+            return result
 
         pending = self._pending.get(key)
         if pending is not None:
@@ -482,7 +525,12 @@ class MissionHistoryService:
                                          message=str(exc))
         elif inherit_mission and instance.mission_id is not None and not instance.mission_owner:
             await self._note_late_member(key, instance.mission_id)
-        return await self._persist(key, instance, fact, False, opened)
+        result = await self._persist(key, instance, fact, False, opened)
+        if (result.outcome is DeclarationOutcome.RECORDED and opened is not None and opened.parent_mission_id
+                and result.instance is not None):
+            # Slice 06 : `[mission]` est une délégation ; elle est nouée avec l'ouverture de la sous-mission.
+            await self._align_delegation(result.instance, opened)
+        return result
 
     async def _note_late_member(self, key: WorkKey, mission_id: str) -> None:
         """Un membre qui rejoint une mission déjà close est retenu tel quel (D18) ; c'est dit au diagnostic."""
@@ -692,6 +740,14 @@ class MissionHistoryService:
                          data={"mission_id": mission_id, "grace_s": ORPHAN_GRACE_S})
         if owner_status is None or not owner_status.is_terminal:
             return False
+        pending = self._pending_handoff_for(mission_id)
+        if pending is not None:
+            # Slice 06 : un relais préparé attend son successeur ; la fin du prédécesseur ne clôt pas la mission.
+            self._report(("deferred_handoff", mission_id, pending.handoff_id), MISSION_HISTORY_CLOSE_DEFERRED_KIND,
+                         "propriétaire terminé, relais préparé en attente de son successeur : clôture différée",
+                         level="info", data={"mission_id": mission_id, "handoff_id": pending.handoff_id,
+                                             "owner_status": owner_status.value})
+            return False
         alive = [item.instance_id for item in instances if item.mission_id == mission_id
                  and item.instance_id != mission.owner_instance_id
                  and (status_of(item) is not None and not status_of(item).is_terminal)]
@@ -709,6 +765,8 @@ class MissionHistoryService:
             return False
         closed = await self.close_mission(mission_id, MISSION_STATUS_FOR_WORK[owner_status])
         self._owner_ended.pop(mission_id, None)
+        if closed.parent_mission_id is not None:
+            await self._return_delegation(closed)
         self._emit(MISSION_HISTORY_MISSION_CLOSED_KIND, "mission close : propriétaire terminé, équipe terminée",
                    data={"mission_id": closed.mission_id, "status": closed.status.value,
                          "owner_status": owner_status.value, "parent_mission_id": closed.parent_mission_id})
@@ -792,6 +850,8 @@ class MissionHistoryService:
                            f"écriture d'historique en attente refusée au rejeu : {result.message}", level="error",
                            data={"work_source": key[0], "work_external_id": key[1], "code": result.code})
             resolved += 1
+        self._expire_handoffs()
+        await self._warm_relations(items)
         await self._sweep_missions()
         return resolved
 
@@ -820,6 +880,332 @@ class MissionHistoryService:
 
     async def post_message(self, message: RelationMessage) -> int:
         return await self._guard("append_message", self._repository.append_message(message))
+
+    # ------------------------------------------------------------ runtime des relations (Slice 06)
+
+    async def _instance_for(self, ref: WorkKey | None, what: str) -> AgentInstance | None:
+        """L'instance retenue pour une identité de travail ; refus codé si elle ne l'est pas."""
+
+        if ref is None:
+            return None
+        stored = await self._guard("find_instance", self._repository.find_instance(*ref))
+        if stored is None:
+            raise RelationError(f"{what} {ref[0]}/{ref[1]} is not recorded in mission history",
+                                code="relation_agent_not_recorded", field=what)
+        return stored.instance
+
+    async def _caller(self, ref: WorkKey | None) -> AgentInstance:
+        caller = await self._instance_for(ref, "caller")
+        if caller is None:
+            raise RelationError("the brain is not a mission instance", code="relation_caller_not_instance",
+                                field="caller")
+        return caller
+
+    async def _scope(self, mission_id: str) -> dict[str, Mission]:
+        tree = await self._guard("mission_tree", self._repository.mission_tree(mission_id))
+        return {mission.mission_id: mission for mission in tree.missions} if tree is not None else {}
+
+    def _refuse(self, operation: str, exc: Exception, **data: Any) -> None:
+        """Un refus de relation, dit au journal avec son code (jamais le texte reçu), puis relevé par l'appelant."""
+
+        self._emit(MISSION_HISTORY_RELATION_REFUSED_KIND, f"relation refusée ({operation}) : {getattr(exc, 'code', '')}",
+                   level="warning", data={"operation": operation, "code": getattr(exc, "code", None),
+                                          "field": getattr(exc, "field", None), **data})
+
+    async def open_relation(self, *, caller: WorkKey | None, kind: AgentRelationKind,
+                            participants: list[tuple[WorkKey, ParticipantPosition]], purpose: str,
+                            target_refs: tuple[str, ...] = ()) -> AgentRelation:
+        """Nouer une relation demandée par un agent (communication, Adversary, QA). Lève l'erreur codée."""
+
+        try:
+            author = await self._caller(caller)
+            if author.mission_id is None:
+                raise RelationError(f"instance {author.instance_id} works for no mission", code="relation_no_mission",
+                                    field="caller")
+            members = [(await self._instance_for(ref, "participant"), position) for ref, position in participants]
+            relation = AgentRelation(
+                relation_id=_new_id(relation_runtime.RELATION_ID_PREFIX), kind=kind, mission_id=author.mission_id,
+                participants=tuple(RelationParticipant(instance.instance_id, position) for instance, position in members),
+                purpose=purpose, created_at=self._clock.now(), created_by_instance_id=author.instance_id,
+                target_refs=tuple(target_refs),
+            )
+            relation_runtime.check_open_authority(author, relation, await self._scope(author.mission_id))
+            created = await self.create_relation(relation)
+        except (RelationError, MissionError) as exc:
+            self._refuse("open", exc, kind=getattr(kind, "value", str(kind)))
+            raise
+        self._note_relation(created)
+        self._emit(MISSION_HISTORY_RELATION_OPENED_KIND, "relation nouée par un agent", data={
+            "relation_id": created.relation_id, "kind": created.kind.value, "mission_id": created.mission_id,
+            "participants": len(created.participants), "created_by_instance_id": created.created_by_instance_id})
+        return created
+
+    async def publish_message(self, *, caller: WorkKey | None, relation_id: str, type: RelationMessageType, text: str,
+                              audience: list[WorkKey] = (), artifact_refs: tuple[str, ...] = (),
+                              reply_to_message_id: str | None = None) -> tuple[int, RelationMessage]:
+        """Publier un message délibéré sur le tableau d'une relation. Lève l'erreur codée (contenu compris)."""
+
+        try:
+            author = await self._caller(caller)
+            relation = await self._relation(relation_id)
+            mission = await self._guard("get_mission", self._repository.get_mission(relation.mission_id))
+            targets = [await self._instance_for(ref, "audience") for ref in audience]
+            message = RelationMessage(
+                message_id=_new_id(relation_runtime.MESSAGE_ID_PREFIX), relation_id=relation.relation_id,
+                author_instance_id=author.instance_id, type=type, text=text,
+                created_at=max(self._clock.now(), relation.created_at),
+                audience=tuple(target.instance_id for target in targets if target is not None),
+                artifact_refs=tuple(artifact_refs), reply_to_message_id=reply_to_message_id,
+            )
+            seq = await self.post_message(message)
+        except (RelationError, MissionError) as exc:
+            self._refuse("post", exc, relation_id=relation_id)
+            raise
+        self._emit(MISSION_HISTORY_RELATION_MESSAGE_KIND, "message publié sur un tableau de relation", data={
+            "relation_id": relation.relation_id, "message_id": message.message_id, "seq": seq, "type": message.type.value,
+            "chars": len(message.text), "author_instance_id": author.instance_id})
+        if mission is not None and mission.status.is_closed:
+            # Constaté en bac à sable : un agent repris par SendMessage après la fin de sa tâche travaille encore
+            # quand la mission se clôt (Work State ne le voit plus vivant). Sa relation ouverte garde ce qu'il dit
+            # (D18, comme un membre tardif) ; c'est dit au journal.
+            self._report(("message_after_close", relation.relation_id), MISSION_HISTORY_MESSAGE_AFTER_CLOSE_KIND,
+                         "message publié sur une relation ouverte d'une mission close : retenu", level="warning",
+                         data={"relation_id": relation.relation_id, "mission_id": mission.mission_id,
+                               "mission_status": mission.status.value})
+        return seq, message
+
+    async def finish_relation(self, *, caller: WorkKey | None, relation_id: str, outcome: RelationOutcome,
+                              summary: str = "", winner: WorkKey | None = None) -> AgentRelation:
+        """Clore une relation à la demande d'un agent (verdict QA, issue d'un Adversary, fin d'une communication)."""
+
+        try:
+            author = await self._caller(caller)
+            relation = await self._relation(relation_id)
+            winner_instance = await self._instance_for(winner, "winner")
+            relation_runtime.check_close_authority(author, relation, outcome, await self._scope(relation.mission_id))
+            closed = await self.close_relation(relation.relation_id, outcome, summary=summary,
+                                               winner_instance_id=winner_instance.instance_id if winner_instance else None,
+                                               closed_by=author.instance_id)
+        except (RelationError, MissionError) as exc:
+            self._refuse("close", exc, relation_id=relation_id)
+            raise
+        self._note_relation(closed)
+        self._emit(MISSION_HISTORY_RELATION_CLOSED_KIND, "relation close", data={
+            "relation_id": closed.relation_id, "kind": closed.kind.value, "outcome": closed.outcome.value,
+            "closed_by_instance_id": closed.closed_by_instance_id, "winner_instance_id": closed.winner_instance_id})
+        return closed
+
+    async def read_relation(self, relation_id: str, *, after: int = 0, limit: int = 100
+                            ) -> tuple[AgentRelation, tuple[tuple[int, RelationMessage], ...], tuple[InstanceView, ...]]:
+        """Une relation, son fil (à partir du rang `after`) et ses participants avec leur statut vivant."""
+
+        relation = await self._relation(relation_id)
+        thread = await self.thread(relation.relation_id, after=after, limit=limit)
+        live = self._live()
+        views = []
+        for instance_id in relation.participant_ids:
+            stored = await self._guard("get_instance", self._repository.get_instance(instance_id))
+            if stored is not None:
+                views.append(InstanceView(stored, live_status(stored.instance, live)))
+        return relation, thread, tuple(views)
+
+    async def _relation(self, relation_id: str) -> AgentRelation:
+        relation = await self._guard("get_relation", self._repository.get_relation(relation_id))
+        if relation is None:
+            raise RelationError(f"relation {relation_id} is unknown", code="relation_unknown", field="relation_id")
+        return relation
+
+    # -- relais
+
+    async def prepare_handoff(self, *, caller: WorkKey | None, purpose: str, packet: HandoffPacket) -> PendingHandoff:
+        """Le propriétaire courant prépare un relais : paquet validé et gardé, rien de durable avant le successeur.
+
+        Un nouveau relais du même prédécesseur remplace le précédent, encore en attente (il n'a pas été lancé).
+        """
+
+        try:
+            author = await self._caller(caller)
+            mission = (await self._guard("get_mission", self._repository.get_mission(author.mission_id))
+                       if author.mission_id is not None else None)
+            relations = ()
+            if mission is not None:
+                tree = await self._guard("mission_tree", self._repository.mission_tree(mission.mission_id))
+                relations = tuple(item for item in (tree.relations if tree else ()) if item.mission_id == mission.mission_id)
+            relation_runtime.check_handoff_preparation(author, mission, relations)
+            pending = PendingHandoff(handoff_id=_new_id(relation_runtime.HANDOFF_ID_PREFIX),
+                                     mission_id=mission.mission_id, predecessor_instance_id=author.instance_id,
+                                     purpose=purpose, packet=packet, prepared_at=self._clock.now())
+        except (RelationError, MissionError) as exc:
+            self._refuse("handoff", exc)
+            raise
+        for handoff_id, other in list(self._handoffs.items()):
+            if other.predecessor_instance_id == author.instance_id:
+                self._handoffs.pop(handoff_id, None)
+        self._handoffs[pending.handoff_id] = pending
+        while len(self._handoffs) > relation_runtime.MAX_PENDING_HANDOFFS:
+            dropped, old = self._handoffs.popitem(last=False)
+            self._emit(MISSION_HISTORY_HANDOFF_FAILED_KIND, "trop de relais préparés : le plus ancien est oublié",
+                       level="warning", data={"handoff_id": dropped, "mission_id": old.mission_id,
+                                              "code": "handoff_pending_dropped"})
+        self._emit(MISSION_HISTORY_HANDOFF_PREPARED_KIND, "relais préparé : en attente de son successeur", data={
+            "handoff_id": pending.handoff_id, "mission_id": pending.mission_id,
+            "predecessor_instance_id": author.instance_id})
+        return pending
+
+    def pending_handoff(self, handoff_id: str) -> PendingHandoff | None:
+        pending = self._handoffs.get(handoff_id)
+        return pending if pending is not None and not pending.expired(self._clock.now()) else None
+
+    def _pending_handoff_for(self, mission_id: str) -> PendingHandoff | None:
+        now = self._clock.now()
+        return next((item for item in self._handoffs.values()
+                     if item.mission_id == mission_id and not item.expired(now)), None)
+
+    def _expire_handoffs(self) -> None:
+        now = self._clock.now()
+        for handoff_id, pending in list(self._handoffs.items()):
+            if pending.expired(now):
+                self._handoffs.pop(handoff_id, None)
+                self._emit(MISSION_HISTORY_HANDOFF_FAILED_KIND, "relais préparé expiré sans successeur", level="warning",
+                           data={"handoff_id": handoff_id, "mission_id": pending.mission_id, "code": "handoff_expired",
+                                 "ttl_s": relation_runtime.HANDOFF_TTL_S})
+
+    async def _take_over(self, key: WorkKey, instance: AgentInstance, fact: AgentDeclarationFact,
+                         parent_work_external_id: str | None, inherit_mission: bool) -> DeclarationResult:
+        """Le successeur d'un relais : instance, relation (paquet), transfert, clôture — en une transaction.
+
+        Relais inconnu, expiré, d'une autre mission ou d'un autre prédécesseur, ou refusé par le magasin : le
+        successeur est quand même retenu (il a tourné, D18), sans devenir propriétaire, et c'est dit à l'erreur.
+        """
+
+        pending = self.pending_handoff(fact.handoff_id or "")
+        problem = None
+        if pending is None:
+            problem = "handoff_unknown"
+        elif pending.mission_id != instance.mission_id:
+            problem = "handoff_mission_mismatch"
+        elif instance.parent_instance_id != pending.predecessor_instance_id:
+            problem = "handoff_wrong_predecessor"
+        if problem is None:
+            now = self._clock.now()
+            try:
+                relation = relation_runtime.handoff_relation(pending, relation_id=_new_id(relation_runtime.RELATION_ID_PREFIX),
+                                                             successor=instance, at=now)
+                stored, closed, mission = await self._guard("record_handoff", self._repository.record_handoff(
+                    instance, declaration=fact, relation=relation, at=relation.created_at,
+                    summary="Propriété de la mission transférée au successeur."), recover=False)
+            except MissionHistoryUnavailable as exc:
+                self._keep_unsaved(key, _UnsavedDeclaration(fact, parent_work_external_id, None, inherit_mission))
+                return DeclarationResult(DeclarationOutcome.DEGRADED, instance, code=exc.code, message=str(exc))
+            except (MissionError, RelationError, MissionHistoryError, MissionHistoryStoreError) as exc:
+                problem = getattr(exc, "code", None) or "handoff_refused"
+                detail = str(exc)[:300]
+            else:
+                self._handoffs.pop(pending.handoff_id, None)
+                self._unsaved.pop(key, None)
+                self._recover()
+                self._remember_role(key, stored.instance.role_id)
+                self._remember_mission(key, stored.instance)
+                self._note_relation(closed)
+                self._emit(MISSION_HISTORY_HANDOFF_TRANSFERRED_KIND, "relais : mission transférée au successeur", data={
+                    "handoff_id": pending.handoff_id, "relation_id": closed.relation_id, "mission_id": mission.mission_id,
+                    "predecessor_instance_id": pending.predecessor_instance_id,
+                    "successor_instance_id": stored.instance.instance_id})
+                return DeclarationResult(DeclarationOutcome.RECORDED, stored.instance)
+        else:
+            detail = problem
+        self._report(("handoff", *key), MISSION_HISTORY_HANDOFF_FAILED_KIND,
+                     f"relais non transféré ({problem}) : le successeur est retenu sans la propriété de la mission",
+                     level="error", data={"work_source": key[0], "work_external_id": key[1], "code": problem,
+                                          "handoff_id": fact.handoff_id, "detail": detail})
+        return await self._persist(key, instance, fact, False, None)
+
+    # -- délégation alignée sur `[mission]`
+
+    async def _align_delegation(self, owner: AgentInstance, mission: Mission | None = None) -> None:
+        """La délégation de la sous-mission que `owner` vient d'ouvrir : délégant = l'instance appelante. Ne lève
+        jamais : un échec est dit (`mission_history.delegation_failed`), la déclaration reste enregistrée."""
+
+        try:
+            if owner.parent_instance_id is None or owner.mission_id is None:
+                return
+            mission = mission or await self._guard("get_mission", self._repository.get_mission(owner.mission_id))
+            if mission is None or mission.parent_mission_id is None:
+                return
+            parent = await self._guard("get_instance", self._repository.get_instance(owner.parent_instance_id))
+            if parent is None or parent.instance.mission_id != mission.parent_mission_id:
+                return  # l'appelant ne travaille pas pour la mission parente : pas de délégation à affirmer
+            relation = relation_runtime.delegation_relation(delegator=parent.instance, delegatee=owner,
+                                                            sub_mission=mission, at=mission.created_at)
+            self._note_relation(await self.create_relation(relation))
+        except (MissionError, RelationError, MissionHistoryError, MissionHistoryUnavailable,
+                MissionHistoryStoreError) as exc:
+            self._report(("delegation", owner.instance_id), MISSION_HISTORY_DELEGATION_FAILED_KIND,
+                         f"délégation de la sous-mission non nouée : {exc}", level="warning",
+                         data={"instance_id": owner.instance_id, "mission_id": owner.mission_id,
+                               "code": getattr(exc, "code", None)})
+
+    async def _return_delegation(self, sub_mission: Mission) -> None:
+        """Clore `returned` la délégation d'une sous-mission close. Ne lève jamais."""
+
+        relation_id = relation_runtime.delegation_relation_id(sub_mission.mission_id)
+        try:
+            relation = await self._guard("get_relation", self._repository.get_relation(relation_id))
+            if relation is None or not relation.is_open:
+                return
+            closed = await self.close_relation(relation_id, RelationOutcome.RETURNED,
+                                               summary=f"Sous-mission close : {sub_mission.status.value}.")
+            self._note_relation(closed)
+        except (MissionError, RelationError, MissionHistoryError, MissionHistoryUnavailable,
+                MissionHistoryStoreError) as exc:
+            self._report(("delegation_return", sub_mission.mission_id), MISSION_HISTORY_DELEGATION_FAILED_KIND,
+                         f"délégation non close à la fin de la sous-mission : {exc}", level="warning",
+                         data={"mission_id": sub_mission.mission_id, "code": getattr(exc, "code", None)})
+
+    # -- résumés pour le contexte du cerveau
+
+    def _note_relation(self, relation: AgentRelation) -> None:
+        for instance_id in relation.participant_ids:
+            known = self._relations.setdefault(instance_id, OrderedDict())
+            known[relation.relation_id] = relation
+            known.move_to_end(relation.relation_id)
+            while len(known) > MAX_RELATIONS_PER_INSTANCE:
+                known.popitem(last=False)
+            self._relations.move_to_end(instance_id)
+        while len(self._relations) > MAX_RELATION_CACHE:
+            self._relations.popitem(last=False)
+
+    def relation_refs(self, work_source: str, work_external_id: str) -> tuple[str, ...]:
+        """Les relations connues d'un travail, une ligne chacune, les plus récentes d'abord. Sans E/S."""
+
+        ref = self._missions.get((work_source, work_external_id))
+        if ref is None:
+            return ()
+        known = self._relations.get(ref.instance_id)
+        if not known:
+            return ()
+        relations = list(known.values())[::-1][:relation_runtime.MAX_BRAIN_RELATIONS]
+        return tuple(relation_runtime.relation_summary(item, ref.instance_id) for item in relations)
+
+    async def _warm_relations(self, items: dict[WorkKey, WorkItem]) -> None:
+        """Après un redémarrage, relire les relations des travaux vivants retenus (borné par balayage)."""
+
+        budget = MAX_RELATION_WARMUPS
+        for key, item in items.items():
+            if budget <= 0:
+                return
+            ref = self._missions.get(key)
+            if ref is None or item.status.is_terminal or ref.instance_id in self._relations:
+                continue
+            budget -= 1
+            try:
+                found = await self._guard("relations_of_instance",
+                                          self._repository.relations_of_instance(ref.instance_id))
+            except (MissionHistoryUnavailable, MissionHistoryStoreError):
+                return  # intentional: `_guard` reported the store failure; the next sweep retries
+            self._relations.setdefault(ref.instance_id, OrderedDict())
+            for relation in reversed(found):
+                self._note_relation(relation)
 
     # ------------------------------------------------------------ lecture
 

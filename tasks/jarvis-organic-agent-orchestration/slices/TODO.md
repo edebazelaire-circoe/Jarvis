@@ -40,7 +40,7 @@ State: **READY** (audited `main@336f21be`, evidence `references/readiness-audit.
 - [x] 03-work-state-mission-history (2026-10-20; QA code-review+qa-verification+runtime-validation+agent-trace PASS_WITH_NOTES after rework, notes fixed 557243df)
 - [x] 04-role-registry-loadouts-methods (2026-10-20; QA code-review+qa-verification+agent-trace PASS_WITH_NOTES, notes fixed 2da89aa4)
 - [x] 05-orchestration-runtime-tools (2026-10-20; QA code-review+qa-verification+runtime-validation+agent-trace PASS_WITH_NOTES after rework, notes fixed 240e69f0)
-- [ ] 06-relations-runtime-communication
+- [ ] 06-relations-runtime-communication (2026-10-20; implemented, QA pending)
 - [ ] 07-interviewer-background-coordination
 - [ ] 08-scene-projection-role-relations
 - [ ] 09-task-graph-ui

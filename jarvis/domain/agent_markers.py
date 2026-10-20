@@ -78,8 +78,10 @@ LEGACY_HEAD_WORDS = 3
 MISSION_MARKER = "mission"
 #: Modificateur : une Work Method livrée choisie par l'appelant (son id, `work_methods.BUILTIN_METHODS`).
 METHOD_MARKERS: frozenset[str] = frozenset(method.method_id for method in BUILTIN_METHODS)
-if MISSION_MARKER in METHOD_MARKERS:
-    raise ValueError("a work method cannot be named like the mission marker")
+#: Modificateur : l'agent lancé est le successeur d'un relais que son appelant a préparé (Slice 06).
+HANDOFF_MARKER = "relais"
+if MISSION_MARKER in METHOD_MARKERS or HANDOFF_MARKER in METHOD_MARKERS:
+    raise ValueError("a work method cannot be named like an orchestration marker")
 
 #: Un mot de marqueur : ASCII, 2 à 24 caractères. Les marqueurs de rôle (`subagent_roles`) y tiennent.
 WORD_PATTERN = r"[A-Za-z_-]{2,24}"
@@ -102,6 +104,7 @@ class HeadMarkers:
     - `profile` : le profil annoncé, ou `None` (le hook prend alors `general` ou se rabat sur `prompt`) ;
     - `role` : le marqueur de rôle annoncé, tel qu'écrit (`reviewer` reste `reviewer`), ou `None` ;
     - `mission` : `[mission]` suit le rôle (modificateur d'orchestration) ;
+    - `handoff` : `[relais]` suit le rôle (successeur d'un relais préparé, Slice 06) ;
     - `method` : l'id de Work Method qui suit le rôle, ou `None` ;
     - `ephemeral` : le marqueur éphémère est déclaré, bien formé ;
     - `description` : le texte sans le marqueur éphémère (les autres marqueurs restent), borné par `strip` ;
@@ -119,6 +122,7 @@ class HeadMarkers:
     head_end: int
     mission: bool = False
     method: str | None = None
+    handoff: bool = False
 
 
 def parse_head(text: object, *, extra_consumed: Iterable[str] = ()) -> HeadMarkers:
@@ -155,12 +159,14 @@ def parse_head(text: object, *, extra_consumed: Iterable[str] = ()) -> HeadMarke
         words = [word for word in words if word[1] < ephemeral_spans[0][0]]
 
     consumed, profile, role = _interpret([word for word, _start, _end in words], frozenset(extra_consumed))
-    mission, method = False, None
+    mission, method, handoff = False, None, False
     if role is not None:
         # Modificateurs : après le rôle seulement, chacun une fois, dans n'importe quel ordre.
         for word, _start, _end in words[consumed:]:
             if word == MISSION_MARKER and not mission:
                 mission = True
+            elif word == HANDOFF_MARKER and not handoff:
+                handoff = True
             elif word in METHOD_MARKERS and method is None:
                 method = word
             else:
@@ -184,6 +190,7 @@ def parse_head(text: object, *, extra_consumed: Iterable[str] = ()) -> HeadMarke
         head_end=head_end,
         mission=mission,
         method=method,
+        handoff=handoff,
     )
 
 

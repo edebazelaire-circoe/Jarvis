@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from jarvis.domain.relation_runtime import RELATIONS_MARK
 from jarvis.domain.agent_orchestration import (
     MAX_SPAWNS_PER_WINDOW, MISSION_MARK, NO_SPAWN_AGENT_TYPE, SPAWN_GUARD_ENV, SPAWN_GUARD_VALUE,
 )
@@ -59,7 +60,10 @@ def test_the_hook_deposits_a_bounded_fact_without_any_content(tmp_path):
 
 def test_the_mission_owner_brief_is_appended_last_and_only_for_owners(tmp_path):
     owner = section(routing_hook.run(call("[code] [coder] Corriger"), tmp_path))["updatedInput"]["prompt"]
-    assert owner.rstrip().endswith("rien de ce que vous ne faites qu'envisager.") and owner.count(MISSION_MARK) == 1
+    # Slice 06 : le bloc des relations suit la responsabilité de mission, en bloc distinct, et ferme la consigne.
+    mission, relations = owner.split(RELATIONS_MARK)
+    assert mission.rstrip().endswith("rien de ce que vous ne faites qu'envisager.") and owner.count(MISSION_MARK) == 1
+    assert relations.rstrip().endswith("ce que vous n'avez pas noué n'existe pas.")
     member = section(routing_hook.run(call("[code] [coder] Corriger", tool_use_id="t2", agent_id="a1"), tmp_path))
     assert MISSION_MARK not in member["updatedInput"]["prompt"]
     plain = section(routing_hook.run(call("[general] Lister", tool_use_id="t3"), tmp_path))

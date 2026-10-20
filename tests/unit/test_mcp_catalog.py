@@ -226,7 +226,12 @@ CONSOLE_INSTRUCTIONS_BUDGET_BYTES = 900
 #: `dossier_present` 665 o, `dossier_view` 536 o, +2 621 o) : 16 417 o mesurés, plafond 16 700 o. Décision
 #: délibérée : sans eux le cerveau recompose la liste (board_memory_tree + board_artifacts), ne peut ni ranger
 #: (durabilité puis retrait, une sémantique de Core) ni afficher une entrée sans recopier son contenu.
-WORKSPACE_CONTEXT_BUDGET_BYTES = 16_700
+#: Organic-agent-orchestration Slice 06 : cinq outils de relation entre sous-agents (`relation_open` 1 045 o,
+#: `relation_post` 939 o, `relation_read` 458 o, `relation_close` 776 o, `relation_handoff` 1 163 o, +4 381 o après
+#: compaction des schémas) : 20 897 o mesurés, plafond 21 000 o. Décision délibérée : c'est la voie explicite par
+#: laquelle un agent noue, alimente et clôt une relation (D13, jamais une copie du flux) ; le CLI diffère ces outils
+#: derrière ToolSearch, et le cerveau n'en fait que lire (`relation_read`).
+WORKSPACE_CONTEXT_BUDGET_BYTES = 21_000
 #: Consigne du serveur `jarvis-workspace` : 874 o mesurés (la console en a perdu 495).
 WORKSPACE_INSTRUCTIONS_BUDGET_BYTES = 950
 #: Tous les serveurs natifs que Jarvis déclare au cerveau Claude (display, console, workspace, capture,
@@ -264,7 +269,9 @@ PRESENTATION_INSTRUCTIONS_BUDGET_BYTES = 700
 #: mesurés (export 1 763, import 1 076, upgrades 948, studio 545, status 457, setup 389). Le plafond de ce gate monte de ce serveur seulement :
 #: 104 548 o avant, 109 726 o après, marge de 274 o, plafond 110 000 o. Décision délibérée (handoff Slice 21), mesure dans le LOG.
 #: Fusion wheel-dossier-refactor (outils Dossier, +2 621 o) et des deux purges (+694 o) : 117 048 o mesurés, plafond 117 300 o.
-DECLARED_CONTEXT_BUDGET_BYTES = 117_300
+#: Organic-agent-orchestration Slice 06 : les outils de relation de `jarvis-workspace` (+4 381 o, voir
+#: WORKSPACE_CONTEXT_BUDGET_BYTES) : 121 429 o mesurés, plafond 121 500 o ; aucun autre serveur ne change.
+DECLARED_CONTEXT_BUDGET_BYTES = 121_500
 #: `jarvis-remotion` : 5 178 o mesurés, plafond 5 400 o ; consigne du serveur (plafond 330 o). Master-project Slice 07 : `scope` (scene | master)
 #: dans les réglages de `remotion_export` : 5 335 o mesurés, plafond inchangé.
 REMOTION_CONTEXT_BUDGET_BYTES = 5_400
@@ -308,12 +315,13 @@ async def test_the_workspace_server_lists_its_tools_in_order_within_its_budget(c
         "board_switch", "session_current", "session_new", "session_list", "session_get", "board_inspect",
         "board_memory_tree", "board_memory_read", "board_memory_search", "board_memory_write", "board_memory_move",
         "board_memory_delete", "board_artifacts", "board_artifact_link", "dossier_list", "dossier_ranger",
-        "dossier_present", "dossier_view"]
+        "dossier_present", "dossier_view", "relation_open", "relation_post", "relation_read", "relation_close",
+        "relation_handoff"]
     effects = {entry["name"]: (entry["side_effect"], entry["idempotent"]) for entry in described}
     assert {name for name, (effect, _) in effects.items() if effect == "read"} == {
         "board_list", "board_get", "board_get_active", "session_current", "session_list", "session_get",
         "board_inspect", "board_memory_tree", "board_memory_read", "board_memory_search", "board_artifacts",
-        "dossier_list"}
+        "dossier_list", "relation_read"}
     assert {name for name, (effect, _) in effects.items() if effect == "destructive"} == {
         "board_archive", "board_memory_write", "board_memory_delete"}  # write : mode=replace écrase
     assert effects["board_create"] == ("write", False) and effects["session_new"] == ("write", False)

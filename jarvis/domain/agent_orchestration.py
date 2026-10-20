@@ -97,6 +97,8 @@ class MissionDecision:
 
     - `mission_owner` / `mission_id` : l'agent ouvre et possède cette mission ;
     - `sub_mission` : vrai pour `[mission]` (la mission parente est celle de l'appelant, résolue par Core) ;
+    - `handoff` : vrai pour `[relais]` (Slice 06) : l'agent reprend la mission de son appelant par le relais que
+      celui-ci a préparé ; `mission_id` est alors celui du relais préparé, posé par le hook (`None` ici) ;
     - `refused` : code d'un `[mission]` qui n'a pas pu être honoré (`ephemeral_mission_owner`,
       `role_cannot_own_mission`), consigné par le hook ; l'agent part quand même, comme membre.
     """
@@ -105,6 +107,7 @@ class MissionDecision:
     mission_id: str | None = None
     sub_mission: bool = False
     refused: str | None = None
+    handoff: bool = False
 
 
 def decide_mission(head: HeadMarkers, role: SubagentRole | None, *, tool_use_id: str | None,
@@ -112,13 +115,24 @@ def decide_mission(head: HeadMarkers, role: SubagentRole | None, *, tool_use_id:
     """La mission d'un agent lancé (voir le docstring du module). Ne lève jamais."""
 
     if head.ephemeral:
-        return MissionDecision(refused="ephemeral_mission_owner" if head.mission else None)
+        return MissionDecision(refused="ephemeral_mission_owner" if head.mission or head.handoff else None)
     capable = role is not None and role.can_own_mission
-    if head.mission and not capable:
+    if (head.mission or head.handoff) and not capable:
         return MissionDecision(refused="role_cannot_own_mission")
+    refused = None
+    if head.handoff:
+        # Slice 06 : un relais vient d'un Mission Owner qui passe la main, jamais du cerveau ; il n'ouvre rien.
+        # Mal placé (`[mission]` en plus, ou appel du cerveau), il est ignoré et consigné : la règle d'avant joue.
+        if head.mission:
+            refused = "handoff_with_mission"
+        elif not nested:
+            refused = "handoff_from_brain"
+        elif tool_use_id is not None:
+            return MissionDecision(mission_owner=True, handoff=True)
     if not capable or tool_use_id is None or (nested and not head.mission):
-        return MissionDecision()
-    return MissionDecision(mission_owner=True, mission_id=mission_id_for(tool_use_id), sub_mission=nested)
+        return MissionDecision(refused=refused)
+    return MissionDecision(mission_owner=True, mission_id=mission_id_for(tool_use_id), sub_mission=nested,
+                           refused=refused)
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,7 +238,9 @@ def mission_brief(decision: MissionDecision, roles: Sequence[SubagentRole] = ROL
 
     if not decision.mission_owner:
         return None
-    scope = ("Votre appelant vous confie une sous-mission : vous l'organisez vous-même et lui en rendez le résultat."
+    scope = ("Votre prédécesseur vous passe sa mission par un relais : vous l'organisez vous-même et lui en rendez "
+             "le résultat." if decision.handoff else
+             "Votre appelant vous confie une sous-mission : vous l'organisez vous-même et lui en rendez le résultat."
              if decision.sub_mission else
              "Le cerveau de JARVIS vous confie cette mission : vous l'organisez vous-même et lui en rendez le résultat.")
     return "\n".join((

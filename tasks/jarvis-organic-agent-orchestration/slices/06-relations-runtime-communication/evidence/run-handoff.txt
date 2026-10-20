@@ -1,0 +1,22 @@
+== instances
+  toolu_01UegJe7boYevxfZedHPBgKp | [code] [coder] Sonde S06 Relais | completed | role=coder | mission=mis_toolu_01UegJe7boYevxfZedHPBgKp owner=True | inst=ainst_3d8b9eda6c1149c8aa23f0458edbc171
+  toolu_01RZ4ELUFBW1j8ecsZhmxf49 | [code] [coder] [relais] Suite du correctif S06 | completed | role=coder | mission=mis_toolu_01UegJe7boYevxfZedHPBgKp owner=True | inst=ainst_f97ba2844f2948a79b4ca6f75605a3e6
+== missions
+  mis_toolu_01UegJe7boYevxfZedHPBgKp status=completed owner=ainst_f97ba2844f2948a79b4ca6f75605a3e6 parent=None
+    owner change -> {'mission_id': 'mis_toolu_01UegJe7boYevxfZedHPBgKp', 'owner_instance_id': 'ainst_3d8b9eda6c1149c8aa23f0458edbc171', 'at': '2026-10-20T14:13:49.827499+00:00', 'handoff_relation_id': None}
+    owner change -> {'mission_id': 'mis_toolu_01UegJe7boYevxfZedHPBgKp', 'owner_instance_id': 'ainst_f97ba2844f2948a79b4ca6f75605a3e6', 'at': '2026-10-20T14:14:04.029173+00:00', 'handoff_relation_id': 'rel_9194585f557043928cac13eaa9d1cd5c'}
+== relations
+  rel_9194585f557043928cac13eaa9d1cd5c kind=handoff status=closed outcome=transferred winner=None closed_by=None created_by=ainst_3d8b9eda6c1149c8aa23f0458edbc171
+    purpose='Contexte neuf pour le correctif' summary='Propriété de la mission transférée au successeur.'
+    participant ainst_3d8b9eda6c1149c8aa23f0458edbc171 predecessor
+    participant ainst_f97ba2844f2948a79b4ca6f75605a3e6 successor
+    packet={"objective": "Corriger parse_date pour les fuseaux", "completed_work": "Analyse (bug fictif) : la fonction parse_date échoue sur les dates ISO avec fuseau horaire, par exemple 2026-10-20T10:00:00+02:00 ou ...Z, alors que les dates ISO sans fuseau sont acceptées. Le correctif doit donc accepter les dates ISO avec fuseau sans changer la signature publique.", "recommended_next_action": "Écrire le correctif et son test", "key_decisions": ["garder la signature publique"], "open_points": ["dates sans fuseau"], "artifact_refs": [], "evidence_refs": []}
+    CC agents={'ainst_3d8b9eda6c1149c8aa23f0458edbc171': 'aa6eb59dcb8017f10', 'ainst_f97ba2844f2948a79b4ca6f75605a3e6': 'a005d0e03e338a215'}
+== trace (relation/handoff)
+  agent.relation_call {"code": "relation_caller_stamped", "tool": "mcp__jarvis-workspace__relation_handoff", "tool_use_id": "toolu_01DoM6x5VsLYiCUbKozG7MYT", "caller_agent_id": "aa6eb59dcb8017f10"}
+  mission_history.handoff_prepared {"handoff_id": "hof_df6c28e5b6af440880442686dd034a85", "mission_id": "mis_toolu_01UegJe7boYevxfZedHPBgKp", "predecessor_instance_id": "ainst_3d8b9eda6c1149c8aa23f0458edbc171"}
+  missions.relation_relayed {"operation": "handoff"}
+  missions.relation_relayed {"operation": "handoff_ticket", "handoff_id": "hof_df6c28e5b6af440880442686dd034a85", "mission_id": "mis_toolu_01UegJe7boYevxfZedHPBgKp"}
+  agent.handoff.claimed {"code": "handoff_ticket_claimed", "handoff_id": "hof_df6c28e5b6af440880442686dd034a85", "mission_id": "mis_toolu_01UegJe7boYevxfZedHPBgKp", "caller_agent_id": "aa6eb59dcb8017f10", "tool_use_id": "toolu_01RZ4ELUFBW1j8ecsZhmxf49"}
+  mission_history.handoff_transferred {"handoff_id": "hof_df6c28e5b6af440880442686dd034a85", "relation_id": "rel_9194585f557043928cac13eaa9d1cd5c", "mission_id": "mis_toolu_01UegJe7boYevxfZedHPBgKp", "predecessor_instance_id": "ainst_3d8b9eda6c1149c8aa23f0458edbc171", "successor_instance_id": "ainst_f97ba2844f2948a79b4ca6f75605a3e6"}
+  missions.relation_relayed {"operation": "read", "relation_id": "rel_9194585f557043928cac13eaa9d1cd5c"}

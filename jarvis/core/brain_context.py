@@ -323,11 +323,14 @@ class BrainContextBuilder:
         clock: Clock | None = None,
         active_board: ActiveBoard | None = None,
         missions: Callable[[WorkItem], tuple[str | None, bool] | None] | None = None,
+        relations: Callable[[WorkItem], tuple[str, ...]] | None = None,
     ) -> None:
         self._reader = reader
         self._active_board = active_board
         #: Appartenance de mission d'un travail (historique des missions, Slice 05), lue sans E/S ; `None` : aucune.
         self._missions = missions
+        #: Relations connues d'un travail (Slice 06), une ligne chacune, sans E/S ; `None` : aucune.
+        self._relations = relations
         self._store_id = store_id
         self._attention = attention
         self._diagnostics: DiagnosticSink = diagnostics or NullDiagnosticSink()
@@ -346,7 +349,7 @@ class BrainContextBuilder:
                 snapshot = WorkSnapshot(revision=snapshot.revision, items=kept, updated_at=snapshot.updated_at)
                 attention = tuple(note for note in attention if on_board(note.board_id, active))
             context = build_brain_work_context(snapshot, now=self._clock.now(), store_id=self._store_id, attention=attention,
-                                               missions=self._missions)
+                                               missions=self._missions, relations=self._relations)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

@@ -108,6 +108,10 @@ def _compact_size(payload: dict[str, Any]) -> int:
     return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
+#: Relations résumées par entrée de travail et longueur d'un résumé (Slice 06 organic-agent-orchestration).
+MAX_BRAIN_RELATIONS = 4
+MAX_BRAIN_RELATION_CHARS = 120
+
 @dataclass(frozen=True, slots=True)
 class BrainWorkEntry:
     """Un travail tel que le cerveau le reçoit : faits publics, textes tronqués.
@@ -141,6 +145,9 @@ class BrainWorkEntry:
     #: retenue ou aucune mission. Absents de la charge utile tant qu'ils sont vides : rien ne change sans mission.
     mission_id: str | None = None
     mission_owner: bool = False
+    #: Relations connues de l'instance (Slice 06) : une ligne courte chacune (`relation_runtime.relation_summary`),
+    #: les plus récentes d'abord, quatre au plus. Absentes de la charge utile tant qu'elles sont vides.
+    relations: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, WorkStatus):
@@ -152,10 +159,15 @@ class BrainWorkEntry:
             raise ValueError("durations must be positive or zero")
         if self.status.is_terminal != (self.ended_at is not None):
             raise ValueError("ended_at is set exactly when the status is terminal")
+        if not isinstance(self.relations, tuple) or len(self.relations) > MAX_BRAIN_RELATIONS:
+            raise ValueError(f"relations is a tuple of at most {MAX_BRAIN_RELATIONS} summaries")
+        for summary in self.relations:
+            _check_short("relations[]", summary, MAX_BRAIN_RELATION_CHARS)
 
     @classmethod
     def from_item(cls, item: WorkItem, *, now: datetime,
-                  mission: tuple[str | None, bool] | None = None) -> BrainWorkEntry:
+                  mission: tuple[str | None, bool] | None = None,
+                  relations: tuple[str, ...] = ()) -> BrainWorkEntry:
         end = item.ended_at or max(now, item.started_at)
         mission_id, mission_owner = mission if mission is not None else (None, False)
         return cls(
@@ -178,6 +190,7 @@ class BrainWorkEntry:
             role_id=item.role_id,
             mission_id=mission_id,
             mission_owner=bool(mission_owner and mission_id),
+            relations=tuple(clip_text(summary, MAX_BRAIN_RELATION_CHARS) for summary in relations[:MAX_BRAIN_RELATIONS]),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -203,6 +216,8 @@ class BrainWorkEntry:
         if self.mission_id is not None:
             payload["mission_id"] = self.mission_id
             payload["mission_owner"] = self.mission_owner
+        if self.relations:
+            payload["relations"] = list(self.relations)
         return payload
 
 
@@ -324,6 +339,7 @@ def build_brain_work_context(
     attention: tuple[WorkAttention, ...] = (),
     max_chars: int = MAX_BRAIN_WORK_CONTEXT_CHARS,
     missions: Callable[[WorkItem], tuple[str | None, bool] | None] | None = None,
+    relations: Callable[[WorkItem], tuple[str, ...]] | None = None,
 ) -> BrainWorkContext:
     """Réduire un instantané Core au contexte borné d'un tour. Fonction pure.
 
@@ -340,11 +356,13 @@ def build_brain_work_context(
     travail actif qui ne tient pas reste, lui, visible au tour suivant.
 
     `missions` (Slice 05) : l'appartenance de mission connue d'un travail (`(mission_id, responsable)`), comptée
-    dans le budget comme le reste de l'entrée.
+    dans le budget comme le reste de l'entrée. `relations` (Slice 06) : ses relations connues, une ligne chacune,
+    comptées de même.
     """
 
     def entry(item: WorkItem) -> BrainWorkEntry:
-        return BrainWorkEntry.from_item(item, now=now, mission=missions(item) if missions is not None else None)
+        return BrainWorkEntry.from_item(item, now=now, mission=missions(item) if missions is not None else None,
+                                        relations=relations(item) if relations is not None else ())
 
     active = sorted(
         (item for item in snapshot.items if not item.status.is_terminal),

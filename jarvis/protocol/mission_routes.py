@@ -11,6 +11,18 @@ Contrat : `docs/mission-history.md` › *Routes* et `docs/agent-orchestration.md
 | GET | `/v1/missions/health` | `HistoryHealth` (état `ok`/`degraded`, écritures en attente, issues comptées) |
 | GET | `/v1/missions/{mission_id}` | l'arbre de la mission : missions, instances (statut vivant lu dans Work State, ou `null`), relations, propriétaires |
 | GET | `/v1/missions/work/{work_source}/{work_external_id}` | l'instance retenue pour ce travail, ou 404 |
+| POST | `/v1/missions/relations` | Slice 06 : nouer une relation demandée par un agent → `{"relation"}` |
+| GET | `/v1/missions/relations/{relation_id}?after=&limit=` | la relation, son fil, ses participants |
+| POST | `/v1/missions/relations/{relation_id}/messages` | publier un message délibéré → `{"seq", "message"}` |
+| POST | `/v1/missions/relations/{relation_id}/close` | clore → `{"relation"}` |
+| POST | `/v1/missions/handoffs` | préparer un relais → `{"handoff"}` (en mémoire jusqu'au successeur) |
+
+Slice 06 : l'appelant (`caller`) et les participants sont des **identités de
+travail** `{work_source, work_external_id}` ; le Control Center les a résolues
+depuis les agentId du CLI (`relation_relay.py`). `caller: null` = le cerveau.
+Un refus de contrat (`RelationError`, `MissionError`) rend son code et un
+message qui dit quoi corriger (`relation_runtime.actionable`) : 404
+`relation_unknown`, 403 pour l'autorité, 409 sinon.
 
 Ingestion : le producteur est le Control Center (`declaration_relay.py`), qui
 remet les faits du hook `PreToolUse` (`AgentDeclarationFact` v1) joints à leur
@@ -43,9 +55,14 @@ from typing import Any
 
 from aiohttp import web
 
+from jarvis.domain.agent_relations import (
+    AgentRelationKind, HandoffPacket, ParticipantPosition, RelationError, RelationMessageType, RelationOutcome,
+)
 from jarvis.domain.mission_history import (
     AgentDeclarationFact, MissionHistoryError, MissionOpening,
 )
+from jarvis.domain.missions import MissionError
+from jarvis.domain.relation_runtime import actionable
 from jarvis.domain.agent_orchestration import FALLBACK_OBJECTIVE
 from jarvis.domain._checks import check_id
 from jarvis.ports.mission_history import MissionHistoryStoreError, MissionHistoryUnavailable
@@ -105,11 +122,55 @@ def decode_declarations(body: object) -> list[Decoded | ValueError]:
     return decoded
 
 
+#: Refus d'autorité (403) du runtime des relations ; les autres refus de contrat sont des conflits (409).
+_AUTHORITY_CODES = frozenset({"relation_not_owner", "relation_caller_not_instance", "handoff_not_owner"})
+_REF_KEYS = frozenset({"work_source", "work_external_id"})
+
+
+def _ref(name: str, value: object, *, required: bool = True) -> tuple[str, str] | None:
+    """Une identité de travail `{work_source, work_external_id}`, strictement ; `None` permis si non requise."""
+
+    if value is None and not required:
+        return None
+    if not isinstance(value, dict) or set(value) != _REF_KEYS:
+        raise ValueError(f"{name} must be {{work_source, work_external_id}}")
+    return (_id(f"{name}.work_source", value["work_source"], required=True),
+            _id(f"{name}.work_external_id", value["work_external_id"], required=True))
+
+
+def _body(data: object, allowed: frozenset[str], required: frozenset[str]) -> dict[str, Any]:
+    if not isinstance(data, dict) or not set(data) <= allowed or not required <= set(data):
+        raise ValueError(f"body keys must be within {sorted(allowed)} and include {sorted(required)}")
+    return data
+
+
+def _enum(name: str, value: object, enum: Any) -> Any:
+    try:
+        return enum(value)
+    except ValueError:
+        raise RelationError(f"{name} must be one of {sorted(item.value for item in enum)}", code="relation_invalid",
+                            field=name) from None
+
+
+def _strings(name: str, value: object, limit: int = 16) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list) or len(value) > limit or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"{name} must be a list of at most {limit} strings")
+    return tuple(value)
+
+
+_OPEN_KEYS = frozenset({"caller", "kind", "participants", "purpose", "target_refs"})
+_POST_KEYS = frozenset({"caller", "type", "text", "audience", "artifact_refs", "reply_to_message_id"})
+_CLOSE_KEYS = frozenset({"caller", "outcome", "summary", "winner"})
+_HANDOFF_KEYS = frozenset({"caller", "purpose", "packet"})
+
+
 def opening_for(fact: AgentDeclarationFact) -> MissionOpening | None:
     """La mission qu'ouvre un fait de Mission Owner : objectif = libellé, parente = mission de l'appelant."""
 
-    if not fact.mission_owner:
-        return None
+    if not fact.mission_owner or fact.handoff_id is not None:
+        return None  # un successeur de relais reprend une mission existante : il n'en ouvre aucune (Slice 06)
     return MissionOpening(objective=fact.label or FALLBACK_OBJECTIVE, parent_from_caller=True,
                           origin_kind=fact.profile or None)
 
@@ -124,6 +185,12 @@ class MissionProtocolRoutes:
         g = self._guarded
         return [
             web.post(PREFIX + "/declarations", g("declarations", self.declarations)),
+            # Slice 06 : runtime des relations, demandé par les outils des agents via le Control Center.
+            web.post(PREFIX + "/relations", g("relation_open", self.relation_open)),
+            web.get(PREFIX + "/relations/{relation_id}", g("relation_read", self.relation_read)),
+            web.post(PREFIX + "/relations/{relation_id}/messages", g("relation_post", self.relation_post)),
+            web.post(PREFIX + "/relations/{relation_id}/close", g("relation_close", self.relation_close)),
+            web.post(PREFIX + "/handoffs", g("handoff_prepare", self.handoff_prepare)),
             # Segments fixes avant `{mission_id}` : aiohttp résout dans l'ordre d'enregistrement.
             web.get(PREFIX + "/health", g("health", self.health)),
             web.get(PREFIX + "/work/{work_source}/{work_external_id}", g("work", self.for_work)),
@@ -155,6 +222,11 @@ class MissionProtocolRoutes:
                 status, code, message = 503, "mission_history_unavailable", str(exc)
             except (MissionHistoryStoreError, MissionHistoryError) as exc:
                 status, code, message = 500, getattr(exc, "code", None) or "mission_history_failed", str(exc)
+            except (RelationError, MissionError) as exc:
+                # Slice 06 : un refus de contrat revient à l'agent qui l'a demandé, avec ce qu'il doit corriger.
+                code = exc.code
+                status = 404 if code == "relation_unknown" else 403 if code in _AUTHORITY_CODES else 409
+                message = actionable(code, str(exc))
             except LookupError as exc:
                 status, code = 404, str(exc.args[0]) if exc.args else "not_found"
                 message = str(exc.args[1]) if len(exc.args) > 1 else code
@@ -196,6 +268,88 @@ class MissionProtocolRoutes:
         self._emit(DECLARATIONS_KIND, "déclarations de sous-agents reçues", level="info",
                    data={"count": len(results), "outcomes": outcomes})
         return web.json_response({"store_id": self._core.work_state.store_id, "results": results})
+
+    # ------------------------------------------------------------ relations (Slice 06)
+
+    @staticmethod
+    async def _json(request: web.Request) -> object:
+        try:
+            return await request.json()
+        except ValueError as exc:
+            raise ValueError("body must be JSON") from exc
+
+    async def relation_open(self, request: web.Request) -> web.Response:
+        body = _body(await self._json(request), _OPEN_KEYS, frozenset({"caller", "kind", "participants", "purpose"}))
+        participants = body["participants"]
+        if not isinstance(participants, list) or not 1 <= len(participants) <= 12:
+            raise ValueError("participants must be a list of 1..12 {ref, position}")
+        decoded = []
+        for index, item in enumerate(participants):
+            item = _body(item, frozenset({"ref", "position"}), frozenset({"ref", "position"}))
+            decoded.append((_ref(f"participants[{index}].ref", item["ref"]),
+                            _enum(f"participants[{index}].position", item["position"], ParticipantPosition)))
+        if not isinstance(body["purpose"], str):
+            raise ValueError("purpose must be a string")
+        relation = await self._service.open_relation(
+            caller=_ref("caller", body["caller"], required=False), kind=_enum("kind", body["kind"], AgentRelationKind),
+            participants=decoded, purpose=body["purpose"], target_refs=_strings("target_refs", body.get("target_refs")))
+        return web.json_response({"relation": relation.to_payload()})
+
+    async def relation_read(self, request: web.Request) -> web.Response:
+        relation_id = _id("relation_id", request.match_info["relation_id"], required=True)
+        unknown = set(request.query) - {"after", "limit"}
+        if unknown:
+            raise ValueError(f"unexpected query parameters: {sorted(unknown)}")
+        try:
+            after = int(request.query.get("after", "0"))
+            limit = int(request.query.get("limit", "100"))
+        except ValueError as exc:
+            raise ValueError("after and limit are integers") from exc
+        relation, thread, participants = await self._service.read_relation(relation_id, after=max(0, after),
+                                                                           limit=max(1, min(limit, 200)))
+        return web.json_response({
+            "relation": relation.to_payload(),
+            "messages": [{"seq": seq, **message.to_payload()} for seq, message in thread],
+            "participants": [view.to_payload() for view in participants],
+        })
+
+    async def relation_post(self, request: web.Request) -> web.Response:
+        relation_id = _id("relation_id", request.match_info["relation_id"], required=True)
+        body = _body(await self._json(request), _POST_KEYS, frozenset({"caller", "type", "text"}))
+        audience = body.get("audience") or []
+        if not isinstance(audience, list) or len(audience) > 12:
+            raise ValueError("audience must be a list of at most 12 refs")
+        if not isinstance(body["text"], str):
+            raise ValueError("text must be a string")
+        reply = body.get("reply_to_message_id")
+        seq, message = await self._service.publish_message(
+            caller=_ref("caller", body["caller"], required=False), relation_id=relation_id,
+            type=_enum("type", body["type"], RelationMessageType), text=body["text"],
+            audience=[_ref(f"audience[{index}]", item) for index, item in enumerate(audience)],
+            artifact_refs=_strings("artifact_refs", body.get("artifact_refs")),
+            reply_to_message_id=_id("reply_to_message_id", reply, required=False))
+        return web.json_response({"seq": seq, "message": message.to_payload()})
+
+    async def relation_close(self, request: web.Request) -> web.Response:
+        relation_id = _id("relation_id", request.match_info["relation_id"], required=True)
+        body = _body(await self._json(request), _CLOSE_KEYS, frozenset({"caller", "outcome"}))
+        summary = body.get("summary") or ""
+        if not isinstance(summary, str):
+            raise ValueError("summary must be a string")
+        relation = await self._service.finish_relation(
+            caller=_ref("caller", body["caller"], required=False), relation_id=relation_id,
+            outcome=_enum("outcome", body["outcome"], RelationOutcome), summary=summary,
+            winner=_ref("winner", body.get("winner"), required=False))
+        return web.json_response({"relation": relation.to_payload()})
+
+    async def handoff_prepare(self, request: web.Request) -> web.Response:
+        body = _body(await self._json(request), _HANDOFF_KEYS, _HANDOFF_KEYS)
+        if not isinstance(body["purpose"], str):
+            raise ValueError("purpose must be a string")
+        pending = await self._service.prepare_handoff(
+            caller=_ref("caller", body["caller"], required=False), purpose=body["purpose"],
+            packet=HandoffPacket.from_payload(body["packet"]))
+        return web.json_response({"handoff": pending.to_payload()})
 
     async def health(self, request: web.Request) -> web.Response:
         if request.query:

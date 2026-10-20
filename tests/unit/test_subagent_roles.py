@@ -23,6 +23,7 @@ from jarvis.domain.agent_orchestration import MissionDecision, mission_brief
 from jarvis.domain.loadout_view import MANIFEST_MARK
 from jarvis.domain.memory_settings import LOADOUT_ROLES
 from jarvis.domain.prompt_registry import MAX_OVERRIDE_TEXT, PromptTarget, prompt_id
+from jarvis.domain.relation_runtime import relations_brief, reviewer_brief
 from jarvis.domain.subagent_roles import (
     CAPABILITIES_MARK, EXECUTION_GATE_RULE, READY_PREFIX, QUESTION_PREFIX, ROLE_MARK, ROLES, brain_rules, role_brief,
     role_for, with_role_instructions,
@@ -479,7 +480,11 @@ def test_the_activated_roles_are_announced_given_their_method_and_their_loadout(
     # Slice 05 : un rôle qui peut porter une mission, lancé par le cerveau, la possède ; le bloc de mission suit
     # alors celui du rôle, en dernier.
     mission = mission_brief(MissionDecision(mission_owner=True, mission_id="mis_x"))
-    expected = role_brief(role_for(marker)) + (f"\n\n{mission}" if role_for(marker).can_own_mission else "")
+    # Slice 06 : un Mission Owner reçoit ensuite le bloc des relations, un relecteur QA celui de la revue.
+    expected = role_brief(role_for(marker)) + (f"\n\n{mission}\n\n{relations_brief()}"
+                                               if role_for(marker).can_own_mission else "")
+    if role_id == "qa":
+        expected += f"\n\n{reviewer_brief()}"
     assert brief.endswith(expected)
     assert brief.count(ROLE_MARK) == 1 and f"({method})" in brief
     [event] = trace(tmp_path, "agent.role_applied")
@@ -504,7 +509,7 @@ def test_the_alias_reviewer_gets_the_qa_method_and_keeps_its_loadout(tmp_path):
     description = "[code] [reviewer] Relire le diff"
     subagent_roles_snapshot.write_snapshot(tmp_path, {"qa": "Relisez, puis tranchez."})
     brief = brief_of(routing_hook.run(call(description), tmp_path))
-    assert brief.endswith(role_brief(role_for("qa"), {"qa": "Relisez, puis tranchez."}))
+    assert brief.endswith(role_brief(role_for("qa"), {"qa": "Relisez, puis tranchez."}) + f"\n\n{reviewer_brief()}")
     assert routing_hook.read_loadout_role({"description": description}) == "reviewer"
     [event] = trace(tmp_path, "agent.role_applied")
     assert (event["data"]["role"], event["data"]["role_id"], event["data"]["role_status"]) == ("reviewer", "qa", "alias")
