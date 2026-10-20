@@ -6,14 +6,23 @@
       "description": "Give a vague creation request, answer Interviewer questions while background research runs, and confirm interaction remains responsive and later questions can use returned evidence.",
       "status": "pending",
       "evidence": null,
-      "preparation": "Après redémarrage de JARVIS par vous : dites « Je voudrais créer une page d'accueil pour mon association de randonnée, inspirée de ce qui se fait de mieux. » Attendu : réponse immédiate d'une phrase, Intervieweur et recherche web lancés ensemble ; répondez à une question pendant que la recherche tourne ; une question ou le cahier des charges suivant reprend une trouvaille de la recherche ; après « PRÊT », le cerveau demande votre accord et ne lance rien sans votre oui. Trace d'essai : C:/Projects/jarvis/orch/tasks/jarvis-organic-agent-orchestration/slices/07-interviewer-background-coordination/evidence/run-prod.txt"
+      "preparation": "Après redémarrage de JARVIS par vous, à la voix : « J'aimerais organiser une petite fête de quartier cet été, quelque chose de convivial qui rassemble vraiment les voisins, en m'inspirant de ce qui a bien marché ailleurs. » Attendu : réponse immédiate d'une phrase, Intervieweur seul lancé ; à sa première question, une recherche part en parallèle ; répondez pendant qu'elle tourne ; une question ou le cahier des charges suivant reprend une trouvaille ; après « PRÊT », le cerveau demande votre accord et ne lance rien sans votre oui. Trace d'essai (sonnet, Chat) : C:/Projects/jarvis/orch/tasks/jarvis-organic-agent-orchestration/slices/07-interviewer-background-coordination/evidence/final-p-c.txt.",
+      "residual_gaps": [
+        "Longueur orale de sonnet : relais de fin mesuré à quatre phrases (borne : trois), réponse de lancement à deux phrases (borne : une) ; écoutez si c'est acceptable à la voix.",
+        "Premier tour du cas B : 10,4 s avec sonnet (un seul appel Agent, aucun autre outil) ; dites si l'attente est acceptable."
+      ]
     },
     {
       "id": "HV-ORG-07-02",
       "description": "Give a clear direct bug/fix request and confirm no mandatory Interviewer ceremony is inserted.",
       "status": "pending",
       "evidence": null,
-      "preparation": "Dites « Il y a un bug dans <fichier> : <constat>. Corrigez-le. » Attendu : un seul agent Développement, aucune question d'Intervieweur, le résultat annoncé à la fin. Puis « Corrigez la coquille du titre de <fichier> » : tâche éphémère discrète, rien d'annoncé quand elle réussit. Traces : C:/Projects/jarvis/orch/tasks/jarvis-organic-agent-orchestration/slices/07-interviewer-background-coordination/evidence/run-haiku-a.txt, C:/Projects/jarvis/orch/tasks/jarvis-organic-agent-orchestration/slices/07-interviewer-background-coordination/evidence/run-prod.txt"
+      "preparation": "Dites « Il y a un bug dans <fichier> : <constat>. Corrigez-le. » Attendu : un seul agent Développement, aucune question d'Intervieweur, le résultat annoncé à la fin. Puis « Corrigez la coquille du titre de <fichier> » : tâche éphémère discrète, rien d'annoncé quand elle réussit. Traces : C:/Projects/jarvis/orch/tasks/jarvis-organic-agent-orchestration/slices/07-interviewer-background-coordination/evidence/run-haiku-a.txt, C:/Projects/jarvis/orch/tasks/jarvis-organic-agent-orchestration/slices/07-interviewer-background-coordination/evidence/final-h-d.txt.",
+      "residual_gaps": [
+        "Haiku, éphémère : il a encore promis « je vous confirme dès qu'elle est vérifiée » et annoncé la réussite, malgré la règle ; vérifiez avec votre modèle du cerveau.",
+        "Haiku : recommandation rendue en Markdown gras et sans dire que le détail est à l'écran ; lancement en trois phrases.",
+        "Haiku et [web-research] : avec le renvoi généré, « lequel me conseillez-vous » (Free/Orange/Bouygues) part bien en [general] [research-lead] (final-h-d.txt) ; une formulation sans « comparer » ni « conseiller » peut encore partir en recherche web (rework-h-d.txt, écrans 27 pouces)."
+      ]
     }
   ],
   "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."

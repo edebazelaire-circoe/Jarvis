@@ -1,0 +1,87 @@
+# Essai h-d (bac à sable 27653/27654, données C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\7314dd51-936a-4614-8684-8f4233075b7c\scratchpad\s07c\out-h-d)
+
+UTILISATEUR : Je dois changer d'opérateur internet : entre la fibre Free, Orange et Bouygues pour un couple qui télétravaille, lequel me conseillez-vous, arguments à l'appui ?
+-- modèle : claude-haiku-5-5 · C:\Users\Clarice\AppData\Local\Temp\claud
+CERVEAU outil : [outil] Agent {"description": "[general] [research-lead] Comparatif fibre Free, Orange, Bouygues", "run_in_background": true, "prompt": "Demande de l'utilisateur, mots exacts : « Je dois changer d'opérateur internet : entre la fibre Free, Orange et Bouygues pour un couple qui télétravaille, lequel me conseillez-vous, arguments à l'appui ? »\n\nContexte : utilisateur en France. Aucune adresse ni éligibilité connue, aucune recherche faite encore. Le couple télétravaille : compte surtout la stabilité et le débit montant (upload) pour les visioconférences, le nombre d'appareils, le support client et les frais d'engagement ou de résiliation.\n\nCe que je te demande : comparer les offres fibre act
+  lancé : [general] [research-lead] Comparatif fibre Free, Orange, Bouygues
+CERVEAU dit : J'ai lancé une recherche comparative sur les offres fibre Free, Orange et Bouygues, avec prix, débit montant, engagement et support. Je vous rendrai une recommandation argumentée dès qu'elle sera prête. Pensez à vérifier l'éligibilité de la fibre à votre adresse sur le site de chaque opérateur, car c'est ce qui peut trancher.
+  [tour] rateur, car c'est ce qui peut trancher. · 11584 ms · $0.0101
+  fin de tâche : **Recommandation : Free, Freebox Ultra (8 Gb/s symétrique), à condition que la fibre de l'adresse soit compatible XGS-PON.** Je n'ai pas pu vérifier l'éligibilité, ni le support client de chaque opérateur.
+
+**Arguments**
+1. **Upload symétrique.** La page Free indique « jusqu'à 8 Gbit/s en débit descendant et montant ». Bouygues (Bbox ultym) annonce 8 Gb/s en envoi, mais des tests de 2024 donnent p
+-- modèle : claude-haiku-5-5 · C:\Users\Clarice\AppData\Local\Temp\claud
+CERVEAU dit : **Recommandation : Free (Freebox Ultra), si la fibre de votre adresse est compatible.** Le conseil dépend de deux points que je n'ai pas pu vérifier : votre éligibilité et les prix, qui divergent selon les sources.
+
+**Pourquoi Free**
+1. **Débit montant symétrique.** Free annonce 8 Gb/s en descendant et en montant. Pour des visioconférences à deux, c'est l'argument le plus solide.
+2. **Sans engagement.** Orange et Bouygues demandent 12 mois sur leurs offres 8 Gb/s.
+3. **Qualité mesurée correcte.** Free est troisième du baromètre nPerf 2025 sur le débit, avec 451 Mb/s, contre 491 pour Bouygues et 425 pour Orange.
+
+**Comparaison**
+
+| Offre | Débit montant | Prix mensuel | Engagement |
+|---|---|---|---|
+| Free Freebox Ultra | 8 Gb/s annoncé | 49,99 € la première année, puis 59,99 € | Aucun |
+| Bouygues Bbox ultym | 8 Gb/s annoncé, environ 1 Gb/s mesuré en 2024 | 45,99 € puis 52,99 € | 12 mois |
+| Orange Livebox Up | Non vérifié | 39,99 € puis 51,99 € | 12 mois |
+
+**Points faibles de Free**
+- Orange a une meilleure satisfaction des abonnés (8,2/10 contre 8,0) et corrige plus de malfaçons dans les délais (94 % contre 87 %, Arcep, février 2026).
+- Free reste un peu plus cher qu'Orange sur la durée.
+
+**Ce qui ferait changer l'avis**
+- Si la fibre de votre adresse n'est qu'en GPON, le 8 Gb/s symétrique n'est pas disponible. Il faut alors comparer les débits montants réels.
+- Si la stabilité prime sur le prix, Orange devient le choix le plus défendable, avec 12 mois d'engagement.
+
+**À 
+  [tour] lité, je peux affiner la recommandation. · 5449 ms · $0.0787
+
+UTILISATEUR : Dans C:/Users/Clarice/AppData/Local/Temp/claude/C--Projects-jarvis-jarvis/7314dd51-936a-4614-8684-8f4233075b7c/scratchpad/s07/fixture/greeting.md, le titre dit Bonjuor : remettez Bonjour, s'il vous plaît.
+-- modèle : claude-haiku-5-5 · C:\Users\Clarice\AppData\Local\Temp\claud
+CERVEAU outil : [outil] Agent {"description": "[éphémère] [code] [coder] Corriger la coquille du titre", "run_in_background": true, "prompt": "Demande de l'utilisateur, mots exacts : « Dans C:/Users/Clarice/AppData/Local/Temp/claude/C--Projects-jarvis-jarvis/7314dd51-936a-4614-8684-8f4233075b7c/scratchpad/s07/fixture/greeting.md, le titre dit Bonjuor : remettez Bonjour, s'il vous plaît. »\n\nFait constaté : le titre de ce fichier contient le mot « Bonjuor ». Il doit devenir « Bonjour ». Rien d'autre ne doit changer dans le fichier.\n\nVérifie d'abord que le fichier existe et que le titre contient bien « Bonjuor ». Corrige uniquement cette coquille, puis relis le fichier pour confirmer que le titre dit « Bon
+  lancé : [éphémère] [code] [coder] Corriger la coquille du titre
+CERVEAU dit : Je lance la correction de « Bonjuor » en « Bonjour » dans le titre de ce fichier ; je vous confirme dès qu'elle est vérifiée.
+  [tour]  vous confirme dès qu'elle est vérifiée. · 7635 ms · $0.0813
+  fin de tâche : Correction faite et vérifiée : le titre de `greeting.md` (dans `scratchpad/s07/fixture/`) dit désormais « # Bonjour » au lieu de « # Bonjuor ». Le fichier ne contenait rien d'autre, je n'ai modifié aucun autre fichier, et la relecture confirme le titre corrigé.
+
+Point à noter : le fichier se trouve sous `scratchpad/s07/fixture/`, et non dans le répertoire de travail `s07c/...`, ce qui est conforme
+-- modèle : claude-haiku-5-5 · C:\Users\Clarice\AppData\Local\Temp\claud
+CERVEAU dit : C'est corrigé : le titre de `greeting.md` dit maintenant « Bonjour ». Le reste du fichier n'a pas été modifié, et j'ai relu le titre pour le confirmer.
+  [tour] et j'ai relu le titre pour le confirmer. · 2481 ms · $0.0861
+
+# Work State et missions (Core)
+TRAVAIL [code] [coder] Corriger la coquille du titre | completed | role=coder | mission=None owner=None | 
+TRAVAIL [general] [research-lead] Comparatif fibre Free, Orange, Bouygues | completed | role=research-lead | mission=mis_toolu_015vTW4v5miiXsFqUTc4VytG owner=True | 
+MISSION mis_toolu_015vTW4v5miiXsFqUTc4VytG completed owner=ainst_f202f54633e54cca8c551f5ad70a1119
+
+# Trace filtrée (kinds)
+agent.ask: 2
+agent.declared: 4
+agent.global_context: 2
+agent.role_applied: 2
+agent.start: 2
+agent.subagent.finished: 2
+agent.subagent.started: 2
+agent.turn_over_budget: 1
+agent.unsolicited_result: 1
+chat.turn.relayed: 2
+core.brain.backend_task_result: 2
+core.brain.backend_task_started: 2
+core.brain.latency.work_completed: 2
+core.brain.memory_context_delivered: 2
+core.brain.outcome_retained: 5
+core.brain.speech_withheld_text_channel: 3
+core.brain.turn_over_budget: 1
+core.brain.turn_slow: 1
+core.brain.work_context: 2
+core.missions.declarations: 2
+core.missions.route_failed: 1
+core.scene.ephemeral_skipped: 1
+core.scene.loaded: 1
+core.scene.mission_projected: 1
+display.server_started: 2
+mission_history.ephemeral_discarded: 1
+mission_history.mission_closed: 1
+mission_history.ready: 1
+missions.declarations_sent: 2

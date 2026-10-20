@@ -559,7 +559,9 @@ Le cerveau vocal ne lit qu'une section générée du registre, `brain_rules()` (
 éphémère », FORMAT ORAL) et `routing_hook.PROFILE_RULE`. Ce qu'elles enseignent :
 
 - **Catalogue** : chaque rôle proposé (`offered_to_brain`) avec son marqueur `[profil] [rôle]` et son
-  `when_relevant`. `qa` : « relecture d'un résultat déjà produit » (un relecteur lancé par le cerveau n'a pas
+  `when_relevant`. Quand la direction de recherche est proposée, la recherche web porte un renvoi généré : « pas
+  pour comparer ou conseiller entre options : [general] [research-lead] » (haiku confiait « lequel me
+  conseillez-vous » à la recherche web). `qa` : « relecture d'un résultat déjà produit » (un relecteur lancé par le cerveau n'a pas
   de mission, donc pas de relation QA : `relation_no_mission`). Aucun exemple de Work Method : le cerveau ne
   voit pas leur liste (un exemple à trois crochets a fait écrire `[general] [web-research] [research-lead]` à
   haiku) ; le choix d'une méthode reste aux Mission Owners.
@@ -568,8 +570,9 @@ Le cerveau vocal ne lit qu'une section générée du registre, `brain_rules()` (
 - **B. Intention à cadrer** : dans son tour, le cerveau n'écrit ni ne vérifie rien. Il compose sans outil le
   chemin absolu du dossier de mission, `missions/<sujet-court>-<AAAAMMJJ>/mission.md` sous la ligne « Mémoire
   du Board (boards/<id>/memory) : <chemin absolu> » de son contexte de tour (`board_brief.render_board_memory`),
-  et le donne à l'Intervieweur, qui le crée (`_DOSSIER`), et aux recherches utiles lancées en parallèle, qui y
-  versent leurs apports ; la réponse de l'utilisateur repart par `SendMessage` avec en une ligne chaque trouvaille
+  et le donne à l'Intervieweur, **seul agent lancé à ce tour**, qui le crée (`_DOSSIER`). Les recherches utiles
+  partent au tour de notification de sa première `QUESTION :`, une fois le dossier créé, avec le même chemin, et y
+  versent leurs apports (plus de course d'écriture sur `mission.md`) ; la réponse de l'utilisateur repart par `SendMessage` avec en une ligne chaque trouvaille
   arrivée depuis la dernière question (D20). Le tour de console `/api/agent/send` ne porte pas ce contexte : le
   chemin n'y est pas composable.
 - **C. Comparer, choisir, faire l'état d'un sujet** : un seul `[general] [research-lead]`, qui porte la mission.
@@ -580,14 +583,17 @@ Le cerveau vocal ne lit qu'une section générée du registre, `brain_rules()` (
   seul Mission Owner avec les mots de l'utilisateur. Seule exception : la relecture d'un résultat déjà rendu,
   hors de toute mission en cours, part directement chez `[general] [qa]` (`[code] [qa]` pour du code).
 - **Restitution** (contrat de la section 5bis), dans la règle de notification, là où se joue le tour de fin :
-  relais en une à trois phrases, la conclusion d'abord ; si l'agent a affiché son résultat (voulu, jamais « non
-  demandé »), la conclusion et « le détail est affiché », sans lire de liste ni de tableau.
+  relais en une à trois phrases, sans markdown, la conclusion d'abord, même quand rien n'est affiché (le reste du
+  compte rendu ne se lit pas) ; si l'agent a affiché son résultat (voulu : jamais « non demandé », n'en demande pas
+  le retrait), la conclusion et « le détail est affiché », sans lire de liste ni de tableau.
 - **Consigne** : les mots exacts de l'utilisateur, l'observable, où chercher, ce qui a été refusé ; jamais la
-  forme, la longueur ni le support du résultat (fichier, format, nombre de phrases) : JARVIS les donne (charte,
-  rôle, restitution). Une consigne « écris le rapport dans un fichier, conclusion en trois phrases » a empêché
+  forme, la longueur ni le support du **résultat final** (fichier, format, nombre de phrases) : JARVIS les donne
+  (charte, rôle, restitution). Le dossier de mission du cas B est un support de cadrage voulu ; hors de lui, le
+  cerveau ne prescrit aucun nom de fichier. Une consigne « écris le rapport dans un fichier, conclusion en trois phrases » a empêché
   l'affichage d'un Mission Owner en essai réel.
-- **Une seule longueur orale** (FORMAT ORAL) : une à trois phrases courtes par réponse — lancement, relais,
-  résumé avant accord.
+- **Une seule règle de longueur** (FORMAT ORAL) : lancement et résumé avant accord en une phrase ; toute autre
+  réponse, relais compris, en trois phrases au plus ; pas de markdown. Une éphémère : la phrase de lancement ne
+  promet rien (pas de « je vous dirai »).
 - **Présentation** : le cerveau lance un seul auteur ; une relecture demandée se fait par l'auteur
   (`[general] [presentation-review]`), plus par le cerveau.
 - **Passage à l'exécution** : `EXECUTION_GATE_RULE`, inchangée, seulement pour le cas B (après `PRÊT :`,
@@ -603,6 +609,6 @@ mot restant dans le libellé (grammaire inchangée, `test_agent_markers_equivale
 `agent.role_applied` au niveau `warning`, `second_role_marker` = le mot, `diagnostics` = `["second_role_marker"]`
 (`agent_markers.second_role_marker`). L'appel n'est jamais refusé.
 
-Taille : `BRAIN_SYSTEM_PROMPT` 8 880 → 11 300 (première passe) → 10 661 caractères après la reprise QA ;
-`brain_rules()` 2 412 → 3 550 (empreinte dans `tests/unit/test_scene_artifacts.py`). Une conversation ouverte
+Taille : `BRAIN_SYSTEM_PROMPT` 8 880 → 11 300 (première passe) → 10 661 (reprise QA) → 11 082 caractères
+(revérification) ; `brain_rules()` 2 412 → 3 550 → 3 648 (empreinte dans `tests/unit/test_scene_artifacts.py`). Une conversation ouverte
 avant ce changement garde l'ancienne consigne jusqu'au redémarrage de JARVIS (`--system-prompt-snapshot`).
