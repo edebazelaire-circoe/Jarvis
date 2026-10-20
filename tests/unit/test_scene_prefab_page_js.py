@@ -48,6 +48,8 @@ FakeDocument.prototype.createElement=function(tag){
 const b=bench();
 const document=b.doc;
 const L=Lay,PrefabHostApi=H,I={};
+/* Rôles d'agent (organic-agent-orchestration Slice 09) : absents de ce banc, `fill` dessine sans pastille de rôle. */
+const Roles=null,accentOf=()=>'slate';
 let prefabHost=b.host;
 const prefabs=()=>prefabHost;
 const logs=[];

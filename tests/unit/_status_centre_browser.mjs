@@ -101,7 +101,7 @@ const SERVER=`(()=>{
   const json=(status,body)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
   const snapshot=()=>({source:'core',core_reachable:true,scene:{state:'ready',code:null,saturated:false,objects:S.objects.length,object_limit:512},
     scene_id:'scene',epoch:'e1',revision:S.revision,
-    snapshot:{schema_version:1,scene_id:'scene',revision:S.revision,objects:S.objects,relations:[],archived_ids:[]},error:null});
+    snapshot:{schema_version:1,scene_id:'scene',revision:S.revision,objects:S.objects,relations:S.relations||[],archived_ids:[]},error:null});
   const release=patches=>{const w=S.waiters.splice(0);for(const fn of w)fn(patches)};
   window.fetch=async(path,init)=>{
     const method=(init&&init.method)||'GET';
@@ -313,6 +313,33 @@ const SERVER=`(()=>{
       if(m){const a=(S.registry||{})[m[1]];return a?json(200,{artifact:a}):json(404,{error:{code:'artifact_not_found',message:'no'}})}
     }
     if(url.startsWith('/api/workspace/artifacts?'))return json(200,{artifacts:S.boardArtifacts,scope:{board_id:S.activeBoard},next_cursor:null});
+    /* Slice 09 de jarvis-organic-agent-orchestration : le registre des rôles (\`roles\`, la charge v2 servie),
+       une relation lue (\`relationReads\` : {relation_id: corps}, \`relationFail\` : {relation_id: {status, code,
+       message}}, \`relationDelayMs\` : attente, \`relationHang\` : jamais de réponse) et une mission
+       (\`missions\` : {mission_id: corps}). Chaque lecture est comptée dans \`calls\`. */
+    if(url==='/api/subagent-roles'){
+      if(S.rolesFail)return json(S.rolesFail.status||500,{error:{code:S.rolesFail.code||'roles_failed',message:S.rolesFail.message||'refusé'}});
+      return S.roles?json(200,S.roles):json(404,{error:{code:'http_error',message:'no roles seeded'}});
+    }
+    {
+      const m=url.match(/^\\/api\\/missions\\/relations\\/([^/?]+)(\\?.*)?$/);
+      if(m&&method==='GET'){
+        const id=decodeURIComponent(m[1]);
+        if(S.relationDelayMs)await new Promise(r=>setTimeout(r,S.relationDelayMs));
+        if(S.relationHang)return new Promise((_ok,ko)=>{const sig=init&&init.signal;if(sig)sig.addEventListener('abort',()=>ko(new DOMException('aborted','AbortError')),{once:true})});
+        const fail=(S.relationFail||{})[id];
+        if(fail)return json(fail.status,{ok:false,error:{code:fail.code,message:fail.message||'refusé'}});
+        const body=(S.relationReads||{})[id];
+        if(!body)return json(404,{ok:false,error:{code:'relation_unknown',message:'relation '+id+' is unknown'}});
+        const after=Number(new URL(url,location.href).searchParams.get('after')||0);
+        return json(200,{ok:true,...body,messages:(body.messages||[]).filter(msg=>msg.seq>after)});
+      }
+      const mm=url.match(/^\\/api\\/missions\\/([^/?]+)$/);
+      if(mm&&method==='GET'){
+        const body=(S.missions||{})[decodeURIComponent(mm[1])];
+        return body?json(200,body):json(404,{error:{code:'mission_not_found',message:'mission is unknown'}});
+      }
+    }
     return json(404,{error:{code:'http_error',message:'not stubbed '+url}});
   };
   return 'ok';

@@ -2292,11 +2292,15 @@ button.wsp-ename:hover{color:var(--accent)}
 /*__CONTROL_CENTER_SHELL_JS__*/
 /*__CONTROL_CENTER_LIVE_JS__*/
 /*__CONTROL_CENTER_CATALOG_JS__*/
+/* Identité des rôles et grammaire des relations (jarvis-organic-agent-orchestration, Slice 09) : avant la scène et les
+   Réglages, qui la lisent tous deux (`window.JarvisRoleIdentity`). */
+/*__CONTROL_CENTER_ROLE_IDENTITY_JS__*/
 /*__CONTROL_CENTER_SCENE_JS__*/
 /*__CONTROL_CENTER_SCENE_LAYOUT_JS__*/
 /*__CONTROL_CENTER_SCENE_INTERACT_JS__*/
 /*__CONTROL_CENTER_SCENE_CAPTURE_JS__*/
 /*__CONTROL_CENTER_SCENE_VIEW_JS__*/
+/*__CONTROL_CENTER_SCENE_ROLES_JS__*/
 const $=s=>document.querySelector(s);let current=null;const panel=$('#panel'),body=$('#panelBody'),title=$('#panelTitle');
 async function api(path,opts){const r=await fetch(path,opts),text=await r.text();let value={};try{value=text?JSON.parse(text):{}}catch{value={error:text}}if(!r.ok){
 /* Enveloppe `{error:{code,message}}` (routes Boards/Sessions relayées de Core,
@@ -2608,9 +2612,9 @@ async function renderErrors(){const archived=errorsView==='archived';title.textC
    et la page passe en « statut perdu » au lieu de rester figée sur le dernier état. */
 const STATUS_BEAT={inFlight:false,timeoutMs:4000};
 async function refreshStatus(){if(STATUS_BEAT.inFlight)return;STATUS_BEAT.inFlight=true;const statusAbort=typeof AbortController==='function'?new AbortController():null;const statusTimer=setTimeout(()=>{if(statusAbort)statusAbort.abort()},STATUS_BEAT.timeoutMs);try{const s=await api('/api/status',statusAbort?{signal:statusAbort.signal}:undefined),online=s.voice_online===true;renderLive(s.live);try{if(window.JarvisRuntimeWheel)JarvisRuntimeWheel.gate(s)}catch(jarvisError){console.error('[jarvis] jarvis_wheel_gate_failed',jarvisError)}$('.face').style.visibility=online?'visible':'hidden';const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background,s.boards);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisBoardsControl)JarvisBoardsControl.gate(s.boards,s.interaction_mode,s.presentation)}catch(boardsError){console.error('[boards] boards_gate_failed',boardsError)}try{if(window.JarvisDossier)JarvisDossier.gate(s.boards,s.dossier_navigation)}catch(dossierError){console.error('[dossier] dossier_gate_failed',dossierError)}try{if(window.JarvisPresentationRail)JarvisPresentationRail.gate(s)}catch(railError){console.error('[presentation-rail] gate_failed',railError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{markBackgroundUnconfirmed()}catch(_pillsError){/* les pastilles non plus */}try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisBoardsControl)JarvisBoardsControl.statusLost()}catch(_boardsError){/* la carte Board non plus : elle doit cesser d'afficher un Board et une séance que plus rien ne confirme */}try{if(window.JarvisDossier)JarvisDossier.statusLost()}catch(_dossierError){/* le Dossier non plus : il dit « Core ne répond pas » et suspend ses écritures */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}try{if(window.JarvisRuntimeWheel)JarvisRuntimeWheel.statusLost()}catch(_jarvisError){/* le sous-menu JARVIS non plus : il dit « état inconnu », jamais le dernier état connu */}$('.face').style.visibility='hidden';updateSubagentBadge(null)}finally{clearTimeout(statusTimer);STATUS_BEAT.inFlight=false}}
-async function openPanel(name){if(window.JarvisChat)window.JarvisChat.close();current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
+async function openPanel(name){if(window.JarvisChat)window.JarvisChat.close();if(window.JarvisRelationBoard)window.JarvisRelationBoard.close();current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 /* Un seul panneau latéral : fermer `#panel` ferme aussi le Chat (Échap, inspecteur du Studio). */
-function closePanel(){if(window.JarvisChat)window.JarvisChat.close();current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
+function closePanel(){if(window.JarvisChat)window.JarvisChat.close();if(window.JarvisRelationBoard)window.JarvisRelationBoard.close();current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
 
 /* =====================================================================
    Panneau Agents
@@ -2759,6 +2763,8 @@ const STATUS={
 /*__CONTROL_CENTER_PREFAB_PROTOCOL_JS__*/
 /*__CONTROL_CENTER_REMOTION_FRAME_JS__*/
 /*__CONTROL_CENTER_PREFAB_HOST_JS__*/
+/* Tableau d'une relation d'agent (Slice 09) : `window.JarvisRelationBoard`, ouvert par les pastilles du graphe. */
+/*__CONTROL_CENTER_RELATION_BOARD_JS__*/
 /*__CONTROL_CENTER_SCENE_PAGE_JS__*/
 /* Plein écran générique d'une surface (studio de présentation, Slice 03) : API Fullscreen du navigateur
    sur un élément HÔTE qui contient le cadre, invite d'un clic pour les demandes de la voix ou d'un agent,

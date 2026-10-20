@@ -1694,6 +1694,236 @@
     return ATTENTION_FLOOR+l*1000+o;
   }
 
+  /* ------------------------------------------- Rôles et relations d'agent (Slice 09)
+
+     Handoff jarvis-organic-agent-orchestration, Slice 09. L'interface **lit** ce
+     que la Slice 08 projette : `role_ref` sur une étoile `agent` (identité de
+     rôle explicite, D01 ; responsabilité de mission, D03) et les cinq natures
+     de relation (D09) avec leur `ref` (`relation_id`, état, issue). Rien n'est
+     tiré d'un titre ni d'un libellé (D09 : jamais inférées du texte), et rien
+     n'est dessiné qui n'existe pas déjà dans la scène (D15) : un lien n'existe
+     que si ses deux étoiles sont dessinées, une pastille que si un de ses liens
+     l'est. */
+  const AGENT_RELATION_KINDS=Object.freeze(['delegation','qa','handoff','adversary','communication']);
+  const DIRECTED_RELATIONS=Object.freeze(['delegation','qa','handoff']);
+  /* Écart entre deux fils qui joignent les deux mêmes étoiles (délégation et
+     contrôle qualité d'un même couple, par exemple) : chacun garde sa voie. */
+  const RELATION_LANE_PX=7;
+  /* Pastilles d'un même couple : espacées le long du fil, au plus de ce pas. */
+  const RELATION_MARK_STEP_PX=26;
+  const ROLE_ID_SHAPE=/^[a-z][a-z0-9_-]{0,63}$/;
+  const LANE_ORDER=['parent_of','explains','groups',...AGENT_RELATION_KINDS];
+  const isAgentRelation=kind=>AGENT_RELATION_KINDS.indexOf(kind)>=0;
+  const byLane=(p,q)=>LANE_ORDER.indexOf(p.kind)-LANE_ORDER.indexOf(q.kind)||(p.id<q.id?-1:p.id>q.id?1:0);
+
+  /* Identité de rôle d'une étoile, ou `null`. `identity(roleId)` (la page,
+     d'après le registre des rôles) donne nom, badge, icône et accent ;
+     `mission(missionId)` (la page, d'après `GET /api/missions/{id}`) donne
+     l'origine et `live_unknown`. Sans eux : l'id tel quel, jamais deviné. */
+  function roleOf(item,identity,mission){
+    if(!item||item.kind!=='agent'||!item.role_ref||typeof item.role_ref!=='object')return null;
+    const ref=item.role_ref;
+    const id=typeof ref.role_id==='string'&&ROLE_ID_SHAPE.test(ref.role_id)?ref.role_id:'';
+    if(!id)return null;
+    const seen=identity?identity(id):null;
+    const shown=seen&&typeof seen==='object'?seen:{};
+    const missionId=typeof ref.mission_id==='string'?ref.mission_id.slice(0,128):'';
+    const owner=ref.mission_owner===true;
+    const info=missionId&&mission?mission(missionId):null;
+    return {id,name:cleanLine(shown.name||id,80),badge:cleanLine(shown.badge||id.slice(0,3).toUpperCase(),6),
+      icon:typeof shown.icon==='string'?shown.icon:'unknown',accent:typeof shown.accent==='string'?shown.accent:'slate',
+      known:shown.known===true,owner,missionId,instanceId:typeof ref.instance_id==='string'?ref.instance_id.slice(0,128):'',
+      /* Origine : le profil du Mission Owner (`origin_kind`), en mots quand il est connu. */
+      origin:owner&&info&&typeof info.origin==='string'&&info.origin
+        ?(Object.prototype.hasOwnProperty.call(AGENT_TYPES,info.origin)?AGENT_TYPES[info.origin].label:cleanLine(info.origin,24)):'',
+      liveUnknown:!!(info&&info.liveUnknown===true)};
+  }
+
+  /* Fils qui joignent les deux mêmes étoiles : une voie chacun, décalée à la
+     perpendiculaire, dans un ordre fixe (la filiation, puis les relations). Un
+     couple sans relation d'agent n'est jamais touché. */
+  function laneEdges(edges){
+    const pairs=new Map();
+    for(const edge of edges){
+      const key=edge.from<edge.to?`${edge.from}|${edge.to}`:`${edge.to}|${edge.from}`;
+      if(!pairs.has(key))pairs.set(key,[]);
+      pairs.get(key).push(edge);
+    }
+    for(const group of pairs.values()){
+      if(group.length<2||!group.some(edge=>isAgentRelation(edge.kind)))continue;
+      group.sort(byLane);
+      const first=group[0];
+      /* La perpendiculaire du couple, dans un sens commun aux deux directions. */
+      const forward=first.from<first.to;
+      const ax=forward?first.x1:first.x2,ay=forward?first.y1:first.y2,bx=forward?first.x2:first.x1,by=forward?first.y2:first.y1;
+      const length=Math.hypot(bx-ax,by-ay);
+      if(!(length>0))continue;
+      const nx=-(by-ay)/length,ny=(bx-ax)/length;
+      group.forEach((edge,index)=>{
+        const shift=(index-(group.length-1)/2)*RELATION_LANE_PX;
+        if(!shift)return;
+        const dx=round1(nx*shift),dy=round1(ny*shift);
+        edge.x1=round1(edge.x1+dx);edge.y1=round1(edge.y1+dy);edge.x2=round1(edge.x2+dx);edge.y2=round1(edge.y2+dy);
+        edge.lane=shift;
+      });
+    }
+    return edges;
+  }
+
+  /* **Pastilles des relations** : une par relation d'agent (regroupée par
+     `ref.relation_id` : une relation à N participants a un fil par paire),
+     posée sur ses fils dessinés. Deux participants : sur le fil, plusieurs
+     relations d'un même couple espacées le long de lui ; davantage : au
+     barycentre, décalées si elles ont les mêmes participants. Rend
+     `[{id, kind, state, outcome, directed, from, to, members, points, place,
+     x, y, turns, mixed}]` ; `place` permet de recalculer le point quand les
+     bouts bougent (`relationMarkPoint`).
+
+     `options.size` : diamètre d'une pastille (24 px, 18 en mode compact) ;
+     `options.obstacles` : boîtes `{left, top, width, height}` que les pastilles
+     évitent (étoiles et pastilles de rôle, dans le même repère que les fils). */
+  function relationMarks(edges,options){
+    const size=options&&Number(options.size)>0?Number(options.size):24;
+    const obstacles=options&&Array.isArray(options.obstacles)?options.obstacles:[];
+    const groups=new Map();
+    for(const edge of edges||[]){
+      if(!isAgentRelation(edge.kind)||!edge.relationId)continue;
+      if(!groups.has(edge.relationId))groups.set(edge.relationId,{id:edge.relationId,kind:edge.kind,state:edge.state,outcome:edge.outcome,missionId:edge.missionId||'',edges:[]});
+      groups.get(edge.relationId).edges.push(edge);
+    }
+    const marks=[];
+    for(const group of groups.values()){
+      const points=new Map();
+      for(const edge of group.edges){
+        if(!points.has(edge.from))points.set(edge.from,{id:edge.from,x:edge.x1,y:edge.y1,turns:!!edge.fromTurns});
+        if(!points.has(edge.to))points.set(edge.to,{id:edge.to,x:edge.x2,y:edge.y2,turns:!!edge.toTurns});
+      }
+      const members=[...points.values()];
+      const turning=members.filter(point=>point.turns).length;
+      const directed=DIRECTED_RELATIONS.indexOf(group.kind)>=0&&group.edges.length===1;
+      marks.push({id:group.id,kind:group.kind,state:group.state,outcome:group.outcome,missionId:group.missionId,directed,
+        from:directed?group.edges[0].from:'',to:directed?group.edges[0].to:'',
+        members:members.map(point=>point.id),points:members,turns:turning===members.length,mixed:turning>0&&turning<members.length,
+        place:{t:.5,dx:0,dy:0}});
+    }
+    /* Même ensemble de participants : les pastilles s'écartent l'une de l'autre. */
+    const bySet=new Map();
+    for(const mark of marks){
+      const key=[...mark.members].sort().join('|');
+      if(!bySet.has(key))bySet.set(key,[]);
+      bySet.get(key).push(mark);
+    }
+    for(const group of bySet.values()){
+      group.sort(byLane);
+      group.forEach((mark,index)=>{
+        const offset=index-(group.length-1)/2;
+        if(mark.points.length===2){
+          const [a,b]=mark.points,length=Math.hypot(b.x-a.x,b.y-a.y)||1;
+          mark.place={t:Math.max(.2,Math.min(.8,.5+offset*Math.min(.22,RELATION_MARK_STEP_PX/length))),dx:0,dy:0};
+        }else mark.place={t:.5,dx:offset*RELATION_MARK_STEP_PX,dy:0};
+      });
+    }
+    for(const mark of marks){const p=relationMarkPoint(mark,mark.points);mark.x=p.x;mark.y=p.y}
+    spreadMarks(marks,size,obstacles);
+    return marks;
+  }
+
+  /* **Pastilles qui se chevauchent** (graphe dense) : quelques passes d'écartement. Une pastille à deux
+     participants glisse le long de son fil (elle reste sur sa relation, entre 15 et 85 % du fil) ; une pastille
+     au barycentre s'écarte librement. Elles s'écartent aussi des étoiles et des pastilles de rôle (`obstacles`),
+     qu'elles couvriraient sinon. Borné : six passes au plus (O(n² + n·m) par passe). */
+  function spreadMarks(marks,size,obstacles){
+    /* 24 px entre centres au moins : la cible compacte de 18 px garde l'espacement de WCAG 2.5.8. */
+    const min=Math.max(size+2,24),clear=size/2+2;
+    const apart=()=>{
+      let moved=false;
+      for(let i=0;i<marks.length;i++)for(let j=i+1;j<marks.length;j++){
+        const a=marks[i],b=marks[j];
+        const dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy);
+        if(d>=min)continue;
+        const ux=d>0?dx/d:1,uy=d>0?dy/d:0,push=(min-d)/2;
+        if(nudge(a,-ux*push,-uy*push,-1))moved=true;
+        if(nudge(b,ux*push,uy*push,1))moved=true;
+      }
+      return moved;
+    };
+    const clearOf=()=>{
+      let moved=false;
+      for(const mark of marks)for(const box of obstacles){
+        /* Le point de la boîte le plus proche du centre de la pastille. */
+        const cx=Math.max(box.left,Math.min(mark.x,box.left+box.width)),cy=Math.max(box.top,Math.min(mark.y,box.top+box.height));
+        const dx=mark.x-cx,dy=mark.y-cy,d=Math.hypot(dx,dy);
+        if(d>=clear)continue;
+        if(d>0){if(nudge(mark,dx/d*(clear-d),dy/d*(clear-d),0))moved=true;continue}
+        /* Centre dans la boîte : sortie par le chemin qui s'éloigne de son centre, jusqu'au bord, plus la marge. */
+        let ux=mark.x-(box.left+box.width/2),uy=mark.y-(box.top+box.height/2);
+        const length=Math.hypot(ux,uy);
+        if(length>0){ux/=length;uy/=length}else{ux=1;uy=0}
+        const tx=ux>0?(box.left+box.width-mark.x)/ux:ux<0?(box.left-mark.x)/ux:Infinity;
+        const ty=uy>0?(box.top+box.height-mark.y)/uy:uy<0?(box.top-mark.y)/uy:Infinity;
+        const push=Math.min(tx,ty)+clear;
+        if(nudge(mark,ux*push,uy*push,0))moved=true;
+      }
+      return moved;
+    };
+    for(let pass=0;pass<6;pass++){const a=apart(),b=clearOf();if(!a&&!b)break}
+    /* Deux pastilles l'une sur l'autre cachent une relation ; une pastille sur une étiquette ne cache rien :
+       l'écart entre pastilles a le dernier mot. */
+    for(let pass=0;pass<4;pass++)if(!apart())break;
+  }
+  /* `side` (−1, 0, 1) : sens de repli le long du fil quand la poussée est presque en travers (deux pastilles de
+     fils parallèles côte à côte) — sans lui, aucune des deux ne bougerait. */
+  function nudge(mark,vx,vy,side){
+    if(mark.points.length===2){
+      const [a,b]=mark.points,lx=b.x-a.x,ly=b.y-a.y,length=Math.hypot(lx,ly);
+      if(!(length>0))return false;
+      /* Seule la composante le long du fil compte ; une poussée en travers ne peut pas le quitter. */
+      let along=(vx*lx+vy*ly)/length;
+      const force=Math.hypot(vx,vy);
+      if(side&&Math.abs(along)<.3*force)along=side*force;
+      const t=Math.max(.15,Math.min(.85,mark.place.t+along/length));
+      if(Math.abs(t-mark.place.t)<1e-4)return false;
+      mark.place.t=t;
+    }else{mark.place.dx+=vx;mark.place.dy+=vy}
+    const p=relationMarkPoint(mark,mark.points);mark.x=p.x;mark.y=p.y;
+    return true;
+  }
+
+  /* Le point d'une pastille pour des bouts donnés (`points` dans l'ordre de
+     `mark.points`) : sur le fil à `place.t` pour deux participants (orienté du
+     premier au second), au barycentre décalé de `place.dx` au-delà. */
+  function relationMarkPoint(mark,points){
+    if(!points.length)return {x:0,y:0};
+    if(points.length===2){
+      const [a,b]=points,t=mark.place.t;
+      return {x:round1(a.x+(b.x-a.x)*t),y:round1(a.y+(b.y-a.y)*t)};
+    }
+    let x=0,y=0;
+    for(const point of points){x+=point.x;y+=point.y}
+    return {x:round1(x/points.length+mark.place.dx),y:round1(y/points.length+(mark.place.dy||0))};
+  }
+
+  /* Nom accessible d'une pastille : la nature, qui agit sur qui (rôles et
+     titres des étoiles), l'état et l'issue, et ce que l'appui ouvre. `names`
+     fournit les mots (`kind`, `verb`, `state`, `outcome`) ; sans eux, les
+     valeurs brutes. */
+  function relationMarkLabel(mark,nodesById,names){
+    const words=names||{};
+    const say=(fn,value)=>(typeof fn==='function'&&fn(value))||value||'';
+    const who=id=>{
+      const node=nodesById.get(id);
+      if(!node)return 'agent';
+      return [node.role?node.role.name:'',node.title?`« ${node.title} »`:''].filter(Boolean).join(' ')||'agent';
+    };
+    const verb=say(words.verb,mark.kind);
+    const between=mark.directed?`${who(mark.from)} ${verb} ${who(mark.to)}`
+      :mark.members.length===2?`${who(mark.members[0])} ${verb} ${who(mark.members[1])}`
+        :`entre ${mark.members.map(who).join(', ')}`;
+    const status=[say(words.state,mark.state),mark.outcome?say(words.outcome,mark.outcome):''].filter(Boolean).join(', ');
+    const open=mark.kind==='communication'?'ouvrir le tableau des messages':'ouvrir le détail et les messages';
+    return [`${say(words.kind,mark.kind)} : ${between}`,status,open].filter(Boolean).join(' · ');
+  }
+
   /* Ce que la page dessine pour `state` dans la fenêtre `vp`. Rend
      `{nodes, edges, capacity, offscreen, hidden, ephemeralHidden}` ; `nodes`
      dans l'ordre de Core, sans objet caché.
@@ -1754,6 +1984,7 @@
       const artifact=item.kind==='artifact';
       const count=Array.isArray(payload.items)?Math.min(payload.items.length,32):0;
       const prefab=prefabOf(item);
+      const role=roleOf(item,options&&options.roleIdentity,options&&options.missionInfo);
       const node={
         id:item.object_id,kind:item.kind,representation,shape,compact:shape!==representation,
         category:cleanLine(item.category,32),tone:toneOf(item.category),
@@ -1774,12 +2005,16 @@
         itemCount:count,
         explains:artifact?explainedTarget(state,item.object_id,errorLabels,explains):null,
         prefab,prefabKey:prefab?`${prefab.id}@${prefab.version}`:'',
-        ghost,
+        ghost,role,
       };
       node.label=artifact
         ?[node.title,KIND_LABELS.artifact,node.category,count?`${count} ${count>1?'entrées':'entrée'}`:'',
           node.explains?`explique « ${node.explains.title} »`:'',node.pinned?'épinglé':'',ghost?'masqué':''].filter(Boolean).join(' · ')
-        :[node.title,KIND_LABELS[item.kind]||item.kind,node.type&&node.type.kind!=='other'?node.type.label:'',node.execLabel,node.ephemeral?'éphémère':'',signal&&!node.live?'retiré':'',node.pinned?'épinglé':'',ghost?'masqué':''].filter(Boolean).join(' · ');
+        :[node.title,KIND_LABELS[item.kind]||item.kind,
+          /* Slice 09 : le rôle (nom), la responsabilité de mission, son origine et son état inconnu. */
+          role?`rôle ${role.name}`:'',role&&role.owner?'responsable de la mission':'',role&&role.origin?`origine ${role.origin}`:'',
+          role&&role.liveUnknown?'mission : état inconnu':'',
+          node.type&&node.type.kind!=='other'?node.type.label:'',node.execLabel,node.ephemeral?'éphémère':'',signal&&!node.live?'retiré':'',node.pinned?'épinglé':'',ghost?'masqué':''].filter(Boolean).join(' · ');
       /* Un fantôme ne fait que se montrer : ni fil, ni constellation, ni
          signal porté, ni compte « hors champ ». */
       if(ghost){node.live=false;node.urgency='none';nodes.push(node);continue}
@@ -1835,7 +2070,14 @@
       if(!a||!b)continue;
       const mine=groupOf.get(a.id),same=!!mine&&rel.kind==='parent_of'&&groupOf.get(b.id)&&groupOf.get(b.id).root===mine.root;
       const signalEdge=rel.kind==='explains'&&rel.relation_id===rel.from_id;
+      /* Slice 09 : une relation d'agent porte son `ref` (Slice 08) ; ses fils sont regroupés par
+         `ref.relation_id`, jamais par leur identifiant ni par un libellé. */
+      const ref=isAgentRelation(rel.kind)&&rel.ref&&typeof rel.ref==='object'?rel.ref:null;
       edges.push({id:rel.relation_id,kind:rel.kind,layer:Number(rel.layer)||0,
+        relationId:ref&&typeof ref.relation_id==='string'?ref.relation_id.slice(0,128):'',
+        missionId:ref&&typeof ref.mission_id==='string'?ref.mission_id.slice(0,128):'',
+        state:ref&&ref.state==='closed'?'closed':ref?'open':'',outcome:ref&&typeof ref.outcome==='string'?cleanLine(ref.outcome,32):'',
+        lane:0,
         signal:signalEdge,artifact:!signalEdge&&rel.kind==='explains'&&a.kind==='artifact',tone:a.tone,group:same?mine.color:'',
         /* Extrémités nommées : la page y noue le fil pendant un geste, et les
            retrouve pour lire l'ancre vivante des deux nœuds qu'il joint. */
@@ -1851,6 +2093,7 @@
            qu'elle renoue elle-même image par image (un seul). */
         fromTurns:orbitTurns(a),toTurns:orbitTurns(b)});
     }
+    laneEdges(edges);
     edges.sort((p,q)=>p.layer-q.layer);
     const objects=state.objects.size;
     return {nodes,edges,hidden,ephemeralHidden,offscreen,coveredSignals,capacity:{objects,limit,saturated:objects>=limit}};
@@ -2043,7 +2286,7 @@
     ORBIT_AXES,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX,ORBIT_RATE_MIN,ORBIT_RATE_MAX,QUANTUM,orbitFits,orbitReach,orbitInset,orbitTurnsRepresentation,
     orbitHolds,orbitRest,orbitDrawnPoint,orbitPlacesOf,orbitLinks,nodeGeometry,holdStart,holdPlace,
     viewport,toScreen,cleanLine,cleanText,markdownSpans,markdownText,markdownBlocks,markdownLines,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
-    stackOf,windowStack,WINDOW_FLOOR,viewModel,taskGroups,taskColor,taskSentence,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
+    stackOf,windowStack,WINDOW_FLOOR,viewModel,AGENT_RELATION_KINDS,RELATION_LANE_PX,roleOf,laneEdges,relationMarks,relationMarkPoint,relationMarkLabel,taskGroups,taskColor,taskSentence,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

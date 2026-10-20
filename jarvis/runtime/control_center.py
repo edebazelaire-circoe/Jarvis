@@ -782,6 +782,18 @@ MEMORY_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MEMORY_SETTINGS_JS__*/"
 #: Onglet Réglages « Sous-agents » (jarvis-organic-agent-orchestration, Slice 10) : lit `GET /api/subagent-roles` et
 #: `GET /api/agent/tasks`, n'écrit que par `POST /api/prompts/subagent_role.<id>`. Contrat : `docs/subagent-roles.md` § 8.
 SUBAGENTS_SETTINGS_SCRIPT_FILE = "control_center_subagents_settings.js"
+#: Identité des rôles et grammaire des relations d'agent, partagées par Réglages > Sous-agents et le graphe des tâches
+#: (jarvis-organic-agent-orchestration, Slice 09) : `window.JarvisRoleIdentity`, lecture seule de `GET /api/subagent-roles`.
+ROLE_IDENTITY_SCRIPT_FILE = "control_center_role_identity.js"
+ROLE_IDENTITY_SCRIPT_MARKER = "/*__CONTROL_CENTER_ROLE_IDENTITY_JS__*/"
+#: Tableau d'une relation d'agent ouvert depuis le graphe (Slice 09) : lit `GET /api/missions/relations/{id}` et
+#: `GET /api/missions/{id}`, n'écrit rien. Contrat : `docs/scene-model.md` › *Interface: roles and relations*.
+RELATION_BOARD_SCRIPT_FILE = "control_center_relation_board.js"
+RELATION_BOARD_SCRIPT_MARKER = "/*__CONTROL_CENTER_RELATION_BOARD_JS__*/"
+#: Rôles et relations d'agent dans la scène (Slice 09) : pastilles de rôle, grammaire des fils, pastilles de
+#: relation, missions lues (`window.JarvisSceneRoles`). Lu par le bloc navigateur de la scène : inséré avant lui.
+SCENE_ROLES_SCRIPT_FILE = "control_center_scene_roles.js"
+SCENE_ROLES_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_ROLES_JS__*/"
 SUBAGENTS_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_SUBAGENTS_SETTINGS_JS__*/"
 MEMORY_SCRIPT_FILE = "control_center_memory.js"
 MEMORY_SCRIPT_MARKER = "/*__CONTROL_CENTER_MEMORY_JS__*/"
@@ -2592,7 +2604,10 @@ class ControlCenter:
         html = html.replace(
             PREFABS_SCRIPT_MARKER, page.with_name(PREFABS_SCRIPT_FILE).read_text(encoding="utf-8")
         )
-        for marker, name in ((MEMORY_SETTINGS_SCRIPT_MARKER, MEMORY_SETTINGS_SCRIPT_FILE),
+        for marker, name in ((ROLE_IDENTITY_SCRIPT_MARKER, ROLE_IDENTITY_SCRIPT_FILE),
+                             (RELATION_BOARD_SCRIPT_MARKER, RELATION_BOARD_SCRIPT_FILE),
+                             (SCENE_ROLES_SCRIPT_MARKER, SCENE_ROLES_SCRIPT_FILE),
+                             (MEMORY_SETTINGS_SCRIPT_MARKER, MEMORY_SETTINGS_SCRIPT_FILE),
                              (SUBAGENTS_SETTINGS_SCRIPT_MARKER, SUBAGENTS_SETTINGS_SCRIPT_FILE),
                              (MEMORY_SCRIPT_MARKER, MEMORY_SCRIPT_FILE),
                              (CHAT_MODEL_SCRIPT_MARKER, CHAT_MODEL_SCRIPT_FILE),

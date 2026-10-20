@@ -39,23 +39,12 @@
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const TOKEN=/^[a-z][a-z0-9-]{0,31}$/;
 
-  /* Pictogrammes dessinés (trait 1,7, grille 24) pour les jetons `visual.icon` du registre. Un jeton inconnu
+  /* Pictogrammes dessinés des jetons `visual.icon` : la table partagée avec le graphe des tâches
+     (`control_center_role_identity.js`, `window.JarvisRoleIdentity`, Slice 09), jamais une copie. Un jeton inconnu
      prend la silhouette générique : le badge reste lisible à côté. */
-  const ICONS={
-    question:'<circle cx="12" cy="12" r="9.5"/><path d="M9.2 9.2a2.9 2.9 0 0 1 5.6 1c0 1.9-2.8 2.6-2.8 4.3"/><path d="M12 17.6h.01"/>',
-    book:'<path d="M5 19.2A2.2 2.2 0 0 1 7.2 17H19"/><path d="M7.2 3H19v18H7.2A2.2 2.2 0 0 1 5 18.8V5.2A2.2 2.2 0 0 1 7.2 3z"/>',
-    globe:'<circle cx="12" cy="12" r="9.5"/><path d="M2.5 12h19"/><path d="M12 2.5a14.5 14.5 0 0 1 3.8 9.5 14.5 14.5 0 0 1-3.8 9.5 14.5 14.5 0 0 1-3.8-9.5A14.5 14.5 0 0 1 12 2.5z"/>',
-    code:'<path d="M15.5 17.5 21 12l-5.5-5.5"/><path d="M8.5 6.5 3 12l5.5 5.5"/>',
-    lightbulb:'<path d="M9 18h6"/><path d="M10 21.5h4"/><path d="M15 14.5c.2-1 .7-1.7 1.4-2.4A5.5 5.5 0 1 0 6.5 8c0 1.2.4 2.5 1.6 3.8.7.8 1.2 1.6 1.4 2.7"/>',
-    compass:'<circle cx="12" cy="12" r="9.5"/><path d="m15.8 8.2-2.1 5.5-5.5 2.1 2.1-5.5z"/>',
-    'shield-check':'<path d="M12 21.5s7.5-3.6 7.5-9.4V5.4L12 2.5 4.5 5.4v6.7c0 5.8 7.5 9.4 7.5 9.4z"/><path d="m8.8 12 2.2 2.2 4.2-4.4"/>',
-    agent:'<circle cx="12" cy="8" r="3.8"/><path d="M4.5 20.5v-.8a6 6 0 0 1 6-6h3a6 6 0 0 1 6 6v.8"/>',
-    unknown:'<circle cx="12" cy="12" r="9.5" stroke-dasharray="3 2.4"/><path d="M12 7.6v5.2"/><path d="M12 16.4h.01"/>',
-  };
-  function icon(name){
-    const body=ICONS[name]||ICONS.agent;
-    return `<svg class="sar-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
-  }
+  const Identity=root.JarvisRoleIdentity||(typeof require==='function'?require('./control_center_role_identity.js'):null);
+  const ICONS=Identity.ICONS;
+  const icon=name=>Identity.iconSvg(name,'sar-glyph');
 
   function logError(code,error,context){try{root.console&&root.console.error(code,error,context||{})}catch(_e){/* intentionnel : la console absente (test node sans console) ne doit pas masquer l'erreur déjà affichée */}}
   function logInfo(code,data){try{root.console&&root.console.info(code,data||{})}catch(_e){/* intentionnel : même argument que logError */}}

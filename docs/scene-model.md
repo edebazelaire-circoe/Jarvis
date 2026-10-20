@@ -481,6 +481,83 @@ Events, never a label.
   (info). A full relation table (`relation_limit`) refuses the link (logged by
   `SceneService`); the next pass retries.
 
+### Interface: roles and relations
+
+Organic-agent-orchestration Slice 09. The page **reads** what the projection
+above writes; it adds no state, no route and no write. Modules:
+`control_center_role_identity.js` (`window.JarvisRoleIdentity`: role
+pictograms, relation grammar, labels; shared with Settings › Sous-agents),
+`control_center_scene_roles.js` (`window.JarvisSceneRoles`: role pill, link
+figures, relation marks, mission cache), `control_center_relation_board.js`
+(`window.JarvisRelationBoard`: the relation board), and in
+`control_center_scene_layout.js` the pure `roleOf`, `laneEdges`,
+`relationMarks`, `relationMarkPoint`, `relationMarkLabel`. Tests:
+`tests/unit/test_scene_task_graph_js.py` (node) and
+`tests/unit/test_scene_task_graph_browser.py` (Chrome, served page).
+
+- **Role identity** (D01/D02): an `agent` star with a `role_ref` gets a pill
+  left of the star — the registry's pictogram (`visual.icon`), badge
+  (`visual.badge`) and accent token (`visual.accent` → `var(--role-accent-<token>)`),
+  the star tinted with the same accent. Never colour alone: pictogram, badge
+  and the accessible name (`rôle <name>`) say it too. The registry is read once
+  from `GET /api/subagent-roles` (retried 30 s after a failure, logged
+  `scene.<code>`); an id the registry does not know shows as is (badge from the
+  id, generic dashed pictogram) — nothing is guessed from a title. A
+  `role_id` that is not an id (`[a-z][a-z0-9_-]{0,63}`) is ignored.
+- **Mission Owner** (D03/D04): `role_ref.mission_owner` adds a flag and a
+  stronger pill; the pill also carries the mission's origin (`origin_kind`,
+  in words: code, général, poste de travail, tâche rapide) and the name says
+  « responsable de la mission ». A sub-mission owner gets its own flag.
+  Missions are read with `GET /api/missions/{id}` (one read per tree, every
+  15 s while open, 30 s after a failure, logged once
+  `scene.mission_unreadable`). `live_unknown` shows « état inconnu » on the
+  owner's pill and in the board, never « en cours ».
+- **Relation figures** (D09–D14), each with a distinct stroke, end and mark
+  shape (forced colours keep stroke, end and shape):
+
+  | Kind | Stroke | End | Mark |
+  | --- | --- | --- | --- |
+  | `delegation` | solid | filled arrow at the delegatee | round, hierarchy pictogram |
+  | `qa` | dashes | open chevron at the reviewed | rounded square, magnifier with a tick |
+  | `handoff` | beads (dotted, thick) | double chevron at the successor | pill, double chevron |
+  | `adversary` | double rail (rail + gap), no arrow | none (peers) | double-bordered square, crossed blades |
+  | `communication` | thin solid, no arrow | none (peers) | speech bubble, tinted |
+
+  A closed relation (`ref.state = closed`) is dimmed and its mark dashed; its
+  outcome is in the mark's name. Links of one relation are grouped by
+  `ref.relation_id`; links joining the same two stars (execution `parent_of`
+  plus a delegation, a QA…) get one lane each, 7 px apart.
+- **Relation marks**: one real `<button>` per relation drawn, on its link (two
+  participants) or at the participants' centroid (more), spread so that two
+  marks never sit on each other (24 px between centres) and stepping off stars
+  and role pills. One tab stop for all marks (arrows, Home, End move between
+  them, reading order); Enter or a click opens the board; `aria-expanded` says
+  which one is open. 18 px marks (still 24 px apart, WCAG 2.5.8) above 24
+  relations or under 900 px of width (200 % zoom). Marks turn with the field
+  like stars; one with a fixed end is re-placed frame by frame with the mixed
+  links; during a drag the marks of the held stars hide until the drop.
+  Hidden links (`sc-no-links`) hide the marks too.
+- **Relation board** (`#relationBoard`, class `.panel`, right zone — see
+  [control-center-shell.md](control-center-shell.md)): kind, purpose, state and
+  outcome, retained winner and summary, mission (objective, origin, status or
+  « état inconnu »), participants with role, position and live Work State
+  status (« hors du suivi vivant » when Work State no longer has it), the
+  handoff packet, and the thread of **deliberate messages** (`seq` order,
+  type, author with role, time) from `GET /api/missions/relations/{id}?after=&limit=200`
+  — nothing else, never private reasoning (D13; Core refuses it at write).
+  States: loading with a live counter and a 15 s deadline, error with the
+  server's words, its code, advice and « Réessayer » (`console.error('<code>')`),
+  empty thread, refresh every 5 s while the relation (or its mission) is open
+  and the page visible (a failed refresh keeps the thread and says so; new
+  messages are announced politely). Keyboard: the title takes focus, arrows /
+  Home / End move between messages, Escape closes and returns focus to the
+  mark. One side panel at a time (opening it closes `#panel`, the chat and the
+  Studio inspector; `closePanel()` closes it). All received text enters by
+  `textContent`; the only markup is the constant pictograms.
+- **Nothing planned** (D15): a link exists only between two drawn stars and a
+  mark only for a drawn link, so a relation whose participant has no star has
+  neither; the board shows the relation as Core holds it.
+
 ### Ephemeral work (D08)
 
 A work item that is **still ephemeral** (`WorkItem.ephemeral`: pending, running

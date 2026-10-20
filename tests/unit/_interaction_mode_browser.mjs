@@ -36,7 +36,9 @@
      {"a":"read"}
      {"a":"shot","path":"...png"}
    Une etape peut aussi porter `setup`, une expression evaluee apres la mise a
-   la taille et avant les montages. */
+   la taille et avant les montages, et `scale` (deviceScaleFactor : 720x450 a
+   l'echelle 2 = une fenetre 1440x900 zoomee a 200 %, organic-agent-orchestration
+   Slice 09). */
 import {spawn} from 'node:child_process';
 import {mkdtempSync, rmSync, writeFileSync, renameSync, unlinkSync, readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -224,11 +226,11 @@ try{
       ...(step.reducedMotion?[{name:'prefers-reduced-motion',value:'reduce'}]:[]),
       ...(step.forcedColors?[{name:'forced-colors',value:'active'}]:[])]});
     await send('Emulation.setDeviceMetricsOverride',
-      {width:step.width,height:step.height,deviceScaleFactor:1,mobile:false});
+      {width:step.width,height:step.height,deviceScaleFactor:step.scale||1,mobile:false});
     await send('Page.navigate',{url:REMOTE?PAGE:'file:///'+PAGE.replace(/\\/g,'/')});
     await sleep(900);
     await send('Emulation.setDeviceMetricsOverride',
-      {width:step.width,height:step.height,deviceScaleFactor:1,mobile:false});
+      {width:step.width,height:step.height,deviceScaleFactor:step.scale||1,mobile:false});
     await sleep(250);
     /* `wheelHidden` (orbital-ui Slice 04) : la roue d'outils cachée, c'est-à-dire
        le retour arrière où la colonne Bare Hands revient à sa place. */

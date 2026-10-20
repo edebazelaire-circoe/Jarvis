@@ -98,8 +98,11 @@ def test_accents_are_tokens_mapped_once_to_theme_variables():
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", source), "aucune couleur dans le module : des jetons seulement"
     for token in subagent_roles.ROLE_ACCENTS:
         assert f"--role-accent-{token}:" in page, token
+    # Pictogrammes : la table partagée avec le graphe des tâches (Slice 09), jamais une copie dans l'onglet.
+    shared = (MODULE.parent / "control_center_role_identity.js").read_text(encoding="utf-8")
+    assert not re.search(r"#[0-9a-fA-F]{3,8}", shared), "aucune couleur dans la table partagée"
     for role in subagent_roles.ROLES:
-        assert role.visual.icon in source, role.visual.icon
+        assert f"{role.visual.icon}:" in shared or f"'{role.visual.icon}':" in shared, role.visual.icon
 
 
 def test_save_posts_the_canonical_prompt_edit_with_both_revisions(tmp_path):

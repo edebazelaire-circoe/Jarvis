@@ -63,7 +63,7 @@ wheel/dossier refactor), so neither skin styles it.
 | `bottom-left` | Board card `#boardsHud` (its panel `#boardsPanel` opens above it, see [Board card](#board-card-boardshud)), `.sc-status` notes of the scene | `control_center_boards.js`, scene |
 | `bottom-centre` | status centre `#statusCentre` (Slice 06): `#bgPills` (the recording indicators moved top-left in the wheel/dossier refactor Slice 04), see [Status centre](#status-centre-statuscentre); `#boardDropTray` above it | page, `control_center_board_drop.js` |
 | `bottom-right` | `#chatTab` | `control_center_chat.js` |
-| `right` | active workspace rail `#presentationRail` (Slice 07, see [Workspace rail](#workspace-rail-presentationrail)); side panels (`#panel`, `#chatPanel`, `#jvStudioInspector`) open over it | `control_center_presentation_rail.js`, page, modules |
+| `right` | active workspace rail `#presentationRail` (Slice 07, see [Workspace rail](#workspace-rail-presentationrail)); side panels (`#panel`, `#chatPanel`, `#jvStudioInspector`, and the relation board `#relationBoard` of organic-agent-orchestration Slice 09, class `.panel`, opened from a relation mark of the scene) open over it | `control_center_presentation_rail.js`, page, modules, `control_center_relation_board.js` |
 | `centre` | Board / scene (`#sceneLayer`) | scene |
 
 `JarvisShell.ZONES` mirrors this table (one line per zone).
@@ -85,8 +85,9 @@ Placement rules that hold in both themes (measured by
 - **Launcher** (`top-right`): one row of four 34 px buttons at
   `--shell-gutter`, at every width (Slice 08; four since the wheel/dossier
   refactor Slice 04); its popover opens under the row, right-aligned.
-- **Side panels** (`right`): `#panel`, `#chatPanel` and the Studio inspector
-  `#jvStudioInspector` share the zone: top `--shell-panel-top` (under the
+- **Side panels** (`right`): `#panel`, `#chatPanel`, the Studio inspector
+  `#jvStudioInspector` and the relation board `#relationBoard` (one open at a
+  time: opening one closes the others, `closePanel()` closes them all) share the zone: top `--shell-panel-top` (under the
   launcher and the pills), bottom `--shell-panel-bottom` (above the chat tab),
   right `--shell-gutter`, full width minus the gutters at 700 px and below.
   Toasts move left of an open panel from 940 px up.

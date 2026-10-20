@@ -563,6 +563,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCor
      ordinaire (titre, résumé de repli). Le seul chemin HTML (document du cadre) vit
      dans `control_center_prefab_host.js` ; cette page n'en a aucun. */
   const PrefabHostApi=window.JarvisPrefabHost||null;
+  /* Rôles et relations d'agent (jarvis-organic-agent-orchestration, Slice 09) : pastilles de rôle, grammaire des
+     fils, pastilles de relation (`control_center_scene_roles.js`), identités du registre des rôles
+     (`control_center_role_identity.js`). Absents : les étoiles et les fils de toujours, sans pastille. */
+  const Roles=window.JarvisSceneRoles||null;
+  const RoleIdentity=window.JarvisRoleIdentity||null;
   const SVG_NS='http://www.w3.org/2000/svg';
   /* Un verrou par profil : le meneur tient le long-poll et valide les
      placements. Un seul verrou pour les deux : la validation exige l'état le
@@ -736,6 +741,10 @@ ${orbitKeyframes()}
 .scene.sc-no-halo .sc-mark::after{display:none}
 .scene.sc-still-halo .sc-mark::after{animation:none}
 .scene.sc-no-links .sc-links{display:none}
+/* Pastilles des relations d'agent (Slice 09) : un calque à elles, sous les fenêtres et l'étiquette survolée,
+   au-dessus des étoiles et des fils. Fils masqués : pastilles masquées. */
+.sc-relmarks{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:${L.WINDOW_FLOOR-2}}
+.scene.sc-no-links .sc-relmarks{display:none}
 .sc-point{width:${POINT_HIT}px;height:${POINT_HIT}px;border-radius:50%}
 .sc-point:hover,.sc-point:focus-visible{z-index:${L.WINDOW_FLOOR-1}!important}
 /* Étoile : point lumineux plutôt que pastille plate — cœur blanc chaud, couleur
@@ -1081,6 +1090,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      `mixedLines` : ceux dont un seul bout tourne, renoués à chaque image
      (`turnEdges`) ; `turning` porte leur boucle. */
   let edgeLines=[],follow=null,mixedLines=[],turning=0;
+  /* Pastilles des relations (Slice 09) : `relation_id` → {el, content, place, mark} ; celles dont un bout tourne
+     et l'autre non sont reposées image par image avec les fils mixtes. */
+  let marksEl=null,markTabId=null,mixedMarks=[],markOrder=[];
+  const marks=new Map();
   /* Le champ tourne-t-il vraiment ? (gravitation allumée, champ calculé, scène
      pas trop peuplée) : la boucle des fils mixtes ne s'allume que pour cela. */
   let fieldMoving=false;
@@ -1136,6 +1149,16 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     }
     return response.body;
   }
+
+  /* Registre des rôles (`GET /api/subagent-roles`, lu une fois à la première étoile qui porte un rôle) et missions
+     des étoiles dessinées (`GET /api/missions/{id}` : origine, `live_unknown`), Slice 09. Lecture seule ; une
+     réponse qui change ce qui est affiché redemande un rendu. */
+  const sceneRerender=()=>{if(enabled&&root)scheduleRender()};
+  const roleRegistry=RoleIdentity?RoleIdentity.createRoleRegistry({fetchJson:path=>getJson(path),
+    log:(level,code,data)=>consoleLog(level,`scene.${code}`,data),onChange:sceneRerender}):null;
+  const missionCache=Roles?Roles.createMissionCache({fetchJson:path=>getJson(path),log:consoleLog,onChange:sceneRerender}):null;
+  const roleIdentityOf=id=>{if(roleRegistry.phase()!=='ready')roleRegistry.load();return roleRegistry.identity(id)};
+  const accentOf=token=>roleRegistry?roleRegistry.accentOf(token):'slate';
 
   const timers={setTimeout:(fn,ms)=>window.setTimeout(fn,ms),clearTimeout:id=>window.clearTimeout(id)};
   /* Seul le meneur du verrou Web Locks, visible, scène allumée, répond (décision PM).
@@ -1412,7 +1435,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function ensureRoot(){
     if(!document.getElementById('jarvisSceneStyle')){
       const style=document.createElement('style');
-      style.id='jarvisSceneStyle';style.textContent=STYLE;
+      style.id='jarvisSceneStyle';style.textContent=STYLE+(Roles?Roles.STYLE:'');
       document.head.appendChild(style);
     }
     if(root)return;
@@ -1439,6 +1462,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     fixedEl=document.createElementNS(SVG_NS,'g');
     fixedEl.setAttribute('class','sc-fixed');
     linksEl.append(fieldEl,fixedEl);
+    if(Roles)linksEl.prepend(Roles.markerDefs(document));
+    /* Pastilles des relations (Slice 09) : de vrais boutons, un seul arrêt de tabulation (flèches entre elles). */
+    marksEl=document.createElement('div');
+    marksEl.className='sc-relmarks';marksEl.setAttribute('role','group');
+    marksEl.setAttribute('aria-label','Relations entre agents. Flèches pour parcourir, Entrée pour ouvrir le tableau d’une relation.');
+    marksEl.addEventListener('click',onMarkClick);
+    marksEl.addEventListener('keydown',onMarkKeyDown);
     statusEl=document.createElement('div');
     statusEl.className='sc-status';statusEl.hidden=true;
     if(typeof ResizeObserver==='function'){statusResize=new ResizeObserver(publishStatusHeight);statusResize.observe(statusEl)}
@@ -1450,7 +1480,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        (archivé, masqué, arrêt demandé), jamais écrasée par l'état de lecture. */
     actionLiveEl=document.createElement('div');
     actionLiveEl.className='sc-sr sc-sr-actions';actionLiveEl.setAttribute('role','status');actionLiveEl.setAttribute('aria-live','polite');
-    root.append(linksEl,statusEl,liveEl,actionLiveEl);
+    root.append(linksEl,marksEl,statusEl,liveEl,actionLiveEl);
     /* Réglages d'affichage : lus avant le premier dessin. Ils se règlent dans
        Réglages → Apparence, pas ici ; la scène ne fait que les appliquer. */
     if(V){viewPrefs=loadViewPrefs();applyViewPrefs()}
@@ -1503,7 +1533,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function teardown(){
     if(raf){cancelAnimationFrame(raf);raf=0}
     if(readyTimer){cancelAnimationFrame(readyTimer);readyTimer=0}
-    stopFollow();edgeLines=[];mixedLines=[];fieldMoving=false;settling.clear();if(desk)desk.clear();fieldFrozen=null;resyncPending=false;fieldClockKey='';
+    stopFollow();edgeLines=[];mixedLines=[];mixedMarks=[];marks.clear();markTabId=null;if(missionCache)missionCache.stop();fieldMoving=false;settling.clear();if(desk)desk.clear();fieldFrozen=null;resyncPending=false;fieldClockKey='';
     stopStatusTicker();
     if(root)root.remove();
     const style=document.getElementById('jarvisSceneStyle');
@@ -1515,7 +1545,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(statusResize){statusResize.disconnect();statusResize=null}
     document.documentElement.style.removeProperty('--sc-status-h');
     if(prefabHost){prefabHost.destroy();prefabHost=null}
-    root=null;linksEl=null;fieldEl=null;fixedEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
+    root=null;linksEl=null;fieldEl=null;fixedEl=null;marksEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
     /* La section des réglages vit dans le modal : elle survit à la scène. */
     lastView=null;lastState=null;layout=null;layoutState=null;lastModel=null;
     viewMemo={state:null,version:-1,value:null};serverMemo={state:null,value:null};gesture=null;
@@ -1720,7 +1750,11 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     /* Le contenu seulement : les classes d'état (tenu, lâché, orbite,
        sélection…) restent — `L.nodeClassName`. */
     if(node.prefab&&node.shape==='window')classes.push('sc-prefab-window');
+    /* Slice 09 : un rôle teinte l'étoile de son accent — toujours doublé de la pastille (icône + badge). */
+    const role=Roles&&node.role?node.role:null;
+    if(role)classes.push('sc-has-role');
     el.className=L.nodeClassName(classes,el.classList);
+    if(role)el.style.setProperty('--sc-role',`var(--role-accent-${accentOf(role.accent)})`);else el.style.removeProperty('--sc-role');
     el.setAttribute('aria-label',node.label);
     /* Fenêtre prefab : son conteneur de cadre n'est JAMAIS détaché (un iframe
        retiré du document recharge son document) ; tout le reste se refait
@@ -1737,17 +1771,21 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
          rattache) ; la couleur de la tâche est posée sur l'élément, avec celle de
          ses étoiles. */
       if(node.task)parts.push(taskPill(node.task));
-      if(node.type)parts.push(typeIcon(node.type));
+      /* Le rôle (Slice 09) remplace l'icône du profil : il est plus précis, et le profil reste dans le nom. */
+      if(role)parts.push(Roles.rolePill(document,role,accentOf));
+      else if(node.type)parts.push(typeIcon(node.type));
       const hue=node.task?node.task.color:node.group;
       if(hue)el.style.setProperty('--sc-group',hue);else el.style.removeProperty('--sc-group');
       const label=element('span','sc-label');
       label.append(appendSpans(element('strong'),node.titleSpans,false));
-      const detail=[node.signal?'signal':'',node.execLabel,node.signal&&!node.live?'retiré':'',node.pinned?'épinglé':''].filter(Boolean).join(' · ');
+      const detail=[node.signal?'signal':'',role?role.name:'',role&&role.owner?'responsable':'',role&&role.liveUnknown?'mission : état inconnu':'',
+        node.execLabel,node.signal&&!node.live?'retiré':'',node.pinned?'épinglé':''].filter(Boolean).join(' · ');
       if(detail)label.append(element('span','',detail));
       parts.push(label);
     }else if(node.shape==='capsule'){
       const dot=element('span','sc-dot');dot.appendChild(element('span','sc-ring'));
       parts.push(dot);
+      if(role)parts.push(Roles.rolePill(document,role,accentOf));
       /* Artefact : sa catégorie (sa couleur) avant son titre. */
       if(node.kind==='artifact'&&node.category)parts.push(element('span','sc-ccat',node.category));
       parts.push(appendSpans(element('span','sc-title'),node.titleSpans,false));
@@ -2114,6 +2152,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         if(anim.animationName==='sc-orbit-field')anim.currentTime=now;
     }catch(_error){/* animation sans horloge (calque masqué, page cachée) : la passe suivante réessaie. */}
     for(const record of nodes.values())syncOrbit(record.el);
+    for(const record of marks.values())syncOrbit(record.el);
   }
 
   /* **Garde de dérive** : l'horloge du document — celle des animations — peut
@@ -2164,7 +2203,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
          est un message au cadre (`syncPrefab`), jamais un nouveau dessin. */
       const content=JSON.stringify([node.shape,node.kind,node.tone,node.exec,node.urgency,node.pinned,node.titleSpans,
         node.category,node.summary,node.items,node.label,node.prefabKey,node.itemCount,node.explains,node.alerted,node.ephemeral,node.task,node.group,node.type,node.ghost,
-        node.registry?registryStamp(node.registry):'']);
+        node.registry?registryStamp(node.registry):'',node.role]);
       if(content!==record.content){
         const inside=record.el.contains(document.activeElement);
         fill(record.el,node);record.content=content;record.anim=null;
@@ -4106,6 +4145,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      mauvais repère serait emportée par la rotation du champ, ou privée d'elle. */
   function followEdges(){
     if(!follow||!root||!fieldEl||!fixedEl)return;
+    /* Pastilles d'une relation dont une étoile est tenue : effacées le temps du geste (le rendu qui suit le
+       lâcher les repose sur leurs fils). */
+    for(const record of marks.values())
+      if(record.mark&&record.mark.members.some(id=>follow.ids.has(id)))record.el.classList.add('sc-relmark-following');
     const turnCtm=fieldEl.getScreenCTM(),fixedCtm=fixedEl.getScreenCTM();
     if(!turnCtm||!fixedCtm)return;
     const matrices=new Map([[fieldEl,turnCtm.inverse()],[fixedEl,fixedCtm.inverse()]]);
@@ -4138,6 +4181,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function turnEdges(){
     if(!mixedLines.length)return;
     const turn=fieldTurn();
+    turnMarks(turn);
     for(const {edge,line} of mixedLines){
       if(edge.fromTurns){
         const p=L.orbitTurnPoint({x:edge.x1,y:edge.y1},lastField,turn);
@@ -4185,38 +4229,168 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     }
     follow=null;
     edgesSig='';
+    for(const record of marks.values())record.el.classList.remove('sc-relmark-following');
   }
 
   /* Les fils sont posés à la place de référence de leurs deux bouts, puis
      rangés dans le calque qui sait les porter (voir `turnEdges`). */
   function applyEdges(edges,vp){
-    const sig=`${vp.width}x${vp.height}|`+edges.map(e=>`${e.id},${e.kind},${e.signal},${e.artifact},${e.tone},${e.group},${e.x1},${e.y1},${e.x2},${e.y2},${e.fromTurns?1:0}${e.toTurns?1:0}`).join(';');
+    const sig=`${vp.width}x${vp.height}|`+edges.map(e=>`${e.id},${e.kind},${e.state},${e.signal},${e.artifact},${e.tone},${e.group},${e.x1},${e.y1},${e.x2},${e.y2},${e.fromTurns?1:0}${e.toTurns?1:0}`).join(';');
     if(sig===edgesSig){ensureEdgeFrame();return}
     edgesSig=sig;
     linksEl.setAttribute('viewBox',`0 0 ${vp.width} ${vp.height}`);
-    const turnGroup=[],fixedGroup=[],mixed=[];
-    const lines=edges.map(edge=>{
-      const line=document.createElementNS(SVG_NS,'line');
-      line.setAttribute('x1',edge.x1);line.setAttribute('y1',edge.y1);line.setAttribute('x2',edge.x2);line.setAttribute('y2',edge.y2);
-      if(edge.group){line.style.setProperty('--sc-group',edge.group);}
-      line.setAttribute('class',`sc-link sc-link-${edge.kind}`+(edge.group?' sc-link-task':'')+(edge.signal?` sc-link-signal sc-tone-${edge.tone}`:'')
-        +(edge.artifact?` sc-link-artifact sc-tone-${edge.tone}`:''));
-      if(edge.fromTurns&&edge.toTurns)turnGroup.push(line);
-      else{
-        fixedGroup.push(line);
-        if(edge.fromTurns||edge.toTurns)mixed.push({edge,line});
+    const turnGroup=[],fixedGroup=[],mixed=[],drawn=[];
+    for(const edge of edges){
+      /* Slice 09 : une relation d'agent a sa figure (`JarvisSceneRoles`) ; la confrontation, deux éléments (le
+         rail et son creux) qui suivent les mêmes bouts. */
+      for(const part of Roles?Roles.linkParts(edge):[null]){
+        const line=document.createElementNS(SVG_NS,'line');
+        line.setAttribute('x1',edge.x1);line.setAttribute('y1',edge.y1);line.setAttribute('x2',edge.x2);line.setAttribute('y2',edge.y2);
+        if(edge.group){line.style.setProperty('--sc-group',edge.group);}
+        line.setAttribute('class',`sc-link ${part||`sc-link-${edge.kind}`}`+(edge.group?' sc-link-task':'')+(edge.signal?` sc-link-signal sc-tone-${edge.tone}`:'')
+          +(edge.artifact?` sc-link-artifact sc-tone-${edge.tone}`:'')+(Roles?Roles.relationClass(edge):''));
+        if(edge.fromTurns&&edge.toTurns)turnGroup.push(line);
+        else{
+          fixedGroup.push(line);
+          if(edge.fromTurns||edge.toTurns)mixed.push({edge,line});
+        }
+        drawn.push({edge,line});
       }
-      return line;
-    });
+    }
     fieldEl.replaceChildren(...turnGroup);
     fixedEl.replaceChildren(...fixedGroup);
-    edgeLines=edges.map((edge,i)=>({edge,line:lines[i]}));
+    edgeLines=drawn;
     mixedLines=mixed;
     /* Les bouts mobiles sont posés tout de suite, sans une image de retard —
        et de même, pendant un geste, ceux du nœud tenu. */
     turnEdges();
     if(follow)followEdges();
     ensureEdgeFrame();
+  }
+
+  /* **Pastilles des relations d'agent** (Slice 09). Une par relation dessinée (`JarvisSceneLayout.relationMarks`),
+     un bouton gardé d'un rendu à l'autre (le focus et `aria-expanded` survivent), reposé seulement si sa place
+     change. Elle tourne avec le champ comme une étoile posée en son point quand tous ses bouts tournent (le tour
+     est une application affine : le milieu des places tourné est le milieu des places tournées) ; un bout fixe
+     et un bout qui tourne : reposée image par image (`turnMarks`) ; aucun bout qui tourne : immobile. */
+  function applyMarks(list,field){
+    if(!marksEl||!Roles)return;
+    const byId=new Map((lastModel?lastModel.nodes:[]).map(node=>[node.id,node]));
+    const words=Roles.markWords(kind=>roleRegistry?roleRegistry.relationLabel(kind):'');
+    const Board=window.JarvisRelationBoard||null;
+    const openId=Board?Board.openRelationId():'';
+    const shape=field?`${field.cx}|${field.cy}|${field.scale}|${field.ms}`:'';
+    const seen=new Set();
+    mixedMarks=[];
+    /* Ordre de lecture (haut en bas, gauche à droite) : celui des flèches et du DOM. */
+    const ordered=[...list].sort((p,q)=>p.y-q.y||p.x-q.x);
+    for(const mark of ordered){
+      seen.add(mark.id);
+      let record=marks.get(mark.id);
+      if(!record){
+        const button=document.createElement('button');
+        button.tabIndex=-1;
+        record={el:button,content:'',place:'',mark:null};
+        marks.set(mark.id,record);
+      }
+      /* Posée une fois : déplacer un bouton dans le DOM lui ôterait le focus. L'ordre des flèches est `markOrder`. */
+      if(!record.el.parentNode)marksEl.appendChild(record.el);
+      const label=L.relationMarkLabel(mark,byId,words);
+      const content=`${mark.kind}|${mark.state}|${mark.outcome}|${mark.missionId}|${label}`;
+      if(content!==record.content){Roles.fillMark(document,record.el,mark,label);record.content=content}
+      record.el.setAttribute('aria-expanded',openId&&openId===mark.id?'true':'false');
+      record.mark=mark;
+      const place=`${mark.x}|${mark.y}|${mark.turns}|${mark.mixed}|${shape}`;
+      if(place!==record.place){positionMark(record,mark,field);record.place=place}
+      if(mark.mixed)mixedMarks.push(record);
+    }
+    for(const [id,record] of marks){
+      if(seen.has(id))continue;
+      const focused=record.el===document.activeElement;
+      record.el.remove();marks.delete(id);
+      if(focused&&root)root.focus({preventScroll:true});
+    }
+    markOrder=ordered.map(mark=>mark.id);
+    if(!marks.has(markTabId))markTabId=ordered.length?ordered[0].id:null;
+    for(const [id,record] of marks)record.el.tabIndex=id===markTabId?0:-1;
+    if(mixedMarks.length&&lastField)turnMarks(fieldTurn());
+  }
+
+  /* Les pastilles de ce rendu : compactes (18 px) dans un graphe dense ou une fenêtre étroite (200 % de zoom
+     compris), et écartées des étoiles et de leurs pastilles de rôle, qu'elles couvriraient sinon. */
+  const MARK_SIZE=24,MARK_SIZE_COMPACT=18,MARK_COMPACT_FROM=24,MARK_COMPACT_BELOW_PX=900;
+  function relationMarksFor(edges,vp){
+    if(!Roles||!marksEl)return [];
+    const relations=new Set(edges.filter(edge=>edge.relationId).map(edge=>edge.relationId)).size;
+    const compact=relations>MARK_COMPACT_FROM||vp.width<MARK_COMPACT_BELOW_PX;
+    marksEl.classList.toggle('sc-relmarks-compact',compact);
+    const obstacles=[];
+    for(const node of lastModel?lastModel.nodes:[]){
+      if(node.ghost||node.shape!=='point')continue;
+      obstacles.push({left:node.cx-9,top:node.cy-9,width:18,height:18});
+      if(node.role)obstacles.push(Roles.rolePillBox(node));
+    }
+    return L.relationMarks(edges,{size:compact?MARK_SIZE_COMPACT:MARK_SIZE,obstacles});
+  }
+
+  function positionMark(record,mark,field){
+    record.el.style.transform=`translate(${mark.x}px,${mark.y}px)`;
+    const point={id:mark.id,cx:mark.x,cy:mark.y,shape:'point',box:{left:mark.x,top:mark.y,width:0,height:0}};
+    if(mark.turns&&field&&L.orbitTrack(point,field)){applyOrbit(record.el,point,field);return}
+    record.el.classList.remove('sc-orbit');
+    record.el.style.translate='';record.el.style.animationDelay='';
+  }
+
+  /* Un bout fixe, un bout qui tourne : la pastille suit les bouts tournés de cette image. */
+  function turnMarks(turn){
+    for(const record of mixedMarks){
+      const mark=record.mark;
+      const points=mark.points.map(point=>point.turns?L.orbitTurnPoint({x:point.x,y:point.y},lastField,turn):point);
+      const at=L.relationMarkPoint(mark,points);
+      record.el.style.transform=`translate(${at.x}px,${at.y}px)`;
+    }
+  }
+
+  /* Ouvrir le tableau de la relation d'une pastille. Le tableau lit ses routes lui-même ; la scène ne lui passe
+     que la relation, sa mission et les mots des rôles. */
+  function onMarkClick(event){
+    const button=event.target&&event.target.closest?event.target.closest('.sc-relmark'):null;
+    if(!button||!marksEl||!marksEl.contains(button))return;
+    event.preventDefault();
+    markTabId=button.dataset.relationId;
+    for(const [id,record] of marks)record.el.tabIndex=id===markTabId?0:-1;
+    const Board=window.JarvisRelationBoard||null;
+    if(!Board){
+      consoleLog('error','scene.relation_board_missing',{relation_id:button.dataset.relationId});
+      if(typeof toast==='function')toast({title:'Tableau de la relation indisponible',sub:'Le module du tableau n’est pas chargé : rechargez la page.',kind:'error'});
+      return;
+    }
+    try{
+      Board.open({relationId:button.dataset.relationId,kind:button.dataset.relationKind,missionId:button.dataset.missionId||'',trigger:button},
+        {identity:id=>roleRegistry?roleIdentityOf(id):null,relationLabel:kind=>roleRegistry?roleRegistry.relationLabel(kind):'',accentOf});
+      consoleLog('info','scene.relation_board_requested',{relation_id:button.dataset.relationId,kind:button.dataset.relationKind});
+    }catch(error){
+      consoleLog('error','scene.relation_board_failed',{relation_id:button.dataset.relationId,error:String(error&&error.message||error)});
+      if(typeof toast==='function')toast({title:'Tableau de la relation indisponible',sub:String(error&&error.message||error),kind:'error'});
+    }
+  }
+
+  /* Flèches entre les pastilles (un seul arrêt de tabulation pour toutes), Début / Fin. */
+  function onMarkKeyDown(event){
+    const button=event.target&&event.target.closest?event.target.closest('.sc-relmark'):null;
+    if(!button||!marksEl)return;
+    const items=markOrder.map(id=>marks.get(id)).filter(Boolean).map(record=>record.el);
+    const index=items.indexOf(button);
+    let next=-1;
+    if(event.key==='ArrowRight'||event.key==='ArrowDown')next=Math.min(items.length-1,index+1);
+    else if(event.key==='ArrowLeft'||event.key==='ArrowUp')next=Math.max(0,index-1);
+    else if(event.key==='Home')next=0;
+    else if(event.key==='End')next=items.length-1;
+    if(next<0)return;
+    event.preventDefault();
+    markTabId=items[next].dataset.relationId;
+    for(const item of items)item.tabIndex=item===items[next]?0:-1;
+    items[next].focus({preventScroll:true});
   }
 
   function errorLabels(){
@@ -4267,14 +4441,15 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!enabled||!root)return;
     if(document.visibilityState==='hidden')return;
     const current=currentLayout();
-    if(!lastState||!current){applyNodes([]);applyEdges([],{width:1,height:1});lastModel=null;return renderStatus()}
+    if(!lastState||!current){applyNodes([]);applyEdges([],{width:1,height:1});applyMarks([],null);lastModel=null;return renderStatus()}
     const vp=L.viewport(root.clientWidth||window.innerWidth,root.clientHeight||window.innerHeight);
     const now=Date.now();
     markFresh(lastState,now);
     nextEphemeralMs=Infinity;
     lastModel=L.viewModel(viewState(),current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
       animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now,
-      workView:item=>workViewOf(item,now),work:workIndex,raised,showHidden:ghostsShown()});
+      workView:item=>workViewOf(item,now),work:workIndex,raised,showHidden:ghostsShown(),
+      roleIdentity:roleRegistry?roleIdentityOf:null,missionInfo:missionCache?id=>missionCache.info(id):null});
     armEphemeralTimer();
     /* Gravitation : le centre, la période et le resserrement du champ sont
        calculés pour ce rendu ; le rayon et la phase, eux, appartiennent à
@@ -4309,7 +4484,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     root.classList.toggle('sc-still',!field);
     applyNodes(lastModel.nodes,field);
     for(const node of lastModel.nodes){if(node.task){const record=nodes.get(node.id);if(record)clampLabel(record.el)}}
-    applyEdges(L.orbitLinks(lastModel.edges,lastModel.nodes,field),vp);
+    const drawnEdges=L.orbitLinks(lastModel.edges,lastModel.nodes,field);
+    applyEdges(drawnEdges,vp);
+    applyMarks(relationMarksFor(drawnEdges,vp),field);
     syncField(!field);
     /* Période (vitesse) ou champ changés : **toutes** les animations qui
        partagent l'horloge — nœuds et calque des fils — sont remises à l'heure

@@ -10,6 +10,7 @@ affichage) est signalé là où il manque encore.
 | Hook `PreToolUse` (méthode, loadout, journal `agent.role_applied`) | `jarvis/runtime/routing_hook.py` | `tests/unit/test_subagent_roles.py`, `tests/unit/test_routing_hook.py` |
 | Lecture du registre pour Settings (`GET /api/subagent-roles`) | `jarvis/runtime/control_center.py` (`_subagent_roles_payload`) | `tests/unit/test_subagent_roles.py` |
 | Onglet Réglages > Sous-agents (section 8) | `jarvis/runtime/control_center_subagents_settings.js` | `tests/unit/test_control_center_subagents_settings_js.py` |
+| Identité partagée des rôles et grammaire des relations (Réglages et graphe des tâches) | `jarvis/runtime/control_center_role_identity.js` | `tests/unit/test_scene_task_graph_js.py` |
 | Grammaire des marqueurs de tête, déclaration | `jarvis/domain/agent_markers.py` | `tests/unit/test_agent_markers.py` |
 | Missions, instances, Mission Owner, éphémère | `jarvis/domain/missions.py` | `tests/unit/test_missions.py` |
 | Work Methods | `jarvis/domain/work_methods.py`, voir [work-methods.md](work-methods.md) | `tests/unit/test_work_methods.py` |
@@ -505,6 +506,10 @@ seule fois dans `control_center.html` pour les dix jetons de `ROLE_ACCENTS` (tab
 tâches). Un jeton absent de `accents` retombe sur `slate` et est journalisé une fois
 (`subagent_settings_unknown_accent`). L'icône (`visual.icon`, pictogramme dessiné ; silhouette générique pour
 un jeton inconnu) et le badge accompagnent toujours la couleur. Le module ne contient aucune couleur (test).
+Les pictogrammes vivent dans `jarvis/runtime/control_center_role_identity.js` (`window.JarvisRoleIdentity`,
+organic-agent-orchestration Slice 09), partagé avec le graphe des tâches de la scène : un rôle a le même
+pictogramme, le même badge et le même accent dans les Réglages et sur ses étoiles ([scene-model.md](scene-model.md)
+› *Interface: roles and relations*).
 
 **Compteur.** « n / 8 192 caractères », la borne lue dans `instructions_max_chars` (à défaut la constante
 `DEFAULT_MAX_CHARS` du module, égale à `MAX_OVERRIDE_TEXT`) ; au-delà, le bouton Enregistrer se désactive.
