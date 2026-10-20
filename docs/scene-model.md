@@ -493,13 +493,26 @@ skipped item logs `core.scene.ephemeral_skipped` once (info). The mission
 history follows the same rule (no instance while ephemeral), so an ephemeral
 never appears in a relation either.
 
-Stars of ephemeral tasks **persisted before this rule** (scene file v1) are left
-as they are: nothing in a scene row says that a star was ephemeral (the flag
-lives in Core's in-memory Work State), and guessing it from a label is
-excluded. They are ordinary finished stars, still projected (Decision 12: no
-automatic removal), that the user clears with the existing archive or « archiver
-les terminés ». The page keeps hiding them while the work table still marks them
-ephemeral (`ephemeralVisibility`).
+- A **merged-duplicate closure** (`cancelled` with `error_class = merged`, sent
+  by the Control Center relay when it retires a duplicate key,
+  `jarvis/runtime/work_ingress.py`) carries no ephemeral flag, so Work State
+  lowers it. It is not an execution fact to show: it **never creates** a star
+  for work that had none (`core.scene.merged_skipped`, debug). A star that
+  already exists receives it like any end (`cancelled`).
+- An ephemeral **interrupted by a Control Center stop** (`interrupted` /
+  `process_stopped`) is a non-successful end: by the rule, the flag is lowered
+  and it gets a star, like a failure.
+
+Stars of ephemeral tasks **persisted before this rule** (scene file v1) are
+accepted as **legacy** (agent 0 decision, Slice 08 rework), with no automatic
+removal: nothing in a scene row says that a star was ephemeral (the flag lives in
+Core's in-memory Work State), and guessing it from a label is excluded. They are
+ordinary finished stars, still projected (Decision 12), that the user clears with
+the existing archive or « archiver les terminés ». The page hides them only
+while the work table still marks them ephemeral (`ephemeralVisibility`): after
+a full restart (Core and Control Center) the table no longer knows them and
+they **become visible again, exactly as on main**. New ephemerals never reach
+the file.
 
 ## Finish marker
 
@@ -994,6 +1007,13 @@ optional and absent when empty, so a v1 row, command or patch decodes unchanged
 and every client (page, MCP) keeps sending version 1. Frozen schema:
 `tests/schema/scene.v2.sql`. A running JARVIS takes the migration at its next
 Core start (the user restarts it).
+
+**Rollback** (going back to a Core older than v2): stop JARVIS, set the current
+`scene.sqlite3` aside (with its `-wal` and `-shm`, never deleted), then put
+`scene.sqlite3.v1.bak` back as `scene.sqlite3`. This **loses everything written
+to the scene after the migration** (new stars, roles, links, placements,
+archives). Never lower `schema_version` by hand in the v2 file: an older Core
+would then read payloads it does not know and refuse the file as `corrupted`.
 
 ## Transport
 

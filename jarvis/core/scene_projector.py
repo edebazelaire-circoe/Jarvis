@@ -64,7 +64,9 @@ Règles (voir `docs/ARCHITECTURE.md` › *Runtime scene projection*) :
   en cours ou après une réussite) ne crée **aucune** étoile : sa vie se voit
   dans le panneau Agents, jamais dans la scène persistée. S'il échoue, est
   arrêté, interrompu ou bloqué, Work State rabaisse le drapeau et l'étoile naît
-  alors comme une étoile ordinaire (signal compris). Une étoile déjà persistée
+  alors comme une étoile ordinaire (signal compris). La clôture d'un doublon
+  fusionné (`cancelled` / `merged`, sans drapeau) ne crée jamais d'étoile pour
+  un travail qui n'en avait pas (`MERGED_CLOSURE`). Une étoile déjà persistée
   (scène v1, avant cette règle) n'est ni retirée ni archivée : la projection
   continue de la tenir à jour (Décision 12, aucun retrait automatique) ;
 - **rôles et relations** (Slice 08) : avec un historique des missions
@@ -168,6 +170,7 @@ SCENE_RESTART_STAR_KIND = "core.scene.restart_star"
 #: mission (une ligne quand quelque chose a changé) ; historique illisible
 #: (une fois par type de panne, la projection des étoiles continue).
 SCENE_EPHEMERAL_SKIPPED_KIND = "core.scene.ephemeral_skipped"
+SCENE_MERGED_SKIPPED_KIND = "core.scene.merged_skipped"
 SCENE_MISSION_PROJECTED_KIND = "core.scene.mission_projected"
 SCENE_MISSION_PROJECTION_FAILED_KIND = "core.scene.mission_projection_failed"
 
@@ -224,6 +227,13 @@ _RESTART_GRACE = "scene.projection.restart_grace"
 _RESTART_REQUESTED = "scene.projection.restart_requested"
 _MAX_REPORTED = 64
 _HASH_CHARS = 24
+#: `error_class` de la clôture d'un doublon fusionné par le relais du Control
+#: Center (`jarvis.runtime.work_ingress.MERGED`, même valeur, vérifiée par test) :
+#: `cancelled` sans drapeau éphémère, ce n'est pas un fait d'exécution à montrer.
+#: Elle ne crée jamais d'étoile pour un travail qui n'en avait pas (D08 : sinon
+#: une éphémère fusionnée laisserait une étoile `cancelled` persistée) ; une
+#: étoile qui existe déjà reçoit cet état comme toute autre fin.
+MERGED_CLOSURE = "merged"
 #: Réveil de la boucle pour rafraîchir les missions suivies (même file, jamais le bus).
 _MISSION_REFRESH = "scene.projection.mission_refresh"
 #: Délai minimal entre deux lectures d'une même mission déclenchées par des
@@ -388,6 +398,7 @@ class SceneProjectionStats:
     restart_reobserved: int = 0
     restart_interrupted: int = 0
     skipped_ephemeral: int = 0
+    skipped_merged: int = 0
     missions_projected: int = 0
     mission_failures: int = 0
 
@@ -1318,6 +1329,18 @@ class SceneProjector:
                 # D08 : aucune ligne persistée pour un travail encore éphémère.
                 self._skip_ephemeral(item, star_id)
                 return
+            if item.status is WorkStatus.CANCELLED and item.error_class == MERGED_CLOSURE:
+                # Clôture d'un doublon fusionné jamais projeté : rien à montrer.
+                self.stats.skipped_merged += 1
+                self._emit(
+                    SCENE_MERGED_SKIPPED_KIND,
+                    "doublon fusionné clos sans étoile : aucune ligne créée",
+                    level="debug",
+                    data={"object_id": star_id, "source": item.source,
+                          "was_ephemeral": item.key in self._ephemeral_seen},
+                )
+                self._ephemeral_seen.pop(item.key, None)
+                return
             if len(scene.objects) >= MAX_SCENE_OBJECTS:
                 self._defer(item, len(scene.objects))
                 return
@@ -1553,17 +1576,12 @@ class SceneProjector:
                 roles += update.changed
         links = 0
         for relation in tree.relations:
-            ref = relation_ref(relation)
-            kind = RelationKind(relation.kind.value)
-            for link_id, source, target in agent_relation_links(relation):
-                if source not in stars or target not in stars:
-                    continue  # une extrémité sans étoile : rien de supposé
-                wanted_link = SceneRelation(link_id, kind, stars[source], stars[target], ref=ref)
-                existing = scene.get_relation(link_id)
-                if existing is not None and existing.endpoints == wanted_link.endpoints and existing.ref == ref:
-                    continue
-                update = await self._apply(SceneCommand(op=SceneOp.LINK, actor=SceneActor.RUNTIME, relation=wanted_link))
-                links += update.changed
+            try:
+                links += await self._project_relation(scene, relation, stars)
+            except (KeyError, ValueError) as exc:
+                # Une relation qu'on ne sait pas projeter ne fait pas perdre les
+                # suivantes de la passe : dite (une fois par type), puis ignorée.
+                self._failed("mission_relation", exc)
         if tree.truncated:
             self._report_once(
                 f"mission_truncated:{tree.root_mission_id}", SCENE_MISSION_PROJECTION_FAILED_KIND,
@@ -1586,6 +1604,23 @@ class SceneProjector:
                       "roles_written": roles, "links_written": links, "relations": len(tree.relations),
                       "settled": settled},
             )
+
+    async def _project_relation(self, scene: SceneSnapshot, relation: AgentRelation, stars: dict[str, str]) -> int:
+        """Poser ou mettre à jour les liens d'une relation entre étoiles existantes ; rend le nombre de liens écrits."""
+
+        ref = relation_ref(relation)
+        kind = RelationKind(relation.kind.value)
+        written = 0
+        for link_id, source, target in agent_relation_links(relation):
+            if source not in stars or target not in stars:
+                continue  # une extrémité sans étoile : rien de supposé (D15)
+            wanted_link = SceneRelation(link_id, kind, stars[source], stars[target], ref=ref)
+            existing = scene.get_relation(link_id)
+            if existing is not None and existing.endpoints == wanted_link.endpoints and existing.ref == ref:
+                continue
+            update = await self._apply(SceneCommand(op=SceneOp.LINK, actor=SceneActor.RUNTIME, relation=wanted_link))
+            written += update.changed
+        return written
 
     def _mission_failed(self, where: str, exc: Exception) -> None:
         self.stats.mission_failures += 1

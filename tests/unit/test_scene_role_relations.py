@@ -205,7 +205,8 @@ def agent_obs(key: str, status: WorkStatus = WorkStatus.RUNNING, *, minute: floa
 class World:
     """Core réduit : bus, Work State, historique des missions et scène, comme `JarvisCoreApplication` les relie."""
 
-    def __init__(self, state_store, *, clock: Clock, scene_repository=None, missions=None) -> None:
+    def __init__(self, state_store, *, clock: Clock, scene_repository=None, missions=None,
+                 mission_min_interval_s: float = 0, mission_refresh_s: float = 0.02) -> None:
         self.clock = clock
         self.diagnostics = RecordingDiagnostics()
         self.events = CoreEventBus(diagnostics=self.diagnostics)
@@ -217,7 +218,7 @@ class World:
         self.projector = SceneProjector(
             work=self.work, scene=self.scene, events=self.events, diagnostics=self.diagnostics, retry_min_s=0.01,
             retry_max_s=0.05, missions=missions if missions is not None else self.service,
-            mission_min_interval_s=0, mission_refresh_s=0.02,
+            mission_min_interval_s=mission_min_interval_s, mission_refresh_s=mission_refresh_s,
         )
 
     async def start(self, *, restart: bool = False) -> World:
@@ -579,6 +580,144 @@ async def test_a_v1_scene_built_from_its_frozen_snapshot_migrates_after_a_backup
         scene = await world.scene.snapshot()
         assert [item.object_id for item in scene.objects] == ["claude:toolu_eph", "claude:toolu_ord"]
         assert scene.get_object("claude:toolu_eph").exec_state is ExecState.COMPLETED and not scene.archived_ids
+    finally:
+        await world.stop()
+        await state.close()
+
+
+# ------------------------------------------------------------------ reprise QA (B1, N1)
+
+
+async def test_a_merged_closure_never_creates_a_star_for_unprojected_work(world):
+    """B1 : le relais clôt un doublon fusionné par `cancelled` / `merged`, sans drapeau éphémère (work_ingress)."""
+
+    from jarvis.runtime.work_ingress import MERGED
+
+    assert projector_module.MERGED_CLOSURE == MERGED
+    await world.observe(agent_obs("E", ephemeral=True))
+    await world.observe(WorkObservation(source=SOURCE, external_id="E", status=WorkStatus.CANCELLED,
+                                        observed_at=at(0.3), error_class=MERGED))
+    scene = await world.scene.snapshot()
+    assert scene.get_object(star_object_id(SOURCE, "E")) is None
+    assert scene.get_object(signal_object_id(star_object_id(SOURCE, "E"))) is None
+    assert world.projector.stats.skipped_merged == 1
+    # Un travail déjà projeté garde le comportement d'avant : la clôture atteint son étoile.
+    await world.observe(agent_obs("D"))
+    await world.observe(WorkObservation(source=SOURCE, external_id="D", status=WorkStatus.CANCELLED,
+                                        observed_at=at(0.4), error_class=MERGED))
+    assert (await world.scene.snapshot()).get_object(star_object_id(SOURCE, "D")).exec_state is ExecState.CANCELLED
+
+
+def single_mission_tree(*relations) -> MissionTree:
+    return MissionTree(
+        root_mission_id="mis_A", missions=(mission("mis_A", "ainst_A"),),
+        instances=(StoredInstance(instance("ainst_A", mission="mis_A", owner=True, external="A")),
+                   StoredInstance(instance("ainst_B", mission="mis_A", external="B")),
+                   StoredInstance(instance("ainst_C", mission="mis_A", external="C"))),
+        relations=relations,
+    )
+
+
+async def recorded_world(tmp_path, source, **projector):
+    state, store = await open_store(tmp_path / "jarvis.sqlite3")
+    return await World(store, clock=Clock(), missions=source, **projector).start(), state
+
+
+async def test_a_role_written_on_a_finished_star_never_changes_its_exec_state(tmp_path):
+    """M08 : l'étoile est déjà terminée quand son rôle arrive ; `exec_state` reste celui de Work State."""
+
+    world, state = await recorded_world(tmp_path, Recording(single_mission_tree()))
+    try:
+        await world.observe(agent_obs("A", WorkStatus.COMPLETED, minute=0.2))
+        scene = await world.refreshed()
+        star_a = scene.get_object(star_object_id(SOURCE, "A"))
+        assert star_a.role_ref == RoleRef(role_id="coder", instance_id="ainst_A", mission_id="mis_A", mission_owner=True)
+        assert star_a.exec_state is ExecState.COMPLETED
+    finally:
+        await world.stop()
+        await state.close()
+
+
+async def test_a_relation_with_a_starless_participant_does_not_cost_the_next_ones(tmp_path):
+    """M06 : la QA vers C (sans étoile) n'est pas projetée, l'Adversary A/B qui suit l'est, sans échec journalisé."""
+
+    tree = single_mission_tree(
+        relation("rel_q", K.QA, "mis_A", [("ainst_C", P.REVIEWER), ("ainst_A", P.REVIEWED)]),
+        relation("rel_d", K.ADVERSARY, "mis_A", [("ainst_A", P.PRODUCER), ("ainst_B", P.PRODUCER)], minute=2),
+    )
+    world, state = await recorded_world(tmp_path, Recording(tree))
+    try:
+        await world.observe(agent_obs("A"), agent_obs("B"))
+        scene = await world.refreshed()
+        assert [link.relation_id for link in scene.relations] == ["adversary!rel_d!ainst_A~ainst_B"]
+        assert world.diagnostics.kinds(projector_module.SCENE_PROJECTION_FAILED_KIND) == []
+    finally:
+        await world.stop()
+        await state.close()
+
+
+def test_brain_and_user_cannot_create_under_any_runtime_reserved_relation_id():
+    """M05 : tous les préfixes du runtime sont réservés, liens d'agent compris, quelle que soit la nature posée."""
+
+    scene = two_stars()
+    for rid in ("attention!x", "parent_of!x", "qa!x", "qa#abc!x", "delegation!x", "communication!x",
+                "adversary#y!z", "handoff!x"):
+        assert is_runtime_reserved_id(rid), rid
+        for actor in (SceneActor.BRAIN, SceneActor.USER):
+            forged = SceneRelation(rid, RelationKind.GROUPS, "claude:A", "claude:B")
+            update = apply_scene_command(scene, SceneCommand(op=SceneOp.LINK, actor=actor, relation=forged))
+            assert (update.outcome, update.reason) == (SceneCommandOutcome.REJECTED_AUTHORITY,
+                                                       SceneRefusal.RESERVED_ID), rid
+    assert not is_runtime_reserved_id("brain-groups-1")
+
+
+class ManyMissions:
+    """Une mission ouverte et vide par id : compte les lectures."""
+
+    def __init__(self) -> None:
+        self.reads: list[str] = []
+
+    async def instance_for_work(self, work_source, work_external_id):
+        return None
+
+    async def mission_view(self, mission_id):
+        self.reads.append(mission_id)
+        return MissionTree(root_mission_id=mission_id, missions=(mission(mission_id, "ainst_X"),), instances=(),
+                           relations=()), ()
+
+
+async def test_a_refresh_pass_reads_at_most_sixteen_missions_and_rotates(tmp_path):
+    """M10 : 20 missions suivies, une passe en lit 16 ; la suivante commence par les 4 autres."""
+
+    source = ManyMissions()
+    world, state = await recorded_world(tmp_path, source, mission_refresh_s=3600)
+    try:
+        ids = [f"mis_{index:02d}" for index in range(20)]
+        for mission_id in ids:
+            world.projector._watch_mission(mission_id)
+        await world.projector._refresh_missions()
+        assert len(source.reads) == projector_module.MAX_MISSIONS_PER_REFRESH == 16
+        first = list(source.reads)
+        source.reads.clear()
+        await world.projector._refresh_missions()
+        assert source.reads[:4] == [mission_id for mission_id in ids if mission_id not in first]
+    finally:
+        await world.stop()
+        await state.close()
+
+
+async def test_events_read_a_mission_at_most_once_per_interval(tmp_path):
+    """M11 : constats rapprochés de deux membres, une lecture ; la mission reste à relire au tour suivant."""
+
+    source = Recording(single_mission_tree())
+    world, state = await recorded_world(tmp_path, source, mission_min_interval_s=60, mission_refresh_s=3600)
+    try:
+        await world.observe(agent_obs("A"))
+        await world.observe(WorkObservation(source=SOURCE, external_id="A", status=WorkStatus.RUNNING,
+                                            observed_at=at(0.2), kind="agent", label="Agent A", activity="outil 2"))
+        await world.observe(agent_obs("B", minute=0.3))
+        assert source.calls.count("mission_view") == 1
+        assert "mis_A" in world.projector._missions_due
     finally:
         await world.stop()
         await state.close()
