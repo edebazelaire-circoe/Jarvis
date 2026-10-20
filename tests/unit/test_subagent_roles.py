@@ -522,6 +522,9 @@ def test_the_brain_rules_teach_owners_relations_and_delivery_without_a_new_gate(
     framing = _bullet(rules, "B. Intention à cadrer")
     assert "lance aussi en parallèle [general] [research]" in framing and "ils avancent pendant l'interview" in framing
     assert "au premier tour ou après une réponse" in framing
+    # Essai réel : le dossier va dans la mémoire du Board, au chemin absolu ; la trouvaille part avec la réponse.
+    assert "dossier mémoire du Board actif" in framing and "son chemin absolu va à chaque agent" in framing
+    assert "avec en une ligne chaque trouvaille arrivée depuis sa dernière question" in framing
     # C : une comparaison sérieuse part chez la direction de recherche, qui porte la mission.
     assert "un seul [general] [research-lead], qui porte la mission" in _bullet(rules, "C. Plusieurs expertises")
     # Mission Owner : les gestes de relation sont aux propriétaires ; le cerveau les demande et ne fait que lire.

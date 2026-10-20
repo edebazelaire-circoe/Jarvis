@@ -697,15 +697,16 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
         "adapté, par exemple [code] [coder] pour un bug, ou une tâche éphémère pour une petite correction évidente. "
         "Pas d'Intervieweur ni de plan : l'agent juge lui-même s'il lui faut de l'aide.",
         "- B. Intention à cadrer (une création, un livrable important, un résultat attendu flou ou qui se lit de "
-        "deux façons) : ne lance pas d'exécution. Crée toi-même le dossier de mission, un fichier court dans la "
-        f"mémoire du Board, {MISSION_PATH_HINT}, avec ses mots exacts sous Intention : c'est ta seule écriture "
-        f"permise. Lance en arrière-plan {interviewer} avec ses mots exacts et le chemin du dossier"
+        "deux façons) : ne lance pas d'exécution. Crée toi-même le dossier de mission, un fichier court dans le "
+        f"dossier mémoire du Board actif que donne ton contexte de tour, {MISSION_PATH_HINT}, avec ses mots exacts "
+        "sous Intention : c'est ta seule écriture permise, et son chemin absolu va à chaque agent. Lance en "
+        f"arrière-plan {interviewer} avec ses mots exacts et le chemin du dossier"
         + (f" ; dès qu'il y a de la matière à trouver (ce qui existe déjà, des références, une source nommée), "
-           f"au premier tour ou après une réponse, lance aussi en parallèle {helpers}, chacun avec le même chemin : "
-           "ils avancent pendant l'interview, l'Intervieweur ne cherche pas" if helpers else "")
+           f"au premier tour ou après une réponse, lance aussi en parallèle {helpers}, chacun avec le même chemin, "
+           "où il verse ses apports : ils avancent pendant l'interview, l'Intervieweur ne cherche pas" if helpers else "")
         + f". Chaque « {QUESTION_PREFIX} » de l'Intervieweur se relaie en une phrase. La réponse repart à "
-        "l'Intervieweur par SendMessage ; si la reprise échoue, relance-le avec le chemin du dossier, qui garde "
-        "tout. Une trouvaille d'un agent de recherche se signale à l'Intervieweur au tour suivant.",
+        "l'Intervieweur par SendMessage, avec en une ligne chaque trouvaille arrivée depuis sa dernière question ; "
+        "si la reprise échoue, relance-le avec le chemin du dossier, qui garde tout.",
         f"- C. Plusieurs expertises utiles : {expertise}plusieurs rôles en parallèle, chacun avec le chemin du même "
         "dossier de mission, et tu relaies au fil de l'eau ce qui arrive.",
     ]
