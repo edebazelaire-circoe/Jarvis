@@ -34,7 +34,7 @@ import shutil
 import sys
 from typing import Any, Mapping, Sequence
 
-from jarvis.domain import agent_markers, agent_orchestration, routing
+from jarvis.domain import agent_markers, agent_orchestration, delivery_quality, routing
 from jarvis.domain.agent_charter import sign_brief
 from jarvis.domain.loadout_view import MANIFEST_MARK
 from jarvis.domain.mission_history import MissionHistoryError, fact_from_hook_event
@@ -211,7 +211,11 @@ def charter_input(
     # Charte consciente du rôle (Slice 05) : un rôle qui ne lance pas n'est pas invité à déléguer.
     can_spawn = orchestration.role is None or orchestration.role.can_spawn
     constrained = orchestration.role is not None and orchestration.role.constrained_output
-    signed = head + sign_brief(brief[len(head):], can_spawn=can_spawn, constrained_output=constrained)
+    # Slice 11 : un Mission Owner lit, juste après la consigne de compte rendu de la charte, que la synthèse
+    # s'affiche (même règle que le paragraphe « RESTITUTION (JARVIS) » de son bloc de mission).
+    report_note = delivery_quality.REPORT_NOTE if orchestration.mission.mission_owner else None
+    signed = head + sign_brief(brief[len(head):], can_spawn=can_spawn, constrained_output=constrained,
+                               report_note=report_note)
     # La méthode de production d'une présentation : apposée ici, sur l'appel lui-même, parce qu'un sous-agent ne
     # voit pas le prompt du cerveau et que ce prompt demande des consignes courtes.
     signed = with_playbook(signed, read_playbook_role(tool_input)) or signed
@@ -220,9 +224,7 @@ def charter_input(
     signed = with_role_instructions(signed, read_role(tool_input), role_overrides,
                                     method=orchestration.method.method_id) or signed
     # La responsabilité de mission d'un Mission Owner (Slice 05), apposée en dernier. Jamais doublée.
-    # L'indice de restitution (Slice 11) lit la demande de l'appelant, jamais la charte ni les blocs apposés.
-    request = f"{tool_input.get('description') or ''}\n{brief}"
-    mission = agent_orchestration.mission_brief(orchestration.mission, request=request)
+    mission = agent_orchestration.mission_brief(orchestration.mission)
     if mission and agent_orchestration.MISSION_MARK not in signed:
         signed = f"{signed.rstrip()}\n\n{mission}"
     return None if signed == brief else {"prompt": signed}

@@ -353,41 +353,66 @@ Décision D23 du handoff jarvis-organic-agent-orchestration : un rapport ou une 
 sur une surface riche **existante**, une réponse simple reste simple. Politique : module pur
 `jarvis/domain/delivery_quality.py` ; tests `tests/unit/test_delivery_quality.py`.
 
-**Ce que le hook appose.** Le bloc « RESPONSABILITÉ DE MISSION (JARVIS) » (`agent_orchestration.mission_brief`)
-se termine par un paragraphe distinct « RESTITUTION (JARVIS) » (`delivery_quality.delivery_brief`), apposé
-une seule fois, au Mission Owner seulement (ni membre, ni agent sans mission). Il dit :
+**Ce que le hook appose, et où.** Au Mission Owner seulement (ni membre, ni agent sans mission), une seule fois :
+
+1. dans la charte, juste après sa consigne de compte rendu (« Compte rendu court… »), la ligne
+   `delivery_quality.REPORT_NOTE` (`agent_charter.sign_brief(report_note=)`, première occurrence, le texte de la
+   charte ne change pas) : un résultat structuré s'affiche ; le compte rendu en donne l'`object_id` et la
+   conclusion, pas la synthèse entière ;
+2. la méthode de `research-lead` dit la même chose dans son « COMPTE RENDU » (quand il porte la mission) ;
+3. en tête du bloc « RESPONSABILITÉ DE MISSION (JARVIS) » (`agent_orchestration.mission_brief`), juste après sa
+   portée, le paragraphe « RESTITUTION (JARVIS) » (`delivery_quality.delivery_brief`). Il était d'abord en fin de
+   consigne, où il pesait moins que les consignes de compte rendu de la charte et de la méthode (reprise QA B2).
+
+Ordre réel vérifié par test sur l'assemblage du hook : charte (compte rendu, puis la note) → consigne → méthode du
+rôle → bloc de mission (restitution, puis le reste). Le paragraphe dit :
 
 - pourquoi : l'utilisateur ne lit pas le compte rendu d'un sous-agent, le cerveau vocal le lui résume ; ce qui
-  doit être lu n'atteint l'utilisateur que s'il est affiché ;
-- quelle surface selon l'usage du résultat : fait, chiffre, petite correction → réponse directe, sans fenêtre ;
-  comparaison sérieuse → `jarvis.table` (recommandation longue dans un `jarvis.document` à côté) ; rapport,
-  synthèse, recherche approfondie → `jarvis.document` ; actions à cocher → `jarvis.checklist` ; une surface
-  plus riche peut se chercher par `prefab_search`. Formes et bornes (`data`) reprises des manifestes livrés,
-  égalité vérifiée par test ;
+  doit être relu n'atteint l'utilisateur que s'il est affiché ;
+- **une règle de jugement sur le résultat réel**, une fois obtenu, jamais sur les mots de la demande : un
+  résultat qui tient en une ou deux phrases se dit, sans fenêtre ; un résultat structuré (plusieurs options ou
+  critères à comparer, rapport, état des lieux, bilan, audit, synthèse de recherche, explication détaillée,
+  liste d'actions, tout ce que l'utilisateur voudra relire) s'affiche par la surface adaptée : `jarvis.table`
+  (recommandation longue dans un `jarvis.document` à côté), `jarvis.document`, `jarvis.checklist`, ou une
+  surface plus riche trouvée par `prefab_search` ;
+- toutes les bornes réelles des `data` : tableau 8 colonnes, intitulés ≤ 40 caractères, 64 lignes, 8 cellules par
+  ligne, cellules de type chaîne ≤ 200 ; document Markdown ≤ 12000 ; checklist 64 éléments, `id` ≤ 64, `label`
+  ≤ 200, `note` ≤ 500. Recopiées de la dernière version livrée des manifestes, égalité vérifiée par test ;
 - comment : `mcp__jarvis-display__scene_create_object` (kind `window`, `prefab {prefab_id, data}`), chargé par
   `ToolSearch` s'il est différé ;
 - quand la livraison est faite : seulement si l'outil rend un `object_id`. Sur refus, erreur ou outils absents,
-  le contenu part en Markdown structuré dans le compte rendu avec une phrase sur l'échec ;
-- le compte rendu après un affichage réussi : l'`object_id` et la conclusion, sans recopier l'affiché.
+  suivre le repli : ne jamais dire affiché ce qui ne l'est pas, livrer en Markdown structuré, une phrase sur
+  l'échec ;
+- après un affichage réussi : l'`object_id` et la conclusion, sans recopier l'affiché.
 
-Un **indice** de forme termine le paragraphe quand la demande de l'appelant (description et consigne d'origine,
-jamais la charte ni les blocs apposés) ressemble à une comparaison, un rapport ou une liste à cocher
-(`classify_delivery`, mots repérés sans accents ; « par rapport à » et « compte rendu » ne comptent pas) :
-« affichez …, sauf si le résultat réel tient en une phrase ». Une demande simple ne reçoit aucun indice. Ni
-gabarit imposé, ni nombre d'artefacts, ni doctrine de complexité minimale (D05) : le Mission Owner juge sur le
-résultat réel, et juge aussi la suffisance des preuves avant de rendre (paragraphe précédent du bloc, D22).
+Aucun indice tiré des mots de la demande (arbitrage de l'agent 0 : l'heuristique par mots-clés de la première
+version classait juste 46 % d'un corpus de 64 demandes réalistes ; retirée). Ni gabarit imposé, ni nombre
+d'artefacts, ni doctrine de complexité minimale (D05) ; le Mission Owner juge aussi la suffisance des preuves
+avant de rendre (D22, même bloc).
 
 **Repli d'un affichage qui échoue.** `SceneDisplayTools.create_object` / `update_object` avec un argument
-`prefab` : toute `DisplayToolError` (refus `prefab_invalid` de Core, `unknown_prefab`, `prefab_unavailable`,
-Core injoignable…) garde son code et sa phrase et reçoit `delivery_quality.fallback_note` : « REPLI DE
-RESTITUTION (JARVIS) », rien n'est à l'écran, ne pas le prétendre, corriger si la cause est claire, sinon livrer
-le contenu sous une forme lisible, et le contenu prêt à livrer (`readable_content` : tableau Markdown pour
-`jarvis.table`, corps pour `jarvis.document`/`window`/`browser`, cases pour `jarvis.checklist`, JSON indenté
-sinon ; borné à 6000 caractères, coupure dite). L'échec reste journalisé une fois (`display.tool_refused` ou
-`display.tool_failed`) ; `display.prefab_fallback` (info : outil, code, motif, `prefab_id`, jamais le contenu)
-dit qu'un repli a été proposé. Un échec sans `prefab` est inchangé.
+`prefab` : toute `DisplayToolError` garde son code et sa phrase et reçoit `delivery_quality.fallback_note`
+(« REPLI DE RESTITUTION (JARVIS) »), qui dit **l'état réel de l'écran** (`screen_state`) :
 
-**Voie réelle de livraison** (bac à sable du 2026-10-20, CLI 2.1.304, haiku) : un sous-agent `general-purpose`
+| Échec | Ce que dit la note |
+| --- | --- |
+| création refusée (`prefab_invalid`, `unknown_prefab`, `prefab_unavailable`, `invalid_argument`, commande non envoyée…) | la fenêtre n'a pas été créée, rien de nouveau n'est à l'écran |
+| mise à jour refusée (mêmes codes) | la mise à jour n'est pas appliquée, la fenêtre `<object_id>` garde son contenu précédent |
+| panne de transport ou réponse illisible (`UNKNOWN_OUTCOME_CODES` : `core_timeout`, `core_unreachable`, `core_bad_answer`, `invalid_scene_response`, `protocol_error`, `display_internal_error`) | l'état de l'affichage est inconnu : relire la scène avant d'en parler ou de réessayer |
+
+Pour un refus, corriger les données et réessayer reste permis : la remarque `scene_changed` éventuelle porte sur
+d'autres objets. Puis le prefab visé et le contenu prêt à livrer (`readable_content` : tableau Markdown pour
+`jarvis.table`, corps pour `jarvis.document`/`window`/`browser`, cases pour `jarvis.checklist`, JSON indenté
+sinon ; borné à 4000 caractères, coupure dite), présenté comme une forme écrite « à résumer à l'oral au lieu de
+la lire ». Un argument sans `prefab_id` reçoit une note propre, sans contenu. La note est **neutre vis-à-vis de
+l'appelant** : le serveur ne distingue pas le cerveau d'un sous-agent (même acteur `brain`), elle ne parle donc ni
+de compte rendu ni d'une consigne propre à un sous-agent. L'échec reste journalisé une fois
+(`display.tool_refused` ou `display.tool_failed`) ; `display.prefab_fallback` (info : outil, code, motif,
+`prefab_id`, jamais le contenu) dit qu'un repli a été proposé. Un échec sans `prefab` est inchangé. Le journal
+`agent.event` du cerveau recopie le résultat d'outil entier (comportement préexistant, hors de ce module) : la
+borne de 4000 caractères limite ce qu'il y gagne.
+
+**Voie réelle de livraison** (bacs à sable du 2026-10-20, CLI 2.1.304, haiku) : un sous-agent `general-purpose`
 lancé par le cerveau a les outils `jarvis-display` du cerveau, différés (`deferred_tools_delta`), chargés par
 `ToolSearch` ; ses appels sont journalisés avec l'acteur `brain` (aucune distinction d'acteur pour un
 sous-agent). Sans `scene.enabled`, le serveur n'est pas déclaré : le Mission Owner livre en Markdown.

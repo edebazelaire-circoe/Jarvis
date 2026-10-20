@@ -39,9 +39,10 @@ consigne (`test_brain_capability_parity`), et la consigne du cerveau appartient 
 « RESPONSABILITÉ DE MISSION (JARVIS) » (`agent_orchestration.mission_brief`) est apposé par le hook, en
 dernier, sur la consigne d'un Mission Owner seulement : propriété du résultat et de sa qualité (D22),
 outils ci-dessus, « une tâche nette se fait seul », « rien de ce que vous ne faites qu'envisager ».
-Il se termine par le paragraphe « RESTITUTION (JARVIS) » (Slice 11, `delivery_quality.delivery_brief`) : surface
-selon l'usage du résultat (`jarvis.table`, `jarvis.document`, `jarvis.checklist`, réponse directe), affichage par
-`scene_create_object`, repli honnête ; contrat : [subagent-roles.md](subagent-roles.md) §5bis.
+Il s'ouvre, après sa portée, par le paragraphe « RESTITUTION (JARVIS) » (Slice 11,
+`delivery_quality.delivery_brief`) : surface jugée sur le résultat réel (`jarvis.table`, `jarvis.document`,
+`jarvis.checklist`, réponse directe), affichage par `scene_create_object`, repli honnête ; la charte du
+Mission Owner reçoit la note de compte rendu assortie ; contrat : [subagent-roles.md](subagent-roles.md) §5bis.
 
 ## 3. Décisions du hook
 

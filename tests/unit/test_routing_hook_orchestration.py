@@ -16,7 +16,6 @@ import pytest
 from jarvis.domain.agent_orchestration import (
     MAX_SPAWNS_PER_WINDOW, MISSION_MARK, NO_SPAWN_AGENT_TYPE, SPAWN_GUARD_ENV, SPAWN_GUARD_VALUE,
 )
-from jarvis.domain import delivery_quality
 from jarvis.domain.mission_history import AgentDeclarationFact
 from jarvis.runtime import agent_declarations, routing_hook
 from jarvis.runtime.journal import read_jsonl_tail
@@ -60,10 +59,7 @@ def test_the_hook_deposits_a_bounded_fact_without_any_content(tmp_path):
 
 def test_the_mission_owner_brief_is_appended_last_and_only_for_owners(tmp_path):
     owner = section(routing_hook.run(call("[code] [coder] Corriger"), tmp_path))["updatedInput"]["prompt"]
-    # Slice 11 : le paragraphe de restitution clôt le bloc de mission, juste après sa dernière phrase.
-    assert owner.rstrip().endswith(delivery_quality.delivery_brief("[code] [coder] Corriger\nFais-le."))
-    assert "rien de ce que vous ne faites qu'envisager.\n\nRESTITUTION (JARVIS)" in owner
-    assert owner.count(MISSION_MARK) == 1
+    assert owner.rstrip().endswith("rien de ce que vous ne faites qu'envisager.") and owner.count(MISSION_MARK) == 1
     member = section(routing_hook.run(call("[code] [coder] Corriger", tool_use_id="t2", agent_id="a1"), tmp_path))
     assert MISSION_MARK not in member["updatedInput"]["prompt"]
     plain = section(routing_hook.run(call("[general] Lister", tool_use_id="t3"), tmp_path))

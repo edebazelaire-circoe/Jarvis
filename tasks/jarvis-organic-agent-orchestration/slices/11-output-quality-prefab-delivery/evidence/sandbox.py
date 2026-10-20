@@ -51,6 +51,24 @@ SCENARIOS = {
         "autre forme d'affichage. » Quand il a fini, relaie son compte rendu tel quel."),
 }
 
+_KNOW = " Travaillez à partir de vos connaissances, sans recherche web et sans lancer d'autre agent. »"
+_RELAY = " Quand il a fini, relaie son compte rendu en deux phrases."
+SCENARIOS.update({
+    "r_rapport": PRE + "description « [general] [research-lead] Rapport licences TTS », et pour consigne : « "
+    "L'utilisateur veut un rapport sur les licences de Piper, Coqui XTTS et Kokoro pour un usage commercial." + _KNOW
+    + _RELAY,
+    "r_etat": PRE + "description « [general] [research-lead] État des lieux mot d'éveil », et pour consigne : « "
+    "Fais un état des lieux des solutions locales et libres de détection de mot d'éveil (Porcupine, openWakeWord, "
+    "microWakeWord) pour JARVIS." + _KNOW + _RELAY,
+    "r_bilan": PRE + "description « [general] [research-lead] Bilan SQLite WAL », et pour consigne : « Fais un "
+    "bilan des forces et faiblesses de SQLite en mode WAL pour une application de bureau à plusieurs processus."
+    + _KNOW + _RELAY,
+    "s_licence": PRE + "description « [general] [research-lead] Licence Kokoro », et pour consigne : « Quelle est la "
+    "licence du modèle Kokoro-82M ? Répondez en une phrase." + _KNOW + " Quand il a fini, dis-moi seulement sa "
+    "réponse.",
+    "s_compte": SCENARIOS["simple_mo"],
+})
+
 
 def listening(port: int) -> bool:
     with socket.socket() as sock:

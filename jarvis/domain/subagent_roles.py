@@ -323,7 +323,9 @@ RESEARCH_LEAD_INSTRUCTIONS = (
     "- Quand des usages différents donnent des gagnants différents, dites-le.\n"
     "- Vérifiez que chaque affirmation de la synthèse a sa source.\n\n"
     "COMPTE RENDU\n"
-    "Une synthèse comparée et sourcée, la recommandation et ses limites, ce qui reste incertain."
+    "Une synthèse comparée et sourcée, la recommandation et ses limites, ce qui reste incertain. Quand vous "
+    "portez la mission, la synthèse s'affiche à l'écran (« RESTITUTION (JARVIS) ») et le compte rendu en donne "
+    "l'object_id et la conclusion."
 )
 
 QA_INSTRUCTIONS = (

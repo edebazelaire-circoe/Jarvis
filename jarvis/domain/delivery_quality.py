@@ -1,25 +1,30 @@
-"""Qualité de restitution d'un Mission Owner : choix de la surface, garde-fous, repli (Slice 11).
+"""Qualité de restitution d'un Mission Owner : règle de jugement, garde-fous, repli (Slice 11).
 
 Handoff jarvis-organic-agent-orchestration, décision D23 : un rapport ou une comparaison sérieuse se livre
-sur une surface riche **existante** (`jarvis.document`, `jarvis.table`, un prefab plus riche trouvé par
-`prefab_search`), jamais en mur de texte ; une réponse simple reste simple. Ce module ne construit aucun
-rendu : il dit au Mission Owner quand et comment utiliser les outils `jarvis-display` qu'il a déjà
-(`scene_create_object` avec `prefab`), et il prépare le repli quand un affichage échoue.
+sur une surface riche **existante** (`jarvis.document`, `jarvis.table`, `jarvis.checklist`, un prefab plus
+riche trouvé par `prefab_search`), jamais en mur de texte ; une réponse simple reste simple. Ce module ne
+construit aucun rendu : il dit au Mission Owner quand et comment utiliser les outils `jarvis-display` qu'il a
+déjà (`scene_create_object` avec `prefab`), et il prépare le repli quand un affichage échoue.
 
-Trois choses, toutes pures (aucune entrée-sortie) :
+La forme se décide sur le **résultat réel**, jamais sur les mots de la demande (arbitrage de l'agent 0 après
+la QA de la Slice 11 : un indice par mots-clés classait juste 46 % d'un corpus de 64 demandes réalistes).
 
-- **heuristique de forme** (`classify_delivery`) : la forme probable de la demande (simple, comparaison,
-  rapport, liste à cocher) lue dans la consigne de l'appelant. Ce n'est qu'un indice : le Mission Owner
-  juge sur le résultat réel, et une demande simple ne reçoit aucun indice qui la pousserait vers un
-  artefact lourd ;
-- **consigne de restitution** (`delivery_brief`) : le paragraphe que le hook ajoute au bloc
-  « RESPONSABILITÉ DE MISSION (JARVIS) » (`agent_orchestration.mission_brief`). Formes et bornes des
-  prefabs de base reprises de leurs manifestes livrés (`jarvis/prefabs/base/*/1/manifest.json`), égalité
-  vérifiée par `tests/unit/test_delivery_quality.py` ;
-- **repli structuré** (`fallback_note`) : le texte joint à l'erreur d'un affichage de prefab refusé ou en
-  panne (`display_mcp.SceneDisplayTools`) : rien n'est à l'écran, ne pas le prétendre, livrer le contenu
-  dans le compte rendu sous une forme lisible, prête à l'emploi (tableau Markdown, corps du document,
-  liste à cocher).
+Quatre choses, toutes pures (aucune entrée-sortie) :
+
+- **consigne de restitution** (`delivery_brief`) : le paragraphe « RESTITUTION (JARVIS) » que le hook place
+  en tête du bloc « RESPONSABILITÉ DE MISSION (JARVIS) » (`agent_orchestration.mission_brief`). Bornes des
+  prefabs de base recopiées de la dernière version livrée de leurs manifestes, égalité vérifiée par
+  `tests/unit/test_delivery_quality.py` ;
+- **note de compte rendu** (`REPORT_NOTE`) : la ligne que la charte reçoit, pour un Mission Owner seulement,
+  juste après sa consigne de compte rendu (`agent_charter.sign_brief(report_note=)`) : la synthèse s'affiche,
+  le compte rendu en donne l'`object_id` et la conclusion ;
+- **repli structuré** (`fallback_note`) : le texte joint à l'erreur d'un affichage de prefab
+  (`display_mcp.SceneDisplayTools`), qui dit l'état réel de l'écran : création refusée (rien de nouveau),
+  mise à jour refusée (la fenêtre garde son contenu précédent) ou issue inconnue (relire la scène) ;
+- **contenu lisible** (`readable_content`) : les données du prefab sous une forme écrite prête à livrer.
+
+Le texte du repli est neutre vis-à-vis de l'appelant : le serveur d'affichage ne distingue pas le cerveau
+d'un sous-agent (même acteur `brain`).
 
 Contrat : `docs/subagent-roles.md` §5bis, `docs/prefabs.md` « Consumers ».
 """
@@ -27,133 +32,81 @@ Contrat : `docs/subagent-roles.md` §5bis, `docs/prefabs.md` « Consumers ».
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
-from enum import StrEnum
 import json
-import re
-import unicodedata
-from typing import Any
+from typing import Any, Literal
 
 #: Tête du paragraphe de restitution ; sert aussi à ne jamais le doubler.
 DELIVERY_MARK = "RESTITUTION (JARVIS)"
 #: Tête du repli joint à une erreur d'affichage de prefab.
 FALLBACK_MARK = "REPLI DE RESTITUTION (JARVIS)"
-#: Outil d'affichage d'un Mission Owner (serveur `jarvis-display`, nom complet vu par un sous-agent).
+#: Outils d'affichage d'un Mission Owner (serveur `jarvis-display`, noms complets vus par un sous-agent).
 DISPLAY_TOOL = "mcp__jarvis-display__scene_create_object"
 SEARCH_TOOL = "mcp__jarvis-display__prefab_search"
-#: Borne du contenu prêt à l'emploi joint à un repli : de quoi livrer sans noyer le message d'erreur.
-MAX_FALLBACK_CHARS = 6000
+#: Borne du contenu prêt à l'emploi joint à un repli. Le journal `agent.event` recopie le résultat d'outil entier
+#: (reprise QA N7) : la borne reste courte.
+MAX_FALLBACK_CHARS = 4000
 
-
-class DeliveryShape(StrEnum):
-    SIMPLE = "simple"
-    COMPARISON = "comparison"
-    REPORT = "report"
-    CHECKLIST = "checklist"
-
-
-@dataclass(frozen=True, slots=True)
-class Surface:
-    """La surface conseillée pour une forme : un prefab de base, ou `None` (réponse directe)."""
-
-    shape: DeliveryShape
-    prefab_id: str | None
-    label: str
-
-
-#: Bornes des prefabs de base, recopiées de leurs manifestes v1 (test de conformité).
+#: Bornes des prefabs de base, recopiées de la dernière version de leurs manifestes (test de conformité).
 TABLE_MAX_COLUMNS = 8
-TABLE_MAX_ROWS = 64
-TABLE_MAX_CELL = 200
 TABLE_MAX_COLUMN_LABEL = 40
+TABLE_MAX_ROWS = 64
+TABLE_MAX_CELLS_PER_ROW = 8
+TABLE_MAX_CELL = 200
 DOCUMENT_MAX_BODY = 12000
 CHECKLIST_MAX_ITEMS = 64
+CHECKLIST_MAX_ID = 64
+CHECKLIST_MAX_LABEL = 200
+CHECKLIST_MAX_NOTE = 500
 
-SURFACES: Mapping[DeliveryShape, Surface] = {
-    DeliveryShape.SIMPLE: Surface(DeliveryShape.SIMPLE, None, "une réponse directe dans votre compte rendu"),
-    DeliveryShape.COMPARISON: Surface(DeliveryShape.COMPARISON, "jarvis.table", "un tableau jarvis.table"),
-    DeliveryShape.REPORT: Surface(DeliveryShape.REPORT, "jarvis.document", "un document jarvis.document"),
-    DeliveryShape.CHECKLIST: Surface(DeliveryShape.CHECKLIST, "jarvis.checklist", "une liste jarvis.checklist"),
-}
+#: Codes d'une panne dont on ne sait pas si l'écran a changé (transport, expiration, réponse illisible).
+#: Tout autre code est un refus avant ou par Core : rien n'a été appliqué.
+UNKNOWN_OUTCOME_CODES = frozenset({
+    "core_timeout", "core_unreachable", "core_bad_answer", "invalid_scene_response", "protocol_error",
+    "display_internal_error",
+})
 
-_SHAPE_LABELS = {
-    DeliveryShape.COMPARISON: "une comparaison",
-    DeliveryShape.REPORT: "un rapport",
-    DeliveryShape.CHECKLIST: "une liste à cocher",
-}
-
-# Mots repérés dans un texte sans accents et en minuscules. « compte rendu » n'en est pas : c'est ce que tout
-# appelant demande en retour, pas une forme. « par rapport à » est retiré avant la recherche.
-_COMPARISON = re.compile(
-    r"\b(compar\w*|versus|vs\.?|benchmark\w*|avantages et inconvenients|pour et contre|pros and cons|"
-    r"lequel choisir|laquelle choisir|differences? entre|tableau comparatif|classement)\b")
-_REPORT = re.compile(
-    r"\b(rapports?|reports?|synthese|etude|etat de l'art|livre blanc|white ?paper|note de synthese|"
-    r"analyse approfondie|recherche approfondie|dossier de recherche|document de synthese|memo)\b")
-_CHECKLIST = re.compile(r"\b(check-?list|liste de controle|liste de taches|a cocher|to-?do)\b")
-_NOT_A_REPORT = re.compile(r"\bpar rapport\b")
+#: Ligne ajoutée à la charte d'un Mission Owner, juste après sa consigne de compte rendu (cohérence N8).
+REPORT_NOTE = (
+    "Pour un Mission Owner : un résultat structuré s'affiche à l'écran (voir « RESTITUTION (JARVIS) ») ; le "
+    "compte rendu donne alors l'object_id et la conclusion, pas la synthèse entière."
+)
 
 
-def _normalized(text: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", text.casefold())
-    plain = "".join(char for char in decomposed if not unicodedata.combining(char))
-    return _NOT_A_REPORT.sub(" ", plain.replace("’", "'"))
+def delivery_brief() -> str:
+    """Le paragraphe de restitution d'un Mission Owner : une règle de jugement sur le résultat réel.
 
-
-def classify_delivery(text: str) -> DeliveryShape:
-    """La forme probable de la demande. Comparaison avant rapport (un « rapport comparatif » est un tableau
-    et quelques lignes), rapport avant liste à cocher ; rien de repéré : simple. Ne lève jamais."""
-
-    plain = _normalized(text if isinstance(text, str) else "")
-    if _COMPARISON.search(plain):
-        return DeliveryShape.COMPARISON
-    if _REPORT.search(plain):
-        return DeliveryShape.REPORT
-    if _CHECKLIST.search(plain):
-        return DeliveryShape.CHECKLIST
-    return DeliveryShape.SIMPLE
-
-
-def surface_for(shape: DeliveryShape) -> Surface:
-    return SURFACES[shape]
-
-
-def delivery_brief(request: str = "") -> str:
-    """Le paragraphe de restitution d'un Mission Owner, avec un indice de forme tiré de `request`.
-
-    Il dit quand une surface riche sert, laquelle, comment l'afficher, et quoi faire si l'affichage échoue ;
-    il n'impose ni gabarit ni artefact. Une demande jugée simple ne reçoit aucun indice.
+    Il dit quand une surface riche sert, laquelle, comment l'afficher et quoi faire si l'affichage échoue ; il
+    n'impose ni gabarit ni nombre d'artefacts, et ne lit pas les mots de la demande.
     """
 
-    lines = [
+    return "\n".join((
         DELIVERY_MARK,
         "L'utilisateur ne lit pas votre compte rendu : le cerveau vocal le lui résume en quelques phrases. Ce qui "
-        "doit être lu (un tableau, un rapport) n'atteint l'utilisateur que s'il est affiché à l'écran. Choisissez "
-        "la forme d'après l'usage du résultat, pas d'après l'effort fourni :",
-        "- Fait, chiffre, oui/non, petite correction : rendez-le tel quel dans votre compte rendu, sans fenêtre "
-        "ni document.",
-        f"- Comparaison sérieuse (plusieurs options sur plusieurs critères) : affichez un tableau jarvis.table, "
-        f"data {{columns: [{{label, align?}}], rows: [[cellules]]}}, {TABLE_MAX_COLUMNS} colonnes et "
-        f"{TABLE_MAX_ROWS} lignes au plus, cellules courtes (≤ {TABLE_MAX_CELL} caractères) ; la recommandation "
-        "va dans un document jarvis.document à côté si elle dépasse quelques lignes.",
-        f"- Rapport, synthèse, recherche approfondie : affichez un document jarvis.document, data {{body: "
-        f"Markdown ≤ {DOCUMENT_MAX_BODY} caractères}}, structuré (titres, listes, sources nommées).",
-        "- Actions à cocher : jarvis.checklist, data {items: [{id, label, done?, note?}]}. Une surface plus "
-        f"riche existe peut-être : {SEARCH_TOOL}.",
+        "doit être relu n'atteint l'utilisateur que s'il est affiché. Une fois le résultat obtenu, jugez sa forme "
+        "sur lui, pas sur les mots de la demande :",
+        "- Il tient en une ou deux phrases (fait, chiffre, oui/non, correction faite) : dites-le dans le compte "
+        "rendu, sans fenêtre.",
+        "- Il est structuré (plusieurs options ou critères à comparer, rapport, état des lieux, bilan, audit, "
+        "synthèse de recherche, explication détaillée, liste d'actions, tout ce que l'utilisateur voudra relire) : "
+        "affichez-le, par la surface adaptée :",
+        f"  - comparaison : jarvis.table, data {{columns: [{{label ≤ {TABLE_MAX_COLUMN_LABEL} car., align?}}], "
+        f"rows: [[cellules]]}} ; {TABLE_MAX_COLUMNS} colonnes, {TABLE_MAX_ROWS} lignes, "
+        f"{TABLE_MAX_CELLS_PER_ROW} cellules par ligne au plus ; chaque cellule est une chaîne ≤ "
+        f"{TABLE_MAX_CELL} car. Une recommandation de plus de quelques lignes va dans un jarvis.document à côté ;",
+        f"  - rapport, état des lieux, bilan, synthèse : jarvis.document, data {{body: Markdown ≤ "
+        f"{DOCUMENT_MAX_BODY} car.}}, structuré (titres, listes, sources nommées) ;",
+        f"  - liste d'actions : jarvis.checklist, data {{items: [{{id ≤ {CHECKLIST_MAX_ID} car., label ≤ "
+        f"{CHECKLIST_MAX_LABEL} car., done?, note? ≤ {CHECKLIST_MAX_NOTE} car.}}]}}, {CHECKLIST_MAX_ITEMS} "
+        "éléments au plus ;",
+        f"  - une surface plus riche existe peut-être : {SEARCH_TOOL}.",
         f"- Pour afficher : {DISPLAY_TOOL} (kind window, category, title, prefab {{prefab_id, data}}) ; s'il "
-        "n'est pas chargé, chargez-le avec ToolSearch (« select:" + DISPLAY_TOOL + " »).",
-        "- L'affichage n'est fait que si l'outil rend un object_id. Sur un refus ou une erreur, ne dites pas "
-        "qu'il est à l'écran : livrez le contenu en Markdown structuré dans votre compte rendu et dites en une "
-        "phrase ce qui a échoué (l'erreur joint un repli prêt à l'emploi). Sans ces outils dans votre session, "
-        "même chose.",
-        "- Dans votre compte rendu final, après un affichage réussi : l'object_id, la conclusion en quelques "
-        "lignes, sans recopier ce qui est affiché.",
-    ]
-    shape = classify_delivery(request)
-    if shape is not DeliveryShape.SIMPLE:
-        lines.append(f"Indice : la consigne ressemble à {_SHAPE_LABELS[shape]} ; affichez {surface_for(shape).label}, "
-                     "sauf si le résultat réel tient en une phrase.")
-    return "\n".join(lines)
+        f"n'est pas chargé, chargez-le avec ToolSearch (« select:{DISPLAY_TOOL} »).",
+        "- L'affichage n'est fait que si l'outil rend un object_id. Sur un refus ou une erreur, suivez le repli "
+        "joint à l'erreur : ne dites jamais affiché ce qui ne l'est pas, livrez le contenu en Markdown structuré "
+        "et dites en une phrase ce qui a échoué. Sans ces outils dans votre session, même chose.",
+        "- Après un affichage réussi, le compte rendu donne l'object_id et la conclusion en quelques lignes, sans "
+        "recopier ce qui est affiché.",
+    ))
 
 
 # ------------------------------------------------------------------ repli
@@ -219,18 +172,40 @@ def readable_content(prefab_id: str, data: object) -> str | None:
     return text
 
 
-def fallback_note(prefab: object) -> str:
-    """Le repli joint à l'erreur d'un affichage de prefab (`prefab` : l'argument de l'outil, tel que reçu)."""
+def screen_state(operation: Literal["create", "update"], code: str, object_id: str | None) -> str:
+    """Ce qui est réellement à l'écran après l'échec `code` d'une création ou d'une mise à jour (reprise QA B1)."""
+
+    if code in UNKNOWN_OUTCOME_CODES:
+        return ("L'état de l'affichage est inconnu (la commande a pu partir ou non) : relisez la scène "
+                "(scene_get ou scene_inspect) avant d'en parler ou de réessayer.")
+    if operation == "update":
+        target = f"la fenêtre {object_id}" if object_id else "la fenêtre visée"
+        return (f"La mise à jour n'est pas appliquée : {target} garde son contenu précédent. Si la cause tient "
+                "aux données (bornes, schéma), corrigez-les et réessayez ; la remarque scene_changed éventuelle "
+                "ne concerne que d'autres objets et n'empêche pas ce nouvel essai.")
+    return ("La fenêtre n'a pas été créée : rien de nouveau n'est à l'écran, ne dites pas le contraire. Si la cause "
+            "tient aux données (bornes, schéma), corrigez-les et réessayez ; la remarque scene_changed éventuelle "
+            "ne concerne que d'autres objets et n'empêche pas ce nouvel essai.")
+
+
+def fallback_note(prefab: object, *, operation: Literal["create", "update"] = "create", code: str = "",
+                  object_id: str | None = None) -> str:
+    """Le repli joint à l'erreur d'un affichage de prefab (`prefab` : l'argument de l'outil, tel que reçu).
+
+    Neutre vis-à-vis de l'appelant (cerveau ou sous-agent) : l'état réel de l'écran, puis le contenu sous une
+    forme écrite, à résumer s'il est dit à voix haute.
+    """
 
     given = prefab if isinstance(prefab, Mapping) else {}
-    prefab_id = given.get("prefab_id") if isinstance(given.get("prefab_id"), str) else "?"
+    prefab_id = given.get("prefab_id")
+    lines = [FALLBACK_MARK, screen_state(operation, code, object_id)]
+    if not isinstance(prefab_id, str) or not prefab_id:
+        lines.append("L'argument prefab ne nomme aucun prefab_id : donnez-en un (prefab_search) ou livrez le "
+                     "contenu autrement.")
+        return "\n".join(lines)
+    lines.append(f"Prefab visé : {prefab_id}. S'il n'est pas corrigé, livrez le contenu autrement que par cette "
+                 "fenêtre et dites en une phrase que l'affichage a échoué, avec sa cause.")
     content = readable_content(prefab_id, given.get("data"))
-    lines = [
-        FALLBACK_MARK,
-        f"La fenêtre {prefab_id} n'est pas affichée : rien n'est à l'écran, ne dites pas le contraire. Corrigez "
-        "et réessayez si la cause est claire ; sinon livrez le contenu dans votre compte rendu sous une forme "
-        "lisible et dites en une phrase que l'affichage a échoué, avec la cause ci-dessus.",
-    ]
     if content is not None:
-        lines += ["Contenu prêt à livrer :", content]
+        lines += ["Contenu prêt à livrer (forme écrite ; à l'oral, résumez-le au lieu de le lire) :", content]
     return "\n".join(lines)

@@ -897,7 +897,8 @@ class SceneDisplayTools(SurfaceToolsMixin):
                 result["prefab"] = {"id": ref.prefab_id, "version": ref.version}
             return result
 
-        return await self._with_fallback("scene_create_object", prefab, self._guard("scene_create_object", run))
+        return await self._with_fallback("scene_create_object", prefab, self._guard("scene_create_object", run),
+                                         operation="create")
 
     async def update_object(
         self,
@@ -962,14 +963,18 @@ class SceneDisplayTools(SurfaceToolsMixin):
                 result["prefab"] = {"id": ref.prefab_id, "version": ref.version}
             return result
 
-        return await self._with_fallback("scene_update_object", prefab, self._guard("scene_update_object", run))
+        return await self._with_fallback("scene_update_object", prefab, self._guard("scene_update_object", run),
+                                         operation="update", object_id=object_id)
 
-    async def _with_fallback(self, tool: str, prefab: Mapping[str, Any] | None, call: Awaitable[Any]) -> Any:
+    async def _with_fallback(self, tool: str, prefab: Mapping[str, Any] | None, call: Awaitable[Any], *,
+                             operation: Literal["create", "update"], object_id: str | None = None) -> Any:
         """Repli de restitution (Slice 11) : un affichage de prefab qui échoue rend son erreur **et** le contenu.
 
         L'échec est déjà journalisé par `_guard` / `_send` (`display.tool_failed` / `display.tool_refused`,
         sans le contenu) ; ici l'erreur rendue à l'agent garde son code et sa phrase, et reçoit
-        `delivery_quality.fallback_note` : rien n'est à l'écran, livrer le contenu sous une forme lisible.
+        `delivery_quality.fallback_note`, qui dit l'état réel de l'écran (création refusée : rien de nouveau ;
+        mise à jour refusée : la fenêtre garde son contenu précédent ; panne de transport : état inconnu) et
+        joint le contenu sous une forme lisible.
         `display.prefab_fallback` (info, ids et code seulement) dit qu'un repli a été proposé.
         """
 
@@ -982,7 +987,8 @@ class SceneDisplayTools(SurfaceToolsMixin):
             self._emit("display.prefab_fallback", f"{tool} : repli de restitution proposé ({exc.code})",
                        data={"tool": tool, "code": exc.code, "reason": exc.reason,
                              "prefab_id": prefab_id if isinstance(prefab_id, str) else None})
-            raise DisplayToolError(exc.code, f"{exc}\n\n{delivery_quality.fallback_note(prefab)}",
+            note = delivery_quality.fallback_note(prefab, operation=operation, code=exc.code, object_id=object_id)
+            raise DisplayToolError(exc.code, f"{exc}\n\n{note}",
                                    outcome=exc.outcome, reason=exc.reason, hint=exc.hint) from None
 
     async def _prefab_ref(self, given: Mapping[str, Any], current: ScenePrefabRef | None) -> ScenePrefabRef:

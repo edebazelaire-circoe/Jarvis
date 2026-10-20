@@ -14,13 +14,16 @@
           "Attendez la fin de la tâche (panneau Agents), puis regardez la scène : une fenêtre « tableau » (jarvis.table) doit porter la comparaison, et, si la recommandation est longue, une fenêtre « document » (jarvis.document) à côté.",
           "Agrandissez chaque fenêtre si besoin : en-têtes lisibles, cellules courtes qui se replient, défilement dans la fenêtre, aucune colonne impossible à lire.",
           "Écoutez ou lisez la réponse du cerveau : elle résume la conclusion en quelques phrases et ne relit pas le tableau.",
-          "Demandez ensuite un rapport (« Lance un [general] [research-lead] : fais une synthèse des licences de Piper, Coqui XTTS et Kokoro ») et vérifiez qu'il arrive dans une fenêtre document structurée (titres, listes, sources ou limites), pas en mur de texte."
+          "Demandez ensuite, sans nommer de prefab, un rapport, un état des lieux et un bilan (« Lance un [general] [research-lead] : fais un état des lieux des solutions locales de détection de mot d'éveil ») et vérifiez que chacun arrive dans une fenêtre document structurée (titres, listes, sources ou limites), pas en mur de texte."
         ],
         "expected": "Comparaison et rapport livrés dans des surfaces structurées et soignées (tableau, document), que vous jugez agréables à lire ; aucun mur de texte brut à l'écran.",
         "reference_captures": [
-          "evidence/01-comparaison-table-et-document.png"
+          "evidence/01-comparaison-table-et-document.png",
+          "evidence/02-rapport-document.png",
+          "evidence/03-etat-des-lieux-document.png",
+          "evidence/04-bilan-document.png"
         ],
-        "note": "Capture de référence : bac à sable du 2026-10-20, fenêtres créées par le Mission Owner (haiku) à leur taille par défaut. La dernière colonne du tableau y est coupée à droite par la largeur par défaut de la fenêtre : dites si c'est acceptable une fois la fenêtre agrandie, ou si la largeur par défaut d'un tableau doit changer (suite hors Slice 11 : nouvelle version du prefab de base ou géométrie conseillée)."
+        "note": "Capture de référence : bac à sable du 2026-10-20, fenêtres créées par le Mission Owner (haiku) à leur taille par défaut. La dernière colonne du tableau y est coupée à droite par la largeur par défaut de la fenêtre : dites si c'est acceptable une fois la fenêtre agrandie, ou si la largeur par défaut d'un tableau doit changer (suite hors Slice 11 : nouvelle version du prefab de base ou géométrie conseillée). Reprise QA (2026-10-20, haiku, sans prefab imposé) : rapport, état des lieux et bilan affichés chacun en jarvis.document (3 sur 3)."
       }
     },
     {
@@ -37,7 +40,7 @@
         ],
         "expected": "Une question simple reçoit une réponse simple, sans artefact ; un affichage refusé est dit honnêtement et le contenu arrive quand même sous une forme lisible.",
         "reference_captures": [],
-        "note": "Trace de référence (bac à sable du 2026-10-20) : question directe → « 6 » sans sous-agent ; [code] [coder] → « 6 », aucun appel d'outil d'affichage ; repli : display.tool_refused (prefab_invalid) puis display.prefab_fallback, compte rendu en tableau Markdown avec la cause."
+        "note": "Trace de référence (bacs à sable du 2026-10-20, haiku) : question directe → « 6 » sans sous-agent ; [code] [coder] → « 6 » et [general] [research-lead] « licence de Kokoro en une phrase » → une phrase, aucun appel d'outil d'affichage (2 sur 2) ; repli : display.tool_refused (prefab_invalid) puis display.prefab_fallback, la note dit l'état réel de l'écran, compte rendu en tableau Markdown avec la cause."
       }
     }
   ],

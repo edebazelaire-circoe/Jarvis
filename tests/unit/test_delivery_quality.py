@@ -1,8 +1,9 @@
 """Qualité de restitution d'un Mission Owner (handoff jarvis-organic-agent-orchestration, Slice 11).
 
 Contrat : `docs/subagent-roles.md` §5bis, `docs/prefabs.md` « Consumers ». Politique pure
-(`jarvis/domain/delivery_quality.py`), assemblage de la consigne par le vrai hook (`routing_hook.run`), et repli
+(`jarvis/domain/delivery_quality.py`), assemblage réel de la consigne par le hook (`routing_hook.run`), et repli
 d'un affichage de prefab par les vrais outils d'affichage contre un vrai Core (`tests/integration` `CoreProcess`).
+La reprise QA (B1, B2, N2 à N7) est couverte ici, sonde de la QA comprise.
 """
 
 from __future__ import annotations
@@ -13,8 +14,8 @@ from pathlib import Path
 import pytest
 
 from jarvis.domain import delivery_quality as dq
+from jarvis.domain.agent_charter import REPORT_PARAGRAPH_END, sign_brief
 from jarvis.domain.agent_orchestration import MISSION_MARK, MissionDecision, mission_brief
-from jarvis.domain.delivery_quality import DeliveryShape, classify_delivery
 from jarvis.runtime import routing_hook
 from jarvis.runtime.core_sessions import CoreSessionTransport
 from jarvis.runtime.display_mcp import DisplayToolError, SceneDisplayTools
@@ -25,105 +26,77 @@ from jarvis.runtime.scene_view import CoreSceneTransport
 from tests.integration.test_scene_transport import CoreProcess
 
 BASE = Path(__file__).resolve().parents[2] / "jarvis" / "prefabs" / "base"
-
-
-# ---------------------------------------------------------------- heuristique de forme
-
-
-@pytest.mark.parametrize("text", [
-    "Combien de fichiers Markdown y a-t-il dans docs/legacy ? Réponds par un nombre.",
-    "Corrige la coquille du bouton Enregistrer.",
-    "Quelle heure est-il à Tokyo ?",
-    "La latence a-t-elle baissé par rapport à hier ?",  # « par rapport » n'est pas un rapport
-    "Fais-le et rends-moi un compte rendu.",  # tout appelant demande un compte rendu : ce n'est pas une forme
-    "",
-])
-def test_a_simple_request_stays_simple(text):
-    assert classify_delivery(text) is DeliveryShape.SIMPLE
-
-
-@pytest.mark.parametrize("text", [
-    "Compare trois ORM Python sur la performance, la maturité et la licence.",
-    "PostgreSQL versus SQLite pour JARVIS : lequel choisir ?",
-    "Avantages et inconvénients de Remotion et de Motion Canvas",
-    "Rédige un rapport comparatif des micros USB",  # comparaison avant rapport
-    "Benchmark des modèles de transcription",
-])
-def test_a_comparison_prefers_a_table(text):
-    assert classify_delivery(text) is DeliveryShape.COMPARISON
-    assert dq.surface_for(DeliveryShape.COMPARISON).prefab_id == "jarvis.table"
-
-
-@pytest.mark.parametrize("text", [
-    "Écris un rapport sur l'état de la voix duplex.",
-    "Fais une synthèse des retours utilisateur de la semaine.",
-    "Recherche approfondie sur les licences des modèles de voix",
-    "Une étude des coûts d'hébergement",
-])
-def test_a_serious_report_prefers_a_document(text):
-    assert classify_delivery(text) is DeliveryShape.REPORT
-    assert dq.surface_for(DeliveryShape.REPORT).prefab_id == "jarvis.document"
-
-
-def test_a_checklist_request_prefers_the_checklist():
-    assert classify_delivery("Prépare une checklist de mise en service") is DeliveryShape.CHECKLIST
-    assert dq.surface_for(DeliveryShape.CHECKLIST).prefab_id == "jarvis.checklist"
-    assert dq.surface_for(DeliveryShape.SIMPLE).prefab_id is None
-
-
-def test_classify_never_raises_on_a_non_text():
-    assert classify_delivery(None) is DeliveryShape.SIMPLE  # type: ignore[arg-type]
+#: Début du paragraphe de restitution lui-même (la marque est aussi citée par la charte et la méthode du rôle).
+PARAGRAPH = f"{dq.DELIVERY_MARK}\nL'utilisateur ne lit pas votre compte rendu"
 
 
 # ---------------------------------------------------------------- consigne de restitution
 
 
-def test_the_delivery_brief_teaches_surfaces_display_and_fallback_without_a_template():
-    text = dq.delivery_brief("")
+def test_the_delivery_brief_is_a_judgement_on_the_result_not_on_the_request():
+    text = dq.delivery_brief()
     assert text.startswith(dq.DELIVERY_MARK)
-    for needle in ("jarvis.table", "jarvis.document", "jarvis.checklist", dq.DISPLAY_TOOL, dq.SEARCH_TOOL,
-                   "ToolSearch", "object_id", "ne dites pas", "Markdown structuré", "sans fenêtre ni document"):
-        assert needle in text
+    for needle in ("jugez sa forme sur lui, pas sur les mots de la demande", "une ou deux phrases",
+                   "sans fenêtre", "état des lieux", "bilan", "audit", "liste d'actions",
+                   "tout ce que l'utilisateur voudra relire", "jarvis.table", "jarvis.document", "jarvis.checklist",
+                   dq.DISPLAY_TOOL, dq.SEARCH_TOOL, "ToolSearch", "object_id", "ne dites jamais affiché"):
+        assert needle in text, needle
     lowered = text.lower()
-    for forbidden in ("étape 1", "toujours", "obligatoirement", "complexité minimale", "au moins"):
+    for forbidden in ("indice", "étape 1", "toujours", "obligatoirement", "complexité minimale", "au moins"):
         assert forbidden not in lowered
 
 
-def test_a_simple_request_gets_no_hint_toward_a_heavy_artifact():
-    assert "Indice" not in dq.delivery_brief("Combien de fichiers dans docs ?")
+def test_no_keyword_heuristic_survives():
+    # Arbitrage de l'agent 0 : la forme se juge sur le résultat ; l'indice par mots-clés est retiré.
+    for name in ("classify_delivery", "DeliveryShape", "surface_for", "SURFACES"):
+        assert not hasattr(dq, name), name
 
 
-@pytest.mark.parametrize(("request_text", "surface"), [
-    ("Compare trois ORM", "jarvis.table"), ("Écris un rapport sur la voix", "jarvis.document"),
-    ("Une checklist de mise en service", "jarvis.checklist")])
-def test_a_shaped_request_gets_a_hint_that_leaves_the_judgement_to_the_owner(request_text, surface):
-    hint = dq.delivery_brief(request_text).splitlines()[-1]
-    assert hint.startswith("Indice :") and surface in hint and "sauf si le résultat réel tient en une phrase" in hint
+def test_every_real_bound_is_stated():
+    text = dq.delivery_brief()
+    for needle in (f"label ≤ {dq.TABLE_MAX_COLUMN_LABEL} car.", f"{dq.TABLE_MAX_COLUMNS} colonnes",
+                   f"{dq.TABLE_MAX_ROWS} lignes", f"{dq.TABLE_MAX_CELLS_PER_ROW} cellules par ligne",
+                   f"chaîne ≤ {dq.TABLE_MAX_CELL} car.", f"Markdown ≤ {dq.DOCUMENT_MAX_BODY} car.",
+                   f"id ≤ {dq.CHECKLIST_MAX_ID} car.", f"label ≤ {dq.CHECKLIST_MAX_LABEL} car.",
+                   f"note? ≤ {dq.CHECKLIST_MAX_NOTE} car.", f"{dq.CHECKLIST_MAX_ITEMS} éléments"):
+        assert needle in text, needle
 
 
-def _manifest_data(prefab_id: str) -> dict:
-    manifest = json.loads((BASE / prefab_id / "1" / "manifest.json").read_text(encoding="utf-8"))
+def _latest_data(prefab_id: str) -> dict:
+    versions = sorted(int(path.name) for path in (BASE / prefab_id).iterdir() if path.name.isdigit())
+    manifest = json.loads((BASE / prefab_id / str(versions[-1]) / "manifest.json").read_text(encoding="utf-8"))
     return manifest["inputs"]["data"]["properties"]
 
 
-def test_the_stated_bounds_are_the_shipped_manifests():
-    table = _manifest_data("jarvis.table")
+def test_the_stated_bounds_are_the_latest_shipped_manifests():
+    table = _latest_data("jarvis.table")
     assert table["columns"]["max_items"] == dq.TABLE_MAX_COLUMNS
     assert table["columns"]["items"]["properties"]["label"]["max_length"] == dq.TABLE_MAX_COLUMN_LABEL
     assert table["rows"]["max_items"] == dq.TABLE_MAX_ROWS
-    assert table["rows"]["items"]["items"]["max_length"] == dq.TABLE_MAX_CELL
-    assert _manifest_data("jarvis.document")["body"]["max_length"] == dq.DOCUMENT_MAX_BODY
-    assert _manifest_data("jarvis.checklist")["items"]["max_items"] == dq.CHECKLIST_MAX_ITEMS
-    for shape, surface in dq.SURFACES.items():
-        assert surface.shape is shape
-        assert surface.prefab_id is None or (BASE / surface.prefab_id / "1" / "manifest.json").is_file()
+    assert table["rows"]["items"]["max_items"] == dq.TABLE_MAX_CELLS_PER_ROW
+    assert table["rows"]["items"]["items"] == {"type": "string", "max_length": dq.TABLE_MAX_CELL}
+    assert _latest_data("jarvis.document")["body"]["max_length"] == dq.DOCUMENT_MAX_BODY
+    checklist = _latest_data("jarvis.checklist")["items"]
+    assert checklist["max_items"] == dq.CHECKLIST_MAX_ITEMS
+    item = checklist["items"]["properties"]
+    assert (item["id"]["max_length"], item["label"]["max_length"], item["note"]["max_length"]) == (
+        dq.CHECKLIST_MAX_ID, dq.CHECKLIST_MAX_LABEL, dq.CHECKLIST_MAX_NOTE)
 
 
-def test_the_mission_brief_carries_the_delivery_paragraph_once_and_last():
-    text = mission_brief(MissionDecision(mission_owner=True, mission_id="m"), request="Compare deux micros")
-    assert text.startswith(MISSION_MARK) and text.count(dq.DELIVERY_MARK) == 1
-    assert text.endswith(dq.delivery_brief("Compare deux micros"))
-    assert mission_brief(MissionDecision(), request="Compare deux micros") is None
+def test_the_mission_brief_opens_with_the_delivery_paragraph():
+    text = mission_brief(MissionDecision(mission_owner=True, mission_id="m"))
+    assert text.startswith(MISSION_MARK) and text.count(PARAGRAPH) == 1
+    assert text.index(PARAGRAPH) < text.index("Le résultat et sa qualité vous appartiennent")
+    assert text.rstrip().endswith("rien de ce que vous ne faites qu'envisager.")
+    assert mission_brief(MissionDecision()) is None
+
+
+def test_the_report_note_lands_right_after_the_charter_report_paragraph_once():
+    signed = sign_brief(f"Consigne qui cite : {REPORT_PARAGRAPH_END}", report_note=dq.REPORT_NOTE)
+    assert f"{REPORT_PARAGRAPH_END}\n{dq.REPORT_NOTE}" in signed and signed.count(dq.REPORT_NOTE) == 1
+    assert signed.index(dq.REPORT_NOTE) < signed.index("--- consigne ---")
+    assert dq.REPORT_NOTE not in sign_brief("Consigne.")
+    assert sign_brief(signed, report_note=dq.REPORT_NOTE) == signed  # déjà signée : jamais doublée
 
 
 # ---------------------------------------------------------------- assemblage par le vrai hook
@@ -141,27 +114,29 @@ def _prompt(output: dict) -> str:
     return (output.get("hookSpecificOutput") or {}).get("updatedInput", {}).get("prompt", "")
 
 
-def test_a_mission_owner_receives_the_delivery_paragraph_with_the_hint_of_its_request(tmp_path):
-    brief = _prompt(routing_hook.run(_call("[general] [research-lead] Comparatif ORM",
-                                           "Compare SQLAlchemy, Peewee et Pony sur trois critères."), tmp_path))
-    assert brief.count(dq.DELIVERY_MARK) == 1 and brief.index(MISSION_MARK) < brief.index(dq.DELIVERY_MARK)
-    assert "Indice : la consigne ressemble à une comparaison" in brief
+@pytest.mark.parametrize("description", ["[general] [research-lead] Bilan", "[code] [coder] Corriger"])
+def test_a_mission_owner_reads_one_consistent_rule_in_the_real_assembly_order(tmp_path, description):
+    brief = _prompt(routing_hook.run(_call(description, "Fais un bilan de la migration."), tmp_path))
+    order = [brief.index(REPORT_PARAGRAPH_END), brief.index(dq.REPORT_NOTE), brief.index("--- consigne ---"),
+             brief.index(MISSION_MARK), brief.index(PARAGRAPH), brief.index("Le résultat et sa qualité")]
+    assert order == sorted(order), order
+    assert brief.index(dq.REPORT_NOTE) == brief.index(REPORT_PARAGRAPH_END) + len(REPORT_PARAGRAPH_END) + 1
+    assert brief.count(PARAGRAPH) == 1 and brief.count(dq.REPORT_NOTE) == 1
 
 
-def test_the_hint_reads_the_callers_words_never_the_appended_blocks(tmp_path):
-    # La charte, le rôle et la méthode apposés parlent de rapports et de comptes rendus : seul le texte de
-    # l'appelant compte, et une demande simple ne reçoit aucun indice.
-    brief = _prompt(routing_hook.run(_call("[code] [coder] Corriger la coquille", "Corrige la coquille du bouton."),
-                                     tmp_path))
-    assert dq.DELIVERY_MARK in brief and "Indice" not in brief
+def test_the_research_lead_report_rule_agrees_with_the_delivery(tmp_path):
+    brief = _prompt(routing_hook.run(_call("[general] [research-lead] Bilan", "Fais un bilan."), tmp_path))
+    report = brief[brief.index("COMPTE RENDU\n"):brief.index(MISSION_MARK)]
+    assert "la synthèse s'affiche à l'écran" in report and "object_id et la conclusion" in report
 
 
-def test_a_member_or_a_plain_agent_gets_no_delivery_paragraph(tmp_path):
+def test_a_member_or_a_plain_agent_gets_neither_the_paragraph_nor_the_note(tmp_path):
     member = _prompt(routing_hook.run(_call("[code] [coder] Comparer", "Compare A et B.", tool_use_id="t2",
                                             agent_id="a1"), tmp_path))
     plain = _prompt(routing_hook.run(_call("[general] [research] Comparer", "Compare A et B.", tool_use_id="t3"),
                                      tmp_path))
-    assert dq.DELIVERY_MARK not in member and dq.DELIVERY_MARK not in plain
+    for text in (member, plain):
+        assert PARAGRAPH not in text and dq.REPORT_NOTE not in text and REPORT_PARAGRAPH_END in text
 
 
 # ---------------------------------------------------------------- repli : forme lisible
@@ -194,11 +169,50 @@ def test_the_fallback_content_is_bounded_and_says_so():
     assert len(text) < dq.MAX_FALLBACK_CHARS + 100 and text.endswith(f"coupé à {dq.MAX_FALLBACK_CHARS} caractères]")
 
 
-def test_the_fallback_note_never_pretends_and_survives_a_malformed_argument():
-    note = dq.fallback_note({"prefab_id": "jarvis.document", "data": {"body": "Rapport."}})
-    assert note.startswith(dq.FALLBACK_MARK) and "n'est pas affichée" in note and note.endswith("Rapport.")
-    bare = dq.fallback_note("n'importe quoi")
-    assert bare.startswith(dq.FALLBACK_MARK) and "Contenu prêt" not in bare
+# ---------------------------------------------------------------- repli : l'état réel de l'écran (B1)
+
+
+def test_a_refused_creation_says_nothing_new_is_on_screen():
+    note = dq.fallback_note({"prefab_id": "jarvis.document", "data": {"body": "Rapport."}}, operation="create",
+                            code="scene_refused")
+    assert note.startswith(dq.FALLBACK_MARK) and "rien de nouveau n'est à l'écran" in note
+    assert note.endswith("Rapport.")
+
+
+def test_a_refused_update_says_the_window_keeps_its_previous_content():
+    note = dq.fallback_note({"prefab_id": "jarvis.document", "data": {"body": "V2"}}, operation="update",
+                            code="scene_refused", object_id="brain-window-1")
+    assert "La mise à jour n'est pas appliquée : la fenêtre brain-window-1 garde son contenu précédent" in note
+    assert "rien" not in note.split("\n")[1]
+
+
+@pytest.mark.parametrize("code", sorted(dq.UNKNOWN_OUTCOME_CODES))
+@pytest.mark.parametrize("operation", ["create", "update"])
+def test_a_transport_failure_says_the_state_is_unknown(code, operation):
+    note = dq.fallback_note({"prefab_id": "jarvis.table", "data": {}}, operation=operation, code=code,
+                            object_id="brain-window-1")
+    assert "L'état de l'affichage est inconnu" in note and "relisez la scène" in note
+    assert "garde son contenu" not in note and "rien de nouveau" not in note
+
+
+def test_the_fallback_note_is_neutral_toward_its_caller():
+    # Reprise QA N5 : le serveur ne distingue pas le cerveau d'un sous-agent.
+    note = dq.fallback_note({"prefab_id": "jarvis.table", "data": {"columns": [{"label": "A"}]}},
+                            operation="create", code="scene_refused")
+    assert "compte rendu" not in note.lower() and "à l'oral, résumez-le au lieu de le lire" in note
+
+
+def test_the_retry_advice_does_not_contradict_the_scene_changed_hint():
+    # Reprise QA N4 : la remarque `scene_changed` (« relis-la ») porte sur d'autres objets.
+    note = dq.fallback_note({"prefab_id": "jarvis.table"}, operation="create", code="scene_refused")
+    assert "scene_changed éventuelle ne concerne que d'autres objets" in note
+
+
+@pytest.mark.parametrize("prefab", [{}, {"prefab_id": ""}, "n'importe quoi", None])
+def test_an_argument_without_a_prefab_id_gets_a_clean_note(prefab):
+    # Reprise QA N6 : plus de « fenêtre ? ».
+    note = dq.fallback_note(prefab, operation="create", code="invalid_argument")
+    assert "?" not in note.split("\n", 2)[2] and "ne nomme aucun prefab_id" in note and "Contenu prêt" not in note
 
 
 # ---------------------------------------------------------------- repli : vrais outils contre un vrai Core
@@ -233,6 +247,11 @@ def _trace(tmp_path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+async def _scene_object(core: CoreProcess, object_id: str) -> dict | None:
+    _, body, _ = await core.request("GET", "/v1/scene/snapshot")
+    return next((item for item in body["snapshot"]["objects"] if item["object_id"] == object_id), None)
+
+
 NINE_COLUMNS = {"columns": [{"label": f"C{index}"} for index in range(9)], "rows": [["Secret 4291"] * 9]}
 
 
@@ -243,7 +262,8 @@ async def test_a_refused_table_returns_the_cause_and_a_readable_fallback(core, d
                                     prefab={"prefab_id": "jarvis.table", "data": NINE_COLUMNS})
     message = str(refused.value)
     assert refused.value.code == "scene_refused" and "prefab_invalid" in message  # la vraie cause, gardée
-    assert dq.FALLBACK_MARK in message and "| C0 | C1 |" in message and "Secret 4291" in message
+    assert dq.FALLBACK_MARK in message and "rien de nouveau n'est à l'écran" in message
+    assert "| C0 | C1 |" in message and "Secret 4291" in message
     _, after, _ = await core.request("GET", "/v1/scene/snapshot")
     assert after["snapshot"]["revision"] == before["snapshot"]["revision"]  # rien à l'écran
     events = _trace(tmp_path)
@@ -252,11 +272,27 @@ async def test_a_refused_table_returns_the_cause_and_a_readable_fallback(core, d
     assert "4291" not in json.dumps(events)  # le journal ne garde jamais le contenu
 
 
-async def test_an_unknown_prefab_also_falls_back(core, display):
+async def test_update_fallback_on_a_displayed_window(core, display):
+    # Sonde de la QA (B1), retournée : la note ne prétend plus que l'écran est vide.
+    created = await display.create_object(kind="window", category="research", title="Rapport",
+                                          prefab={"prefab_id": "jarvis.document", "data": {"body": "# V1 visible"}})
+    object_id = created["object_id"]
+    with pytest.raises(DisplayToolError) as refused:
+        await display.update_object(object_id=object_id, prefab={"prefab_id": "jarvis.document",
+                                                                 "data": {"body": "y" * 12001}})
+    message = str(refused.value)
+    assert "rien n'est à l'écran" not in message and "rien de nouveau" not in message
+    assert f"la fenêtre {object_id} garde son contenu précédent" in message
+    stored = await _scene_object(core, object_id)
+    assert stored["payload"]["prefab"]["id"] == "jarvis.document"
+    assert stored["payload"]["prefab"]["data"]["body"] == "# V1 visible"
+
+
+async def test_an_unknown_prefab_on_update_also_falls_back(core, display):
     with pytest.raises(DisplayToolError) as refused:
         await display.update_object(object_id="brain-window-x", title="x",
                                     prefab={"prefab_id": "custom.none", "data": {"body": "Synthèse."}})
-    assert refused.value.code == "unknown_prefab" and dq.FALLBACK_MARK in str(refused.value)
+    assert refused.value.code == "unknown_prefab" and "garde son contenu précédent" in str(refused.value)
     assert str(refused.value).endswith("Synthèse.")
 
 
@@ -265,6 +301,22 @@ async def test_a_displayed_document_succeeds_without_any_fallback(core, display,
                                           prefab={"prefab_id": "jarvis.document", "data": {"body": "# Rapport"}})
     assert created["object_id"].startswith("brain-window-") and created["prefab"]["id"] == "jarvis.document"
     assert not [e for e in _trace(tmp_path) if e["kind"] == "display.prefab_fallback"]
+
+
+async def test_the_bound_holds_on_a_maximal_table(core, display):
+    # Sonde de la QA : 9 colonnes × 64 lignes de 200 caractères.
+    data = {"columns": [{"label": f"C{i}"} for i in range(9)], "rows": [["z" * 200] * 9 for _ in range(64)]}
+    with pytest.raises(DisplayToolError) as refused:
+        await display.create_object(kind="window", category="research", title="T",
+                                    prefab={"prefab_id": "jarvis.table", "data": data})
+    tail = str(refused.value).split("au lieu de le lire) :\n", 1)[1]
+    assert len(tail) <= dq.MAX_FALLBACK_CHARS + 60
+
+
+async def test_an_empty_prefab_argument_gets_a_clean_note(core, display):
+    with pytest.raises(DisplayToolError) as refused:
+        await display.create_object(kind="window", category="research", title="T", prefab={})
+    assert "ne nomme aucun prefab_id" in str(refused.value) and "fenêtre ?" not in str(refused.value)
 
 
 async def test_prefabs_out_of_reach_fall_back_and_a_plain_failure_is_untouched(core, tmp_path):
@@ -278,5 +330,26 @@ async def test_prefabs_out_of_reach_fall_back_and_a_plain_failure_is_untouched(c
         with pytest.raises(DisplayToolError) as plain:
             await tools.create_object(kind="agent", category="note", title="x")
         assert dq.FALLBACK_MARK not in str(plain.value)
+        with pytest.raises(DisplayToolError) as plain_update:
+            await tools.update_object(object_id="brain-window-nope", title="x")
+        assert dq.FALLBACK_MARK not in str(plain_update.value)
     finally:
         await tools.close()
+
+
+async def test_a_core_out_of_reach_says_the_display_state_is_unknown(tmp_path):
+    token = tmp_path / "core.token"
+    token.write_text("x" * 48, encoding="utf-8")
+    prefabs = PrefabDisplayTools(CorePrefabTransport(CoreSessionTransport(host="127.0.0.1", port=1,
+                                                                          token_file=token)), timeout_s=3.0)
+    tools = SceneDisplayTools(CoreSceneTransport(host="127.0.0.1", port=1, token_file=token),
+                              journal=RuntimeJournal(tmp_path / "runtime"), prefabs=prefabs)
+    try:
+        with pytest.raises(DisplayToolError) as failed:
+            await tools.create_object(kind="window", category="note", title="x",
+                                      prefab={"prefab_id": "jarvis.document", "data": {"body": "Corps."}})
+        assert failed.value.code in dq.UNKNOWN_OUTCOME_CODES
+        assert "L'état de l'affichage est inconnu" in str(failed.value)
+    finally:
+        await tools.close()
+        await prefabs.close()

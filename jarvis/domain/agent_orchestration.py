@@ -216,13 +216,12 @@ def _owner_markers(roles: Sequence[SubagentRole]) -> str:
     return ", ".join(f"[{role.default_profile}] [{role.marker}]" for role in owners)
 
 
-def mission_brief(decision: MissionDecision, roles: Sequence[SubagentRole] = ROLES, *,
-                  request: str = "") -> str | None:
+def mission_brief(decision: MissionDecision, roles: Sequence[SubagentRole] = ROLES) -> str | None:
     """Le bloc apposé sur la consigne d'un Mission Owner, ou `None` pour tout autre agent.
 
     Il enseigne quand les outils peuvent servir, jamais un ordre ni un nombre d'agents (D05) ; il rappelle que
-    seul ce qui est réellement lancé laisse une trace (D15). `request` (description et consigne de l'appelant)
-    nourrit l'indice de forme du paragraphe de restitution (Slice 11, `delivery_quality`).
+    seul ce qui est réellement lancé laisse une trace (D15). La restitution (Slice 11, `delivery_quality`) vient
+    en tête, juste après la portée : en fin de consigne elle pesait moins que les consignes de compte rendu.
     """
 
     if not decision.mission_owner:
@@ -233,6 +232,10 @@ def mission_brief(decision: MissionDecision, roles: Sequence[SubagentRole] = ROL
     return "\n".join((
         MISSION_MARK,
         scope,
+        # Slice 11 : la restitution (règle de jugement, affichage, repli), paragraphe distinct de `delivery_quality`.
+        "",
+        delivery_quality.delivery_brief(),
+        "",
         "Le résultat et sa qualité vous appartiennent. Personne n'a prévu d'équipe pour vous, et il n'en faut pas "
         "forcément une : une tâche nette se fait seul. Organisez-vous au fil de ce que vous découvrez.",
         "- Déléguez un morceau borné (outil Agent, description « [profil] [rôle] … ») quand il couvre du terrain "
@@ -247,7 +250,4 @@ def mission_brief(decision: MissionDecision, roles: Sequence[SubagentRole] = ROL
         "([code] [qa] …) ou comparez des approches : ne vous arrêtez pas à la première réponse plausible.",
         "- Rendez le résultat sous une forme lisible pour son usage ; une réponse simple reste simple.",
         "JARVIS retient les agents que vous lancez réellement, rien de ce que vous ne faites qu'envisager.",
-        # Slice 11 : la restitution (surface, affichage, repli), paragraphe distinct tenu par `delivery_quality`.
-        "",
-        delivery_quality.delivery_brief(request),
     ))
