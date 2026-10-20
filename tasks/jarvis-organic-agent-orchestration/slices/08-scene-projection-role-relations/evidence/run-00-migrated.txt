@@ -1,0 +1,8 @@
+== scène révision 2 (2 objets, 0 liens, 0 archivés)
+  agent     claude:toolu_v1_ephemere                         exec=completed   title='Liste de courses (éphémère v1)' role_ref=None
+  agent     claude:toolu_v1_ordinaire                        exec=completed   title='Audit ordinaire v1' role_ref=None
+== travail
+== missions
+== trace (scène)
+  {"ts": "2026-10-20T15:58:45.597231+00:00", "kind": "core.scene.migrated", "level": "info", "message": "fichier de scène migré, après sa sauvegarde", "data": {"from": 1, "to": 2, "backup": "scene.sqlite3.v1.bak"}}
+  {"ts": "2026-10-20T15:58:45.618599+00:00", "kind": "core.scene.restart_marked", "level": "info", "message": "redémarrage de Core : étoiles en cours marquées « état inconnu » jusqu'à ce qu'un producteur les redise", "data": {"marked": 0, "already_unknown": 0, "tracked": 0, "terminal_untouched": 2, "job_outcomes": 0, "grace_s": 20.0, "sample": []}}

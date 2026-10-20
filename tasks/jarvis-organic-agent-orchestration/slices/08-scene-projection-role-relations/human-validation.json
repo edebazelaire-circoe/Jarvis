@@ -5,13 +5,13 @@
       "id": "HV-ORG-08-01",
       "description": "Complete a non-ephemeral multi-agent mission, restart isolated Core, and confirm actual role/relation history reappears without invented live status.",
       "status": "pending",
-      "evidence": null
+      "evidence": "Prepared, not passed: evidence/run-01-qa-mission.txt then run-03-after-core-restart.txt (isolated sandbox, real haiku brain: coder Mission Owner + coder producer + qa reviewer, role_ref on each star, owner flag on the owner only, typed link qa!rel_... with ref closed/correction_requested; after killing and restarting the sandbox Core, revision unchanged, same roles and link, finished stars stay completed, nothing marked running). To check live (after the user restarts JARVIS, which applies scene v2): run a mission with a QA or a second agent, restart Core, then read GET /api/scene: role_ref and the typed link are still there and no star says running without live work."
     },
     {
       "id": "HV-ORG-08-02",
       "description": "Complete a trivial ephemeral task and confirm no persistent constellation/history star remains afterward.",
       "status": "pending",
-      "evidence": null
+      "evidence": "Prepared, not passed: evidence/run-02-ephemeral.txt and run-04-scene-files.txt (a real [éphémère] sub-agent and a synthetic one completed: no scene row in scene.sqlite3, core.scene.ephemeral_skipped logged; a synthetic ephemeral that failed got its star and signal at the failure; after the Core restart the replayed ephemeral was not resurrected). To check live: ask JARVIS for a trivial [éphémère] task, wait for its end, reload the page and restart Core: no star for it in the constellation (stars persisted before v2 stay until archived)."
     }
   ],
   "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."

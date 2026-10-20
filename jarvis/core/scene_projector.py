@@ -535,6 +535,8 @@ class SceneProjector:
         #: Dernière lecture de chaque mission (`monotonic`).
         self._mission_read_at: OrderedDict[str, float] = OrderedDict()
         self._mission_tick: asyncio.Task[None] | None = None
+        #: Missions des étoiles persistées à relire à la première réconciliation réussie.
+        self._persisted_missions_due = False
         #: Travaux éphémères déjà signalés (une ligne de journal chacun).
         self._ephemeral_seen: OrderedDict[tuple[str, str], None] = OrderedDict()
         self.stats = SceneProjectionStats()
@@ -605,6 +607,7 @@ class SceneProjector:
         self._queue = self._events.subscribe(max_queue=self._queue_size, lossy=True)
         self._stopping = False
         self._started_at = self._monotonic()
+        self._persisted_missions_due = self._missions is not None
         self._dirty = "start"
         self._task = asyncio.get_running_loop().create_task(self._run(self._queue), name="jarvis-scene-projector")
 
@@ -805,10 +808,12 @@ class SceneProjector:
         before = (self.stats.applied, self.stats.refused)
         try:
             probe = await self._scene.snapshot()  # sonde : lève si la scène est indisponible
-            if reason == "start":
+            if self._persisted_missions_due:
                 # Redémarrage (Slice 08) : les missions que portent les étoiles
                 # persistées sont relues, pour rattraper ce qui a changé pendant
-                # l'arrêt (relation close, relais) sans rien inventer.
+                # l'arrêt (relation close, relais) sans rien inventer. Une fois
+                # par démarrage, même si la première réconciliation a échoué.
+                self._persisted_missions_due = False
                 self._watch_persisted_missions(probe)
             for item in work.items:
                 try:
