@@ -350,6 +350,90 @@ Développement ou une Direction de recherche peut porter une mission en gardant 
   exige l'id du relais et un successeur Mission Owner de la même mission ; une mission close ne change plus
   de propriétaire.
 
+### 5bis. Restitution du Mission Owner (Slice 11)
+
+Décision D23 du handoff jarvis-organic-agent-orchestration : un rapport ou une comparaison sérieuse se livre
+sur une surface riche **existante**, une réponse simple reste simple. Politique : module pur
+`jarvis/domain/delivery_quality.py` ; tests `tests/unit/test_delivery_quality.py`.
+
+**Ce que le hook appose, et où.** Au Mission Owner seulement (ni membre, ni agent sans mission), une seule fois :
+
+1. dans la charte, juste après sa consigne de compte rendu (« Compte rendu court… »), la ligne
+   `delivery_quality.REPORT_NOTE` (`agent_charter.sign_brief(report_note=)`, première occurrence, le texte de la
+   charte ne change pas) : un résultat structuré s'affiche ; le compte rendu en donne l'`object_id` et la
+   conclusion, pas la synthèse entière ;
+2. la méthode de `research-lead` dit la même chose dans son « COMPTE RENDU » (quand il porte la mission) ;
+3. en tête du bloc « RESPONSABILITÉ DE MISSION (JARVIS) » (`agent_orchestration.mission_brief`), juste après sa
+   portée, le paragraphe « RESTITUTION (JARVIS) » (`delivery_quality.delivery_brief`). Il était d'abord en fin de
+   consigne, où il pesait moins que les consignes de compte rendu de la charte et de la méthode (reprise QA B2).
+
+Ordre réel vérifié par test sur l'assemblage du hook : charte (compte rendu, puis la note) → consigne → méthode du
+rôle → bloc de mission (restitution, puis le reste). Le paragraphe dit :
+
+- pourquoi : l'utilisateur ne lit pas le compte rendu d'un sous-agent, le cerveau vocal le lui résume ; ce qui
+  doit être relu n'atteint l'utilisateur que s'il est affiché ;
+- **une règle de jugement sur le résultat réel**, une fois obtenu, jamais sur les mots de la demande : un
+  résultat qui tient en une ou deux phrases se dit, sans fenêtre ; un résultat structuré (plusieurs options ou
+  critères à comparer, rapport, état des lieux, bilan, audit, synthèse de recherche, explication détaillée,
+  liste d'actions, tout ce que l'utilisateur voudra relire) s'affiche par la surface adaptée : `jarvis.table`
+  (recommandation longue dans un `jarvis.document` à côté), `jarvis.document`, `jarvis.checklist`, ou une
+  surface plus riche trouvée par `prefab_search` ;
+- toutes les bornes réelles des `data` : tableau 8 colonnes, intitulés ≤ 40 caractères, 64 lignes, 8 cellules par
+  ligne, cellules de type chaîne ≤ 200 ; document Markdown ≤ 12000 ; checklist 64 éléments, `id` ≤ 64, `label`
+  ≤ 200, `note` ≤ 500. Recopiées de la dernière version livrée des manifestes, égalité vérifiée par test ;
+- comment : `mcp__jarvis-display__scene_create_object` (kind `window`, `prefab {prefab_id, data}`), chargé par
+  `ToolSearch` s'il est différé ;
+- quand la livraison est faite : seulement si l'outil rend un `object_id`. Sur refus, erreur ou outils absents,
+  suivre le repli : ne jamais dire affiché ce qui ne l'est pas, livrer en Markdown structuré, une phrase sur
+  l'échec ;
+- après un affichage réussi : l'`object_id` et la conclusion, sans recopier l'affiché.
+
+Aucun indice tiré des mots de la demande (arbitrage de l'agent 0 : l'heuristique par mots-clés de la première
+version classait juste 46 % d'un corpus de 64 demandes réalistes ; retirée). Ni gabarit imposé, ni nombre
+d'artefacts, ni doctrine de complexité minimale (D05) ; le Mission Owner juge aussi la suffisance des preuves
+avant de rendre (D22, même bloc).
+
+**Repli d'un affichage qui échoue.** `SceneDisplayTools.create_object` / `update_object` avec un argument
+`prefab` : toute `DisplayToolError` garde son code et sa phrase et reçoit `delivery_quality.fallback_note`
+(« REPLI DE RESTITUTION (JARVIS) »), qui dit **l'état réel de l'écran** (`screen_state`) :
+
+| Échec | Ce que dit la note |
+| --- | --- |
+| création refusée (`prefab_invalid`, `unknown_prefab`, `prefab_unavailable`, `invalid_argument`, commande non envoyée…) | la fenêtre n'a pas été créée, rien de nouveau n'est à l'écran |
+| mise à jour refusée (mêmes codes) | la mise à jour n'est pas appliquée, la fenêtre `<object_id>` garde son contenu précédent |
+| mise à jour d'un objet inconnu ou archivé (motif `unknown_object` / `object_archived`) | aucune fenêtre `<object_id>` n'existe, rien n'est affiché sous ce nom |
+| panne de transport, réponse illisible ou erreur HTTP de Core hors 400/413 (`UNKNOWN_OUTCOME_CODES` : `core_timeout`, `core_unreachable`, `core_bad_answer`, `invalid_scene_response`, `core_refused`, `display_internal_error`) | l'état de l'affichage est inconnu : relire la scène avant d'en parler ou de réessayer |
+
+Pourquoi un refus est sûr : il est décidé avant l'envoi (argument, taille, prefab, délégation), la commande n'est
+pas partie (`command_not_sent`), ou Core répond sans appliquer : refus du domaine dans une réponse 200
+(`scene_refused`), 400/413, ou 503 de scène (`scene_unavailable`, `scene_persist_failed`, « Rien n'a été
+appliqué »). `core_refused` couvre toute autre erreur HTTP de Core, 5xx compris ; le statut ne remonte pas
+jusqu'à la note et une erreur interne après application ne peut pas être exclue, d'où « inconnu ».
+`protocol_error` n'est levé que par un lot, jamais par une création ou une mise à jour. Un `prefab` sans
+`prefab_id` (absent ou vide) est refusé avant tout envoi (`invalid_argument`), jamais « inconnu ».
+
+Pour un refus, corriger les données et réessayer reste permis : la remarque `scene_changed` éventuelle porte sur
+d'autres objets. Puis le prefab visé et le contenu prêt à livrer (`readable_content` : tableau Markdown pour
+`jarvis.table`, corps pour `jarvis.document`/`window`/`browser`, cases pour `jarvis.checklist`, JSON indenté
+sinon ; borné à 4000 caractères, coupure dite), présenté comme une forme écrite « à résumer à l'oral au lieu de
+la lire ». Un argument sans `prefab_id` reçoit une note propre, sans contenu. La note est **neutre vis-à-vis de
+l'appelant** : le serveur ne distingue pas le cerveau d'un sous-agent (même acteur `brain`), elle ne parle donc ni
+de compte rendu ni d'une consigne propre à un sous-agent. L'échec reste journalisé une fois
+(`display.tool_refused` ou `display.tool_failed`) ; `display.prefab_fallback` (info : outil, code, motif,
+`prefab_id`, jamais le contenu) dit qu'un repli a été proposé. Un échec sans `prefab` est inchangé. Le journal
+`agent.event` du cerveau recopie le résultat d'outil entier (comportement préexistant, hors de ce module) : la
+borne de 4000 caractères limite ce qu'il y gagne.
+
+**Voie réelle de livraison** (bacs à sable du 2026-10-20, CLI 2.1.304, haiku) : un sous-agent `general-purpose`
+lancé par le cerveau a les outils `jarvis-display` du cerveau, différés (`deferred_tools_delta`), chargés par
+`ToolSearch` ; ses appels sont journalisés avec l'acteur `brain` (aucune distinction d'acteur pour un
+sous-agent). Sans `scene.enabled`, le serveur n'est pas déclaré : le Mission Owner livre en Markdown.
+
+**Limite.** Seul un Mission Owner reçoit la consigne : le cerveau propose aujourd'hui `[code] [coder]` et
+`[general] [research]` ; une recherche confiée à `[research]` (rôle qui ne porte pas de mission) ne la reçoit pas tant
+que la Slice 07 n'offre pas `research-lead` au cerveau. La beauté du rendu reste un jugement humain
+(`HV-ORG-11-01`, `HV-ORG-11-02`).
+
 ## 6. Éphémère
 
 Un seul drapeau (décision I-004 de l'agent 0, 2026-10-20) : une tâche courte dont la réussite est

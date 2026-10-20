@@ -45,7 +45,7 @@ State: **READY** (audited `main@336f21be`, evidence `references/readiness-audit.
 - [ ] 08-scene-projection-role-relations
 - [ ] 09-task-graph-ui
 - [x] 10-agent-roles-settings-ui (2026-10-20; QA code-review+qa-verification+runtime-validation+impeccable PASS_WITH_NOTES, notes fixed 7480cc5c; HV-ORG-10-01/02 pending)
-- [ ] 11-output-quality-prefab-delivery
+- [x] 11-output-quality-prefab-delivery (2026-10-20; QA code-review+qa-verification+runtime-validation+agent-trace FAIL then PASS_WITH_NOTES after rework, notes fixed 3f02464f; HV-ORG-11-01/02 pending)
 - [ ] 12-work-method-learning
 - [ ] 13-integration-rollout-quality-docs
 

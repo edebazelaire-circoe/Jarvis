@@ -73,6 +73,7 @@ import tempfile
 from typing import Annotated, Any, Literal, NotRequired, TypedDict
 import uuid
 
+from jarvis.domain import delivery_quality
 from jarvis.domain._checks import check_id, check_token
 from jarvis.domain.scene_links import link_host
 from jarvis.domain.ui_intent import UiIntentDraft
@@ -896,7 +897,8 @@ class SceneDisplayTools(SurfaceToolsMixin):
                 result["prefab"] = {"id": ref.prefab_id, "version": ref.version}
             return result
 
-        return await self._guard("scene_create_object", run)
+        return await self._with_fallback("scene_create_object", prefab, self._guard("scene_create_object", run),
+                                         operation="create")
 
     async def update_object(
         self,
@@ -961,11 +963,44 @@ class SceneDisplayTools(SurfaceToolsMixin):
                 result["prefab"] = {"id": ref.prefab_id, "version": ref.version}
             return result
 
-        return await self._guard("scene_update_object", run)
+        return await self._with_fallback("scene_update_object", prefab, self._guard("scene_update_object", run),
+                                         operation="update", object_id=object_id)
+
+    async def _with_fallback(self, tool: str, prefab: Mapping[str, Any] | None, call: Awaitable[Any], *,
+                             operation: Literal["create", "update"], object_id: str | None = None) -> Any:
+        """Repli de restitution (Slice 11) : un affichage de prefab qui échoue rend son erreur **et** le contenu.
+
+        L'échec est déjà journalisé par `_guard` / `_send` (`display.tool_failed` / `display.tool_refused`,
+        sans le contenu) ; ici l'erreur rendue à l'agent garde son code et sa phrase, et reçoit
+        `delivery_quality.fallback_note`, qui dit l'état réel de l'écran (création refusée : rien de nouveau ;
+        mise à jour refusée : la fenêtre garde son contenu précédent ; panne de transport : état inconnu) et
+        joint le contenu sous une forme lisible.
+        `display.prefab_fallback` (info, ids et code seulement) dit qu'un repli a été proposé.
+        """
+
+        try:
+            return await call
+        except DisplayToolError as exc:
+            if prefab is None:
+                raise
+            prefab_id = prefab.get("prefab_id") if isinstance(prefab, Mapping) else None
+            self._emit("display.prefab_fallback", f"{tool} : repli de restitution proposé ({exc.code})",
+                       data={"tool": tool, "code": exc.code, "reason": exc.reason,
+                             "prefab_id": prefab_id if isinstance(prefab_id, str) else None})
+            note = delivery_quality.fallback_note(prefab, operation=operation, code=exc.code, object_id=object_id,
+                                                  reason=exc.reason)
+            raise DisplayToolError(exc.code, f"{exc}\n\n{note}",
+                                   outcome=exc.outcome, reason=exc.reason, hint=exc.hint) from None
 
     async def _prefab_ref(self, given: Mapping[str, Any], current: ScenePrefabRef | None) -> ScenePrefabRef:
         """Bloc d'instance de l'argument `prefab` (version épinglée), par `PrefabDisplayTools`."""
 
+        prefab_id = given.get("prefab_id") if isinstance(given, Mapping) else None
+        if not isinstance(prefab_id, str) or not prefab_id.strip():
+            # Reprise QA S11 : refus explicite avant tout envoi. L'accès `given["prefab_id"]` levait une KeyError,
+            # rendue `display_internal_error` (« état inconnu ») alors que rien n'était parti.
+            raise DisplayToolError("invalid_argument", "Argument invalide, rien n'a été envoyé : prefab doit nommer "
+                                                       "un prefab_id (cherchez-le avec prefab_search).")
         if self.prefabs is None:
             raise DisplayToolError("prefab_unavailable", "Les prefabs ne sont pas joignables depuis ce serveur : "
                                                          "rien n'a été envoyé.")
