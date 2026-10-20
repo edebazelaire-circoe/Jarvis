@@ -178,10 +178,11 @@ l'attente : rien de durable n'avait été écrit, le rejeu du producteur la reco
 - **Contrat de rejeu du producteur** : les éphémères en attente vivent en mémoire de Core et disparaissent à
   son redémarrage ; le relais du Control Center reconnaît le nouveau `store_id` et renvoie les déclarations
   des tâches encore suivies ; les durables répondent `duplicate`.
-- **Clôture** : une mission se clôt avec la fin du travail de son propriétaire **courant** (`completed`,
-  `failed`, `cancelled` ; `interrupted` → `cancelled`), une fois, même si la fin précède la déclaration ou
-  survient après un redémarrage de Core (lecture de l'instance). Après un relais explicite, la fin du
-  prédécesseur ne clôt rien. `mission_history.mission_closed`, ou `mission_history.mission_close_failed`.
+- **Clôture** : propriétaire **courant** terminé ET équipe terminée (aucun membre vivant dans Work State,
+  aucune sous-mission ouverte) ; sinon différée et réévaluée à chaque fin et chaque balayage. Issue du
+  propriétaire (`interrupted` → `cancelled`). Déclaration tardive : instance toujours retenue (D18), sans
+  sous-mission sous une mission close (`mission_parent_closed`). Détail : [agent-orchestration.md](agent-orchestration.md)
+  §6. `mission_history.mission_closed`, `…mission_close_deferred`, `…mission_close_failed`.
 
 ## 8. Fournisseur dégradé
 
@@ -216,7 +217,7 @@ State, mission dans le contexte du cerveau, `health()` exposé, balayage périod
 
 | Méthode | Route Core (jeton) | Control Center (lecture seule) | Réponse |
 | --- | --- | --- | --- |
-| POST | `/v1/missions/declarations` | — (relais seulement) | `{"store_id", "results": [{outcome, instance_id, code, message}]}` ; 400 strict, rien d'écrit |
+| POST | `/v1/missions/declarations` | — (relais seulement) | `{"store_id", "results": [{outcome, instance_id, code, message}]}` ; enveloppe stricte (400) ; un élément hors contrat = `refused` / `invalid_declaration` à sa place, les autres enregistrés |
 | GET | `/v1/missions/health` | `/api/missions/health` | `HistoryHealth` + `store_id` |
 | GET | `/v1/missions/{mission_id}` | `/api/missions/{mission_id}` | missions, instances (statut vivant ou `null`), relations, propriétaires, `truncated` ; 404 `mission_not_found` |
 | GET | `/v1/missions/work/{work_source}/{work_external_id}` | `/api/missions/work/{work_source}/{work_external_id}` | l'instance retenue ; 404 `mission_instance_not_found` |

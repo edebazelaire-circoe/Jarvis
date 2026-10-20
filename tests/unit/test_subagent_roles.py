@@ -576,17 +576,39 @@ def test_no_role_brief_contradicts_a_constrained_final_output():
         assert role.as_dict()["constrained_output"] is role.constrained_output
 
 
+def test_the_assembled_brief_of_a_constrained_role_never_sends_extra_work_to_the_report(tmp_path):
+    # Reprise QA M3 (Slice 05) : la consigne ASSEMBLÉE, charte comprise, telle que le hook la rend. Pour un rôle à
+    # sortie contrainte, aucun texte n'invite à mettre un autre travail dans le compte rendu : charte et capacités
+    # l'envoient au dossier de mission. Pour les autres rôles qui ne lancent pas, la charte garde le compte rendu.
+    from jarvis.domain.agent_charter import NO_DELEGATION_CONSTRAINED_PARAGRAPH, NO_DELEGATION_PARAGRAPH
+    report = ("dis-le dans ton compte rendu", "dites-le dans votre compte rendu", "ajoutez-le au compte rendu")
+    for role in ROLES:
+        if role.can_spawn:
+            continue
+        flat = brief_of(routing_hook.run(call(f"[{role.default_profile}] [{role.marker}] Faire"),
+                                         tmp_path)).replace("\n", " ")
+        if role.constrained_output:
+            assert not any(phrase in flat for phrase in report), role.id
+            assert NO_DELEGATION_CONSTRAINED_PARAGRAPH.replace("\n", " ") in flat
+            assert flat.count("dossier de mission") >= 2  # la charte et les capacités disent la même chose
+        else:
+            assert NO_DELEGATION_PARAGRAPH.replace("\n", " ") in flat, role.id
+
+
 def test_a_non_spawning_role_gets_a_charter_without_the_delegation_invitation(tmp_path):
     # Slice 05 : la charte est consciente du rôle. Un rôle qui ne lance pas n'est plus invité à déléguer (le
     # bloc des capacités ne contredit donc plus rien) ; un rôle qui lance, ou une tâche sans rôle, l'est toujours.
-    from jarvis.domain.agent_charter import DELEGATION_PARAGRAPH, NO_DELEGATION_PARAGRAPH
+    from jarvis.domain.agent_charter import (
+        DELEGATION_PARAGRAPH, NO_DELEGATION_CONSTRAINED_PARAGRAPH, NO_DELEGATION_PARAGRAPH,
+    )
     delegation = "délègue à tes propres sous-agents"
     assert delegation in DELEGATION_PARAGRAPH.replace("\n", " ")
     for marker in ("qa", "interviewer", "research", "web-research", "concept"):
         assert not role_for(marker).can_spawn
         brief = brief_of(routing_hook.run(call(f"[general] [{marker}] Faire"), tmp_path))
         flat = brief.replace("\n", " ")
-        assert delegation not in flat and NO_DELEGATION_PARAGRAPH.replace("\n", " ") in flat
+        expected = NO_DELEGATION_CONSTRAINED_PARAGRAPH if role_for(marker).constrained_output else NO_DELEGATION_PARAGRAPH
+        assert delegation not in flat and expected.replace("\n", " ") in flat
         assert flat.index(CHARTER_MARK) < flat.index(ROLE_MARK) < flat.index(CAPABILITIES_MARK)
         capabilities = flat[flat.index(CAPABILITIES_MARK):]
         assert "Vous ne lancez aucun autre agent" in capabilities and "prime sur" in capabilities

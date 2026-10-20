@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -46,11 +47,25 @@ MAX_FILES = 1_024
 RETENTION_S = 3_600
 #: Taille maximale d'un fait sur disque : au-delà, le fichier n'est pas lu.
 MAX_FACT_BYTES = 8_192
-_NAME = re.compile(r"(\d{10,16})-([A-Za-z0-9_.-]{1,128})\.json\Z")
+_NAME = re.compile(r"(\d{10,16})-([A-Za-z0-9_-]{1,128})\.json\Z")
+#: Ce qu'un `tool_use_id` peut porter tel quel dans un nom de fichier ; tout autre id est haché (`file_key`).
+_SAFE_KEY = re.compile(r"[A-Za-z0-9_-]{1,96}\Z")
 
 
 class DeclarationLedgerFull(OSError):
     """Le dossier des déclarations a atteint `MAX_FILES` : le fait n'est pas écrit."""
+
+
+def file_key(tool_use_id: str) -> str:
+    """La partie du nom de fichier d'un fait : le `tool_use_id` s'il est sûr (liste blanche), sinon son empreinte.
+
+    Un id hors liste (point, séparateur, `..`, caractère de contrôle) ne peut ainsi jamais sortir du dossier ni
+    former un nom réservé ; le fait garde l'id d'origine dans son contenu.
+    """
+
+    if _SAFE_KEY.fullmatch(tool_use_id):
+        return tool_use_id
+    return "h_" + hashlib.sha256(tool_use_id.encode("utf-8", "replace")).hexdigest()[:40]
 
 
 def ledger_dir(runtime_root: Path) -> Path:
@@ -85,7 +100,7 @@ def write_fact(runtime_root: Path, fact: AgentDeclarationFact, *, now_ms: int | 
     if len(_entries(folder)) >= MAX_FILES:
         raise DeclarationLedgerFull(f"{MAX_FILES} declarations already waiting in {folder}")
     stamp = now_ms if now_ms is not None else _now_ms()
-    target = folder / f"{stamp}-{fact.tool_use_id}.json"
+    target = folder / f"{stamp}-{file_key(fact.tool_use_id)}.json"
     body = json.dumps(fact.to_payload(), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     handle, temp = tempfile.mkstemp(prefix=".fact-", suffix=".tmp", dir=folder)
     try:
@@ -104,8 +119,24 @@ def write_fact(runtime_root: Path, fact: AgentDeclarationFact, *, now_ms: int | 
 def recent_count(runtime_root: Path, window_s: float, *, now_ms: int | None = None) -> int:
     """Faits écrits dans les `window_s` dernières secondes (d'après leur nom, sans les lire)."""
 
+    return len(recent_stamps(runtime_root, window_s, now_ms=now_ms))
+
+
+def recent_stamps(runtime_root: Path, window_s: float, *, now_ms: int | None = None) -> list[int]:
+    """Horodatages (ms, croissants) des faits écrits dans la fenêtre, d'après leur nom."""
+
     floor = (now_ms if now_ms is not None else _now_ms()) - int(window_s * 1000)
-    return sum(1 for stamp, _tool_use_id, _path in _entries(ledger_dir(runtime_root)) if stamp >= floor)
+    return [stamp for stamp, _key, _path in _entries(ledger_dir(runtime_root)) if stamp >= floor]
+
+
+def free_in_s(stamps: list[int], window_s: float, limit: int, *, now_ms: int | None = None) -> int | None:
+    """Secondes avant qu'une place se libère sous la borne `limit`, ou `None` si une place est déjà libre."""
+
+    if len(stamps) < limit:
+        return None
+    now = now_ms if now_ms is not None else _now_ms()
+    oldest_that_must_leave = stamps[len(stamps) - limit]
+    return max(1, -(-(oldest_that_must_leave + int(window_s * 1000) - now) // 1000))
 
 
 def prune(runtime_root: Path, *, older_than_s: float = RETENTION_S, now_ms: int | None = None) -> int:

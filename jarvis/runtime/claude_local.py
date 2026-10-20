@@ -1147,15 +1147,21 @@ class ClaudeLocalAgent:
             restricted = self.execution_profile in RESTRICTED_PROFILES
             speculative = self.execution_profile == "speculative_analysis"
             # Slice 05 (organic-agent-orchestration) : le type d'agent restreint (sans l'outil `Agent`) est déclaré
-            # au même lancement que le hook, qui ne l'impose que s'il sait le CLI informé (`--spawn-guard`).
+            # au même lancement que le hook, qui ne l'impose que s'il sait le CLI informé (`JARVIS_SPAWN_GUARD`).
             routing_args = [] if restricted else [
-                "--settings", routing_hook.hook_settings(self.runtime_root, spawn_guard=True),
+                "--settings", routing_hook.hook_settings(self.runtime_root),
                 "--agents", agent_orchestration.agents_argument(),
             ]
             if not restricted:
                 # Le hook lit les instructions des rôles dans un instantané, sans réseau : il est réécrit à
                 # chaque lancement pour suivre les surcharges enregistrées.
                 self._write_subagent_roles_snapshot()
+            # La garde `can_spawn` s'active par l'environnement du CLI, hérité par chaque hook (reprise QA M1) :
+            # posée seulement quand `--agents` déclare le type restreint, retirée sinon.
+            if routing_args:
+                env[agent_orchestration.SPAWN_GUARD_ENV] = agent_orchestration.SPAWN_GUARD_VALUE
+            else:
+                env.pop(agent_orchestration.SPAWN_GUARD_ENV, None)
             restricted_args = []
             if restricted:
                 suffix = os.path.splitext(executable)[1].lower()

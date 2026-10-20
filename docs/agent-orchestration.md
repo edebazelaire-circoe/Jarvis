@@ -49,13 +49,24 @@ Pour chaque appel `Agent`/`Task` (`routing_hook.run`) :
    - borne de sûreté : au plus `MAX_SPAWNS_PER_WINDOW` (120) lancements par `SPAWN_WINDOW_S` (600 s), tous
      cerveaux du poste confondus, comptés sur les noms du registre local : refus `spawn_rate_cap` avec une
      raison lisible ;
-   - rôle `can_spawn=False` et type `general-purpose` (ou absent) : `subagent_type` réécrit en
-     `jarvis-no-spawn` (`can_spawn_enforced`) ; un autre type (`Explore`, type de l'utilisateur) est laissé
-     tel quel (`can_spawn_not_enforced`, consigné).
-   Sans `--spawn-guard` sur la commande du hook (CLI lancé sans le type restreint), rien n'est réécrit ni
-   refusé pour le rôle : un type inconnu du CLI ferait échouer l'appel.
-2. **Consigne** : charte consciente du rôle (`agent_charter.sign_brief(can_spawn=)` : un rôle qui ne lance
-   pas n'est plus invité à déléguer), playbook, méthode du rôle (choisie ou par défaut), manifeste du loadout,
+   - rôle `can_spawn=False` et type `general-purpose` (toute casse, blancs de bord ignorés) ou absent :
+     `subagent_type` réécrit en `jarvis-no-spawn` (`can_spawn_enforced`) ; tout autre type (`Explore`, `Plan`,
+     `claude`, `fork`, types de l'utilisateur) est laissé tel quel (`can_spawn_not_enforced`, consigné).
+   **Activation** (reprise QA M1) : la garde ne s'arme que si l'environnement du hook porte
+   `JARVIS_SPAWN_GUARD=jarvis-no-spawn@1`, posé par `claude_local` sur le CLI qu'il lance avec `--agents` et
+   hérité par chaque hook (constaté sur le CLI 2.1.304, appel du cerveau et appel imbriqué). Aucun drapeau
+   n'est plus ajouté à la commande du hook : un hook d'une version antérieure (argparse strict) sortait en 2
+   sur `--spawn-guard`, et le CLI refusait alors **tout** appel `Agent`. Une autre valeur ou une autre version
+   laisse la garde éteinte : un type inconnu du CLI ferait échouer l'appel.
+
+   | Garanti | Non garanti (consigné `can_spawn_not_enforced`) |
+   | --- | --- |
+   | rôle `can_spawn=False` demandé en `general-purpose` (toute casse) ou sans type : part sous `jarvis-no-spawn`, sans `Agent`/`Task` | rôle `can_spawn=False` demandé sous un autre type : garde les outils de ce type |
+   | appel `Agent` émis depuis `jarvis-no-spawn` : refusé (`caller_cannot_spawn`) | CLI lancé sans la variable (ancien lanceur) : rien n'est réécrit |
+   | borne de débit pour tous les appels | rôle non déclaré : peut lancer, comme avant |
+2. **Consigne** : charte consciente du rôle (`agent_charter.sign_brief(can_spawn=, constrained_output=)` : un
+   rôle qui ne lance pas n'est plus invité à déléguer ; un rôle à sortie contrainte, l'Intervieweur, envoie le
+   travail en plus au dossier de mission, jamais au compte rendu), playbook, méthode du rôle (choisie ou par défaut), manifeste du loadout,
    bloc de mission d'un Mission Owner.
 3. **Mission** (`decide_mission`) : l'agent possède une mission si son rôle peut en porter une
    (`can_own_mission` : `coder`, `research-lead`) et que l'appel vient du cerveau (mission racine) ou porte
@@ -67,9 +78,12 @@ Pour chaque appel `Agent`/`Task` (`routing_hook.run`) :
    (`agent.declaration.failed`) et ne retient jamais l'appel. Journal : `agent.declared` (codes et ids :
    rôle, appelant, mission, méthode choisie ou refusée, garde, écrit ou non) ou `agent.spawn_refused`.
 
-Le hook ne fait aucun appel réseau et ne lève jamais ; un argument refusé par sa ligne de commande le ferait
-échouer et le CLI refuserait l'appel `Agent` (constaté en bac à sable) : `jarvis routing-hook` accepte
-`--spawn-guard`.
+Le hook ne fait aucun appel réseau et ne lève jamais : `routing_hook.main` rattrape toute exception, sort en
+0 sans rien écrire (le CLI garde la consigne d'origine) et consigne `agent.routing.failed`
+(`routing_hook_crashed`). La sous-commande `jarvis routing-hook` tolère un argument inconnu
+(`parse_known_args`) : un lanceur plus récent ne la fait jamais sortir en 2. La raison rendue au CLI porte la
+note de la garde même quand la consigne n'a pas changé. Refus de la borne : il dit dans combien de secondes la
+fenêtre libère une place.
 
 ### Le type d'agent restreint
 
@@ -92,8 +106,9 @@ Ce sont des bornes de ressources : aucune n'impose un minimum ni ne pousse à d�
 
 ## 5. Registre des déclarations et relais
 
-`<runtime>/agent-declarations/<ms>-<tool_use_id>.json` : un fichier par fait, écrit atomiquement (temporaire
-puis renommage) ; un fichier illisible ou hors contrat est signalé (`missions.declaration_invalid`) et laissé
+`<runtime>/agent-declarations/<ms>-<clé>.json` : un fichier par fait, écrit atomiquement (temporaire
+puis renommage). La clé est le `tool_use_id` s'il ne contient que `[A-Za-z0-9_-]` (96 au plus), sinon
+`h_<empreinte sha256>` : un id ne devient jamais un chemin ; le fait garde l'id d'origine. Un fichier illisible ou hors contrat est signalé (`missions.declaration_invalid`) et laissé
 à l'élagage, jamais réparé.
 
 Le relais du Control Center (`DeclarationRelay`, une tâche, sondage du registre toutes les secondes dans un
@@ -118,8 +133,9 @@ thread) :
 
 ## 6. Core : ingestion et lecture
 
-`POST /v1/missions/declarations` (`mission_routes.py`), strict : un élément hors contrat rend 400 et rien
-n'est écrit. Pour chaque fait, `record_declaration(..., inherit_mission=True)` :
+`POST /v1/missions/declarations` (`mission_routes.py`) : enveloppe stricte (400 sinon) ; chaque élément est
+décodé seul, et un élément hors contrat devient à sa place l'issue `refused` / `invalid_declaration` sans faire
+perdre les autres (reprise QA). Pour chaque fait, `record_declaration(..., inherit_mission=True)` :
 
 - un **Mission Owner** ouvre sa mission : objectif = libellé de la tâche (sinon « Mission sans libellé »),
   nature d'origine = profil, mission parente = celle de l'instance appelante
@@ -127,10 +143,19 @@ n'est écrit. Pour chaque fait, `record_declaration(..., inherit_mission=True)` 
 - un **membre** hérite de la mission de son appelant ; sans appelant retenu (ou appelant sans mission), il
   n'a pas de mission.
 
-Une mission se **clôt avec la fin du travail de son propriétaire courant** (`completed` → `completed`,
-`failed` → `failed`, `cancelled`/`interrupted` → `cancelled`), une fois, y compris quand la fin est arrivée
-avant la déclaration ou après un redémarrage. Après un relais explicite (`transfer_ownership`, Slice 06), la
-fin du prédécesseur ne clôt rien. Journal : `mission_history.mission_closed`.
+Une mission se **clôt quand son propriétaire courant a fini ET que plus rien de son équipe ne vit** (reprise
+QA M2) : aucun membre non terminal au regard de Work State, aucune sous-mission encore ouverte (réévaluée
+d'abord). Sinon la clôture est différée (`mission_history.mission_close_deferred`) et réévaluée à chaque fin
+observée et à chaque balayage, qui referme aussi une mission dont l'événement de fin a été perdu. L'issue suit
+le propriétaire courant (`completed`, `failed`, `cancelled` ; `interrupted` → `cancelled`, mais seulement une
+fois l'équipe finie). Un propriétaire dont Core ne sait rien (redémarrage, aucune fin vue, élagué sans fin
+retenue) laisse la mission ouverte : rien n'est deviné. Après un relais explicite (`transfer_ownership`,
+Slice 06), seule la fin du propriétaire **courant** compte. Journal : `mission_history.mission_closed`.
+
+Déclaration arrivée après une clôture : l'instance est **toujours** enregistrée (D18). `[mission]` sous une
+mission close n'ouvre rien : instance retenue sans mission, diagnostic `mission_history.mission_parent_closed`
+(code `mission_parent_closed`), et le rejeu est un doublon. Un membre tardif garde sa mission close, diagnostic
+`mission_history.member_after_close`.
 
 Lecture : `GET /v1/missions/health` (avec `store_id`), `GET /v1/missions/{mission_id}` (arbre, instances avec
 statut vivant de Work State ou `null`), `GET /v1/missions/work/{work_source}/{work_external_id}`. Le Control Center les
@@ -153,9 +178,11 @@ dégrade, rien n'est deviné ni réécrit. Aucun libellé n'est lu pour deviner 
 
 - Un sous-agent lancé sous un type autre que `general-purpose` garde ses outils : `can_spawn` n'y est pas
   mécanique (`can_spawn_not_enforced` le dit). Les types natifs `Explore`/`Plan` n'ont pas `Agent`.
-- Un cerveau lancé avant ce code (sans `--agents`) a un hook sans `--spawn-guard` : rien n'est réécrit tant
+- Un cerveau lancé avant ce code (sans `--agents`) n'a pas `JARVIS_SPAWN_GUARD` : rien n'est réécrit tant
   qu'il n'est pas relancé. Le hook à jour dépose ses faits, mais seul un Control Center à jour les relaie, et
   seul un Core à jour (route `/v1/missions/declarations`, schéma v10) les enregistre : la mise en service
   demande un redémarrage complet, fait par l'utilisateur.
 - Codex ne relaie aucune sous-tâche (`subtasks_supported` faux) : ni déclaration ni mission.
-- Outils de relation (communication, QA, adversaire, relais) : Slice 06.
+- Outils de relation (communication, QA, adversaire, relais) : Slice 06, qui doit faire précéder la fin du
+  prédécesseur par `transfer_ownership` ; sinon la fin du prédécesseur, propriétaire courant, clôt la mission
+  dès que l'équipe a fini.

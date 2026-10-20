@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -209,7 +210,8 @@ def charter_input(
     head = brief[:_markers(brief)[0]]
     # Charte consciente du rôle (Slice 05) : un rôle qui ne lance pas n'est pas invité à déléguer.
     can_spawn = orchestration.role is None or orchestration.role.can_spawn
-    signed = head + sign_brief(brief[len(head):], can_spawn=can_spawn)
+    constrained = orchestration.role is not None and orchestration.role.constrained_output
+    signed = head + sign_brief(brief[len(head):], can_spawn=can_spawn, constrained_output=constrained)
     # La méthode de production d'une présentation : apposée ici, sur l'appel lui-même, parce qu'un sous-agent ne
     # voit pas le prompt du cerveau et que ce prompt demande des consignes courtes.
     signed = with_playbook(signed, read_playbook_role(tool_input)) or signed
@@ -259,7 +261,7 @@ def _merge(
     tool_input = dict(tool_input) if isinstance(tool_input, Mapping) else {}
     updated = {**tool_input, **dict(section.get("updatedInput") or {}), **applied}
     reason = str(section.get("permissionDecisionReason") or "")
-    if "prompt" in applied:
+    if "prompt" in applied or "subagent_type" in applied:
         reason = f"{reason} {note}".strip()
     # `allow` est déjà la décision du hook quand il réécrit le modèle : rien de
     # nouveau n'est autorisé ici, seule l'entrée change.
@@ -408,24 +410,23 @@ def load_settings(runtime_root: Path) -> dict[str, Any]:
 # --------------------------------------------------------------- déclaration
 
 
-#: Option du hook : le CLI qui l'a lancé déclare le type d'agent restreint (`--agents`), la garde peut s'appliquer.
+#: Ancienne option de ligne de commande de la garde, encore acceptée en entrée mais jamais plus émise : la garde
+#: s'active par `agent_orchestration.SPAWN_GUARD_ENV` (reprise QA M1).
 SPAWN_GUARD_FLAG = "--spawn-guard"
 
 
-def hook_settings(runtime_root: Path, *, python: str | None = None, spawn_guard: bool = False) -> str:
+def hook_settings(runtime_root: Path, *, python: str | None = None) -> str:
     """Le `--settings` passé au CLI : ce hook-ci, et rien d'autre.
 
     Déclaré en ligne de commande plutôt que dans le fichier de réglages de
     l'utilisateur : JARVIS n'a pas à modifier la configuration personnelle de
     quelqu'un pour appliquer la sienne, et le hook meurt avec le processus.
-    `spawn_guard` : le même lancement passe `--agents` avec le type restreint
-    (`agent_orchestration.agents_argument`) ; sans lui, le hook ne réécrit
-    jamais `subagent_type` (un type inconnu du CLI ferait échouer l'appel).
+    La commande ne porte que `--runtime-root`, que toutes les versions du hook
+    connaissent : l'activation de la garde passe par l'environnement du CLI
+    (`agent_orchestration.SPAWN_GUARD_ENV`), qu'une version antérieure ignore.
     """
     executable = python or sys.executable
     command = f'"{executable}" -m jarvis routing-hook --runtime-root "{runtime_root}"'
-    if spawn_guard:
-        command += f" {SPAWN_GUARD_FLAG}"
     return json.dumps(
         {
             "hooks": {
@@ -476,7 +477,8 @@ def run(event: Mapping[str, Any], runtime_root: Path, *, spawn_guard: bool = Fal
     note = _brief_note(charter is not None, loadout, role=role)
     guarded = {"subagent_type": guard.rewrite_agent_type} if guard.rewrite_agent_type else None
     if guarded:
-        note = f"{note} {GUARD_NOTE}".strip()
+        # Sans réécriture de la consigne, la note de la garde est seule (reprise QA : elle était perdue).
+        note = f"{note} {GUARD_NOTE}".strip() if brief else GUARD_NOTE
     output = _route(event, runtime_root, journal, charter is not None)
     # La note de la garde voyage avec celle de la consigne (`_merge` ne note que sa réécriture) ; la ligne
     # `agent.declared` consigne la garde dans tous les cas.
@@ -521,17 +523,20 @@ def _spawn_guard(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJ
     """
     if orchestration is None:
         return agent_orchestration.SpawnGuard()
-    recent = None
+    recent = free = None
     try:
         agent_declarations.prune(runtime_root)
-        recent = agent_declarations.recent_count(runtime_root, agent_orchestration.SPAWN_WINDOW_S)
+        stamps = agent_declarations.recent_stamps(runtime_root, agent_orchestration.SPAWN_WINDOW_S)
+        recent = len(stamps)
+        free = agent_declarations.free_in_s(stamps, agent_orchestration.SPAWN_WINDOW_S,
+                                            agent_orchestration.MAX_SPAWNS_PER_WINDOW)
     except OSError as exc:
         _emit(journal, "agent.declaration.failed", "Registre des déclarations illisible : borne de sûreté non "
               "vérifiée pour ce lancement.", level="warning",
               data={"code": "declaration_ledger_unreadable", "exception_type": type(exc).__name__})
     try:
         return agent_orchestration.decide_spawn_guard(event, orchestration.role, enforce=enforce,
-                                                      recent_spawns=recent)
+                                                      recent_spawns=recent, window_free_in_s=free)
     except Exception as exc:  # noqa: BLE001 - une garde qui lève ne vaut pas un outil perdu
         _emit(journal, "agent.declaration.failed", "Garde de lancement en panne : l'appel part sans garde.",
               level="error", data={"code": "spawn_guard_failed", "exception_type": type(exc).__name__})
@@ -807,7 +812,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         event = json.loads(sys.stdin.read().lstrip("﻿") or "{}")
     except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         event = {}
-    output = run(event if isinstance(event, dict) else {}, runtime_root, spawn_guard=SPAWN_GUARD_FLAG in args)
+    spawn_guard = SPAWN_GUARD_FLAG in args or agent_orchestration.spawn_guard_enabled(os.environ)
+    try:
+        output = run(event if isinstance(event, dict) else {}, runtime_root, spawn_guard=spawn_guard)
+    except Exception as exc:  # noqa: BLE001 - la frontière du hook : toute panne laisse l'appel partir intact
+        # Reprise QA : un hook qui lève ou sort autrement qu'en 0 ferait refuser l'appel `Agent` par le CLI. La
+        # panne est consignée ; aucune sortie = le CLI garde la consigne d'origine.
+        _emit(RuntimeJournal(runtime_root), "agent.routing.failed",
+              f"Hook des sous-agents en panne ({type(exc).__name__}) : l'appel part sans réécriture.", level="error",
+              data={"code": "routing_hook_crashed", "exception_type": type(exc).__name__})
+        return 0
     if output:
         sys.stdout.write(json.dumps(output, ensure_ascii=False))
     return 0

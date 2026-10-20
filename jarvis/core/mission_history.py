@@ -86,6 +86,12 @@ MISSION_HISTORY_DISCARDED_FORGOTTEN_KIND = "mission_history.discarded_forgotten"
 MISSION_HISTORY_UNSAVED_REFUSED_KIND = "mission_history.unsaved_refused"
 MISSION_HISTORY_MISSION_CLOSED_KIND = "mission_history.mission_closed"
 MISSION_HISTORY_CLOSE_FAILED_KIND = "mission_history.mission_close_failed"
+MISSION_HISTORY_CLOSE_DEFERRED_KIND = "mission_history.mission_close_deferred"
+MISSION_HISTORY_PARENT_CLOSED_KIND = "mission_history.mission_parent_closed"
+MISSION_HISTORY_MEMBER_AFTER_CLOSE_KIND = "mission_history.member_after_close"
+#: Missions ouvertes réévaluées par balayage, et profondeur de sous-missions réévaluée d'un coup.
+MAX_SWEPT_MISSIONS = 64
+MAX_CLOSE_DEPTH = 16
 MISSION_HISTORY_SWEEP_FAILED_KIND = "mission_history.sweep_failed"
 
 #: Balayage périodique (Slice 05, note N5 de la Slice 03) : rattrape un événement perdu ou un magasin rétabli même
@@ -155,6 +161,10 @@ class _UnsavedDeclaration:
     inherit_mission: bool = False
 
 
+def _from_caller(mission: object) -> bool:
+    return isinstance(mission, MissionOpening) and mission.parent_from_caller
+
+
 def new_instance_id() -> str:
     return f"ainst_{uuid.uuid4().hex}"
 
@@ -188,6 +198,9 @@ class MissionHistoryService:
         self._roles: OrderedDict[WorkKey, str] = OrderedDict()
         #: identité de travail -> (instance, mission ou None, propriétaire) ; `None` = aucune instance retenue.
         self._missions: OrderedDict[WorkKey, MissionRef | None] = OrderedDict()
+        #: mission -> issue de son propriétaire courant, vue avant que la clôture soit possible (équipe active) :
+        #: elle survit à l'élagage du propriétaire dans Work State.
+        self._owner_ended: OrderedDict[str, WorkStatus] = OrderedDict()
         self._reported: set[tuple[str, ...]] = set()
         self._queue: asyncio.Queue[ProtocolEnvelope] | None = None
         self._task: asyncio.Task[None] | None = None
@@ -305,7 +318,7 @@ class MissionHistoryService:
             # se clôt aussitôt, sinon elle resterait ouverte pour toujours.
             item = self._live().get(key)
             if item is not None and item.status.is_terminal:
-                await self._close_owned_mission(key, item.status)
+                await self._on_terminal(key, item.status)
         return result
 
     def _settled(self, key: WorkKey, result: DeclarationResult) -> None:
@@ -409,6 +422,10 @@ class MissionHistoryService:
             # retenu plus tard, une éphémère échouée par exemple, ne réécrit pas l'instance).
             incoming = replace(instance, ephemeral=False if stored.ephemeral_lowered else instance.ephemeral,
                                parent_instance_id=stored.instance.parent_instance_id)
+            if (_from_caller(mission) and fact.mission_owner and stored.instance.mission_id is None
+                    and not stored.instance.mission_owner):
+                # Sous-mission refusée à la première fois (parent clos) : son rejeu est la même instance.
+                incoming = replace(incoming, mission_id=None, mission_owner=False)
             try:
                 reconcile_instance(stored.instance, incoming)
             except MissionError as exc:
@@ -440,10 +457,36 @@ class MissionHistoryService:
             except MissionHistoryUnavailable as exc:
                 self._keep_unsaved(key, _UnsavedDeclaration(fact, parent_work_external_id, mission, inherit_mission))
                 return DeclarationResult(DeclarationOutcome.DEGRADED, instance, code=exc.code, message=str(exc))
-            except (MissionError, MissionHistoryStoreError) as exc:
+            except MissionError as exc:
+                if exc.code != "mission_closed" or not _from_caller(mission):
+                    return DeclarationResult(DeclarationOutcome.REFUSED, instance, code=exc.code, message=str(exc))
+                # `[mission]` sous une mission close : l'agent a bien tourné, il est retenu (D18), sans
+                # sous-mission ; une mission close ne reçoit plus de sous-mission.
+                instance = replace(instance, mission_id=None, mission_owner=False)
+                self._report(("parent_closed", *key), MISSION_HISTORY_PARENT_CLOSED_KIND,
+                             "sous-mission demandée sous une mission close : agent retenu sans mission",
+                             level="warning", data={"work_source": key[0], "work_external_id": key[1],
+                                                    "code": "mission_parent_closed",
+                                                    "parent_mission_id": mission.parent_mission_id})
+            except MissionHistoryStoreError as exc:
                 return DeclarationResult(DeclarationOutcome.REFUSED, instance, code=getattr(exc, "code", None),
                                          message=str(exc))
+        elif inherit_mission and instance.mission_id is not None and not instance.mission_owner:
+            await self._note_late_member(key, instance.mission_id)
         return await self._persist(key, instance, fact, False, opened)
+
+    async def _note_late_member(self, key: WorkKey, mission_id: str) -> None:
+        """Un membre qui rejoint une mission déjà close est retenu tel quel (D18) ; c'est dit au diagnostic."""
+
+        try:
+            mission = await self._guard("get_mission", self._repository.get_mission(mission_id), recover=False)
+        except (MissionHistoryUnavailable, MissionHistoryStoreError):
+            return  # intentional: `_guard` reported the store failure; the member is still persisted just after
+        if mission is not None and mission.status.is_closed:
+            self._report(("late_member", *key), MISSION_HISTORY_MEMBER_AFTER_CLOSE_KIND,
+                         "membre déclaré après la clôture de sa mission : retenu tel quel", level="warning",
+                         data={"work_source": key[0], "work_external_id": key[1], "mission_id": mission_id,
+                               "mission_status": mission.status.value})
 
     async def _persist(self, key: WorkKey, instance: AgentInstance, fact: AgentDeclarationFact | None, lowered: bool,
                        mission: Mission | None) -> DeclarationResult:
@@ -554,7 +597,7 @@ class MissionHistoryService:
                          level="warning", data={"work_source": key[0], "work_external_id": key[1],
                                                 "history_role_id": known, "work_role_id": item.role_id})
         if item.status.is_terminal:
-            await self._close_owned_mission(key, item.status)
+            await self._on_terminal(key, item.status)
         pending = self._pending.get(key)
         if pending is None:
             return None
@@ -570,37 +613,108 @@ class MissionHistoryService:
         self._count(result.outcome)
         return result
 
-    async def _close_owned_mission(self, key: WorkKey, status: WorkStatus) -> None:
-        """Clore la mission dont ce travail est le propriétaire **courant**, avec l'issue de ce travail. Ne lève jamais.
-
-        Règle (Slice 05) : une mission vit tant que son propriétaire courant travaille. Après un relais explicite
-        (`transfer_ownership`, Slice 06), la fin du prédécesseur ne clôt rien : il n'est plus le propriétaire.
-        Une mission déjà close reste telle quelle (fin rejouée, redémarrage).
-        """
+    async def _ref(self, key: WorkKey) -> MissionRef | None:
+        """L'appartenance de mission d'un travail : mémoire bornée, sinon une lecture (mise en mémoire, même `None`)."""
 
         if key not in self._missions:
-            try:
-                stored = await self._guard("find_instance", self._repository.find_instance(*key))
-            except (MissionHistoryUnavailable, MissionHistoryStoreError, MissionHistoryError):
-                return  # intentional: `_guard` reported it; the next terminal replay or sweep retries nothing here
+            stored = await self._guard("find_instance", self._repository.find_instance(*key))
             self._remember_mission(key, stored.instance if stored is not None else None)
-        ref = self._missions.get(key)
-        if ref is None or not ref.mission_owner or ref.mission_id is None:
-            return
+        return self._missions.get(key)
+
+    async def _on_terminal(self, key: WorkKey, status: WorkStatus) -> None:
+        """Un travail vient de finir : noter la fin d'un propriétaire courant, réévaluer sa mission. Ne lève jamais."""
+
         try:
-            mission = await self._guard("get_mission", self._repository.get_mission(ref.mission_id))
-            if mission is None or mission.status.is_closed or mission.owner_instance_id != ref.instance_id:
+            ref = await self._ref(key)
+            if ref is None or ref.mission_id is None:
                 return
-            closed = await self.close_mission(mission.mission_id, MISSION_STATUS_FOR_WORK[status])
+            if ref.mission_owner:
+                mission = await self._guard("get_mission", self._repository.get_mission(ref.mission_id))
+                # Seul le propriétaire COURANT compte (après un relais, la fin du prédécesseur ne dit rien).
+                if mission is not None and mission.owner_instance_id == ref.instance_id and not mission.status.is_closed:
+                    self._owner_ended[ref.mission_id] = status
+                    self._owner_ended.move_to_end(ref.mission_id)
+                    while len(self._owner_ended) > MAX_MISSION_CACHE:
+                        self._owner_ended.popitem(last=False)
+            await self._try_close(ref.mission_id)
         except (MissionError, MissionHistoryUnavailable, MissionHistoryStoreError, MissionHistoryError) as exc:
-            self._report(("close", ref.mission_id), MISSION_HISTORY_CLOSE_FAILED_KIND,
-                         f"mission non close à la fin de son propriétaire : {exc}", level="warning",
-                         data={"mission_id": ref.mission_id, "work_source": key[0], "work_external_id": key[1],
-                               "code": getattr(exc, "code", None)})
-            return
-        self._emit(MISSION_HISTORY_MISSION_CLOSED_KIND, "mission close à la fin de son propriétaire",
+            self._report(("close", *key), MISSION_HISTORY_CLOSE_FAILED_KIND,
+                         f"clôture de mission non évaluée : {exc}", level="warning",
+                         data={"work_source": key[0], "work_external_id": key[1], "code": getattr(exc, "code", None)})
+
+    async def _try_close(self, mission_id: str, *, live: dict[WorkKey, WorkItem] | None = None,
+                         depth: int = 0) -> bool:
+        """Clore `mission_id` si son propriétaire courant a fini ET que plus rien de son équipe ne vit. Rend vrai si
+        la mission est close (déjà ou maintenant). Lève les erreurs du magasin (l'appelant les signale).
+
+        Règle (Slice 05, reprise QA M2) : un membre encore vivant au regard de Work State, ou une sous-mission encore
+        ouverte (réévaluée d'abord), diffère la clôture ; elle est réévaluée à chaque fin observée et à chaque
+        balayage. L'issue est celle du propriétaire courant (`interrupted` → `cancelled`), lue dans Work State, ou
+        retenue quand il en a été élagué. Un propriétaire dont Core ne sait rien (redémarrage, aucune fin vue) laisse
+        la mission ouverte : rien n'est deviné.
+        """
+
+        live = self._live() if live is None else live
+        tree = await self._guard("mission_tree", self._repository.mission_tree(mission_id))
+        if tree is None:
+            return False
+        missions = {item.mission_id: item for item in tree.missions}
+        mission = missions.get(mission_id)
+        if mission is None:
+            return False
+        if mission.status.is_closed:
+            self._owner_ended.pop(mission_id, None)
+            return True
+
+        def status_of(instance: AgentInstance) -> WorkStatus | None:
+            item = live.get(instance.work_identity)
+            return item.status if item is not None else None
+
+        instances = [stored.instance for stored in tree.instances]
+        owner = next((item for item in instances if item.instance_id == mission.owner_instance_id), None)
+        owner_status = status_of(owner) if owner is not None else None
+        if owner_status is None:
+            owner_status = self._owner_ended.get(mission_id)
+        if owner_status is None or not owner_status.is_terminal:
+            return False
+        alive = [item.instance_id for item in instances if item.mission_id == mission_id
+                 and item.instance_id != mission.owner_instance_id
+                 and (status_of(item) is not None and not status_of(item).is_terminal)]
+        open_children = []
+        for child in (item for item in tree.missions if item.parent_mission_id == mission_id):
+            if child.status.is_closed:
+                continue
+            if depth >= MAX_CLOSE_DEPTH or not await self._try_close(child.mission_id, live=live, depth=depth + 1):
+                open_children.append(child.mission_id)
+        if alive or open_children:
+            self._report(("deferred", mission_id), MISSION_HISTORY_CLOSE_DEFERRED_KIND,
+                         "propriétaire terminé, équipe encore active : clôture différée", level="info",
+                         data={"mission_id": mission_id, "alive_members": len(alive),
+                               "open_sub_missions": len(open_children), "owner_status": owner_status.value})
+            return False
+        closed = await self.close_mission(mission_id, MISSION_STATUS_FOR_WORK[owner_status])
+        self._owner_ended.pop(mission_id, None)
+        self._emit(MISSION_HISTORY_MISSION_CLOSED_KIND, "mission close : propriétaire terminé, équipe terminée",
                    data={"mission_id": closed.mission_id, "status": closed.status.value,
-                         "work_source": key[0], "work_external_id": key[1], "work_status": status.value})
+                         "owner_status": owner_status.value, "parent_mission_id": closed.parent_mission_id})
+        if closed.parent_mission_id is not None and depth == 0:
+            # La dernière sous-mission close peut libérer la mission parente.
+            await self._try_close(closed.parent_mission_id, live=live)
+        return True
+
+    async def _sweep_missions(self) -> None:
+        """Réévaluer les missions ouvertes : clôture différée, fin perdue (bus tolérant). Ne lève jamais."""
+
+        try:
+            missions = await self._guard("list_missions", self._repository.list_missions(open_only=True,
+                                                                                        limit=MAX_SWEPT_MISSIONS))
+            live = self._live()
+            for mission in missions:
+                await self._try_close(mission.mission_id, live=live)
+        except (MissionError, MissionHistoryUnavailable, MissionHistoryStoreError, MissionHistoryError) as exc:
+            self._report(("sweep_missions", type(exc).__name__), MISSION_HISTORY_CLOSE_FAILED_KIND,
+                         f"réévaluation des missions ouvertes en échec : {exc}", level="warning",
+                         data={"code": getattr(exc, "code", None)})
 
     async def sweep(self) -> int:
         """Rattraper ce qu'un événement perdu (bus tolérant) ou un magasin indisponible a laissé en attente.
@@ -639,6 +753,7 @@ class MissionHistoryService:
                            f"écriture d'historique en attente refusée au rejeu : {result.message}", level="error",
                            data={"work_source": key[0], "work_external_id": key[1], "code": result.code})
             resolved += 1
+        await self._sweep_missions()
         return resolved
 
     def _live(self) -> dict[WorkKey, WorkItem]:

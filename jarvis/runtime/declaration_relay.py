@@ -179,7 +179,13 @@ class DeclarationRelay(CoreBatchForwarder):
                 self._report(self.INVALID_KIND, "Déclaration de sous-agent illisible ou hors contrat : ignorée.",
                              "warning", extra={"file": name, "reason": reason})
         if len(self._seen) > 4 * MAX_FACTS:
-            self._seen = {name for name in self._seen if name.split("-", 1)[-1][:-5] in self._facts}
+            # Oublier les noms déjà élagués du registre : relister suffit (un nom présent reste vu).
+            try:
+                present = set(await asyncio.to_thread(lambda: {p.name for p in
+                                                               agent_declarations.ledger_dir(self.runtime_root).iterdir()}))
+            except OSError:
+                present = self._seen  # intentional: keep the memory as is; the next scan retries the listing
+            self._seen &= present
 
     def join(self) -> int:
         """Joindre les faits connus aux tâches démarrées ; rend le nombre de jointures neuves. Sans E/S."""

@@ -2032,7 +2032,12 @@ def _arm_crash_capture(command: str) -> None:
 
 
 async def _amain(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args, unknown = parser.parse_known_args(argv)
+    if unknown and args.command != "routing-hook":
+        parser.error(f"unrecognized arguments: {' '.join(unknown)}")
+    # `routing-hook` tolère un argument inconnu (reprise QA M1) : un lanceur plus récent ne doit jamais faire sortir
+    # le hook en 2, ce qui ferait refuser l'appel `Agent` par le CLI.
     load_project_environment()
     command = args.command or "health"
     _arm_crash_capture(command)

@@ -248,12 +248,19 @@ async def test_an_invalid_ledger_file_is_reported_and_skipped(core, tmp_path):
 # ---------------------------------------------------------------- route Core
 
 
-async def test_the_route_is_strict_and_records_nothing_on_a_bad_item(core):
+async def test_a_bad_item_is_refused_alone_and_never_drops_the_valid_ones(core):
+    # Reprise QA : un lot n'est plus jeté en entier pour un élément hors contrat.
     good = {"fact": fact("toolu_1").to_payload(), "work_source": SOURCE, "work_external_id": "toolu_1"}
     bad = {**good, "prompt": "fuite"}
-    response = await core.client.post("/v1/missions/declarations", json={"declarations": [good, bad]})
-    assert response.status == 400 and "declarations[1]" in (await response.json())["error"]["message"]
-    assert await core.service.instance_for_work(SOURCE, "toolu_1") is None
+    response = await core.client.post("/v1/missions/declarations", json={"declarations": [bad, good]})
+    body = await response.json()
+    assert response.status == 200
+    assert body["results"][0]["outcome"] == "refused" and body["results"][0]["code"] == "invalid_declaration"
+    assert "declarations[0]" in body["results"][0]["message"] and "fuite" not in body["results"][0]["message"]
+    assert body["results"][1]["outcome"] == "recorded"
+    assert (await core.service.instance_for_work(SOURCE, "toolu_1")) is not None
+    assert core.journal.kinds("core.missions.route_failed")[-1]["code"] == "invalid_declaration"
+    good = {"fact": fact("toolu_2").to_payload(), "work_source": SOURCE, "work_external_id": "toolu_2"}
     for body in ({}, {"declarations": []}, {"declarations": [good] * 33}, {"declarations": [good], "x": 1}):
         assert (await core.client.post("/v1/missions/declarations", json=body)).status == 400
     response = await core.client.post("/v1/missions/declarations", json={"declarations": [good]})
@@ -274,6 +281,7 @@ async def test_read_routes_answer_coded_refusals(core):
     assert core.journal.kinds("core.missions.route_failed")[-1]["code"] == "mission_instance_not_found"
     assert decode_declarations({"declarations": [{"fact": fact("t").to_payload(), "work_source": SOURCE,
                                                   "work_external_id": "t"}]})[0][3] is None
+    assert isinstance(decode_declarations({"declarations": [{"fact": {}}]})[0], ValueError)
 
 
 async def test_the_control_center_view_relays_and_bounds_the_wait(core):

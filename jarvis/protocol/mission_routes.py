@@ -14,8 +14,10 @@ Contrat : `docs/mission-history.md` › *Routes* et `docs/agent-orchestration.md
 
 Ingestion : le producteur est le Control Center (`declaration_relay.py`), qui
 remet les faits du hook `PreToolUse` (`AgentDeclarationFact` v1) joints à leur
-tâche. Strict : un champ inconnu ou un fait hors contrat rend 400 et **rien**
-n'est enregistré (comme `/v1/work/observations`). Une déclaration valide mais
+tâche. Enveloppe stricte (400 sinon) ; chaque élément est décodé seul : un champ
+inconnu ou un fait hors contrat devient, à sa place, l'issue `refused` de code
+`invalid_declaration` (index et règle, jamais la valeur), et les autres éléments
+du lot sont enregistrés. Une déclaration valide mais
 refusée par un contrat (rôle réécrit, mission inconnue) ou retenue en mode
 dégradé n'est pas une erreur HTTP : son issue est dans `results`. Un Mission
 Owner ouvre sa mission ici : objectif = libellé de la tâche, mission parente =
@@ -66,27 +68,40 @@ def _id(name: str, value: object, *, required: bool) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def decode_declarations(body: object) -> list[tuple[AgentDeclarationFact, str, str, str | None]]:
-    """Le lot, strictement : rien n'est enregistré si un élément est hors contrat (le message nomme l'index)."""
+Decoded = tuple[AgentDeclarationFact, str, str, str | None]
+
+
+def decode_item(index: int, item: object) -> Decoded:
+    """Un élément, strictement ; lève `ValueError` nommant l'index et la règle (jamais la valeur)."""
+
+    try:
+        if not isinstance(item, dict) or not set(item) <= _ITEM_KEYS or not {"fact", "work_source",
+                                                                            "work_external_id"} <= set(item):
+            raise ValueError(f"keys must be {sorted(_ITEM_KEYS)}")
+        fact = AgentDeclarationFact.from_payload(item["fact"])
+        source = _id("work_source", item["work_source"], required=True)
+        external = _id("work_external_id", item["work_external_id"], required=True)
+        parent = _id("parent_work_external_id", item.get("parent_work_external_id"), required=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"declarations[{index}]: {exc}") from exc
+    return fact, source, external, parent
+
+
+def decode_declarations(body: object) -> list[Decoded | ValueError]:
+    """L'enveloppe, strictement (400 sinon) ; chaque élément décodé seul : un élément hors contrat devient son
+    erreur, à sa place, et ne fait jamais perdre les déclarations valides du même lot (reprise QA)."""
 
     if not isinstance(body, dict) or set(body) != {"declarations"}:
         raise ValueError("body must be {\"declarations\": [...]}")
     items = body["declarations"]
     if not isinstance(items, list) or not 1 <= len(items) <= MAX_DECLARATION_BATCH:
         raise ValueError(f"declarations must be a list of 1..{MAX_DECLARATION_BATCH} items")
-    decoded = []
+    decoded: list[Decoded | ValueError] = []
     for index, item in enumerate(items):
         try:
-            if not isinstance(item, dict) or not set(item) <= _ITEM_KEYS or not {"fact", "work_source",
-                                                                                "work_external_id"} <= set(item):
-                raise ValueError(f"keys must be {sorted(_ITEM_KEYS)}")
-            fact = AgentDeclarationFact.from_payload(item["fact"])
-            source = _id("work_source", item["work_source"], required=True)
-            external = _id("work_external_id", item["work_external_id"], required=True)
-            parent = _id("parent_work_external_id", item.get("parent_work_external_id"), required=False)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"declarations[{index}]: {exc}") from exc
-        decoded.append((fact, source, external, parent))
+            decoded.append(decode_item(index, item))
+        except ValueError as exc:
+            decoded.append(exc)
     return decoded
 
 
@@ -160,7 +175,16 @@ class MissionProtocolRoutes:
             raise ValueError("body must be JSON") from exc
         batch = decode_declarations(body)
         results = []
-        for fact, source, external, parent in batch:
+        for decoded in batch:
+            if isinstance(decoded, ValueError):
+                # Refus par élément : la raison (index, règle) revient au relais, le reste du lot est enregistré.
+                self._emit(ROUTE_FAILED_KIND, "déclaration de sous-agent hors contrat : élément refusé",
+                           level="warning", data={"operation": "declarations", "status": 200,
+                                                  "code": "invalid_declaration", "detail": str(decoded)[:200]})
+                results.append({"outcome": "refused", "instance_id": None, "code": "invalid_declaration",
+                                "message": str(decoded)[:500]})
+                continue
+            fact, source, external, parent = decoded
             result = await self._service.record_declaration(
                 fact, work_source=source, work_external_id=external, parent_work_external_id=parent,
                 mission=opening_for(fact), inherit_mission=True,

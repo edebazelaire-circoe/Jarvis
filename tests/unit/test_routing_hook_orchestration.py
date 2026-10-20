@@ -13,7 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.domain.agent_orchestration import MAX_SPAWNS_PER_WINDOW, MISSION_MARK, NO_SPAWN_AGENT_TYPE
+from jarvis.domain.agent_orchestration import (
+    MAX_SPAWNS_PER_WINDOW, MISSION_MARK, NO_SPAWN_AGENT_TYPE, SPAWN_GUARD_ENV, SPAWN_GUARD_VALUE,
+)
 from jarvis.domain.mission_history import AgentDeclarationFact
 from jarvis.runtime import agent_declarations, routing_hook
 from jarvis.runtime.journal import read_jsonl_tail
@@ -117,7 +119,11 @@ def test_the_rate_cap_denies_beyond_the_window(tmp_path):
         (folder / f"{now - index}-toolu_{index}.json").write_text("{}", encoding="utf-8")
     output = routing_hook.run(call("[general] Lister", tool_use_id="toolu_new"), tmp_path)
     assert section(output)["permissionDecision"] == "deny"
-    assert "Borne de sûreté" in section(output)["permissionDecisionReason"]
+    reason = section(output)["permissionDecisionReason"]
+    assert "Borne de sûreté" in reason and "La fenêtre libère une place dans" in reason
+    assert "Attendez la fin des agents" not in reason
+    seconds = int(reason.split("place dans ")[1].split(" s")[0])
+    assert 590 <= seconds <= 600  # la plus ancienne vient d'être écrite : elle sort dans ~10 min
     assert trace(tmp_path, "agent.spawn_refused")[0]["data"]["code"] == "spawn_rate_cap"
 
 
@@ -144,7 +150,7 @@ def test_an_unreadable_ledger_lets_the_call_through_and_says_so(tmp_path, monkey
     def unreadable(*args, **kwargs):
         raise OSError("dossier illisible")
 
-    monkeypatch.setattr(agent_declarations, "recent_count", unreadable)
+    monkeypatch.setattr(agent_declarations, "recent_stamps", unreadable)
     assert section(routing_hook.run(call("[general] Lister"), tmp_path))["permissionDecision"] == "allow"
     assert trace(tmp_path, "agent.declaration.failed")[0]["data"]["code"] == "declaration_ledger_unreadable"
 
@@ -162,23 +168,94 @@ def test_other_tools_are_untouched(tmp_path):
     assert not agent_declarations.ledger_dir(tmp_path).exists()
 
 
-def test_hook_settings_and_the_cli_entry_carry_the_guard_flag(tmp_path, monkeypatch):
-    plain = json.loads(routing_hook.hook_settings(tmp_path))
-    guarded = json.loads(routing_hook.hook_settings(tmp_path, spawn_guard=True))
-    command = guarded["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-    assert command.endswith(routing_hook.SPAWN_GUARD_FLAG)
-    assert routing_hook.SPAWN_GUARD_FLAG not in plain["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-    # La sous-commande `jarvis routing-hook` accepte le drapeau (constat du bac à sable : un argument refusé par
-    # argparse fait échouer le hook, et le CLI refuse alors l'appel `Agent`).
-    from jarvis.app import _parser
-    args = _parser().parse_args(["routing-hook", "--runtime-root", str(tmp_path), "--spawn-guard"])
-    assert args.spawn_guard is True
+def test_the_hook_command_carries_no_new_flag_and_the_guard_comes_from_the_environment(tmp_path, monkeypatch):
+    # Reprise QA M1 : le lanceur ne met plus rien de neuf sur la ligne de commande du hook.
+    settings = json.loads(routing_hook.hook_settings(tmp_path))
+    command = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert routing_hook.SPAWN_GUARD_FLAG not in command and command.endswith(f'--runtime-root "{tmp_path}"')
+    # Un ancien hook (argparse strict, seul `--runtime-root` connu) lit cette commande sans sortir en 2.
+    import argparse
+    import shlex
+    old = argparse.ArgumentParser(prog="jarvis")
+    old.add_subparsers(dest="command").add_parser("routing-hook").add_argument("--runtime-root", default="")
+    argv = shlex.split(command, posix=False)[2:]  # après l'exécutable et `-m jarvis`
+    assert argv[0] == "jarvis"
+    assert old.parse_args([arg.strip('"') for arg in argv[1:]]).command == "routing-hook"
+    # Le nouveau hook ne s'arme que par la variable du lanceur, dans la version exacte du contrat.
     event = call("[general] [qa] Relire")
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(event)))
+    for value, expected in ((None, "general-purpose"), ("jarvis-no-spawn@999", "general-purpose"),
+                            (SPAWN_GUARD_VALUE, NO_SPAWN_AGENT_TYPE)):
+        if value is None:
+            monkeypatch.delenv(SPAWN_GUARD_ENV, raising=False)
+        else:
+            monkeypatch.setenv(SPAWN_GUARD_ENV, value)
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(event)))
+        out = io.StringIO()
+        monkeypatch.setattr("sys.stdout", out)
+        assert routing_hook.main(["--runtime-root", str(tmp_path)]) == 0
+        assert json.loads(out.getvalue())["hookSpecificOutput"]["updatedInput"]["subagent_type"] == expected
+
+
+def test_the_cli_entry_tolerates_an_unknown_flag_and_never_exits_2(tmp_path):
+    # Reprise QA M1, sens « nouveau code, lanceur plus récent » : un drapeau inconnu est ignoré, sortie 0.
+    import subprocess
+    import sys
+    event = json.dumps(call("[general] Lister"))
+    root = Path(__file__).resolve().parents[2]
+    env = {key: value for key, value in os.environ.items() if key != SPAWN_GUARD_ENV}
+    for extra in ([], ["--spawn-guard"], ["--drapeau-futur", "valeur"]):
+        done = subprocess.run([sys.executable, "-m", "jarvis", "routing-hook", "--runtime-root", str(tmp_path),
+                               *extra], input=event.encode("utf-8"), capture_output=True, cwd=root, env=env,
+                              timeout=120)
+        assert done.returncode == 0, (extra, done.stderr.decode("utf-8", "replace")[-400:])
+    from jarvis.app import _parser
+    with pytest.raises(SystemExit):  # les autres commandes restent strictes
+        _parser().parse_args(["health", "--drapeau-futur"])
+
+
+def test_a_crashing_hook_exits_0_lets_the_call_through_and_says_so(tmp_path, monkeypatch):
+    def broken(*args, **kwargs):
+        raise RuntimeError("panne interne")
+
+    monkeypatch.setattr(routing_hook, "run", broken)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(call("[code] [coder] X"))))
     out = io.StringIO()
     monkeypatch.setattr("sys.stdout", out)
-    assert routing_hook.main(["--runtime-root", str(tmp_path), routing_hook.SPAWN_GUARD_FLAG]) == 0
-    assert json.loads(out.getvalue())["hookSpecificOutput"]["updatedInput"]["subagent_type"] == NO_SPAWN_AGENT_TYPE
+    assert routing_hook.main(["--runtime-root", str(tmp_path)]) == 0
+    assert out.getvalue() == ""  # aucune sortie : le CLI garde la consigne d'origine
+    [failure] = trace(tmp_path, "agent.routing.failed")
+    assert failure["data"]["code"] == "routing_hook_crashed" and failure["level"] == "error"
+
+
+def test_the_guard_compares_general_purpose_without_case_and_keeps_its_note(tmp_path, monkeypatch):
+    for agent_type in ("General-Purpose", "GENERAL-PURPOSE", " general-purpose "):
+        out = section(routing_hook.run(call("[general] [qa] Relire", tool_use_id=f"t{len(agent_type)}",
+                                            subagent_type=agent_type), tmp_path, spawn_guard=True))
+        assert out["updatedInput"]["subagent_type"] == NO_SPAWN_AGENT_TYPE
+    for agent_type in ("claude", "fork", "Explore", "mon-type"):
+        out = section(routing_hook.run(call("[general] [qa] Relire", tool_use_id=agent_type,
+                                            subagent_type=agent_type), tmp_path, spawn_guard=True))
+        assert out["updatedInput"]["subagent_type"] == agent_type
+    assert [line["data"]["spawn_guard"] for line in trace(tmp_path, "agent.declared")][-4:] == [
+        "can_spawn_not_enforced"] * 4
+    # Consigne inchangée (charte en panne) : la note de la garde reste dans la raison.
+    monkeypatch.setattr(routing_hook, "charter_input", lambda *args: None)
+    out = section(routing_hook.run(call("[general] [qa] Relire", tool_use_id="tz"), tmp_path, spawn_guard=True))
+    assert out["updatedInput"]["subagent_type"] == NO_SPAWN_AGENT_TYPE
+    assert out["permissionDecisionReason"] == routing_hook.GUARD_NOTE
+
+
+def test_an_unsafe_tool_use_id_never_becomes_a_path(tmp_path):
+    from tests.fakes.mission_history import fact
+    from jarvis.domain.mission_history import AgentDeclarationFact
+    for raw in ("toolu_A.B", "con", "a" * 120):
+        assert agent_declarations.file_key(raw) == raw or agent_declarations.file_key(raw).startswith("h_")
+    assert agent_declarations.file_key("toolu_01Abc-_9") == "toolu_01Abc-_9"
+    assert agent_declarations.file_key("toolu_A.B").startswith("h_")
+    weird = AgentDeclarationFact.from_payload({**fact("toolu_1").to_payload(), "tool_use_id": "x.y.z"})
+    path = agent_declarations.write_fact(tmp_path, weird)
+    assert path.parent == agent_declarations.ledger_dir(tmp_path) and ".y" not in path.name
+    assert agent_declarations.scan(tmp_path).facts[0].fact.tool_use_id == "x.y.z"
 
 
 # ---------------------------------------------------------------- registre local
@@ -238,9 +315,17 @@ async def test_the_brain_declares_the_restricted_type_with_the_guarded_hook(tmp_
         started.append(list(args))
         return _FakePipedProcess()
 
-    monkeypatch.setattr(claude_local.asyncio, "create_subprocess_exec", fake_exec)
+    envs: list[dict] = []
+
+    async def fake_exec_env(*args, **kwargs):  # noqa: ANN002, ANN003
+        envs.append(dict(kwargs.get("env") or {}))
+        return await fake_exec(*args, **kwargs)
+
+    monkeypatch.setattr(claude_local.asyncio, "create_subprocess_exec", fake_exec_env)
     await ClaudeLocalAgent(runtime_root=tmp_path, cwd=tmp_path).start()
     argv = started[0]
     assert argv[argv.index("--agents") + 1] == agents_argument()
     settings = json.loads(argv[argv.index("--settings") + 1])
-    assert settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"].endswith(routing_hook.SPAWN_GUARD_FLAG)
+    assert routing_hook.SPAWN_GUARD_FLAG not in settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    # L'activation passe par l'environnement du CLI, hérité par le hook (constaté sur le CLI 2.1.304).
+    assert envs[0][SPAWN_GUARD_ENV] == SPAWN_GUARD_VALUE

@@ -52,6 +52,21 @@ NO_SPAWN_AGENT_TYPE = "jarvis-no-spawn"
 REWRITABLE_AGENT_TYPES = frozenset({"", "general-purpose"})
 #: Outils retirés au type restreint : ceux qui lancent un sous-agent (`routing_hook.AGENT_TOOLS`).
 SPAWN_TOOLS = (SPAWN_TOOL, "Task")
+#: Activation de la garde (reprise QA M1) : variable d'environnement posée par `claude_local` sur le processus du
+#: CLI, héritée par chaque hook (constaté sur le CLI 2.1.304, appel du cerveau et appel imbriqué). Jamais un drapeau
+#: de ligne de commande : un hook d'une version antérieure (argparse strict) sortirait en 2 et le CLI refuserait
+#: tout appel `Agent`. La valeur nomme le type et la version du contrat ; toute autre valeur laisse la garde éteinte.
+SPAWN_GUARD_ENV = "JARVIS_SPAWN_GUARD"
+SPAWN_GUARD_CONTRACT = 1
+SPAWN_GUARD_VALUE = f"{NO_SPAWN_AGENT_TYPE}@{SPAWN_GUARD_CONTRACT}"
+
+
+def spawn_guard_enabled(environ: Mapping[str, str]) -> bool:
+    """Vrai si le CLI qui a lancé ce hook déclare le type restreint, dans cette version exacte du contrat."""
+
+    return environ.get(SPAWN_GUARD_ENV) == SPAWN_GUARD_VALUE
+
+
 #: Préfixe de l'id d'une mission ouverte par le hook : dérivé du `tool_use_id`, donc stable au rejeu.
 MISSION_ID_PREFIX = "mis_"
 #: Profondeur maximale de sous-agents sous le cerveau, imposée par le CLI (sonde du 2026-10-20, CLI 2.1.304 :
@@ -138,12 +153,18 @@ class SpawnGuard:
 
 
 def decide_spawn_guard(event: Mapping[str, Any], role: SubagentRole | None, *, enforce: bool,
-                       recent_spawns: int | None = None) -> SpawnGuard:
+                       recent_spawns: int | None = None, window_free_in_s: int | None = None) -> SpawnGuard:
     """La garde d'un appel `Agent`. `enforce` : le type restreint est déclaré au CLI qui a lancé ce hook.
 
     Ordre : l'appelant restreint (refus), la borne de sûreté (refus), puis le rôle lancé (type restreint).
     Sans `enforce`, rien n'est réécrit ni refusé pour le rôle : un CLI lancé sans le type restreint
-    échouerait sur un type inconnu.
+    échouerait sur un type inconnu. `window_free_in_s` : dans combien de secondes la fenêtre de la borne libère
+    une place (`agent_declarations.recent_window`), dit dans la raison du refus.
+
+    Garanti : un rôle `can_spawn=False` lancé en `general-purpose` (toute casse) ou sans type part sous
+    `NO_SPAWN_AGENT_TYPE`, et un appel émis depuis ce type est refusé. Non garanti (consigné
+    `can_spawn_not_enforced`) : tout autre type demandé (`Explore`, `Plan`, `claude`, `fork`, types de
+    l'utilisateur), qui garde ses propres outils.
     """
 
     if enforce and str(event.get("agent_type") or "") == NO_SPAWN_AGENT_TYPE:
@@ -153,13 +174,14 @@ def decide_spawn_guard(event: Mapping[str, Any], role: SubagentRole | None, *, e
         return SpawnGuard(
             deny=True, code="spawn_rate_cap",
             reason=(f"Borne de sûreté de JARVIS : {recent_spawns} sous-agents lancés en {SPAWN_WINDOW_S // 60} min "
-                    f"(au plus {MAX_SPAWNS_PER_WINDOW}). Attendez la fin des agents en cours."),
+                    f"(au plus {MAX_SPAWNS_PER_WINDOW}). La fenêtre libère une place dans "
+                    f"{max(1, window_free_in_s or SPAWN_WINDOW_S)} s : relancez après ce délai."),
         )
     if role is None or role.can_spawn or not enforce:
         return SpawnGuard()
     tool_input = event.get("tool_input")
     agent_type = str((tool_input if isinstance(tool_input, Mapping) else {}).get("subagent_type") or "")
-    if agent_type not in REWRITABLE_AGENT_TYPES:
+    if agent_type.strip().casefold() not in REWRITABLE_AGENT_TYPES:
         return SpawnGuard(code="can_spawn_not_enforced")
     return SpawnGuard(rewrite_agent_type=NO_SPAWN_AGENT_TYPE, code="can_spawn_enforced")
 
