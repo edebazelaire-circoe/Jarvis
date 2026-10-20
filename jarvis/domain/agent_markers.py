@@ -211,6 +211,26 @@ def _interpret(words: list[str], extra: frozenset[str]) -> tuple[int, str | None
     return 1, (first if routing.is_profile(first) else None), None
 
 
+#: Code du diagnostic d'un second mot de rôle laissé dans le libellé (reprise QA Slice 07, constat N3).
+SECOND_ROLE_MARKER = "second_role_marker"
+
+
+def second_role_marker(head: HeadMarkers) -> str | None:
+    """Le second mot de rôle annoncé qui ouvre le libellé après un rôle consommé, ou `None`. Diagnostic seulement.
+
+    `[general] [web-research] [research-lead] Comparer` se lit `web-research` et garde `[research-lead]` dans le
+    libellé, comme avant : la grammaire ne change pas (oracle de `test_agent_markers_equivalence`). Le hook
+    consigne ce mot (`agent.role_applied`, code `second_role_marker`) pour qu'un deuxième rôle ne passe plus en
+    silence ; l'appel n'est jamais refusé pour autant.
+    """
+
+    if head.role is None:
+        return None
+    found = _WORD.match(head.label)
+    word = found.group(1).strip().lower() if found else None
+    return word if word in ANNOUNCED_ROLES else None
+
+
 def parse_ephemeral_description(description: object) -> tuple[str, bool]:
     """`(description sans le marqueur éphémère, drapeau)`. Forme historique du suivi des tâches."""
 

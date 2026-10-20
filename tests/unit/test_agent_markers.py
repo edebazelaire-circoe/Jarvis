@@ -226,3 +226,16 @@ def test_the_module_is_the_only_owner_of_the_grammar():
     assert not hasattr(agent_tasks, "_EPHEMERAL_RE")
     # Slice 05 : quatre mots (profil, rôle, `[mission]`, méthode) et le marqueur éphémère.
     assert agent_markers.MAX_HEAD_MARKERS == 5
+
+
+def test_a_second_role_word_is_left_in_the_label_and_reported_not_read():
+    # Reprise QA Slice 07 (N3) : la lecture ne change pas, seul un diagnostic est rendu.
+    from jarvis.domain.agent_markers import second_role_marker
+    head = parse_head("[general] [web-research] [research-lead] Comparer trois écrans")
+    assert (head.role, head.label) == ("web-research", "[research-lead] Comparer trois écrans")
+    assert second_role_marker(head) == "research-lead"
+    for text in ("[general] [research-lead] Comparer", "[general] [research] [quick-research] Chercher",
+                 "[code] [inconnu] [coder] Relire", "Comparer [qa] ensuite", "[general] Comparer"):
+        assert second_role_marker(parse_head(text)) is None, text
+    assert second_role_marker(parse_head("[qa] [coder] Relire")) == "coder"
+

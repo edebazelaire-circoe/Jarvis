@@ -123,7 +123,7 @@ def test_the_brain_prompt_carries_the_request_types_and_the_execution_gate():
     rules = brain_rules()
     assert rules in BRAIN_SYSTEM_PROMPT
     assert EXECUTION_GATE_RULE in BRAIN_SYSTEM_PROMPT
-    for text in ("TYPE DE DEMANDE", "A. Action claire", "B. Intention à cadrer", "C. Plusieurs expertises",
+    for text in ("TYPE DE DEMANDE", "A. Action claire", "B. Intention à cadrer", "C. Comparer",
                  "[general] [interviewer]", "[code] [coder]", "SendMessage", "missions/"):
         assert text in rules, text
     # La puce remplacée a disparu, la règle de profil et la règle présentation restent.
@@ -187,6 +187,21 @@ def test_the_hook_appends_the_role_method_after_the_charter_and_logs_it(tmp_path
     assert event["data"]["role"] == "interviewer" and event["data"]["profile"] == "general"
     assert event["data"]["source"] == "default"
     assert role_for("interviewer").instructions not in json.dumps(event)
+
+
+def test_a_second_role_word_is_reported_by_the_hook_without_refusing_the_call(tmp_path):
+    # Reprise QA Slice 07 (N3) : `[general] [web-research] [research-lead] …` part en recherche web, comme avant ;
+    # le second rôle est consigné avec un code, jamais deviné ni refusé.
+    output = routing_hook.run(call("[general] [web-research] [research-lead] Comparer trois écrans"), tmp_path)
+    assert output["hookSpecificOutput"]["permissionDecision"] == "allow"
+    assert brief_of(output).endswith(role_brief(role_for("web-research")))
+    [event] = trace(tmp_path, "agent.role_applied")
+    assert event["level"] == "warning" and event["data"]["role"] == "web-research"
+    assert event["data"]["second_role_marker"] == "research-lead"
+    assert event["data"]["diagnostics"] == ["second_role_marker"]
+    routing_hook.run(call("[general] [research] Chercher la doc"), tmp_path / "clean")
+    [clean] = trace(tmp_path / "clean", "agent.role_applied")
+    assert clean["level"] == "info" and clean["data"]["second_role_marker"] is None and clean["data"]["diagnostics"] == []
 
 
 def test_a_brief_without_role_gets_no_method_and_no_event(tmp_path):
@@ -510,7 +525,7 @@ def _bullet(rules: str, head: str) -> str:
     return line
 
 
-def test_the_brain_rules_teach_owners_relations_and_delivery_without_a_new_gate():
+def test_the_brain_rules_teach_owners_and_relations_without_a_new_gate():
     rules = brain_rules()
     # Une seule porte, la règle d'exécution existante du cas B (D21, I-003) : ni généralisée ni dupliquée.
     assert rules.count(EXECUTION_GATE_RULE) == 1 and rules.endswith(f"- {EXECUTION_GATE_RULE}")
@@ -522,39 +537,52 @@ def test_the_brain_rules_teach_owners_relations_and_delivery_without_a_new_gate(
     framing = _bullet(rules, "B. Intention à cadrer")
     assert "lance aussi en parallèle [general] [research]" in framing and "ils avancent pendant l'interview" in framing
     assert "au premier tour ou après une réponse" in framing
-    # Essai réel : le dossier va dans la mémoire du Board, au chemin absolu ; la trouvaille part avec la réponse.
-    assert "dossier mémoire du Board actif" in framing and "son chemin absolu va à chaque agent" in framing
+    # Reprise QA (N2) : le premier tour ne fait aucun outil en ligne ; le chemin se compose, l'Intervieweur crée.
+    assert "dans ce tour n'écris ni ne vérifies rien" in framing
+    assert "sous le chemin absolu de la Mémoire du Board de ton contexte de tour : compose-le sans outil" in framing
+    assert "l'Intervieweur le crée" in framing and "ta seule écriture permise" not in framing
     assert "avec en une ligne chaque trouvaille arrivée depuis sa dernière question" in framing
     # C : une comparaison sérieuse part chez la direction de recherche, qui porte la mission.
-    assert "un seul [general] [research-lead], qui porte la mission" in _bullet(rules, "C. Plusieurs expertises")
-    # Mission Owner : les gestes de relation sont aux propriétaires ; le cerveau les demande et ne fait que lire.
-    owner = _bullet(rules, "Mission Owner")
+    assert _bullet(rules, "C.") == ("- C. Comparer, choisir, faire l'état d'un sujet : un seul [general] "
+                                    "[research-lead], qui porte la mission et organise ses recherches.")
+    # Second regard : les gestes de relation sont aux Mission Owners ; le cerveau les demande ou en lance un.
+    owner = _bullet(rules, "Second regard")
     assert "[code] [coder] et [general] [research-lead]" in owner
-    for text in ("second regard (QA)", "approches distinctes (Adversary : une consigne différente par producteur)",
-                 "passer la main", "[mission] et [relais] sont à eux", "SendMessage",
-                 "tu ne fais que lire les relations", "[code] [qa] pour du code",
-                 "Tu n'organises jamais toi-même un second regard, une concurrence ni un relais",
-                 "tu ne tranches pas entre des producteurs", "Demande-le au Mission Owner du travail",
-                 "lance-en un seul avec la demande de l'utilisateur : il lance lui-même les producteurs"):
+    for text in ("eux seuls organisent une QA", "une consigne différente par producteur", "un relais, et tranchent",
+                 "Pour un travail en cours, demande-le à son Mission Owner par SendMessage",
+                 "pour une demande neuve, lance un seul Mission Owner",
+                 "Seule exception : la relecture d'un résultat déjà rendu, hors de toute mission en cours",
+                 "[code] [qa] pour du code"):
         assert text in owner, text
-    # Restitution (Slice 11) : l'affichage du Mission Owner est voulu ; le cerveau résume et renvoie à l'écran.
-    delivery = _bullet(rules, "Restitution")
-    for text in ("« non demandé »", "n'en demande pas le retrait", "le détail est à l'écran",
-                 "ne lis pas un tableau à voix haute"):
-        assert text in delivery, text
-    # Work Method choisie : l'exemple vient du registre et se relit comme le hook le lit.
-    assert "écris son id après le rôle ([general] [research-lead] [comparative-research] …)" in rules
-    from jarvis.domain import agent_markers
-    head = agent_markers.parse_head("[general] [research-lead] [comparative-research] Comparer")
-    assert (head.role, head.method) == ("research-lead", "comparative-research")
+    # Coupes QA : ni exemple de Work Method (le cerveau ne voit pas leur liste), ni doublons des relations.
+    assert "écris son id après le rôle" not in rules and "comparative-research" not in rules
+    assert "[mission] et [relais]" not in rules and "tu ne fais que lire les relations" not in rules
+    # La restitution vit dans la règle de notification (le tour de fin), plus dans cette section.
+    assert "Restitution" not in rules
+    [notice] = [line for line in BRAIN_SYSTEM_PROMPT.splitlines() if line.startswith("- Quand un sous-agent ou une")]
+    for text in ("relaie le résultat en une à trois phrases orales, la conclusion d'abord",
+                 "Si l'agent l'a affiché à l'écran (voulu, jamais « non demandé »)",
+                 "dis la conclusion et que le détail est affiché, sans lire de liste ni de tableau"):
+        assert text in notice, text
+    # Une seule longueur orale (N4 iii), et la forme du résultat jamais imposée dans la consigne (N5).
+    assert "- Une à trois phrases courtes par réponse (lancement, relais, résumé avant accord)" in BRAIN_SYSTEM_PROMPT
+    assert "jamais la forme ni la longueur de son résultat, que JARVIS lui donne" in BRAIN_SYSTEM_PROMPT
+    assert "compte rendu court" not in BRAIN_SYSTEM_PROMPT
     # Le marqueur historique n'est plus enseigné ; il reste lu (alias, docs/legacy/subagent-role-aliases.md).
     assert "[reviewer]" not in BRAIN_SYSTEM_PROMPT and role_for("reviewer") is role_for("qa")
+
+
+def test_the_brain_no_longer_launches_the_presentation_review_itself():
+    # Reprise QA (N4 i) : la relecture passe par l'auteur, le cerveau ne lance qu'un auteur.
+    assert ("demande à l'auteur, dans sa consigne, de faire relire son rendu par un [general] [presentation-review]"
+            in PRESENTATION_PRODUCTION_RULE)
+    assert "après lui, un [general] [presentation-review]" not in PRESENTATION_PRODUCTION_RULE
 
 
 def test_without_owner_roles_the_rules_keep_their_old_shape():
     roles = [role for role in ROLES if not role.can_own_mission and role.id != "qa"]
     rules = brain_rules(roles)
-    assert "Mission Owner" not in rules and "Restitution" not in rules and "research-lead" not in rules
+    assert "Mission Owner" not in rules and "Second regard" not in rules and "research-lead" not in rules
     assert "- C. Plusieurs expertises utiles : plusieurs rôles en parallèle" in rules
     assert rules.endswith(f"- {EXECUTION_GATE_RULE}")
 

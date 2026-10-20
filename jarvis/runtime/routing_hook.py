@@ -822,9 +822,10 @@ def _log_role(
     resolution = resolve_role(role)
     active = role_for(role)
     # La méthode réellement apposée : celle choisie par l'appelant si le rôle la permet, sinon le défaut (Slice 05).
-    method = agent_orchestration.decide_method(
-        agent_markers.parse_head(str(tool_input.get("description") or ""), extra_consumed=PLAYBOOK_ROLES), active,
-    ).method_id
+    head = agent_markers.parse_head(str(tool_input.get("description") or ""), extra_consumed=PLAYBOOK_ROLES)
+    method = agent_orchestration.decide_method(head, active).method_id
+    # Diagnostic codé (reprise QA Slice 07) : un second mot de rôle reste dans le libellé, sans refus ni relecture.
+    second = agent_markers.second_role_marker(head)
     caller = event.get("agent_id")
     try:
         journal.emit(
@@ -844,7 +845,10 @@ def _log_role(
                 "caller_agent_id": caller if isinstance(caller, str) and caller else None,
                 "instructions_chars": len(after) - after.index(ROLE_MARK),
                 "role_instructions_chars": len(instructions_for(active, role_overrides).strip()) if active else 0,
+                "second_role_marker": second,
+                "diagnostics": [agent_markers.SECOND_ROLE_MARKER] if second else [],
             },
+            level="warning" if second else "info",
         )
     except OSError:
         pass

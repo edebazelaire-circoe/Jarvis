@@ -667,9 +667,11 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
     """La section « TYPE DE DEMANDE » du prompt du cerveau, générée depuis le registre.
 
     Slice 07 (jarvis-organic-agent-orchestration) : la direction de recherche et le contrôle qualité y sont
-    proposés ; la puce « Mission Owner » dit ce qui appartient aux propriétaires de mission (relations, `[mission]`,
-    `[relais]`) et ce que le cerveau leur demande ; la puce « Restitution » porte le contrat d'affichage de la
-    Slice 11. Aucune porte nouvelle : seule `gate` (cas B) attend un accord (D21, I-003).
+    proposés ; la puce « Second regard » dit que QA, concurrence et relais appartiennent aux Mission Owners. La
+    restitution d'un résultat affiché vit dans la règle de notification de `BRAIN_SYSTEM_PROMPT` (le tour de fin).
+    Reprise QA : en cas B le cerveau n'écrit ni ne vérifie rien dans son tour (l'Intervieweur crée le dossier) ; ni
+    exemple de Work Method (le cerveau ne voit pas leur liste ; les Mission Owners gardent ce choix). Aucune porte
+    nouvelle : seule `gate` (cas B) attend un accord (D21, I-003).
     """
 
     active = [role for role in roles if role.enabled and role.offered_to_brain]
@@ -679,53 +681,40 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
     helpers = ", ".join(_marker_of(by_id[key]) for key in ("research", "web-research", "concept") if key in by_id)
     owners = [role for role in active if role.can_own_mission]
     lead, qa = by_id.get("research-lead"), by_id.get("qa")
-    # Un exemple de méthode choisie, pris dans le registre : un rôle proposé qui a une méthode par défaut et une autre.
-    chosen = next((f"{_marker_of(role)} [{method}]" for role in active if role.default_work_method
-                   for method in role.work_methods if method != role.default_work_method), None)
-    expertise = (f"pour comparer, choisir ou faire l'état d'un sujet, un seul {_marker_of(lead)}, qui porte la "
-                 "mission et organise lui-même ses recherches ; pour chercher et concevoir à la fois pendant un "
-                 "cadrage, " if lead else "")
     lines = [
         "TYPE DE DEMANDE\n"
         "Avant de lancer quoi que ce soit, classe la demande : tu es le seul à avoir le micro, et un chantier lancé "
         "sur une lecture incertaine se refait. Rôles de sous-agent disponibles, à écrire après le "
         f"profil dans la description : {catalogue}. JARVIS donne lui-même à chaque agent la méthode de son rôle : "
-        "ne la recopie pas"
-        + (f" ; pour une autre méthode du rôle, écris son id après le rôle ({chosen} …)" if chosen else "")
-        + ".",
+        "ne la recopie pas.",
         "- A. Action claire (un bug précis, une modification nommée, une recherche ciblée) : un seul agent du rôle "
         "adapté, par exemple [code] [coder] pour un bug, ou une tâche éphémère pour une petite correction évidente. "
         "Pas d'Intervieweur ni de plan : l'agent juge lui-même s'il lui faut de l'aide.",
         "- B. Intention à cadrer (une création, un livrable important, un résultat attendu flou ou qui se lit de "
-        "deux façons) : ne lance pas d'exécution. Crée toi-même le dossier de mission, un fichier court dans le "
-        f"dossier mémoire du Board actif que donne ton contexte de tour, {MISSION_PATH_HINT}, avec ses mots exacts "
-        "sous Intention : c'est ta seule écriture permise, et son chemin absolu va à chaque agent. Lance en "
-        f"arrière-plan {interviewer} avec ses mots exacts et le chemin du dossier"
+        "deux façons) : ne lance pas d'exécution, et dans ce tour n'écris ni ne vérifies rien. Le dossier de mission "
+        f"est {MISSION_PATH_HINT} sous le chemin absolu de la Mémoire du Board de ton contexte de tour : compose-le "
+        f"sans outil, l'Intervieweur le crée. Lance en arrière-plan {interviewer} avec ses mots exacts et ce chemin"
         + (f" ; dès qu'il y a de la matière à trouver (ce qui existe déjà, des références, une source nommée), "
            f"au premier tour ou après une réponse, lance aussi en parallèle {helpers}, chacun avec le même chemin, "
            "où il verse ses apports : ils avancent pendant l'interview, l'Intervieweur ne cherche pas" if helpers else "")
         + f". Chaque « {QUESTION_PREFIX} » de l'Intervieweur se relaie en une phrase. La réponse repart à "
         "l'Intervieweur par SendMessage, avec en une ligne chaque trouvaille arrivée depuis sa dernière question ; "
         "si la reprise échoue, relance-le avec le chemin du dossier, qui garde tout.",
-        f"- C. Plusieurs expertises utiles : {expertise}plusieurs rôles en parallèle, chacun avec le chemin du même "
-        "dossier de mission, et tu relaies au fil de l'eau ce qui arrive.",
     ]
+    if lead:
+        lines.append(f"- C. Comparer, choisir, faire l'état d'un sujet : un seul {_marker_of(lead)}, qui porte la "
+                     "mission et organise ses recherches.")
+    else:
+        lines.append("- C. Plusieurs expertises utiles : plusieurs rôles en parallèle, chacun avec le chemin du même "
+                     "dossier de mission, et tu relaies au fil de l'eau ce qui arrive.")
     if owners:
         lines.append(
-            f"- Mission Owner : {' et '.join(_marker_of(role) for role in owners)}, lancés par toi, portent leur "
-            "mission et décident en cours de route de déléguer, de demander un second regard (QA), de mettre en "
-            "concurrence des approches distinctes (Adversary : une consigne différente par producteur) ou de passer "
-            "la main ; [mission] et [relais] sont à eux. Tu n'organises jamais toi-même un second regard, une "
-            "concurrence ni un relais, et tu ne tranches pas entre des producteurs : tu ne fais que lire les relations. "
-            "Demande-le au Mission Owner du travail, dans sa consigne ou par SendMessage ; s'il n'y en a pas, lance-en "
-            "un seul avec la demande de l'utilisateur : il lance lui-même les producteurs ou le relecteur."
-            + (f" Une relecture demandée d'un résultat déjà rendu : {_marker_of(qa)}, ou [code] [qa] pour du code, "
-               "avec ce résultat et la demande d'origine." if qa else "")
-        )
-        lines.append(
-            "- Restitution : un Mission Owner affiche lui-même un résultat structuré (tableau, document) ; c'est "
-            "voulu, ne le dis jamais « non demandé » et n'en demande pas le retrait. À sa fin, dis la conclusion en "
-            "une ou deux phrases et que le détail est à l'écran ; ne lis pas un tableau à voix haute."
+            f"- Second regard, concurrence, relais : {' et '.join(_marker_of(role) for role in owners)}, lancés par "
+            "toi, sont Mission Owners ; eux seuls organisent une QA, des approches concurrentes (une consigne "
+            "différente par producteur) ou un relais, et tranchent. Pour un travail en cours, demande-le à son Mission "
+            "Owner par SendMessage ; pour une demande neuve, lance un seul Mission Owner avec les mots de l'utilisateur."
+            + (f" Seule exception : la relecture d'un résultat déjà rendu, hors de toute mission en cours, part "
+               f"directement chez {_marker_of(qa)} ([code] [qa] pour du code)." if qa else "")
         )
     lines.append(f"- {gate}")
     return "\n".join(lines)

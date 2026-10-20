@@ -593,7 +593,11 @@ def test_orphan_artifacts_are_bulk_archivable_and_linked_ones_never():
 #: de la matière à trouver, dossier de mission au chemin absolu, trouvaille jointe à la réponse, plus de
 #: « compte rendu court » imposé, le cerveau n'organise ni ne tranche une QA, une
 #: concurrence ou un relais (il les demande à un Mission Owner). 8 880 -> 11 300 caractères.
-BASE_SYSTEM_SHA256 = "9eb4ad505590530e569ce174c95b294c2b5b260d60e922fedff9dac21adc625b"
+#: Reprise QA Slice 07 (coupes N1-N5) : restitution fondue dans la règle de notification, une seule longueur
+#: orale, cas C réduit à la direction de recherche, puce « Second regard » fusionnée (relecture directe vs Mission
+#: Owner), plus d'exemple de Work Method, cas B sans écriture ni vérification dans le tour (l'Intervieweur crée le
+#: dossier), relecture de présentation demandée à l'auteur. 11 300 -> 10 576 caractères.
+BASE_SYSTEM_SHA256 = "e60d27c799b45a6f3697725f987de1fb91df92de7044975cbf7001ccd53c897e"
 #: Réalignement baseline (main `f05ed24`, changement délibéré venu de main) : la
 #: consigne d'affichage nomme scene_update_many, scene_archive, scene_pin et
 #: donne au cerveau la main de l'utilisateur (archiver, épingler, déplacer).
