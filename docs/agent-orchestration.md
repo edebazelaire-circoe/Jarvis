@@ -38,8 +38,9 @@ du CLI Claude ; le seul point contraignant est le hook `PreToolUse`, qui voit ch
 
 Slice 05 : aucun outil MCP nouveau pour le cerveau. Slice 06 : les outils de relation sont sur `jarvis-workspace`,
 pour les sous-agents ; le test de parité exige qu'ils soient nommés dans la consigne du cerveau, ce que fait une
-ligne de `BRAIN_WORKSPACE_PROMPT` (« à eux ; toi, relation_read seulement ») ; `BRAIN_SYSTEM_PROMPT` et
-`brain_rules()` ne changent pas (Slice 07). Le bloc « RELATIONS ENTRE AGENTS (JARVIS) »
+ligne de `BRAIN_WORKSPACE_PROMPT` (« à eux ; toi, relation_read seulement ») ; depuis la Slice 07,
+`brain_rules()` dit au cerveau que ces gestes appartiennent aux Mission Owners : il les leur demande, ou
+lance un Mission Owner, et ne fait que lire ([subagent-roles.md](subagent-roles.md) §9). Le bloc « RELATIONS ENTRE AGENTS (JARVIS) »
 (`relation_runtime.relations_brief`) suit, en bloc distinct, la responsabilité de mission ; un relecteur QA reçoit
 « RELATION QA (JARVIS) ». Le bloc
 « RESPONSABILITÉ DE MISSION (JARVIS) » (`agent_orchestration.mission_brief`) est apposé par le hook, en

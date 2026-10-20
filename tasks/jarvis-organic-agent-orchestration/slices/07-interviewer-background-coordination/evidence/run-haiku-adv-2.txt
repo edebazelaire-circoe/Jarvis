@@ -1,0 +1,32 @@
+# Essai haiku-adv-2 (bac à sable 27653/27654, données C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\7314dd51-936a-4614-8684-8f4233075b7c\scratchpad\s07\out-haiku-adv-2)
+
+UTILISATEUR : Ne modifiez aucun fichier. Je veux deux propositions concurrentes de stratégie de cache pour une API lente, qui se défendent l'une contre l'autre, puis un arbitrage. Réponse courte.
+-- modèle : claude-haiku-5-5 · C:\Projects\jarvis\orch
+CERVEAU dit : **Proposition A : cache en lecture avec TTL et rafraîchissement en arrière-plan (stale-while-revalidate)**
+
+Chaque réponse est mise en cache avec une durée de vie courte. Passé ce délai, on sert encore l'ancienne valeur pendant qu'une seule requête recharge la donnée en arrière-plan.
+
+- Pour : le code reste simple et découplé de l'API. Aucune logique d'invalidation à maintenir. L'utilisateur ne voit presque jamais la lenteur, et la charge sur l'API reste bornée.
+- Contre : il existe une fenêtre où l'on sert une donnée périmée. Le tout premier appel, à froid, reste lent. Sans verrou de type « single-flight », une expiration populaire peut déclencher une rafale d'appels identiques.
+
+**Proposition B : cache précalculé avec invalidation par événement**
+
+Un job de fond remplit le cache à l'avance pour les clés chaudes. Chaque écriture connue invalide ou remplace l'entrée concernée. Personne n'attend jamais l'API en ligne.
+
+- Pour : la fraîcheur est bonne tant que les écritures passent par notre code. Le coût de l'API devient prévisible, puisqu'il suit le planning du job.
+- Contre : chaque chemin d'écriture doit émettre l'événement, et un oubli produit une donnée fausse sans signal visible. Le job calcule aussi des clés que personne ne lit. Et si le job tombe, tout le cache devient froid d'un coup.
+
+**Arbitrage**
+
+A gagne par défaut : c'est moins de code, moins de pannes silencieuses, et le risque de donnée périmée est borné par le TTL. Il faut l'accompagner de trois garde-fous : s
+  [tour] ents, je peux trancher plus précisément. · 9508 ms · $0.0098
+
+# Work State et missions (Core)
+
+# Trace filtrée (kinds)
+agent.global_context: 2
+agent.start: 2
+agent.turn_over_budget: 1
+core.scene.loaded: 1
+display.server_started: 1
+mission_history.ready: 1

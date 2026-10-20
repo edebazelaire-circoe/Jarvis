@@ -1,0 +1,84 @@
+# Essai prod-adv (bac à sable 27653/27654, données C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\7314dd51-936a-4614-8684-8f4233075b7c\scratchpad\s07\out-prod-adv)
+
+UTILISATEUR : Sans modifier aucun fichier, faites travailler deux agents en concurrence sur la meilleure façon de découper le module jarvis/runtime/claude_local.py, qu'ils défendent leurs approches l'une contre l'autre, et rendez-moi l'arbitrage.
+-- modèle : claude-sonnet-5-5 · C:\Projects\jarvis\orch
+CERVEAU outil : [outil] Agent {"description": "[code] [coder] Découpage de claude_local.py en concurrence", "prompt": "Demande de l'utilisateur, mots exacts : « Sans modifier aucun fichier, faites travailler deux agents en concurrence sur la meilleure façon de découper le module jarvis/runtime/claude_local.py, qu'ils défendent leurs approches l'une contre l'autre, et rendez-moi l'arbitrage. »\n\nDépôt : C:\\Projects\\jarvis\\orch (worktree, branche task/jarvis-organic-agent-orchestration). Aucun fichier ne doit être modifié : ni toi ni les agents que tu lances. Les deux approches doivent être réellement différentes (consigne distincte à chaque producteur), chacune étayée par la lecture du module et de ses a
+  lancé : [code] [coder] Découpage de claude_local.py en concurrence
+CERVEAU dit : J'ai lancé en arrière-plan un agent qui fera travailler deux approches concurrentes sur le découpage de ce module, sans toucher à aucun fichier. Il fera défendre chaque approche contre l'autre, puis je vous donnerai l'arbitrage dès qu'il arrive.
+  [tour]  donnerai l'arbitrage dès qu'il arrive. · 10162 ms · $0.1935
+  lancé : [general] [concept] Approche A découpe par couches
+  lancé : [general] [concept] Approche B extraction minimale
+  fin de tâche : **Plan : découper `claude_local.py` par couches en paquet**
+
+Lecture seule respectée : rien n'a été modifié dans le dépôt. Votre consigne ne donnait aucun chemin de dossier de mission, donc je n'y ai rien écrit. Je n'ai exécuté aucun test, tout ce qui suit vient de la lecture du code et de grep.
+
+**Constat chiffré**
+- Le fichier fait 2216 lignes. Les prompts occupent les lignes 56 à 358, soit une 
+  fin de tâche : **Proposition B : extraire d'abord les prompts, un seul déplacement par commit.** Analyse en lecture seule, rien n'a été modifié ni exécuté. Le dossier de mission n'avait pas de chemin dans la consigne, je n'y ai donc rien écrit.
+
+**Ce que j'ai constaté** (`jarvis/runtime/claude_local.py`, 2216 lignes)
+- Les prompts occupent les lignes 56 à 370, soit 315 lignes et 42 Ko. Ce sont des chaînes pures 
+  lancé : [general] [concept] Approche A découpe par couches
+  lancé : [general] [concept] Approche B extraction minimale
+  fin de tâche : J'ai publié ma critique de B et ma défense de A, type critique, sur `rel_79874175f8254e8180f4a4f88afd564f`. J'ai prévenu l'agent `ac559383562d277c2`.
+
+Le plan de B n'était pas encore sur le tableau quand je l'ai lu, et la relation ne contenait alors aucun message. Ma critique vise donc l'approche annoncée (extraction des seuls prompts) et le dit en tête de message. Elle est à réviser si B publie u
+  fin de tâche : Seul mon plan B est publié sur le tableau, et je n'ai pas pu publier la critique de A ni la défense de B.
+
+- **Publié :** mon plan B, type proposal, au rang 1 du tableau `rel_79874175f8254e8180f4a4f88afd564f`.
+- **Plan de A introuvable :** `a9e46110dde200516` est marqué « completed », mais le tableau ne contient aucun de ses messages. Je n'ai pas pu lire son plan. Une critique datée de lignes et d
+  lancé : [general] [concept] Approche B extraction minimale
+  fin de tâche : La critique de A et la défense de B sont publiées sur le tableau `rel_79874175f8254e8180f4a4f88afd564f`, au rang 3, en réponse à la critique de A (rang 2).
+
+Le message tient en 5 points contre A, plus la défense de B :
+- **Patchs silencieux :** une fois le fichier éclaté en paquet, `monkeypatch` de `resolve_command` ou `raise_console_window` sur le paquet ne change plus ce que voit le code déplacé
+  fin de tâche : L'arbitrage est affiché à l'écran (object_id `brain-window-4d1a3947d0a2`). J'ai retenu l'approche B, l'extraction minimale des prompts. Je n'ai lancé aucun test : les chiffres viennent de la lecture du code et de `git log`.
+
+- **Approche A :** découper `claude_local.py` en un paquet par couches (prompts, politique d'outils, lancement, agent).
+- **Approche B :** sortir seulement les prompts (lignes
+-- modèle : claude-sonnet-5-5 · C:\Projects\jarvis\orch
+CERVEAU dit : L'arbitrage retient l'approche B : sortir seulement les prompts de `claude_local.py` (lignes 56 à 370) dans `jarvis/runtime/brain_prompts.py`, que `claude_local.py` réexporte. Le détail est affiché à l'écran. Les deux agents ont travaillé en lecture seule et n'ont lancé aucun test : les chiffres viennent de la lecture du code et de `git log`.
+
+Voici les deux approches et pourquoi B l'emporte :
+- **Approche A :** découper le module en un paquet par couches (prompts, politique d'outils, lancement, agent).
+- **Approche B :** extraction minimale des prompts. C'est le sous-ensemble sûr de A, car l'étape 1 est la même.
+- **Conflits :** 48 des 65 commits récents touchent les prompts, donc l'extraction réduit les conflits entre worktrees.
+- **Tests :** avec A, au moins 8 patchs de tests (sur `resolve_command` et `raise_console_window`) cesseraient d'agir sans échouer. Les tests appelleraient alors le vrai CLI ou ouvriraient une vraie console. B ne casse aucun patch.
+
+Ce qui reste à faire avec B :
+- mettre à jour deux listes blanches de tests et trois commentaires de chemin ;
+- rediriger la provenance des 17 descripteurs de `prompt_catalog` ;
+- laisser `ClaudeLocalAgent` à ses 1650 lignes, car la scinder déplacerait les risques de concurrence sans les réduire.
+
+Aucun redémarrage de Core n'est nécessaire.
+
+La plaidoirie croisée est inégale. Le premier message de A a été écrit avant la publication du plan de B, donc il visait l'approche annoncée. B a ensuite critiqué A en connaissance d
+  [tour] onfirmer, donc à vérifier de votre côté. · 5442 ms · $1.3752
+
+# Work State et missions (Core)
+TRAVAIL [code] [coder] Découpage de claude_local.py en concurrence | completed | role=coder | mission=mis_toolu_01DYffEzjyPLZdbZYCi54eiX owner=True | 
+MISSION mis_toolu_01DYffEzjyPLZdbZYCi54eiX completed owner=ainst_8f285cf3ec2940d3a05db04236acb627
+  RELATION rel_79874175f8254e8180f4a4f88afd564f adversary closed outcome=winner
+TRAVAIL [general] [concept] Approche B extraction minimale | completed | role=concept | mission=mis_toolu_01DYffEzjyPLZdbZYCi54eiX owner=False | 
+TRAVAIL [general] [concept] Approche A découpe par couches | completed | role=concept | mission=mis_toolu_01DYffEzjyPLZdbZYCi54eiX owner=False | 
+
+# Trace filtrée (kinds)
+agent.declared: 6
+agent.global_context: 2
+agent.relation_call: 18
+agent.role_applied: 3
+agent.start: 2
+agent.subagent.finished: 3
+agent.subagent.started: 3
+agent.turn_over_budget: 1
+core.missions.declarations: 3
+core.scene.loaded: 1
+display.server_started: 1
+display.tool: 1
+mission_history.mission_closed: 1
+mission_history.ready: 1
+mission_history.relation_closed: 1
+mission_history.relation_message: 3
+mission_history.relation_opened: 1
+missions.declarations_sent: 3
+missions.relation_relayed: 18

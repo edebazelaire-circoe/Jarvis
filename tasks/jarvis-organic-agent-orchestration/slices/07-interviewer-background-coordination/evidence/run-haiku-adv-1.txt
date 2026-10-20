@@ -1,0 +1,24 @@
+# Essai haiku-adv-1 (bac à sable 27653/27654, données C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\7314dd51-936a-4614-8684-8f4233075b7c\scratchpad\s07\out-haiku-adv-1)
+
+UTILISATEUR : Ne modifiez aucun fichier. Je veux deux propositions concurrentes de stratégie de cache pour une API lente, qui se défendent l'une contre l'autre, puis un arbitrage. Réponse courte.
+-- modèle : claude-haiku-5-5 · C:\Projects\jarvis\orch
+CERVEAU dit : **Proposition A : cache court avec rafraîchissement en arrière-plan.** Chaque réponse est mise en cache pour 30 à 60 secondes. Passé ce délai, le service sert quand même la valeur périmée et relance l'appel à l'API en arrière-plan. Les requêtes identiques simultanées partagent un seul appel. L'utilisateur ne voit jamais la lenteur de l'API sur le chemin chaud, et le système tient sous forte charge. Le code reste simple. Faiblesse : la donnée peut être périmée de quelques dizaines de secondes, et une première requête à froid reste lente.
+
+**Proposition B : pré-calcul et invalidation par événement.** On ne cache pas à la demande. Un job précharge en batch les réponses connues pour être demandées, et l'API source émet un événement à chaque changement, ce qui invalide la clé concernée. La fraîcheur est exacte et aucun appel lent ne touche l'utilisateur. Faiblesses : l'invalidation est fragile, car un événement perdu laisse une donnée fausse indéfiniment. Le pré-calcul gaspille des appels sur une longue traîne de clés que personne ne demande.
+
+**Ce que A reproche à B :** l'invalidation par événement exige une fiabilité que le système n'a pas forcément, et le pré-calcul coûte cher sur des clés peu demandées.
+
+**Ce que B reproche à A :** le rafraîchissement en arrière-plan sert des données périmées sans borne de fraîcheur garantie, et il ne résout pas le premier appel.
+
+**Arbitrage :** tout dépend de deux questions. Les clés sont-elles finies et connues, ou forment-elles une longue 
+  [tour] faire l'arbitrage sur des faits précis. · 11019 ms · $0.0100
+
+# Work State et missions (Core)
+
+# Trace filtrée (kinds)
+agent.global_context: 2
+agent.start: 2
+agent.turn_over_budget: 1
+core.scene.loaded: 1
+display.server_started: 1
+mission_history.ready: 1

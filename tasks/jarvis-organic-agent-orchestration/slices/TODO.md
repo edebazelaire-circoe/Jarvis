@@ -41,7 +41,7 @@ State: **READY** (audited `main@336f21be`, evidence `references/readiness-audit.
 - [x] 04-role-registry-loadouts-methods (2026-10-20; QA code-review+qa-verification+agent-trace PASS_WITH_NOTES, notes fixed 2da89aa4)
 - [x] 05-orchestration-runtime-tools (2026-10-20; QA code-review+qa-verification+runtime-validation+agent-trace PASS_WITH_NOTES after rework, notes fixed 240e69f0)
 - [x] 06-relations-runtime-communication (2026-10-20; QA code-review+qa-verification+runtime-validation+agent-trace FAIL then PASS_WITH_NOTES after rework, notes fixed 33fd4373)
-- [ ] 07-interviewer-background-coordination
+- [ ] 07-interviewer-background-coordination (implemented, QA pending)
 - [ ] 08-scene-projection-role-relations
 - [ ] 09-task-graph-ui
 - [x] 10-agent-roles-settings-ui (2026-10-20; QA code-review+qa-verification+runtime-validation+impeccable PASS_WITH_NOTES, notes fixed 7480cc5c; HV-ORG-10-01/02 pending)

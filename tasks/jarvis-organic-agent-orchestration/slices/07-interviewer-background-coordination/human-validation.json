@@ -5,13 +5,15 @@
       "id": "HV-ORG-07-01",
       "description": "Give a vague creation request, answer Interviewer questions while background research runs, and confirm interaction remains responsive and later questions can use returned evidence.",
       "status": "pending",
-      "evidence": null
+      "evidence": null,
+      "preparation": "Après redémarrage de JARVIS par vous : dites « Je voudrais créer une page d'accueil pour mon association de randonnée, inspirée de ce qui se fait de mieux. » Attendu : réponse immédiate d'une phrase, Intervieweur et recherche web lancés ensemble ; répondez à une question pendant que la recherche tourne ; une question ou le cahier des charges suivant reprend une trouvaille de la recherche ; après « PRÊT », le cerveau demande votre accord et ne lance rien sans votre oui. Trace d'essai : C:/Projects/jarvis/orch/tasks/jarvis-organic-agent-orchestration/slices/07-interviewer-background-coordination/evidence/run-prod.txt"
     },
     {
       "id": "HV-ORG-07-02",
       "description": "Give a clear direct bug/fix request and confirm no mandatory Interviewer ceremony is inserted.",
       "status": "pending",
-      "evidence": null
+      "evidence": null,
+      "preparation": "Dites « Il y a un bug dans <fichier> : <constat>. Corrigez-le. » Attendu : un seul agent Développement, aucune question d'Intervieweur, le résultat annoncé à la fin. Puis « Corrigez la coquille du titre de <fichier> » : tâche éphémère discrète, rien d'annoncé quand elle réussit. Traces : C:/Projects/jarvis/orch/tasks/jarvis-organic-agent-orchestration/slices/07-interviewer-background-coordination/evidence/run-haiku-a.txt, C:/Projects/jarvis/orch/tasks/jarvis-organic-agent-orchestration/slices/07-interviewer-background-coordination/evidence/run-prod.txt"
     }
   ],
   "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."

@@ -1,0 +1,68 @@
+# Essai prod-adv-1 (bac à sable 27653/27654, données C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\7314dd51-936a-4614-8684-8f4233075b7c\scratchpad\s07\out-prod-adv-1)
+
+UTILISATEUR : Ne modifiez aucun fichier. Je veux deux propositions concurrentes de stratégie de cache pour une API lente, qui se défendent l'une contre l'autre, puis un arbitrage. Réponse courte.
+-- modèle : claude-sonnet-5-5 · C:\Projects\jarvis\orch
+CERVEAU dit : **Proposition A : cache-aside avec TTL long et stale-while-revalidate.** On sert la valeur en cache, même périmée, et on la rafraîchit en arrière-plan. La latence reste basse et l'API lente n'est jamais sur le chemin critique. Contre B, A dit que l'invalidation sur événement est fragile : un événement perdu laisse une donnée fausse indéfiniment, alors qu'un TTL borne toujours l'erreur.
+
+**Proposition B : cache court avec invalidation sur événement et coalescence des requêtes.** Les données restent fraîches car on les purge dès qu'elles changent, et une seule requête part vers l'API pour N demandeurs simultanés. Contre A, B dit que servir du périmé est inacceptable pour des données sensibles. Il ajoute que le rafraîchissement en arrière-plan peut saturer l'API lente avec des requêtes inutiles pour des clés que personne ne relit.
+
+**Arbitrage.** Aucune des deux ne suffit seule. A est meilleure pour la latence et la résilience, B pour la fraîcheur et la charge sur l'API. Je retiens A comme base : TTL moyen, stale-while-revalidate, et rafraîchissement limité aux clés récemment lues. J'y greffe de B la coalescence des requêtes, qui coûte peu, et l'invalidation sur événement seulement pour les données sensibles, avec le TTL comme filet de sécurité si un événement se perd.
+
+La décision dépend d'un point que je ne connais pas : la tolérance réelle de vos données au périmé. Si elle est nulle, B passe devant.
+  [tour] imé. Si elle est nulle, B passe devant. · 10022 ms · $0.1832
+
+UTILISATEUR : Merci. Maintenant, sans modifier aucun fichier, faites travailler deux agents en concurrence sur la meilleure façon de découper le module jarvis/runtime/claude_local.py, qu'ils défendent leurs approches l'une contre l'autre, et rendez-moi l'arbitrage.
+-- modèle : claude-sonnet-5-5 · C:\Projects\jarvis\orch
+CERVEAU outil : [outil] Agent {"description": "[code] Découpage claude_local.py, approche par responsabilités", "prompt": "Demande de l'utilisateur, mot pour mot : « faites travailler deux agents en concurrence sur la meilleure façon de découper le module jarvis/runtime/claude_local.py, qu'ils défendent leurs approches l'une contre l'autre, et rendez-moi l'arbitrage. » Contrainte stricte : ne modifie AUCUN fichier, lecture seule. Dépôt : C:\\Projects\\jarvis\\orch (worktree), lis aussi docs/ et les tests qui touchent ce module, ainsi que ses importeurs. Tu es le producteur A : défends un découpage fondé sur les responsabilités (séparer clairement les couches ou préoccupations distinctes du module, quitte à 
+  lancé : [code] Découpage claude_local.py, approche par responsabilités
+CERVEAU outil : [outil] Agent {"description": "[code] Découpage claude_local.py, approche conservatrice", "prompt": "Demande de l'utilisateur, mot pour mot : « faites travailler deux agents en concurrence sur la meilleure façon de découper le module jarvis/runtime/claude_local.py, qu'ils défendent leurs approches l'une contre l'autre, et rendez-moi l'arbitrage. » Contrainte stricte : ne modifie AUCUN fichier, lecture seule. Dépôt : C:\\Projects\\jarvis\\orch (worktree), lis aussi docs/ et les tests qui touchent ce module, ainsi que ses importeurs. Tu es le producteur B : défends un découpage minimal et conservateur (n'extraire que ce qui a une couture évidente, le moins de fichiers et de mouvement possible,
+  lancé : [code] Découpage claude_local.py, approche conservatrice
+CERVEAU dit : Deux agents en lecture seule sont lancés sur claude_local.py. L'un défend un découpage par responsabilités, l'autre un découpage minimal et conservateur. Ils ne se voient pas encore. Quand les deux plans seront rentrés, je les ferai se répondre, puis je vous rendrai l'arbitrage.
+  [tour] ndre, puis je vous rendrai l'arbitrage. · 17760 ms · $0.3031
+  fin de tâche : **Producteur B : découpage minimal et conservateur de `jarvis/runtime/claude_local.py`** (lecture seule, aucun fichier modifié)
+
+**Constat**
+- Le module fait 2216 lignes. Il contient trois blocs :
+  - Les prompts et règles, lignes 56 à 370, soit environ 315 lignes de données pures : `BRAIN_*_PROMPT`, `JOB_RESULT_SYSTEM_PROMPT`, `SPECULATIVE_SYSTEM_PROMPT`, `PRESENTATION_PREPARATION_SYSTEM_PROMPT`,
+-- modèle : claude-sonnet-5-5 · C:\Projects\jarvis\orch
+CERVEAU dit : [pas-pour-moi]
+  [tour] [pas-pour-moi] · 2159 ms · $0.5744
+  fin de tâche : # Producteur A : découpage de `jarvis/runtime/claude_local.py` par responsabilité
+
+Je n'ai modifié aucun fichier. Tout ce qui suit vient de la lecture du code.
+
+## Constat
+
+- Le module fait 2216 lignes et mélange 6 préoccupations sans lien entre elles.
+- Il a 8 importeurs côté `jarvis/` et environ 125 fichiers de tests y touchent.
+- L'import de `claude_local` pour de simples constantes tire `Claud
+-- modèle : claude-sonnet-5-5 · C:\Projects\jarvis\orch
+CERVEAU dit : **Arbitrage.** Les deux agents sont d'accord sur le point essentiel : extraire les prompts (lignes 56 à 370) dans un module à part. C'est du texte pur, sans état, sans cycle d'import, et `claude_local` ré-exporte les noms pour que les importeurs et les 125 fichiers de tests ne changent pas. Je n'ai pas fait de tour de réplique, chacun ayant déjà répondu aux attaques de l'autre.
+
+Ils divergent sur la suite. L'agent par responsabilités veut aussi sortir les helpers d'arguments CLI, la transcription, la config MCP, les notices et la console. Le conservateur s'arrête aux prompts, au motif que le module bouge tous les jours. Il y a eu 101 commits depuis septembre, dont 7 sur cette seule branche, et les merges ont déjà perdu un côté en silence.
+
+Je retiens ceci :
+- **Maintenant :** les prompts, puis les helpers d'arguments CLI et la transcription. Ce sont des fonctions pures. L'agent par responsabilités le reconnaît lui-même : on peut s'arrêter là sans perdre en sécurité.
+- **Plus tard, après la fusion de S7 à S13 :** la config MCP, les notices et la console. L'argument du conservateur sur le calendrier tient.
+- **Vérification avant la config MCP :** l'agent par responsabilités affirme que les douze méthodes `_*_mcp_args` ne lisent que `runtime_root`, l'environnement et le profil. Il ne l'a pas relu méthode par méthode. Le conservateur soutient le contraire, sans le prouver non plus.
+- **Hors périmètre :** découper `start()` (225 lignes). Les deux le jugent trop risqué pour la voix
+  [tour] calées.
+
+Aucun fichier n'a été modifié. · 10725 ms · $0.6646
+
+# Work State et missions (Core)
+TRAVAIL [code] Découpage claude_local.py, approche par responsabilités | completed | role=undeclared | mission=None owner=False | 
+TRAVAIL [code] Découpage claude_local.py, approche conservatrice | completed | role=undeclared | mission=None owner=False | 
+
+# Trace filtrée (kinds)
+agent.declared: 4
+agent.global_context: 2
+agent.start: 2
+agent.subagent.finished: 2
+agent.subagent.started: 2
+agent.turn_over_budget: 3
+core.missions.declarations: 2
+core.scene.loaded: 1
+display.server_started: 1
+mission_history.ready: 1
+missions.declarations_sent: 2

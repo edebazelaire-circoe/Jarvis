@@ -16,9 +16,12 @@ reçoit aussi la méthode du Contrôle qualité (instructions `subagent_role.qa`
 (`code:reviewer`, `general:reviewer`), des skills qui listent `reviewer` dans `allowed_profiles` et la règle
 du prompt `PROFILE_RULE` (« ajoute [reviewer] ») l'emploient.
 
-**Condition de retrait.** Quand `PROFILE_RULE` et les règles du cerveau enseignent `[qa]` (Slice 07) et
-qu'une migration des réglages a réécrit les clés de loadout `*:reviewer` existantes (le loadout de `qa` est
-câblé depuis la Slice 04 : `qa` -> `reviewer`). D'ici là l'alias reste, et `tests/unit/test_subagent_roles.py` le garde.
+**Condition de retrait.** Première moitié remplie par la Slice 07 : `PROFILE_RULE` et les règles du
+cerveau enseignent `[qa]`, plus `[reviewer]` (`tests/unit/test_int_role_markers.py`). Reste : une migration
+des réglages qui réécrit les clés de loadout `*:reviewer` existantes et les `allowed_profiles` des skills (le
+loadout de `qa` est câblé depuis la Slice 04 : `qa` -> `reviewer`), puis le retrait de l'alias et du rôle de
+loadout. D'ici là l'alias reste lu (un sous-agent ou une ancienne conversation peut encore l'écrire), et
+`tests/unit/test_subagent_roles.py` le garde.
 
 ## Reste n° 2 — `research-lead` et `qa` définis mais désactivés (retiré par la Slice 04)
 

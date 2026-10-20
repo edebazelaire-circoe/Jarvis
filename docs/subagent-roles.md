@@ -31,8 +31,8 @@ outils, profil par défaut, identité visuelle, capacités, Work Methods permise
 | `web-research` | Recherche web | Web Research | general | non | non | profil | quick, deep, comparative | globe, sky, WEB | oui | oui |
 | `coder` | Développement | Developer | code | oui | oui | `coder` | bug-investigation | code, amber, DEV | oui | oui |
 | `concept` | Conceptualisation | Conceptualizer | general | non | non | profil | — | lightbulb, rose, CPT | oui | oui |
-| `research-lead` | Direction de recherche | Research Lead | general | oui | oui | `research` | **deep**, comparative, quick | compass, indigo, DIR | **non** (Slice 07) | oui |
-| `qa` | Contrôle qualité | QA / Quality Analyst | general | non | non | `reviewer` | **result-review**, bug-investigation | shield-check, lime, QA | **non** (Slice 07) | oui |
+| `research-lead` | Direction de recherche | Research Lead | general | oui | oui | `research` | **deep**, comparative, quick | compass, indigo, DIR | oui (Slice 07) | oui |
+| `qa` | Contrôle qualité | QA / Quality Analyst | general | non | non | `reviewer` | **result-review**, bug-investigation | shield-check, lime, QA | oui (Slice 07) | oui |
 
 Tous les rôles sont actifs (`enabled=True`). Les ids des méthodes sont abrégés : `quick-research`,
 `deep-research`, `comparative-research` ([work-methods.md](work-methods.md)).
@@ -50,9 +50,8 @@ Règles :
     inconnu (marqueur gardé dans le libellé, repli sur la consigne) et seul `resolve_role` direct rend
     `disabled` ;
   - `offered_to_brain` : le rôle figure dans la section « TYPE DE DEMANDE » du cerveau (`brain_rules`).
-    `research-lead` et `qa` sont actifs depuis la Slice 04 mais **pas encore proposés au cerveau** : la règle
-    qui dit au cerveau quand les lancer appartient à la Slice 07, qui passera ce drapeau à vrai. Le prompt du
-    cerveau est donc inchangé octet pour octet (`test_scene_artifacts.BASE_SYSTEM_SHA256`) ;
+    Tous les rôles le sont depuis la Slice 07 (`research-lead` et `qa` ne l'étaient pas avant, section 9) ; le
+    baisser retire le rôle de la règle et rien d'autre, et Settings le dit (« pas encore proposé au cerveau ») ;
   - `offered_to_subagents` : le rôle figure dans les capacités apposées sur la consigne d'un agent qui peut
     lancer des agents (section 1bis). Faux pour l'Intervieweur, qui ne parle à l'utilisateur que par le
     cerveau.
@@ -63,8 +62,8 @@ Règles :
 - **Pourquoi activer `research-lead` et `qa` dès la Slice 04.** Leur câblage registre/hook est complet ici
   (méthode, capacités, Work Method, loadout) et ne touche pas le prompt du cerveau. Effets immédiats : un
   agent qui lance des agents (Développement, Direction de recherche) peut demander `[general] [qa]` ou
-  `[general] [research-lead]` et obtient la bonne méthode ; l'alias historique `[code] [reviewer]` que
-  `PROFILE_RULE` enseigne déjà au cerveau reçoit la méthode du Contrôle qualité.
+  `[general] [research-lead]` et obtient la bonne méthode ; l'alias historique `[code] [reviewer]` reçoit la
+  méthode du Contrôle qualité. Depuis la Slice 07, `PROFILE_RULE` enseigne `[qa]` et plus `[reviewer]`.
 - Mission Owner **n'est pas un rôle** (section 5). Il n'existe ni rôle « Orchestrateur » ni rôle
   « Owner ».
 
@@ -429,9 +428,11 @@ lancé par le cerveau a les outils `jarvis-display` du cerveau, différés (`def
 `ToolSearch` ; ses appels sont journalisés avec l'acteur `brain` (aucune distinction d'acteur pour un
 sous-agent). Sans `scene.enabled`, le serveur n'est pas déclaré : le Mission Owner livre en Markdown.
 
-**Limite.** Seul un Mission Owner reçoit la consigne : le cerveau propose aujourd'hui `[code] [coder]` et
-`[general] [research]` ; une recherche confiée à `[research]` (rôle qui ne porte pas de mission) ne la reçoit pas tant
-que la Slice 07 n'offre pas `research-lead` au cerveau. La beauté du rendu reste un jugement humain
+**Limite.** Seul un Mission Owner reçoit la consigne. Depuis la Slice 07 le cerveau confie une comparaison ou
+un état des lieux sérieux à `[general] [research-lead]`, qui porte la mission ; une recherche ciblée confiée à
+`[research]` (rôle qui ne porte pas de mission) ne la reçoit pas, et c'est voulu. Le cerveau connaît le contrat
+(section 9) : il ne traite pas une fenêtre affichée par un Mission Owner de « non demandée » et ne lit pas un
+tableau à voix haute. La beauté du rendu reste un jugement humain
 (`HV-ORG-11-01`, `HV-ORG-11-02`).
 
 ## 6. Éphémère
@@ -450,8 +451,11 @@ silencieuse et qui ne reste pas dans l'historique durable.
   orpheline d'un historique qui ne la garde pas.
 
 La règle du prompt du cerveau qui dit quand déclarer une éphémère (`claude_local.py`, « Tâche éphémère »)
-n'est pas modifiée par ce contrat ; son élargissement aux petites corrections évidentes relève de la
-Slice 07.
+couvre depuis la Slice 07 les petites corrections évidentes dont le changement visible suffit comme compte
+rendu (une coquille, une erreur évidente que l'utilisateur vient de montrer : `[éphémère] [code] [coder] …`).
+Un correctif dont l'utilisateur attend la confirmation reste une tâche ordinaire à un seul agent ; au
+lancement, le cerveau ne promet pas de compte rendu ; un échec est toujours annoncé. Toujours un seul drapeau
+(I-004).
 
 ## 7. Ce qui reste à câbler
 
@@ -460,7 +464,7 @@ Slice 07.
 | Contrat de la déclaration du hook (`AgentDeclarationFact`), `role_id` de `WorkObservation`, historique durable : faits ([mission-history.md](mission-history.md)) | Slice 03 |
 | Câblage du hook vers Core, outils du Mission Owner (`[mission]`, méthode choisie, `SendMessage`/`TaskStop`), `can_spawn` mécanique, charte consciente du rôle | fait (Slice 05, [agent-orchestration.md](agent-orchestration.md)) |
 | Relations au runtime (communication, QA, adversaire, relais) | Slice 06 |
-| Règles du cerveau (rôles proposés : `offered_to_brain` de `research-lead` et `qa`, éphémère élargie, `[mission]` enseigné au cerveau) | Slice 07 |
+| Règles du cerveau (rôles proposés : `offered_to_brain` de `research-lead` et `qa`, éphémère élargie, `[mission]` enseigné au cerveau) | fait (Slice 07, section 9) |
 | Rôle dans la scène, badge Mission Owner | Slice 08 |
 
 ## 8. Interface : Réglages > Sous-agents
@@ -547,3 +551,46 @@ notices. Les couleurs du CSS `.sar-*` sont des jetons du thème (`--text`, `--mu
 
 **Thèmes.** Lisible dans les deux thèmes livrés (Circuit imprimé, Cosmos), tous deux sombres, et en couleurs
 forcées (contraste élevé de Windows). Le Control Center n'a pas de thème clair.
+
+## 9. Ce que le cerveau sait des rôles (Slice 07)
+
+Le cerveau vocal ne lit qu'une section générée du registre, `brain_rules()` (« TYPE DE DEMANDE », dans
+`BRAIN_SYSTEM_PROMPT`), plus deux règles voisines de `claude_local.py` (« Tâche éphémère ») et de
+`routing_hook.PROFILE_RULE`. Ce qu'elle enseigne :
+
+- **Catalogue** : chaque rôle proposé (`offered_to_brain`) avec son marqueur `[profil] [rôle]` et son
+  `when_relevant`. `qa` : « relecture d'un résultat déjà produit » (un relecteur lancé par le cerveau n'a pas
+  de mission, donc pas de relation QA possible : `relation_no_mission`). Une Work Method se choisit en
+  écrivant son id après le rôle ; l'exemple est tiré du registre (`[general] [research-lead]
+  [comparative-research] …`).
+- **A. Action claire** : un seul agent du bon rôle, ou une éphémère pour une petite correction évidente. Ni
+  Intervieweur ni plan préalable : l'agent juge lui-même s'il lui faut de l'aide (organique, D05/D07/D19).
+- **B. Intention à cadrer** : dossier de mission écrit par le cerveau dans le dossier mémoire du Board actif
+  (chemin absolu transmis à chaque agent), Intervieweur en arrière-plan, et, dès qu'il y a de la matière à
+  trouver, recherches en parallèle qui versent leurs apports au dossier ; la réponse de l'utilisateur repart
+  par `SendMessage` avec en une ligne chaque trouvaille arrivée depuis la dernière question (D20).
+- **C. Plusieurs expertises** : comparer, choisir, faire l'état d'un sujet → un seul `[general]
+  [research-lead]`, qui porte la mission ; chercher et concevoir pendant un cadrage → plusieurs rôles en
+  parallèle sur le même dossier.
+- **Mission Owner** : `[code] [coder]` et `[general] [research-lead]`, lancés par le cerveau, portent leur
+  mission et décident de déléguer, de demander une QA, de mettre en concurrence des approches distinctes
+  (une consigne différente par producteur) ou de passer la main. `[mission]` et `[relais]` sont à eux ; le
+  cerveau n'organise ni ne tranche lui-même une QA, une concurrence ou un relais (il n'a que `relation_read`,
+  `BRAIN_WORKSPACE_PROMPT`) : il le demande au Mission Owner du travail (consigne ou `SendMessage`), ou en
+  lance un seul avec la demande. Une relecture demandée d'un résultat déjà rendu : `[general] [qa]`, ou
+  `[code] [qa]` pour du code.
+- **Restitution** (contrat de la section 5bis) : l'affichage d'un résultat structuré par un Mission Owner est
+  voulu ; le cerveau ne le dit jamais « non demandé », n'en demande pas le retrait, dit la conclusion en une
+  ou deux phrases et que le détail est à l'écran, sans lire un tableau. Sa consigne n'impose plus « un compte
+  rendu court » : la forme du rendu vient de JARVIS (charte, rôle, restitution).
+- **Passage à l'exécution** : `EXECUTION_GATE_RULE`, inchangée, seulement pour le cas B (après `PRÊT :`,
+  accord oral). Aucune porte nouvelle (D21, I-003) ; un test vérifie qu'elle est la seule.
+
+**Décision `[reviewer]` (Slice 07).** `PROFILE_RULE` enseigne `[qa]` pour une relecture (`[code] [qa] …`) :
+même rôle, même méthode, même loadout `reviewer` que l'alias. `[reviewer]` n'est plus enseigné nulle part au
+cerveau mais reste lu (alias) ; condition de retrait :
+[legacy/subagent-role-aliases.md](legacy/subagent-role-aliases.md).
+
+Taille : `BRAIN_SYSTEM_PROMPT` 8 880 → 11 300 caractères, dont `brain_rules()` 2 412 → 4 495 (empreintes dans
+`tests/unit/test_scene_artifacts.py` et `tests/unit/test_subagent_roles.py`). Une conversation ouverte avant ce
+changement garde l'ancienne consigne jusqu'au redémarrage de JARVIS (`--system-prompt-snapshot`).
