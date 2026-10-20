@@ -599,7 +599,11 @@ def test_orphan_artifacts_are_bulk_archivable_and_linked_ones_never():
 #: dossier, seulement les rôles utiles en parallèle), relecture de présentation demandée à l'auteur, ni forme ni support imposés
 #: au résultat (fichier compris). 11 300 -> 10 661
 #: caractères.
-BASE_SYSTEM_SHA256 = "a77e3de622317ed310b6361281bd21b1c06ce1aea34806da7cf915ade6dc3285"
+#: Revérification QA Slice 07 : cas B échelonné (Intervieweur seul, recherches à sa première question), une seule
+#: règle de longueur (une phrase pour lancement et accord, trois au plus ailleurs, sans markdown même sans affichage),
+#: « n'en demande pas le retrait » rétabli, support imposé limité au résultat final, renvoi de la recherche web vers
+#: la direction de recherche, éphémère sans promesse. 10 661 -> 11 082 caractères.
+BASE_SYSTEM_SHA256 = "de626f7b0dd7dc563e20049e718ff2890748b7523f1f846f68c25d94098e4941"
 #: Réalignement baseline (main `f05ed24`, changement délibéré venu de main) : la
 #: consigne d'affichage nomme scene_update_many, scene_archive, scene_pin et
 #: donne au cerveau la main de l'utilisateur (archiver, épingler, déplacer).

@@ -535,13 +535,16 @@ def test_the_brain_rules_teach_owners_and_relations_without_a_new_gate():
     assert "Pas d'Intervieweur ni de plan" in clear and "éphémère" in clear
     # B : l'interview n'arrête rien ; une recherche part en parallèle dès qu'il y a de la matière à trouver (D20).
     framing = _bullet(rules, "B. Intention à cadrer")
-    assert "lance aussi en parallèle ceux qui servent parmi [general] [research]" in framing
-    assert "Lance en arrière-plan [general] [interviewer] avec ses mots exacts et ce chemin" in framing and "ils avancent pendant l'interview" in framing
-    assert "au premier tour ou après une réponse" in framing
+    # Revérification QA : cas B échelonné ; l'Intervieweur seul au premier tour (il crée le dossier), les recherches
+    # au tour de sa première question (plus de course d'écriture sur mission.md).
+    assert "Lance en arrière-plan seulement [general] [interviewer], avec ses mots exacts et ce chemin : il crée le "            "dossier" in framing
+    assert ("Au tour de sa première « QUESTION : », le dossier existe : s'il y a de la matière à trouver" in framing
+            and "lance alors en parallèle ceux qui servent parmi [general] [research]" in framing)
+    assert "ils avancent pendant l'interview" in framing and "au premier tour" not in framing
     # Reprise QA (N2) : le premier tour ne fait aucun outil en ligne ; le chemin se compose, l'Intervieweur crée.
     assert "dans ce tour n'écris ni ne vérifies rien" in framing
     assert "sous le chemin absolu de la Mémoire du Board de ton contexte de tour : compose-le sans outil" in framing
-    assert "l'Intervieweur le crée" in framing and "ta seule écriture permise" not in framing
+    assert "ta seule écriture permise" not in framing
     assert "avec en une ligne chaque trouvaille arrivée depuis sa dernière question" in framing
     # C : une comparaison sérieuse part chez la direction de recherche, qui porte la mission.
     assert _bullet(rules, "C.") == ("- C. Comparer, choisir, faire l'état d'un sujet : un seul [general] "
@@ -561,16 +564,24 @@ def test_the_brain_rules_teach_owners_and_relations_without_a_new_gate():
     # La restitution vit dans la règle de notification (le tour de fin), plus dans cette section.
     assert "Restitution" not in rules
     [notice] = [line for line in BRAIN_SYSTEM_PROMPT.splitlines() if line.startswith("- Quand un sous-agent ou une")]
-    for text in ("relaie le résultat en une à trois phrases orales, la conclusion d'abord",
-                 "Si l'agent l'a affiché à l'écran (voulu, jamais « non demandé »)",
+    for text in ("relaie le résultat en une à trois phrases orales, sans markdown, la conclusion d'abord, même quand "
+                 "rien n'est affiché : le reste du compte rendu ne se lit pas",
+                 "Si l'agent l'a affiché à l'écran (voulu : jamais « non demandé », n'en demande pas le retrait)",
                  "dis la conclusion et que le détail est affiché, sans lire de liste ni de tableau"):
         assert text in notice, text
-    # Une seule longueur orale (N4 iii), et la forme du résultat jamais imposée dans la consigne (N5).
-    assert "- Une à trois phrases courtes par réponse (lancement, relais, résumé avant accord)" in BRAIN_SYSTEM_PROMPT
+    # Une seule règle de longueur, sans fourchette contradictoire (revérification QA).
+    assert ("- Longueur : le lancement et le résumé avant accord tiennent en une phrase ; toute autre réponse, relais "
+            "compris, en trois phrases au plus") in BRAIN_SYSTEM_PROMPT
+    assert "Une à trois phrases courtes par réponse" not in BRAIN_SYSTEM_PROMPT
+    assert "réponds en une phrase, une seule, qui dit ce que tu as lancé" in BRAIN_SYSTEM_PROMPT
+    # La recherche web renvoie à la direction de recherche pour comparer ou conseiller.
+    assert ("[general] [web-research] (recherche web) : quand il faut des sources extérieures que le poste n'a pas, "
+            "pas pour comparer ou conseiller entre options : [general] [research-lead]") in rules
     # Essai sonnet de la reprise : « écris le rapport dans un fichier, conclusion en trois phrases » a empêché
     # l'affichage ; le support aussi est interdit, et FORMAT ORAL ne renvoie plus vers un fichier.
-    assert ("jamais la forme, la longueur ni le support de son résultat (fichier, format, nombre de phrases), que "
-            "JARVIS lui donne") in BRAIN_SYSTEM_PROMPT
+    assert ("jamais la forme, la longueur ni le support de son résultat final (fichier, format, nombre de phrases), "
+            "que JARVIS lui donne : hors du dossier de mission du cas B, tu ne prescris aucun nom de fichier"
+            ) in BRAIN_SYSTEM_PROMPT
     assert "vont dans un fichier" not in BRAIN_SYSTEM_PROMPT
     assert "compte rendu court" not in BRAIN_SYSTEM_PROMPT
     # Le marqueur historique n'est plus enseigné ; il reste lu (alias, docs/legacy/subagent-role-aliases.md).

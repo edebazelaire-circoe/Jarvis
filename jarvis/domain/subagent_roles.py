@@ -676,11 +676,15 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
 
     active = [role for role in roles if role.enabled and role.offered_to_brain]
     by_id = {role.id: role for role in active}
-    catalogue = " ; ".join(f"{_marker_of(role)} ({role.name.lower()}) : {_lower_first(role.when_relevant)}" for role in active)
+    lead, qa = by_id.get("research-lead"), by_id.get("qa")
+    # Revérification QA : haiku confiait « lequel me conseillez-vous » à la recherche web. Le renvoi n'est écrit que si
+    # la direction de recherche est proposée, pour ne jamais nommer un rôle absent du catalogue.
+    pointer = {"web-research": f", pas pour comparer ou conseiller entre options : {_marker_of(lead)}"} if lead else {}
+    catalogue = " ; ".join(f"{_marker_of(role)} ({role.name.lower()}) : {_lower_first(role.when_relevant)}"
+                           f"{pointer.get(role.id, '')}" for role in active)
     interviewer = _marker_of(by_id["interviewer"]) if "interviewer" in by_id else "[general] [interviewer]"
     helpers = ", ".join(_marker_of(by_id[key]) for key in ("research", "web-research", "concept") if key in by_id)
     owners = [role for role in active if role.can_own_mission]
-    lead, qa = by_id.get("research-lead"), by_id.get("qa")
     lines = [
         "TYPE DE DEMANDE\n"
         "Avant de lancer quoi que ce soit, classe la demande : tu es le seul à avoir le micro, et un chantier lancé "
@@ -693,10 +697,12 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
         "- B. Intention à cadrer (une création, un livrable important, un résultat attendu flou ou qui se lit de "
         "deux façons) : ne lance pas d'exécution, et dans ce tour n'écris ni ne vérifies rien. Le dossier de mission "
         f"est {MISSION_PATH_HINT} sous le chemin absolu de la Mémoire du Board de ton contexte de tour : compose-le "
-        f"sans outil, l'Intervieweur le crée. Lance en arrière-plan {interviewer} avec ses mots exacts et ce chemin"
-        + (f" ; dès qu'il y a de la matière à trouver (ce qui existe déjà, des références, une source nommée), "
-           f"au premier tour ou après une réponse, lance aussi en parallèle ceux qui servent parmi {helpers}, chacun avec le même chemin, "
-           "où il verse ses apports : ils avancent pendant l'interview, l'Intervieweur ne cherche pas" if helpers else "")
+        f"sans outil. Lance en arrière-plan seulement {interviewer}, avec ses mots exacts et ce chemin : il crée le "
+        "dossier"
+        + (f". Au tour de sa première « {QUESTION_PREFIX} », le dossier existe : s'il y a de la matière à trouver "
+           f"(ce qui existe déjà, des références, une source nommée), lance alors en parallèle ceux qui servent parmi "
+           f"{helpers}, chacun avec le même chemin, où il verse ses apports ; ils avancent pendant l'interview, "
+           "l'Intervieweur ne cherche pas" if helpers else "")
         + f". Chaque « {QUESTION_PREFIX} » de l'Intervieweur se relaie en une phrase. La réponse repart à "
         "l'Intervieweur par SendMessage, avec en une ligne chaque trouvaille arrivée depuis sa dernière question ; "
         "si la reprise échoue, relance-le avec le chemin du dossier, qui garde tout.",

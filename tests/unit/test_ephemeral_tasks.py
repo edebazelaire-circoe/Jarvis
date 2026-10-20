@@ -86,7 +86,7 @@ def test_the_brain_rule_widens_to_self_evident_corrections_but_not_to_awaited_fi
     assert "ni pour un correctif dont il attend la confirmation : c'est une tâche ordinaire, à un seul agent" in rule
     assert "rien n'est dit à l'oral" in rule and "relaie cet échec" in rule
     # Essai réel Slice 07 : lancée avec « je vous dirai quand c'est fait », puis tue ; la promesse est retirée.
-    assert "au lancement, ne promets pas de compte rendu" in rule
+    assert "ta phrase de lancement ne promet rien (pas de « je vous dirai »)" in rule
     # L'exemple composé se lit à l'identique par la grammaire commune (I-005) : éphémère, profil et rôle gardés.
     from jarvis.domain import agent_markers
     example = f"{EPHEMERAL_MARKER} [code] [coder] Corriger la coquille du titre"
