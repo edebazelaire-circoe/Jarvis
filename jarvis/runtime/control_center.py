@@ -316,18 +316,23 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: texte et pièces jointes — toutes les méthodes gardées.
 #: Lecture de l'historique des missions (organic-agent-orchestration, Slice 05).
 MISSIONS_ROUTE = "/api/missions"
+#: Work Methods, candidats appris et promotion (organic-agent-orchestration, Slice 12) : toutes les méthodes gardées
+#: comme l'historique des missions dont les candidats sont tirés.
+WORK_METHODS_ROUTE = "/api/work-methods"
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX, FULLSCREEN_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
                        MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES, *MEMORY_BRAIN_GUARDED_PREFIXES,
                        *PREFAB_GUARDED_PREFIXES, *REMOTION_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES,
                        *REMOTION_STUDIO_GUARDED_PREFIXES, *CHAT_GUARDED_PREFIXES, *DOSSIER_GUARDED_PREFIXES,
                        # Historique des missions (Slice 05) : objectifs et libellés viennent des demandes de l'utilisateur.
-                       MISSIONS_ROUTE)
+                       MISSIONS_ROUTE, WORK_METHODS_ROUTE)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
 #: nous. Délai croissant, plafonné ; s'arrête dès que le foreground est lié.
 SESSION_ADOPT_RETRY_S = (1.0, 2.0, 5.0, 10.0, 30.0)
+#: Synchronisation des versions promues de Work Method vers l'instantané du hook (Slice 12) : même rythme.
+WORK_METHODS_SYNC_RETRY_S = SESSION_ADOPT_RETRY_S
 
 
 #: Characters that never belong to a plain `host[:port]` authority (userinfo,
@@ -1583,6 +1588,10 @@ class ControlCenter:
             web.post("/api/missions/handoffs", self.relations_handoff),
             web.get("/api/missions/work/{work_source}/{work_external_id}", self.missions_for_work),
             web.get("/api/missions/{mission_id}", self.missions_get),
+            # Work Methods (Slice 12) : catalogue et candidats en lecture ; la promotion est un acte de l'utilisateur.
+            web.get(WORK_METHODS_ROUTE, self.work_methods_get),
+            web.get(WORK_METHODS_ROUTE + "/candidates", self.work_method_candidates),
+            web.post(WORK_METHODS_ROUTE + "/promotions", self.work_method_promote),
             web.get("/api/scene", self.scene),
             web.get("/api/scene/patches", self.scene_patches),
             web.post("/api/scene/commands", self.scene_command),
@@ -2323,6 +2332,9 @@ class ControlCenter:
             # active de Core, sans redémarrer. En tâche de fond : Core peut
             # démarrer après nous, et le démarrage n'attend jamais le réseau.
             self._spawn_session_task(self._adopt_core_session(), "jarvis-board-brain-adopt")
+        if self.mission_view is not None:
+            # Slice 12 : le hook appose la dernière version promue ; il la lit dans son instantané local.
+            self._spawn_session_task(self._sync_work_methods_at_start(), "jarvis-work-methods-sync")
 
     async def stop(self) -> None:
         # Avant tout le reste : un appel du cerveau qui attend une page rend la
@@ -5167,6 +5179,14 @@ class ControlCenter:
 
         layers = {item["prompt_id"]: item for item in
                   default_prompt_registry().inspect(stored_prompt_override_document(settings))["layers"]}
+        from jarvis.runtime import work_methods_snapshot
+        try:
+            effective = work_methods_snapshot.read_promoted(self.runtime_root)
+            snapshot_state = {"promoted": sorted(m.key for m in effective.values()), "error": None}
+        except (OSError, ValueError) as exc:
+            # Même repli que le hook : la version livrée s'applique, et l'écran le dit.
+            effective = {}
+            snapshot_state = {"promoted": [], "error": f"{type(exc).__name__}: {exc}"[:200]}
         roles = []
         for role in subagent_roles.ROLES:
             layer = layers[role.prompt_id]
@@ -5185,7 +5205,11 @@ class ControlCenter:
         return {
             "schema_version": 2,
             "roles": roles,
-            "work_methods": [method.to_payload() for method in work_methods.BUILTIN_METHODS],
+            # Slice 12 : la version EFFECTIVE de chaque méthode, celle que le hook appose (dernière promue lue dans
+            # son instantané, sinon livrée) ; `work_methods_snapshot` dit d'où elle vient.
+            "work_methods": [effective.get(method.method_id, method).to_payload()
+                             for method in work_methods.BUILTIN_METHODS],
+            "work_methods_snapshot": snapshot_state,
             "aliases": dict(subagent_roles.ROLE_ALIASES),
             "accents": list(subagent_roles.ROLE_ACCENTS),
             # Libellés français des relations citées par les méthodes (`useful_relations`), pour que l'onglet
@@ -6271,6 +6295,143 @@ class ControlCenter:
         source = str(request.match_info.get("work_source") or "")
         external = str(request.match_info.get("work_external_id") or "")
         return await self._mission_read(lambda view: view.for_work(source, external))
+
+    # -- Work Methods (Slice 12)
+
+    #: Corps d'une promotion : une méthode bornée (12 principes et 12 critères de 300 caractères au plus).
+    WORK_METHOD_PROMOTION_MAX_BYTES = 32 * 1024
+    _PROMOTION_KEYS = frozenset({"candidate_id", "expected_version", "method"})
+
+    async def work_methods_get(self, request: web.Request) -> web.Response:
+        """Toutes les versions de Work Method (livrées et promues) et la dernière de chacune. Lecture seule.
+
+        Une lecture réussie resynchronise aussi l'instantané lu par le hook (`work_methods_snapshot`).
+        """
+        del request
+        if self.mission_view is None:
+            return await self._mission_read(lambda view: view.work_methods())
+        status, body = await self.mission_view.work_methods()
+        if status == 200:
+            await self._refresh_work_methods_snapshot(body)
+        return web.json_response(body, status=status)
+
+    async def work_method_candidates(self, request: web.Request) -> web.Response:
+        """Les candidats de Work Method recalculés depuis l'historique durable, avec seuils et lecture."""
+        del request
+        return await self._mission_read(lambda view: view.work_method_candidates())
+
+    @staticmethod
+    def _request_facts(request: web.Request) -> dict[str, Any]:
+        """Ce qu'on observe d'une demande de promotion, pour reconstituer un abus après coup.
+
+        Des faits, jamais un verdict : ces en-têtes se forgent, ils ne distinguent pas un clic d'un appel forgé
+        par un processus local (modèle de menace, `docs/work-methods.md` › *Promotion*).
+        """
+        header = lambda name: (request.headers.get(name) or "")[:120] or None  # noqa: E731
+        return {"origin": header("Origin"), "sec_fetch_site": header("Sec-Fetch-Site"),
+                "sec_fetch_mode": header("Sec-Fetch-Mode"), "sec_fetch_dest": header("Sec-Fetch-Dest"),
+                "referer_present": bool(request.headers.get("Referer")),
+                "user_agent_present": bool(request.headers.get("User-Agent")),
+                "remote": str(request.remote or "")[:64] or None}
+
+    async def work_method_promote(self, request: web.Request) -> web.Response:
+        """Promouvoir un candidat, depuis la page du Control Center.
+
+        Le promoteur est posé par Core (`user`), jamais lu du corps. Au-delà de la garde de bouclage du préfixe,
+        la requête doit porter `Sec-Fetch-Site: same-origin` et `Origin`, ce que pose un navigateur ; aucun outil
+        MCP ni outil du cerveau n'appelle cette route. Cela couvre les erreurs du modèle et les appels sans ces
+        en-têtes, pas un processus local qui les forge (`docs/work-methods.md` › *Promotion*). Après succès, les
+        versions promues sont recopiées dans l'instantané du hook ; la réponse dit si c'est fait (`snapshot`).
+        """
+        facts = self._request_facts(request)
+
+        def refuse(status: int, code: str, message: str) -> web.Response:
+            self.journal.emit("work_methods.promotion_failed", f"Promotion de Work Method refusée : {code}",
+                              level="warning", data={"code": code, "status": status, **facts})
+            return web.json_response(mission_failure(code, message), status=status)
+
+        if (request.headers.get("Sec-Fetch-Site") or "").strip().lower() != "same-origin" \
+                or not request.headers.get("Origin"):
+            return refuse(403, "promotion_requires_browser",
+                          "Une promotion se fait depuis la page du Control Center, par une personne.")
+        if self.mission_view is None:
+            return web.json_response(mission_failure(MISSIONS_NOT_CONFIGURED,
+                                                     "Work Methods non configurées (Core absent)."), status=503)
+        if request.content_length is not None and request.content_length > self.WORK_METHOD_PROMOTION_MAX_BYTES:
+            return refuse(413, "promotion_body_too_large",
+                          f"Corps de plus de {self.WORK_METHOD_PROMOTION_MAX_BYTES} octets.")
+        try:
+            body = await request.json()
+        except ValueError:
+            return refuse(400, "invalid_request", "Le corps doit être un objet JSON.")
+        if not isinstance(body, dict) or set(body) != self._PROMOTION_KEYS:
+            return refuse(400, "invalid_request",
+                          f"Le corps doit contenir exactement {sorted(self._PROMOTION_KEYS)}.")
+        self.journal.emit("work_methods.promotion_requested",
+                          "Promotion de Work Method demandée (en-têtes de page présents ; ils ne prouvent pas un clic).",
+                          data={"candidate_id": str(body.get("candidate_id"))[:64], **facts})
+        status, payload = await self.mission_view.promote_work_method(body)
+        if status != 200:
+            return web.json_response(payload, status=status)
+        method = payload.get("method") if isinstance(payload, dict) else None
+        key = f"{method.get('method_id')}@{method.get('version')}" if isinstance(method, dict) else None
+        self.journal.emit("work_methods.promotion_done", f"Work Method {key} promue.",
+                          data={"candidate_id": str(body.get("candidate_id"))[:64], "method": key, **facts})
+        written, code = await self._refresh_work_methods_snapshot()
+        return web.json_response({"ok": True, **payload, "snapshot": {"written": written, "code": code}})
+
+    async def _refresh_work_methods_snapshot(self, catalogue: dict[str, Any] | None = None) -> tuple[bool, str | None]:
+        """Recopier les versions promues de Core dans `work-methods.json`, lu par le hook. Rend (écrit, code).
+
+        Sans changement, rien n'est réécrit. Un échec est consigné (`work_methods.snapshot_failed`) avec son code :
+        le hook garde alors l'instantané précédent, ou la version livrée sans instantané.
+        """
+        from jarvis.domain.work_methods import MethodError, MethodOrigin, WorkMethod
+        from jarvis.runtime import work_methods_snapshot
+
+        code: str | None = None
+        try:
+            if catalogue is None:
+                if self.mission_view is None:
+                    return False, MISSIONS_NOT_CONFIGURED
+                status, catalogue = await self.mission_view.work_methods()
+                if status != 200:
+                    code = str((catalogue or {}).get("code") or f"http_{status}")
+                    raise LookupError(str((catalogue or {}).get("error") or code))
+            raw = catalogue.get("methods") if isinstance(catalogue, dict) else None
+            if not isinstance(raw, list):
+                code = "work_methods_catalogue_invalid"
+                raise ValueError("the Core catalogue has no method list")
+            promoted = [m for m in (WorkMethod.from_payload(item) for item in raw)
+                        if m.provenance.origin is MethodOrigin.PROMOTED]
+            wanted = [m.to_payload() for m in sorted(promoted, key=lambda m: (m.method_id, m.version))]
+            try:
+                current = work_methods_snapshot.read_payloads(self.runtime_root)
+            except (OSError, ValueError):
+                current = None  # intentional: an unreadable snapshot is simply rewritten below
+            if current is not None and current == wanted:
+                return True, None
+            work_methods_snapshot.write_snapshot(self.runtime_root, promoted)
+        except (LookupError, ValueError, MethodError, OSError) as exc:
+            code = code or getattr(exc, "code", None) or type(exc).__name__
+            self.journal.emit("work_methods.snapshot_failed",
+                              f"Versions promues non transmises au hook : {code}", level="error",
+                              data={"code": code, "error": f"{type(exc).__name__}: {exc}"[:300]})
+            return False, code
+        self.journal.emit("work_methods.snapshot_written", "Versions promues transmises au hook.",
+                          data={"methods": [f"{m.method_id}@{m.version}" for m in promoted]})
+        return True, None
+
+    async def _sync_work_methods_at_start(self) -> None:
+        """Au démarrage, recopier les versions promues dès que Core répond (Core peut démarrer après nous)."""
+        delays = iter(WORK_METHODS_SYNC_RETRY_S)
+        delay = 0.0
+        while True:
+            await asyncio.sleep(delay)
+            written, _code = await self._refresh_work_methods_snapshot()
+            if written:
+                return
+            delay = next(delays, WORK_METHODS_SYNC_RETRY_S[-1])
 
     # ------------------------------------------------------------------ scène
 

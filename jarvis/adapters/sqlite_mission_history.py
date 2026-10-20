@@ -341,6 +341,16 @@ class SQLiteMissionHistoryRepository:
 
         return await self._run(read)
 
+    async def recent_root_mission_ids(self, *, limit: int = 64) -> tuple[str, ...]:
+        limit = max(1, min(int(limit), MAX_LIST_LIMIT + 1))
+
+        def read(conn: sqlite3.Connection) -> tuple[str, ...]:
+            rows = conn.execute("SELECT mission_id FROM missions WHERE parent_mission_id IS NULL "
+                                "ORDER BY created_at DESC, mission_id DESC LIMIT ?", (limit,)).fetchall()
+            return tuple(str(row["mission_id"]) for row in rows)
+
+        return await self._run(read)
+
     async def mission_tree(self, root_mission_id: str) -> MissionTree | None:
         def read(conn: sqlite3.Connection) -> MissionTree | None:
             start = _fetch_mission(conn, root_mission_id)

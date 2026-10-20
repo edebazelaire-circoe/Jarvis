@@ -16,7 +16,8 @@ Ce module fixe le contrat (Slice 01) :
   qui s'appliquent à eux.
 
 Le catalogue des méthodes livrées (Slice 04) est `BUILTIN_METHODS`, rendu sur
-une consigne par `render_method` ; leur apprentissage relève de la Slice 12. Contrat : `docs/work-methods.md`. Module pur, sans E/S.
+une consigne par `render_method` ; les candidats appris et leur promotion sont dans
+`work_method_learning` (Slice 12). Contrat : `docs/work-methods.md`. Module pur, sans E/S.
 """
 
 from __future__ import annotations
@@ -55,6 +56,11 @@ USEFUL_RELATION_KINDS: tuple[str, ...] = RELATION_KINDS
 FORBIDDEN_PLAN_KEYS = frozenset({"steps", "sequence", "order", "graph", "dag", "nodes", "edges", "workflow", "plan"})
 
 
+#: Seule personne qui promeut aujourd'hui : l'utilisateur du Control Center (Slice 12). Un rôle d'agent n'est jamais un
+#: promoteur valable ; une version promue par un autre nom n'est ni publiée ni apposée.
+HUMAN_PROMOTERS = frozenset({"user"})
+
+
 class MethodError(ValueError):
     """Méthode invalide, refusée avec un code stable."""
 
@@ -77,6 +83,17 @@ def _coded_text(name: str, value: object, limit: int) -> None:
 
 def is_method_id(value: object) -> bool:
     return isinstance(value, str) and bool(METHOD_ID.fullmatch(value))
+
+
+#: Référence exacte d'une version, `<method_id>@<version>` (`WorkMethod.key`).
+METHOD_KEY = re.compile(r"(?P<id>[a-z][a-z0-9-]{1,47})@(?P<version>[1-9][0-9]{0,3})\Z")
+
+
+def parse_method_key(value: object) -> tuple[str, int] | None:
+    """`(method_id, version)` d'une clé `<id>@<version>`, ou `None` si la valeur n'en est pas une."""
+
+    match = METHOD_KEY.fullmatch(value) if isinstance(value, str) else None
+    return (match["id"], int(match["version"])) if match else None
 
 
 class MethodOrigin(StrEnum):
@@ -433,6 +450,25 @@ def builtin_method(method_id: object) -> WorkMethod | None:
     """La méthode livrée de cet id, ou `None`."""
 
     return _BUILTIN.get(str(method_id or ""))
+
+
+def promotion_refusal(method: WorkMethod) -> str | None:
+    """Pourquoi une version ne peut pas être apposée comme version promue (Slice 12, reprise QA R-1), ou `None`.
+
+    Gardes de vérité de la clé déclarée : une version qui se dit promue doit l'avoir été par une personne
+    (`HUMAN_PROMOTERS`) et suivre strictement la version livrée de la même méthode ; sinon un instantané forgé
+    `@1` remplacerait le texte livré alors que le fait déclarerait toujours `@1`.
+    """
+
+    provenance = method.provenance
+    if provenance.origin is not MethodOrigin.PROMOTED:
+        return "work_method_not_promoted"
+    if provenance.promoted_by not in HUMAN_PROMOTERS:
+        return "work_method_promoter_not_human"
+    builtin = builtin_method(method.method_id)
+    if builtin is not None and method.version <= builtin.version:
+        return "work_method_version_not_after_builtin"
+    return None
 
 
 def render_method(method: WorkMethod) -> str:

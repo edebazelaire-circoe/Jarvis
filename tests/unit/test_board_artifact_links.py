@@ -102,7 +102,8 @@ async def test_a_v7_copy_with_rows_migrates_to_v8_after_a_backup_and_keeps_every
     finally:
         await state.close()
     # v8, puis v9 (données seules : ces lignes, déjà au type fixé, ne bougent pas), puis v10 (historique des missions, DDL seul)
-    assert _inspect(db, "SELECT version FROM schema_version") == [(10,)]
+    # et v11 (versions promues de Work Method, DDL seul)
+    assert _inspect(db, "SELECT version FROM schema_version") == [(11,)]
     for table, rows in before.items():
         assert _inspect(db, f"SELECT * FROM {table} ORDER BY 1") == rows, table
     backup = pre_migration_backup_path(db, 7)

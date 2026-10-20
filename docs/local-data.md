@@ -141,6 +141,22 @@ neuves, aucune ligne produit, aucune colonne de statut d'exécution) ;
 sauvegarde `jarvis.sqlite3.v9.bak`. Le code v9 refuse ensuite la base
 (`state DB schema 10 is newer than supported 9`) ; retour arrière : restaurer
 `.v9.bak`. Contrat : [mission-history.md](mission-history.md).
+v11 (2026-10-20) : versions de Work Method promues par une personne, **DDL seul**
+(une table neuve en ajout seul `work_method_versions`, aucune ligne produit). Le code
+v10 refuse ensuite la base (`state DB schema 11 is newer than supported 10`). Contrat :
+[work-methods.md](work-methods.md#promotion).
+
+**Mise en service de v10 et v11 ensemble.** Une base v9 (cas du JARVIS vivant tant que
+la branche de l'orchestration organique n'est pas fusionnée) passe v9 → v10 → v11 en
+**un seul** démarrage de Core, après **une seule** sauvegarde, `jarvis.sqlite3.v9.bak`
+(la sauvegarde est faite une fois, sous le nom de la version de départ) ; il n'y a donc
+pas de `.v10.bak`. Retour arrière : arrêter Core, mettre de côté `jarvis.sqlite3` et ses
+`-wal` / `-shm` (jamais les supprimer), restaurer `jarvis.sqlite3.v9.bak` et relancer le
+code v9. Tout ce qui a été écrit depuis la migration est alors absent de la base
+restaurée : historique des missions (v10) et versions promues (v11) ; l'instantané
+`<runtime>/work-methods.json` est réécrit vide par le Control Center à son prochain
+démarrage, et le hook revient aux versions livrées. Une base déjà en v10 ne passe que
+v10 → v11, après la sauvegarde `jarvis.sqlite3.v10.bak`.
 
 Le schéma de chaque version est figé dans `tests/schema/<base>.v<N>.sql`.
 `tests/unit/test_schema_migrations.py` échoue dès qu'un DDL change sans

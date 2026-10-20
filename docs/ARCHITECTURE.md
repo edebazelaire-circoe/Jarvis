@@ -1694,7 +1694,8 @@ the source of truth for jobs). What must outlive it — which agent instance had
 which role, owned or handed off which mission, and which typed relations and
 relation messages it took part in — is the durable mission history
 (`jarvis/core/mission_history.py`, `jarvis.sqlite3` v10,
-[mission-history.md](mission-history.md)): no execution status there, joined to
+[mission-history.md](mission-history.md); Work Method candidates are recomputed
+from it and promoted versions live in v11, [work-methods.md](work-methods.md)): no execution status there, joined to
 this store by `(source, external_id)`, never ephemeral while ephemeral. `revision` is monotonic within one `store_id`
 only: a consumer that sees a new `store_id` drops what it holds and re-reads the
 snapshot.

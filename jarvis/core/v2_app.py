@@ -29,6 +29,7 @@ from jarvis.adapters.sqlite_board_artifact_links import SQLiteBoardArtifactLinks
 from jarvis.adapters.artifact_payloads import FileArtifactPayloads
 from jarvis.adapters.sqlite_artifacts import SQLiteArtifactRepository
 from jarvis.adapters.sqlite_mission_history import SQLiteMissionHistoryRepository
+from jarvis.adapters.sqlite_work_methods import SQLiteWorkMethodRepository
 from jarvis.adapters.sqlite_session_activity import SQLiteActivityLedger
 from jarvis.adapters.sqlite_captures import SQLiteCaptureRepository
 from jarvis.core.artifact_service import ArtifactService
@@ -119,6 +120,7 @@ from jarvis.core.v2_services import (
 )
 from jarvis.core.v2_tools import CoreToolRouter
 from jarvis.core.mission_history import MissionHistoryService
+from jarvis.core.work_method_learning import WorkMethodLearningService
 from jarvis.core.work_state import WorkStateStore
 from jarvis.domain.work_state import WorkItem
 from jarvis.core.voice_ledger import VoiceLedgerService
@@ -344,9 +346,14 @@ class JarvisCoreApplication:
         # Historique durable des missions (handoff organic-agent-orchestration, Slice 03, D18) : même base v10,
         # même connexion ; aucun statut d'exécution, il se lit dans `work_state`. Abonné tolérant au bus pour la
         # seule règle éphémère. Les déclarations du hook arrivent à la Slice 05 (`record_declaration`).
+        mission_history_store = SQLiteMissionHistoryRepository(self.state)
         self.mission_history = MissionHistoryService(
-            SQLiteMissionHistoryRepository(self.state), work_state=self.work_state, events=self.events,
+            mission_history_store, work_state=self.work_state, events=self.events,
             diagnostics=diagnostics)
+        # Slice 12 : candidats de Work Method relus de ce même historique (jamais persistés) et versions promues
+        # par une personne (table v11, append-only). Aucun agent n'y écrit.
+        self.work_method_learning = WorkMethodLearningService(
+            mission_history_store, SQLiteWorkMethodRepository(self.state), diagnostics=diagnostics)
         self.jobs = JobService(self.state, self.events, workers or {}, diagnostics=diagnostics, work_state=self.work_state,
                                board_of=self.sessions.board_of)
         # Scène constellation (handoff jarvis-constellation-scene-runtime,

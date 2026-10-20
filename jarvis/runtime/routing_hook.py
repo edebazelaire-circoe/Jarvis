@@ -41,9 +41,9 @@ from jarvis.domain.agent_charter import sign_brief
 from jarvis.domain.loadout_view import MANIFEST_MARK
 from jarvis.domain.agent_relations import QA_REVIEWER_ROLE_IDS
 from jarvis.domain.mission_history import MissionHistoryError, fact_from_hook_event
-from jarvis.domain.work_methods import builtin_method
+from jarvis.domain.work_methods import WorkMethod, builtin_method
 from jarvis.domain.subagent_roles import (
-    ROLE_MARK, SubagentRole, instructions_for, resolve_role, role_for, with_role_instructions,
+    ROLE_MARK, SubagentRole, effective_method, instructions_for, resolve_role, role_for, with_role_instructions,
 )
 # `ANNOUNCED_ROLES` : les rôles qu'une description peut annoncer (loadout, registre, alias), réexporté ici.
 from jarvis.domain.agent_markers import ANNOUNCED_ROLES, WORD_PATTERN  # noqa: F401
@@ -58,7 +58,7 @@ from jarvis.domain.routing import (
 )
 from jarvis.runtime import (
     agent_declarations, agent_handoffs, hook_failsafe, agent_routing, cli_catalog, credentials, loadout_snapshot,
-    subagent_roles_snapshot,
+    subagent_roles_snapshot, work_methods_snapshot,
 )
 from jarvis.runtime.catalog_view import ProviderCatalogSnapshot
 from jarvis.runtime.journal import RuntimeJournal
@@ -192,7 +192,8 @@ def orchestration_of(event: Mapping[str, Any]) -> Orchestration:
 
 
 def charter_input(
-    event: Mapping[str, Any], role_overrides: Mapping[str, str] | None = None
+    event: Mapping[str, Any], role_overrides: Mapping[str, str] | None = None,
+    promoted: Mapping[str, WorkMethod] | None = None,
 ) -> dict[str, Any] | None:
     """La consigne signée de la charte du chantier, ou `None` si rien à changer.
 
@@ -204,7 +205,9 @@ def charter_input(
     Fonction pure et sans entrée-sortie : elle ne lit ni réglage ni disque, pour
     que la charte survive à une politique d'aiguillage éteinte ou cassée. Les
     surcharges des méthodes de rôle (`role_overrides`, `{id: texte}`) sont lues
-    par l'appelant ; sans elles, chaque rôle prend le défaut du code.
+    par l'appelant ; sans elles, chaque rôle prend le défaut du code. De même les
+    versions promues des Work Methods (`promoted`, Slice 12) : sans elles, la
+    version livrée.
     """
     if str(event.get("tool_name") or "") not in AGENT_TOOLS:
         return None
@@ -231,7 +234,7 @@ def charter_input(
     # La méthode du rôle annoncé (`subagent_roles`), pour la même raison : texte enregistré par l'utilisateur,
     # sinon défaut du code ; Work Method choisie par l'appelant si le rôle la permet. Jamais doublée.
     signed = with_role_instructions(signed, read_role(tool_input), role_overrides,
-                                    method=orchestration.method.method_id) or signed
+                                    method=orchestration.method.method_id, promoted=promoted) or signed
     # La responsabilité de mission d'un Mission Owner (Slice 05), apposée en dernier. Jamais doublée.
     mission = agent_orchestration.mission_brief(orchestration.mission)
     if mission and agent_orchestration.MISSION_MARK not in signed:
@@ -504,13 +507,14 @@ def run(event: Mapping[str, Any], runtime_root: Path, *, spawn_guard: bool = Fal
             _log_declared(journal, event, orchestration, guard, written=False)
             return _output("deny", refusal)
     role_overrides = _role_overrides(event, runtime_root, journal)
+    promoted = _promoted_methods(event, runtime_root, journal)
     try:
-        charter = charter_input(event, role_overrides)
+        charter = charter_input(event, role_overrides, promoted)
     except Exception:  # noqa: BLE001 - une charte qui lève ne vaut pas un outil perdu
         charter = None
     if ticket is not None:
         charter = _with_handoff_packet(event, charter, ticket)
-    role = _log_role(journal, event, charter, role_overrides)
+    role = _log_role(journal, event, charter, role_overrides, promoted)
     brief, loadout = _brief_change(event, runtime_root, charter, journal)
     note = _brief_note(charter is not None, loadout, role=role)
     guarded = {"subagent_type": guard.rewrite_agent_type} if guard.rewrite_agent_type else None
@@ -523,8 +527,8 @@ def run(event: Mapping[str, Any], runtime_root: Path, *, spawn_guard: bool = Fal
     final = _merge(event, output, brief, guarded, note=note)
     denied = ((final.get("hookSpecificOutput") or {}).get("permissionDecision") == "deny") if final else False
     if orchestration is not None and not denied:
-        written = _declare(event, runtime_root, journal, orchestration, ticket)
-        _log_declared(journal, event, orchestration, guard, written=written, ticket=ticket)
+        written = _declare(event, runtime_root, journal, orchestration, ticket, promoted)
+        _log_declared(journal, event, orchestration, guard, written=written, ticket=ticket, promoted=promoted)
     return final
 
 
@@ -648,7 +652,8 @@ def _spawn_guard(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJ
 
 
 def _declare(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJournal,
-             orchestration: Orchestration, ticket: agent_handoffs.HandoffTicket | None = None) -> bool:
+             orchestration: Orchestration, ticket: agent_handoffs.HandoffTicket | None = None,
+             promoted: Mapping[str, WorkMethod] | None = None) -> bool:
     """Déposer le fait de déclaration (contrat v1) ; rend s'il est écrit. Ne lève jamais, consigne chaque panne.
 
     Successeur d'un relais (Slice 06) : Mission Owner de la mission reprise, avec l'id du relais réclamé.
@@ -657,7 +662,12 @@ def _declare(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJourn
         fact = fact_from_hook_event(event, declared_at=datetime.now(timezone.utc),
                                     mission_id=ticket.mission_id if ticket else orchestration.mission.mission_id,
                                     mission_owner=orchestration.mission.mission_owner,
-                                    handoff_id=ticket.handoff_id if ticket else None)
+                                    handoff_id=ticket.handoff_id if ticket else None,
+                                    # Slice 12 : la méthode apposée devient une preuve d'usage durable.
+                                    work_method=method_key(orchestration.method.method_id,
+                                                           role=orchestration.role, promoted=promoted),
+                                    work_method_chosen=orchestration.method.chosen
+                                    and method_key(orchestration.method.method_id) is not None)
     except MissionHistoryError as exc:
         _emit(journal, "agent.declaration.failed", f"Déclaration du sous-agent hors contrat : {exc}", level="warning",
               data={"code": exc.code, "field": exc.field, "tool_use_id": str(event.get("tool_use_id") or "")[:128]})
@@ -678,7 +688,8 @@ def _declare(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJourn
 
 def _log_declared(journal: RuntimeJournal, event: Mapping[str, Any], orchestration: Orchestration | None,
                   guard: agent_orchestration.SpawnGuard, *, written: bool,
-                  ticket: agent_handoffs.HandoffTicket | None = None) -> None:
+                  ticket: agent_handoffs.HandoffTicket | None = None,
+                  promoted: Mapping[str, WorkMethod] | None = None) -> None:
     """`agent.declared` (fait déposé) ou `agent.spawn_refused` (garde) : des codes et des ids, jamais un texte."""
     if orchestration is None and not guard.deny:
         return
@@ -698,7 +709,7 @@ def _log_declared(journal: RuntimeJournal, event: Mapping[str, Any], orchestrati
         "sub_mission": mission.sub_mission,
         "handoff_id": ticket.handoff_id if ticket else None,
         "mission_refused": mission.refused,
-        "work_method": method_key(method.method_id),
+        "work_method": method_key(method.method_id, role=role, promoted=promoted),
         "work_method_chosen": method.chosen,
         "work_method_refused": method.refused,
         "spawn_guard": guard.code,
@@ -801,6 +812,7 @@ def _log_role(
     event: Mapping[str, Any],
     charter: Mapping[str, Any] | None,
     role_overrides: Mapping[str, str],
+    promoted: Mapping[str, WorkMethod] | None = None,
 ) -> bool:
     """Consigne `agent.role_applied` quand la méthode d'un rôle vient d'être apposée ; rend si elle l'a été.
 
@@ -839,7 +851,7 @@ def _log_role(
                 "role_status": resolution.status.value,
                 "profile": read_profile(tool_input),
                 "source": "override" if resolution.role_id in role_overrides else "default",
-                "work_method": method_key(method),
+                "work_method": method_key(method, role=active, promoted=promoted),
                 "loadout_role": read_loadout_role(tool_input),
                 "can_spawn": bool(active and active.can_spawn),
                 "caller_agent_id": caller if isinstance(caller, str) and caller else None,
@@ -855,10 +867,36 @@ def _log_role(
     return True
 
 
-def method_key(method_id: str | None) -> str | None:
-    """`<id>@<version>` de la Work Method livrée apposée, ou `None`."""
-    method = builtin_method(method_id) if method_id else None
+def method_key(method_id: str | None, *, role: SubagentRole | None = None,
+               promoted: Mapping[str, WorkMethod] | None = None) -> str | None:
+    """`<id>@<version>` de la Work Method apposée, ou `None` : la dernière version promue pour ce rôle quand
+    l'instantané en porte une (`subagent_roles.effective_method`, Slice 12), sinon la version livrée."""
+    if role is not None:
+        method = effective_method(role, method_id, promoted)
+    else:
+        method = builtin_method(method_id) if method_id else None
     return method.key if method is not None else None
+
+
+def _promoted_methods(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJournal) -> dict[str, WorkMethod]:
+    """Les dernières versions promues des Work Methods, lues dans l'instantané (Slice 12) ; `{}` sinon.
+
+    Lu seulement pour un appel `Agent` qui annonce un rôle du registre. Absent : `{}` sans bruit (aucune
+    promotion, ou Control Center pas encore synchronisé). Illisible : consigné en avertissement, et la consigne
+    part avec la version livrée de la méthode ; l'appel n'est jamais retenu.
+    """
+    if str(event.get("tool_name") or "") not in AGENT_TOOLS:
+        return {}
+    tool_input = event.get("tool_input")
+    if role_for(read_role(tool_input if isinstance(tool_input, Mapping) else {})) is None:
+        return {}
+    try:
+        return work_methods_snapshot.read_promoted(runtime_root)
+    except Exception as exc:  # noqa: BLE001 - un instantané illisible ne vaut pas un outil perdu
+        _emit(journal, "agent.work_method.failed",
+              f"Versions promues des Work Methods illisibles ({type(exc).__name__}) : la version livrée s'applique.",
+              level="warning", data={"code": "work_methods_snapshot_failed", "exception_type": type(exc).__name__})
+        return {}
 
 
 def _log(
@@ -904,13 +942,23 @@ def _log(
         pass
 
 
+def default_runtime_root() -> Path:
+    """La racine runtime sans `--runtime-root` (ou avec une valeur vide) : `JARVIS_RUNTIME_DIR`, sinon le dossier
+    `runtime/` du dépôt (ignoré par git). Jamais le répertoire courant : le journal et le registre des
+    déclarations n'y tombent pas (reprise QA S12, `trace.jsonl` égaré à la racine d'un worktree)."""
+    configured = (os.environ.get("JARVIS_RUNTIME_DIR") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path(__file__).resolve().parents[2] / "runtime"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entrée du sous-commande `jarvis routing-hook`, branchée sur stdin/stdout."""
     args = list(argv if argv is not None else sys.argv[1:])
-    runtime_root = Path.cwd()
+    runtime_root = default_runtime_root()
     if "--runtime-root" in args:
         index = args.index("--runtime-root")
-        if index + 1 < len(args):
+        if index + 1 < len(args) and args[index + 1].strip():
             runtime_root = Path(args[index + 1])
     # Le manifeste porte des accents (Références, mémoire, rôle) : la sortie est de l'UTF-8
     # quelle que soit la page de code du poste, et une entrée mal codée ne fait pas tomber le hook.

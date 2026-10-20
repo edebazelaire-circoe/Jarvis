@@ -281,8 +281,9 @@ def test_the_applied_step_is_reported_with_its_row_count_and_a_rerun_reports_not
             await repository.close()
 
     first = asyncio.run(run())
-    # v10 (historique des missions) suit : DDL seul, aucune ligne changée.
-    assert first == [{"from": 8, "to": 9, "rows": len(MATRIX)}, {"from": 9, "to": 10, "rows": 0}], first
+    # v10 (historique des missions) et v11 (versions promues de Work Method) suivent : DDL seul, aucune ligne changée.
+    assert first == [{"from": 8, "to": 9, "rows": len(MATRIX)}, {"from": 9, "to": 10, "rows": 0},
+                     {"from": 10, "to": 11, "rows": 0}], first
     assert asyncio.run(run()) == []
 
 

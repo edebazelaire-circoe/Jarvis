@@ -74,6 +74,9 @@ CORE_ADAPTER_IMPORT_EXCEPTIONS: dict[str, frozenset[str]] = {
             # shares the `sqlite_state` connection (v10); injected into
             # `MissionHistoryService` through its port, constructed only.
             "jarvis.adapters.sqlite_mission_history",
+            # Promoted Work Method versions (Slice 12): same connection (v11),
+            # injected into `WorkMethodLearningService` through its port.
+            "jarvis.adapters.sqlite_work_methods",
             "jarvis.adapters.windows_notifications",
             # Board memory folders and Board-artifact links (Slices 02-04 of
             # board-memory-workspace-inspector): the folder store is

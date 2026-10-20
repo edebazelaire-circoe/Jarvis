@@ -28,12 +28,13 @@ def roles_payload(tmp_path: Path, settings: dict | None = None) -> dict:
     return center._subagent_roles_payload(settings or {})
 
 
-def run_node(tmp_path: Path, payload: dict, source: str, tasks: dict | None = None):
+def run_node(tmp_path: Path, payload: dict, source: str, tasks: dict | None = None, candidates: dict | None = None):
     node = shutil.which("node")
     if node is None:
         pytest.skip("node absent")
     data = tmp_path / "roles.json"
-    data.write_text(json.dumps({"roles": payload, "tasks": tasks or {"tasks": []}}), encoding="utf-8")
+    data.write_text(json.dumps({"roles": payload, "tasks": tasks or {"tasks": []},
+                                "candidates": candidates or {"candidates": [], "thresholds": {}}}), encoding="utf-8")
     script = tmp_path / "t.cjs"
     script.write_text(
         "const errors=[],infos=[];console.error=(c,e,x)=>errors.push([c,e&&e.code||null,x||null]);"
@@ -44,6 +45,7 @@ def run_node(tmp_path: Path, payload: dict, source: str, tasks: dict | None = No
         "const calls=[];\n"
         "const reply=async(p,i)=>{calls.push([p,i&&i.method||'GET',i&&i.body?JSON.parse(i.body):null]);"
         "if(p==='/api/subagent-roles')return DATA.roles;if(p==='/api/agent/tasks')return DATA.tasks;"
+        "if(p==='/api/work-methods/candidates')return DATA.candidates;"
         "return {mutation:{changed:true},subagent_roles_snapshot:{written:true}}};\n"
         "const quiet={setInterval:()=>null,clearInterval:()=>{}};\n"
         "(async()=>{" + source + "})().catch(e=>{process.stderr.write(String(e&&e.stack||e));process.exit(1)});",
@@ -398,3 +400,132 @@ const opened=[];const v=M.create(host,{fetch:reply,openTab:t=>opened.push(t),...
 process.stdout.write(JSON.stringify({html:host.innerHTML}));""")
     assert "data-sar-open-cli" in out["html"] and "Agent / CLI › Sous-agents / Modèles" in out["html"]
     assert 'aria-live' not in out["html"]  # la fiche n'est plus une région live
+
+
+# --- Slice 12 : approches observées et promotion explicite --------------------------------------------
+
+def _candidates() -> dict:
+    """La forme servie par `GET /api/work-methods/candidates` (une candidate, une en observation)."""
+
+    draft = {"method_id": "deep-research", "version": 2, "name": "Recherche approfondie", "summary": "Résumé.",
+             "role_ids": ["research-lead"], "principles": ["Un principe."], "quality_checks": [],
+             "useful_relations": ["delegation", "adversary", "qa"]}
+    return {"thresholds": {"min_uses": 3, "min_positive": 2, "min_positive_share": 0.75, "scan_root_missions": 64},
+            "candidates": [
+                {"candidate_id": "wmc-aaaaaaaaaaaaaaaa", "role_id": "research-lead", "method_id": "deep-research",
+                 "relation_kinds": ["delegation", "adversary", "qa"], "status": "candidate", "reason": "thresholds_met",
+                 "uses": 3, "positive": 3, "negative": 0, "unrated": 0, "evidence_refs": ["m1", "rq1"],
+                 "base_method_key": "deep-research@1", "draft": draft, "promoted_keys": []},
+                {"candidate_id": "wmc-bbbbbbbbbbbbbbbb", "role_id": "research-lead", "method_id": "quick-research",
+                 "relation_kinds": [], "status": "observing", "reason": "not_enough_quality_evidence",
+                 "uses": 4, "positive": 0, "negative": 0, "unrated": 4, "evidence_refs": [],
+                 "base_method_key": "quick-research@1", "draft": None, "promoted_keys": []},
+            ]}
+
+
+def test_observed_approaches_are_shown_for_mission_owner_roles_only(tmp_path):
+    out = run_node(tmp_path, roles_payload(tmp_path), """
+const v=M.create(host,{fetch:reply,...quiet});await v.load();
+v.select('research-lead');const lead=host.innerHTML;v.select('research');const research=host.innerHTML;
+process.stdout.write(JSON.stringify({lead,research,errors,infos}));""", candidates=_candidates())
+    assert out["errors"] == []
+    assert "Approches observées" in out["lead"] and "Approches observées" not in out["research"]
+    assert 'data-sar-promote="wmc-aaaaaaaaaaaaaaaa"' in out["lead"] and "Promouvoir en deep-research@2" in out["lead"]
+    # Pas de bouton sans seuils atteints ; la raison réelle est dite, le silence n'est pas une approbation.
+    assert 'data-sar-promote="wmc-bbbbbbbbbbbbbbbb"' not in out["lead"]
+    assert "une mission terminée sans verdict QA ne compte pas" in out["lead"]
+    assert "Rien n’est promu sans vous" in out["lead"]
+    assert any(name == "subagent_settings.candidates_loaded" for name, _ in out["infos"])
+
+
+def test_a_promotion_is_confirmed_then_posts_the_draft_with_its_revision(tmp_path):
+    out = run_node(tmp_path, roles_payload(tmp_path), """
+const v=M.create(host,{fetch:reply,...quiet});await v.load();await v.loadCandidates();v.select('research-lead');
+v.state.confirmPromote='wmc-aaaaaaaaaaaaaaaa';v.render();const confirming=host.innerHTML;
+await v.promote('wmc-aaaaaaaaaaaaaaaa');
+process.stdout.write(JSON.stringify({confirming,calls,notice:v.state.promoteNotice,html:host.innerHTML,errors,
+  promote:v.state.promote}));""", candidates=_candidates())
+    assert "Confirmer la promotion" in out["confirming"] and "<code>deep-research@1</code> reste" in out["confirming"]
+    # N5 : la confirmation montre ce qui sera publié, principes et relations compris.
+    assert "Principes publiés" in out["confirming"] and "<li>Un principe.</li>" in out["confirming"]
+    assert "Relations à envisager publiées" in out["confirming"]
+    post = [c for c in out["calls"] if c[1] == "POST"]
+    assert post == [["/api/work-methods/promotions", "POST", {
+        "candidate_id": "wmc-aaaaaaaaaaaaaaaa", "expected_version": 1, "method": _candidates()["candidates"][0]["draft"]}]]
+    assert "promoted_by" not in post[0][2]  # forcé par le serveur, jamais envoyé par la page
+    assert out["calls"][-1][0] == "/api/work-methods/candidates"  # relu après l'écriture
+    assert out["notice"]["tone"] == "ok" and "deep-research@2" in out["notice"]["text"]
+    assert "prochain sous-agent" in out["notice"]["hint"]
+    assert out["promote"] is None and out["errors"] == []
+
+
+def test_a_refused_promotion_shows_the_server_words_and_rereads(tmp_path):
+    out = run_node(tmp_path, roles_payload(tmp_path), """
+const failing=async(p,i)=>{if(i&&i.method==='POST'){const e=new Error('deep-research is now at version 2, not 1');e.code='work_method_revision_conflict';e.status=409;throw e}return reply(p,i)};
+const v=M.create(host,{fetch:failing,...quiet});await v.load();await v.loadCandidates();v.select('research-lead');
+await v.promote('wmc-aaaaaaaaaaaaaaaa');
+process.stdout.write(JSON.stringify({notice:v.state.promoteNotice,html:host.innerHTML,errors,calls,
+  learned:v.state.learned.phase}));""", candidates=_candidates())
+    assert out["notice"]["tone"] == "bad" and out["notice"]["code"] == "work_method_revision_conflict"
+    assert "deep-research is now at version 2, not 1" in out["notice"]["text"]
+    assert "elles sont relues" in out["notice"]["hint"] and out["learned"] == "ready"
+    assert "<code>work_method_revision_conflict</code>" in out["html"]
+    assert out["errors"][0][0] == "subagent_settings_promotion_failed"
+
+
+def test_an_unknown_outcome_rereads_and_says_how_to_tell(tmp_path):
+    out = run_node(tmp_path, roles_payload(tmp_path), """
+const failing=async(p,i)=>{if(i&&i.method==='POST'){const e=new Error('Pas de réponse du Control Center après 15 s.');e.code='subagent_settings_timeout';throw e}return reply(p,i)};
+const v=M.create(host,{fetch:failing,...quiet});await v.load();await v.loadCandidates();v.select('research-lead');
+await v.promote('wmc-aaaaaaaaaaaaaaaa');
+process.stdout.write(JSON.stringify({notice:v.state.promoteNotice}));""", candidates=_candidates())
+    assert out["notice"]["text"].startswith("Résultat inconnu")
+    assert "« Promue »" in out["notice"]["hint"]
+
+
+def test_unreadable_candidates_say_so_with_a_retry_and_leave_the_rest_usable(tmp_path):
+    out = run_node(tmp_path, roles_payload(tmp_path), """
+const failing=async(p,i)=>{if(p==='/api/work-methods/candidates'){const e=new Error('Core injoignable : ConnectionRefusedError');e.code='core_unreachable';e.status=503;throw e}return reply(p,i)};
+const v=M.create(host,{fetch:failing,...quiet});await v.load();v.select('research-lead');
+process.stdout.write(JSON.stringify({html:host.innerHTML,errors}));""")
+    assert "Approches observées illisibles : Core injoignable" in out["html"]
+    assert "data-sar-learned-retry" in out["html"] and "<code>core_unreachable</code>" in out["html"]
+    assert 'data-sar-text="research-lead"' in out["html"]  # l'éditeur reste là
+    assert out["errors"] == [["subagent_settings_candidates_failed", "core_unreachable",
+                              {"path": "/api/work-methods/candidates"}]]
+
+
+def test_a_stale_candidate_is_never_a_silent_button(tmp_path):
+    out = run_node(tmp_path, roles_payload(tmp_path), """
+const v=M.create(host,{fetch:reply,...quiet});await v.load();await v.loadCandidates();v.select('research-lead');
+await v.promote('wmc-bbbbbbbbbbbbbbbb');
+process.stdout.write(JSON.stringify({notice:v.state.promoteNotice,calls,errors}));""", candidates=_candidates())
+    assert out["notice"]["code"] == "subagent_settings_candidate_stale" and "Rien n’a été écrit" in out["notice"]["text"]
+    assert not [c for c in out["calls"] if c[1] == "POST"]
+    assert out["errors"][0][0] == "subagent_settings_promotion_failed"
+
+
+def test_a_promotion_not_yet_handed_to_the_hook_is_said(tmp_path):
+    out = run_node(tmp_path, roles_payload(tmp_path), """
+const answering=async(p,i)=>{if(i&&i.method==='POST')return {ok:true,method:{method_id:'deep-research',version:2},snapshot:{written:false,code:'PermissionError'}};return reply(p,i)};
+const v=M.create(host,{fetch:answering,...quiet});await v.load();await v.loadCandidates();v.select('research-lead');
+await v.promote('wmc-aaaaaaaaaaaaaaaa');
+process.stdout.write(JSON.stringify({notice:v.state.promoteNotice}));""", candidates=_candidates())
+    assert out["notice"]["tone"] == "bad" and out["notice"]["code"] == "PermissionError"
+    assert "pas encore transmise aux sous-agents" in out["notice"]["text"]
+
+
+def test_the_effective_promoted_version_is_marked_and_a_partial_reading_is_said(tmp_path):
+    payload = json.loads(json.dumps(roles_payload(tmp_path)))
+    for method in payload["work_methods"]:
+        if method["method_id"] == "deep-research":
+            method["version"] = 2
+            method["provenance"] = {"origin": "promoted", "candidate_id": "wmc-aaaaaaaaaaaaaaaa",
+                                    "promoted_by": "user", "promoted_at": "2026-10-20T10:00:00+00:00",
+                                    "evidence_refs": ["m1"]}
+    candidates = {**_candidates(), "scan": {"partial": True}}
+    out = run_node(tmp_path, payload, """
+const v=M.create(host,{fetch:reply,...quiet});await v.load();await v.loadCandidates();v.select('research-lead');
+process.stdout.write(JSON.stringify({html:host.innerHTML}));""", candidates=candidates)
+    assert "deep-research@2" in out["html"] and "version promue" in out["html"]
+    assert "Lecture partielle" in out["html"]

@@ -85,6 +85,10 @@ class MissionHistoryRepository(Protocol):
 
     async def mission_tree(self, root_mission_id: str) -> MissionTree | None: ...
 
+    async def recent_root_mission_ids(self, *, limit: int = 64) -> tuple[str, ...]:
+        """Les ids des missions racines, la plus récemment créée d'abord (Slice 12). Aucune ligne n'est décodée."""
+        ...
+
     async def ownership(self, mission_id: str) -> tuple[OwnershipChange, ...]: ...
 
     async def create_relation(self, relation: AgentRelation) -> AgentRelation:

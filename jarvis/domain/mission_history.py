@@ -46,6 +46,7 @@ from jarvis.domain.agent_markers import AgentDeclaration, declaration_from_hook_
 from jarvis.domain.agent_relations import AgentRelation
 from jarvis.domain.missions import AgentInstance, Mission
 from jarvis.domain.subagent_roles import RoleResolution, RoleStatus
+from jarvis.domain.work_methods import parse_method_key
 from jarvis.domain.work_state import MAX_LABEL_CHARS, WorkItem, WorkSnapshot, WorkStatus, clip_text
 
 #: Version du contrat de déclaration. Un fait d'une autre version est refusé, jamais deviné.
@@ -96,6 +97,10 @@ class AgentDeclarationFact:
     - `handoff_id` (Slice 06) : le relais préparé que ce successeur reprend (`[relais]`) ; il exige
       `mission_owner` et la mission reprise. Absent de la charge utile quand il est vide : un fait ordinaire
       garde exactement sa forme d'avant ;
+    - `work_method` / `work_method_chosen` (Slice 12) : la Work Method réellement apposée par le hook
+      (`<id>@<version>`, `agent_orchestration.decide_method`) et si l'appelant l'a nommée plutôt que reçue par
+      défaut. Preuve d'usage durable des candidats de méthode (`work_method_learning`) ; absents quand aucune
+      méthode n'est apposée, pour la même raison que `handoff_id` ;
     - `declared_at` : l'horloge du hook ; `contract_version` : `DECLARATION_CONTRACT_VERSION`.
     """
 
@@ -114,6 +119,8 @@ class AgentDeclarationFact:
     mission_id: str | None = None
     mission_owner: bool = False
     handoff_id: str | None = None
+    work_method: str | None = None
+    work_method_chosen: bool = False
     contract_version: int = DECLARATION_CONTRACT_VERSION
 
     def __post_init__(self) -> None:
@@ -147,6 +154,12 @@ class AgentDeclarationFact:
         if self.handoff_id is not None and (not self.mission_owner or self.ephemeral):
             raise MissionHistoryError("a handoff successor is a non-ephemeral mission owner of the handed-off mission",
                                       field="handoff_id")
+        if self.work_method is not None and parse_method_key(self.work_method) is None:
+            raise MissionHistoryError(f"work_method must be <method_id>@<version>, got {preview(self.work_method)}",
+                                      field="work_method")
+        if not isinstance(self.work_method_chosen, bool) or (self.work_method_chosen and self.work_method is None):
+            raise MissionHistoryError("work_method_chosen is a boolean, true only with a work_method",
+                                      field="work_method_chosen")
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -166,6 +179,8 @@ class AgentDeclarationFact:
             "mission_id": self.mission_id,
             "mission_owner": self.mission_owner,
             **({"handoff_id": self.handoff_id} if self.handoff_id is not None else {}),
+            **({"work_method": self.work_method, "work_method_chosen": self.work_method_chosen}
+               if self.work_method is not None else {}),
         }
 
     @classmethod
@@ -190,6 +205,8 @@ class AgentDeclarationFact:
             mission_id=data.get("mission_id"),
             mission_owner=data.get("mission_owner", False),
             handoff_id=data.get("handoff_id"),
+            work_method=data.get("work_method"),
+            work_method_chosen=data.get("work_method_chosen", False),
         )
 
     def declaration(self) -> AgentDeclaration:
@@ -205,14 +222,14 @@ class AgentDeclarationFact:
 _FACT_KEYS = frozenset({
     "contract_version", "tool_use_id", "declared_at", "role_id", "role_status", "role_marker", "ephemeral",
     "profile", "label", "session_id", "caller_agent_id", "subagent_type", "run_in_background", "mission_id",
-    "mission_owner", "handoff_id",
+    "mission_owner", "handoff_id", "work_method", "work_method_chosen",
 })
 _FACT_REQUIRED = frozenset({"contract_version", "tool_use_id", "declared_at", "role_id", "role_status"})
 
 
 def fact_from_hook_event(
     event: Mapping[str, Any], *, declared_at: datetime, mission_id: str | None = None, mission_owner: bool = False,
-    handoff_id: str | None = None,
+    handoff_id: str | None = None, work_method: str | None = None, work_method_chosen: bool = False,
 ) -> AgentDeclarationFact:
     """Le fait qu'un hook `PreToolUse` produit pour un appel `Agent` (lecture : `agent_markers`).
 
@@ -248,6 +265,8 @@ def fact_from_hook_event(
         mission_id=mission_id,
         mission_owner=mission_owner,
         handoff_id=handoff_id,
+        work_method=work_method,
+        work_method_chosen=work_method_chosen,
     )
 
 
