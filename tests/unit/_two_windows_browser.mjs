@@ -13,9 +13,11 @@ import {spawn} from 'node:child_process';
 import {mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {disposeChromeOnExit} from './_cdp_profile.mjs';
+import {disposeChromeOnExit,killChrome,assertSafeTarget} from './_cdp_profile.mjs';
 
 const [,,URL_,CHROME,PLAN]=process.argv;
+/* Jamais le JARVIS vivant : ni ses ports, ni son dossier d'exécution (QA S09, `_cdp_profile.mjs`). */
+assertSafeTarget(URL_,null);
 const plan=JSON.parse(PLAN);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const profile=mkdtempSync(join(tmpdir(),'jarvis-two-windows-'));

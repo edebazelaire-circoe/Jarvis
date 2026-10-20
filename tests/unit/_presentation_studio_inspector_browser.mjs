@@ -7,7 +7,7 @@
 
    Usage : node _presentation_studio_inspector_browser.mjs <url> <chrome.exe> <planJSON>
    Environnement : CDP_VIEWPORT=LxH (1280x720 par défaut), CDP_REDUCED_MOTION=1.
-   Fin : Chrome est tué AVEC ses enfants (`taskkill /T /F`), puis le profil `jarvis-psi-cdp-*` est effacé.
+   Fin : Chrome est tué AVEC ses enfants (`killChrome` : par handle puis par profil jetable, jamais `taskkill /T`), puis le profil `jarvis-psi-cdp-*` est effacé.
    Actions : {eval}, {wait}, {click: selecteur}, {key: nom, ctrl?, shift?, alt?}, {hold: {key, ms, interval}} (touche maintenue, répétition automatique), {wheel: {selector, deltaY, count}} (molette sur l'élément), {type: texte}, {focus: selecteur},
      {mouseDown: {selector, frac}}, {mouseMove: {selector, frac}}, {mouseUp: {selector, frac}}, {drag: {selector, from, to, steps, ms}},
      {value: nom, expr}, {until: expr, ms}, {size: [w,h]}, {shot: chemin.png}, {ax: nom, root: selecteur},
@@ -19,9 +19,11 @@ import {createHash} from 'node:crypto';
 import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {disposeChromeOnExit} from './_cdp_profile.mjs';
+import {disposeChromeOnExit,killChrome,assertSafeTarget} from './_cdp_profile.mjs';
 
 const [,,PAGE,CHROME,PLAN]=process.argv;
+/* Jamais le JARVIS vivant : ni ses ports, ni son dossier d'exécution (QA S09, `_cdp_profile.mjs`). */
+assertSafeTarget(PAGE,null);
 const plan=JSON.parse(PLAN);
 const [VIEW_W,VIEW_H]=(process.env.CDP_VIEWPORT||'1280x720').split('x').map(Number);
 
@@ -251,13 +253,8 @@ try{
   try{rmSync(profile,{recursive:true,force:true,maxRetries:10,retryDelay:300})}catch(_){/* dernier recours : il reste, le test le signale */}
 }
 
-function killTree(child){
-  if(process.platform==='win32'&&child.pid){
-    try{execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});return}
-    catch(_){/* deja sorti, ou taskkill refuse : on retombe sur kill() */}
-  }
-  child.kill();
-}
+/* Chrome de CE harnais seulement (profil jetable) : jamais `taskkill /PID … /T` sur un PID mémorisé (QA S09). */
+function killTree(child){killChrome(child,profile)}
 
 async function poll(url){
   for(let i=0;i<100;i+=1){

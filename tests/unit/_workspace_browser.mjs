@@ -24,9 +24,11 @@ import {spawn} from 'node:child_process';
 import {existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {disposeChromeOnExit} from './_cdp_profile.mjs';
+import {disposeChromeOnExit,killChrome,assertSafeTarget} from './_cdp_profile.mjs';
 
 const [,,URL_,CHROME,PLAN,SHOTS]=process.argv;
+/* Jamais le JARVIS vivant : ni ses ports, ni son dossier d'exécution (QA S09, `_cdp_profile.mjs`). */
+assertSafeTarget(URL_,null);
 const plan=JSON.parse(PLAN);
 const WAIT_MS=plan.waitMs??45000;
 const BOOT_MS=60000;

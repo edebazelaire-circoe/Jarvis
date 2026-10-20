@@ -12,9 +12,11 @@ import {spawn} from 'node:child_process';
 import {mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {disposeChromeOnExit} from './_cdp_profile.mjs';
+import {disposeChromeOnExit,killChrome,assertSafeTarget} from './_cdp_profile.mjs';
 
 const [,,PAGE,CHROME,PLAN]=process.argv;
+/* Jamais le JARVIS vivant : ni ses ports, ni son dossier d'exécution (QA S09, `_cdp_profile.mjs`). */
+assertSafeTarget(PAGE,null);
 const plan=JSON.parse(PLAN);
 
 /* Le serveur double. Une alerte `failed` du Board `default` ; on est sur

@@ -13,9 +13,11 @@ import {spawn} from 'node:child_process';
 import {mkdtempSync, readFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {disposeChromeOnExit} from './_cdp_profile.mjs';
+import {disposeChromeOnExit,killChrome,assertSafeTarget} from './_cdp_profile.mjs';
 
 const [,,PAGE,CHROME,PLAN_FILE]=process.argv;
+/* Jamais le JARVIS vivant : ni ses ports, ni son dossier d'exécution (QA S09, `_cdp_profile.mjs`). */
+assertSafeTarget(PAGE,null);
 const plan=JSON.parse(readFileSync(PLAN_FILE,'utf8'));
 const profile=mkdtempSync(join(tmpdir(),'jarvis-mcpp-cdp-'));
 const chrome=spawn(CHROME,[

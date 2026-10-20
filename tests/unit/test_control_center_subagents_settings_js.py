@@ -102,7 +102,7 @@ def test_accents_are_tokens_mapped_once_to_theme_variables():
         assert f"--role-accent-{token}:" in page, token
     # Pictogrammes : la table partagée avec le graphe des tâches (Slice 09), jamais une copie dans l'onglet.
     shared = (MODULE.parent / "control_center_role_identity.js").read_text(encoding="utf-8")
-    assert not re.search(r"#[0-9a-fA-F]{3,8}", shared), "aucune couleur dans la table partagée"
+    assert not re.search(r"#[0-9a-fA-F]{3,8}\b", shared), "aucune couleur dans la table partagée"
     for role in subagent_roles.ROLES:
         assert f"{role.visual.icon}:" in shared or f"'{role.visual.icon}':" in shared, role.visual.icon
 

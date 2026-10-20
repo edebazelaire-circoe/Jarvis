@@ -16,9 +16,11 @@ import {spawn, spawnSync} from 'node:child_process';
 import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {disposeChromeOnExit} from './_cdp_profile.mjs';
+import {disposeChromeOnExit,killChrome,assertSafeTarget} from './_cdp_profile.mjs';
 
 const [,,URL_,CHROME,PLAN_FILE]=process.argv;
+/* Jamais le JARVIS vivant : ni ses ports, ni son dossier d'exécution (QA S09, `_cdp_profile.mjs`). */
+assertSafeTarget(URL_,null);
 const plan=JSON.parse(readFileSync(PLAN_FILE,'utf8'));
 const profile=mkdtempSync(join(tmpdir(),'jarvis-reload-cdp-'));
 const port=9400+Math.floor(Math.random()*400);
@@ -192,8 +194,7 @@ try{
   /* Le profil Chrome pese des dizaines de Mo : il doit disparaitre a CHAQUE passage (sinon des milliers de profils remplissent
      le disque). Sous Windows `kill()` ne tue que le processus principal et ses enfants gardent le dossier : on tue l'arbre,
      on attend la sortie, puis on supprime avec quelques reprises. */
-  if(process.platform==='win32')spawnSync('taskkill',['/PID',String(chrome.pid),'/T','/F'],{stdio:'ignore'});
-  else chrome.kill();
+  killChrome(chrome,profile);  // Chrome de CE harnais seulement (QA S09)
   await new Promise(done=>{if(chrome.exitCode!==null)done();else{chrome.once('exit',()=>done());setTimeout(done,4000)}});
   for(let attempt=0;attempt<15;attempt+=1){
     try{rmSync(profile,{recursive:true,force:true});break}catch(_){await sleep(300)}

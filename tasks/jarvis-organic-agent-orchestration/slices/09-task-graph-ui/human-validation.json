@@ -35,6 +35,7 @@
         "steps": [
           "Repérez les cinq figures : délégation = trait plein avec flèche pleine vers celui qui reçoit la sous-mission, pastille ronde à l'arborescence ; contrôle qualité = tirets avec chevron ouvert vers le travail relu, pastille carrée à la loupe ; relais = perles avec double chevron vers le successeur, pastille allongée « » » ; confrontation = double rail sans flèche entre les concurrents, pastille au double bord et aux lames croisées ; échange entre agents = trait fin sans flèche, pastille en bulle.",
           "Comparez la confrontation et le contrôle qualité : trait (double rail plein / tirets), bout (aucun / chevron), pastille (lames croisées / loupe), couleur (corail / vert) — quatre différences, la couleur n'est pas la seule.",
+          "Comparez une confrontation close et un contrôle qualité clos : chacun garde sa forme (double bord / carré arrondi simple) ; l'état clos se lit à l'opacité et à la petite coche, jamais à un pointillé.",
           "Survolez ou passez le focus clavier sur une pastille : son nom dit la nature, qui agit sur qui et l'état (par exemple « Contrôle qualité : … relit … · close, remarques »).",
           "Activez les couleurs forcées de Windows (contraste élevé) : les figures restent distinctes par le trait, le bout et la forme de la pastille."
         ],
@@ -59,6 +60,7 @@
           "Fermez (×), puis au clavier : Tab jusqu'aux pastilles (un seul arrêt), flèches pour passer de l'une à l'autre, Entrée sur la bulle. Le titre du tableau prend le focus.",
           "Tab jusqu'au premier message, puis flèches haut et bas, Début, Fin : le focus passe d'un message à l'autre et reste visible.",
           "Laissez le tableau ouvert pendant que les agents publient : un nouveau message s'ajoute dans les 5 s sans déplacer votre focus.",
+          "Ouvrez une pastille, puis une autre aussitôt (avant que la première ait fini de lire) : le tableau montre la seconde relation, jamais un « chargement » qui ne finit pas ; une lecture sans réponse finit en erreur avec « Réessayer » après 15 s.",
           "Échap ferme le tableau et rend le focus à la pastille. Ouvrez aussi la pastille d'une confrontation : son tableau dit le gagnant retenu et la conclusion."
         ],
         "expected": "La bonne relation s'ouvre, son tableau est lisible (messages délibérés seulement, jamais de raisonnement privé), et tout se fait au clavier.",
@@ -69,7 +71,9 @@
           "evidence/test-03-board-open-keyboard.png",
           "evidence/test-04-board-loading.png",
           "evidence/test-05-board-error.png",
-          "evidence/test-06-board-empty.png"
+          "evidence/test-06-board-empty.png",
+          "evidence/test-11-race-fixed.png",
+          "evidence/sandbox-fix-race.png"
         ]
       }
     },
@@ -83,7 +87,7 @@
         "steps": [
           "Lancez la demande de HV-ORG-09-01 et regardez le Board pendant la mission : une étoile n'apparaît que quand son agent est lancé, un fil et sa pastille seulement quand la relation existe entre deux agents déjà présents.",
           "Vérifiez qu'aucune étoile ni pastille n'annonce une étape à venir (pas de « prochain agent », pas de relation prévue).",
-          "À la fin, les étoiles et relations de la mission restent (historique), une relation close a un trait atténué et une pastille en tirets ; après un relais, le drapeau passe au successeur et le prédécesseur garde son rôle sans drapeau.",
+          "À la fin, les étoiles et relations de la mission restent (historique), une relation close a un trait atténué et une pastille atténuée avec une petite coche ; après un relais, le drapeau passe au successeur et le prédécesseur garde son rôle sans drapeau.",
           "Relancez Core (vous) : les étoiles de la mission montrent « état inconnu depuis le redémarrage » (?), jamais « en cours » ; le tableau d'une relation dit « hors du suivi vivant » pour ses participants. Une mission restée ouverte sans agent connu se lit « état inconnu » sur la pastille du responsable après 10 minutes."
         ],
         "expected": "Le graphe ne montre que l'exécution réelle, en direct et en historique, sans nœud futur.",
@@ -108,18 +112,21 @@
           "À 200 %, vérifiez que les pastilles de rôle restent lisibles (l'origine du responsable disparaît de la pastille ; elle reste dans le nom et le tableau) et que les pastilles de relation sont plus petites mais cliquables, jamais l'une sur l'autre.",
           "Ouvrez un tableau à 200 % : il prend la largeur de la page, défile, et les commandes du haut (lanceur) restent atteignables.",
           "Avec plusieurs missions sur le Board, vérifiez qu'aucune pastille de relation ne cache une autre pastille et que la carte Board, le Chat et le lanceur restent utilisables.",
-          "Notez les endroits où une pastille couvre encore une étiquette (voir residual_gaps)."
+          "À 100 %, sur une équipe neuve (lancée après cette version), vérifiez qu'aucune pastille de relation ne couvre une pastille de rôle, l'étiquette du responsable ni une autre pastille. À 200 %, notez ce qui reste (voir residual_gaps)."
         ],
         "expected": "Rôles, pastilles de relation et commandes de la coque restent utilisables à 200 % et dans un graphe dense, sans chevauchement majeur.",
         "reference_captures": [
           "evidence/sandbox-06-zoom200.png",
           "evidence/sandbox-07-zoom200-board.png",
           "evidence/test-08-dense-200pct.png",
-          "evidence/test-09-dense-200pct-board.png"
+          "evidence/test-09-dense-200pct-board.png",
+          "evidence/test-12-fresh-team-100pct.png",
+          "evidence/sandbox-fix-fresh-team.png"
         ],
         "residual_gaps": [
-          "Une équipe très serrée placée avant cette Slice (places enregistrées avec l'ancien encombrement de 6 × 6) garde des pastilles de rôle qui se recouvrent ; les nouvelles étoiles à rôle sont placées avec la place de leur pastille (18 × 8, 32 × 8 pour un responsable).",
-          "À 200 % de zoom, les pastilles gardent leur taille en pixels pendant que la scène se resserre : une pastille de relation peut couvrir une étiquette de rôle (jamais une autre pastille)."
+          "Une équipe placée avant cette version garde ses places enregistrées : ses pastilles peuvent se recouvrir, rien n'est déplacé.",
+          "À 200 % de zoom, la scène se resserre (les unités valent deux fois moins de pixels) alors que pastilles et étiquettes gardent leur taille : une pastille de relation peut couvrir une étiquette ou une pastille de rôle quand ses fils sont plus courts que la pastille ; deux pastilles de relation gardent leur écart.",
+          "Gravitation allumée : les pastilles sont recalculées chaque seconde et glissent ; un liseré de 1 à 2 px peut apparaître pendant la glissade (mesuré : ≤ 48 px² dans le test)."
         ]
       }
     }

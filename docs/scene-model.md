@@ -506,13 +506,14 @@ figures, relation marks, mission cache), `control_center_relation_board.js`
   `role_id` that is not an id (`[a-z][a-z0-9_-]{0,63}`) is ignored. A leading
   `[<role_id>]` in the title (the marker the brain wrote) leaves the drawn
   title, since the pill says it — only that exact marker, nothing else is
-  read in the text. The resolver reserves room for the pill: an agent star
-  with a `role_ref` is placed with an 18 × 8 unit footprint (32 × 8 for a
-  Mission Owner, whose pill also carries the flag and the origin) instead of
-  6 × 6, so the stars of one team do not lay their pills on each other; the
-  drawn point stays at the centre (`DEFAULT_SIZE.rolePoint` / `ownerPoint`,
-  placements already stored are never moved). Under 900 px of width (200 %
-  zoom) the pill drops the origin text (still in the name and the board).
+  read in the text. The resolver reserves room for what a role star shows
+  without hover: the stored geometry stays a 6 × 6 point, but its neighbours
+  are kept off a footprint that extends **on the pill's side** —
+  `ROLE_PILL_ROOM` (`footprintOf`): 13 units to the left (≈ 55 px at
+  1440 px), 3 right, 3 up and down; a Mission Owner 27 left (flag and
+  origin), 7 right (task pill) and 8 up (its always-visible label). Stored
+  placements are never moved. Under 900 px of width (200 % zoom) the pill
+  drops the origin text (still in the name and the board).
 - **Mission Owner** (D03/D04): `role_ref.mission_owner` adds a flag and a
   stronger pill; the pill also carries the mission's origin (`origin_kind`,
   in words: code, général, poste de travail, tâche rapide) and the name says
@@ -532,19 +533,26 @@ figures, relation marks, mission cache), `control_center_relation_board.js`
   | `adversary` | double rail (rail + gap), no arrow | none (peers) | double-bordered square, crossed blades |
   | `communication` | thin solid, no arrow | none (peers) | speech bubble, tinted |
 
-  A closed relation (`ref.state = closed`) is dimmed and its mark dashed; its
+  A closed relation (`ref.state = closed`) is dimmed, its mark keeps the
+  contour of its kind (never dashed: a state must not erase the
+  adversary's double border) and gets a small tick; its
   outcome is in the mark's name. Links of one relation are grouped by
   `ref.relation_id`; links joining the same two stars (execution `parent_of`
   plus a delegation, a QA…) get one lane each, 7 px apart.
 - **Relation marks**: one real `<button>` per relation drawn, on its link (two
   participants) or at the participants' centroid (more), spread so that two
-  marks never sit on each other (24 px between centres) and stepping off stars
-  and role pills. One tab stop for all marks (arrows, Home, End move between
+  marks never sit on each other (≥ 28 px between centres) and stepping off
+  stars, role pills, the label and task pill of a task root (a two-party mark
+  slides along its link, 15–85 %, and at most 16 px across it; a centroid mark
+  at most 40 px from the centroid). One tab stop for all marks (arrows, Home, End move between
   them, reading order); Enter or a click opens the board; `aria-expanded` says
   which one is open. 18 px marks (still 24 px apart, WCAG 2.5.8) above 24
-  relations or under 900 px of width (200 % zoom). Marks turn with the field
-  like stars; one with a fixed end is re-placed frame by frame with the mixed
-  links; during a drag the marks of the held stars hide until the drop.
+  relations or under 900 px of width (200 % zoom). Marks are placed **in the
+  drawn frame** — link ends and stars where the field's turn has taken them,
+  pills and labels where they really are (they do not turn) — and, while the
+  field moves, recomputed every second for where things will be at the end of
+  a 1 s linear glide; still field: placed once. During a drag the marks of the
+  held stars hide until the drop.
   Hidden links (`sc-no-links`) hide the marks too.
 - **Relation board** (`#relationBoard`, class `.panel`, right zone — see
   [control-center-shell.md](control-center-shell.md)): kind, purpose, state and
@@ -556,6 +564,11 @@ figures, relation marks, mission cache), `control_center_relation_board.js`
   handoff packet, and the thread of **deliberate messages** (`seq` order,
   type, author with role, time) from `GET /api/missions/relations/{id}?after=&limit=200`
   — nothing else, never private reasoning (D13; Core refuses it at write).
+  Opening another relation while a read is in flight forces a new read; only
+  the read of the relation shown can hold the board busy (QA S09 B1), and a
+  watchdog turns any wait longer than the deadline + 2 s into the error state.
+  The mission is re-read with each refresh while it is open (`live_unknown`
+  shows within 5 s).
   States: loading with a live counter and a 15 s deadline, error with the
   server's words, its code, advice and « Réessayer » (`console.error('<code>')`),
   empty thread, refresh every 5 s while the relation (or its mission) is open

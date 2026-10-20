@@ -9,7 +9,8 @@
    Usage : node _fullscreen_browser.mjs <page.html | http://url> <chrome.exe> <planJSON>
    Environnement : CDP_REAL_PAGE=1 -> pas de double du relais (la page est le VRAI Control Center servi par un Core isole) ;
    CDP_VIEWPORT=LxH -> taille initiale (1000x700 par defaut).
-   Fin : Chrome est tue AVEC ses processus enfants (`taskkill /T /F` sous Windows : `kill()` ne tue que le parent, les
+   Fin : Chrome est tue AVEC ses processus enfants (`killChrome` de `_cdp_profile.mjs` : le parent par son handle, les enfants
+   par leur profil jetable, jamais `taskkill /T` sur un PID memorise ; `kill()` seul ne tue que le parent, les
    enfants gardent le profil ouvert et il restait ~13 Mo dans %TEMP% par execution), puis le profil est efface.
    Actions : {eval}, {wait: ms}, {click: selecteur}, {key: nom}, {value: nom, expr}, {until: expr, ms},
    {size: [w,h]}, {shot: chemin.png}, {targets: nom} (les adresses des onglets ouverts, native-studio-playback-fix Slice 11).
@@ -18,9 +19,11 @@ import {execFileSync, spawn} from 'node:child_process';
 import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {disposeChromeOnExit} from './_cdp_profile.mjs';
+import {disposeChromeOnExit,killChrome,assertSafeTarget} from './_cdp_profile.mjs';
 
 const [,,PAGE,CHROME,PLAN]=process.argv;
+/* Jamais le JARVIS vivant : ni ses ports, ni son dossier d'exécution (QA S09, `_cdp_profile.mjs`). */
+assertSafeTarget(PAGE,null);
 const plan=JSON.parse(PLAN);
 const REAL=process.env.CDP_REAL_PAGE==='1';
 const [VIEW_W,VIEW_H]=(process.env.CDP_VIEWPORT||'1000x700').split('x').map(Number);
@@ -160,13 +163,8 @@ try{
 }
 
 /* Chrome lance des processus enfants (GPU, utilitaires, rendu) qui tiennent le profil ouvert : tuer le parent seul ne suffit pas. */
-function killTree(child){
-  if(process.platform==='win32'&&child.pid){
-    try{execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});return}
-    catch(_){/* deja sorti, ou taskkill refuse : on retombe sur kill() */}
-  }
-  child.kill();
-}
+/* Chrome de CE harnais seulement (profil jetable) : jamais `taskkill /PID … /T` sur un PID mémorisé (QA S09). */
+function killTree(child){killChrome(child,profile)}
 
 async function poll(url){
   for(let i=0;i<100;i+=1){

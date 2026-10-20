@@ -202,7 +202,11 @@
 
     const st={open:false,relationId:'',kind:'',missionId:'',trigger:null,phase:'idle',startedAt:0,error:null,
       read:null,messages:[],instances:new Map(),mission:null,owners:null,missionError:null,lastSeq:0,readAt:0,more:false,
-      generation:0,inflight:false,focusIndex:0};
+      generation:0,inflightGen:null,focusIndex:0};
+    /* Une lecture en vol pour la relation AFFICHÉE : celle d'une relation quittée (autre génération) ne bloque rien
+       (QA S09 B1 : ouvrir une autre relation pendant une lecture laissait le tableau en chargement). */
+    const busy=()=>st.inflightGen!==null&&st.inflightGen===st.generation;
+    Object.defineProperty(st,'inflight',{get:busy,enumerable:true});
     let panel=null,ticker=null,refresher=null;
     const el=(tag,cls,text)=>{const e=doc.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e};
     const svg=markup=>{const holder=doc.createElement('span');holder.innerHTML=markup;return holder.firstChild};  // pictogrammes constants
@@ -253,7 +257,8 @@
       render();
       const title=panel.querySelector('#relationBoardTitle');if(title)title.focus({preventScroll:true});
       log('info','relation_board_opened',{relation_id:relationId,kind:st.kind});
-      load({full:!same});
+      /* Une autre relation : lecture forcée, quoi qu'il reste en vol pour l'ancienne. */
+      load({full:!same,force:!same});
       startTicker();
       return true;
     }
@@ -276,13 +281,14 @@
     /* Lecture : la relation (tout, ou la suite après `lastSeq`) et, une fois, la mission. Une lecture en vol à la
        fois ; une réponse d'une relation déjà quittée est ignorée (`generation`). */
     async function load(how){
-      if(st.inflight&&!(how&&how.force))return;
+      if(busy()&&!(how&&how.force))return;
       const generation=st.generation,full=!!(how&&how.full)||!st.read;
-      st.inflight=true;
+      st.inflightGen=generation;
       if(full){st.phase='loading';st.startedAt=now();st.error=null;render()}
       try{
         const relationRead=fetchJson(RELATION_PATH(st.relationId,full?0:st.lastSeq));
-        const missionRead=st.missionId&&(full||!st.mission)?fetchJson(MISSION_PATH(st.missionId)).then(body=>normalizeMission(body,st.missionId),
+        /* La mission est relue avec la relation tant qu'elle est ouverte : un `live_unknown` arrive sans attendre. */
+        const missionRead=st.missionId&&(full||!st.mission||st.mission.status==='open')?fetchJson(MISSION_PATH(st.missionId)).then(body=>normalizeMission(body,st.missionId),
           error=>{if(generation===st.generation){st.missionError=error;log('warn',error&&error.code||'relation_board_mission_unreadable',{mission_id:st.missionId,error:String(error&&error.message||error)})}return null}):null;
         const read=normalizeRead(await relationRead);
         if(generation!==st.generation)return;
@@ -307,15 +313,26 @@
         if(!st.read)st.phase='error';
         log('error',error&&error.code||'relation_board_failed',{relation_id:st.relationId,status:error&&error.status||null,error:String(error&&error.message||error)});
       }finally{
-        if(generation===st.generation){st.inflight=false;render()}
-        else st.inflight=false;
+        /* Seule la lecture de la génération en vol la libère ; une ancienne ne touche à rien. */
+        if(st.inflightGen===generation)st.inflightGen=null;
+        if(generation===st.generation)render();
       }
     }
 
     /* Compteur de l'attente (1 s) et relecture d'une relation ouverte (5 s), seulement panneau visible. */
     function startTicker(){
       stopTicker();
-      ticker=timers.every(()=>{if(st.open&&st.phase==='loading')renderState()},1000);
+      ticker=timers.every(()=>{
+        if(!st.open||st.phase!=='loading')return;
+        /* Filet : quelle que soit la voie de lecture, une attente ne dépasse jamais l'échéance (+ 2 s de marge). */
+        if(now()-st.startedAt>TIMEOUT_MS+2000){
+          const e=new Error(`Pas de réponse après ${Math.round(TIMEOUT_MS/1000)} s.`);e.code='relation_board_timeout';
+          st.error=e;st.phase='error';st.inflightGen=null;st.generation++;
+          log('error','relation_board_timeout',{relation_id:st.relationId,waited_ms:now()-st.startedAt});
+          render();return;
+        }
+        renderState();
+      },1000);
       refresher=timers.every(()=>{
         if(!st.open||st.inflight||!st.read||doc.visibilityState==='hidden')return;
         if(st.read.relation.status==='open'||(st.mission&&st.mission.status==='open'))load({full:false});

@@ -44,11 +44,8 @@
   /* Taille maximale d'une capsule (même valeur que `CAPSULE_MAX` du rendu) :
      au-delà, le rendu la dessine à sa hauteur naturelle, centrée. */
   const MAX_SIZE=Object.freeze({capsule:Object.freeze({w:160,h:10})});
-  /* Même table que le résolveur (`JarvisSceneLayout.DEFAULT_SIZE`, testé) ; `rolePoint` et `ownerPoint` (Slice 09
-     de organic-agent-orchestration) n'y servent qu'au résolveur : un changement de forme reprend la taille de point. */
   const DEFAULT_SIZE=Object.freeze({point:Object.freeze({w:6,h:6}),signal:Object.freeze({w:4,h:4}),
-    capsule:Object.freeze({w:40,h:7}),window:Object.freeze({w:64,h:40}),rolePoint:Object.freeze({w:18,h:8}),
-    ownerPoint:Object.freeze({w:32,h:8})});
+    capsule:Object.freeze({w:40,h:7}),window:Object.freeze({w:64,h:40})});
   /* Seuil (px) au-delà duquel un appui devient un glissement : 4 px à la
      souris, 10 px pour un pointeur grossier (tactile, stylet) ou la main de
      Barehands, pour qu'un appui long qui tremble n'épingle rien ; appui long

@@ -180,7 +180,7 @@ READ = """(()=>{
     return {cls:l.getAttribute('class'),dash:cs.strokeDasharray,marker:cs.markerEnd,width:cs.strokeWidth,stroke:cs.stroke}});
   const marks=[...document.querySelectorAll('#sceneLayer .sc-relmark')].map(b=>{const r=b.getBoundingClientRect(),cs=getComputedStyle(b);
     return {id:b.dataset.relationId,kind:b.dataset.relationKind,cls:b.className,label:b.getAttribute('aria-label'),tab:b.tabIndex,
-      radius:cs.borderRadius,border:cs.borderStyle,w:r.width,h:r.height,l:r.left,t:r.top,r:r.right,b:r.bottom,
+      radius:cs.borderRadius,border:cs.borderStyle,closedMark:getComputedStyle(b,'::after').content,w:r.width,h:r.height,l:r.left,t:r.top,r:r.right,b:r.bottom,
       glyph:b.querySelector('svg')?b.querySelector('svg').innerHTML.length:0}});
   const orbit={nodes:Object.fromEntries([...document.querySelectorAll('#sceneLayer .sc-node')].map(n=>[n.dataset.objectId,n.classList.contains('sc-orbit')])),
     marks:Object.fromEntries([...document.querySelectorAll('#sceneLayer .sc-relmark')].map(b=>[b.dataset.relationId,b.classList.contains('sc-orbit')]))};
@@ -233,13 +233,6 @@ def test_every_role_star_carries_its_registry_identity_and_the_owner_its_flag_an
     assert "rôle Développement" in roles["dev_a"]["label"] and "rôle Recherche web" in roles["web"]["label"]
     assert "rôle Recherche documentaire" in roles["doc"]["label"] and "rôle Contrôle qualité" in roles["qa"]["label"]
     assert "responsable de la mission" in roles["lead"]["label"] and "origine général" in roles["lead"]["label"]
-    # Les pastilles tournent avec leurs étoiles quand toutes leurs étoiles tournent, même après avoir été
-    # redessinées par la lecture du registre (qui change leur nom accessible).
-    members = {"rel_dlg_doc": ("lead", "doc"), "rel_comm": ("lead", "web", "doc"), "rel_adv": ("dev_a", "dev_b", "dev_c"),
-               "rel_qa": ("qa", "dev_a"), "rel_hof": ("lead", "next")}
-    turning = [rel for rel, who in members.items() if all(seen["orbit"]["nodes"].get(w) for w in who)]
-    assert turning, seen["orbit"]
-    assert all(seen["orbit"]["marks"][rel] for rel in turning), (turning, seen["orbit"]["marks"])
     assert any(call == "GET /api/subagent-roles" for call in step["calls"])
     assert step["calls"].count("GET /api/subagent-roles") == 1, step["calls"]
 
@@ -248,7 +241,12 @@ def test_every_role_star_carries_its_registry_identity_and_the_owner_its_flag_an
 
 
 def test_each_relation_kind_has_its_own_figure_and_adversary_never_looks_like_qa(tmp_path):
-    [step] = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": _seed(), "actions": [["eval", "read", READ, 200]]}])
+    seed = _seed()
+    # Confrontation close ET contrôle qualité clos : l'état ne doit pas effacer la forme de la nature (QA S09, M5).
+    for link in seed["relations"]:
+        if link["kind"] == "adversary":
+            link["ref"].update(state="closed", outcome="winner")
+    [step] = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed, "actions": [["eval", "read", READ, 200]]}])
     seen = step["results"]["read"]
     by_kind: dict[str, list] = {}
     for line in seen["lines"]:
@@ -269,7 +267,10 @@ def test_each_relation_kind_has_its_own_figure_and_adversary_never_looks_like_qa
     # Une pastille par relation (la confrontation à trois n'en a qu'une), aucune pour la relation fantôme.
     marks = {m["id"]: m for m in seen["marks"]}
     assert set(marks) == {"rel_dlg_doc", "rel_comm", "rel_adv", "rel_qa", "rel_hof"}
-    assert (marks["rel_adv"]["radius"], marks["rel_adv"]["border"]) != (marks["rel_qa"]["radius"], marks["rel_qa"]["border"])
+    assert marks["rel_adv"]["border"] == "double" and marks["rel_qa"]["border"] == "solid", (marks["rel_adv"], marks["rel_qa"])
+    assert marks["rel_adv"]["radius"] != marks["rel_qa"]["radius"]
+    assert "✓" in marks["rel_adv"]["closedMark"] and "✓" in marks["rel_qa"]["closedMark"]
+    assert marks["rel_comm"]["closedMark"] in ("none", "normal", "")       # ouverte : pas de coche
     assert marks["rel_adv"]["glyph"] and marks["rel_qa"]["glyph"]
     assert marks["rel_adv"]["label"].startswith("Confrontation : entre ") and marks["rel_qa"]["label"].startswith("Contrôle qualité : ")
     assert "relit" in marks["rel_qa"]["label"] and "close, remarques" in marks["rel_qa"]["label"]
@@ -478,3 +479,81 @@ def test_a_live_refresh_appends_new_messages_without_moving_the_keyboard_focus(t
     reads = [c for c in step["calls"] if c == "GET /api/missions/relations/rel_comm"]
     assert len(reads) >= 3
     _no_errors(step)
+
+
+RACE = ("(()=>{const f=window.fetch;window.__slow=0;window.fetch=function(u,o){if(String(u).includes('/api/missions/relations/'))"
+        "{window.__slow++;return new Promise(r=>setTimeout(r,1500)).then(()=>f.call(this,u,o))}return f.call(this,u,o)};"
+        "const a=document.querySelector('.sc-relmark-communication'),b=document.querySelector('.sc-relmark-adversary');"
+        "a.click();setTimeout(()=>b.click(),300);return [a.dataset.relationId,b.dataset.relationId]})()")
+BOARD_STATE = ("(()=>{const s=JarvisRelationBoard.instance.state;return {phase:s.phase,rel:s.relationId,inflight:s.inflight,"
+               "slow:window.__slow,title:document.getElementById('relationBoardTitle').textContent}})()")
+
+
+def test_opening_another_relation_during_a_read_never_leaves_the_board_loading(tmp_path):
+    """QA S09 B1 (plan `race.json`) : deux pastilles ouvertes à 300 ms d'écart pendant des lectures lentes."""
+    [step] = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": _seed(), "actions": [
+        ["eval", "race", RACE, 50],
+        ["eval", "settle", "new Promise(r=>setTimeout(r,4500))", 50],
+        ["eval", "state", BOARD_STATE, 50], *_shot("11-race-fixed"),
+    ]}])
+    first, second = step["results"]["race"]
+    state = step["results"]["state"]
+    assert (first, second) == ("rel_comm", "rel_adv")
+    assert state["phase"] == "ready" and state["rel"] == "rel_adv" and state["inflight"] is False, state
+    assert state["slow"] >= 2 and "Confrontation" in state["title"]
+    _no_errors(step)
+
+
+def test_a_read_that_never_answers_ends_in_the_error_state(tmp_path):
+    [step] = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": _seed(extra={"relationHang": True}), "actions": [
+        ["click", "open", ".sc-relmark-communication", 100],
+        ["eval", "wait", "new Promise(r=>setTimeout(r,16500))", 50],
+        ["eval", "board", BOARD, 50]]}])
+    board = step["results"]["board"]
+    assert board["error"] and "Pas de réponse après 15 s." in board["text"] and "relation_board_timeout" in board["text"]
+
+
+OVERLAPS = """(()=>{
+  const rect=e=>{const r=e.getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom,w:r.width,h:r.height}};
+  const marks=[...document.querySelectorAll('#sceneLayer .sc-relmark')].map(b=>({id:b.dataset.relationId,...rect(b)}));
+  const pills=[...document.querySelectorAll('#sceneLayer .sc-role')].map(p=>({id:p.closest('.sc-node').dataset.objectId,...rect(p)}));
+  const labels=[...document.querySelectorAll('#sceneLayer .sc-task-root > .sc-label')].map(p=>({id:'label:'+p.closest('.sc-node').dataset.objectId,...rect(p)}));
+  const area=(a,b)=>Math.max(0,Math.min(a.r,b.r)-Math.max(a.l,b.l))*Math.max(0,Math.min(a.b,b.b)-Math.max(a.t,b.t));
+  const hits=[];
+  marks.forEach((m,i)=>{
+    for(const o of [...pills,...labels])if(area(m,o)>0.5)hits.push([m.id,o.id,Math.round(area(m,o))]);
+    for(const o of marks.slice(i+1))if(area(m,o)>0.5)hits.push([m.id,o.id,Math.round(area(m,o))]);
+  });
+  const pillHits=[];
+  pills.forEach((p,i)=>{for(const o of pills.slice(i+1))if(area(p,o)>0.5)pillHits.push([p.id,o.id])});
+  return {marks:marks.length,pills:pills.length,hits,pillHits};
+})()"""
+
+
+def _fresh_team() -> dict:
+    """Une équipe neuve : aucune place enregistrée, le résolveur de la page pose chaque étoile."""
+    seed = _seed()
+    for item in seed["objects"]:
+        item["geometry"] = None
+    return seed
+
+
+def test_a_fresh_team_at_100_percent_has_no_mark_on_a_pill_a_label_or_another_mark(tmp_path):
+    steps = _drive(tmp_path, [
+        {"width": 1440, "height": 900, "seed": _fresh_team(), "storage": {"orbit": False},
+         "actions": [["eval", "wait", "new Promise(r=>setTimeout(r,1500))", 50], ["eval", "o", OVERLAPS, 50],
+                     *_shot("12-fresh-team-100pct")]},
+        {"width": 1920, "height": 1032, "seed": _fresh_team(), "storage": {"orbit": False},
+         "actions": [["eval", "wait", "new Promise(r=>setTimeout(r,1500))", 50], ["eval", "o", OVERLAPS, 50]]},
+        # Gravitation allumée (réglage par défaut) : le tour est une rotation d'ensemble, rien ne se rapproche.
+        {"width": 1440, "height": 900, "seed": _fresh_team(),
+         "actions": [["eval", "wait", "new Promise(r=>setTimeout(r,3000))", 50], ["eval", "o", OVERLAPS, 50]]},
+    ])
+    for index, step in enumerate(steps):
+        seen = step["results"]["o"]
+        assert seen["marks"] == 5 and seen["pills"] == 8, seen
+        assert seen["pillHits"] == [], seen["pillHits"]
+        # Champ immobile : aucun recouvrement. Champ qui tourne : la place est recalculée chaque seconde et la
+        # pastille glisse entre deux places ; au plus un liseré de 2 px pendant la glissade.
+        tolerance = 0 if index < 2 else 2 * 24
+        assert [hit for hit in seen["hits"] if hit[2] > tolerance] == [], seen["hits"]

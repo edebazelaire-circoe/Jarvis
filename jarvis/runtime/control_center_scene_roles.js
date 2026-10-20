@@ -68,9 +68,15 @@
 .sc-relmark-adversary{--sc-rel:var(--sc-rel-adversary);border-width:2.5px;border-style:double;border-radius:5px;transform-origin:center}
 .sc-relmark-communication{--sc-rel:var(--sc-rel-communication);width:30px;margin-left:-15px;border-radius:13px 13px 13px 3px;
   background:color-mix(in srgb,var(--sc-rel) 18%,#061017)}
-.sc-relmark.sc-rel-closed{border-style:dashed;opacity:.86}
-.sc-relmark.sc-rel-closed.sc-relmark-adversary{border-style:dashed}
+/* Close : la forme de contour de la nature ne change JAMAIS (QA S09 : un pointillé d'état effaçait la double
+   bordure de la confrontation, qui ressemblait alors au contrôle qualité). L'état se dit par l'opacité et une coche. */
+.sc-relmark.sc-rel-closed{opacity:.8}
+.sc-relmark.sc-rel-closed::after{content:'✓';position:absolute;right:-5px;bottom:-5px;width:11px;height:11px;border-radius:50%;
+  display:grid;place-items:center;font-size:8px;line-height:1;font-weight:700;background:#061017;color:var(--sc-rel);
+  box-shadow:0 0 0 1px var(--sc-rel);pointer-events:none}
+/* Champ immobile : un déplacement glisse ; champ qui tourne (sans sc-still) : une place par seconde, en ligne. */
 .scene.sc-ready .sc-relmark{transition:transform .42s cubic-bezier(.16,1,.3,1)}
+.scene.sc-ready:not(.sc-still) .sc-relmark{transition:transform 1s linear}
 .sc-relmark.sc-relmark-following{visibility:hidden}
 /* Graphe dense ou fenêtre étroite : pastilles de 18 px (la page le décide, \`sc-relmarks-compact\`). */
 .sc-relmarks-compact .sc-relmark{width:18px;height:18px;margin:-9px 0 0 -9px;border-width:1.25px}
@@ -86,6 +92,7 @@
   .sc-relmark{forced-color-adjust:none;background:Canvas;color:CanvasText;border-color:CanvasText;box-shadow:none}
   .sc-relmark:hover{background:Canvas;color:Highlight;border-color:Highlight}
   .sc-relmark:focus-visible,.sc-relmark[aria-expanded="true"]{outline:3px solid Highlight}
+  .sc-relmark.sc-rel-closed::after{forced-color-adjust:none;background:Canvas;color:CanvasText;box-shadow:0 0 0 1px CanvasText}
   .sc-role,.sc-role-owner{forced-color-adjust:none;background:Canvas;color:CanvasText;box-shadow:none;border:1px solid CanvasText}
   .sc-role-owner{border-width:2px}
   .sc-role i,.sc-role-owner .sc-role-flag{color:CanvasText}

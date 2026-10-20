@@ -249,10 +249,40 @@ return {participants:read.relation.participants,seqs:read.messages.map(m=>m.seq)
 
 
 def test_no_new_write_path_is_introduced_by_the_graph_modules():
+    """Lecture seule : aucune option `method` dans les modules du graphe (M8 : pas seulement les littéraux POST/DELETE),
+    et, exécutés, ils n'émettent que des GET."""
+    import re
     for name in ("control_center_role_identity.js", "control_center_scene_roles.js", "control_center_relation_board.js"):
         source = (RUNTIME / name).read_text(encoding="utf-8")
-        assert "method:'POST'" not in source and "method:\"POST\"" not in source and "'DELETE'" not in source, name
-        assert "/api/missions/relations/" not in source or "/messages" not in source, name
+        assert not re.search(r"\bmethod\s*:", source), f"{name} sets a request method"
+        assert not re.search(r"\b(?:POST|PUT|PATCH|DELETE)\b", source), f"{name} names a write verb"
+    out = _node("""
+const seen=[];
+const fakeFetch=async(path,init)=>{seen.push([path,(init&&init.method)||'GET']);
+  return {ok:true,status:200,text:async()=>JSON.stringify(path.includes('/relations/')?{relation:{relation_id:'r',kind:'qa',participants:[]},messages:[],participants:[]}
+    :path.includes('/missions/')?{missions:[{mission_id:'m',status:'open'}]}:{roles:[]})}};
+globalThis.fetch=fakeFetch;
+const reg=I.createRoleRegistry({fetchJson:async p=>{const r=await fakeFetch(p);return JSON.parse(await r.text())}});await reg.load();
+const cache=S.createMissionCache({fetchJson:async p=>{const r=await fakeFetch(p);return JSON.parse(await r.text())},setInterval:()=>1,clearInterval:()=>{}});
+cache.info('m');await new Promise(r=>setTimeout(r,5));
+return seen;""")
+    assert out and all(method == "GET" for _path, method in out), out
+
+
+def test_a_star_without_role_ref_has_no_role_even_with_a_bracket_in_its_title():
+    """M1 : le rôle ne vient que de `role_ref`, jamais d'un « [coder] » écrit dans le titre."""
+    out = _node("""
+const item=(id,ref,title)=>({schema_version:1,object_id:id,kind:'agent',category:'agent',exec_state:'running',representation:'point',
+  geometry:{x:0,y:0,w:6,h:6},layer:100,order:0,visibility:'visible',disposition:'active',constraints:{},origin:'runtime',
+  work_ref:{source:'claude',external_id:id},role_ref:ref,payload:{title,summary:'',items:[]}});
+const objects=[item('a',null,'[coder] Prototype'),item('b',undefined,'[qa] [research] Relire'),item('c',{role_id:''},'[coder] Vide')];
+const state={objects:new Map(objects.map(o=>[o.object_id,o])),relations:new Map()};
+const vm=L.viewModel(state,L.resolveLayout(state),L.viewport(1440,900),{roleIdentity:()=>({name:'Développement',badge:'DEV',known:true})});
+return vm.nodes.map(n=>({id:n.id,role:n.role,title:n.title,label:n.label}));""")
+    for node in out:
+        assert node["role"] is None, node
+        assert "rôle" not in node["label"], node
+    assert out[0]["title"] == "[coder] Prototype"
 
 
 def test_role_stars_get_room_for_their_pill_and_lose_only_their_exact_role_marker():
@@ -267,16 +297,19 @@ const relations=['a','b','c','d'].map(id=>({relation_id:'parent_of!p~'+id,kind:'
 const state={objects:new Map(objects.map(o=>[o.object_id,o])),relations:new Map(relations.map(r=>[r.relation_id,r]))};
 const layout=L.resolveLayout(state);
 const boxes=Object.fromEntries([...layout.placements].map(([id,b])=>[id,b]));
+const rooms=Object.fromEntries([...layout.placements].map(([id,b])=>[id,L.footprintOf(state.objects.get(id),b)]));
 const vm=L.viewModel(state,layout,L.viewport(1440,900),{});
 const title=id=>vm.nodes.find(n=>n.id===id).title;
-return {sizes:L.DEFAULT_SIZE,boxes,titles:{p:title('p'),a:title('a'),x:title('x'),plain:title('plain')}};""")
-    assert out["sizes"]["rolePoint"] == {"w": 18, "h": 8} and out["sizes"]["ownerPoint"] == {"w": 32, "h": 8}
-    boxes = out["boxes"]
-    assert (boxes["a"]["w"], boxes["a"]["h"]) == (18, 8) and (boxes["plain"]["w"], boxes["plain"]["h"]) == (6, 6)
-    team = [boxes[k] for k in ("p", "a", "b", "c", "d")]
+return {room:L.ROLE_PILL_ROOM,boxes,rooms,titles:{p:title('p'),a:title('a'),x:title('x'),plain:title('plain')}};""")
+    assert out["room"]["role"]["left"] == 13 and out["room"]["owner"]["left"] == 27
+    boxes, rooms = out["boxes"], out["rooms"]
+    # La géométrie enregistrée reste celle d'un point ; la place réservée s'étend surtout à GAUCHE (côté pastille).
+    assert (boxes["a"]["w"], boxes["a"]["h"]) == (6, 6) and (boxes["plain"]["w"], boxes["plain"]["h"]) == (6, 6)
+    assert rooms["a"]["x"] == boxes["a"]["x"] - 13 and rooms["p"]["x"] == boxes["p"]["x"] - 27
+    assert rooms["plain"] == boxes["plain"]
+    team = [rooms[k] for k in ("p", "a", "b", "c", "d", "x")]
+    overlap = lambda a, b: min(a["x"] + a["w"], b["x"] + b["w"]) > max(a["x"], b["x"]) and min(a["y"] + a["h"], b["y"] + b["h"]) > max(a["y"], b["y"])
     for i, one in enumerate(team):
         for other in team[i + 1:]:
-            apart_x = abs((one["x"] + one["w"] / 2) - (other["x"] + other["w"] / 2)) >= 18 - 1e-6
-            apart_y = abs((one["y"] + one["h"] / 2) - (other["y"] + other["h"] / 2)) >= 8 - 1e-6
-            assert apart_x or apart_y, (one, other)
+            assert not overlap(one, other), (one, other)
     assert out["titles"] == {"p": "Comparer", "a": "Prototype a", "x": "[coder] Mal marqué", "plain": "Sans rôle"}

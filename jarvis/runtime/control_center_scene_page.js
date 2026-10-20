@@ -1092,7 +1092,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   let edgeLines=[],follow=null,mixedLines=[],turning=0;
   /* Pastilles des relations (Slice 09) : `relation_id` → {el, content, place, mark} ; celles dont un bout tourne
      et l'autre non sont reposées image par image avec les fils mixtes. */
-  let marksEl=null,markTabId=null,mixedMarks=[],markOrder=[];
+  let marksEl=null,markTabId=null,markOrder=[];
   const marks=new Map();
   /* Le champ tourne-t-il vraiment ? (gravitation allumée, champ calculé, scène
      pas trop peuplée) : la boucle des fils mixtes ne s'allume que pour cela. */
@@ -1533,7 +1533,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function teardown(){
     if(raf){cancelAnimationFrame(raf);raf=0}
     if(readyTimer){cancelAnimationFrame(readyTimer);readyTimer=0}
-    stopFollow();edgeLines=[];mixedLines=[];mixedMarks=[];marks.clear();markTabId=null;if(missionCache)missionCache.stop();fieldMoving=false;settling.clear();if(desk)desk.clear();fieldFrozen=null;resyncPending=false;fieldClockKey='';
+    stopFollow();edgeLines=[];mixedLines=[];stopMarkTicker();marks.clear();markTabId=null;if(missionCache)missionCache.stop();fieldMoving=false;settling.clear();if(desk)desk.clear();fieldFrozen=null;resyncPending=false;fieldClockKey='';
     stopStatusTicker();
     if(root)root.remove();
     const style=document.getElementById('jarvisSceneStyle');
@@ -2152,7 +2152,6 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         if(anim.animationName==='sc-orbit-field')anim.currentTime=now;
     }catch(_error){/* animation sans horloge (calque masqué, page cachée) : la passe suivante réessaie. */}
     for(const record of nodes.values())syncOrbit(record.el);
-    for(const record of marks.values())syncOrbit(record.el);
   }
 
   /* **Garde de dérive** : l'horloge du document — celle des animations — peut
@@ -4181,7 +4180,6 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function turnEdges(){
     if(!mixedLines.length)return;
     const turn=fieldTurn();
-    turnMarks(turn);
     for(const {edge,line} of mixedLines){
       if(edge.fromTurns){
         const p=L.orbitTurnPoint({x:edge.x1,y:edge.y1},lastField,turn);
@@ -4268,21 +4266,23 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     ensureEdgeFrame();
   }
 
-  /* **Pastilles des relations d'agent** (Slice 09). Une par relation dessinée (`JarvisSceneLayout.relationMarks`),
-     un bouton gardé d'un rendu à l'autre (le focus et `aria-expanded` survivent), reposé seulement si sa place
-     change. Elle tourne avec le champ comme une étoile posée en son point quand tous ses bouts tournent (le tour
-     est une application affine : le milieu des places tourné est le milieu des places tournées) ; un bout fixe
-     et un bout qui tourne : reposée image par image (`turnMarks`) ; aucun bout qui tourne : immobile. */
-  function applyMarks(list,field){
+  /* **Pastilles des relations d'agent** (Slice 09, reprise QA). Une par relation dessinée
+     (`JarvisSceneLayout.relationMarks`), un bouton gardé d'un rendu à l'autre (le focus et `aria-expanded`
+     survivent). Elles sont calculées **dans le repère dessiné** : bouts des fils et étoiles là où le tour du champ
+     les a menés à cet instant, pastilles de rôle et étiquettes là où elles sont vraiment (toujours à gauche et
+     au-dessus de leur étoile, le tour ne les fait pas pivoter) — un calcul dans le repère des places les aurait
+     écartées d'obstacles qui, une fois le champ tourné, ne sont plus là. Champ en mouvement : recalcul chaque
+     seconde (`MARK_TICK_MS`), la pastille glisse d'une place à la suivante (transition linéaire de la même durée). */
+  const MARK_TICK_MS=1000;
+  let markTicker=0,lastMarkEdges=null,lastMarkVp=null;
+  function applyMarks(list){
     if(!marksEl||!Roles)return;
     const byId=new Map((lastModel?lastModel.nodes:[]).map(node=>[node.id,node]));
     const words=Roles.markWords(kind=>roleRegistry?roleRegistry.relationLabel(kind):'');
     const Board=window.JarvisRelationBoard||null;
     const openId=Board?Board.openRelationId():'';
-    const shape=field?`${field.cx}|${field.cy}|${field.scale}|${field.ms}`:'';
     const seen=new Set();
-    mixedMarks=[];
-    /* Ordre de lecture (haut en bas, gauche à droite) : celui des flèches et du DOM. */
+    /* Ordre de lecture (haut en bas, gauche à droite) : celui des flèches. */
     const ordered=[...list].sort((p,q)=>p.y-q.y||p.x-q.x);
     for(const mark of ordered){
       seen.add(mark.id);
@@ -4297,13 +4297,11 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(!record.el.parentNode)marksEl.appendChild(record.el);
       const label=L.relationMarkLabel(mark,byId,words);
       const content=`${mark.kind}|${mark.state}|${mark.outcome}|${mark.missionId}|${label}`;
-      /* `fillMark` réécrit `className` : la classe du tour (`sc-orbit`) tombe avec, la place est donc reposée. */
       if(content!==record.content){Roles.fillMark(document,record.el,mark,label);record.content=content;record.place=''}
       record.el.setAttribute('aria-expanded',openId&&openId===mark.id?'true':'false');
       record.mark=mark;
-      const place=`${mark.x}|${mark.y}|${mark.turns}|${mark.mixed}|${shape}`;
-      if(place!==record.place){positionMark(record,mark,field);record.place=place}
-      if(mark.mixed)mixedMarks.push(record);
+      const place=`${mark.x}|${mark.y}`;
+      if(place!==record.place){record.el.style.transform=`translate(${mark.x}px,${mark.y}px)`;record.place=place}
     }
     for(const [id,record] of marks){
       if(seen.has(id))continue;
@@ -4314,46 +4312,67 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     markOrder=ordered.map(mark=>mark.id);
     if(!marks.has(markTabId))markTabId=ordered.length?ordered[0].id:null;
     for(const [id,record] of marks)record.el.tabIndex=id===markTabId?0:-1;
-    if(mixedMarks.length&&lastField)turnMarks(fieldTurn());
+  }
+
+  /* Où le tour dessine maintenant le point `p` d'un objet (`turns` : il tourne ; sinon il est à sa place, au repos
+     déjà compris par `orbitLinks`). */
+  function drawnPoint(p,turns,turn){
+    return turns&&lastField?L.orbitTurnPoint({x:p.x,y:p.y},lastField,turn):{x:p.x,y:p.y};
   }
 
   /* Les pastilles de ce rendu : compactes (18 px) dans un graphe dense ou une fenêtre étroite (200 % de zoom
-     compris), et écartées des étoiles et de leurs pastilles de rôle, qu'elles couvriraient sinon. */
+     compris), et écartées des étoiles, de leurs pastilles de rôle, de l'étiquette et de la pastille de tâche
+     d'une étoile principale. */
   const MARK_SIZE=24,MARK_SIZE_COMPACT=18,MARK_COMPACT_FROM=24,MARK_COMPACT_BELOW_PX=900;
   function relationMarksFor(edges,vp){
     if(!Roles||!marksEl)return [];
     const relations=new Set(edges.filter(edge=>edge.relationId).map(edge=>edge.relationId)).size;
     const compact=relations>MARK_COMPACT_FROM||vp.width<MARK_COMPACT_BELOW_PX;
     marksEl.classList.toggle('sc-relmarks-compact',compact);
-    /* Fenêtre étroite (200 % de zoom) : les pastilles de rôle gardent icône, drapeau et badge ; l'origine et
-       « état inconnu » restent dans le nom accessible et le tableau. */
+    /* Fenêtre étroite (200 % de zoom) : les pastilles de rôle gardent icône, drapeau et badge ; l'origine reste
+       dans le nom accessible et le tableau. */
     root.classList.toggle('sc-roles-compact',vp.width<MARK_COMPACT_BELOW_PX);
+    /* Champ qui tourne : la place visée est celle de la FIN de la transition (une seconde plus tard), pour que la
+       pastille arrive avec ses étoiles au lieu de les suivre avec une seconde de retard. */
+    const lead=lastField&&fieldMoving?MARK_TICK_MS/lastField.ms:0;
+    const turn=lastField?((fieldTurn()+lead)%1+1)%1:0;
+    const drawn=edges.filter(edge=>edge.relationId).map(edge=>{
+      const a=drawnPoint({x:edge.x1,y:edge.y1},edge.fromTurns,turn),b=drawnPoint({x:edge.x2,y:edge.y2},edge.toTurns,turn);
+      return {...edge,x1:a.x,y1:a.y,x2:b.x,y2:b.y,fromTurns:false,toTurns:false};
+    });
     const obstacles=[];
     for(const node of lastModel?lastModel.nodes:[]){
       if(node.ghost||node.shape!=='point')continue;
-      obstacles.push({left:node.cx-9,top:node.cy-9,width:18,height:18});
-      if(node.role)obstacles.push(Roles.rolePillBox(node));
+      const turns=!!lastField&&L.orbitHolds(node,lastField);
+      const rest=!turns&&lastField?L.orbitRest(node,lastField):null;
+      const at=turns?drawnPoint({x:node.cx,y:node.cy},true,turn):{x:node.cx+(rest?rest.x:0),y:node.cy+(rest?rest.y:0)};
+      const here={...node,cx:at.x,cy:at.y};
+      obstacles.push({left:here.cx-9,top:here.cy-9,width:18,height:18});
+      if(node.role)obstacles.push(Roles.rolePillBox(here));
+      /* Ce qui reste affiché sans survol autour d'une étoile principale : son étiquette au-dessus (au plus
+         26 caractères) et sa pastille de tâche à droite. */
+      if(node.task){
+        const chars=Math.min(26,(node.title||'').length+1),width=Math.max(40,chars*6.8);
+        obstacles.push({left:here.cx-width/2,top:here.cy-9-6-17,width,height:17});
+        obstacles.push({left:here.cx+9,top:here.cy-8,width:30,height:16});
+      }
     }
-    return L.relationMarks(edges,{size:compact?MARK_SIZE_COMPACT:MARK_SIZE,obstacles});
+    lastMarkEdges=edges;lastMarkVp=vp;
+    armMarkTicker();
+    return L.relationMarks(drawn,{size:compact?MARK_SIZE_COMPACT:MARK_SIZE,obstacles});
   }
 
-  function positionMark(record,mark,field){
-    record.el.style.transform=`translate(${mark.x}px,${mark.y}px)`;
-    const point={id:mark.id,cx:mark.x,cy:mark.y,shape:'point',box:{left:mark.x,top:mark.y,width:0,height:0}};
-    if(mark.turns&&field&&L.orbitTrack(point,field)){applyOrbit(record.el,point,field);return}
-    record.el.classList.remove('sc-orbit');
-    record.el.style.translate='';record.el.style.animationDelay='';
+  /* Champ en mouvement et des pastilles à suivre : un recalcul par seconde, rien sinon. */
+  function armMarkTicker(){
+    const wanted=!!(lastField&&fieldMoving&&marks.size&&document.visibilityState!=='hidden');
+    if(wanted&&!markTicker)markTicker=window.setInterval(()=>{
+      if(!root||!lastModel||!lastMarkEdges||!lastField||!fieldMoving){stopMarkTicker();return}
+      if(follow||document.visibilityState==='hidden')return;  // geste en cours (pastilles tenues masquées) ou page cachée
+      applyMarks(relationMarksFor(lastMarkEdges,lastMarkVp));
+    },MARK_TICK_MS);
+    else if(!wanted)stopMarkTicker();
   }
-
-  /* Un bout fixe, un bout qui tourne : la pastille suit les bouts tournés de cette image. */
-  function turnMarks(turn){
-    for(const record of mixedMarks){
-      const mark=record.mark;
-      const points=mark.points.map(point=>point.turns?L.orbitTurnPoint({x:point.x,y:point.y},lastField,turn):point);
-      const at=L.relationMarkPoint(mark,points);
-      record.el.style.transform=`translate(${at.x}px,${at.y}px)`;
-    }
-  }
+  function stopMarkTicker(){if(markTicker){window.clearInterval(markTicker);markTicker=0}}
 
   /* Ouvrir le tableau de la relation d'une pastille. Le tableau lit ses routes lui-même ; la scène ne lui passe
      que la relation, sa mission et les mots des rôles. */
@@ -4445,7 +4464,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!enabled||!root)return;
     if(document.visibilityState==='hidden')return;
     const current=currentLayout();
-    if(!lastState||!current){applyNodes([]);applyEdges([],{width:1,height:1});applyMarks([],null);lastModel=null;return renderStatus()}
+    if(!lastState||!current){applyNodes([]);applyEdges([],{width:1,height:1});applyMarks([]);lastModel=null;return renderStatus()}
     const vp=L.viewport(root.clientWidth||window.innerWidth,root.clientHeight||window.innerHeight);
     const now=Date.now();
     markFresh(lastState,now);
@@ -4490,7 +4509,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     for(const node of lastModel.nodes){if(node.task){const record=nodes.get(node.id);if(record)clampLabel(record.el)}}
     const drawnEdges=L.orbitLinks(lastModel.edges,lastModel.nodes,field);
     applyEdges(drawnEdges,vp);
-    applyMarks(relationMarksFor(drawnEdges,vp),field);
+    applyMarks(relationMarksFor(drawnEdges,vp));
     syncField(!field);
     /* Période (vitesse) ou champ changés : **toutes** les animations qui
        partagent l'horloge — nœuds et calque des fils — sont remises à l'heure

@@ -50,13 +50,21 @@
     signal:Object.freeze({w:4,h:4}),
     capsule:Object.freeze({w:40,h:7}),
     window:Object.freeze({w:64,h:40}),
-    /* Étoile d'agent qui porte un rôle (organic-agent-orchestration Slice 09) : sa pastille de rôle (icône +
-       badge, à gauche de l'étoile) prend de la place ; le résolveur la lui réserve, pour que deux étoiles d'une
-       même équipe ne posent pas leurs pastilles l'une sur l'autre. Le point dessiné reste au centre. */
-    rolePoint:Object.freeze({w:18,h:8}),
-    /* Responsable de mission : sa pastille porte aussi le drapeau et l'origine de la mission, plus large. */
-    ownerPoint:Object.freeze({w:32,h:8}),
   });
+  /* **Place de la pastille de rôle** (organic-agent-orchestration Slice 09, reprise QA). Une étoile d'agent qui
+     porte un rôle garde la géométrie d'un point (6 × 6, centrée sur l'étoile) ; le résolveur lui réserve en plus,
+     pour ses voisines, ce qu'elle affiche sans survol : sa pastille À GAUCHE (`left` unités ≈ 55 px, 120 px pour un
+     responsable avec drapeau et origine, à la largeur de référence 1440 px), et pour un responsable — étoile
+     principale de sa tâche — l'étiquette au-dessus (`top`) et la pastille de tâche à droite (`right`). Le reste
+     (`top`/`bottom` d'une étoile ordinaire) laisse aux fils de l'équipe la longueur d'une pastille de relation.
+     Rien n'est enregistré de plus. */
+  const ROLE_PILL_ROOM=Object.freeze({role:Object.freeze({left:13,right:3,top:3,bottom:3}),
+    owner:Object.freeze({left:27,right:7,top:8,bottom:3})});
+  function footprintOf(item,box){
+    if(!item||item.kind!=='agent'||!item.role_ref||typeof item.role_ref.role_id!=='string'||item.representation&&item.representation!=='point')return box;
+    const room=item.role_ref.mission_owner===true?ROLE_PILL_ROOM.owner:ROLE_PILL_ROOM.role;
+    return {x:box.x-room.left,y:box.y-room.top,w:box.w+room.left+room.right,h:box.h+room.top+room.bottom};
+  }
   /* Travail maximal d'une passe (comparaisons de boîtes) : au-delà, les objets
      restants prennent leur premier emplacement admissible sans comparaison. */
   const WORK_BUDGET=400000;
@@ -1410,9 +1418,7 @@
   function sizeFor(item){
     if(item.representation==='window')return DEFAULT_SIZE.window;
     if(item.representation==='capsule')return DEFAULT_SIZE.capsule;
-    if(item.kind==='attention')return DEFAULT_SIZE.signal;
-    if(item.kind!=='agent'||!item.role_ref||typeof item.role_ref.role_id!=='string')return DEFAULT_SIZE.point;
-    return item.role_ref.mission_owner===true?DEFAULT_SIZE.ownerPoint:DEFAULT_SIZE.rolePoint;
+    return item.kind==='attention'?DEFAULT_SIZE.signal:DEFAULT_SIZE.point;
   }
 
   function workKey(ref){return ref&&typeof ref.source==='string'?`${ref.source}\n${ref.external_id}`:null}
@@ -1588,7 +1594,7 @@
       order.set(item.object_id,index++);
       if(item.visibility!=='visible'||!item.geometry)continue;
       const g=item.geometry,box={x:g.x,y:g.y,w:g.w,h:g.h};
-      placements.set(item.object_id,box);grid.add(box,item.layer);
+      placements.set(item.object_id,box);grid.add(footprintOf(item,box),item.layer);
     }
     const anchors=anchorsOf(state);
     const pending=[...state.objects.values()].filter(item=>item.visibility==='visible'&&!item.geometry);
@@ -1601,13 +1607,14 @@
        `firstFit` : prendre le premier sans chevauchement de même couche (un
        signal peut recouvrir une étoile voisine, pas un autre signal).
        Rend {box, index, free} ou null. */
-    const pick=(candidates,start,layer,sameLayerOnly,firstFit,fits)=>{
+    const pick=(candidates,start,layer,sameLayerOnly,firstFit,fits,item)=>{
       let best=null;
       for(let i=start;i<candidates.length;i++){
         const box=candidates[i];
         if(!fits(box))continue;
         if(work>WORK_BUDGET)return {box,index:i,free:false,cost:Infinity};
-        const [same,other,count]=grid.overlap({x:box.x-1,y:box.y-1,w:box.w+2,h:box.h+2},layer);
+        const room=footprintOf(item,box);
+        const [same,other,count]=grid.overlap({x:room.x-1,y:room.y-1,w:room.w+2,h:room.h+2},layer);
         work+=count+1;
         const face=overlapArea(box,faceBox);
         if(same===0&&other===0&&face===0)return {box,index:i,free:true};
@@ -1634,7 +1641,9 @@
          avec un tas d'étoiles superposées. Ce qui compte est que **plus rien
          ne resserre le champ** : l'immobilité reste le sort de cet objet-là,
          et de lui seul. */
-      const turnFits=box=>inSafeArea(box)&&orbitFits(box,item.representation);
+      /* La pastille de rôle reste elle aussi dans la zone sûre (`footprintOf`). */
+      const safeFits=box=>inSafeArea(footprintOf(item,box));
+      const turnFits=box=>safeFits(box)&&orbitFits(box,item.representation);
       /* Une place libre sur son tour d'abord ; sinon le choix d'avant, dans
          toute la zone sûre — libre si possible, au moindre coût sinon. Une
          superposition coûte plus qu'un tour qui déborde. */
@@ -1646,11 +1655,11 @@
            `WORK_BUDGET` — au-delà duquel les objets restants prennent leur
            premier candidat, superpositions comprises. */
         if(!fullKey||!turnFull.has(fullKey)){
-          const tight=pick(candidates,start,item.layer,sameLayerOnly,firstFit,turnFits);
+          const tight=pick(candidates,start,item.layer,sameLayerOnly,firstFit,turnFits,item);
           if(tight&&tight.free)return tight;
           if(fullKey)turnFull.add(fullKey);
         }
-        return pick(candidates,start,item.layer,sameLayerOnly,firstFit,inSafeArea);
+        return pick(candidates,start,item.layer,sameLayerOnly,firstFit,safeFits,item);
       };
       let chosen=null;
       if(anchorBox){
@@ -1669,7 +1678,7 @@
         else if(start>0){const again=best(candidates,0,false,false,fullKey);if(again&&(!far||again.cost<far.cost))far=again}
         chosen=far?far.box:{x:Math.round(home.x-size.w/2),y:Math.round(home.y-size.h/2),w:size.w,h:size.h};
       }
-      placements.set(item.object_id,chosen);grid.add(chosen,item.layer);resolved.push(item.object_id);
+      placements.set(item.object_id,chosen);grid.add(footprintOf(item,chosen),item.layer);resolved.push(item.object_id);
     }
     return {placements,resolved,work};
   }
@@ -1721,6 +1730,8 @@
   const RELATION_MARK_STEP_PX=26;
   /* Écart maximal d'une pastille à plusieurs participants depuis leur barycentre. */
   const RELATION_MARK_DRIFT_PX=40;
+  /* Écart maximal d'une pastille à deux participants en travers de son fil. */
+  const RELATION_MARK_OFF_PX=16;
   const ROLE_ID_SHAPE=/^[a-z][a-z0-9_-]{0,63}$/;
   const LANE_ORDER=['parent_of','explains','groups',...AGENT_RELATION_KINDS];
   const isAgentRelation=kind=>AGENT_RELATION_KINDS.indexOf(kind)>=0;
@@ -1853,7 +1864,7 @@
      qu'elles couvriraient sinon. Borné : six passes au plus (O(n² + n·m) par passe). */
   function spreadMarks(marks,size,obstacles){
     /* 24 px entre centres au moins : la cible compacte de 18 px garde l'espacement de WCAG 2.5.8. */
-    const min=Math.max(size+2,24),clear=size/2+2;
+    const min=Math.max(size+4,24),clear=size/2+3;
     const apart=()=>{
       let moved=false;
       for(let i=0;i<marks.length;i++)for(let j=i+1;j<marks.length;j++){
@@ -1896,13 +1907,17 @@
     if(mark.points.length===2){
       const [a,b]=mark.points,lx=b.x-a.x,ly=b.y-a.y,length=Math.hypot(lx,ly);
       if(!(length>0))return false;
-      /* Seule la composante le long du fil compte ; une poussée en travers ne peut pas le quitter. */
+      /* Surtout le long du fil ; la composante en travers l'écarte de son fil d'au plus `RELATION_MARK_OFF_PX`
+         (elle reste lue comme la pastille de CE fil) : sans elle, un fil qui passe sous une pastille de rôle
+         n'avait aucune place libre. */
       let along=(vx*lx+vy*ly)/length;
+      const across=(vx*-ly+vy*lx)/length;
       const force=Math.hypot(vx,vy);
       if(side&&Math.abs(along)<.3*force)along=side*force;
       const t=Math.max(.15,Math.min(.85,mark.place.t+along/length));
-      if(Math.abs(t-mark.place.t)<1e-4)return false;
-      mark.place.t=t;
+      const off=Math.max(-RELATION_MARK_OFF_PX,Math.min(RELATION_MARK_OFF_PX,(mark.place.off||0)+across));
+      if(Math.abs(t-mark.place.t)<1e-4&&Math.abs(off-(mark.place.off||0))<1e-4)return false;
+      mark.place.t=t;mark.place.off=off;
     }else{
       /* Au barycentre : jamais plus loin que `RELATION_MARK_DRIFT_PX` — au-delà, elle ne se lirait plus comme la
          pastille de ses participants. */
@@ -1922,8 +1937,9 @@
   function relationMarkPoint(mark,points){
     if(!points.length)return {x:0,y:0};
     if(points.length===2){
-      const [a,b]=points,t=mark.place.t;
-      return {x:round1(a.x+(b.x-a.x)*t),y:round1(a.y+(b.y-a.y)*t)};
+      const [a,b]=points,t=mark.place.t,off=mark.place.off||0;
+      const length=Math.hypot(b.x-a.x,b.y-a.y)||1;
+      return {x:round1(a.x+(b.x-a.x)*t-(b.y-a.y)/length*off),y:round1(a.y+(b.y-a.y)*t+(b.x-a.x)/length*off)};
     }
     let x=0,y=0;
     for(const point of points){x+=point.x;y+=point.y}
@@ -2315,7 +2331,7 @@
     ORBIT_AXES,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX,ORBIT_RATE_MIN,ORBIT_RATE_MAX,QUANTUM,orbitFits,orbitReach,orbitInset,orbitTurnsRepresentation,
     orbitHolds,orbitRest,orbitDrawnPoint,orbitPlacesOf,orbitLinks,nodeGeometry,holdStart,holdPlace,
     viewport,toScreen,cleanLine,cleanText,markdownSpans,markdownText,markdownBlocks,markdownLines,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
-    stackOf,windowStack,WINDOW_FLOOR,viewModel,AGENT_RELATION_KINDS,RELATION_LANE_PX,roleOf,laneEdges,relationMarks,relationMarkPoint,relationMarkLabel,taskGroups,taskColor,taskSentence,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
+    stackOf,windowStack,WINDOW_FLOOR,viewModel,ROLE_PILL_ROOM,footprintOf,AGENT_RELATION_KINDS,RELATION_LANE_PX,roleOf,laneEdges,relationMarks,relationMarkPoint,relationMarkLabel,taskGroups,taskColor,taskSentence,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

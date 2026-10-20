@@ -162,8 +162,10 @@ de `subagent_roles.role_brief(role, overrides)` :
    de qualité, relations à envisager, avec sa clé exacte `<id>@<version>` et la mention « des réflexes, pas
    des étapes ».
 
-Seules les instructions sont éditables, par la voie existante `POST /api/prompts/subagent_role.<id>`
-(révisions optimistes) ; capacités et méthode suivent toujours le code. Aucune autre voie d'écriture.
+Les instructions sont éditables par la voie existante `POST /api/prompts/subagent_role.<id>`
+(révisions optimistes) ; capacités et méthode par défaut suivent le code. Seule autre écriture, depuis
+organic-agent-orchestration Slice 12 : la promotion explicite d'une approche observée en Work Method (voir la
+section des Work Methods) ; aucune autre voie d'écriture.
 
 **`can_spawn` et l'outillage effectif.** Le CLI donne l'outil `Agent` à tout sous-agent `general-purpose` :
 `can_spawn` ne retire aucun outil aujourd'hui. Il est effectif par la consigne (bloc 2), et il reste lié à

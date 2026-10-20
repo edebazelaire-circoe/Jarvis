@@ -43,9 +43,11 @@ import {spawn} from 'node:child_process';
 import {mkdtempSync, rmSync, writeFileSync, renameSync, unlinkSync, readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {disposeChromeOnExit} from './_cdp_profile.mjs';
+import {disposeChromeOnExit,killChrome,assertSafeTarget} from './_cdp_profile.mjs';
 
 const [,,PAGE,CHROME,PLAN,RUNTIME]=process.argv;
+/* Jamais le JARVIS vivant : ni ses ports, ni son dossier d'exécution (QA S09, `_cdp_profile.mjs`). */
+assertSafeTarget(PAGE,RUNTIME);
 /* `@<fichier>` : le plan lu dans un fichier (un long plan depasse la ligne de commande Windows). */
 const plan=JSON.parse(PLAN.startsWith('@')?readFileSync(PLAN.slice(1),'utf-8'):PLAN);
 const REMOTE=/^https?:\/\//.test(PAGE);

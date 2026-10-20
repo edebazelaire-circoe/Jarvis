@@ -38,3 +38,13 @@ sandbox-06/07 (200 %) précèdent le retrait de l'origine dans les pastilles sou
 
 Arrêt : Core et Control Center arrêtés par arbre de PID, ports 27653/27654 libres, JARVIS vivant (17653/17654)
 jamais sollicité.
+
+REPRISE QA (2026-10-21, run-fix) : nouveau bac à sable 27653/27654, un tour réel sonnet (Mission Owner
+research-lead, trois [research] en confrontation réelle) + la mission semée par les vraies routes de Core
+(délégation, relais). Équipes placées par la nouvelle réservation de place. Captures : sandbox-fix-fresh-team.png
+(100 %, gravitation allumée : 6 pastilles, recouvrements mesurés 1 et 7 px² avec une étiquette pendant la glissade),
+sandbox-fix-race.png (deux pastilles ouvertes à 300 ms d'écart pendant des lectures ralenties à 1,5 s : le tableau
+montre la seconde relation, phase « ready », rien en vol), sandbox-fix-zoom200.png (200 % : recouvrements restants
+avec des étiquettes et pastilles de rôle, consignés dans HV-ORG-09-05). Arrêt par sb.py stop : PID ET heure de
+création vérifiés, descendants nés après leur parent seulement, jamais taskkill /T ; ports libres ; JARVIS vivant
+intact.

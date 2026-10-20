@@ -26,9 +26,11 @@ import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {disposeChromeOnExit} from './_cdp_profile.mjs';
+import {disposeChromeOnExit,killChrome,assertSafeTarget} from './_cdp_profile.mjs';
 
 const [,,PAGE,CHROME,STEP]=process.argv;
+/* Jamais le JARVIS vivant : ni ses ports, ni son dossier d'exécution (QA S09, `_cdp_profile.mjs`). */
+assertSafeTarget(PAGE,null);
 const step=JSON.parse(STEP);
 const EXTRA=step.extra?(await import(pathToFileURL(step.extra).href)).FAKE:'';
 
@@ -286,13 +288,8 @@ try{
   try{rmSync(profile,{recursive:true,force:true,maxRetries:10,retryDelay:300})}catch(_){/* Windows tient le dossier */}
 }
 
-function killTree(child){
-  if(process.platform==='win32'&&child.pid){
-    try{execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});return}
-    catch(_){/* deja sorti */}
-  }
-  child.kill();
-}
+/* Chrome de CE harnais seulement (profil jetable) : jamais `taskkill /PID … /T` sur un PID mémorisé (QA S09). */
+function killTree(child){killChrome(child,profile)}
 
 async function poll(url){
   for(let i=0;i<100;i+=1){

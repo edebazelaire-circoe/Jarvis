@@ -15,9 +15,11 @@ import {spawn, execFileSync} from 'node:child_process';
 import {mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {disposeChromeOnExit} from './_cdp_profile.mjs';
+import {disposeChromeOnExit,killChrome,assertSafeTarget} from './_cdp_profile.mjs';
 
 const [,,BASE,CHROME,PLAN]=process.argv;
+/* Jamais le JARVIS vivant : ni ses ports, ni son dossier d'exécution (QA S09, `_cdp_profile.mjs`). */
+assertSafeTarget(BASE,null);
 const plan=JSON.parse(PLAN);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const profile=mkdtempSync(join(tmpdir(),'jarvis-chat-tabs-'));
@@ -108,8 +110,7 @@ try{
   process.stdout.write(JSON.stringify(out));
 }finally{
   const exited=new Promise(resolve=>chrome.once('exit',resolve));
-  if(process.platform==='win32'&&chrome.pid){try{execFileSync('taskkill',['/PID',String(chrome.pid),'/T','/F'],{stdio:'ignore'})}catch(_){chrome.kill()}}
-  else chrome.kill();
+  killChrome(chrome,profile);  // Chrome de CE harnais seulement (QA S09)
   await Promise.race([exited,sleep(4000)]);
   try{rmSync(profile,{recursive:true,force:true,maxRetries:10,retryDelay:300})}catch(_){/* Windows tient le dossier */}
 }
