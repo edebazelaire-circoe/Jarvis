@@ -141,6 +141,9 @@ class SubagentRole:
     #: Proposé aux agents qui peuvent lancer d'autres agents (`can_spawn`), dans les capacités apposées sur leur
     #: consigne. Faux pour un rôle qui n'a de sens qu'au premier niveau (l'Intervieweur parle par le cerveau).
     offered_to_subagents: bool = True
+    #: Sortie finale imposée par les instructions (l'Intervieweur : une seule ligne `QUESTION :` / `PRÊT :`).
+    #: Le texte généré pour ce rôle ne demande alors jamais d'ajout au compte rendu. Donnée explicite.
+    constrained_output: bool = False
 
     def __post_init__(self) -> None:
         for name in ("id", "marker"):
@@ -176,7 +179,7 @@ class SubagentRole:
             raise ValueError(f"subagent role {self.id}: default_work_method must be one of work_methods")
         if self.loadout_role is not None and self.loadout_role not in LOADOUT_ROLES:
             raise ValueError(f"subagent role {self.id}: loadout_role must be one of {list(LOADOUT_ROLES)}")
-        for name in ("enabled", "offered_to_brain", "offered_to_subagents"):
+        for name in ("enabled", "offered_to_brain", "offered_to_subagents", "constrained_output"):
             if not isinstance(getattr(self, name), bool):
                 raise TypeError(f"{name} must be a boolean")
 
@@ -205,6 +208,7 @@ class SubagentRole:
             "loadout_role": self.loadout_role,
             "offered_to_brain": self.offered_to_brain,
             "offered_to_subagents": self.offered_to_subagents,
+            "constrained_output": self.constrained_output,
             "aliases": sorted(alias for alias, target in ROLE_ALIASES.items() if target == self.id),
         }
 
@@ -370,6 +374,8 @@ ROLES: tuple[SubagentRole, ...] = (
         visual=RoleVisual(icon="question", accent="violet", badge="INT"),
         # L'Intervieweur ne parle à l'utilisateur que par le cerveau : un agent ne le lance pas.
         offered_to_subagents=False,
+        # Sa réponse finale est une seule ligne `QUESTION :` / `PRÊT :`, « pas d'autre texte ».
+        constrained_output=True,
     ),
     SubagentRole(
         id="research",
@@ -569,12 +575,18 @@ def capabilities_text(role: SubagentRole, roles: Sequence[SubagentRole] = ROLES)
     """Ce que le rôle peut faire, généré du registre : lancer des agents (`can_spawn`) et lesquels.
 
     Le CLI donne l'outil `Agent` à tout sous-agent `general-purpose` : tant qu'aucun type d'agent à outils
-    restreints n'est câblé (Slice 05), cette consigne est ce qui rend `can_spawn` effectif.
+    restreints n'est câblé (Slice 05), cette consigne est ce qui rend `can_spawn` effectif. Le hook l'appose
+    après la charte du chantier (`agent_charter`), qui invite tout sous-agent à déléguer : pour un rôle qui ne
+    lance pas, le texte dit qu'il prime sur cette règle. Un rôle à sortie contrainte (`constrained_output`)
+    n'est jamais invité à ajouter quoi que ce soit à son compte rendu.
     """
 
     if not role.can_spawn:
-        return (f"{CAPABILITIES_MARK}\nVous ne lancez aucun autre agent : si un autre travail vous semble "
-                "nécessaire, dites-le dans votre compte rendu.")
+        where = ("notez-le dans le dossier de mission ; votre réponse finale garde la seule forme que vos "
+                 "instructions imposent" if role.constrained_output else "dites-le dans votre compte rendu")
+        return (f"{CAPABILITIES_MARK}\nVous ne lancez aucun autre agent (outil {SPAWN_TOOL}) : pour ce rôle, "
+                "cette règle prime sur l'invitation à déléguer de la charte du chantier. Si un autre travail vous "
+                f"semble nécessaire, {where}.")
     offered = [item for item in roles if item.enabled and item.offered_to_subagents and item.id != role.id]
     catalogue = " ; ".join(f"{_marker_of(item)} ({item.name.lower()})" for item in offered)
     return (

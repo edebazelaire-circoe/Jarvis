@@ -553,3 +553,46 @@ def test_an_unknown_marker_never_gets_a_method():
     assert role_for("zorg") is None and with_role_instructions("Consigne.", "zorg") is None
     assert routing_hook.read_role({"description": "[code] [zorg] Relire"}) is None
     assert routing_hook.strip_profile("[code] [zorg] Relire") == "[zorg] Relire"
+
+
+# ---------------------------------------------------------------- corrections QA de la Slice 04
+
+
+def test_no_role_brief_contradicts_a_constrained_final_output():
+    # L'Intervieweur rend une seule ligne `QUESTION :` / `PRÊT :` : rien de généré ne lui demande d'ajouter au
+    # compte rendu. Donnée explicite du rôle, vérifiée pour tous.
+    from jarvis.domain.subagent_roles import capabilities_text, default_method_text
+    assert [role.id for role in ROLES if role.constrained_output] == ["interviewer"]
+    for role in ROLES:
+        generated = capabilities_text(role) + (default_method_text(role) or "")
+        if role.constrained_output:
+            assert "compte rendu" not in generated, role.id
+            assert "dossier de mission" in generated
+        assert role.as_dict()["constrained_output"] is role.constrained_output
+
+
+def test_a_non_spawning_role_brief_overrides_the_charter_delegation_in_assembly_order(tmp_path):
+    from jarvis.domain.agent_charter import AGENT_TASK_CHARTER
+    delegation = "délègue à tes propres sous-agents"
+    assert delegation in AGENT_TASK_CHARTER.replace("\n", " ")
+    for marker in ("qa", "interviewer", "research", "web-research", "concept"):
+        assert not role_for(marker).can_spawn
+        brief = brief_of(routing_hook.run(call(f"[general] [{marker}] Faire"), tmp_path))
+        flat = brief.replace("\n", " ")
+        # Ordre réel : charte, consigne, puis le rôle ; le bloc des capacités dit qu'il prime sur la charte.
+        assert flat.index(delegation) < flat.index(ROLE_MARK) < flat.index(CAPABILITIES_MARK)
+        capabilities = flat[flat.index(CAPABILITIES_MARK):]
+        assert "Vous ne lancez aucun autre agent" in capabilities and "prime sur" in capabilities
+        assert "Vous pouvez lancer" not in flat
+
+
+def test_role_applied_traces_the_nested_caller_and_both_sizes(tmp_path):
+    nested = {**call("[general] [qa] Relire"), "agent_id": "aeff9faad9c652acc"}
+    brief = brief_of(routing_hook.run(nested, tmp_path))
+    routing_hook.run(call("[general] [concept] Pistes"), tmp_path)
+    first, second = trace(tmp_path, "agent.role_applied")
+    assert first["data"]["caller_agent_id"] == "aeff9faad9c652acc" and first["data"]["can_spawn"] is False
+    assert second["data"]["caller_agent_id"] is None
+    assert first["data"]["instructions_chars"] == len(brief) - brief.index(ROLE_MARK)
+    assert first["data"]["role_instructions_chars"] == len(role_for("qa").instructions.strip())
+    assert first["data"]["role_instructions_chars"] < first["data"]["instructions_chars"]

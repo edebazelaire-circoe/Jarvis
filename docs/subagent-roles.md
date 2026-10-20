@@ -55,6 +55,10 @@ Règles :
   - `offered_to_subagents` : le rôle figure dans les capacités apposées sur la consigne d'un agent qui peut
     lancer des agents (section 1bis). Faux pour l'Intervieweur, qui ne parle à l'utilisateur que par le
     cerveau.
+- `constrained_output` : la réponse finale du rôle a une forme imposée par ses instructions (l'Intervieweur :
+  une seule ligne `QUESTION :` / `PRÊT :`, « pas d'autre texte »). Le texte généré pour ce rôle ne lui demande
+  alors jamais d'ajouter quoi que ce soit au compte rendu ; il renvoie au dossier de mission. Donnée explicite,
+  jamais déduite des instructions, et un test l'impose à tous les rôles.
 - **Pourquoi activer `research-lead` et `qa` dès la Slice 04.** Leur câblage registre/hook est complet ici
   (méthode, capacités, Work Method, loadout) et ne touche pas le prompt du cerveau. Effets immédiats : un
   agent qui lance des agents (Développement, Direction de recherche) peut demander `[general] [qa]` ou
@@ -145,7 +149,11 @@ de `subagent_roles.role_brief(role, overrides)` :
    défaut du code ;
 2. `CAPACITÉS DU RÔLE` (`capabilities_text`), généré du registre : pour un rôle `can_spawn`, il peut lancer
    des agents (outil `Agent`), avec la liste des marqueurs `[profil] [rôle]` des rôles actifs
-   `offered_to_subagents` ; sinon « Vous ne lancez aucun autre agent » ;
+   `offered_to_subagents` ; sinon « Vous ne lancez aucun autre agent », avec la mention que cette règle
+   **prime sur l'invitation à déléguer de la charte du chantier** (`AGENT_TASK_CHARTER`, apposée avant : ordre
+   réel charte, consigne, playbook, rôle), et où signaler un autre travail utile : le compte rendu, ou le
+   dossier de mission pour un rôle `constrained_output`. La charte elle-même ne connaît pas les rôles ; la
+   rendre consciente des rôles relève de la Slice 05 ;
 3. la **Work Method par défaut** du rôle (`work_methods.render_method`), s'il en a une : principes, critères
    de qualité, relations à envisager, avec sa clé exacte `<id>@<version>` et la mention « des réflexes, pas
    des étapes ».
@@ -164,7 +172,10 @@ un appel imbriqué selon le rôle de l'appelant : l'événement porte l'`agent_i
 **Journal `agent.role_applied`** (codes, jamais le texte) : `role` (marqueur tel qu'écrit), `role_id` et
 `role_status` (`declared`, ou `alias` pour `[reviewer]`), `profile`, `source` (`override` ou `default`, selon
 l'id canonique), `work_method` (`<id>@<version>` ou `null`), `loadout_role`, `can_spawn`,
-`instructions_chars` (taille du texte apposé), `tool_use_id`.
+`caller_agent_id` (l'`agent_id` du sous-agent appelant pour un appel imbriqué, `null` pour le cerveau : de quoi
+vérifier après coup qu'un rôle `can_spawn=False` n'a lancé personne), `instructions_chars` (tout le texte
+apposé à partir de `ROLE_MARK` : instructions, capacités et méthode), `role_instructions_chars` (les seules
+instructions effectives, surcharge ou défaut), `tool_use_id`.
 
 Un marqueur inconnu (`[code] [zorg] …`) n'est pas un rôle : rien n'est apposé, le libellé le garde.
 
@@ -175,7 +186,7 @@ Slice 04 :
 
 | Clé | Contenu |
 | --- | --- |
-| `roles[]` | `SubagentRole.as_dict()` (dont `enabled`, `offered_to_brain`, `offered_to_subagents`, `aliases`, `visual`, capacités, `work_methods`, `default_work_method`, `loadout_role`), plus `instructions` effectives, `default_instructions`, `modified`, `default_revision`, `revision`, `conflict` |
+| `roles[]` | `SubagentRole.as_dict()` (dont `enabled`, `offered_to_brain`, `offered_to_subagents`, `constrained_output`, `aliases`, `visual`, capacités, `work_methods`, `default_work_method`, `loadout_role`), plus `instructions` effectives, `default_instructions`, `modified`, `default_revision`, `revision`, `conflict` |
 | `work_methods[]` | `WorkMethod.to_payload()` de chaque méthode livrée |
 | `aliases` | `ROLE_ALIASES` (`{"reviewer": "qa"}`) |
 | `accents` | `ROLE_ACCENTS`, les jetons que le frontend traduit en variables CSS |

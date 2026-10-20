@@ -36,7 +36,7 @@ from jarvis.domain import agent_markers, routing
 from jarvis.domain.agent_charter import sign_brief
 from jarvis.domain.loadout_view import MANIFEST_MARK
 from jarvis.domain.work_methods import builtin_method
-from jarvis.domain.subagent_roles import ROLE_MARK, resolve_role, role_for, with_role_instructions
+from jarvis.domain.subagent_roles import ROLE_MARK, instructions_for, resolve_role, role_for, with_role_instructions
 # `ANNOUNCED_ROLES` : les rôles qu'une description peut annoncer (loadout, registre, alias), réexporté ici.
 from jarvis.domain.agent_markers import ANNOUNCED_ROLES, WORD_PATTERN  # noqa: F401
 from jarvis.domain.routing import (
@@ -514,8 +514,11 @@ def _log_role(
 
     La preuve est faite de codes : le marqueur tel qu'écrit (`role`), l'id canonique et le statut de sa
     résolution (`reviewer` -> `qa`, `alias`), le profil, la source des instructions (`override` ou `default`),
-    la Work Method apposée (`<id>@<version>` ou `None`), le rôle de loadout, la capacité de lancer des agents et
-    la taille du texte apposé, jamais le texte lui-même.
+    la Work Method apposée (`<id>@<version>` ou `None`), le rôle de loadout, la capacité de lancer des agents,
+    l'`agent_id` de l'appelant quand l'appel est imbriqué (`caller_agent_id`, `None` pour le cerveau : de quoi
+    vérifier après coup qu'un rôle qui ne lance pas n'a lancé personne), et deux tailles : `instructions_chars`
+    = tout le texte apposé à partir de `ROLE_MARK` (instructions, capacités et méthode), et
+    `role_instructions_chars` = les seules instructions effectives (surcharge ou défaut). Jamais le texte.
     """
     tool_input = event.get("tool_input")
     tool_input = tool_input if isinstance(tool_input, Mapping) else {}
@@ -527,6 +530,7 @@ def _log_role(
     resolution = resolve_role(role)
     active = role_for(role)
     method = active.default_work_method if active is not None else None
+    caller = event.get("agent_id")
     try:
         journal.emit(
             "agent.role_applied",
@@ -542,7 +546,9 @@ def _log_role(
                 "work_method": method_key(method),
                 "loadout_role": read_loadout_role(tool_input),
                 "can_spawn": bool(active and active.can_spawn),
+                "caller_agent_id": caller if isinstance(caller, str) and caller else None,
                 "instructions_chars": len(after) - after.index(ROLE_MARK),
+                "role_instructions_chars": len(instructions_for(active, role_overrides).strip()) if active else 0,
             },
         )
     except OSError:
