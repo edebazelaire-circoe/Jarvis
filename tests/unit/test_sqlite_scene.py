@@ -57,6 +57,11 @@ from jarvis.domain.scene import (
 )
 from jarvis.ports.scene import SceneRepository, SceneStoreError, SceneStoreErrorCode
 
+#: Version de fichier courante et la suivante, que ce code doit refuser.
+FILE_VERSION = sqlite_scene._SCHEMA_VERSION
+NEWER = FILE_VERSION + 1
+NEWER_MESSAGE = f"schema {NEWER} is newer than supported {FILE_VERSION}"
+
 RUNTIME, BRAIN, USER = SceneActor.RUNTIME, SceneActor.BRAIN, SceneActor.USER
 
 
@@ -195,10 +200,10 @@ async def test_newer_schema_is_refused_and_the_file_is_left_untouched(tmp_path):
     repository, _ = await fresh(path)
     await repository.close()
     with sqlite3.connect(path) as conn:
-        conn.execute("UPDATE schema_version SET version = 2")
+        conn.execute(f"UPDATE schema_version SET version = {NEWER}")
     conn.close()
     before = digest(path)
-    await expect_refusal(path, SceneStoreErrorCode.SCHEMA_NEWER, "schema 2 is newer than supported 1")
+    await expect_refusal(path, SceneStoreErrorCode.SCHEMA_NEWER, NEWER_MESSAGE)
     assert digest(path) == before
 
 
@@ -359,7 +364,7 @@ async def test_payload_columns_are_plain_json_of_the_domain_wire_form(tmp_path):
         (version,) = conn.execute("SELECT version FROM schema_version").fetchone()
     conn.close()
     assert json.loads(data) == snapshot.objects[0].to_payload()
-    assert version == 1
+    assert version == FILE_VERSION
 
 
 # --- ouverture durcie (reprise QA de la Slice 02) --------------------------------------------
@@ -504,13 +509,13 @@ async def test_a_refused_file_with_a_pending_wal_keeps_its_logical_content(tmp_p
     code = (
         "import sqlite3, os, sys; c = sqlite3.connect(sys.argv[1], isolation_level=None);"
         "c.execute('PRAGMA journal_mode=WAL'); c.execute('PRAGMA wal_autocheckpoint=0');"
-        "c.execute('UPDATE schema_version SET version = 2'); os._exit(0)"
+        f"c.execute('UPDATE schema_version SET version = {NEWER}'); os._exit(0)"
     )
     subprocess.run([sys.executable, "-c", code, str(path)], check=True)
     assert (tmp_path / "scene.sqlite3-wal").is_file()
     before = logical_content(path)
-    assert before["schema_version"] == [(2,)]
-    await expect_refusal(path, SceneStoreErrorCode.SCHEMA_NEWER, "schema 2 is newer than supported 1")
+    assert before["schema_version"] == [(NEWER,)]
+    await expect_refusal(path, SceneStoreErrorCode.SCHEMA_NEWER, NEWER_MESSAGE)
     assert logical_content(path) == before
 
 
@@ -611,13 +616,13 @@ async def test_a_newer_schema_written_just_before_the_open_is_never_served(tmp_p
 
     def mutate_then_check():
         conn = sqlite3.connect(path)
-        conn.execute("UPDATE schema_version SET version = 2")
+        conn.execute(f"UPDATE schema_version SET version = {NEWER}")
         conn.commit()
         conn.close()
         original()
 
     racing._check_access = mutate_then_check
-    with pytest.raises(SceneStoreError, match="schema 2 is newer") as caught:
+    with pytest.raises(SceneStoreError, match=f"schema {NEWER} is newer") as caught:
         await racing.initialize()
     assert caught.value.code is SceneStoreErrorCode.SCHEMA_NEWER
     assert racing._conn is None

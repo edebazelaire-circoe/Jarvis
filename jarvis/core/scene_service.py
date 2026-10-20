@@ -141,6 +141,8 @@ SCENE_ARCHIVE_PURGED_KIND = "core.scene.archive_purged"
 SCENE_ARCHIVE_PURGE_FAILED_KIND = "core.scene.archive_purge_failed"
 SCENE_SWEEP_FAILED_KIND = "core.scene.sweep_failed"
 SCENE_ORPHAN_WAL_SET_ASIDE_KIND = "core.scene.orphan_wal_set_aside"
+#: Une étape de migration du fichier de scène appliquée à l'ouverture (de, vers, sauvegarde).
+SCENE_MIGRATED_KIND = "core.scene.migrated"
 #: Le validateur de prefabs a levé : refus fermé (`prefab_invalid`), cause réelle journalisée.
 SCENE_PREFAB_VALIDATOR_FAILED_KIND = "core.scene.prefab_validator_failed"
 #: `detail` d'un bloc refusé faute de catalogue (aucun validateur branché).
@@ -310,6 +312,8 @@ class SceneService:
                     level="warning",
                     data={"set_aside": list(set_aside)},
                 )
+            for step in tuple(getattr(self._repository, "migrations_applied", ()) or ()):
+                self._emit(SCENE_MIGRATED_KIND, "fichier de scène migré, après sa sauvegarde", data=dict(step))
             self._snapshot = snapshot
             self._availability = SceneAvailability(SceneState.READY)
             self._emit(

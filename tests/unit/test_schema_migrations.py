@@ -113,28 +113,31 @@ def test_a_v1_state_file_migrates_to_the_fresh_schema_after_a_backup(tmp_path, m
 
 
 def test_a_scene_migration_step_runs_once_after_a_backup_and_keeps_the_data(tmp_path, monkeypatch):
-    """Le mécanisme de la scène, exercé par une migration d'essai (il n'y en a pas encore de vraie)."""
+    """Le mécanisme de la scène, exercé par une migration d'essai au-delà de la version courante."""
 
+    current = sqlite_scene._SCHEMA_VERSION
+    probe = current + 1
     path = tmp_path / "scene.sqlite3"
     asyncio.run(fresh_scene(path))
     conn = sqlite3.connect(path)
     scene_id = conn.execute("SELECT scene_id FROM scene_meta").fetchone()[0]
     conn.close()
-    monkeypatch.setattr(sqlite_scene, "_SCHEMA_VERSION", 2)
-    monkeypatch.setattr(sqlite_scene, "_MIGRATIONS", {2: ("CREATE TABLE scene_probe_v2 (id INTEGER)",)})
+    monkeypatch.setattr(sqlite_scene, "_SCHEMA_VERSION", probe)
+    monkeypatch.setattr(sqlite_scene, "_MIGRATIONS",
+                        {**sqlite_scene._MIGRATIONS, probe: (f"CREATE TABLE scene_probe_v{probe} (id INTEGER)",)})
     asyncio.run(fresh_scene(path))
     conn = sqlite3.connect(path)
     try:
-        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(2,)]
+        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(probe,)]
         assert conn.execute("SELECT scene_id FROM scene_meta").fetchone()[0] == scene_id
-        assert conn.execute("SELECT count(*) FROM sqlite_master WHERE name = 'scene_probe_v2'").fetchone()[0] == 1
+        assert conn.execute(f"SELECT count(*) FROM sqlite_master WHERE name = 'scene_probe_v{probe}'").fetchone()[0] == 1
     finally:
         conn.close()
-    backup = tmp_path / "scene.sqlite3.v1.bak"
+    backup = tmp_path / f"scene.sqlite3.v{current}.bak"
     assert backup.exists()
     conn = sqlite3.connect(backup)
     try:
-        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(1,)]
+        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(current,)]
     finally:
         conn.close()
     asyncio.run(fresh_scene(path))  # déjà à jour : rien ne se rejoue

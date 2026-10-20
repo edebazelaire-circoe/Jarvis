@@ -85,7 +85,10 @@ les migrations que Core applique au démarrage :
   Core journalise une ligne `core.state.migrated` par étape appliquée (de, vers,
   lignes changées) ;
 - `scene.sqlite3` : même mécanisme dans `jarvis/adapters/sqlite_scene.py`.
-  Sauvegarde `scene.sqlite3.v<N>.bak`.
+  Sauvegarde `scene.sqlite3.v<N>.bak` ; Core journalise une ligne
+  `core.scene.migrated` par étape (de, vers, sauvegarde). v2
+  (organic-agent-orchestration, Slice 08) ne réécrit aucune ligne : elle monte
+  la version du fichier (rôles et liens d'agent dans les colonnes `data`).
 
 Règles :
 

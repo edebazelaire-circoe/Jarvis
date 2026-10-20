@@ -620,6 +620,8 @@ class JarvisCoreApplication:
         self.scene_projector = SceneProjector(
             work=self.work_state, scene=self.scene, events=self.events, diagnostics=diagnostics,
             restart_grace_s=scene_restart_grace_s, job_outcomes=self.jobs.observe_persisted_outcomes,
+            # Slice 08 (orchestration) : rôles et relations réelles lus dans l'historique des missions (lecture seule).
+            missions=self.mission_history,
         )
         # Purge des archivés : ce que la projection peut encore écrire garde sa pierre tombale (sinon l'étoile renaîtrait).
         self.scene.attach_archive_retention(self.scene_projector.retained_archive_ids)

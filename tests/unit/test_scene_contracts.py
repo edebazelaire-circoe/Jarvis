@@ -140,7 +140,10 @@ def test_closed_enums_hold_exactly_the_contract_values():
     assert {value.value for value in Visibility} == {"visible", "hidden"}
     assert {value.value for value in Disposition} == {"active", "archived"}
     assert {value.value for value in PlacedBy} == {"runtime", "brain", "user", "resolver"}
-    assert {value.value for value in RelationKind} == {"parent_of", "explains", "groups"}
+    # Slice 08 (orchestration) : les cinq natures de relation d'agent de D09.
+    assert {value.value for value in RelationKind} == {
+        "parent_of", "explains", "groups", "delegation", "communication", "adversary", "qa", "handoff",
+    }
     assert {value.value for value in SceneActor} == {"runtime", "brain", "user"}
     assert {value.value for value in SceneCommandOutcome} == {"applied", "duplicate", "rejected_authority", "invalid"}
     assert {op.value for op in SceneOp} == {
