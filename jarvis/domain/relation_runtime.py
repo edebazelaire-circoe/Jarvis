@@ -50,7 +50,7 @@ from jarvis.domain.missions import AgentInstance, Mission
 CALLER_STAMP_KEY = "jarvis_caller"
 #: Serveur qui porte les outils de relation, et leurs noms (`mcp__<serveur>__<outil>` côté CLI).
 RELATION_SERVER = "jarvis-workspace"
-RELATION_TOOLS = ("relation_open", "relation_post", "relation_read", "relation_close", "relation_handoff")
+RELATION_TOOLS = ("relation_start", "relation_post", "relation_read", "relation_close", "relation_handoff")
 RELATION_TOOL_PREFIX = f"mcp__{RELATION_SERVER}__relation_"
 #: Version de l'apposition (reprise QA N2) : le serveur refuse une identité sans elle ou d'une autre version, donc
 #: un champ écrit par le modèle sous un CLI sans le hook à jour. Ce n'est pas une signature (voir le modèle de
@@ -116,7 +116,7 @@ NEXT_STEPS: Mapping[str, str] = {
     "relation_not_participant": "seuls les participants publient ; pour parler à d'autres agents, ouvrez une "
                                 "communication avec eux",
     "relation_closed": "la relation est close : son tableau n'accepte plus rien ; nouez-en une autre si besoin",
-    "relation_unknown": "vérifiez l'identifiant rel_… rendu par relation_open ou relation_read",
+    "relation_unknown": "vérifiez l'identifiant rel_… rendu par relation_start ou relation_read",
     "relation_private_content": "publiez le message explicite destiné aux autres, jamais votre raisonnement ; "
                                 "nommez une balise sans chevrons et retirez tout champ privé d'un JSON",
     "relation_raw_payload": "publiez un texte lisible, pas une charge brute",
@@ -412,12 +412,12 @@ def relations_brief() -> str:
         "et aucune n'impose de tours. Chargez-les avec ToolSearch au besoin. Un agent se désigne par l'agentId que "
         "rend l'outil Agent (« agentId: … ») ; « self » vous désigne.",
         f"- Second regard sur un résultat : lancez un relecteur ([code] [qa] …) en lui donnant l'agentId du travail "
-        f"à relire ; il ouvre la relation QA ({_tool('relation_open')}, kind qa) et rend son verdict "
+        f"à relire ; il ouvre la relation QA ({_tool('relation_start')}, kind qa) et rend son verdict "
         f"({_tool('relation_close')}).",
         "- Approches concurrentes : lancez au moins deux producteurs, chacun avec une approche différente nommée "
-        "dans sa consigne (deux consignes identiques ne font pas une concurrence), puis relation_open (kind adversary, producteurs = leurs agentId) ; faites-les défendre leur travail l'un face à "
+        "dans sa consigne (deux consignes identiques ne font pas une concurrence), puis relation_start (kind adversary, producteurs = leurs agentId) ; faites-les défendre leur travail l'un face à "
         "l'autre et tranchez par relation_close (winner, synthesis, unresolved, escalated).",
-        f"- Coordination explicite : relation_open (kind communication, membres) ; chacun publie ses messages "
+        f"- Coordination explicite : relation_start (kind communication, membres) ; chacun publie ses messages "
         f"délibérés avec {_tool('relation_post')} et lit le fil avec {_tool('relation_read')}. SendMessage reste le "
         "moyen de joindre un agent ; le tableau garde ce qui a été dit, jamais un raisonnement privé. Si vous "
         "comptez faire publier un agent sur un tableau, dites-le dès sa consigne : une demande reçue plus tard par "
@@ -436,7 +436,7 @@ def reviewer_brief() -> str:
         REVIEWER_MARK,
         "Vous relisez le travail d'un autre agent ; vous ne produisez pas une solution concurrente.",
         f"Si votre consigne donne l'agentId du travail relu et aucune relation QA ouverte (rel_…), ouvrez-la : "
-        f"{_tool('relation_open')} (kind qa, reviewer « self », reviewed = cet agentId, target_refs utiles). "
+        f"{_tool('relation_start')} (kind qa, reviewer « self », reviewed = cet agentId, target_refs utiles). "
         f"Publiez vos constats explicites ({_tool('relation_post')}, type critique), puis rendez votre verdict avec "
         f"{_tool('relation_close')} : approved, findings, correction_requested ou rejected, avec un résumé.",
         "Sans agentId du travail relu, faites la relecture et dites dans votre compte rendu qu'aucune relation n'a été "

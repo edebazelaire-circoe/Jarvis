@@ -125,7 +125,7 @@ def test_a_crashing_hook_fails_closed_for_relation_tools_and_open_for_others(tmp
 
 def test_the_standalone_failsafe_refuses_only_relation_tools(capsys):
     assert hook_failsafe.RELATION_TOOL_PREFIX == rr.RELATION_TOOL_PREFIX
-    hook_failsafe.main(json.dumps({"tool_name": "mcp__jarvis-workspace__relation_open"}))
+    hook_failsafe.main(json.dumps({"tool_name": "mcp__jarvis-workspace__relation_start"}))
     assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "deny"
     hook_failsafe.main(json.dumps({"tool_name": "Agent"}))
     hook_failsafe.main("pas du json")
@@ -148,10 +148,10 @@ def test_a_stamp_without_the_current_hook_version_is_refused(stamp):
 
 
 @pytest.mark.parametrize("tool, fires", [
-    ("Agent", True), ("Task", True), ("mcp__jarvis-workspace__relation_open", True),
+    ("Agent", True), ("Task", True), ("mcp__jarvis-workspace__relation_start", True),
     ("mcp__jarvis-workspace__relation_handoff", True),
     ("Glob", False), ("TaskStop", False), ("TaskOutput", False), ("SendMessage", False), ("AgentX", False),
-    ("mcp__jarvis-workspace__board_list", False), ("xmcp__jarvis-workspace__relation_open", False),
+    ("mcp__jarvis-workspace__board_list", False), ("xmcp__jarvis-workspace__relation_start", False),
 ])
 def test_the_hook_matcher_fires_only_on_its_tools(tool, fires):
     # Le CLI compare le matcher comme une expression régulière (constaté sur le CLI 2.1.304 avec ce motif ancré).

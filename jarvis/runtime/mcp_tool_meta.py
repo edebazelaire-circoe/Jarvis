@@ -494,7 +494,7 @@ WORKSPACE = ServerMeta(
             output_notes=("state = reçu de la page ; no_visible_page : aucune page n'a répondu",)),
         # Relations entre agents (organic-agent-orchestration, Slice 06, `relations_mcp_tools.py`) : outils des
         # sous-agents de mission ; l'appelant est apposé par le hook, jamais un argument du modèle.
-        "relation_open": ToolMeta(
+        "relation_start": ToolMeta(
             "Nouer une relation entre agents", "write", False, "single_request", "structured",
             parameter_rules=("qa : reviewer + reviewed ; adversary : ≥ 2 producers ; communication : ≥ 2 members",
                              "agentId rendu par l'outil Agent, ou self"),

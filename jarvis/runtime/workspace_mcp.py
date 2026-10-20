@@ -24,7 +24,7 @@ ni la bascule, ni les liaisons, ni l'autorité de parole (`docs/boards.md` ›
 Board pendant que la conversation reste où elle est.
 
 **Relations entre agents** (organic-agent-orchestration, Slice 06,
-`relations_mcp_tools.py`) : `relation_open|post|read|close|handoff`, outils des
+`relations_mcp_tools.py`) : `relation_start|post|read|close|handoff`, outils des
 sous-agents de mission (le cerveau ne fait que lire). Le hook `PreToolUse` y
 appose l'identité de l'appelant (`relation_runtime.CALLER_STAMP_KEY`), retirée
 ici avant le contrôle strict des arguments.

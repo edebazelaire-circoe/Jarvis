@@ -245,8 +245,11 @@ Runtime (Slice 06, §10) : `relation_caller_unstamped`, `relation_caller_not_ins
 ### 10.1 Voie d'entrée : des outils explicites, l'identité apposée par le hook
 
 Un agent noue, alimente, lit ou clôt une relation, ou passe la main, par cinq outils MCP du serveur
-`jarvis-workspace` (`jarvis/runtime/relations_mcp_tools.py`) : `relation_open`, `relation_post`, `relation_read`,
-`relation_close`, `relation_handoff`. Pourquoi cette voie :
+`jarvis-workspace` (`jarvis/runtime/relations_mcp_tools.py`) : `relation_start`, `relation_post`, `relation_read`,
+`relation_close`, `relation_handoff`. L'outil qui noue une relation s'appelle `relation_start`, pas
+`relation_open` : le mot `open` est un verbe de navigation réservé au serveur `jarvis-surface`
+(`test_tool_brain_contracts.test_browser_navigation_exists_only_as_the_tool_brain_surface_server`) ; la route Core
+garde son nom (`POST /v1/missions/relations`, opération `relation_open`). Pourquoi cette voie :
 
 - **un sous-agent hérite des serveurs MCP du cerveau** (constaté en Slice 05) ; `jarvis-workspace` est déclaré à
   chaque lancement, sans interrupteur. Le test de parité (`test_brain_capability_parity`) exige que chaque outil

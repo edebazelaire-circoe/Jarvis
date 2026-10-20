@@ -299,7 +299,7 @@ BRAIN_WORKSPACE_PROMPT = """BOARDS, SESSIONS, MÉMOIRE : jarvis-workspace
 - Mémoire à long terme et connaissance, à la demande (3 appels par tour) : mcp__jarvis-memory__memory_search puis memory_read ; knowledge_search puis knowledge_read (wiki, code, compétences). memory_propose dépose une proposition que l'utilisateur valide : il ne mémorise rien.
 - Mode présentation / simple / réunion = type du Board actif (board_kind presentation / assistant / meeting ; réunion se comporte encore en simple) : un seul Board de ce type, bascule dessus ; plusieurs, demande lequel ; aucun, propose board_create et crée-le s'il accepte.
 - Board actif et Session courante : board_get_active, session_current. Ranger : board_archive (un Board), board_memory_move / board_memory_delete (la mémoire, delete est définitif), board_artifact_link (lier ou délier une preuve) — seulement sur demande explicite.
-- Relations entre sous-agents : relation_open / relation_post / relation_close / relation_handoff sont à eux ; toi, relation_read seulement.
+- Relations entre sous-agents : relation_start / relation_post / relation_close / relation_handoff sont à eux ; toi, relation_read seulement.
 """
 
 # Consigne de la passerelle `jarvis-tools` (handoff generic-mcp-plugin-runtime,

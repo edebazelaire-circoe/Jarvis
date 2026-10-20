@@ -33,7 +33,7 @@ du CLI Claude ; le seul point contraignant est le hook `PreToolUse`, qui voit ch
 | Arrêter un agent lancé en fond | `TaskStop` (CLI) | autorité existante ; la fin part dans Work State (`cancelled`) |
 | Relire le travail d'un enfant | son compte rendu, `TaskOutput` (CLI) | — |
 | Inspecter une mission, sa trace, son état | `GET /api/missions/{id}` (Control Center), `GET /v1/missions/{id}` (Core) | lecture seule (§6) |
-| Second regard, approches concurrentes, coordination explicite (Slice 06) | `mcp__jarvis-workspace__relation_open` / `relation_post` / `relation_read` / `relation_close` | Core (autorité, contrat), identité apposée par le hook ([agent-relations.md](agent-relations.md) §10) |
+| Second regard, approches concurrentes, coordination explicite (Slice 06) | `mcp__jarvis-workspace__relation_start` / `relation_post` / `relation_read` / `relation_close` | Core (autorité, contrat), identité apposée par le hook ([agent-relations.md](agent-relations.md) §10) |
 | Passer la mission à une instance neuve (Slice 06) | `relation_handoff`, puis `Agent` avec `[relais]` après le rôle | hook (billet réclamé, paquet apposé), Core (une transaction, avant la fin du prédécesseur) |
 
 Slice 05 : aucun outil MCP nouveau pour le cerveau. Slice 06 : les outils de relation sont sur `jarvis-workspace`,

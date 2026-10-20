@@ -226,7 +226,7 @@ CONSOLE_INSTRUCTIONS_BUDGET_BYTES = 900
 #: `dossier_present` 665 o, `dossier_view` 536 o, +2 621 o) : 16 417 o mesurés, plafond 16 700 o. Décision
 #: délibérée : sans eux le cerveau recompose la liste (board_memory_tree + board_artifacts), ne peut ni ranger
 #: (durabilité puis retrait, une sémantique de Core) ni afficher une entrée sans recopier son contenu.
-#: Organic-agent-orchestration Slice 06 : cinq outils de relation entre sous-agents (`relation_open` 1 045 o,
+#: Organic-agent-orchestration Slice 06 : cinq outils de relation entre sous-agents (`relation_start` 1 045 o,
 #: `relation_post` 939 o, `relation_read` 458 o, `relation_close` 776 o, `relation_handoff` 1 163 o, +4 381 o après
 #: compaction des schémas) : 20 897 o mesurés, plafond 21 000 o. Décision délibérée : c'est la voie explicite par
 #: laquelle un agent noue, alimente et clôt une relation (D13, jamais une copie du flux) ; le CLI diffère ces outils
@@ -315,7 +315,7 @@ async def test_the_workspace_server_lists_its_tools_in_order_within_its_budget(c
         "board_switch", "session_current", "session_new", "session_list", "session_get", "board_inspect",
         "board_memory_tree", "board_memory_read", "board_memory_search", "board_memory_write", "board_memory_move",
         "board_memory_delete", "board_artifacts", "board_artifact_link", "dossier_list", "dossier_ranger",
-        "dossier_present", "dossier_view", "relation_open", "relation_post", "relation_read", "relation_close",
+        "dossier_present", "dossier_view", "relation_start", "relation_post", "relation_read", "relation_close",
         "relation_handoff"]
     effects = {entry["name"]: (entry["side_effect"], entry["idempotent"]) for entry in described}
     assert {name for name, (effect, _) in effects.items() if effect == "read"} == {

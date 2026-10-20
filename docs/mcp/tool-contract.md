@@ -1519,7 +1519,7 @@ tools (a delegated agent inherits the server); the brain only reads
 
 | Tool | Route(s) | Class / idempotent | Result (`mcp_results`) |
 | --- | --- | --- | --- |
-| `relation_open` | `POST /api/missions/relations {caller_agent_id, kind, purpose, participants[{agent, position}], target_refs}` | write / no | `RelationOpenResult {relation_id, kind, mission_id, purpose, status, created_by_instance_id?, target_refs?, participants[{agent_id, instance_id, position}], next}` |
+| `relation_start` | `POST /api/missions/relations {caller_agent_id, kind, purpose, participants[{agent, position}], target_refs}` | write / no | `RelationOpenResult {relation_id, kind, mission_id, purpose, status, created_by_instance_id?, target_refs?, participants[{agent_id, instance_id, position}], next}` |
 | `relation_post` | `POST /api/missions/relations/{id}/messages {caller_agent_id, type, text, audience[agent], artifact_refs, reply_to_message_id}` | write / no | `RelationPostResult {relation_id, seq, message_id, type, published}` |
 | `relation_read` | `GET /api/missions/relations/{id}?after&limit≤50` | read / yes | `RelationReadResult {…relation, participants[{agent_id, instance_id, position, role_id, work_status}], messages[{seq, message_id, author_agent_id, author_instance_id, type, text, created_at, reply_to_message_id?}], next_after}` |
 | `relation_close` | `POST /api/missions/relations/{id}/close {caller_agent_id, outcome, summary, winner}` | write / yes | `RelationCloseResult {…relation}` |
@@ -1544,7 +1544,7 @@ tools (a delegated agent inherits the server); the brain only reads
   (`relation_runtime.actionable`: what to fix), status 404 `relation_unknown`,
   403 authority, 409 contract, 400 envelope; `relation_agent_unknown` (404) and
   `relation_caller_not_instance` (403) come from the Control Center.
-- **Context cost.** +4 381 B (`relation_open` 1 045, `relation_post` 939,
+- **Context cost.** +4 381 B (`relation_start` 1 045, `relation_post` 939,
   `relation_read` 458, `relation_close` 776, `relation_handoff` 1 163):
   `jarvis-workspace` 20 897 B (budget 21 000 B), declared native surface
   121 429 B (budget 121 500 B).

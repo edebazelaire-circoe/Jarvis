@@ -72,7 +72,7 @@ class RelationTools:
                 exc.code, "Identité de l'appelant absente : rien n'a été envoyé")) from None
 
     def _invalid(self, message: str) -> Exception:
-        return self._refused("relation_open", "relation_arguments_invalid", f"{message} Rien n'a été envoyé.")
+        return self._refused("relation_start", "relation_arguments_invalid", f"{message} Rien n'a été envoyé.")
 
     async def _send(self, tool: str, method: str, route: str, *, payload: Any = None,
                     params: dict[str, str] | None = None, timeout_s: float = WRITE_TIMEOUT_S) -> dict[str, Any]:
@@ -93,7 +93,7 @@ class RelationTools:
     async def open(self, *, kind: str, purpose: str, reviewer: str | None = None, reviewed: str | None = None,
                    producers: Sequence[str] = (), members: Sequence[str] = (),
                    target_refs: Sequence[str] = ()) -> dict[str, Any]:
-        caller = self._caller("relation_open")
+        caller = self._caller("relation_start")
         given = {"reviewer": reviewer, "reviewed": reviewed, "producers": producers, "members": members}
         wanted = {"qa": ("reviewer", "reviewed"), "adversary": ("producers",), "communication": ("members",)}
         extra = [name for name, value in given.items() if value and name not in wanted.get(kind, given)]
@@ -121,7 +121,7 @@ class RelationTools:
                                 "un relais par relation_handoff.")
         if target_refs and kind != "qa":
             raise self._invalid("target_refs n'existe que pour une QA.")
-        body = await self._send("relation_open", "POST", RELATIONS_ROUTE, payload={
+        body = await self._send("relation_start", "POST", RELATIONS_ROUTE, payload={
             "caller_agent_id": caller.agent_id, "kind": kind, "purpose": purpose, "target_refs": list(target_refs),
             "participants": [{"agent": agent, "position": position} for agent, position in participants]})
         relation = body.get("relation") or {}
@@ -213,8 +213,8 @@ def register(mcp: Any, tools: RelationTools, *, annotations: Callable[[str], Any
     PacketItems = Annotated[list[Annotated[str, Field(max_length=MAX_PACKET_ITEM_CHARS)]],
                             Field(max_length=MAX_PACKET_ITEMS)]
 
-    @mcp.tool(annotations=annotations("relation_open"))
-    async def relation_open(
+    @mcp.tool(annotations=annotations("relation_start"))
+    async def relation_start(
         kind: Literal["qa", "adversary", "communication"],
         purpose: Purpose,
         reviewer: AgentRef = "",

@@ -37,8 +37,8 @@ async def test_the_server_strips_the_stamp_passes_the_caller_and_hides_it_from_t
         "agents": {"ainst_q": STAMP["agent_id"], "ainst_b": "bbbbbbbbbbbbbbbbb"}})
     async with create_connected_server_and_client_session(build_server(tools=ws)) as session:
         listed = {tool.name: tool for tool in (await session.list_tools()).tools}
-        assert CALLER_STAMP_KEY not in listed["relation_open"].inputSchema["properties"]
-        result = await session.call_tool("relation_open", {
+        assert CALLER_STAMP_KEY not in listed["relation_start"].inputSchema["properties"]
+        result = await session.call_tool("relation_start", {
             "kind": "qa", "purpose": "Relire", "reviewer": "self", "reviewed": "bbbbbbbbbbbbbbbbb",
             CALLER_STAMP_KEY: STAMP})
         assert not result.isError, result.content
@@ -47,7 +47,7 @@ async def test_the_server_strips_the_stamp_passes_the_caller_and_hides_it_from_t
         unstamped = await session.call_tool("relation_post", {"relation_id": "rel_1", "text": "Bonjour"})
         assert unstamped.isError
         assert "relancer JARVIS" in unstamped.content[0].text
-        wrong = await session.call_tool("relation_open", {"kind": "adversary", "purpose": "Un seul",
+        wrong = await session.call_tool("relation_start", {"kind": "adversary", "purpose": "Un seul",
                                                           "producers": ["self"], CALLER_STAMP_KEY: STAMP})
         assert wrong.isError and "au moins deux producers" in wrong.content[0].text
     [(method, path, _query, body)] = [request for request in fake.requests if request[1] == "/api/missions/relations"]
@@ -212,7 +212,7 @@ async def test_a_superfluous_field_is_named_and_the_local_refusal_is_journaled(f
 
     fake, ws = fake_cc
     async with create_connected_server_and_client_session(build_server(tools=ws)) as session:
-        result = await session.call_tool("relation_open", {
+        result = await session.call_tool("relation_start", {
             "kind": "qa", "purpose": "Relire", "reviewer": "self", "reviewed": "bbbbbbbbbbbbbbbbb",
             "members": ["bbbbbbbbbbbbbbbbb"], CALLER_STAMP_KEY: STAMP})
     assert result.isError and "Retirez members" in result.content[0].text

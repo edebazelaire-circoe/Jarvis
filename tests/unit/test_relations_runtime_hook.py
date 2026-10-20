@@ -56,7 +56,7 @@ def relation_call(tool: str, tool_input: dict, *, agent_id: str | None = None) -
 
 def test_the_hook_stamps_the_real_caller_and_overwrites_a_forged_one(tmp_path):
     forged = {"kind": "qa", "purpose": "x", rr.CALLER_STAMP_KEY: {"stamped": True, "agent_id": "someone_else"}}
-    out = section(routing_hook.run(relation_call("relation_open", forged, agent_id="a2a69a1d01cba9282"), tmp_path))
+    out = section(routing_hook.run(relation_call("relation_start", forged, agent_id="a2a69a1d01cba9282"), tmp_path))
     assert out["permissionDecision"] == "allow"
     stamp = out["updatedInput"][rr.CALLER_STAMP_KEY]
     assert stamp == {"stamped": True, "hook": rr.STAMP_VERSION, "agent_id": "a2a69a1d01cba9282",
