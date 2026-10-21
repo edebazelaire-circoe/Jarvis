@@ -3,7 +3,7 @@
 1. [x] `00-project-manager` - Project Manager readiness and reconciliation gate. READY (2026-10-21, see LOG).
 2. [x] `01-settings-registry-ia-contract` - Canonical Settings registry and six-category IA contract. Approved 2026-10-21 (626e08ab).
 3. [x] `02-settings-shell-visual-redesign` - Settings shell and visual redesign. Approved 2026-10-21 (8583ac1c + 77740b68).
-4. `03-voice-audio-reorganization` - Voice and audio reorganization.
+4. [x] `03-voice-audio-reorganization` - Voice and audio reorganization. Approved 2026-10-21 (2d114097 + 55b59ad0 + ccc46063).
 5. `04-agents-models-reorganization` - Agents and models reorganization.
 6. `05-memory-knowledge-reorganization` - Memory and knowledge reorganization.
 7. `06-interface-interactions-reorganization` - Interface and interactions reorganization.
