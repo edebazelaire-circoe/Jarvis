@@ -185,3 +185,105 @@ Bac à sable `setui` (Core 127.77.0.1:27653, Control Center 127.0.0.1:27654, don
 - Retravail `3e47b4c3` (S3: fix), `56c17532`, `4889c375`. Re-QA par agent 0 (retravail limité aux tests) : 40 passed sur les deux fichiers ; mutations rejouées sur worktree jetable — `view.destroy()` retiré → `test_leaving_roles_then_work_methods_destroys_each_view` échoue ; libellé du badge `next_voice_start` changé → test d'annonce différée échoue. APPROUVÉ.
 - Préexistants sur origin/main `20292e5c` (7) : `test_app::test_the_control_center_receives_a_tools_gateway_target…`, 6 tests de `test_control_center_mcp_api`.
 - Reporté Slice 09/10 : focus sur BODY après liens internes (« Régler la commande », renvois Work Methods), titre/pastille de Work Methods, commentaires citant des routes dans `control_center.html`, filtres du catalogue coupés à 1366×768 (défilement interne, préexistant), pas d'outline au focus de `#f_cli_model`.
+
+## 2026-10-22 - Slice 05 (implémentation)
+
+### Décisions
+
+- Destination de chaque champ mémoire servie par le serveur : `surface = {category:'memory_knowledge', section}` dans le
+  schéma (`memory_settings.py` : `SURFACE_SECTIONS`, `_SURFACE`, `surface()`), aussi sur `schema.loadouts`. Section du bloc
+  sans destination → `RuntimeError`. Valeurs, précédence env/fichier/défaut, charge et codes inchangés. Aucune liste de
+  champs dans le navigateur : le module range par `surface.section`.
+- Onglet `memory` retiré de `TABS` (et de `renderTab`). `memory_knowledge` : cinq sections enregistrées par la page
+  (`MEMORY_SECTIONS`, `installMemorySettingsSections()` gardée par `typeof window` + `typeof` de la fonction) : `recall`
+  · Rappel (alias `memory`), `semantic_retrieval`, `consolidation`, `knowledge_sources` (Tencent + Wiki/graphe/Skills +
+  résumé des loadouts en lecture seule), toutes `save:'self'` (bouton « Enregistrer la mémoire », correctif mémoire seul,
+  comme avant) ; `memory_center` · Centre mémoire (`readonly`, bouton « Ouvrir le Memory Center », qui ferme les Réglages).
+- Avancé › Diagnostics : partie « Mémoire » (`registerSettingsDiagnostic`, order 30) : chaque étage et son badge, raison +
+  code + comment réparer, combinaisons coupées à la lecture, valeurs imposées par l'environnement. La page ordinaire garde
+  une ligne courte (étages de la section, nombre de points à vérifier) + « Voir le diagnostic mémoire » (ouvre
+  Diagnostics, focus sur `#diagnostic_memory`, gardée en vue pendant que Voix et Mot d'éveil se remplissent au-dessus).
+- Module `control_center_memory_settings.js` : vues `fields` (une section), `center`, `diagnostics` sur un état partagé
+  (`createStore`, un par ouverture des Réglages, une seule lecture). Brouillon partagé entre sections mémoire : une règle
+  de compatibilité peut ramener un champ d'une autre section (couper la sémantique remet la consolidation en manuel) ;
+  la section le dit (« Enregistre aussi les changements en attente… ») et l'enregistrement envoie tout le brouillon.
+  `destroy()` : plus aucun dessin, réponse tardive ignorée. `show` supprimé (seul appelant : l'ancien onglet). Rendu par
+  les primitives du shell (`field`, `section`, `badge`, `appliesBadge`, `notice`, `actions`). Moment d'application lu
+  dans `status.restart_required` (badge par section, par groupe dans Sources de connaissances) ; avis « Redémarrage de
+  Core nécessaire pour … » tant qu'un tel champ est en attente, rappel après l'enregistrement.
+- Écarts : aucun avec docs/07. Le résumé « Connaissances par agent » est dans Sources de connaissances (destination servie
+  `schema.loadouts.surface`). Libellé d'entrée « Centre mémoire » ; le bouton garde « Memory Center ».
+
+### Table champ → section (servie par le serveur, vérifiée par `test_memory_settings_surface`)
+
+| Champs | Section |
+| --- | --- |
+| `recall.enabled`, `recall.max_items`, `recall.timeout_ms` | `recall` |
+| `semantic.enabled`, `semantic.provider`, `semantic.allow_private` | `semantic_retrieval` |
+| `consolidation.mode`, `consolidation.auto_min_confidence`, `consolidation.max_candidates_per_run` | `consolidation` |
+| `tencent.enabled`, `tencent.url`, `tencent.service_id`, `tencent.allow_private`, `knowledge.wiki_enabled`, `knowledge.codegraph_enabled`, `knowledge.skills_enabled`, `loadouts` (lecture seule) | `knowledge_sources` |
+| aucun champ : entrée du Memory Center | `memory_center` |
+| aucun champ : état et dégradation des étages | `advanced_diagnostics` / `diagnostics` › Mémoire |
+
+### Fichiers
+
+`jarvis/runtime/memory_settings.py`, `control_center_memory_settings.js`, `control_center.html` ; docs
+`docs/settings/memory.md` (table champ → section, schéma complété de `tencent.service_id` et `tencent.allow_private`),
+`settings/INDEX.md`, `settings/navigation-registry.md`, `settings/settings-shell.md`, `legacy/settings-tab-aliases.md`,
+`OPERATIONS.md` ; tests `test_control_center_memory_settings_js.py` (réécrit), `test_memory_settings_surface.py` (nouveau),
+`test_memory_settings_browser.py` (nouveau), `test_control_center_settings_registry_js.py` (+ `SLICE_05_SECTIONS`,
+`test_memory_legacy_id_opens_recall_and_every_memory_section`, `test_page_memory_sections_match_the_registered_fixture`),
+`test_memory_settings_endpoints.py`, `tests/integration/test_settings_redesign_migration.py`.
+
+### Tests (comptes exacts, depuis `setui` @ `28e055d8`, `.venv` du dépôt principal)
+
+- mvp + quality + voice_architecture + voice_settings_ui + wake_word_settings_ui + agent_cli_settings_ui +
+  routing_settings_screen + catalog_ui + voice_architecture_ui_review : 209 passed.
+- memory_settings_js + subagents_settings_js + appearance + scene_settings_ui + scene_view_prefs +
+  barehands_tools_settings_js + barehands_cards_js + jarvis_wheel_js + mcp_inspector_js + control_center_memory_js
+  (Memory Center) : 174 passed.
+- settings_registry_js + settings_shell_js + intégration settings_redesign_migration + settings_ia_contract +
+  voice_settings_surface + voice_settings_schema + shell_layers + variants_css_orphans + control_center_prompts +
+  memory_settings_surface + memory_settings + memory_settings_endpoints : 271 passed.
+- documented_routes + delivery_quality + wake_word_docs : 80 passed.
+- Navigateur (chaque commande < 600 s) : settings_shell_browser + jarvis_wheel_browser 13 passed (deux passes, @ `d1fd5690`
+  et @ `28e055d8`) ; memory_settings_browser 6 passed @ `d1fd5690`, puis memory_settings_js + memory_settings_surface +
+  settings_registry_js + quality + variants_css_orphans + shell_layers + memory_settings_browser 123 passed @ `28e055d8` ;
+  agents_models_settings_browser 6 passed ; wake_word_settings_browser 12 + 8 passed ; dossier_fullscreen_browser
+  19 passed, 3 skipped (ces trois @ `d1fd5690`).
+- Balayage large sans navigateur (unit + intégration, @ `d1fd5690`) : `-k "memory and not browser"` 1308 passed,
+  4 skipped ; `-k "settings and not memory and not browser"` 711 passed, 1 failed ; `-k "control_center and not settings
+  and not memory and not browser"` 809 passed, 6 failed, 1 skipped ; `-k "(subagent or work_method or routing or
+  agent_cli or catalog or knowledge or loadout or wheel or shell or registry) and not settings and not memory and not
+  control_center and not browser"` 1091 passed, 3 skipped. Les 7 échecs sont exactement les préexistants de main
+  (`test_app::test_the_control_center_receives_a_tools_gateway_target_built_from_core_settings`, 6 ×
+  `test_control_center_mcp_api`). Régression attrapée en route et corrigée avant commit :
+  `test_control_center_quality::test_the_page_renders_the_solo_owner_and_aec_status_from_the_api` refuse le mot
+  « embedding » dans la page (description de Recherche sémantique reformulée).
+
+### Mutations (copies jetables `git worktree add --detach` au scratchpad, supprimées ensuite) : 14/14 tuées
+
+M1 Tencent servi dans `semantic_retrieval` (surface) ; M2 chaque section rend tous les champs ; M3 la charge envoie toutes
+les valeurs ; M4 `destroy` sans effet (réponse tardive dessinée) ; M5 la section ne détruit pas sa vue ; M6 alias `memory`
+retiré (tué par le test qui lie la fixture du registre à `MEMORY_SECTIONS`) ; M7 avis de redémarrage retiré ; M8 correctif
+croisé sémantique → consolidation retiré ; M9 état non partagé ; M10 lien diagnostic non câblé ; M11 sections non
+installées (vrai Chrome) ; M12 clé inconnue ajoutée à la charge ; M13 partie Mémoire non inscrite (vrai Chrome) ;
+M14 partie Mémoire non gardée en vue après le lien (vrai Chrome).
+
+### Preuves
+
+Bac à sable `setui` (Core 127.77.0.1:27653, Control Center 127.0.0.1:27654, données/runtime au scratchpad `s05`,
+visualiseur coupé), Chrome sans tête par CDP : `evidence/s05/` : 31 PNG quantifiés (2,1 Mo) — six vues × {1920×1080,
+1366×768} × {100 %, 125 %}, plus enregistrement, brouillon en attente vu d'une autre section, avis de redémarrage avant et
+après, diagnostic ouvert par le lien, Memory Center ouvert ; `runtime-check.json`. Constats : cinq entrées, aucun onglet
+« Mémoire » ; chaque champ dans sa section ; clavier (flèches + Entrée sur le rail jusqu'à Mémoire & connaissances, Tab
+vers Fermer puis les entrées, flèche droite + Entrée ouvre Recherche sémantique) ; alias `memory` → `recall` ; POST
+`/api/settings` = `{"memory":{"recall":{"max_items":5}}}` puis `{"memory":{"semantic":{"enabled":false}}}` (première passe :
+`{"memory":{"recall":{"max_items":4}}}` puis `{"memory":{"semantic":{"provider":"openai","enabled":true}}}`), relus après
+rechargement ; sémantique sans clé → « 1 point à vérifier », détail `semantic_no_key` dans Diagnostics, focus sur la
+partie, en vue ; Memory Center ouvert (Réglages fermés, focus sur l'onglet Notes) ; débordement 0 aux quatre tailles ;
+console vide. La première passe a trouvé la partie Mémoire hors écran après le lien (corrigé, `36085b29`) et la borne
+des nombres repliée à 125 % (corrigé, `28e055d8`). PID arrêtés un par un après vérification de leur ligne de commande,
+sans `/T` : 22472 (cerveau claude du bac à sable, enfant du Control Center ; ses dix MCP partis avec lui, vérifié),
+26960 (Control Center ; lanceur 3776 parti avec lui), 528 (Core ; lanceur 17780 parti avec lui). Core utilisateur 17653
+(PID 31824) intact. Données du bac à sable laissées en place.
