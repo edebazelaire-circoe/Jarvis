@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-SETTINGS-002",
+      "description": "Without using Advanced, locate microphone, speaker, voice, turn-taking and wake-word controls. Confirm the path is obvious and the page is not dominated by architecture/VAD diagnostics."
+    }
+  ]
+}

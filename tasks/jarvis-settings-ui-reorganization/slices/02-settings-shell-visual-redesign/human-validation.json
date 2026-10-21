@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-SETTINGS-001",
+      "description": "Open Settings on a normal desktop display at 100% and 125% zoom. Confirm the six categories are immediately distinguishable, the large boxed modal feel is gone, and ordinary controls no longer read like a dense HUD/debug screen."
+    }
+  ]
+}

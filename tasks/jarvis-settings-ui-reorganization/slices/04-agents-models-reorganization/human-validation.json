@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-SETTINGS-003",
+      "description": "Locate the main agent/model, response behavior and sub-agent roles from one category. Confirm CLI command/path and routing internals do not dominate the normal view."
+    }
+  ]
+}

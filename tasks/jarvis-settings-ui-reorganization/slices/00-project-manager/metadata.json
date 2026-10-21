@@ -1,0 +1,14 @@
+{
+  "slice_id": "00-project-manager",
+  "title": "Project Manager readiness and reconciliation gate",
+  "task_type": null,
+  "task_type_blocker": "Workspace Task Type vocabulary is not exposed during task creation. Slice 00 must resolve a valid existing Task Type before dispatch; do not invent one.",
+  "dependencies": [],
+  "frontend": false,
+  "code": false,
+  "required_qa": [
+    "qa-verification"
+  ],
+  "required_skills": [],
+  "agent_routing": null
+}

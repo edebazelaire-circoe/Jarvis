@@ -1,0 +1,34 @@
+{
+  "project_name": "Jarvis",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "handoff_slug": "jarvis-settings-ui-reorganization",
+  "source_branch": "main",
+  "source_sha": "20292e5c292dc8ab9a012ccf00ecb82b5c7f820e",
+  "rebuilt_on": "2026-10-21",
+  "drive_destination": "Jarvis/task/to-do/jarvis-settings-ui-reorganization/",
+  "target_top_level_categories": [
+    "voice_audio",
+    "agents_models",
+    "memory_knowledge",
+    "interface_interactions",
+    "connections",
+    "advanced_diagnostics"
+  ],
+  "slices": [
+    "00-project-manager",
+    "01-settings-registry-ia-contract",
+    "02-settings-shell-visual-redesign",
+    "03-voice-audio-reorganization",
+    "04-agents-models-reorganization",
+    "05-memory-knowledge-reorganization",
+    "06-interface-interactions-reorganization",
+    "07-connections-reorganization",
+    "08-advanced-diagnostics-labs",
+    "09-legacy-routing-and-deeplink-compatibility",
+    "10-integration-accessibility-release-qa"
+  ],
+  "planning_blockers": [
+    "Workspace Task Type vocabulary is not exposed during task creation. Slice 00 must resolve a valid existing Task Type before dispatch; do not invent one."
+  ],
+  "supersedes": "incomplete publication attempt of the same task identity"
+}
