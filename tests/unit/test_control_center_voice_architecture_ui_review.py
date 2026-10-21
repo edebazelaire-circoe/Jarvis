@@ -178,10 +178,46 @@ def test_page_is_a_generic_architecture_renderer_with_an_explicit_change_latch()
         assert not re.search(rf"['\"]{architecture_id}['\"]", html)
 
 
-def test_page_announces_deferred_architecture_apply_and_uses_task16_live_control():
+def _announce_deferred_apply(tmp_path: Path) -> dict:
+    """Monte la vraie section Architecture & compatibilité (`voiceSectionSpec`) avec les vraies primitives des
+    Réglages, et rend l'avis de redémarrage (`voiceRestartHtml`) : ce que l'utilisateur lit vraiment."""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    html = PAGE.read_text(encoding="utf-8")
+    ui = PAGE.with_name("control_center_settings_ui.js")
+    sections = html[html.index("const VOICE_SECTIONS=[") : html.index("/* `advanced_diagnostics` › `diagnostics`")]
+    restart = html[html.index("function voiceRestartHtml(){") : html.index("/* --- onglet Prompts")]
+    script = tmp_path / "deferred-apply.cjs"
+    script.write_text(
+        f"require({json.dumps(str(ui))});const UI=globalThis.JarvisSettingsUI;\n"
+        "const SET={data:{voice:{authorization:{},echo_cancellation:{}}},draft:{},restartNotice:false};\n"
+        "const renderVoicePanel=()=>{},destroyVoiceCatalog=()=>{};\n"
+        + sections + restart
+        + "const spec=voiceSectionSpec(VOICE_SECTIONS.find(s=>s.id==='architecture_compat'));const host={innerHTML:''};"
+        "spec.mount(host,{revision:1,ui:UI});const quiet=voiceRestartHtml();SET.restartNotice=true;"
+        "process.stdout.write(JSON.stringify({applies:spec.applies,section:host.innerHTML,quiet,restart:voiceRestartHtml()}));",
+        encoding="utf-8",
+    )
+    done = subprocess.run([node, str(script)], capture_output=True, text=True, encoding="utf-8", timeout=30, check=False)
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
+
+
+def test_page_announces_deferred_architecture_apply_and_uses_task16_live_control(tmp_path):
     html = PAGE.read_text(encoding="utf-8")
 
-    assert re.search(r"prochaine activation", html, re.I)
+    # L'application différée est annoncée par la section elle-même (jarvis-settings-ui-reorganization Slice 03) :
+    # `applies: 'next_voice_start'` → badge « Au prochain démarrage de Voice », puis, après un enregistrement,
+    # « Redémarrez Voice pour appliquer ». L'ancienne phrase de `modalSub` (« … prochaine activation ») a disparu.
+    seen = _announce_deferred_apply(tmp_path)
+    assert seen["applies"] == "next_voice_start"
+    assert "Au prochain démarrage de Voice" in seen["section"]
+    assert seen["quiet"] == ""
+    assert "Redémarrez Voice pour appliquer" in seen["restart"] and "lus au démarrage de Voice" in seen["restart"]
     assert "/api/live/stop" in html
     assert 'id="liveStop"' in html
     assert "session.close" not in html
