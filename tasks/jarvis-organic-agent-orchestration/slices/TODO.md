@@ -43,7 +43,7 @@ State: **READY** (audited `main@336f21be`, evidence `references/readiness-audit.
 - [x] 06-relations-runtime-communication (2026-10-20; QA code-review+qa-verification+runtime-validation+agent-trace FAIL then PASS_WITH_NOTES after rework, notes fixed 33fd4373)
 - [x] 07-interviewer-background-coordination (2026-10-20; QA code-review+qa-verification+runtime-validation+agent-trace PASS_WITH_NOTES after rework, notes fixed 6544087a ; écarts de forme orale résiduels confiés à HV-ORG-07)
 - [x] 08-scene-projection-role-relations (2026-10-20; QA code-review+qa-verification+runtime-validation+agent-trace FAIL then PASS_WITH_NOTES after rework, notes fixed 6f0f3913; HV-ORG-08-01/02 pending)
-- [ ] 09-task-graph-ui (2026-10-20; implemented, QA pending; HV-ORG-09-01..05 pending)
+- [x] 09-task-graph-ui (2026-10-20; QA code-review+qa-verification+runtime-validation+impeccable FAIL then PASS_WITH_NOTES after rework, notes fixed 04c795d2 ; HV-ORG-09-01..05 pending)
 - [x] 10-agent-roles-settings-ui (2026-10-20; QA code-review+qa-verification+runtime-validation+impeccable PASS_WITH_NOTES, notes fixed 7480cc5c; HV-ORG-10-01/02 pending)
 - [x] 11-output-quality-prefab-delivery (2026-10-20; QA code-review+qa-verification+runtime-validation+agent-trace FAIL then PASS_WITH_NOTES after rework, notes fixed 3f02464f; HV-ORG-11-01/02 pending)
 - [x] 12-work-method-learning (2026-10-20; QA code-review+qa-verification+runtime-validation+agent-trace+impeccable PASS_WITH_NOTES after rework, notes fixed e6927af2; HV-ORG-12-01 pending)
