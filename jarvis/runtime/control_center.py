@@ -457,6 +457,11 @@ BAREHANDS_FAILURE_TEXT_LIMIT = 4000
 #: `docs/control-center-shell.md`.
 SHELL_SCRIPT_FILE = "control_center_shell.js"
 SHELL_SCRIPT_MARKER = "/*__CONTROL_CENTER_SHELL_JS__*/"
+#: Registre canonique des Réglages (jarvis-settings-ui-reorganization, Slice 01) : six catégories figées,
+#: sections enregistrées, alias des onglets hérités (`window.JarvisSettingsRegistry`). Pur, sans réseau ni
+#: stockage. Contrat : `docs/settings/navigation-registry.md`.
+SETTINGS_REGISTRY_SCRIPT_FILE = "control_center_settings_registry.js"
+SETTINGS_REGISTRY_SCRIPT_MARKER = "/*__CONTROL_CENTER_SETTINGS_REGISTRY_JS__*/"
 #: Logique pure du panneau Agents, gardée à part pour être exécutée par les
 #: tests (node) et insérée dans la page à la place de ce repère.
 WORK_SCRIPT_FILE = "control_center_work.js"
@@ -2411,6 +2416,10 @@ class ControlCenter:
         # version que celle du serveur.
         html = html.replace(
             SHELL_SCRIPT_MARKER, page.with_name(SHELL_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            SETTINGS_REGISTRY_SCRIPT_MARKER,
+            page.with_name(SETTINGS_REGISTRY_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             WORK_SCRIPT_MARKER, page.with_name(WORK_SCRIPT_FILE).read_text(encoding="utf-8")

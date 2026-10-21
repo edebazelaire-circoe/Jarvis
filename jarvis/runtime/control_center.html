@@ -2333,6 +2333,10 @@ button.wsp-ename:hover{color:var(--accent)}
 
 <script>
 /*__CONTROL_CENTER_SHELL_JS__*/
+/* Registre canonique des Réglages (jarvis-settings-ui-reorganization, Slice 01) : six catégories figées,
+   sections enregistrées, alias des onglets hérités (`window.JarvisSettingsRegistry`). Pur, avant tout
+   module de réglages. Contrat : `docs/settings/navigation-registry.md`. */
+/*__CONTROL_CENTER_SETTINGS_REGISTRY_JS__*/
 /*__CONTROL_CENTER_LIVE_JS__*/
 /*__CONTROL_CENTER_CATALOG_JS__*/
 /* Identité des rôles et grammaire des relations (jarvis-organic-agent-orchestration, Slice 09) : avant la scène et les
@@ -5295,7 +5299,13 @@ function authFieldChanged(el,revision){
   say('Modifications non enregistrées.','');
 }
 
-function canonicalSettingsTab(id){return id==='routing'?'cli':id}
+/* Identifiant demandé → onglet du shell actuel. Le registre (Slice 01) résout les onglets, leurs redirections,
+   les catégories et les sections cibles ; sans lui (page partielle, tests), seule la redirection historique tient. */
+function canonicalSettingsTab(id){
+  const registry=typeof window!=='undefined'?window.JarvisSettingsRegistry:null;
+  if(registry&&typeof TABS!=='undefined'){const tab=registry.legacyTabFor(id,TABS);if(tab)return tab}
+  return id==='routing'?'cli':id;
+}
 function selectTab(id){
   const next=canonicalSettingsTab(id);
   if(SET.tab==='cli'&&next!=='cli'){SET.routingAdvancedOpen=false;++SET.routingGeneration}
@@ -5580,13 +5590,25 @@ async function openSettings(){
    que `#openSettings`, sur un onglet. L'onglet est posé AVANT l'ouverture (`openSettings`
    peint `SET.tab` tel qu'il le trouve) ; un onglet inconnu ouvre le modal tel quel. */
 function openSettingsTab(tab){
-  const known=typeof tab==='string'&&TABS.some(t=>t.id===tab);
-  if(!SET.open){if(known)SET.tab=tab;return openSettings()}
-  if(known&&SET.tab!==tab)selectTab(tab);
+  /* Onglet, redirection, catégorie ou section cible : résolu par le registre (Slice 01). */
+  const id=typeof tab==='string'?canonicalSettingsTab(tab):tab;
+  const known=typeof id==='string'&&TABS.some(t=>t.id===id);
+  if(typeof tab==='string'&&!known)console.warn('settings_target_unknown',{target:tab});
+  if(!SET.open){if(known)SET.tab=id;return openSettings()}
+  if(known&&SET.tab!==id)selectTab(id);
   return Promise.resolve();
 }
 /* Les onglets réels des réglages, pour le sous-menu Paramètres (aucune liste recopiée). */
 function settingsTabs(){return TABS.map(t=>({id:t.id,label:t.label}))}
+/* Les onglets actuels rangés sous les six catégories du registre : la donnée que le shell de la Slice 02
+   dessinera. Ne change rien à l'affichage actuel ; un onglet sans alias se signale dans la console. */
+function settingsNavigation(){
+  const registry=window.JarvisSettingsRegistry;
+  if(!registry){console.error('settings_registry_missing');return null}
+  const navigation=registry.navigationFromLegacyTabs(TABS);
+  if(navigation.unassigned.length)console.error('settings_tab_unassigned',{tabs:navigation.unassigned});
+  return navigation;
+}
 
 function closeSettings(){SET.routingPick={};++SET.openGeneration;++SET.cliGeneration;++SET.cliModelGeneration;++SET.routingGeneration;++SET.voiceGeneration;++SET.audioGeneration;++SET.diagnosticGeneration;SET.renderRevision=(SET.renderRevision||0)+1;SET.routingAdvancedOpen=false;cleanupSettingsSurface();overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel()}
 

@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "status": "canonical-for-slices-02-through-07",
+  "navigation_superseded_by": "docs/settings/navigation-registry.md (jarvis-settings-ui-reorganization Slice 01): the navigation below is historical; option metadata stays valid",
   "source_snapshot": {
     "branch": "main",
     "sha": "f0aec1067542ac4beae7dcced74a336fcfaa7fdf",

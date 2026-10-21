@@ -1,5 +1,13 @@
 # Agent / CLI settings backend
 
+> **Settings navigation (canonical):** the six top-level categories, the section
+> registration contract and the legacy tab aliases live in
+> [`navigation-registry.md`](navigation-registry.md)
+> (`jarvis/runtime/control_center_settings_registry.js`,
+> `window.JarvisSettingsRegistry`). New Settings features register a section
+> there; they never add a top-level tab. It supersedes the `navigation` part of
+> `tasks/jarvis-settings-model-catalog-ux/docs/settings-ia-contract.json`.
+
 ## Components
 
 | Component | Responsibility | Key entry points |
@@ -10,6 +18,7 @@
 | `jarvis/runtime/prompt_runtime.py` | One bounded Agent-turn composition for ask, direct send and owned jobs | `compose_agent_turn` |
 | `jarvis/runtime/memory_settings.py` | Memory settings (`memory` key): tolerant read, strict whole-request write, server-described schema, `has_secret` only; see [`memory.md`](memory.md) | `read_memory_settings`, `validate_memory_settings_write`, `describe_memory_settings`, `read_loadout_policy` (`memory.loadouts`, Slice 09) |
 | `jarvis/runtime/control_center_subagents_settings.js` | Settings tab `Sous-agents`: role catalogue, role sheet, Work Methods, order of the appended brief, running instances; only writes role instructions through `POST /api/prompts/subagent_role.<id>`; see [`../subagent-roles.md`](../subagent-roles.md) § 8 | `JarvisSubagentSettings.create`, `show` |
+| `jarvis/runtime/control_center_settings_registry.js` | Canonical Settings navigation: six frozen categories, section registration with deterministic refusals, legacy tab aliases and the migration adapter for the current tab shell; see [`navigation-registry.md`](navigation-registry.md) | `JarvisSettingsRegistry.page.register`, `resolve`, `legacyTabFor`, `navigationFromLegacyTabs` |
 | `jarvis/runtime/control_center.py` | `/api/settings` projection/save, alias conflict rejection, active-agent refresh | `_settings_payload`, `save_settings`, `_apply_cli`, `agent_ask` |
 | `jarvis/runtime/agent_settings.py` + `back_brain_worker.py` | Carry and consume behavior choice for owned background agent executions | `resolve_agent_execution`, `execute_with_progress` |
 
