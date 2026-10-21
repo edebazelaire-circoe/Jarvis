@@ -151,10 +151,14 @@ Le bouton **Réglages** du Control Center (l'ancien **SET**, dans « Plus d’ou
 points en haut à droite, depuis la Slice 04 de la refonte roue/dossier ; ce guide écrit
 « Réglages → onglet »), la
 touche `s`, ou la catégorie **Paramètres** de la roue d'outils (une ligne par
-onglet, qui ouvre la fenêtre directement sur cet onglet) ouvrent une fenêtre
-centrée, fermée par un clic à l'extérieur ou par `Échap`. Elle a six onglets :
-Mode vocal, Prompts, Agent / CLI, Config, API Keys et Raccourcis, plus
-Apparence (couche de thèmes) et Expérimental (scène constellation et Barehands en mode test).
+catégorie, qui ouvre les réglages directement sur elle) ouvrent les réglages en plein
+écran, au-dessus du fond flouté (`docs/settings/settings-shell.md`). Ils se ferment par
+« Fermer » ou `Échap` (plus de clic à l'extérieur : il n'y en a plus). Six catégories à
+gauche — Voix & audio, Agents & modèles, Mémoire & connaissances, Interface & interactions,
+Connexions, Avancé & diagnostic — ; Ctrl+→ / Ctrl+← passent de l'une à l'autre. Pendant la
+migration, chaque catégorie montre en haut les anciens onglets qui lui reviennent (Voix, Mot
+d'éveil, Prompts, Agent / CLI, API Keys, Raccourcis, Mémoire, Sous-agents, Apparence,
+Expérimental) ; ce guide écrit encore « Réglages → onglet ».
 
 Un principe la traverse : **la page ne connaît aucun réglage**. Le serveur
 décrit ce qui existe — les piles vocales, leurs champs, les CLI, leurs modes,

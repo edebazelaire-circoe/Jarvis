@@ -13,6 +13,7 @@ d'implémentation). Les métadonnées d'options et de réglages de ce fichier re
   `control_center_shell.js`, donc avant tout module de réglages et avant `TABS`.
 - Conformité : `tests/unit/test_control_center_settings_registry_js.py`.
 - Compatibilité temporaire : [`../legacy/settings-tab-aliases.md`](../legacy/settings-tab-aliases.md).
+- Shell qui dessine cette navigation (Slice 02) : [`settings-shell.md`](settings-shell.md).
 
 ## 1. Six catégories, et pas une de plus
 
@@ -97,14 +98,14 @@ Destination principale de chaque ID d'onglet actuel, plus les autres destination
 
 | ID hérité | Destination principale | Autres destinations (`also`) |
 | --- | --- | --- |
-| `voice` | `voice_audio` / `conversation` | `advanced_diagnostics` / `architecture_compat`, `diagnostics` |
+| `voice` | `voice_audio` / `conversation` | `voice_audio` / `voice_output`, `microphone_sound`, `turns_interruptions` ; `advanced_diagnostics` / `architecture_compat`, `diagnostics` |
 | `wakeword` | `voice_audio` / `wake_word` | `advanced_diagnostics` / `diagnostics` |
 | `prompts` | `advanced_diagnostics` / `prompts` | — |
 | `cli` | `agents_models` / `main_agent` | `agents_models` / `agent_behavior` ; `advanced_diagnostics` / `runtime_cli` |
 | `routing` (déjà redirigé vers `cli`) | `advanced_diagnostics` / `runtime_cli` | — |
 | `keys` | `connections` / `providers` | — |
 | `shortcuts` | `interface_interactions` / `shortcuts` | — |
-| `memory` | `memory_knowledge` / `recall` | `memory_knowledge` / `memory_center` ; `advanced_diagnostics` / `diagnostics` |
+| `memory` | `memory_knowledge` / `recall` | `memory_knowledge` / `semantic_retrieval`, `consolidation`, `knowledge_sources`, `memory_center` ; `advanced_diagnostics` / `diagnostics` |
 | `subagents` | `agents_models` / `subagents` | `advanced_diagnostics` / `labs` (promotion de Work Methods) |
 | `appearance` | `interface_interactions` / `theme_scene` | — |
 | `experimental` | `advanced_diagnostics` / `labs` | `interface_interactions` / `bare_hands` |
@@ -128,44 +129,43 @@ Sections cibles prévues (enregistrées par les Slices 03 à 08) :
   y ajoute la porte de test de la scène. L'ID est un alias vers Labs ; les préférences
   ordinaires de Bare Hands sont atteintes par leurs ancres. Les Slices 06 et 08 enregistrent
   `bare_hands` (Interface) et `labs` (Avancé), puis la Slice 09 retire l'onglet.
-- **`ui_tab_next` / `ui_tab_prev`.** Dans le shell à six catégories, ils parcourent les
-  catégories par `cycleCategory`, jamais les sections ni les anciens onglets (Slice 02).
-  Jusque-là ils parcourent `TABS` comme avant.
+- **`ui_tab_next` / `ui_tab_prev`.** Depuis la Slice 02, ils parcourent les six catégories par
+  `cycleCategory`, jamais les sections ni les anciens onglets.
 - **Roue Jarvis** (`control_center_jarvis_wheel.js`). Elle lit `settingsTabs()` et ouvre
   `openSettingsTab(id)`. Dès la Slice 01, `openSettingsTab` accepte un ID d'onglet, une
-  redirection, une catégorie ou une section cible. À la Slice 02, `settingsTabs()` rend les
-  six catégories (`{id, label}`) ; la ligne « Réglages de la voix » (`'voice'`) reste servie
-  par l'alias jusqu'à son passage à `voice_audio` (Slice 09).
+  redirection, une catégorie ou une section cible. Depuis la Slice 02, `settingsTabs()` rend
+  les six catégories (`{id, label, description}`) ; la ligne « Réglages de la voix » (`'voice'`)
+  reste servie par l'alias (Voix & audio, onglet Voix) jusqu'à son passage à `voice_audio` (Slice 09).
 - **Pied de page.** `save: 'footer'` montre le bouton Enregistrer du shell ; `self` et
   `readonly` le cachent (aujourd'hui : `TABS[].save` et le cas `subagents`).
 - **Nettoyage.** Le shell appelle `destroy` de la section quittée avant d'en monter une autre ;
   `cleanupSettingsSurface()` reste le point d'appel pendant la migration.
 
-## 5. Adaptateur du shell actuel (migration, Slices 01-02)
+## 5. Adaptateur des onglets hérités (migration, Slices 01-09)
 
-Tant que la page affiche les onglets de `TABS` :
+Tant que des onglets de `TABS` existent :
 
 - `legacyTabFor(target, TABS)` : l'onglet lui-même ; sa redirection (`routing` → `cli`) ;
   pour une catégorie, son premier onglet dans l'ordre de `TABS` ; pour une section cible,
-  l'onglet dont c'est la destination principale, sinon celui qui en porte une partie ;
-  `null` sinon. `canonicalSettingsTab` (donc `selectTab` et `openSettingsTab`) s'en sert :
-  un ID d'onglet actuel donne exactement le même onglet qu'avant.
+  l'onglet dont c'est la destination principale, sinon celui qui en porte une partie
+  (`also`, qui couvre toutes les sections cibles prévues depuis la QA de la Slice 01) ;
+  `null` sinon. `canonicalSettingsTab` s'en sert : un ID d'onglet actuel donne exactement
+  le même onglet qu'avant.
 - `navigationFromLegacyTabs(TABS)` → `{categories:[{id,label,tabs}], unassigned}` : les
-  onglets actuels rangés sous les six catégories. `settingsNavigation()` de la page la rend
-  et journalise `settings_tab_unassigned` si un onglet n'a pas d'alias. C'est la donnée que
-  la Slice 02 dessine en premier (onglets hérités montés comme sections temporaires).
-- Le rendu visuel, les contrôles et la persistance ne changent pas.
+  onglets actuels rangés sous les six catégories (destination principale).
+- `test_no_module_injects_a_new_top_level_tab` fige la liste des modules qui font encore
+  `TABS.push/splice` (`control_center_wake_word.js`, `control_center_work.js`,
+  `control_center_barehands.js`) : tout nouveau module doit enregistrer une section.
 
-`test_no_module_injects_a_new_top_level_tab` fige la liste des modules qui font encore
-`TABS.push/splice` (`control_center_wake_word.js`, `control_center_work.js`,
-`control_center_barehands.js`) : tout nouveau module doit enregistrer une section.
+## 6. Navigation du shell (Slice 02)
 
-## 6. Ce que la Slice 02 branche
-
-1. Dessiner la navigation depuis `JarvisSettingsRegistry.CATEGORIES` (jamais une liste recopiée).
-2. Pour chaque catégorie, monter les sections de `R.page.sections(id)` ; tant qu'une catégorie
-   n'en a pas, monter les onglets de `settingsNavigation()` par l'adaptateur.
-3. Router toute ouverture (`openSettingsTab`, raccourcis, roue) par `R.page.resolve`, avec
-   repli sur `legacyTabFor` pour les onglets non migrés.
-4. `ui_tab_next` / `ui_tab_prev` → `cycleCategory`.
-5. Attraper chaque refus de `register` : journal avec `code` + notice visible.
+- `shellNavigation(TABS, registry)` → `{categories:[{id, label, description, items, related}], unassigned}` :
+  `items` = sections enregistrées (ordre du registre, `{kind:'section', id, label, save, advanced}`), puis
+  onglets hérités de la catégorie (`{kind:'tab', id, label}`) qu'aucune section ne déclare en alias ;
+  `related` = onglets d'autres catégories qui portent encore une partie de celle-ci (`also`), montrés comme
+  liens ; un onglet sans alias (`unassigned`) est rangé dans `advanced_diagnostics` pour rester atteignable
+  et journalisé une fois (`settings_tab_unassigned`). `settingsNavigation()` de la page la rend.
+- `shellTarget(cible, nav, registry, TABS)` → `{category, item}` ou `null` : catégorie seule (`item: null`) ;
+  onglet hérité encore dans la navigation ; section enregistrée (ID, alias, ou destination d'un ancien ID) ;
+  onglet qui sert une section cible ; sinon la catégorie seule d'un alias connu.
+- Le shell, son clavier, son focus et la façon de monter une section : [`settings-shell.md`](settings-shell.md).

@@ -6,8 +6,11 @@ Contrat : `docs/settings/navigation-registry.md`. Ce fichier épingle :
 - refus déterministes (code stable) : section en double, catégorie inconnue, section invalide, alias en conflit ;
 - chaque identifiant d'onglet actuel (base + injectés) a une destination déclarée, et aucun nouveau module
   n'injecte d'onglet de premier niveau sans passer par cette table ;
-- l'adaptateur du shell actuel (`canonicalSettingsTab`, `openSettingsTab`) résout onglets, redirections,
-  catégories et sections cibles sans changer l'onglet affiché pour un identifiant actuel ;
+- l'adaptateur des onglets hérités (`canonicalSettingsTab`) garde chaque identifiant actuel sur son onglet, et
+  chaque section cible prévue s'ouvre (QA Slice 01) ;
+- le shell à six catégories (Slice 02) route catégories, sections, alias et anciens identifiants (`openSettingsTab`,
+  `selectTab`), rend les six catégories à la roue (`settingsTabs`) et laisse une section enregistrée remplacer
+  l'onglet hérité qu'elle déclare en alias ;
 - le module n'écrit aucun réglage (ni réseau ni stockage) et la page servie l'insère avant `TABS`.
 """
 
@@ -254,32 +257,117 @@ out({{map:targets.map(t=>[String(t),R.legacyTabFor(t,T)]),nav:R.navigationFromLe
     assert out["cycle"] == ["agents_models", "advanced_diagnostics", "voice_audio", "voice_audio", "advanced_diagnostics"]
 
 
-def test_page_adapter_keeps_current_tabs_and_resolves_new_targets(tmp_path):
-    page = HTML.read_text(encoding="utf-8")
-    canonical = page[page.index("function canonicalSettingsTab") : page.index("function selectTab")]
+#: Sections cibles prévues (`docs/settings/navigation-registry.md` § 3), enregistrées par les Slices 03 à 08.
+PLANNED_SECTIONS = {
+    "voice_audio": ["conversation", "voice_output", "microphone_sound", "turns_interruptions", "wake_word"],
+    "agents_models": ["main_agent", "agent_behavior", "subagents"],
+    "memory_knowledge": ["recall", "semantic_retrieval", "consolidation", "knowledge_sources", "memory_center"],
+    "interface_interactions": ["theme_scene", "shortcuts", "bare_hands"],
+    "connections": ["providers"],
+    "advanced_diagnostics": ["architecture_compat", "prompts", "runtime_cli", "diagnostics", "labs"],
+}
+
+
+def test_every_planned_target_section_is_served_by_a_current_tab(tmp_path):
+    """QA Slice 01 : `voice_output`, `semantic_retrieval`… rendaient `null` ; chaque section cible prévue s'ouvre."""
+    out = run(tmp_path, f"""
+const T={json.dumps(assembled_tabs())},P={json.dumps(PLANNED_SECTIONS)};
+out(Object.fromEntries(Object.values(P).flat().map(s=>[s,R.legacyTabFor(s,T)])));""")
+    assert all(out.values()), {k: v for k, v in out.items() if not v}
+    assert {k: out[k] for k in ("voice_output", "microphone_sound", "turns_interruptions")} == dict.fromkeys(
+        ("voice_output", "microphone_sound", "turns_interruptions"), "voice")
+    assert {k: out[k] for k in ("semantic_retrieval", "consolidation", "knowledge_sources")} == dict.fromkeys(
+        ("semantic_retrieval", "consolidation", "knowledge_sources"), "memory")
+
+
+def _page_routing(page: str) -> str:
+    """Les fonctions de la page qui routent une cible : résolution, pose de l'emplacement, ouverture, roue."""
+    canonical = page[page.index("function canonicalSettingsTab") : page.index("function destroyAgentCatalog()")]
     door = page[page.index("function openSettingsTab(tab){") : page.index("function closeSettings(){")]
+    return canonical + door
+
+
+def test_page_routes_categories_sections_and_legacy_ids_into_the_six_category_shell(tmp_path):
+    page = HTML.read_text(encoding="utf-8")
     out = run(tmp_path, f"""
 globalThis.window=globalThis;window.JarvisSettingsRegistry=R;
 const TABS={json.dumps(assembled_tabs())};
-const SET={{open:false,tab:'voice'}},warn=[],errors=[],selected=[];
+const SET={{open:false,tab:'voice',category:null,section:null,lastItem:{{}},routingGeneration:0}},warn=[],errors=[];
 console.warn=(c,x)=>warn.push([c,x]);console.error=(c,x)=>errors.push([c,x]);
-let opened=0;const openSettings=()=>{{opened++;SET.open=true;return Promise.resolve()}};
-const selectTab=id=>{{selected.push(canonicalSettingsTab(id));SET.tab=canonicalSettingsTab(id)}};
-{canonical}
-{door}
+let opened=0,rendered=0;const openSettings=()=>{{opened++;SET.open=true;return Promise.resolve()}};
+const renderTabs=()=>{{}},renderTab=()=>{{rendered++}};
+{_page_routing(page)}
+const at=()=>[SET.category,SET.tab,SET.section];
 (async()=>{{
-  await openSettingsTab('connections');const first=SET.tab;
-  await openSettingsTab('memory');await openSettingsTab('routing');await openSettingsTab('labs');await openSettingsTab('nope');
-  out({{first,opened,selected,tab:SET.tab,warn,nav:settingsNavigation(),errors,
-    tabs:settingsTabs().map(t=>t.id),same:TABS.every(t=>canonicalSettingsTab(t.id)===t.id)}});
+  await openSettingsTab('connections');const first=at();
+  const seen={{}};
+  for(const target of ['memory','routing','labs','bare_hands','voice','voice_output','semantic_retrieval','barehandsCalibration',
+    'appearance','voice_audio','interface_interactions','wake_word'])
+    {{await openSettingsTab(target);seen[target]=at()}}
+  await openSettingsTab('nope');const afterUnknown=at();
+  out({{first,opened,seen,afterUnknown,warn,errors,nav:settingsNavigation(),tabs:settingsTabs(),
+    same:TABS.every(t=>canonicalSettingsTab(t.id)===t.id),rendered}});
 }})();""")
-    assert out["first"] == "keys" and out["opened"] == 1
-    assert out["selected"] == ["memory", "cli", "experimental"]
-    assert out["tab"] == "experimental"  # une cible inconnue ne change pas d'onglet…
+    assert out["first"] == ["connections", "keys", None] and out["opened"] == 1
+    seen = out["seen"]
+    assert seen["memory"] == ["memory_knowledge", "memory", None]
+    assert seen["routing"] == ["agents_models", "cli", None]
+    assert seen["labs"] == seen["bare_hands"] == seen["barehandsCalibration"] == ["advanced_diagnostics", "experimental", None]
+    # La ligne « Réglages de la voix » de la roue (`'voice'`) atterrit sur Voix & audio.
+    assert seen["voice"] == seen["voice_output"] == ["voice_audio", "voice", None]
+    assert seen["semantic_retrieval"] == ["memory_knowledge", "memory", None]
+    # Une catégorie seule rouvre la dernière entrée ouverte dans cette catégorie (Apparence), sinon la première.
+    assert seen["voice_audio"] == ["voice_audio", "voice", None]
+    assert seen["interface_interactions"] == ["interface_interactions", "appearance", None]
+    assert seen["wake_word"] == ["voice_audio", "wakeword", None]
+    assert out["afterUnknown"] == seen["wake_word"]  # une cible inconnue ne change rien…
     assert out["warn"] == [["settings_target_unknown", {"target": "nope"}]]  # … mais se dit
-    assert out["same"] is True
-    assert out["tabs"] == [t["id"] for t in assembled_tabs()]  # la roue voit les mêmes onglets qu'avant
-    assert out["nav"]["unassigned"] == [] and out["errors"] == []
+    assert out["same"] is True and out["errors"] == []
+    # Le sous-menu Paramètres de la roue lit les six catégories du registre.
+    assert [(t["id"], t["label"]) for t in out["tabs"]] == CATEGORIES
+    nav = out["nav"]
+    assert [c["id"] for c in nav["categories"]] == [c[0] for c in CATEGORIES] and nav["unassigned"] == []
+    assert {c["id"]: [(i["kind"], i["id"]) for i in c["items"]] for c in nav["categories"]} == {
+        "voice_audio": [("tab", "voice"), ("tab", "wakeword")],
+        "agents_models": [("tab", "cli"), ("tab", "subagents")],
+        "memory_knowledge": [("tab", "memory")],
+        "interface_interactions": [("tab", "shortcuts"), ("tab", "appearance")],
+        "connections": [("tab", "keys")],
+        "advanced_diagnostics": [("tab", "prompts"), ("tab", "experimental")],
+    }
+    related = {c["id"]: [r["id"] for r in c["related"]] for c in nav["categories"]}
+    assert related["interface_interactions"] == ["experimental"]  # les préférences Bare Hands, encore dans Expérimental
+    assert related["advanced_diagnostics"] == ["voice", "wakeword", "cli", "memory", "subagents"]
+    assert related["voice_audio"] == related["connections"] == []
+
+
+def test_registered_section_takes_over_its_legacy_tab_and_a_stray_tab_stays_reachable(tmp_path):
+    page = HTML.read_text(encoding="utf-8")
+    out = run(tmp_path, f"""
+globalThis.window=globalThis;window.JarvisSettingsRegistry=R;
+const TABS=[...{json.dumps(assembled_tabs())},{{id:'stray',label:'Égaré'}}];
+const SET={{open:true,tab:'voice',category:'voice_audio',section:null,lastItem:{{}},routingGeneration:0}},errors=[];
+console.warn=noop;console.error=(c,x)=>errors.push([c,x]);
+const openSettings=()=>Promise.resolve(),renderTabs=noop,renderTab=noop;
+{_page_routing(page)}
+R.page.register({{id:'wake_word',category:'voice_audio',label:'Mot d’éveil',mount:noop,save:'self',aliases:['wakeword'],order:50}});
+R.page.register({{id:'conversation',category:'voice_audio',label:'Conversation',mount:noop,save:'footer',order:10}});
+const nav=settingsNavigation();settingsNavigation();
+selectTab('wakeword');const viaAlias=[SET.category,SET.tab,SET.section];
+selectTab('voice_audio');const remembered=[SET.category,SET.tab,SET.section];
+selectTab('voice');const legacy=[SET.category,SET.tab,SET.section];
+selectTab('stray');const stray=[SET.category,SET.tab,SET.section];
+out({{voice:nav.categories[0].items.map(i=>[i.kind,i.id]),viaAlias,remembered,legacy,stray,errors,
+  advanced:nav.categories[5].items.map(i=>i.id)}});""")
+    # Sections enregistrées d'abord (ordre du registre), puis les onglets hérités restants ; `wakeword` est remplacé.
+    assert out["voice"] == [["section", "conversation"], ["section", "wake_word"], ["tab", "voice"]]
+    assert out["viaAlias"] == ["voice_audio", None, "wake_word"]
+    assert out["remembered"] == ["voice_audio", None, "wake_word"]
+    # `'voice'` reste l'onglet hérité tant qu'aucune section ne le déclare en alias.
+    assert out["legacy"] == ["voice_audio", "voice", None]
+    # Un onglet sans alias (module qui a contourné le registre) reste atteignable, et se dit une seule fois.
+    assert out["stray"] == ["advanced_diagnostics", "stray", None] and "stray" in out["advanced"]
+    assert out["errors"] == [["settings_tab_unassigned", {"tabs": ["stray"]}]]
 
 
 def test_module_writes_no_setting_and_is_served_before_the_tabs():

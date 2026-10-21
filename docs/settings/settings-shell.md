@@ -1,0 +1,141 @@
+# Réglages : le shell plein écran et ses primitives
+
+**Statut :** contrat canonique du shell des Réglages (niveau 3 : implémentation réutilisable + tests).
+**Introduit :** tâche `jarvis-settings-ui-reorganization`, Slice 02.
+**S'appuie sur :** [`navigation-registry.md`](navigation-registry.md) (six catégories, sections, alias).
+
+- Shell : `jarvis/runtime/control_center.html` (`#overlay` › `#settingsShell`, CSS « Réglages : shell plein
+  écran », fonctions `renderTabs`, `renderTab`, `selectTab`, `openSettings`, `openSettingsTab`, `closeSettings`,
+  `mountRegisteredSection`, `registerSettingsSection`).
+- Navigation : `shellNavigation` / `shellTarget` de `control_center_settings_registry.js`.
+- Primitives : `jarvis/runtime/control_center_settings_ui.js` (`window.JarvisSettingsUI`), inséré par
+  `control_center.py` (`SETTINGS_UI_SCRIPT_FILE`/`_MARKER`) juste après le registre, avant `TABS`.
+- Tests : `tests/unit/test_control_center_settings_shell_js.py` (node : primitives, cycle de vie d'une section,
+  navigation lue au registre), `tests/unit/test_control_center_settings_registry_js.py` (routage des cibles),
+  `tests/unit/test_settings_shell_browser.py` (vrai Chrome : clavier, focus, Échap, débordement à 100 % et 125 %,
+  mouvement réduit), `tests/unit/test_jarvis_wheel_browser.py` (roue → catégories).
+
+## 1. Ce que le shell possède
+
+Le shell possède l'ouverture et la fermeture, les six catégories, les entrées d'une catégorie, le focus, le
+clavier, le nettoyage des sections et la mise en page. Une section possède ses contrôles, ses données et sa
+validation. Aucune valeur de réglage n'est écrite par le shell.
+
+```
+#overlay (plein écran, voile + flou du fond Jarvis)
+└─ #settingsShell  role=dialog aria-modal
+   ├─ aside.set-rail
+   │  ├─ h2#modalTitle « Réglages »
+   │  └─ nav#settingsCategories role=tablist (vertical ; horizontal sous 900 px)
+   │       six button.set-cat role=tab [data-category] : pictogramme, libellé, description (registre)
+   └─ main#settingsMain role=tabpanel
+      ├─ .set-head : #settingsIntro (pictogramme + JarvisSettingsUI.intro) · #closeModal « Fermer · Échap »
+      ├─ nav#modalTabs role=tablist : entrées de la catégorie, button.set-item [data-section] ou [data-tab]
+      ├─ #settingsRelated : liens vers les onglets d'autres catégories qui en portent encore une partie
+      ├─ #modalSub : la phrase de l'onglet hérité (vide pour une section enregistrée)
+      ├─ #modalContent.set-body.content : le contenu, SEUL à défiler
+      └─ footer.set-foot : #modalStatus (role=status, aria-live=polite) · #modalSave « Enregistrer »
+```
+
+Les identifiants historiques (`overlay`, `modalTitle`, `modalTabs`, `modalContent`, `modalSub`, `modalStatus`,
+`modalSave`, `closeModal`) sont conservés : les modules hérités et leurs tests les lisent.
+
+## 2. Emplacement et routage
+
+L'emplacement est `SET.category`, puis **soit** `SET.section` (section enregistrée), **soit** `SET.tab` (onglet
+hérité monté comme section temporaire), jamais les deux. `SET.lastItem[catégorie]` retient la dernière entrée
+ouverte dans chaque catégorie pendant la session.
+
+- `selectTab(cible)` et `openSettingsTab(cible)` acceptent une catégorie, une section, un alias de section, un
+  ancien ID d'onglet, une ancre Bare Hands ou une section cible encore servie par un onglet
+  (`settingsTarget` → `shellTarget`). Une cible inconnue est signalée (`settings_target_unknown`) et ne change rien.
+- Catégorie seule : dernière entrée ouverte dans la catégorie, sinon la première.
+- Un onglet hérité encore présent s'ouvre lui-même ; il ne cède sa place qu'à la section qui le déclare en alias.
+- Un module hérité qui pose `SET.tab` directement (Bare Hands) reste servi : `ensureSettingsLocation` ramène la
+  catégorie sur l'onglet posé.
+- `settingsTabs()` rend les six catégories (`{id, label, description}`) : le sous-menu Paramètres de la roue
+  Jarvis en fait une ligne par catégorie ; la ligne « Réglages de la voix » ouvre `'voice'` → Voix & audio.
+- `ui_tab_next` / `ui_tab_prev` (Ctrl+→ / Ctrl+← par défaut) parcourent les six catégories par
+  `cycleCategory`, en boucle.
+
+## 3. Clavier, focus, fermeture
+
+- À l'ouverture, l'élément d'ouverture est retenu et le focus va à la catégorie active. À la fermeture, il revient
+  à l'élément d'ouverture s'il est encore dans la page (un bouton du popover « Plus d’outils » rend le focus à
+  « Plus d’outils »), sinon au bouton Réglages. Il n'est jamais volé à un élément focalisé hors du shell.
+- Les deux listes (`#settingsCategories`, `#modalTabs`) sont des onglets ARIA à **activation manuelle** :
+  flèches (les deux axes), Début, Fin déplacent le focus sans rien charger ; Entrée, Espace ou un clic ouvre.
+  Une catégorie charge des données : la parcourir au clavier ne doit pas déclencher six chargements.
+- Après chaque rendu de la navigation, le focus revient sur l'entrée active de la liste qui l'avait.
+- Tab et Maj+Tab bouclent dans le shell.
+- **Échap ferme toujours**, même si `ui_close` est réaffecté et même depuis un champ, sauf : capture d'un raccourci
+  en cours (elle le prend avant), zone de texte longue ou éditable (Échap y abandonne la saisie, pas la page), ou
+  événement déjà consommé (`defaultPrevented`). Le bouton « Fermer » et `ui_close` ferment aussi.
+- **Pas de fermeture au clic extérieur.** Le shell couvre toute la fenêtre : il n'y a plus d'extérieur, et un clic
+  dans un vide du shell fermerait par accident une page en cours de réglage.
+- Focus visible : `outline` 2 px accent sur tout élément du shell en `:focus-visible` ; en couleurs forcées,
+  l'entrée active est soulignée par `Highlight`.
+- `prefers-reduced-motion` : ni fondu d'ouverture, ni entrée du contenu, ni transitions du rail.
+
+## 4. Monter une section (Slices 03 à 08)
+
+```js
+registerSettingsSection({               // porte de la page : R.page.register derrière un filet
+  id: 'wake_word', category: 'voice_audio', label: 'Mot d’éveil', order: 50,
+  save: 'self',                         // 'footer' | 'self' | 'readonly' (navigation-registry.md § 2)
+  aliases: ['wakeword'],                // l'onglet hérité `wakeword` disparaît de la navigation
+  mount(host, context) { … },           // dessine dans `host` (un <div class="set-mount"> neuf)
+  destroy(host) { … },                  // arrête minuteurs, requêtes, écouteurs
+});
+```
+
+- **Où :** le module s'enregistre à son chargement par `registerSettingsSection(spec)`. Un refus est journalisé
+  (`settings_section_rejected`, avec `code`) et affiché en notice dans la catégorie visée (Avancé & diagnostic si
+  la catégorie est inconnue) ; la fonction rend `null`, jamais une exception.
+- **Ordre des entrées :** sections enregistrées (ordre du registre), puis onglets hérités restants.
+- **`mount(host, context)`** reçoit un hôte neuf à chaque montage. `context` :
+  `revision`, `section`, `ui` (`JarvisSettingsUI`), `say(texte, 'ok'|'error'|'')` (pied d'état),
+  `open(cible)` (ouvrir une autre cible), `isCurrent()` (faux dès que la section est quittée, la catégorie changée
+  ou les réglages fermés : une réponse tardive vérifie `isCurrent()` avant d'écrire), `data()` / `draft()` (les
+  données et le brouillon partagés de `/api/settings`), `markDirty()`.
+- **`destroy(host)`** est appelé exactement une fois avant tout autre montage, tout changement de catégorie et à la
+  fermeture (`cleanupSettingsSurface()` → `destroyRegisteredSection()`). Une exception y est journalisée
+  (`settings_section_destroy_failed`) sans bloquer la suite.
+- **Échec de montage :** un `mount` qui lève ou rejette laisse dans `host` une notice `role=alert` portant le
+  message réel et le code `settings_section_mount_failed`, et la journalise.
+- **Pied Enregistrer :** `save: 'footer'` montre le pied et le bouton ; la section écrit dans `context.draft()`,
+  appelle `context.markDirty()`, et « Enregistrer » envoie `/api/settings` comme aujourd'hui (`saveDraft`).
+  `self` et `readonly` cachent le pied : la section porte ses propres notices. Pour les onglets hérités, le
+  comportement d'avant est conservé (`TABS[].save`, pied caché pour `subagents`).
+- Les brouillons ne sont pas gardés par le shell au changement de section : chaque module garde son contrat actuel
+  (par exemple `SET.subagentDrafts`).
+
+## 5. Primitives (`window.JarvisSettingsUI`)
+
+Fragments HTML purs aux classes `.set-*` (styles dans `control_center.html`). Tout paramètre texte est échappé ;
+`body`, `control` et `items` sont du HTML déjà construit par l'appelant.
+
+| Primitive | Usage | Accessibilité |
+| --- | --- | --- |
+| `intro({id, title, description, level})` | tête d'une catégorie ou d'une page | `h2` (ou `h3` avec `level: 3`) |
+| `section({id, title, description, body, advanced, applies, badges})` | un groupe titré | `section[aria-labelledby]` ; badges « Avancé » et moment d'application |
+| `field({id, label, hint, control, inline})` | une ligne de champ | `label[for=id]` ; aide `#<id>-hint`, à référencer par `aria-describedby` dans `control` |
+| `badge(kind, text)` | un état court (`info`, `ok`, `warn`, `bad`, `advanced`, `restart`) | toujours un mot, jamais la couleur seule |
+| `appliesBadge(applies)` | moment d'application (`JarvisSettingsRegistry.APPLIES`) | texte : « Au prochain démarrage de Voice »… |
+| `notice({kind, title, text, body, live})` | message `info`/`ok`/`warn`/`bad` | `live: 'polite'` → `role=status`, `'assertive'` → `role=alert` |
+| `advanced({id, summary, body, open})` | divulgation « avancé » | `<details>` natif |
+| `actions(items)` | rangée de boutons | — |
+
+## 6. Langage visuel
+
+- Plein écran, sans cadre flottant : voile sombre `rgba(2,6,10,.80)` et flou de 22 px sur le fond Jarvis (26 px,
+  voile plus léger, sous Cosmos : `control_center_work.js`).
+- Rail des catégories : une destination par catégorie (pictogramme dessiné, teinte propre, libellé, description
+  du registre). Pictogrammes et teintes (`SETTINGS_ICON`, `SETTINGS_HUE`) sont la seule donnée par identifiant de
+  catégorie dans la page : de l'apparence, jamais une liste de navigation.
+- Texte courant en sans-serif (`Segoe UI Variable Text`, `Segoe UI`, `system-ui`) ; la monospace reste au code,
+  aux identifiants et aux diagnostics (`code`, `kbd`, `samp`, `pre`).
+- Le contenu hérité garde ses contrôles ; le shell n'en change que la typographie de lecture (titres en casse
+  normale, champs, aides, notices encadrées d'un trait de 1 px).
+- Largeur : aucun débordement horizontal vérifié à 1920×1080 et 1366×768, à 100 % et 125 % de zoom ; sous 900 px
+  le rail passe en barre horizontale défilante. Hauteur faible (≤ 700 px) : rail compacté.

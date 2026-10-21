@@ -152,13 +152,18 @@ def test_agent_and_subagent_edges(tmp_path):
     assert got["cat"] == {"tone": None, "text": "voix : écoute · 1 sous-agent"}
 
 
-def test_settings_rows_follow_the_real_tabs(tmp_path):
+def test_settings_rows_follow_the_six_categories(tmp_path):
+    """Une ligne par catégorie des réglages (`settingsTabs()`, Slice 02 de jarvis-settings-ui-reorganization)."""
     got = run(tmp_path, """
-      out({tabs:J.settingsItemsOf([{id:'voice',label:'Voix'},{id:'cli',label:'Agent / CLI'},{id:'barehands',label:'Bare Hands'}]),
+      out({tabs:J.settingsItemsOf([{id:'voice_audio',label:'Voix & audio',description:'Conversation, voix.'},
+          {id:'connections',label:'Connexions'},{id:'future_cat',label:'Plus tard',description:'Une description.'},{id:'bare',label:'Nue'}]),
         none:J.settingsItemsOf(null),bad:J.settingsItemsOf([{label:'sans id'},null])})""")
-    assert [(r["id"], r["tab"], r["label"]) for r in got["tabs"]] == [
-        ("tab:voice", "voice", "Voix"), ("tab:cli", "cli", "Agent / CLI"), ("tab:barehands", "barehands", "Bare Hands")]
-    assert got["tabs"][0]["detail"] == "ouvre les réglages, onglet Voix"
+    assert [(r["id"], r["tab"], r["label"], r["note"]) for r in got["tabs"]] == [
+        ("tab:voice_audio", "voice_audio", "Voix & audio", "micro, voix, mot d’éveil"),
+        ("tab:connections", "connections", "Connexions", "fournisseurs et clés"),
+        ("tab:future_cat", "future_cat", "Plus tard", "Une description."),
+        ("tab:bare", "bare", "Nue", "catégorie des réglages")]
+    assert got["tabs"][0]["detail"] == "ouvre les réglages, catégorie Voix & audio"
     assert got["none"] == got["bad"] == [{"id": "settings", "tab": None, "icon": "settings",
                                           "label": "Réglages de Jarvis", "note": "ouvrir"}]
 

@@ -16,7 +16,7 @@ Ce que ce fichier épingle :
   sans refermer le sous-menu ni perdre le focus clavier ;
 - une ligne d'état activée n'agit pas et ne ferme pas la roue ;
 - « Sous-agents » ouvre le panneau Agents, « Réglages de la voix » et chaque ligne
-  de Paramètres ouvrent le modal des réglages sur leur onglet — les routes de
+  de Paramètres (une par catégorie des réglages) ouvrent les réglages sur leur catégorie — les routes de
   `#agentsButton` et `#openSettings` ;
 - aucun second sondage : le nombre de lectures de `/api/status` ne dépend pas
   de l'ouverture du sous-menu.
@@ -56,6 +56,7 @@ SUB = r"""(()=>{const host=document.getElementById('toolWheel');const ae=documen
     reads:performance.getEntriesByType('resource').length}})()"""
 OVERLAY = r"""(()=>({open:document.getElementById('overlay').classList.contains('open'),
   tab:(document.querySelector('#modalTabs button.active')||{}).dataset?.tab||null,
+  category:(document.querySelector('#settingsCategories [aria-selected=true]')||{}).dataset?.category||null,
   panel:document.getElementById('panel').classList.contains('open')?document.getElementById('panelTitle').textContent:null,
   wheel:window.JarvisToolWheel.isOpen()}))()"""
 STATUS_READS = "window.__statusReads||0"
@@ -172,19 +173,23 @@ def test_the_two_jarvis_routes_and_every_settings_row_open_existing_surfaces(tmp
             ["eval", "voice", OVERLAY, 50]]},
         {"width": 1280, "height": 720, "seed": ONLINE, "actions": [
             *_open("settings"), ["eval", "sub", SUB, 50], *_shot("settings-submenu-1280x720"),
-            ["click", "shortcuts", "#toolWheel .tw-item[data-tw-item='tab:shortcuts']", 900],
+            ["click", "shortcuts", "#toolWheel .tw-item[data-tw-item='tab:interface_interactions']", 900],
             ["eval", "shortcutsTab", OVERLAY, 50]]},
     ])
     assert out[0]["results"]["agents"]["panel"].startswith("Agents") and out[0]["results"]["agents"]["wheel"] is False
     voice = out[1]["results"]["voice"]
     assert voice["open"] is True and voice["tab"] == "voice" and voice["wheel"] is False
+    assert voice["category"] == "voice_audio"  # « Réglages de la voix » atterrit sur Voix & audio
     sub = out[2]["results"]["sub"]
     assert sub["head"] == "Paramètres"
     ids = [i["id"] for i in sub["items"]]
-    assert ids[0] == "tab:voice" and "tab:shortcuts" in ids and "tab:memory" in ids, ids
+    # Une ligne par catégorie des réglages (Slice 02 de jarvis-settings-ui-reorganization).
+    assert ids == ["tab:voice_audio", "tab:agents_models", "tab:memory_knowledge", "tab:interface_interactions",
+                   "tab:connections", "tab:advanced_diagnostics"], ids
     assert all(i["kind"] is None and i["disabled"] is None for i in sub["items"])
     shortcuts = out[2]["results"]["shortcutsTab"]
-    assert shortcuts["open"] is True and shortcuts["tab"] == "shortcuts", shortcuts
+    assert shortcuts["open"] is True and shortcuts["tab"] == "shortcuts", shortcuts  # première entrée d'Interface
+    assert shortcuts["category"] == "interface_interactions", shortcuts
     for step in out:
         errors = [c for c in step["console"] if c["type"] in ("exception", "error")]
         # Le double ne sert ni `/api/settings` ni le détail des agents : la page le dit, rien d'autre.

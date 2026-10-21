@@ -126,17 +126,29 @@ def test_background_notifications_are_round_pills_in_the_main_interface_not_a_to
     assert 'html[data-jarvis-theme="cosmos"] .bgpills{' not in work
 
 
-def test_settings_window_is_a_modal_that_closes_on_an_outside_click():
-    """La fenêtre de réglages est une modale centrée, dimensionnée en % d'écran.
+def test_settings_window_is_a_full_screen_shell_closed_explicitly():
+    """Les réglages sont un shell plein écran (Slice 02 de jarvis-settings-ui-reorganization).
 
-    Ces assertions portent sur des choix demandés explicitement : un clic à
-    l'extérieur ferme, et la taille suit la fenêtre plutôt qu'un nombre de
-    pixels. Les champs eux-mêmes ne sont pas vérifiés ici : ils sont décrits
-    par le serveur, pas écrits en dur dans la page.
+    Il couvre toute la fenêtre au-dessus du fond flouté : il n'y a plus
+    d'« extérieur », donc plus de fermeture au clic extérieur (un clic dans un
+    vide du shell fermerait par accident). Ferment : le bouton « Fermer », Échap
+    (garanti même si `ui_close` est réaffecté) et `ui_close`. Les champs eux-mêmes
+    ne sont pas vérifiés ici : ils sont décrits par le serveur.
     """
     html = CONTROL_CENTER_HTML.read_text(encoding="utf-8")
-    assert ".modal{width:82vw;height:82vh" in html
-    assert "overlay.addEventListener('mousedown',event=>{if(event.target===overlay)closeSettings()})" in html
+    assert ".modal{" not in html and "nav.tabs" not in html  # l'ancien modal centré à onglets n'existe plus
+    css = html[html.index(".overlay{") :]
+    assert css.startswith(".overlay{position:fixed;inset:0;") and "backdrop-filter:blur(" in css[:400]
+    assert ".settings-shell{" in html and "position:absolute;inset:0;" in html[html.index(".settings-shell{") :][:900]
+    assert "overlay.addEventListener('mousedown'" not in html
+    shell = html[html.index('<div class="overlay" id="overlay">') :]
+    shell = shell[: shell.index("<script>")]
+    assert 'role="dialog" aria-modal="true" aria-labelledby="modalTitle"' in shell
+    assert 'id="closeModal" aria-label="Fermer les réglages"' in shell and "<kbd>Échap</kbd>" in shell
+    assert 'id="settingsCategories" role="tablist"' in shell and 'id="modalStatus" role="status" aria-live="polite"' in shell
+    keys = html[html.index("overlay.addEventListener('keydown'") :]
+    keys = keys[: keys.index("\n});")]
+    assert "event.key==='Escape'" in keys and "closeSettings()" in keys and "SET.capture" in keys
     for label in ("Voix", "Prompts", "Agent / CLI", "API Keys", "Raccourcis"):
         assert f"label:'{label}'" in html
     assert "id:'config'" not in html

@@ -115,17 +115,17 @@ SHORTCUTS: tuple[ShortcutSpec, ...] = (
     ),
     ShortcutSpec(
         id="ui_tab_next",
-        label="Onglet de réglages suivant",
+        label="Catégorie de réglages suivante",
         scope="ui",
         default="ctrl+ArrowRight",
-        description="Dans la fenêtre de réglages, passe à l'onglet suivant.",
+        description="Dans les réglages, passe à la catégorie suivante.",
     ),
     ShortcutSpec(
         id="ui_tab_prev",
-        label="Onglet de réglages précédent",
+        label="Catégorie de réglages précédente",
         scope="ui",
         default="ctrl+ArrowLeft",
-        description="Dans la fenêtre de réglages, revient à l'onglet précédent.",
+        description="Dans les réglages, revient à la catégorie précédente.",
     ),
 )
 

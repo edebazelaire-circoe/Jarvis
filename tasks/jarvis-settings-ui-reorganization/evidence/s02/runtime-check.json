@@ -1,0 +1,419 @@
+{
+ "note": "Bac à sable S02 : Core 27653, Control Center 27654, données sous le scratchpad. 125 % = largeur CSS /1.25 avec deviceScaleFactor 1.25. page/shell/main = débordement horizontal en px (0 = aucun). Le 424 de /api/models est l'état réel du catalogue sans clé Anthropic dans le bac à sable, rendu par la page, pas une erreur JS.",
+ "runs": [
+  {
+   "viewport": "1920x1080-100",
+   "checks": [
+    {
+     "step": "m-voice_audio",
+     "value": {
+      "cat": "voice_audio",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Voix",
+       "Mot d’éveil"
+      ]
+     }
+    },
+    {
+     "step": "m-agents_models",
+     "value": {
+      "cat": "agents_models",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Agent / CLI",
+       "Sous-agents"
+      ]
+     }
+    },
+    {
+     "step": "m-memory_knowledge",
+     "value": {
+      "cat": "memory_knowledge",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Mémoire"
+      ]
+     }
+    },
+    {
+     "step": "m-interface_interactions",
+     "value": {
+      "cat": "interface_interactions",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Raccourcis",
+       "Apparence"
+      ]
+     }
+    },
+    {
+     "step": "m-connections",
+     "value": {
+      "cat": "connections",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "API Keys"
+      ]
+     }
+    },
+    {
+     "step": "m-advanced_diagnostics",
+     "value": {
+      "cat": "advanced_diagnostics",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Prompts",
+       "Expérimental"
+      ]
+     }
+    }
+   ],
+   "console_errors": [
+    {
+     "type": "log.error",
+     "text": "Failed to load resource: the server responded with a status of 424 (Failed Dependency) http://127.0.0.1:27654/api/models?provider=anthropic&role=text"
+    }
+   ]
+  },
+  {
+   "viewport": "1366x768-100",
+   "checks": [
+    {
+     "step": "m-voice_audio",
+     "value": {
+      "cat": "voice_audio",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Voix",
+       "Mot d’éveil"
+      ]
+     }
+    },
+    {
+     "step": "m-agents_models",
+     "value": {
+      "cat": "agents_models",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Agent / CLI",
+       "Sous-agents"
+      ]
+     }
+    },
+    {
+     "step": "m-memory_knowledge",
+     "value": {
+      "cat": "memory_knowledge",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Mémoire"
+      ]
+     }
+    },
+    {
+     "step": "m-interface_interactions",
+     "value": {
+      "cat": "interface_interactions",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Raccourcis",
+       "Apparence"
+      ]
+     }
+    },
+    {
+     "step": "m-connections",
+     "value": {
+      "cat": "connections",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "API Keys"
+      ]
+     }
+    },
+    {
+     "step": "m-advanced_diagnostics",
+     "value": {
+      "cat": "advanced_diagnostics",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Prompts",
+       "Expérimental"
+      ]
+     }
+    }
+   ],
+   "console_errors": [
+    {
+     "type": "log.error",
+     "text": "Failed to load resource: the server responded with a status of 424 (Failed Dependency) http://127.0.0.1:27654/api/models?provider=anthropic&role=text"
+    }
+   ]
+  },
+  {
+   "viewport": "1920x1080-125",
+   "checks": [
+    {
+     "step": "m-voice_audio",
+     "value": {
+      "cat": "voice_audio",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Voix",
+       "Mot d’éveil"
+      ]
+     }
+    },
+    {
+     "step": "m-agents_models",
+     "value": {
+      "cat": "agents_models",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Agent / CLI",
+       "Sous-agents"
+      ]
+     }
+    },
+    {
+     "step": "m-memory_knowledge",
+     "value": {
+      "cat": "memory_knowledge",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Mémoire"
+      ]
+     }
+    },
+    {
+     "step": "m-interface_interactions",
+     "value": {
+      "cat": "interface_interactions",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Raccourcis",
+       "Apparence"
+      ]
+     }
+    },
+    {
+     "step": "m-connections",
+     "value": {
+      "cat": "connections",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "API Keys"
+      ]
+     }
+    },
+    {
+     "step": "m-advanced_diagnostics",
+     "value": {
+      "cat": "advanced_diagnostics",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Prompts",
+       "Expérimental"
+      ]
+     }
+    }
+   ],
+   "console_errors": [
+    {
+     "type": "log.error",
+     "text": "Failed to load resource: the server responded with a status of 424 (Failed Dependency) http://127.0.0.1:27654/api/models?provider=anthropic&role=text"
+    }
+   ]
+  },
+  {
+   "viewport": "1366x768-125",
+   "checks": [
+    {
+     "step": "m-voice_audio",
+     "value": {
+      "cat": "voice_audio",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Voix",
+       "Mot d’éveil"
+      ]
+     }
+    },
+    {
+     "step": "m-agents_models",
+     "value": {
+      "cat": "agents_models",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Agent / CLI",
+       "Sous-agents"
+      ]
+     }
+    },
+    {
+     "step": "m-memory_knowledge",
+     "value": {
+      "cat": "memory_knowledge",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Mémoire"
+      ]
+     }
+    },
+    {
+     "step": "m-interface_interactions",
+     "value": {
+      "cat": "interface_interactions",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Raccourcis",
+       "Apparence"
+      ]
+     }
+    },
+    {
+     "step": "m-connections",
+     "value": {
+      "cat": "connections",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "API Keys"
+      ]
+     }
+    },
+    {
+     "step": "m-advanced_diagnostics",
+     "value": {
+      "cat": "advanced_diagnostics",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Prompts",
+       "Expérimental"
+      ]
+     }
+    }
+   ],
+   "console_errors": [
+    {
+     "type": "log.error",
+     "text": "Failed to load resource: the server responded with a status of 424 (Failed Dependency) http://127.0.0.1:27654/api/models?provider=anthropic&role=text"
+    }
+   ]
+  },
+  {
+   "viewport": "extra",
+   "checks": [
+    {
+     "step": "subagents",
+     "value": {
+      "cat": "agents_models",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": true,
+      "items": [
+       "Agent / CLI",
+       "Sous-agents"
+      ]
+     }
+    },
+    {
+     "step": "bh",
+     "value": 1
+    },
+    {
+     "step": "barehands",
+     "value": {
+      "cat": "advanced_diagnostics",
+      "page": 0,
+      "shell": 0,
+      "main": 0,
+      "footerHidden": false,
+      "items": [
+       "Prompts",
+       "Expérimental"
+      ]
+     }
+    },
+    {
+     "step": "themeapi",
+     "value": "JarvisThemeAPI"
+    }
+   ],
+   "console_errors": []
+  }
+ ]
+}

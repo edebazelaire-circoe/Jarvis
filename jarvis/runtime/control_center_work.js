@@ -183,10 +183,10 @@ html[data-jarvis-theme="cosmos"] .panel header{border-bottom-color:rgba(151,191,
 html[data-jarvis-theme="cosmos"] .panel header h2{font-size:12px;letter-spacing:.1em}
 html[data-jarvis-theme="cosmos"] .live-banner{
   border-width:1px;border-radius:14px;backdrop-filter:blur(18px)}
-html[data-jarvis-theme="cosmos"] .overlay{backdrop-filter:blur(9px)}
-html[data-jarvis-theme="cosmos"] .modal{
-  border:1px solid rgba(151,191,209,.15);border-radius:18px;
-  background:rgba(5,11,16,.94);box-shadow:0 30px 110px rgba(0,0,0,.58);overflow:hidden}
+/* Réglages (shell plein écran, Slice 02 de jarvis-settings-ui-reorganization) : le cosmos reste visible, flouté,
+   derrière un voile plus léger ; le rail prend le verre du thème. */
+html[data-jarvis-theme="cosmos"] .overlay{background:rgba(2,6,10,.72);backdrop-filter:blur(26px) saturate(1.15)}
+html[data-jarvis-theme="cosmos"] .set-rail{background:rgba(5,11,16,.40)}
 html[data-jarvis-theme="cosmos"] .choice.theme-choice{grid-template-columns:auto 1fr;border-radius:12px}
 html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
   border-color:color-mix(in srgb,var(--accent,#6ee7ff) 54%,transparent);

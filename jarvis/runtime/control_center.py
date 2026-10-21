@@ -462,6 +462,10 @@ SHELL_SCRIPT_MARKER = "/*__CONTROL_CENTER_SHELL_JS__*/"
 #: stockage. Contrat : `docs/settings/navigation-registry.md`.
 SETTINGS_REGISTRY_SCRIPT_FILE = "control_center_settings_registry.js"
 SETTINGS_REGISTRY_SCRIPT_MARKER = "/*__CONTROL_CENTER_SETTINGS_REGISTRY_JS__*/"
+#: Primitives visuelles des Réglages (Slice 02) : intro, section, champ, badge, notice, divulgation
+#: avancée, rangée d'actions (`window.JarvisSettingsUI`). Pur. Contrat : `docs/settings/settings-shell.md`.
+SETTINGS_UI_SCRIPT_FILE = "control_center_settings_ui.js"
+SETTINGS_UI_SCRIPT_MARKER = "/*__CONTROL_CENTER_SETTINGS_UI_JS__*/"
 #: Logique pure du panneau Agents, gardée à part pour être exécutée par les
 #: tests (node) et insérée dans la page à la place de ce repère.
 WORK_SCRIPT_FILE = "control_center_work.js"
@@ -2420,6 +2424,10 @@ class ControlCenter:
         html = html.replace(
             SETTINGS_REGISTRY_SCRIPT_MARKER,
             page.with_name(SETTINGS_REGISTRY_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            SETTINGS_UI_SCRIPT_MARKER,
+            page.with_name(SETTINGS_UI_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             WORK_SCRIPT_MARKER, page.with_name(WORK_SCRIPT_FILE).read_text(encoding="utf-8")

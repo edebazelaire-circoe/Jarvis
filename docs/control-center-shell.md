@@ -749,7 +749,7 @@ category does comes from its registrant.
 | Sélection | `control_center_input_arbitration.js` (method rows) + `JarvisScene.selectionMenu` (Slice 06, action rows) | Souris / Bare Hands (then Bare Hands › tools, Veille, Aide, Diagnostic, Calibration); then the selection: a count, Ranger dans le Dossier, Masquer, Masqués (N) ›, Changer la forme ›, Retirer du Board… — or « Aucun objet sélectionné » and the hidden row — see *Selection actions* below |
 | Dossier | `control_center_dossier.js` (Slice 07) | **no tree**: a click opens the displayed Board's Dossier directly (same path as « Ouvrir le Dossier », `dossier.wheel_open`); refused with a toast and its reason when the Board is unknown (status lost) or Variantes covers the screen — see [Dossier full-screen view](#dossier-full-screen-view-dossierview) |
 | Capture | `control_center_capture_wheel.js` | Capture d'écran, Enregistrer l'écran, Enregistrer l'audio, each with its second level (stop list, then Core's real targets); live while open (`refresh`) — [capture.md](capture.md) › *Interface* |
-| Paramètres | `control_center_jarvis_wheel.js` (Slice 04) | one row per settings tab (`settingsTabs()`), each opens the settings modal on that tab |
+| Paramètres | `control_center_jarvis_wheel.js` (Slice 04) | one row per Settings category (`settingsTabs()`, the six registry categories since Slice 02 of jarvis-settings-ui-reorganization), each opens Settings on that category |
 
 Every category is registered by its module; the wheel keeps no placeholder
 (the Slice 03 `PLACEHOLDERS` waiting rows were removed in Slice 08, once Dossier
@@ -833,11 +833,12 @@ JARVIS category projects a short sentence on its sector and the core readout
 « ? » that does not colour the anchor). An open JARVIS submenu follows the
 beat (`refresh`). No Veille / Réveil, Pause or mode row is drawn: a click-to-
 sleep/wake control needs a canonical Voice lifecycle route first (follow-up,
-not invented here). **Paramètres** lists the real settings tabs
-(`settingsTabs()`, the page's `TABS`, including those that modules add:
-Mot d'éveil, Apparence, Expérimental), each row opening the same modal as
-`#openSettings` on that tab (`openSettingsTab(tab)`: tab set before opening,
-or `selectTab` when already open). Journal `[jarvis] jarvis_wheel.installed`,
+not invented here). **Paramètres** lists the six Settings categories
+(`settingsTabs()`, read from `JarvisSettingsRegistry.CATEGORIES` since Slice 02
+of jarvis-settings-ui-reorganization; see `docs/settings/settings-shell.md`),
+each row opening the same Settings as `#openSettings` on that category
+(`openSettingsTab(category)`: location set before opening, or `selectTab` when
+already open). « Réglages de la voix » opens `'voice'`: Voix & audio, tab Voix. Journal `[jarvis] jarvis_wheel.installed`,
 `.menu`, `.settings_menu`, `.facts {read, hint}` (only when a fact changes),
 `.open_agents`, `.open_settings {tab}`, `.route_missing`, `.paint_failed`,
 `.install_failed`. Tests: `tests/unit/test_jarvis_wheel_js.py` (pure model),

@@ -772,21 +772,130 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .bgpop footer .action{padding:6px 10px;font-size:12px}
 @media(prefers-reduced-motion:reduce){.bgpill,.bgpill.bad::after{animation:none;transition:none}}
 
-/* ---------- Fenêtre de réglages ---------- */
-.overlay{position:fixed;inset:0;z-index:60;display:none;place-items:center;padding:3vh 3vw;background:rgba(2,6,10,.68);backdrop-filter:blur(7px)}
-.overlay.open{display:grid}
-.modal{width:82vw;height:82vh;display:grid;grid-template-rows:auto minmax(0,1fr) auto;background:var(--solid);border:1px solid var(--line);box-shadow:0 34px 90px rgba(0,0,0,.65);overflow:hidden}
-.modal>header{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:16px 22px;border-bottom:1px solid var(--line)}
-.modal>header h2{margin:0;font-size:14px;letter-spacing:.16em;text-transform:uppercase}
-.modal>header .sub{font-size:11px;color:var(--muted);letter-spacing:.04em;text-transform:none}
-.modal>header button{background:none;border:0;color:var(--muted);font-size:24px;line-height:1;cursor:pointer}
-.modal>header button:hover{color:var(--text)}
-.split{display:grid;grid-template-columns:212px minmax(0,1fr);min-height:0}
-nav.tabs{border-right:1px solid var(--line);padding:14px 0;overflow:auto}
-nav.tabs button{display:block;width:100%;text-align:left;padding:11px 20px;background:none;border:0;border-left:2px solid transparent;color:var(--muted);font:inherit;font-size:13px;cursor:pointer;letter-spacing:.05em}
-nav.tabs button:hover{color:var(--text)}
-nav.tabs button.active{color:var(--accent);border-left-color:var(--accent);background:rgba(110,231,255,.06)}
-.content{overflow:auto;padding:24px 28px 32px;min-height:0}
+/* ---------- Réglages : shell plein écran (Slice 02, docs/settings/settings-shell.md) ----------
+   Pas de cadre flottant : le shell couvre la fenêtre, au-dessus du fond Jarvis flouté. Le rail
+   tient les six catégories du registre ; la colonne principale tient l'intro de la catégorie,
+   ses entrées (#modalTabs), le contenu (seul à défiler) et le pied Enregistrer. Texte courant
+   en sans-serif ; la monospace reste aux identifiants, au code et aux diagnostics. */
+.overlay{position:fixed;inset:0;z-index:60;display:none;background:radial-gradient(120% 90% at 18% 0%,rgba(10,30,40,.55),transparent 60%),rgba(2,6,10,.80);backdrop-filter:blur(22px) saturate(1.12)}
+.overlay.open{display:block;animation:set-fade var(--shell-dur) var(--shell-ease)}
+@keyframes set-fade{from{opacity:0}}
+.settings-shell{--set-font:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;--set-mono:ui-monospace,SFMono-Regular,Consolas,monospace;
+  --set-ink:var(--text);--set-ink-2:#a9c2cf;--set-ink-3:#8aa5b3;--set-hair:rgba(151,191,209,.13);--set-hair-2:rgba(151,191,209,.2);
+  --set-field-bg:rgba(3,9,13,.72);--set-pad:clamp(20px,3.6vw,56px);--set-hue:var(--accent);
+  position:absolute;inset:0;display:grid;grid-template-columns:clamp(256px,22vw,332px) minmax(0,1fr);
+  font:14px/1.5 var(--set-font);color:var(--set-ink);letter-spacing:0}
+.settings-shell :is(code,kbd,samp,pre){font-family:var(--set-mono)}
+.settings-shell :is(button,input,select,textarea){font-family:inherit}
+.settings-shell :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.settings-shell .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+/* Rail des catégories */
+.set-rail{display:flex;flex-direction:column;min-height:0;padding:30px 14px 18px 18px;border-right:1px solid var(--set-hair);background:rgba(3,8,12,.42);overflow:auto}
+.set-rail-title{margin:0 10px 22px;font-size:22px;font-weight:600;letter-spacing:-.01em;line-height:1.2}
+.set-cats{display:flex;flex-direction:column;gap:4px}
+.set-cat{display:grid;grid-template-columns:40px minmax(0,1fr);gap:4px 14px;align-items:center;width:100%;padding:11px 12px;border:1px solid transparent;border-radius:12px;background:none;color:var(--set-ink-2);text-align:left;cursor:pointer;transition:background-color var(--shell-dur-fast),border-color var(--shell-dur-fast)}
+.set-cat:hover{background:rgba(151,191,209,.05)}
+.set-cat[aria-selected=true]{background:color-mix(in srgb,var(--set-hue) 8%,rgba(5,11,16,.7));border-color:color-mix(in srgb,var(--set-hue) 28%,transparent)}
+.set-cat-icon{grid-row:span 2;display:grid;place-items:center;width:40px;height:40px;border-radius:11px;color:var(--set-hue);background:color-mix(in srgb,var(--set-hue) 10%,transparent);border:1px solid color-mix(in srgb,var(--set-hue) 22%,transparent)}
+.set-cat[aria-selected=true] .set-cat-icon{background:color-mix(in srgb,var(--set-hue) 20%,transparent);box-shadow:0 6px 18px -10px var(--set-hue)}
+.set-cat-icon svg,.set-intro-icon svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.set-cat-label{font-size:15px;font-weight:600;color:var(--set-ink);line-height:1.25}
+.set-cat-desc{font-size:12.5px;line-height:1.4;color:var(--set-ink-3);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+/* Colonne principale */
+.set-main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.set-main>*{flex:none}
+.set-head{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding:30px var(--set-pad) 0}
+.set-head-text{display:flex;gap:16px;align-items:flex-start;min-width:0}
+.set-intro-icon{flex:none;display:grid;place-items:center;width:48px;height:48px;border-radius:14px;color:var(--set-hue);background:color-mix(in srgb,var(--set-hue) 14%,transparent);border:1px solid color-mix(in srgb,var(--set-hue) 28%,transparent)}
+.set-intro-icon svg{width:24px;height:24px}
+.set-intro{min-width:0}
+.set-intro-title{margin:0;font-size:26px;font-weight:600;letter-spacing:-.015em;line-height:1.2;text-wrap:balance}
+.set-intro-desc{margin:6px 0 0;max-width:68ch;font-size:14.5px;color:var(--set-ink-2)}
+.set-close{flex:none;display:inline-flex;align-items:center;gap:8px;padding:7px 10px 7px 9px;border:1px solid var(--set-hair-2);border-radius:10px;background:rgba(4,10,15,.6);color:var(--set-ink-2);font-size:13.5px;cursor:pointer;transition:color var(--shell-dur-fast),border-color var(--shell-dur-fast)}
+.set-close:hover{color:var(--set-ink);border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
+.set-close svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round}
+.set-close kbd{padding:1px 6px;border:1px solid var(--set-hair-2);border-radius:5px;font-size:11px;color:var(--set-ink-3)}
+.set-items{display:flex;gap:2px;margin:22px var(--set-pad) 0;border-bottom:1px solid var(--set-hair);overflow-x:auto;scrollbar-width:thin}
+.set-items:empty{display:none}
+.set-item{position:relative;flex:none;padding:9px 14px 12px;border:0;border-radius:8px 8px 0 0;background:none;color:var(--set-ink-3);font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap}
+.set-item:hover{color:var(--set-ink)}
+.set-item.active{color:var(--set-ink)}
+.set-item.active::after{content:'';position:absolute;left:10px;right:10px;bottom:0;height:2px;border-radius:2px;background:var(--set-hue)}
+.set-related{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:12px var(--set-pad) 0;font-size:13px;color:var(--set-ink-3)}
+.set-related[hidden]{display:none}
+.set-link{padding:2px 10px;border:1px solid var(--set-hair-2);border-radius:999px;background:none;color:var(--set-ink-2);font-size:12.5px;cursor:pointer}
+.set-link:hover{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
+.set-sub{margin:14px var(--set-pad) 0;max-width:80ch;font-size:13px;color:var(--set-ink-3)}
+.set-sub:empty{display:none}
+.set-main>.set-body{flex:1 1 auto;overflow:auto;min-height:0;padding:22px var(--set-pad) 40px}
+.set-body.set-enter{animation:set-enter var(--shell-dur) var(--shell-ease)}
+@keyframes set-enter{from{opacity:0;transform:translateY(4px)}}
+.set-foot{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px var(--set-pad);border-top:1px solid var(--set-hair);background:rgba(3,8,12,.5)}
+.set-foot[hidden]{display:none}
+.set-foot .status{font-size:13px;color:var(--set-ink-3);min-height:18px}
+.set-foot .status.ok{color:var(--ok)}
+.set-foot .status.error{color:var(--danger)}
+.set-foot .action.primary{padding:9px 18px;border-radius:9px;font-size:14px;font-weight:600}
+.set-empty{padding:28px 0;color:var(--set-ink-3)}
+/* Contenu hérité : typographie de lecture (le contenu lui-même ne change pas). */
+.settings-shell .content h3{margin:30px 0 12px;font-size:15px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--set-ink)}
+.settings-shell .content h3:first-child{margin-top:0}
+.settings-shell .field>label{font-size:13.5px;color:var(--set-ink-2)}
+.settings-shell .hint{font-size:12.5px;color:var(--set-ink-3)}
+.settings-shell .field :is(input:not([type=checkbox]):not([type=radio]):not([type=range]),select),.settings-shell textarea{padding:9px 11px;border-color:var(--set-hair-2);border-radius:8px;background:var(--set-field-bg);font-size:14px}
+.settings-shell .notice{border:1px solid color-mix(in srgb,var(--warn) 32%,transparent);border-radius:10px;padding:11px 14px;font-size:13px;line-height:1.55}
+.settings-shell .notice.bad{border-color:color-mix(in srgb,var(--danger) 36%,transparent)}
+.settings-shell .notice.ok{border-color:color-mix(in srgb,var(--ok) 32%,transparent)}
+.settings-shell .notice.info{border-color:var(--set-hair-2)}
+.settings-shell details.rd{border-color:var(--set-hair-2);border-radius:10px}
+.settings-shell details.rd>summary{font-size:13.5px;color:var(--set-ink-2)}
+/* Primitives (JarvisSettingsUI) */
+.set-section{max-width:860px;margin:0 0 36px}
+.set-section-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 12px}
+.set-section-head h3{margin:0;font-size:17px;font-weight:600;letter-spacing:-.005em;color:var(--set-ink)}
+.set-section-marks{display:inline-flex;flex-wrap:wrap;gap:6px}
+.set-section-desc{margin:6px 0 0;max-width:68ch;font-size:13.5px;color:var(--set-ink-2)}
+.set-section-body{display:grid;gap:18px;margin-top:16px}
+.set-field{display:grid;gap:6px}
+.set-field-inline{grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 16px}
+.set-field-inline .set-field-hint{grid-column:1/-1}
+.set-field-label{font-size:13.5px;font-weight:500;color:var(--set-ink)}
+.set-field-hint{margin:0;max-width:68ch;font-size:12.5px;color:var(--set-ink-3)}
+.set-field-control :is(input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea){width:100%;padding:9px 11px;border:1px solid var(--set-hair-2);border-radius:8px;background:var(--set-field-bg);color:var(--set-ink);font-size:14px}
+.set-badge{display:inline-flex;align-items:center;padding:1px 8px;border:1px solid var(--set-hair-2);border-radius:999px;font-size:11.5px;font-weight:600;line-height:1.6;color:var(--set-ink-2);white-space:nowrap}
+.set-badge-ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent)}
+.set-badge-warn,.set-badge-restart{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
+.set-badge-bad{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 42%,transparent)}
+.set-badge-advanced{color:var(--role-accent-violet);border-color:color-mix(in srgb,var(--role-accent-violet) 40%,transparent)}
+.set-notice{display:grid;gap:3px;padding:11px 14px;border:1px solid var(--set-hair-2);border-radius:10px;background:rgba(113,144,160,.06);font-size:13px;line-height:1.55;color:var(--set-ink)}
+.set-notice-ok{border-color:color-mix(in srgb,var(--ok) 32%,transparent);background:rgba(104,224,160,.06)}
+.set-notice-warn{border-color:color-mix(in srgb,var(--warn) 32%,transparent);background:rgba(255,184,92,.06)}
+.set-notice-bad{border-color:color-mix(in srgb,var(--danger) 36%,transparent);background:rgba(255,101,119,.07)}
+.set-notice-title{font-weight:600}
+.set-advanced{border:1px solid var(--set-hair-2);border-radius:10px}
+.set-advanced>summary{padding:11px 14px;font-size:13.5px;color:var(--set-ink-2);cursor:pointer}
+.set-advanced[open]>summary{border-bottom:1px solid var(--set-hair)}
+.set-advanced-body{display:grid;gap:16px;padding:14px}
+.set-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+@media(max-height:700px) and (min-width:901px){
+  .set-rail{padding-top:20px}.set-rail-title{margin-bottom:14px}
+  .set-cat{padding:8px 10px}.set-cat-desc{-webkit-line-clamp:1}
+  .set-head{padding-top:20px}.set-items{margin-top:14px}
+}
+@media(max-width:900px){
+  .settings-shell{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  .set-rail{padding:14px 16px 10px;border-right:0;border-bottom:1px solid var(--set-hair);overflow:visible}
+  .set-rail-title{margin:0 2px 10px;font-size:18px}
+  .set-cats{flex-direction:row;overflow-x:auto;gap:6px;scrollbar-width:thin}
+  .set-cat{flex:none;width:auto;grid-template-columns:28px auto;padding:6px 12px 6px 6px}
+  .set-cat-icon{grid-row:auto;width:28px;height:28px;border-radius:8px}
+  .set-cat-icon svg{width:16px;height:16px}
+  .set-cat-label{font-size:13.5px;white-space:nowrap}.set-cat-desc{display:none}
+  .set-head{padding-top:18px;gap:12px}.set-intro-icon{display:none}.set-intro-title{font-size:21px}
+  .set-close span{display:none}
+}
+@media(prefers-reduced-motion:reduce){.overlay.open,.set-body.set-enter{animation:none}.set-cat,.set-close{transition:none}}
+@media(forced-colors:active){.set-cat[aria-selected=true],.set-item.active{outline:2px solid Highlight}}
 .content>section{max-width:760px}
 .content h3{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:26px 0 12px;font-weight:normal}
 .content h3:first-child{margin-top:0}
@@ -829,10 +938,6 @@ table.keys input[type=radio]{accent-color:var(--accent)}
 .keycap:hover{border-color:var(--accent)}
 .keycap.capturing{border-color:var(--accent);color:var(--accent);animation:pulse 1.1s ease-in-out infinite}
 @keyframes pulse{50%{opacity:.45}}
-.modal>footer{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px 22px;border-top:1px solid var(--line)}
-.modal>footer .status{font-size:12px;color:var(--muted);min-height:16px}
-.modal>footer .status.ok{color:var(--ok)}
-.modal>footer .status.error{color:var(--danger)}
 .notice{border-left:2px solid var(--warn);padding:10px 14px;margin:0 0 18px;background:rgba(255,184,92,.06);font-size:12px;line-height:1.6;color:#e4d3b8}
 .notice.bad{border-left-color:var(--danger);background:rgba(255,101,119,.07);color:#f0c3c9}
 .notice.ok{border-left-color:var(--ok);background:rgba(104,224,160,.06);color:#cdeedd}
@@ -875,11 +980,6 @@ details.rd[open]>summary{margin-bottom:14px}
 .voice-category-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.voice-category-head h3{margin-top:0}
 .voice-field-label{display:block;margin-bottom:6px;color:var(--text);font-size:12px}.field output{display:block;color:var(--text)}
 @media(max-width:900px){
-  .modal{width:94vw;height:88vh}
-  .split{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
-  nav.tabs{display:flex;border-right:0;border-bottom:1px solid var(--line);padding:0;overflow-x:auto}
-  nav.tabs button{border-left:0;border-bottom:2px solid transparent;white-space:nowrap;padding:12px 16px}
-  nav.tabs button.active{border-left:0;border-bottom-color:var(--accent)}
   .keyform{grid-template-columns:1fr}
 }
 @media(max-width:700px){
@@ -2314,20 +2414,30 @@ button.wsp-ename:hover{color:var(--accent)}
   <div class="sr" id="pfbAnnounce" aria-live="polite"></div>
 </section>
 
+<!-- Shell des Réglages (jarvis-settings-ui-reorganization, Slice 02 ; docs/settings/settings-shell.md) :
+     plein écran au-dessus du fond Jarvis flouté, six catégories dessinées depuis
+     `JarvisSettingsRegistry.CATEGORIES`, puis les entrées de la catégorie (#modalTabs). -->
 <div class="overlay" id="overlay">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-    <header>
-      <div><h2 id="modalTitle">Réglages</h2><div class="sub" id="modalSub"></div></div>
-      <button id="closeModal" aria-label="Fermer les réglages">×</button>
-    </header>
-    <div class="split">
-      <nav class="tabs" id="modalTabs"></nav>
-      <div class="content" id="modalContent"></div>
-    </div>
-    <footer>
-      <div class="status" id="modalStatus"></div>
-      <div class="row"><button class="action primary" id="modalSave">Enregistrer</button></div>
-    </footer>
+  <div class="settings-shell" id="settingsShell" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="settingsHelp">
+    <aside class="set-rail">
+      <h2 class="set-rail-title" id="modalTitle">Réglages</h2>
+      <nav class="set-cats" id="settingsCategories" role="tablist" aria-orientation="vertical" aria-label="Catégories des réglages"></nav>
+      <p class="sr" id="settingsHelp">Flèches haut et bas dans les catégories, puis Entrée pour en ouvrir une. Échap ferme les réglages.</p>
+    </aside>
+    <main class="set-main" id="settingsMain" role="tabpanel">
+      <div class="set-head">
+        <div class="set-head-text" id="settingsIntro"></div>
+        <button type="button" class="set-close" id="closeModal" aria-label="Fermer les réglages" aria-keyshortcuts="Escape"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Fermer</span><kbd>Échap</kbd></button>
+      </div>
+      <nav class="set-items" id="modalTabs" role="tablist" aria-label="Sections de la catégorie"></nav>
+      <div class="set-related" id="settingsRelated" hidden></div>
+      <div class="set-sub" id="modalSub"></div>
+      <div class="set-body content" id="modalContent"></div>
+      <footer class="set-foot">
+        <div class="status" id="modalStatus" role="status" aria-live="polite"></div>
+        <div class="row"><button class="action primary" id="modalSave">Enregistrer</button></div>
+      </footer>
+    </main>
   </div>
 </div>
 
@@ -2337,6 +2447,8 @@ button.wsp-ename:hover{color:var(--accent)}
    sections enregistrées, alias des onglets hérités (`window.JarvisSettingsRegistry`). Pur, avant tout
    module de réglages. Contrat : `docs/settings/navigation-registry.md`. */
 /*__CONTROL_CENTER_SETTINGS_REGISTRY_JS__*/
+/* Primitives visuelles des Réglages (Slice 02) : `window.JarvisSettingsUI`. Contrat : `docs/settings/settings-shell.md`. */
+/*__CONTROL_CENTER_SETTINGS_UI_JS__*/
 /*__CONTROL_CENTER_LIVE_JS__*/
 /*__CONTROL_CENTER_CATALOG_JS__*/
 /* Identité des rôles et grammaire des relations (jarvis-organic-agent-orchestration, Slice 09) : avant la scène et les
@@ -4327,7 +4439,7 @@ const TABS=[
   {id:'memory',label:'Mémoire',save:false},
   {id:'subagents',label:'Sous-agents',save:false},
 ];
-const SET={open:false,tab:'voice',voiceTab:'architecture',voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:'',subagentView:null,subagentDrafts:{}};
+const SET={open:false,tab:'voice',category:null,section:null,lastItem:{},opener:null,sectionView:null,voiceTab:'architecture',voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:'',subagentView:null,subagentDrafts:{}};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
 
 function say(text,kind){modalStatus.className='status'+(kind?' '+kind:'');modalStatus.textContent=text||''}
@@ -5140,7 +5252,18 @@ function tabShortcuts(){
 }
 
 /* --- rendu et liaisons --------------------------------------------------- */
-function cleanupSettingsSurface(){destroyAgentCatalog();destroyVoiceCatalog();destroySubagentSettings()}
+function cleanupSettingsSurface(){destroyAgentCatalog();destroyVoiceCatalog();destroySubagentSettings();destroyRegisteredSection()}
+/* Section enregistrée au registre (Slice 02, `docs/settings/settings-shell.md`) : le shell appelle son `destroy`
+   avant d'en monter une autre, de changer de catégorie ou de fermer. Un `destroy` qui lève est journalisé, jamais
+   bloquant : la section suivante se monte quand même. */
+function destroyRegisteredSection(){
+  const view=SET.sectionView;
+  if(!view)return;
+  SET.sectionView=null;
+  if(typeof view.entry.destroy!=='function')return;
+  try{view.entry.destroy(view.host)}
+  catch(e){console.error('settings_section_destroy_failed',{section:view.entry.id,error:String(e&&e.message||e)})}
+}
 /* Onglet Sous-agents (`control_center_subagents_settings.js`) : sa vue arrête son compteur d'attente et ignore
    ses réponses tardives une fois détruite ; ses brouillons vivent dans `SET.subagentDrafts`, d'un onglet à l'autre. */
 function destroySubagentSettings(){if(SET.subagentView){SET.subagentView.destroy();SET.subagentView=null}}
@@ -5157,20 +5280,136 @@ function mountSubagentSettings(revision){
     host.innerHTML=`<div class="notice bad" role="alert"><strong>Onglet Sous-agents indisponible.</strong> ${esc(e&&e.message||String(e))}<div class="hint">Code : <code>subagent_settings_mount_failed</code></div></div>`;
   });
 }
+/* --- shell à six catégories (Slice 02) ----------------------------------------
+   Navigation dessinée depuis `JarvisSettingsRegistry.CATEGORIES` par `shellNavigation` : jamais une liste
+   recopiée ici. `SETTINGS_LOOK` ne porte que l'apparence (pictogramme, teinte) par identifiant de catégorie ;
+   une catégorie sans apparence garde le pictogramme générique. */
+const SETTINGS_ICON={
+  voice_audio:'<path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0M12 18v3"/>',
+  agents_models:'<circle cx="12" cy="5" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><path d="M12 7v4m0 0-5.5 5.5M12 11l5.5 5.5"/>',
+  memory_knowledge:'<path d="M12 3 3 7.5l9 4.5 9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/>',
+  interface_interactions:'<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  connections:'<path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/>',
+  advanced_diagnostics:'<path d="M3 12h4l3-7 4 14 3-7h4"/>',
+  generic:'<circle cx="12" cy="12" r="3"/><path d="M12 3v3m0 12v3M3 12h3m12 0h3"/>',
+};
+const SETTINGS_HUE={voice_audio:'var(--accent)',agents_models:'var(--role-accent-violet)',memory_knowledge:'var(--role-accent-amber)',
+  interface_interactions:'var(--role-accent-teal)',connections:'var(--role-accent-sky)',advanced_diagnostics:'var(--role-accent-slate)'};
+function settingsIcon(id){return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${SETTINGS_ICON[id]||SETTINGS_ICON.generic}</svg>`}
+/* Refus d'enregistrement de section (`register` du registre) : journalisés et montrés dans la catégorie visée. */
+const SETTINGS_REJECTED=[];
+/* Porte d'enregistrement des modules (Slices 03-08) : `R.page.register` derrière un filet qui journalise le
+   refus avec son code (`settings_section_rejected`) et l'affiche dans la catégorie. Rend l'entrée ou `null`. */
+function registerSettingsSection(spec){
+  const R=window.JarvisSettingsRegistry;
+  try{return R.page.register(spec)}
+  catch(e){
+    const id=spec&&typeof spec.id==='string'?spec.id:null,category=spec&&R.CATEGORY_IDS.includes(spec.category)?spec.category:'advanced_diagnostics';
+    const rejected={id,category,code:e&&e.code||'settings_section_invalid',message:String(e&&e.message||e)};
+    SETTINGS_REJECTED.push(rejected);console.error('settings_section_rejected',rejected);
+    if(SET.open)renderTabs();
+    return null;
+  }
+}
+/* Où en est le shell : catégorie, puis section enregistrée OU onglet hérité. Un module hérité peut encore poser
+   `SET.tab` lui-même (Bare Hands) : un onglet posé l'emporte et la catégorie suit. */
+function ensureSettingsLocation(nav){
+  const cat=nav.categories.find(c=>c.id===SET.category);
+  const has=(c,kind,id)=>!!c&&c.items.some(i=>i.kind===kind&&i.id===id);
+  if(SET.tab&&has(cat,'tab',SET.tab)){SET.section=null;return}
+  if(!SET.tab&&SET.section&&has(cat,'section',SET.section))return;
+  if(!SET.tab&&!SET.section&&cat&&!cat.items.length)return;
+  const want=SET.tab||SET.section;
+  applySettingsTarget((want&&settingsTarget(want,nav))||{category:cat?cat.id:nav.categories[0].id,item:null},nav);
+}
 function renderTabs(){
-  $('#modalTabs').innerHTML=TABS.map(t=>`<button data-tab="${t.id}" class="${t.id===SET.tab?'active':''}">${esc(t.label)}</button>`).join('');
-  document.querySelectorAll('#modalTabs button').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.tab)));
-  /* En largeur étroite la barre d'onglets défile : l'onglet actif est ramené dans la vue, pour tous les onglets
-     (sans effet quand la barre est verticale et tout visible). */
-  const active=$('#modalTabs button.active');
-  if(active&&active.scrollIntoView)active.scrollIntoView({block:'nearest',inline:'nearest'});
-  /* Le pied (état + Enregistrer) n'a rien à dire dans l'onglet Sous-agents, qui porte ses propres notices. */
-  const footer=modalSave.closest('footer');if(footer)footer.hidden=SET.tab==='subagents';
+  const R=window.JarvisSettingsRegistry,UI=window.JarvisSettingsUI,nav=settingsNavigation();
+  if(!R||!UI||!nav){console.error('settings_shell_modules_missing',{registry:!!R,ui:!!UI});return}
+  ensureSettingsLocation(nav);
+  const cat=nav.categories.find(c=>c.id===SET.category);
+  const rail=$('#settingsCategories'),items=$('#modalTabs'),shell=$('#settingsShell');
+  const hadFocus=document.activeElement&&(rail.contains(document.activeElement)?'rail':items.contains(document.activeElement)?'items':null);
+  const narrow=typeof matchMedia==='function'&&matchMedia('(max-width:900px)').matches;
+  rail.setAttribute('aria-orientation',narrow?'horizontal':'vertical');
+  rail.innerHTML=nav.categories.map(c=>{const on=c.id===SET.category;
+    return `<button type="button" role="tab" class="set-cat" id="settingsCat-${c.id}" data-category="${c.id}" aria-selected="${on}" aria-controls="settingsMain" tabindex="${on?0:-1}" style="--set-hue:${SETTINGS_HUE[c.id]||'var(--accent)'}">`
+      +`<span class="set-cat-icon">${settingsIcon(c.id)}</span><span class="set-cat-label">${esc(c.label)}</span><span class="set-cat-desc">${esc(c.description)}</span></button>`}).join('');
+  shell.style.setProperty('--set-hue',SETTINGS_HUE[cat.id]||'var(--accent)');
+  $('#settingsMain').setAttribute('aria-labelledby',`settingsCat-${cat.id}`);
+  $('#settingsIntro').innerHTML=`<span class="set-intro-icon" aria-hidden="true">${settingsIcon(cat.id)}</span>`+UI.intro({id:'settingsCategoryTitle',title:cat.label,description:cat.description,level:3});
+  const activeKey=SET.section?`section:${SET.section}`:SET.tab?`tab:${SET.tab}`:'';
+  /* `data-tab` / `data-section` : l'identifiant de l'entrée ; `.active` et `aria-selected` : l'entrée montrée. */
+  items.innerHTML=cat.items.map(i=>{const on=`${i.kind}:${i.id}`===activeKey;
+    return `<button type="button" role="tab" class="set-item${on?' active':''}" ${i.kind==='tab'?'data-tab':'data-section'}="${esc(i.id)}" aria-selected="${on}" aria-controls="modalContent" tabindex="${on?0:-1}">${esc(i.label)}</button>`}).join('');
+  /* Tant qu'un onglet d'une autre catégorie porte encore une partie de celle-ci : un lien, pas un second éditeur. */
+  const related=$('#settingsRelated');
+  related.hidden=!cat.related.length;
+  related.innerHTML=cat.related.length?'<span>En attendant leur déplacement, d’autres réglages de cette catégorie sont encore dans :</span>'
+    +cat.related.map(r=>`<button type="button" class="set-link" data-related="${esc(r.id)}">${esc(r.label)} <span aria-hidden="true">·</span> ${esc((R.category(r.category)||{}).label||r.category)}</button>`).join(''):'';
+  const rejected=SETTINGS_REJECTED.filter(r=>r.category===cat.id);
+  if(rejected.length)$('#settingsIntro').insertAdjacentHTML('beforeend',UI.notice({kind:'bad',title:'Une section n’a pas pu être ajoutée.',
+    body:rejected.map(r=>`<span class="set-notice-text">${esc(r.message)} <code>${esc(r.code)}</code></span>`).join('')}));
+  rail.querySelectorAll('[data-category]').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.category)));
+  items.querySelectorAll('[data-tab],[data-section]').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.section||b.dataset.tab)));
+  related.querySelectorAll('[data-related]').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.related)));
+  /* La navigation est redessinée à chaque changement : le focus revient sur l'entrée active de la même liste. */
+  if(hadFocus==='rail')rail.querySelector('[aria-selected=true]').focus({preventScroll:true});
+  if(hadFocus==='items'){const on=items.querySelector('[aria-selected=true]');if(on)on.focus({preventScroll:true})}
+  /* En largeur étroite les deux barres défilent : l'entrée active est ramenée dans la vue. */
+  for(const on of [rail.querySelector('[aria-selected=true]'),items.querySelector('[aria-selected=true]')])
+    if(on&&on.scrollIntoView)on.scrollIntoView({block:'nearest',inline:'nearest'});
+  /* Le pied (état + Enregistrer) : rien à dire dans l'onglet Sous-agents (ses propres notices) ni dans une section
+     enregistrée qui s'enregistre elle-même ou se lit seulement (`save` ≠ 'footer'). */
+  const entry=SET.section?R.page.section(SET.section):null;
+  const footer=modalSave.closest('footer');if(footer)footer.hidden=entry?entry.save!=='footer':(!SET.tab||SET.tab==='subagents');
+}
+/* Clavier des deux listes (onglets ARIA à activation manuelle : une catégorie charge des données, la parcourir ne
+   doit rien charger) : flèches (les deux axes, la liste change d'orientation en largeur étroite), Début, Fin
+   déplacent le focus ; Entrée ou Espace ouvre. */
+function settingsListKeys(list,event){
+  const keys=['ArrowDown','ArrowUp','ArrowLeft','ArrowRight','Home','End'];
+  if(!keys.includes(event.key)||event.altKey||event.ctrlKey||event.metaKey)return;
+  const all=[...list.querySelectorAll('[role=tab]')],at=all.indexOf(document.activeElement);
+  if(at<0||!all.length)return;
+  event.preventDefault();
+  const next=event.key==='Home'?0:event.key==='End'?all.length-1:(at+(['ArrowDown','ArrowRight'].includes(event.key)?1:-1)+all.length)%all.length;
+  all.forEach((b,i)=>b.tabIndex=i===next?0:-1);
+  all[next].focus();
+}
+$('#settingsCategories').addEventListener('keydown',event=>settingsListKeys(event.currentTarget,event));
+$('#modalTabs').addEventListener('keydown',event=>settingsListKeys(event.currentTarget,event));
+
+/* Monte la section enregistrée active (`SET.section`) : `mount(host, context)` dans un hôte neuf. `context` donne
+   la révision, `isCurrent()` (faux dès que la section est quittée ou les réglages fermés : une réponse tardive
+   n'écrit plus rien), `say` (pied d'état), `open` (ouvrir une autre cible), les données et le brouillon partagés
+   (`save: 'footer'` : la section écrit dans `draft()` puis `markDirty()`, le bouton Enregistrer du shell envoie).
+   Un `mount` qui lève ou rejette laisse une notice visible et codée (`settings_section_mount_failed`). */
+function mountRegisteredSection(revision){
+  const R=window.JarvisSettingsRegistry,UI=window.JarvisSettingsUI,entry=SET.section?R.page.section(SET.section):null;
+  modalSave.style.display=entry&&entry.save==='footer'?'':'none';
+  modalSub.textContent='';
+  if(!entry){modalContent.innerHTML='<div class="set-empty">Rien à régler ici pour le moment.</div>';return}
+  const host=document.createElement('div');host.className='set-mount';host.dataset.section=entry.id;
+  modalContent.replaceChildren(host);
+  const view={entry,host};SET.sectionView=view;
+  const failed=e=>{
+    console.error('settings_section_mount_failed',{section:entry.id,error:String(e&&e.message||e)});
+    if(SET.sectionView===view)host.innerHTML=UI.notice({kind:'bad',live:'assertive',title:`Section « ${entry.label} » indisponible.`,
+      body:`<span class="set-notice-text">${esc(e&&e.message||String(e))} <code>settings_section_mount_failed</code></span>`});
+  };
+  const context=Object.freeze({revision,section:entry.id,ui:UI,say,open:selectTab,
+    isCurrent:()=>SET.open&&SET.sectionView===view&&revision===SET.renderRevision,
+    data:()=>SET.data,draft:()=>SET.draft,markDirty:()=>{SET.dirty=true;say('Modifications non enregistrées.','')}});
+  try{const result=entry.mount(host,context);if(result&&typeof result.then==='function')result.catch(failed)}
+  catch(e){failed(e)}
 }
 
 async function renderTab(){
   cleanupSettingsSurface();
   const revision=SET.renderRevision=(SET.renderRevision||0)+1;
+  /* Section enregistrée, ou catégorie sans entrée : le shell la monte lui-même (Slice 02). */
+  if(SET.section||!SET.tab)return mountRegisteredSection(revision);
+  if(modalContent.classList){modalContent.classList.remove('set-enter');void modalContent.offsetWidth;modalContent.classList.add('set-enter')}
   modalContent.innerHTML='<div class="empty">Chargement…</div>';
   const tab=TABS.find(t=>t.id===SET.tab);
   modalSave.style.display=tab.save?'':'none';
@@ -5299,17 +5538,41 @@ function authFieldChanged(el,revision){
   say('Modifications non enregistrées.','');
 }
 
-/* Identifiant demandé → onglet du shell actuel. Le registre (Slice 01) résout les onglets, leurs redirections,
-   les catégories et les sections cibles ; sans lui (page partielle, tests), seule la redirection historique tient. */
+/* Identifiant demandé → onglet hérité qui le sert. Le registre (Slice 01) résout les onglets, leurs redirections,
+   les catégories et les sections cibles ; sans registre, seule la redirection historique tient. Les deux gardes
+   `typeof` ne servent qu'aux extraits exécutés seuls par les tests (node, sans `window` ni `TABS`) : dans la page,
+   `TABS` est un `const` déclaré plus haut dans ce même script, avant tout appel (un appel plus tôt lèverait en zone
+   morte temporelle, `typeof` ne le rattraperait pas). */
 function canonicalSettingsTab(id){
   const registry=typeof window!=='undefined'?window.JarvisSettingsRegistry:null;
   if(registry&&typeof TABS!=='undefined'){const tab=registry.legacyTabFor(id,TABS);if(tab)return tab}
   return id==='routing'?'cli':id;
 }
+/* Cible (catégorie, section enregistrée, alias, onglet hérité, ancre, section cible encore servie par un onglet)
+   → `{category, item}` de la navigation du shell (`shellTarget` du registre), ou `null`. */
+function settingsTarget(id,nav){
+  const R=window.JarvisSettingsRegistry,navigation=nav||settingsNavigation();
+  return R&&navigation?R.shellTarget(id,navigation,R.page,TABS):null;
+}
+/* Pose l'emplacement : la catégorie, puis l'entrée demandée, sinon la dernière ouverte dans cette catégorie
+   (mémoire de la session), sinon la première. Une entrée est une section enregistrée (`SET.section`) OU un onglet
+   hérité (`SET.tab`), jamais les deux. */
+function applySettingsTarget(hit,nav){
+  const navigation=nav||settingsNavigation(),cat=navigation.categories.find(c=>c.id===hit.category)||navigation.categories[0];
+  const known=item=>item&&cat.items.find(i=>i.kind===item.kind&&i.id===item.id);
+  const item=known(hit.item)||known(SET.lastItem[cat.id])||cat.items[0]||null;
+  SET.category=cat.id;
+  SET.section=item&&item.kind==='section'?item.id:null;
+  SET.tab=item&&item.kind==='tab'?item.id:null;
+  if(item)SET.lastItem[cat.id]={kind:item.kind,id:item.id};
+}
 function selectTab(id){
-  const next=canonicalSettingsTab(id);
-  if(SET.tab==='cli'&&next!=='cli'){SET.routingAdvancedOpen=false;++SET.routingGeneration}
-  SET.tab=next;renderTabs();renderTab();
+  const hit=settingsTarget(id);
+  if(!hit){console.warn('settings_target_unknown',{target:id});return}
+  const leaving=SET.tab;
+  applySettingsTarget(hit);
+  if(leaving==='cli'&&SET.tab!=='cli'){SET.routingAdvancedOpen=false;++SET.routingGeneration}
+  renderTabs();renderTab();
 }
 
 function destroyAgentCatalog(){
@@ -5569,12 +5832,15 @@ function draftFrom(data){
 }
 
 async function openSettings(){
-  const generation=++SET.openGeneration;
+  const generation=++SET.openGeneration,opening=!SET.open;
+  if(opening)settingsRememberOpener();
   overlay.classList.add('open');SET.open=true;
   // Sans modification en cours, relire : l'état de Voice (Solo Owner,
   // annulation d'écho) a pu changer depuis la dernière ouverture.
+  if(!SET.data||!SET.dirty)modalContent.innerHTML='<div class="empty">Chargement…</div>';
+  renderTabs();
+  if(opening)settingsFocusIn();
   if(!SET.data||!SET.dirty){
-    modalContent.innerHTML='<div class="empty">Chargement…</div>';renderTabs();
     try{
       const data=await api('/api/settings');
       if(!SET.open||generation!==SET.openGeneration)return;
@@ -5585,32 +5851,63 @@ async function openSettings(){
   renderTabs();await renderTab();
 }
 
-/* Porte des réglages par onglet (Slice 04 de jarvis-board-ui-wheel-dossier-refactor) : la
-   catégorie Paramètres et la ligne « Réglages de la voix » de la roue ouvrent le même modal
-   que `#openSettings`, sur un onglet. L'onglet est posé AVANT l'ouverture (`openSettings`
-   peint `SET.tab` tel qu'il le trouve) ; un onglet inconnu ouvre le modal tel quel. */
+/* Porte des réglages par cible (Slice 04 de jarvis-board-ui-wheel-dossier-refactor, étendue en Slice 02) : la
+   catégorie Paramètres et la ligne « Réglages de la voix » de la roue ouvrent les mêmes réglages que
+   `#openSettings`. Catégorie, section, alias ou ancien identifiant d'onglet (`'voice'` → `voice_audio`, onglet
+   Voix) ; l'emplacement est posé AVANT l'ouverture (`openSettings` peint l'emplacement tel qu'il le trouve). Une
+   cible inconnue se dit (`settings_target_unknown`) et ouvre les réglages tels quels. */
 function openSettingsTab(tab){
-  /* Onglet, redirection, catégorie ou section cible : résolu par le registre (Slice 01). */
-  const id=typeof tab==='string'?canonicalSettingsTab(tab):tab;
-  const known=typeof id==='string'&&TABS.some(t=>t.id===id);
-  if(typeof tab==='string'&&!known)console.warn('settings_target_unknown',{target:tab});
-  if(!SET.open){if(known)SET.tab=id;return openSettings()}
-  if(known&&SET.tab!==id)selectTab(id);
+  const hit=typeof tab==='string'?settingsTarget(tab):null;
+  if(typeof tab==='string'&&!hit)console.warn('settings_target_unknown',{target:tab});
+  if(!SET.open){if(hit)applySettingsTarget(hit);return openSettings()}
+  if(hit)selectTab(tab);
   return Promise.resolve();
 }
-/* Les onglets réels des réglages, pour le sous-menu Paramètres (aucune liste recopiée). */
-function settingsTabs(){return TABS.map(t=>({id:t.id,label:t.label}))}
-/* Les onglets actuels rangés sous les six catégories du registre : la donnée que le shell de la Slice 02
-   dessinera. Ne change rien à l'affichage actuel ; un onglet sans alias se signale dans la console. */
+/* Les six catégories des réglages (`{id, label, description}`), pour le sous-menu Paramètres de la roue : lues
+   au registre, aucune liste recopiée. */
+function settingsTabs(){
+  const registry=window.JarvisSettingsRegistry;
+  return registry?registry.CATEGORIES.map(c=>({id:c.id,label:c.label,description:c.description})):[];
+}
+/* Navigation du shell (`shellNavigation` du registre) : six catégories, leurs entrées (sections enregistrées, puis
+   onglets hérités montés comme sections temporaires) et les liens vers les onglets d'autres catégories qui en
+   portent encore une partie. Un onglet sans alias se signale une fois dans la console. */
 function settingsNavigation(){
   const registry=window.JarvisSettingsRegistry;
   if(!registry){console.error('settings_registry_missing');return null}
-  const navigation=registry.navigationFromLegacyTabs(TABS);
-  if(navigation.unassigned.length)console.error('settings_tab_unassigned',{tabs:navigation.unassigned});
+  const navigation=registry.shellNavigation(TABS,registry.page);
+  const stray=navigation.unassigned.join(',');
+  if(stray&&SET.unassignedLogged!==stray){SET.unassignedLogged=stray;console.error('settings_tab_unassigned',{tabs:navigation.unassigned})}
   return navigation;
 }
+/* Focus (Slice 02) : à l'ouverture, l'élément qui l'a demandée est retenu et le focus va à la catégorie active ; à la
+   fermeture, il revient à cet élément s'il est encore dans la page, sinon au bouton Réglages (rangé dans « Plus
+   d’outils » : son `focus()` replié rend alors le focus à « Plus d’outils », jamais à un bouton caché). Sans `document`
+   (extraits exécutés par node), rien. */
+function settingsRememberOpener(){
+  if(typeof document==='undefined')return;
+  const active=document.activeElement;
+  SET.opener=active&&active!==document.body&&!overlay.contains(active)?active:null;
+}
+function settingsFocusIn(){
+  if(typeof document==='undefined')return;
+  const target=document.querySelector('#settingsCategories [aria-selected=true]')||document.getElementById('closeModal');
+  if(target)target.focus({preventScroll:true});
+}
+function settingsFocusOut(){
+  if(typeof document==='undefined')return;
+  const opener=SET.opener;SET.opener=null;
+  const usable=opener&&opener.isConnected&&typeof opener.focus==='function';
+  const target=usable?opener:document.getElementById('openSettings');
+  /* Le focus n'est rendu que s'il était dans le shell (caché, il retombe sur `body`) : jamais volé ailleurs. */
+  const lost=document.activeElement===document.body||overlay.contains(document.activeElement);
+  if(!target||!lost)return;
+  target.focus({preventScroll:true});
+  /* Élément d'ouverture devenu invisible (une roue refermée) : le bouton Réglages plutôt que `body`. */
+  if(document.activeElement===document.body&&target!==document.getElementById('openSettings'))document.getElementById('openSettings').focus({preventScroll:true});
+}
 
-function closeSettings(){SET.routingPick={};++SET.openGeneration;++SET.cliGeneration;++SET.cliModelGeneration;++SET.routingGeneration;++SET.voiceGeneration;++SET.audioGeneration;++SET.diagnosticGeneration;SET.renderRevision=(SET.renderRevision||0)+1;SET.routingAdvancedOpen=false;cleanupSettingsSurface();overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel()}
+function closeSettings(){SET.routingPick={};++SET.openGeneration;++SET.cliGeneration;++SET.cliModelGeneration;++SET.routingGeneration;++SET.voiceGeneration;++SET.audioGeneration;++SET.diagnosticGeneration;SET.renderRevision=(SET.renderRevision||0)+1;SET.routingAdvancedOpen=false;cleanupSettingsSurface();const wasOpen=SET.open;overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel();if(wasOpen)settingsFocusOut()}
 
 async function saveDraft(options){
   const silent=options&&options.silent;
@@ -5636,7 +5933,28 @@ async function saveDraft(options){
 modalSave.addEventListener('click',()=>saveDraft().catch(()=>{}));
 $('#closeModal').addEventListener('click',closeSettings);
 $('#openSettings').addEventListener('click',openSettings);
-overlay.addEventListener('mousedown',event=>{if(event.target===overlay)closeSettings()});
+/* Pas de fermeture au clic extérieur (Slice 02) : le shell couvre toute la fenêtre, il n'y a plus d'« extérieur »,
+   et un clic dans un vide du shell fermerait par accident une page en cours de réglage. Ferment : le bouton
+   « Fermer », Échap, et le raccourci `ui_close`.
+   Échap ferme toujours, même si `ui_close` a été réaffecté et même depuis un champ : sauf pendant la capture d'un
+   raccourci (elle le prend avant, en capture), dans une zone de texte longue ou éditable (Échap y abandonne la
+   saisie en cours, pas la page), ou si un contrôle l'a déjà consommé (`defaultPrevented`). Tab et Maj+Tab
+   bouclent dans le shell : le focus ne part pas derrière lui. */
+overlay.addEventListener('keydown',event=>{
+  if(!SET.open)return;
+  if(event.key==='Escape'){
+    const target=event.target;
+    if(SET.capture||event.defaultPrevented||target&&(target.tagName==='TEXTAREA'||target.isContentEditable))return;
+    event.preventDefault();event.stopPropagation();closeSettings();return;
+  }
+  if(event.key!=='Tab')return;
+  const all=[...overlay.querySelectorAll('button,a[href],input,select,textarea,summary,[tabindex]')]
+    .filter(el=>!el.disabled&&el.tabIndex>=0&&el.getClientRects().length>0);
+  if(!all.length)return;
+  const first=all[0],last=all[all.length-1];
+  if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}
+  else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}
+});
 
 /* --- raccourcis d'interface ---------------------------------------------- */
 function currentSignature(event){
@@ -5679,8 +5997,8 @@ window.addEventListener('keydown',event=>{
   if(id==='ui_tab_next'||id==='ui_tab_prev'){
     if(!SET.open)return;
     event.preventDefault();
-    const index=TABS.findIndex(t=>t.id===SET.tab),step=id==='ui_tab_next'?1:-1;
-    selectTab(TABS[(index+step+TABS.length)%TABS.length].id);return;
+    /* Les six catégories, dans l'ordre du registre (Slice 02) : jamais les sections ni les anciens onglets. */
+    selectTab(window.JarvisSettingsRegistry.cycleCategory(SET.category,id==='ui_tab_next'?1:-1));return;
   }
   const panelName={ui_panel_errors:'errors',ui_panel_trace:'trace',ui_panel_agents:'agents'}[id];
   if(panelName){event.preventDefault();if(current===panelName)closePanel();else{if(panelName==='errors')errorsView='active';openPanel(panelName)}}

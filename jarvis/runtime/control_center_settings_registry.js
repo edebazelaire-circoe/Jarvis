@@ -13,9 +13,12 @@
      (`openSettingsTab('voice')`, roue Jarvis, `selectTab('memory')`…).
      Temporaire : retiré par la Slice 09 quand plus aucun appelant ni document
      durable ne s'en sert.
-   - `legacyTabFor` / `navigationFromLegacyTabs` : adaptateur de migration pour
-     le shell actuel à onglets (`TABS` de `control_center.html`), tant que la
-     Slice 02 n'a pas posé le shell à six catégories. Retiré avec lui. */
+   - `legacyTabFor` / `navigationFromLegacyTabs` : adaptateur de migration vers
+     les onglets hérités (`TABS` de `control_center.html`).
+   - `shellNavigation` / `shellTarget` (Slice 02) : ce que dessine et ouvre le
+     shell à six catégories — sections enregistrées, puis onglets hérités encore
+     montés comme sections temporaires. Les onglets hérités disparaissent avec la
+     Slice 09. */
 (function(root){
   'use strict';
 
@@ -39,8 +42,12 @@
      sert un identifiant déjà redirigé (`routing` → `cli`, contrat de
      jarvis-settings-model-catalog-ux). */
   const LEGACY_TAB_ALIASES=Object.freeze({
+    /* `also` porte aussi les sections cibles de la même catégorie que l'onglet sert
+       aujourd'hui (QA Slice 01) : `openSettingsTab('voice_output')` ouvre `voice`. */
     voice:Object.freeze({category:'voice_audio',section:'conversation',
-      also:freezeAll([{category:'advanced_diagnostics',section:'architecture_compat'},{category:'advanced_diagnostics',section:'diagnostics'}])}),
+      also:freezeAll([{category:'voice_audio',section:'voice_output'},{category:'voice_audio',section:'microphone_sound'},
+        {category:'voice_audio',section:'turns_interruptions'},
+        {category:'advanced_diagnostics',section:'architecture_compat'},{category:'advanced_diagnostics',section:'diagnostics'}])}),
     wakeword:Object.freeze({category:'voice_audio',section:'wake_word',
       also:freezeAll([{category:'advanced_diagnostics',section:'diagnostics'}])}),
     prompts:Object.freeze({category:'advanced_diagnostics',section:'prompts',also:freezeAll([])}),
@@ -50,7 +57,9 @@
     keys:Object.freeze({category:'connections',section:'providers',also:freezeAll([])}),
     shortcuts:Object.freeze({category:'interface_interactions',section:'shortcuts',also:freezeAll([])}),
     memory:Object.freeze({category:'memory_knowledge',section:'recall',
-      also:freezeAll([{category:'memory_knowledge',section:'memory_center'},{category:'advanced_diagnostics',section:'diagnostics'}])}),
+      also:freezeAll([{category:'memory_knowledge',section:'semantic_retrieval'},{category:'memory_knowledge',section:'consolidation'},
+        {category:'memory_knowledge',section:'knowledge_sources'},
+        {category:'memory_knowledge',section:'memory_center'},{category:'advanced_diagnostics',section:'diagnostics'}])}),
     subagents:Object.freeze({category:'agents_models',section:'subagents',
       also:freezeAll([{category:'advanced_diagnostics',section:'labs'}])}),
     appearance:Object.freeze({category:'interface_interactions',section:'theme_scene',also:freezeAll([])}),
@@ -178,7 +187,7 @@
       categories:()=>CATEGORIES});
   }
 
-  /* --- Adaptateur de migration du shell actuel (retiré par la Slice 02/09) ---
+  /* --- Adaptateur de migration vers les onglets hérités (retiré par la Slice 09) ---
      `tabs` est le `TABS` vivant de la page (base + onglets injectés). */
 
   /* Onglet du shell actuel à sélectionner pour une cible : l'onglet lui-même,
@@ -211,8 +220,57 @@
       tabs:list.filter(t=>{const a=legacyAlias(t.id);return a&&a.category===c.id}).map(t=>({id:t.id,label:t.label}))})),unassigned};
   }
 
+  /* --- Navigation du shell à six catégories (Slice 02) ---------------------
+     Ce que le shell dessine : pour chaque catégorie, ses entrées dans l'ordre —
+     d'abord les sections enregistrées (`registry.sections`), puis les onglets
+     hérités qui lui reviennent encore (adaptateur temporaire, Slices 03-08).
+     Un onglet hérité disparaît de la navigation dès qu'une section enregistrée
+     le déclare en alias (elle le remplace). `related` : les onglets d'autres
+     catégories qui portent encore une partie de celle-ci (`also`), proposés
+     comme liens tant que leur contenu n'a pas déménagé. Un onglet sans alias
+     (`unassigned`) est rangé dans Avancé & diagnostic pour rester atteignable. */
+  const UNASSIGNED_HOME='advanced_diagnostics';
+  function shellNavigation(tabs,registry){
+    const list=(Array.isArray(tabs)?tabs:[]).filter(t=>t&&typeof t.id==='string');
+    const claimed=new Set(),sectionsBy={};
+    for(const c of CATEGORIES){
+      sectionsBy[c.id]=registry?registry.sections(c.id):[];
+      for(const s of sectionsBy[c.id])for(const alias of s.aliases)claimed.add(alias);
+    }
+    const unassigned=list.filter(t=>!legacyAlias(t.id)).map(t=>t.id);
+    const home=t=>{const a=legacyAlias(t.id);return a?a.category:UNASSIGNED_HOME};
+    const categories=CATEGORIES.map(c=>({id:c.id,label:c.label,description:c.description,
+      items:[
+        ...sectionsBy[c.id].map(s=>({kind:'section',id:s.id,label:s.label,save:s.save,advanced:s.advanced})),
+        ...list.filter(t=>!claimed.has(t.id)&&home(t)===c.id).map(t=>({kind:'tab',id:t.id,label:String(t.label||t.id)})),
+      ],
+      related:list.filter(t=>{const a=legacyAlias(t.id);return a&&!claimed.has(t.id)&&a.category!==c.id&&a.also.some(d=>d.category===c.id)})
+        .map(t=>({id:t.id,label:String(t.label||t.id),category:legacyAlias(t.id).category}))}));
+    return {categories,unassigned};
+  }
+
+  /* Une cible (catégorie, section, alias, onglet hérité, ancre, section cible
+     encore servie par un onglet) → `{category, item}` dans `nav`
+     (`shellNavigation`). `item` vaut `null` pour une catégorie seule : le
+     shell choisit alors l'entrée retenue ou la première. `null` si rien ne
+     sert la cible. Un onglet hérité encore dans la navigation s'ouvre
+     lui-même : il ne cède sa place qu'à la section qui le déclare en alias. */
+  function shellTarget(target,nav,registry,tabs){
+    if(typeof target!=='string'||!nav)return null;
+    const find=(kind,id)=>{for(const c of nav.categories){const item=c.items.find(i=>i.kind===kind&&i.id===id);if(item)return {category:c.id,item}}return null};
+    if(CATEGORY_IDS.includes(target))return {category:target,item:null};
+    const current=find('tab',target);
+    if(current)return current;
+    const hit=registry?registry.resolve(target):null;
+    const section=hit&&hit.section?find('section',hit.section):null;
+    if(section)return section;
+    const tab=legacyTabFor(target,tabs),served=tab?find('tab',tab):null;
+    if(served)return served;
+    return hit?{category:hit.category,item:null}:null;
+  }
+
   const api=Object.freeze({CATEGORIES,CATEGORY_IDS,LEGACY_TAB_ALIASES,LEGACY_ANCHORS,ERROR_CODES,SAVE_POLICIES,APPLIES,
-    category,cycleCategory,legacyAlias,createRegistry,legacyTabFor,navigationFromLegacyTabs,
+    category,cycleCategory,legacyAlias,createRegistry,legacyTabFor,navigationFromLegacyTabs,shellNavigation,shellTarget,
     /* L'instance de la page, où les modules enregistrent leurs sections. */
     page:createRegistry()});
   root.JarvisSettingsRegistry=api;

@@ -391,8 +391,10 @@ process.stdout.write(JSON.stringify({old:r('old'),ctor:r('constructor'),proto:r(
 
 def test_served_page_hides_the_empty_footer_scrolls_the_active_tab_and_links_models(tmp_path):
     served = asyncio.run(ControlCenter(runtime_root=tmp_path, project_root=tmp_path).index(None)).text
-    assert "footer.hidden=SET.tab==='subagents'" in served
-    assert "active.scrollIntoView({block:'nearest',inline:'nearest'})" in served
+    # Shell à six catégories (Slice 02 de jarvis-settings-ui-reorganization) : même pied caché pour Sous-agents,
+    # même défilement de l'entrée active dans les deux barres.
+    assert "footer.hidden=entry?entry.save!=='footer':(!SET.tab||SET.tab==='subagents')" in served
+    assert "on.scrollIntoView({block:'nearest',inline:'nearest'})" in served
     assert "openTab:selectTab" in served and "subagent_settings_mount_failed" in served
     payload = roles_payload(tmp_path)
     out = run_node(tmp_path, payload, """

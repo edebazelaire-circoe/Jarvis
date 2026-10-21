@@ -28,12 +28,13 @@
      `agent.model` en détail ;
    - **Sous-agents** (action) : `subagents.active` ; ouvre le panneau Agents
      (`#agentsButton`, la même route que le lanceur) ;
-   - **Réglages de la voix** (action) : les réglages, onglet Voix (micro,
-     modèle, pile vocale), la même surface que `#openSettings`.
+   - **Réglages de la voix** (action) : les réglages, catégorie Voix & audio,
+     onglet Voix (micro, modèle, pile vocale), la même surface que `#openSettings`.
 
-   **Paramètres** : une ligne par onglet des réglages (`settingsTabs()` de la
-   page), chacune ouvre le même modal que `#openSettings` sur cet onglet
-   (`openSettingsTab`).
+   **Paramètres** : une ligne par catégorie des réglages (`settingsTabs()` de la
+   page : les six catégories du registre, jarvis-settings-ui-reorganization
+   Slice 02), chacune ouvre les mêmes réglages que `#openSettings` sur cette
+   catégorie (`openSettingsTab`).
 
    Deux blocs : le **modèle pur** (`factsOf`, `wakeHintOf`, `jarvisItemsOf`,
    `categoryStatusOf`, `settingsItemsOf`), exécuté par node dans
@@ -165,17 +166,19 @@
 
   /* ------------------------------------------------- Paramètres
 
-     `tabs` : les onglets de la page (`[{id, label}]`). Une ligne par onglet ;
-     aucune liste inventée : sans onglets lisibles, une seule ligne ouvre les
-     réglages tels quels. */
-  const TAB_NOTES=Object.freeze({voice:'micro, modèle, pile vocale',wakeword:'déclencheur vocal',prompts:'consignes du brain',cli:'agent et modèle',
-    keys:'clés d’API',shortcuts:'raccourcis clavier',memory:'mémoire de Jarvis',appearance:'thème de l’interface',
-    experimental:'Bare Hands et essais'});
+     `tabs` : les catégories des réglages (`[{id, label, description}]`,
+     `settingsTabs()` de la page). Une ligne par catégorie ; aucune liste
+     inventée : sans catégorie lisible, une seule ligne ouvre les réglages tels
+     quels. `TAB_NOTES` ne donne qu'une note courte par identifiant de
+     catégorie ; une catégorie sans note garde sa description. */
+  const TAB_NOTES=Object.freeze({voice_audio:'micro, voix, mot d’éveil',agents_models:'agent, modèles, sous-agents',
+    memory_knowledge:'rappel et connaissances',interface_interactions:'thème, raccourcis, Bare Hands',
+    connections:'fournisseurs et clés',advanced_diagnostics:'architecture, prompts, diagnostics'});
   function settingsItemsOf(tabs){
     const list=(Array.isArray(tabs)?tabs:[]).filter(t=>isObject(t)&&typeof t.id==='string'&&t.id);
     if(!list.length)return [{id:'settings',tab:null,icon:'settings',label:'Réglages de Jarvis',note:'ouvrir'}];
     return list.map(t=>({id:`tab:${t.id}`,tab:t.id,icon:'settings',label:String(t.label||t.id),
-      note:TAB_NOTES[t.id]||'onglet des réglages',detail:`ouvre les réglages, onglet ${String(t.label||t.id)}`}));
+      note:TAB_NOTES[t.id]||String(t.description||'')||'catégorie des réglages',detail:`ouvre les réglages, catégorie ${String(t.label||t.id)}`}));
   }
 
   const api=Object.freeze({VOICE_STATES,AGENT_STATES,factsOf,wakeHintOf,jarvisItemsOf,categoryStatusOf,settingsItemsOf});

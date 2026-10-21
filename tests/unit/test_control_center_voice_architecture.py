@@ -129,8 +129,8 @@ def test_async_browser_render_does_not_restore_a_previous_panel(tmp_path):
     render = page[page.index('async function renderTab()'):page.index('function bindTab(revision)')]
     script = r'''
 const assert=require('node:assert/strict');
-const SET={tab:'voice'},TABS=[{id:'voice',save:true},{id:'cli',save:true}];
-const modalContent={},modalSub={},modalSave={style:{}};
+const SET={tab:'voice',data:{},draft:{}},TABS=[{id:'voice',save:true},{id:'cli',save:true}];
+const modalContent={querySelectorAll:()=>[]},modalSub={},modalSave={style:{}};
 const esc=String,say=()=>{},bindTab=()=>{},bindVoiceSurface=()=>{},destroyAgentCatalog=()=>{},destroyVoiceCatalog=()=>{},cleanupSettingsSurface=()=>{destroyAgentCatalog();destroyVoiceCatalog()},mountAgentCatalog=()=>{},hydrateCliAgents=()=>{};
 let finish;
 const tabVoice=()=>new Promise(resolve=>{finish=resolve});
@@ -142,7 +142,8 @@ SET.tab='cli';
 await renderTab();
 finish('<old voice panel>');
 await first;
-assert.equal(modalContent.innerHTML,'<new agent panel>');
+assert.ok(modalContent.innerHTML.startsWith('<new agent panel>'),modalContent.innerHTML);
+assert.ok(!modalContent.innerHTML.includes('old voice panel'));
 })().catch(error=>{console.error(error);process.exitCode=1});
 '''
     path = tmp_path / 'settings-render.cjs'

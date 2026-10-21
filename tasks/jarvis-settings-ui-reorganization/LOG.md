@@ -63,3 +63,30 @@ Nouveaux : 9 passés. Suites Réglages listées en Slice 00 (hors navigateur) + 
 ## 2026-10-21 - Slice 01 QA decision (agent 0)
 
 QA (qa-verification + code-review, read-only, 10/10 mutations caught, page assembly via `ControlCenter.index()` checked): APPROVED, no blocking finding. Accepted: `experimental` primary alias -> `advanced_diagnostics/labs` (Bare Hands ordinary prefs via anchors); `save` policy mandatory (stricter than docs/02, documented); `openSettingsTab('routing')` now opens `cli` like `selectTab` already did (no repository caller). Carried into Slice 02 (needed by its routing): `legacyTabFor` returns null for same-category target sections `voice_output`, `microphone_sound`, `turns_interruptions`, `semantic_retrieval`, `consolidation`, `knowledge_sources`; misleading "page partielle" comment on the `typeof TABS` guard in `canonicalSettingsTab` (TDZ, guard is illusory).
+
+## 2026-10-21 - Slice 02 (implémentation)
+
+### Décisions
+
+- Shell plein écran (`#overlay` › `#settingsShell`) : rail des six catégories dessiné depuis le registre (`shellNavigation`, jamais une liste recopiée ; seuls pictogramme et teinte par ID dans la page), colonne principale : intro de la catégorie, entrées de la catégorie (`#modalTabs`), liens « encore dans » (`related`), phrase de l'onglet (`#modalSub`), contenu seul à défiler, pied Enregistrer. Texte courant en sans-serif, monospace réservée à `code/kbd/samp/pre`. Identifiants historiques conservés (modules et tests hérités).
+- Adaptateur : chaque catégorie liste d'abord ses sections enregistrées, puis les onglets hérités qui lui reviennent (rendus par `renderTab` et les modules injectés, inchangés). Un onglet hérité encore présent s'ouvre lui-même ; il cède sa place à la section qui le déclare en alias. Onglet sans alias rangé dans Avancé (atteignable) et journalisé une fois.
+- Emplacement `SET.category` + `SET.section` XOR `SET.tab`, mémoire de la dernière entrée par catégorie ; `ensureSettingsLocation` absorbe les modules qui posent `SET.tab` eux-mêmes (Bare Hands `showSettings` vérifié en bac à sable).
+- Sections enregistrées : `registerSettingsSection` (refus journalisé `settings_section_rejected` + notice dans la catégorie), `mountRegisteredSection` (`mount(host, context)` avec `isCurrent()`, `say`, `open`, `data()`, `draft()`, `markDirty()` ; échec → notice `role=alert` codée `settings_section_mount_failed`), `destroy` via `cleanupSettingsSurface()` → `destroyRegisteredSection()`. Pied : `save:'footer'` seulement ; onglets hérités : comportement d'avant (`tab.save`, pied caché pour `subagents`, vérifié en bac à sable).
+- Clic extérieur supprimé : le shell couvre la fenêtre, plus d'extérieur, et un clic dans un vide fermerait une page en cours. Échap garanti (même si `ui_close` est réaffecté, même depuis un champ) sauf capture de raccourci, textarea/contenteditable ou `defaultPrevented`. Tab bouclé dans le shell. Focus à la catégorie active à l'ouverture, rendu à l'élément d'ouverture à la fermeture (« Plus d’outils » pour le bouton Réglages du popover), jamais volé ailleurs. Listes ARIA à activation manuelle (flèches/Début/Fin déplacent, Entrée ouvre) : parcourir ne charge rien.
+- `ui_tab_next/prev` → `cycleCategory` ; libellés des raccourcis renommés « Catégorie de réglages suivante/précédente » (ID et touches inchangés). `settingsTabs()` → six catégories ; la roue (`settingsItemsOf`) fait une ligne par catégorie, notes courtes par ID de catégorie, repli sur la description.
+- QA Slice 01 : (a) `also` de `voice` et `memory` complété (`voice_output`, `microphone_sound`, `turns_interruptions` ; `semantic_retrieval`, `consolidation`, `knowledge_sources`), test sur toutes les sections cibles prévues ; (b) commentaire de la garde `typeof TABS` corrigé (extraits de tests seulement, zone morte temporelle dans la page).
+- Échec déjà présent `test_async_browser_render_does_not_restore_a_previous_panel` corrigé (double incomplet : `SET.data/draft`, `querySelectorAll`, suffixe Rappels d'agenda).
+
+### Fichiers
+
+`jarvis/runtime/control_center.html`, `control_center_settings_ui.js` (nouveau, primitives), `control_center_settings_registry.js` (`shellNavigation`, `shellTarget`, `also`), `control_center.py` (insertion des primitives), `control_center_jarvis_wheel.js`, `control_center_work.js` (Cosmos), `shortcuts.py` (libellés) ; docs `docs/settings/settings-shell.md` (nouveau, contrat du shell et du montage des sections), `navigation-registry.md`, `INDEX.md`, `docs/legacy/settings-tab-aliases.md`, `docs/control-center-shell.md`, `docs/OPERATIONS.md` ; tests `test_control_center_settings_shell_js.py` et `test_settings_shell_browser.py` (nouveaux), `test_control_center_settings_registry_js.py`, `test_control_center_mvp.py`, `test_jarvis_wheel_js.py`, `test_jarvis_wheel_browser.py`, `test_control_center_subagents_settings_js.py`, `test_control_center_voice_architecture.py`.
+
+### Tests
+
+- Suites Réglages (liste Slice 00 hors navigateur) + registre + nouveau node + `test_settings_redesign_migration` + `test_settings_ia_contract` : 395 passed.
+- Navigateur : `test_settings_shell_browser` 6 passed, `test_jarvis_wheel_browser` 3 passed, `test_wake_word_settings_browser` 20 passed, `test_global_launcher_browser` + `test_control_center_shell_layers` + `test_variants_css_orphans` 21 passed. Autres : tests de raccourcis (`-k shortcut`) 18 passed ; documents lus par des tests 84 passed.
+- Non relancé : `test_dossier_fullscreen_browser` (chemin non touché).
+
+### Preuves
+
+Bac à sable `setui` (Core 27653, Control Center 27654, données au scratchpad, visualiseur coupé). Avant : `references/current-settings-ui.png`. Après : `evidence/s02/` — 6 catégories × {1920×1080, 1366×768} × {100 %, 125 %} (125 % = largeur CSS /1,25, deviceScaleFactor 1,25), PNG quantifiés (2,1 Mo), `runtime-check.json` (débordement horizontal 0 partout, pied caché sur Sous-agents, Bare Hands `showSettings` → Avancé/Expérimental ; console sans erreur JS, seul le 424 réel de `/api/models` sans clé Anthropic).
