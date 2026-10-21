@@ -1,0 +1,456 @@
+{
+ "slice": "04-agents-models-reorganization",
+ "commit": "fc5f2ff8",
+ "sandbox": {
+  "worktree": "C:/Projects/jarvis/setui",
+  "core": "127.77.0.1:27653",
+  "control_center": "127.0.0.1:27654",
+  "visualizer": "off",
+  "data_root": "C:/Users/Clarice/AppData/Local/Temp/claude/C--Projects-jarvis-jarvis/27bb85db-d7ce-4168-b4b8-691f54979c31/scratchpad/s04/data",
+  "runtime_dir": "C:/Users/Clarice/AppData/Local/Temp/claude/C--Projects-jarvis-jarvis/27bb85db-d7ce-4168-b4b8-691f54979c31/scratchpad/s04/runtime",
+  "user_core_17653": "intact (PID 31824, non touché)"
+ },
+ "keyboard": {
+  "focus0": "settingsCat-voice_audio",
+  "kdown": {
+   "focused": "settingsCat-agents_models"
+  },
+  "kenter": {
+   "focused": "settingsCat-agents_models"
+  },
+  "keyboard": {
+   "cat": "agents_models",
+   "section": "main_agent",
+   "focus": "settingsCat-agents_models"
+  },
+  "tab1": {
+   "focused": "closeModal"
+  },
+  "tab2": {
+   "focused": "BUTTON"
+  },
+  "kright": {
+   "focused": "BUTTON"
+  },
+  "kenter2": {
+   "focused": "BUTTON"
+  },
+  "keyboard2": {
+   "cat": "agents_models",
+   "section": "agent_behavior",
+   "focus": "Comportement"
+  }
+ },
+ "sections": {
+  "main_agent": {
+   "cat": "agents_models",
+   "section": "main_agent",
+   "items": [
+    "Agent principal",
+    "Comportement",
+    "Modèles des sous-agents",
+    "Rôles des sous-agents"
+   ],
+   "footer": true,
+   "cmd": false,
+   "perm": false,
+   "model": true,
+   "agents": 2,
+   "overflow": 0,
+   "content": 0
+  },
+  "agent_behavior": {
+   "cat": "agents_models",
+   "section": "agent_behavior",
+   "items": [
+    "Agent principal",
+    "Comportement",
+    "Modèles des sous-agents",
+    "Rôles des sous-agents"
+   ],
+   "footer": true,
+   "cmd": false,
+   "perm": false,
+   "model": false,
+   "agents": 0,
+   "overflow": 0,
+   "content": 0
+  },
+  "subagent_models": {
+   "cat": "agents_models",
+   "section": "subagent_models",
+   "items": [
+    "Agent principal",
+    "Comportement",
+    "Modèles des sous-agents",
+    "Rôles des sous-agents"
+   ],
+   "footer": true,
+   "cmd": false,
+   "perm": false,
+   "model": false,
+   "agents": 0,
+   "overflow": 0,
+   "content": 0
+  },
+  "subagents": {
+   "cat": "agents_models",
+   "section": "subagents",
+   "items": [
+    "Agent principal",
+    "Comportement",
+    "Modèles des sous-agents",
+    "Rôles des sous-agents"
+   ],
+   "footer": false,
+   "cmd": false,
+   "perm": false,
+   "model": false,
+   "agents": 0,
+   "overflow": 0,
+   "content": 0
+  },
+  "runtime_cli": {
+   "cat": "advanced_diagnostics",
+   "section": "runtime_cli",
+   "items": [
+    "Architecture & compatibilité",
+    "Runtime & CLI",
+    "Diagnostics",
+    "Work Methods apprises",
+    "Prompts",
+    "Expérimental"
+   ],
+   "footer": true,
+   "cmd": true,
+   "perm": true,
+   "model": false,
+   "agents": 0,
+   "overflow": 0,
+   "content": 0
+  },
+  "work_methods": {
+   "cat": "advanced_diagnostics",
+   "section": "work_methods",
+   "items": [
+    "Architecture & compatibilité",
+    "Runtime & CLI",
+    "Diagnostics",
+    "Work Methods apprises",
+    "Prompts",
+    "Expérimental"
+   ],
+   "footer": false,
+   "cmd": false,
+   "perm": false,
+   "model": false,
+   "agents": 0,
+   "overflow": 0,
+   "content": 0
+  }
+ },
+ "legacy_aliases": {
+  "cli": [
+   "agents_models",
+   null,
+   "main_agent"
+  ],
+  "routing": [
+   "advanced_diagnostics",
+   null,
+   "runtime_cli"
+  ],
+  "subagents": [
+   "agents_models",
+   null,
+   "subagents"
+  ]
+ },
+ "agent_cli_save": {
+  "change": {
+   "before": "direct",
+   "after": "inherit",
+   "options": [
+    "inherit",
+    "direct",
+    "courteous",
+    "formal"
+   ]
+  },
+  "status": "Enregistré.",
+  "payload_top_keys": [
+   "voice",
+   "cli",
+   "routing",
+   "audio",
+   "agenda_reminders"
+  ],
+  "cli_keys": [
+   "agent",
+   "settings",
+   "delegation_mode",
+   "behavior"
+  ],
+  "cli_settings_keys": {
+   "claude": [
+    "command",
+    "model",
+    "permission_mode"
+   ],
+   "codex": [
+    "command",
+    "model",
+    "permission_mode"
+   ]
+  },
+  "routing_keys": [
+   "profiles"
+  ],
+  "reloaded_value_after_first_run_save": "direct",
+  "reloaded_value_after_this_run_save": "inherit"
+ },
+ "role_edit": {
+  "before": {
+   "modified": true,
+   "len": 1829
+  },
+  "notice": "Instructions enregistrées. Elles s’appliquent au prochain sous-agent lancé avec ce rôle.",
+  "reloaded": {
+   "modified": true,
+   "tail": "ez vos sources.\nNote de bac à sable S04 : citez vos sources."
+  },
+  "server_conflict_with_stale_revisions": {
+   "status": 400,
+   "code": "prompt_override_concurrent",
+   "body": "Prompt override changed; refresh before saving"
+  },
+  "ui_conflict_stale_revision": {
+   "code": "prompt_override_concurrent",
+   "text": "Ces instructions ont été modifiées ailleurs depuis l’ouverture de l’écran. Votre texte est conservé dans le champ.",
+   "draftKept": true,
+   "revisionReread": true
+  }
+ },
+ "layout_disclosures_and_catalog_open": {
+  "1920x1080@100%": {
+   "main_agent": {
+    "section": "main_agent",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 0,
+    "catalogRows": 0
+   },
+   "agent_behavior": {
+    "section": "agent_behavior",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 0,
+    "catalogRows": 0
+   },
+   "subagent_models": {
+    "section": "subagent_models",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 2,
+    "catalogRows": 2
+   },
+   "subagents": {
+    "section": "subagents",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 2,
+    "catalogRows": 0
+   },
+   "runtime_cli": {
+    "section": "runtime_cli",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 1,
+    "catalogRows": 0
+   },
+   "work_methods": {
+    "section": "work_methods",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 0,
+    "catalogRows": 0
+   }
+  },
+  "1366x768@100%": {
+   "main_agent": {
+    "section": "main_agent",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 0,
+    "catalogRows": 0
+   },
+   "agent_behavior": {
+    "section": "agent_behavior",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 0,
+    "catalogRows": 0
+   },
+   "subagent_models": {
+    "section": "subagent_models",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 2,
+    "catalogRows": 2
+   },
+   "subagents": {
+    "section": "subagents",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 2,
+    "catalogRows": 0
+   },
+   "runtime_cli": {
+    "section": "runtime_cli",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 1,
+    "catalogRows": 0
+   },
+   "work_methods": {
+    "section": "work_methods",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 0,
+    "catalogRows": 0
+   }
+  },
+  "1920x1080@125% (1536x864, dpr 1.25)": {
+   "main_agent": {
+    "section": "main_agent",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 0,
+    "catalogRows": 0
+   },
+   "agent_behavior": {
+    "section": "agent_behavior",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 0,
+    "catalogRows": 0
+   },
+   "subagent_models": {
+    "section": "subagent_models",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 2,
+    "catalogRows": 2
+   },
+   "subagents": {
+    "section": "subagents",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 2,
+    "catalogRows": 0
+   },
+   "runtime_cli": {
+    "section": "runtime_cli",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 1,
+    "catalogRows": 0
+   },
+   "work_methods": {
+    "section": "work_methods",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 0,
+    "catalogRows": 0
+   }
+  },
+  "1366x768@125% (1093x614, dpr 1.25)": {
+   "main_agent": {
+    "section": "main_agent",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 0,
+    "catalogRows": 0
+   },
+   "agent_behavior": {
+    "section": "agent_behavior",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 0,
+    "catalogRows": 0
+   },
+   "subagent_models": {
+    "section": "subagent_models",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 2,
+    "catalogRows": 2
+   },
+   "subagents": {
+    "section": "subagents",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 2,
+    "catalogRows": 0
+   },
+   "runtime_cli": {
+    "section": "runtime_cli",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 1,
+    "catalogRows": 0
+   },
+   "work_methods": {
+    "section": "work_methods",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "opened": 0,
+    "catalogRows": 0
+   }
+  }
+ },
+ "console_errors": {
+  "tour": [],
+  "reload": [],
+  "layout": []
+ },
+ "wheel_row": "tests/unit/test_jarvis_wheel_browser.py (tab:agents_models ouvre la catégorie, focus dans le shell) : 3 passed",
+ "pids_stopped_after_command_line_check": {
+  "claude_brain": 32884,
+  "control_center": [
+   11208,
+   "14700 (lanceur, parti avec son enfant)"
+  ],
+  "core": [
+   20656,
+   "36684 (lanceur, parti avec son enfant)"
+  ],
+  "mcp_children_of_brain": "partis avec le cerveau (vérifié : aucun PID restant)",
+  "sans /T": true
+ },
+ "data_left_in_place": "bases SQLite du bac à sable laissées dans data_root (aucune suppression)"
+}
