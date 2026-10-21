@@ -61,6 +61,13 @@ def test_navigation_fixture_matches_unified_agent_cli_tab_and_legacy_programmati
     assert tabs[: len(core_tabs)] == [(tab["id"], tab["label"]) for tab in core_tabs]
     work = PAGE.with_name("control_center_work.js").read_text(encoding="utf-8")
     assert "{id:'appearance',label:'Apparence',save:false}" in work
+    # Voix réhébergée en sections (jarvis-settings-ui-reorganization, Slice 03) : plus un onglet, son ancien ID est
+    # l'alias de la section qui la reçoit.
+    for legacy_id, target in expected["rehosted_as_sections"].items():
+        assert legacy_id not in [identifier for identifier, _label in tabs]
+        sections = page[page.index("const VOICE_SECTIONS=[") : page.index("function voiceSectionSpec")]
+        assert f"{{id:'{target['section']}',category:'{target['category']}'" in sections
+        assert f"aliases:['{legacy_id}']" in sections
     legacy = expected["legacy_programmatic_tab"]
     canonical_id = expected["canonical_programmatic_tab"]
     assert legacy not in [identifier for identifier, _label in tabs]

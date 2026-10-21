@@ -856,6 +856,9 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-section-marks{display:inline-flex;flex-wrap:wrap;gap:6px}
 .set-section-desc{margin:6px 0 0;max-width:68ch;font-size:13.5px;color:var(--set-ink-2)}
 .set-section-body{display:grid;gap:18px;margin-top:16px}
+/* Une grille élargit ses enfants à leur contenu (min-width:auto) : un catalogue replié dans une section (Voix &
+   transcription) poussait le contenu à droite. Les enfants tiennent dans la colonne ; les filtres défilent en interne. */
+.set-section-body>*,.set-section-body details.rd,.set-section-body .catalog-shell>*{min-width:0;max-width:100%}
 .set-field{display:grid;gap:6px}
 .set-field-inline{grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 16px}
 .set-field-inline .set-field-hint{grid-column:1/-1}
@@ -5370,7 +5373,6 @@ function voiceSectionSpec(spec){
     destroy(){destroyVoiceCatalog();++SET.voiceGeneration},
   };
 }
-VOICE_SECTIONS.forEach(spec=>registerSettingsSection(voiceSectionSpec(spec)));
 
 /* `advanced_diagnostics` › `diagnostics` : une page en lecture seule faite de parties (Voix ici, Mot d'éveil par son module ;
    la Slice 08 y range les autres). `registerSettingsDiagnostic({id, label, order, mount(host, context), destroy()})`. */
@@ -5383,7 +5385,7 @@ function registerSettingsDiagnostic(part){
   return part;
 }
 let settingsDiagnosticsMounted=[];
-registerSettingsSection({id:'diagnostics',category:'advanced_diagnostics',group:'diagnostics',order:40,advanced:true,save:'readonly',
+const DIAGNOSTICS_SECTION={id:'diagnostics',category:'advanced_diagnostics',group:'diagnostics',order:40,advanced:true,save:'readonly',
   label:'Diagnostics',description:'État constaté, en lecture seule : autorisation, vérificateur, annulation d’écho, piles, catalogues, détecteur du mot d’éveil.',
   mount(host,context){
     const UI=context.ui;
@@ -5401,14 +5403,22 @@ registerSettingsSection({id:'diagnostics',category:'advanced_diagnostics',group:
     for(const part of parts)try{if(typeof part.destroy==='function')part.destroy()}
       catch(e){console.error('settings_diagnostic_destroy_failed',{part:part.id,error:String(e&&e.message||e)})}
   },
-});
-registerSettingsDiagnostic({id:'voice',label:'Voix',order:10,
+};
+const VOICE_DIAGNOSTIC={id:'voice',label:'Voix',order:10,
   mount(host,context){
     if(!SET.data||!SET.draft){host.innerHTML='<div class="empty">Chargement…</div>';return}
     SET.voiceTab='diagnostics';host.innerHTML='<div id="voicePanel"></div>';renderVoicePanel(context.revision);
   },
   destroy(){++SET.voiceGeneration;++SET.diagnosticGeneration},
-});
+};
+/* Enregistrement au chargement de la page. Garde explicite : les tests exécutent des extraits de ce script sous node,
+   sans `window` ni registre ; dans la page, `window` existe toujours et un registre absent lève, visible. */
+function installVoiceSettingsSections(){
+  VOICE_SECTIONS.forEach(spec=>registerSettingsSection(voiceSectionSpec(spec)));
+  registerSettingsSection(DIAGNOSTICS_SECTION);
+  registerSettingsDiagnostic(VOICE_DIAGNOSTIC);
+}
+if(typeof window!=='undefined')installVoiceSettingsSections();
 
 /* Où en est le shell : catégorie, puis section enregistrée OU onglet hérité. Un module hérité peut encore poser
    `SET.tab` lui-même (Bare Hands) : un onglet posé l'emporte et la catégorie suit. */

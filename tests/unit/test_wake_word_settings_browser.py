@@ -167,7 +167,8 @@ DIAG = [
     click("#settingsCategories [data-category=advanced_diagnostics]"),
     wait("!!document.querySelector('#modalTabs [data-section=diagnostics]')"),
     click("#modalTabs [data-section=diagnostics]"),
-    wait("!!document.getElementById('wwDetector')&&document.getElementById('wwDetector').dataset.wwDetectorKind!=='unread'"),
+    # La lecture du journal (`/api/trace`, 500 lignes) peut dépasser 5 s quand toute la suite charge la machine.
+    wait("!!document.getElementById('wwDetector')&&document.getElementById('wwDetector').dataset.wwDetectorKind!=='unread'", 15000),
 ]
 
 #: Retour à la section du mot d'éveil, par la catégorie Voix & audio.
@@ -575,31 +576,32 @@ async def test_le_mouvement_reduit_arrete_l_animation_du_bandeau(served):
 async def test_une_lecture_en_echec_se_dit_et_se_reessaie(served, monkeypatch):
     real = cc.wake_word_settings.describe
 
+    failures = []
+
     def broken(_settings):
+        # Réparée par l'événement « la panne a été servie une fois », jamais par une minuterie (QA Slice 03, N2) :
+        # la lecture suivante, celle de « Réessayer », réussit.
+        failures.append(1)
+        monkeypatch.setattr(cc.wake_word_settings, "describe", real)
         raise RuntimeError("panne simulée")
 
     monkeypatch.setattr(cc.wake_word_settings, "describe", broken)
-
-    async def heal_later():
-        await asyncio.sleep(3)
-        monkeypatch.setattr(cc.wake_word_settings, "describe", real)
-
-    healer = asyncio.create_task(heal_later())
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         wait("!!document.getElementById('openSettings')"),
         # Réglages est replié dans « Plus d’outils » depuis la Slice 04 de la refonte roue/dossier.
         click("#dockMore"), click("#openSettings"),
+        # Réglages lus d'abord : `openSettings` ne remonte pas la section au milieu du test (une seule lecture en panne).
+        wait("!!document.getElementById('voiceSection_conversation')"),
         wait(f"!!document.querySelector('{WAKE_ENTRY}')"),
         click(WAKE_ENTRY),
         wait("!!document.querySelector('[data-ww-load-error]')"),
         eval_("({role:document.querySelector('[data-ww-load-error]').getAttribute('role'),"
               "save:!!document.getElementById('ww_save'),text:document.querySelector('[data-ww-load-error]').textContent})", "failed"),
-        eval_("new Promise(r=>setTimeout(r,3200))"),
         click("[data-ww-retry]"),
         wait("!!document.getElementById('ww_save')"),
         snapshot("healed"),
     ]}])
-    await healer
+    assert failures == [1], "une seule lecture en panne, puis la réparation"
     failed = got(out["steps"][0], "failed")
     assert failed["role"] == "alert" and failed["save"] is False, "pas de formulaire sans réglage lu"
     assert "illisible" in failed["text"] and "Réessayer" in failed["text"]
@@ -620,7 +622,7 @@ async def test_l_etat_du_detecteur_est_le_dernier_evenement_du_journal(served):
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         *OPEN,
         *DIAG,
-        wait("document.getElementById('wwDetector').dataset.wwDetectorKind==='failed'"),
+        wait("document.getElementById('wwDetector').dataset.wwDetectorKind==='failed'", 15000),
         snapshot("seen"),
         eval_("({h3:parseFloat(getComputedStyle(document.getElementById('diagnostic_wake_word-title')).fontSize),"
               "h4:parseFloat(getComputedStyle(document.getElementById('wwHealthTitle')).fontSize)})", "titles"),

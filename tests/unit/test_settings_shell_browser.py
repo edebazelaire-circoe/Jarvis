@@ -162,3 +162,28 @@ async def test_reduced_motion_stops_the_opening_animation(served):
     ])
     assert got(out["steps"][0], "reduced") == "none"
     assert got(out["steps"][1], "normal") == "set-fade"
+
+
+COMPARE_OPEN = """(async()=>{const d=document.querySelector('#voiceSection_voice_output details.rd');d.open=true;
+  await new Promise(r=>setTimeout(r,1500));
+  const body=document.getElementById('modalContent'),filters=document.querySelector('#voiceCatalog .catalog-filters');
+  return {open:d.open,page:document.documentElement.scrollWidth-innerWidth,content:body.scrollWidth-body.clientWidth,
+    details:d.getBoundingClientRect().right<=body.getBoundingClientRect().right+0.5,
+    filters:!!filters,catalog:!!document.querySelector('#voiceCatalog').children.length}})()"""
+
+
+@pytest.mark.parametrize(("width", "height"), [(1366, 768), (1093, 614)])
+async def test_open_voice_model_comparison_does_not_overflow(served, width, height):
+    """QA Slice 03 (B4) : « Comparer les modèles vocaux » ouvert à 1366×768 faisait déborder le contenu de 57 px
+    (filtres du catalogue à 2120 px). Les filtres défilent désormais dans le catalogue, comme dans Agents & modèles.
+    1093×614 : 1366×768 à 125 % de zoom."""
+
+    out = await drive(served.url, [{"width": width, "height": height, "actions": [
+        *OPEN,
+        click("#modalTabs [data-section=voice_output]"),
+        wait("!!document.querySelector('#voiceSection_voice_output details.rd')"),
+        eval_(COMPARE_OPEN, "compare"),
+    ]}])
+    seen = got(out["steps"][0], "compare")
+    assert seen["open"] is True and seen["catalog"] is True, seen
+    assert seen["page"] <= 0 and seen["content"] <= 1 and seen["details"] is True, seen

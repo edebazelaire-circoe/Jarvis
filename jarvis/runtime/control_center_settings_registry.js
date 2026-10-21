@@ -42,8 +42,9 @@
      sert un identifiant déjà redirigé (`routing` → `cli`, contrat de
      jarvis-settings-model-catalog-ux). */
   const LEGACY_TAB_ALIASES=Object.freeze({
-    /* `also` porte aussi les sections cibles de la même catégorie que l'onglet sert
-       aujourd'hui (QA Slice 01) : `openSettingsTab('voice_output')` ouvre `voice`. */
+    /* `also` porte aussi les autres sections cibles du contenu éclaté (QA Slice 01). Depuis la
+       Slice 03, `voice` n'est plus un onglet : ces sections sont enregistrées et
+       `openSettingsTab('voice_output')` ouvre la section elle-même. */
     voice:Object.freeze({category:'voice_audio',section:'conversation',
       also:freezeAll([{category:'voice_audio',section:'voice_output'},{category:'voice_audio',section:'microphone_sound'},
         {category:'voice_audio',section:'turns_interruptions'},

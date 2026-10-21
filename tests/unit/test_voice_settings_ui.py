@@ -124,7 +124,8 @@ def test_voice_sub_tabs_are_gone_and_voice_sections_use_the_reserved_registry_id
         ("conversation", "voice_audio"), ("voice_output", "voice_audio"), ("microphone_sound", "voice_audio"),
         ("turns_interruptions", "voice_audio"), ("architecture_compat", "advanced_diagnostics"),
     ]
-    assert "registerSettingsSection({id:'diagnostics',category:'advanced_diagnostics'" in page
+    assert "const DIAGNOSTICS_SECTION={id:'diagnostics',category:'advanced_diagnostics'" in page
+    assert "registerSettingsSection(DIAGNOSTICS_SECTION);" in page and "if(typeof window!=='undefined')installVoiceSettingsSections();" in page
 
 
 def test_voice_catalog_has_backend_roles_owned_lifecycle_and_preserved_per_role_state(tmp_path: Path):
@@ -437,3 +438,48 @@ def test_top_navigation_has_no_config_and_wake_shortcut_has_one_editor_in_shortc
     assert "wake_toggle'" not in shortcuts.replace("`wake_toggle` compris", "")
     assert "Voix → Tours" not in shortcuts and "data-shortcut" in shortcuts
     assert "function tabConfig" not in page
+
+
+@pytest.mark.asyncio
+async def test_saving_from_a_voice_section_posts_the_whole_unchanged_payload_shape(
+    control: ControlCenter, tmp_path: Path,
+):
+    """QA Slice 03 (B5) : une modification faite depuis une section Voix part par `saveDraft` avec la charge complète
+    d'avant la refonte. Clés de premier niveau, sous-clés de `voice` et `audio`, valeurs non touchées : figées."""
+
+    data = json.loads((await control.get_settings(None)).text)
+    page = PAGE.read_text(encoding="utf-8")
+    changed = page[page.index("function voiceChanged") : page.index("function bindVoiceModelField")]
+    draft = page[page.index("function draftFrom(data)") : page.index("async function openSettings()")]
+    save = page[page.index("async function saveDraft(options)") : page.index("modalSave.addEventListener('click'")]
+    result = run_node(
+        tmp_path,
+        data,
+        r"""
+        const esc=value=>String(value??'');const SET={data,dirty:false,open:true,shortcuts:data.shortcuts};const modalSave={};
+        const say=()=>{},renderTab=async()=>{},renderVoicePanel=()=>{},authFieldChanged=()=>{throw new Error('auth path')};
+        const authValues=()=>({}),authVerdictHtml=()=>'',verifierHtml=()=>'',authEffectiveHtml=()=>'',aecHtml=()=>'',deviceOptions=()=>'',catalogNote=()=>'';
+        let sent=null;const api=async(path,options)=>{sent={path,body:JSON.parse(options.body)};return data};
+        """
+        + voice_renderer_source(page) + changed + draft + save
+        + r"""
+        (async()=>{SET.draft=draftFrom(data);SET.voiceTab='conversation';
+          voiceChanged({dataset:{voiceMeta:'active_timeout_s',voicePersistence:'active_timeout_s'},type:'number',value:'120'},1);
+          voiceChanged({dataset:{voiceMeta:'openai.voice',voicePersistence:'voice_stack_settings.openai_realtime.voice'},type:'select-one',value:'ash'},1);
+          await saveDraft({silent:true});process.stdout.write(JSON.stringify(sent));
+        })().catch(error=>{console.error(error);process.exitCode=1});
+        """,
+    )
+
+    assert result["path"] == "/api/settings"
+    body = result["body"]
+    assert sorted(body) == ["agenda_reminders", "audio", "cli", "routing", "voice"]
+    assert sorted(body["voice"]) == ["arch", "authorization", "settings", "stack"], "jamais `architecture` sans changement d'architecture"
+    assert body["voice"]["authorization"] == {}
+    assert body["voice"]["stack"] == data["voice"]["stack"] and body["voice"]["arch"] == (data["voice"]["arch"] or "")
+    expected_settings = json.loads(json.dumps(data["voice"]["settings"]))
+    expected_settings["openai_realtime"]["voice"] = "ash"
+    assert body["voice"]["settings"] == expected_settings, "pile inactive et champs non touchés conservés"
+    assert sorted(body["audio"]) == sorted(data["audio"]), "toutes les sous-clés de `audio` partent"
+    assert body["audio"] == {**data["audio"], "active_timeout_s": "120"}
+    assert body["cli"]["agent"] == data["cli"]["agent"] and body["routing"]["profiles"] == data["routing"]["policy"]

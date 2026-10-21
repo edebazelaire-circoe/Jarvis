@@ -859,7 +859,7 @@
         view.error=null;
         host.append(sectionNode());
         /* Lecture déjà refusée pendant cette ouverture des Réglages (le shell remonte la section quand
-           `/api/settings` arrive) : le refus reste affiché, « Réessayer » relit ; pas de relecture en boucle. */
+           les réglages généraux arrivent) : le refus reste affiché, « Réessayer » relit ; pas de relecture en boucle. */
         const opening=typeof SET!=='undefined'?SET.openGeneration:0;
         if(view.loadError&&!view.state&&view.failedOpening===opening)return;
         view.failedOpening=null;
