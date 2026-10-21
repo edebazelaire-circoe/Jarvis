@@ -552,3 +552,73 @@ const v=M.create(host,{fetch:reply,view:'work_methods',...quiet});await v.load()
 process.stdout.write(JSON.stringify({roles,html:host.innerHTML}));""", candidates=candidates)
     assert "deep-research@2" in out["roles"] and "version promue" in out["roles"]
     assert "Lecture partielle" in out["html"]
+
+
+# --- jarvis-settings-ui-reorganization Slice 04 : cycle de vie des deux sections ---------------------------------
+
+SECTION_LIFECYCLE = r"""
+globalThis.window=globalThis;
+const timers=new Map();let nextTimer=1;
+globalThis.setInterval=(fn,ms)=>{const id=nextTimer++;timers.set(id,{fn,ms});return id};
+globalThis.clearInterval=id=>{timers.delete(id)};
+const pending=[];
+globalThis.fetch=(path)=>new Promise(resolve=>pending.push({path,resolve}));
+const errors=[];console.error=(c,e)=>errors.push(String(c));console.info=()=>{};
+require(MODULE);
+const SET={open:true,renderRevision:1,subagentView:null,subagentDrafts:{}};
+const selectTab=()=>{},esc=String;
+function fakeHost(){const inner={innerHTML:'',setAttribute(){},querySelectorAll(){return[]},querySelector(){return null}};
+  return {inner,_h:'',set innerHTML(v){this._h=v},get innerHTML(){return this._h},get firstElementChild(){return inner}}}
+""" + "{PAGE_SOURCE}" + r"""
+const reply=body=>({ok:true,status:200,headers:{get:()=>null},text:async()=>JSON.stringify(body)});
+(async()=>{
+  const out={};
+  for(const spec of SUBAGENT_SECTIONS){
+    const entry=subagentSectionSpec(spec),host=fakeHost();
+    pending.length=0;
+    entry.mount(host,{revision:SET.renderRevision});
+    const view=SET.subagentView,ticking=timers.size;
+    const before=host.inner.innerHTML;
+    entry.destroy(host);                       // le shell quitte la section (`destroyRegisteredSection`)
+    const afterDestroy={held:SET.subagentView,destroyed:view.state.destroyed,timers:timers.size};
+    for(const p of pending)p.resolve(reply(DATA.roles));       // réponse tardive au registre des rôles
+    await new Promise(r=>setTimeout(r,20));
+    out[spec.id]={view:view.view,ticking,afterDestroy,stillLoading:host.inner.innerHTML===before,
+      phase:view.state.phase,paths:pending.map(p=>p.path)};
+    SET.renderRevision++;
+  }
+  process.stdout.write(JSON.stringify({out,errors}));
+})().catch(e=>{process.stderr.write(String(e&&e.stack||e));process.exit(1)});
+"""
+
+
+def test_leaving_roles_then_work_methods_destroys_each_view(tmp_path):
+    """Quitter `subagents` puis `work_methods` appelle `view.destroy()` : vue marquée détruite, compteur d'attente
+    arrêté, réponse tardive ignorée (l'écran reste celui du chargement, aucun état n'est publié)."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    page = HTML.read_text(encoding="utf-8")
+    source = (page[page.index("function destroySubagentSettings()") : page.index("/* --- shell à six catégories")]
+              + page[page.index("const SUBAGENT_SECTIONS=[") : page.index("/* --- onglet Config")])
+    data = tmp_path / "roles.json"
+    data.write_text(json.dumps({"roles": roles_payload(tmp_path)}), encoding="utf-8")
+    script = tmp_path / "lifecycle.cjs"
+    script.write_text(
+        f"const MODULE={json.dumps(str(MODULE))};"
+        f"const DATA=JSON.parse(require('node:fs').readFileSync({json.dumps(str(data))},'utf8'));"
+        + SECTION_LIFECYCLE.replace("{PAGE_SOURCE}", source),
+        encoding="utf-8",
+    )
+    done = subprocess.run([node, str(script)], capture_output=True, text=True, encoding="utf-8", timeout=60, check=False)
+    assert done.returncode == 0, done.stderr
+    result = json.loads(done.stdout)
+    out = result["out"]
+    assert list(out) == ["subagents", "work_methods"]
+    for section_id, seen in out.items():
+        assert seen["view"] == ("roles" if section_id == "subagents" else "work_methods")
+        assert seen["ticking"] == 1, seen  # le compteur d'attente tournait pendant le chargement
+        assert seen["afterDestroy"] == {"held": None, "destroyed": True, "timers": 0}, seen
+        assert seen["stillLoading"] is True and seen["phase"] == "loading", seen  # la réponse tardive n'a rien publié
+        assert seen["paths"] == ["/api/subagent-roles"], seen
+    assert result["errors"] == []
