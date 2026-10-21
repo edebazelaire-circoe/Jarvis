@@ -54,6 +54,9 @@ async def test_sections_destinations_alias_and_links(served):
         click("#memSection_consolidation [data-mem-diagnostics]"),
         wait("!!document.getElementById('diagnostic_memory')&&!!document.querySelector('#diagnostic_memory .mem-legs')"),
         eval_("[SET.category,SET.section,document.activeElement&&document.activeElement.id]", "diag"),
+        # Les parties Voix et Mot d'éveil, au-dessus, se remplissent après leur lecture : la partie Mémoire reste en vue.
+        eval_("""new Promise(r=>setTimeout(()=>{const t=document.getElementById('diagnostic_memory').getBoundingClientRect().top,
+          b=document.getElementById('modalContent').getBoundingClientRect();r(t>=b.top-1&&t<b.bottom)},2000))""", "in_view"),
         click("#settingsCategories [data-category=memory_knowledge]"),
         click("#modalTabs [data-section=memory_center]"),
         wait("!!document.querySelector('[data-mem-center]:not([disabled])')"),
@@ -76,6 +79,7 @@ async def test_sections_destinations_alias_and_links(served):
     assert sections["memory_center"]["center"] and sections["memory_center"]["fields"] == []
     assert tour["alias"] == ["memory_knowledge", None, "recall"]
     assert got(step, "diag") == ["advanced_diagnostics", "diagnostics", "diagnostic_memory"]
+    assert got(step, "in_view") is True
     assert got(step, "center") == [False, True]
     assert out["console"] == [], out["console"]
 

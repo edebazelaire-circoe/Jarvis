@@ -5553,12 +5553,20 @@ function memorySettingsStore(){
     SET.memoryStore=window.JarvisMemorySettings.createStore();SET.memoryStoreOpening=SET.openGeneration}
   return SET.memoryStore;
 }
-/* « Voir le diagnostic mémoire » : ouvre Avancé › Diagnostics (montage synchrone) et porte le focus sur la partie Mémoire. */
+/* « Voir le diagnostic mémoire » : ouvre Avancé › Diagnostics (montage synchrone) et porte le focus sur la partie Mémoire.
+   Les parties au-dessus (Voix, Mot d'éveil) grandissent quand leur lecture arrive : la partie Mémoire est gardée en vue
+   tant qu'elle a le focus, quelques secondes au plus, et plus du tout dès que l'utilisateur fait défiler. */
 function openMemoryDiagnostics(context){
   context.open('diagnostics');
   const part=document.getElementById('diagnostic_memory');
   if(!part)return;
-  part.setAttribute('tabindex','-1');part.scrollIntoView({block:'start'});part.focus({preventScroll:true});
+  part.setAttribute('tabindex','-1');part.focus({preventScroll:true});
+  const pin=()=>part.scrollIntoView({block:'start'});pin();
+  if(typeof ResizeObserver!=='function')return;
+  const watch=new ResizeObserver(()=>{if(part.isConnected&&document.activeElement===part)pin();else watch.disconnect()});
+  watch.observe(part.parentElement);
+  modalContent.addEventListener('wheel',()=>watch.disconnect(),{once:true,passive:true});
+  setTimeout(()=>watch.disconnect(),4000);
 }
 /* Une vue du module dans `host` ; la lecture part tout de suite, un refus s'affiche avec son message réel. */
 function mountMemorySettings(host,context,options){
