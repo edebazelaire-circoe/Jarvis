@@ -369,18 +369,17 @@ async def test_assembled_primary_navigation_has_six_tabs_and_no_legacy_navigatio
     # « Voix » n'est plus un onglet (jarvis-settings-ui-reorganization, Slice 03) : sections enregistrées de Voix & audio.
     assert rendered == [
         {"id": "prompts", "label": "Prompts"},
-        {"id": "cli", "label": "Agent / CLI"},
         {"id": "keys", "label": "API Keys"},
         {"id": "shortcuts", "label": "Raccourcis"},
         {"id": "memory", "label": "Mémoire"},
-        {"id": "subagents", "label": "Sous-agents"},
         {"id": "appearance", "label": "Apparence"},
     ]
     # Le contrat de navigation de jarvis-settings-model-catalog-ux (six onglets) est figé ; les onglets ajoutés
     # depuis par d'autres handoffs (Mémoire, Sous-agents) s'intercalent sans changer l'ordre des siens.
-    added_since_contract = {"memory", "subagents"}
+    added_since_contract = {"memory"}
     contract_navigation = json.loads(IA_CONTRACT.read_text(encoding="utf-8"))["navigation"]
-    rehosted_as_sections = {"voice"}
+    # Voix (Slice 03) puis Agent / CLI (Slice 04) : sections enregistrées, plus des onglets.
+    rehosted_as_sections = {"voice", "agent_cli"}
     assert [item["label"] for item in contract_navigation if item["id"] not in rehosted_as_sections] == [
         item["label"] for item in rendered if item["id"] not in added_since_contract
     ]

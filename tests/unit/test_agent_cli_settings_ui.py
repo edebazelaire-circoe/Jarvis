@@ -61,13 +61,16 @@ def test_navigation_fixture_matches_unified_agent_cli_tab_and_legacy_programmati
     assert tabs[: len(core_tabs)] == [(tab["id"], tab["label"]) for tab in core_tabs]
     work = PAGE.with_name("control_center_work.js").read_text(encoding="utf-8")
     assert "{id:'appearance',label:'Apparence',save:false}" in work
-    # Voix réhébergée en sections (jarvis-settings-ui-reorganization, Slice 03) : plus un onglet, son ancien ID est
-    # l'alias de la section qui la reçoit.
+    # Voix (Slice 03), Agent / CLI et Sous-agents (Slice 04) réhébergés en sections
+    # (jarvis-settings-ui-reorganization) : plus des onglets, leur ancien ID est l'alias de la section qui les reçoit
+    # (ou son ID même).
+    sections = (page[page.index("const VOICE_SECTIONS=[") : page.index("function voiceSectionSpec")]
+                + page[page.index("const AGENT_SECTIONS=[") : page.index("function agentSectionSpec")]
+                + page[page.index("const SUBAGENT_SECTIONS=[") : page.index("function installAgentSettingsSections")])
     for legacy_id, target in expected["rehosted_as_sections"].items():
         assert legacy_id not in [identifier for identifier, _label in tabs]
-        sections = page[page.index("const VOICE_SECTIONS=[") : page.index("function voiceSectionSpec")]
-        assert f"{{id:'{target['section']}',category:'{target['category']}'" in sections
-        assert f"aliases:['{legacy_id}']" in sections
+        line = next(row for row in sections.split("\n") if f"{{id:'{target['section']}',category:'{target['category']}'" in row)
+        assert legacy_id == target["section"] or f"aliases:['{legacy_id}']" in line
     legacy = expected["legacy_programmatic_tab"]
     canonical_id = expected["canonical_programmatic_tab"]
     assert legacy not in [identifier for identifier, _label in tabs]
@@ -84,10 +87,12 @@ def test_navigation_fixture_matches_unified_agent_cli_tab_and_legacy_programmati
 def test_agent_cli_sections_are_in_locked_order_and_advanced_policy_is_disclosed():
     page = PAGE.read_text(encoding="utf-8")
     expected = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    body = page[page.index("function tabCli()") : page.index("/* --- onglet Config")]
-
-    positions = [body.index(f"<h3>{label}</h3>") for label in expected["agent_section_order"]]
-    assert positions == sorted(positions)
+    # Slice 04 : sections enregistrées de `agents_models`, dans l'ordre ; Runtime & CLI sous Avancé.
+    registered = page[page.index("const AGENT_SECTIONS=[") : page.index("function installAgentSettingsSections")]
+    labels = re.findall(r"category:'agents_models',order:(\d+),label:'([^']+)'", registered)
+    assert [label for _order, label in sorted(labels, key=lambda item: int(item[0]))] == expected["agent_section_order"]
+    assert "{id:'runtime_cli',category:'advanced_diagnostics',group:'runtime_cli',order:30,advanced:true,label:'Runtime & CLI'" in registered
+    body = page[page.index("function routingRow(") : page.index("/* --- onglet Config")]
     assert '<details class="rd" id="routingAdvanced"' in body
     assert "Configuration avancée des sous-agents" in body
     # Le choix se fait en deux temps — un harness, puis un de ses modèles — donc
@@ -96,8 +101,9 @@ def test_agent_cli_sections_are_in_locked_order_and_advanced_policy_is_disclosed
     # retenu, dans quel ordre, et pourquoi un candidat n'est pas utilisable.
     assert "unavailable_reason" in body and "rank===0?'préféré'" in body
     assert "data-routing-harness" in body and "data-routing-drop" in body
-    tab = body[body.index("function tabCli()") : body.index("/* --- configuration avancée")]
-    assert "await " not in tab and "api(" not in tab and "catalog(" not in tab
+    builders = page[page.index("function mainAgentHtml()") : page.index("/* --- configuration avancée")]
+    assert "await " not in builders and "api(" not in builders and "catalog(" not in builders
+    assert "function runtimeCliHtml(){\n  return `<div id=\"cliTechnical\">${cliTechnicalHtml()}</div>${routingAdvancedShell()}`;" in builders
 
 
 def test_cli_failure_keeps_mode_behavior_and_catalog_shell_visible(tmp_path: Path):
@@ -107,19 +113,54 @@ def test_cli_failure_keeps_mode_behavior_and_catalog_shell_visible(tmp_path: Pat
         tmp_path,
         {},
         """
-        const SET={clis:{ok:false,error:'CLI probe failed',agents:[]},draft:{cli:{agent:'claude'}}};
-        const esc=value=>String(value),delegationModeHtml=()=>'<mode>MODE</mode>',behaviorHtml=()=>'<behavior>BEHAVIOR</behavior>',routingAdvancedShell=()=>'<advanced>CLOSED</advanced>';
+        const SET={agentSection:'main_agent',clis:{ok:false,error:'CLI probe failed',agents:[]},draft:{cli:{agent:'claude'}}};
+        const esc=value=>String(value),delegationModeHtml=()=>'<mode>MODE</mode>',behaviorHtml=()=>'<behavior>BEHAVIOR</behavior>',tabAgenda=()=>'<agenda>AGENDA</agenda>',routingAdvancedShell=()=>'<advanced>CLOSED</advanced>';
         """
         + functions
-        + "process.stdout.write(JSON.stringify(tabCli()));",
+        + "const main=mainAgentHtml();SET.agentSection='runtime_cli';"
+        "process.stdout.write(JSON.stringify({main,behavior:agentBehaviorHtml(),models:subagentModelsHtml(),runtime:runtimeCliHtml()}));",
     )
 
-    assert "CLI probe failed" in result
-    assert "MODE" in result and "BEHAVIOR" in result
-    assert 'id="agentCatalog"' in result and "CLOSED" in result
-    assert "data-cli-retry" in result
-    assert result.index("Technique") < result.index("Comportement") < result.index("Sous-agents / Modèles")
+    # Une sonde en échec reste locale : Agent principal et Runtime & CLI le disent avec « réessayer »,
+    # Comportement et Modèles des sous-agents restent rendus.
+    for section in ("main", "runtime"):
+        assert "CLI probe failed" in result[section] and "data-cli-retry" in result[section]
+    assert "MODE" in result["models"] and 'id="agentCatalog"' in result["models"]
+    assert "BEHAVIOR" in result["behavior"] and "AGENDA" in result["behavior"]
+    assert "CLOSED" in result["runtime"] and "CLOSED" not in result["main"]
+    assert 'data-settings-open="runtime_cli"' in result["main"] and 'data-settings-open="runtime_cli"' in result["models"]
     assert "<label>Agent piloté</label>" not in functions
+
+
+def test_main_agent_and_runtime_split_the_cli_fields_without_changing_the_draft(tmp_path: Path):
+    """Agent principal : identité, modèle, disponibilité ; Runtime & CLI : commande, chemin, re-détection, permission.
+    Les deux écrivent dans le même `cli.settings[<CLI>]` (mêmes `data-cli-field`)."""
+    page = PAGE.read_text(encoding="utf-8")
+    functions = page[page.index("function cliTechnicalHtml()") : page.index("function mainAgentHtml()")]
+    result = run_node(
+        tmp_path,
+        {},
+        """
+        const esc=value=>String(value),keyStateFor=()=>'',providerLabel=String,catalogNote=()=>'NOTE';
+        const selectOptions=(values,selected,placeholder)=>(placeholder?`<option value="">${placeholder}</option>`:'')+values.map(v=>`<option value="${v.value}">${v.label}</option>`).join('');
+        const SET={agentSection:'main_agent',catalog:{'anthropic:text':{ok:true,models:[{id:'m1'}]}},
+          clis:{agents:[{id:'claude',label:'Claude Code',available:true,version:'9.9',path:'C:/bin/claude.exe',description:'D',model_provider:'anthropic',permission_label:'Permissions',permission_modes:['default','bypass'],docs:'docs'},
+                        {id:'codex',label:'Codex',available:false,error:'introuvable',description:'D',model_provider:'openai',permission_modes:[]}]},
+          draft:{cli:{agent:'claude',settings:{claude:{model:'m1',command:'claude',permission_mode:'default'}}}}};
+        """
+        + functions
+        + "const main=cliTechnicalHtml();SET.agentSection='runtime_cli';"
+        "process.stdout.write(JSON.stringify({main,runtime:cliTechnicalHtml()}));",
+    )
+
+    main, runtime = result["main"], result["runtime"]
+    assert 'name="clicagent"' in main and 'data-cli-field="model"' in main and "9.9" in main and "introuvable" in main
+    assert 'data-cli-field="command"' not in main and 'data-cli-field="permission_mode"' not in main
+    assert "C:/bin/claude.exe" not in main and 'id="reprobe"' not in main
+    assert 'data-cli-field="command"' in runtime and 'data-cli-field="permission_mode"' in runtime
+    assert "C:/bin/claude.exe" in runtime and 'id="reprobe"' in runtime
+    assert 'name="clicagent"' not in runtime and 'data-cli-field="model"' not in runtime
+    assert 'data-scope="claude"' in main and 'data-scope="claude"' in runtime
 
 
 @pytest.mark.asyncio
@@ -220,8 +261,8 @@ def test_catalog_mount_is_shared_async_and_has_owned_lifecycle(tmp_path: Path):
         """
         let destroyed=0,loaded=0,refreshed=0,captured=null,refreshHandler=null;
         const host={},refresh={addEventListener:(kind,handler)=>{refreshHandler=handler}};
-        const SET={tab:'cli',agentCatalog:{destroy:()=>{destroyed+=1}}};
-        const currentAgentTab=()=>true;
+        const SET={section:'subagent_models',agentSection:'subagent_models',agentCatalog:{destroy:()=>{destroyed+=1}}};
+        const currentAgentSection=()=>true;
         const $=selector=>selector==='#agentCatalog'?host:selector==='#agentCatalogRefresh'?refresh:null;
         const JarvisCatalog={createCatalogTable:(target,options)=>{
           captured={targetIsHost:target===host,options};
@@ -250,9 +291,13 @@ def test_agent_catalog_lifecycle_error_and_accessibility_contracts_are_wired():
     render = page[page.index("async function renderTab()") : page.index("function bindTab(revision)")]
     cleanup = page[page.index("function cleanupSettingsSurface()") : page.index("function renderTabs()")]
     close = page[page.index("function closeSettings()") : page.index("async function saveDraft")]
+    sections = page[page.index("const AGENT_SECTIONS=[") : page.index("function bindAgentSection(")]
     assert render.lstrip().startswith("async function renderTab(){\n  cleanupSettingsSurface();")
     assert "destroyAgentCatalog();destroyVoiceCatalog()" in cleanup
-    assert "if(SET.tab==='cli'){mountAgentCatalog(revision);hydrateCliAgents(revision)}" in render
+    # Slice 04 : le catalogue est monté par la section Modèles des sous-agents et détruit par son `destroy`.
+    assert "body:subagentModelsHtml,start:revision=>mountAgentCatalog(revision),stop:destroyAgentCatalog}" in sections
+    assert "destroy(){if(stop)stop();" in sections
+    assert "mountAgentCatalog" not in render
     assert "SET.renderRevision=(SET.renderRevision||0)+1" in close
     assert "SET.routingAdvancedOpen=false" in close
     assert "cleanupSettingsSurface();" in close
@@ -288,15 +333,15 @@ def test_open_close_race_cannot_publish_or_mount_after_settings_response(tmp_pat
 
 def test_advanced_policy_is_lazy_local_and_last_render_wins(tmp_path: Path):
     page = PAGE.read_text(encoding="utf-8")
-    hydrate = page[page.index("async function hydrateRoutingAdvanced") : page.index("/* --- onglet Config")]
+    hydrate = page[page.index("async function hydrateRoutingAdvanced") : page.index("/* --- `agents_models` et leurs sections")]
     result = run_node(
         tmp_path,
         {},
         """
         function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no});return {promise,resolve,reject}}
         const calls=[],body={innerHTML:''};let renders=[];
-        const SET={open:true,tab:'cli',renderRevision:7,routingAdvancedOpen:false,routingGeneration:0,routing:null};
-        const currentAgentTab=revision=>SET.open&&SET.tab==='cli'&&revision===SET.renderRevision;
+        const SET={open:true,section:'runtime_cli',agentSection:'runtime_cli',renderRevision:7,routingAdvancedOpen:false,routingGeneration:0,routing:null};
+        const currentAgentSection=revision=>SET.open&&SET.section===SET.agentSection&&revision===SET.renderRevision;
         const $=()=>body,renderRoutingAdvanced=()=>{renders.push(SET.routing&&SET.routing.marker||SET.routing&&SET.routing.error)};
         const api=()=>{const call=deferred();calls.push(call);return call.promise};
         """
@@ -328,7 +373,7 @@ def test_advanced_policy_is_lazy_local_and_last_render_wins(tmp_path: Path):
 def test_cli_hydration_retries_locally_without_remounting_catalog_or_accumulating_binds(tmp_path: Path):
     page = PAGE.read_text(encoding="utf-8")
     cli_runtime = page[
-        page.index("function currentAgentTab(revision)") : page.index("function renderRoutingAdvanced")
+        page.index("function currentAgentSection(revision)") : page.index("function renderRoutingAdvanced")
     ]
     mount_runtime = page[
         page.index("function destroyAgentCatalog()") : page.index("async function runAudioTest()")
@@ -350,7 +395,7 @@ def test_cli_hydration_retries_locally_without_remounting_catalog_or_accumulatin
         technical.replaceNodes();
         const catalogHost={},refresh={addEventListener(){}};
         const controller={state:{search:'needle',compare:['model-a']},load(){},refresh(){},destroy(){destroys+=1}};
-        const SET={open:true,tab:'cli',renderRevision:9,clis:null,cliGeneration:0,cliModelGeneration:0,catalog:{},agentCatalog:null,draft:{cli:{agent:'claude',settings:{claude:{model:'',command:'claude',permission_mode:'default'}}}}};
+        const SET={open:true,section:'main_agent',agentSection:'main_agent',renderRevision:9,clis:null,cliGeneration:0,cliModelGeneration:0,catalog:{},agentCatalog:null,draft:{cli:{agent:'claude',settings:{claude:{model:'',command:'claude',permission_mode:'default'}}}}};
         const $=selector=>selector==='#cliTechnical'?technical:selector==='#agentCatalog'?catalogHost:selector==='#agentCatalogRefresh'?refresh:null;
         const cliTechnicalHtml=()=>'<technical></technical>',say=()=>{},saveDraft=async()=>{};
         const api=async()=>{apiCalls+=1;if(apiCalls===1)throw new Error('probe offline');return {ok:true,agents:[{id:'claude',model_provider:'anthropic'}]}};
@@ -397,8 +442,8 @@ def test_cli_and_model_hydrations_ignore_stale_or_closed_render(tmp_path: Path):
         """
         function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no});return {promise,resolve,reject}}
         const cliRequest=deferred(),modelRequest=deferred();let renders=0,modelCalls=0;
-        const SET={open:true,tab:'cli',renderRevision:3,clis:null,cliGeneration:0,cliModelGeneration:0,catalog:{},draft:{cli:{agent:'claude'}}};
-        const currentAgentTab=revision=>SET.open&&SET.tab==='cli'&&revision===SET.renderRevision;
+        const SET={open:true,section:'main_agent',agentSection:'main_agent',renderRevision:3,clis:null,cliGeneration:0,cliModelGeneration:0,catalog:{},draft:{cli:{agent:'claude'}}};
+        const currentAgentSection=revision=>SET.open&&SET.section===SET.agentSection&&revision===SET.renderRevision;
         const api=()=>cliRequest.promise,renderTab=()=>{renders+=1};
         const requestCatalog=async()=>{modelCalls+=1;await modelRequest.promise;return {ok:true,models:[]}};
         """
@@ -486,3 +531,33 @@ async def test_combined_agent_save_preserves_profiles_unknown_candidate_and_voic
     assert final["audio_output_device"] == "7"
     assert final["active_timeout_s"] == "42"
     assert final["future_extension"] == {"keep": True}
+
+
+@pytest.mark.asyncio
+async def test_agent_cli_save_payload_is_frozen_key_by_key(tmp_path: Path, monkeypatch):
+    """Slice 04 (jarvis-settings-ui-reorganization) : Agent / CLI éclaté en sections, la charge d'enregistrement ne
+    change pas d'une clé. Clés et sous-clés figées ; toute valeur vient du serveur et revient telle quelle."""
+    for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "JARVIS_VOICE_ARCH"):
+        monkeypatch.delenv(name, raising=False)
+    control = ControlCenter(runtime_root=tmp_path / "runtime", project_root=tmp_path)
+    data = json.loads((await control.get_settings(None)).text)
+    page = PAGE.read_text(encoding="utf-8")
+    draft_source = page[page.index("function draftFrom(data)") : page.index("async function openSettings()")]
+    payload = run_node(tmp_path, data, "const SET={};" + draft_source + "process.stdout.write(JSON.stringify(draftFrom(data)));")
+
+    assert list(payload) == ["voice", "cli", "routing", "audio", "agenda_reminders"]
+    cli = payload["cli"]
+    assert list(cli) == ["agent", "settings", "delegation_mode", "behavior"]
+    assert cli["agent"] == data["cli"]["agent"] and cli["delegation_mode"] == data["cli"]["delegation_mode"]
+    assert sorted(cli["settings"]) == ["claude", "codex"]
+    for agent, values in cli["settings"].items():
+        assert sorted(values) == ["command", "model", "permission_mode"], agent
+    assert cli["settings"] == data["cli"]["settings"]
+    assert sorted(cli["behavior"]) == ["politeness_formality", "response_verbosity"]
+    assert cli["behavior"] == data["cli"]["behavior"]["values"]
+    assert list(payload["routing"]) == ["profiles"] and payload["routing"]["profiles"] == data["routing"]["policy"]
+    assert sorted(payload["routing"]["profiles"]) == ["code", "desktop", "fast", "general"]
+    for profile, entry in payload["routing"]["profiles"].items():
+        assert sorted(entry) == ["allow_general_fallback", "candidates", "enabled", "profile"], profile
+    assert payload["agenda_reminders"] == {f["key"]: data["agenda_reminders"][f["key"]] for f in data["agenda_reminders"]["fields"]}
+    assert payload["audio"] == data["audio"]

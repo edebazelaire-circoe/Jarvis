@@ -115,8 +115,18 @@ SLICE_03_SECTIONS = (
     ("wake_word", "voice_audio", 50, "self"), ("architecture_compat", "advanced_diagnostics", 10, "footer"),
     ("diagnostics", "advanced_diagnostics", 40, "readonly"),
 )
+#: Sections enregistrées par la page servie depuis la Slice 04 (`control_center.html` : `AGENT_SECTIONS`,
+#: `SUBAGENT_SECTIONS`) ; les onglets `cli` et `subagents` ont disparu.
+SLICE_04_SECTIONS = (
+    ("main_agent", "agents_models", 10, "footer", ["cli"]), ("agent_behavior", "agents_models", 20, "footer", []),
+    ("subagent_models", "agents_models", 30, "footer", []), ("subagents", "agents_models", 40, "self", []),
+    ("runtime_cli", "advanced_diagnostics", 30, "footer", ["routing"]), ("work_methods", "advanced_diagnostics", 50, "self", []),
+)
 REGISTER_SLICE_03 = "".join(
     f"R.page.register({{id:'{i}',category:'{c}',label:'{i}',order:{o},save:'{v}',mount:noop}});" for i, c, o, v in SLICE_03_SECTIONS
+) + "".join(
+    f"R.page.register({{id:'{i}',category:'{c}',label:'{i}',order:{o},save:'{v}',aliases:{json.dumps(a)},mount:noop}});"
+    for i, c, o, v, a in SLICE_04_SECTIONS
 )
 
 
@@ -257,10 +267,10 @@ out({{map:targets.map(t=>[String(t),R.legacyTabFor(t,T)]),nav:R.navigationFromLe
         assert mapped.get(tab["id"], tab["id"]) == tab["id"]
     # Voix & audio n'a plus d'onglet (Slice 03) : ses cibles sont des sections enregistrées, servies par le shell.
     assert mapped == {
-        "voice": None, "wakeword": None, "cli": "cli", "routing": "cli", "keys": "keys", "memory": "memory",
-        "experimental": "experimental", "voice_audio": None, "agents_models": "cli", "memory_knowledge": "memory",
+        "voice": None, "wakeword": None, "cli": None, "routing": None, "keys": "keys", "memory": "memory",
+        "experimental": "experimental", "voice_audio": None, "agents_models": None, "memory_knowledge": "memory",
         "interface_interactions": "shortcuts", "connections": "keys", "advanced_diagnostics": "prompts",
-        "wake_word": None, "runtime_cli": "cli", "labs": "experimental", "bare_hands": "experimental",
+        "wake_word": None, "runtime_cli": None, "labs": "experimental", "bare_hands": "experimental",
         "theme_scene": "appearance", "diagnostics": "memory", "barehandsRecord": "experimental", "nope": None, "null": None,
     }
     nav = out["nav"]
@@ -268,7 +278,7 @@ out({{map:targets.map(t=>[String(t),R.legacyTabFor(t,T)]),nav:R.navigationFromLe
     assert [c["id"] for c in nav["categories"]] == [c[0] for c in CATEGORIES]
     assert {c["id"]: [t["id"] for t in c["tabs"]] for c in nav["categories"]} == {
         "voice_audio": [],
-        "agents_models": ["cli", "subagents"],
+        "agents_models": [],
         "memory_knowledge": ["memory"],
         "interface_interactions": ["shortcuts", "appearance"],
         "connections": ["keys"],
@@ -281,18 +291,18 @@ out({{map:targets.map(t=>[String(t),R.legacyTabFor(t,T)]),nav:R.navigationFromLe
 #: Sections cibles prévues (`docs/settings/navigation-registry.md` § 3), enregistrées par les Slices 03 à 08.
 PLANNED_SECTIONS = {
     "voice_audio": ["conversation", "voice_output", "microphone_sound", "turns_interruptions", "wake_word"],
-    "agents_models": ["main_agent", "agent_behavior", "subagents"],
+    "agents_models": ["main_agent", "agent_behavior", "subagent_models", "subagents"],
     "memory_knowledge": ["recall", "semantic_retrieval", "consolidation", "knowledge_sources", "memory_center"],
     "interface_interactions": ["theme_scene", "shortcuts", "bare_hands"],
     "connections": ["providers"],
-    "advanced_diagnostics": ["architecture_compat", "prompts", "runtime_cli", "diagnostics", "labs"],
+    "advanced_diagnostics": ["architecture_compat", "prompts", "runtime_cli", "diagnostics", "work_methods", "labs"],
 }
 
 
 def test_every_planned_target_section_is_served_by_a_current_tab(tmp_path):
     """QA Slice 01 : `voice_output`, `semantic_retrieval`… rendaient `null` ; chaque section cible prévue s'ouvre :
     par un onglet hérité, ou (depuis la Slice 03) parce qu'elle est enregistrée par la page."""
-    registered = {i for i, *_ in SLICE_03_SECTIONS}
+    registered = {i for i, *_ in SLICE_03_SECTIONS} | {i for i, *_ in SLICE_04_SECTIONS}
     out = run(tmp_path, f"""
 const T={json.dumps(assembled_tabs())},P={json.dumps(PLANNED_SECTIONS)};
 out(Object.fromEntries(Object.values(P).flat().map(s=>[s,R.legacyTabFor(s,T)])));""")
@@ -338,7 +348,8 @@ const at=()=>[SET.category,SET.tab,SET.section];
     assert out["first"] == ["connections", "keys", None] and out["opened"] == 1
     seen = out["seen"]
     assert seen["memory"] == ["memory_knowledge", "memory", None]
-    assert seen["routing"] == ["agents_models", "cli", None]
+    # Slice 04 : `routing` → Runtime & CLI ; `cli` et `subagents` ouvrent leurs sections (test suivant).
+    assert seen["routing"] == ["advanced_diagnostics", None, "runtime_cli"]
     assert seen["labs"] == seen["bare_hands"] == seen["barehandsCalibration"] == ["advanced_diagnostics", "experimental", None]
     # La ligne « Réglages de la voix » de la roue (`'voice'`) atterrit sur Voix & audio, section Conversation.
     assert seen["voice"] == ["voice_audio", None, "conversation"]
@@ -358,17 +369,46 @@ const at=()=>[SET.category,SET.tab,SET.section];
     assert {c["id"]: [(i["kind"], i["id"]) for i in c["items"]] for c in nav["categories"]} == {
         "voice_audio": [("section", "conversation"), ("section", "voice_output"), ("section", "microphone_sound"),
                         ("section", "turns_interruptions"), ("section", "wake_word")],
-        "agents_models": [("tab", "cli"), ("tab", "subagents")],
+        "agents_models": [("section", "main_agent"), ("section", "agent_behavior"), ("section", "subagent_models"),
+                          ("section", "subagents")],
         "memory_knowledge": [("tab", "memory")],
         "interface_interactions": [("tab", "shortcuts"), ("tab", "appearance")],
         "connections": [("tab", "keys")],
-        "advanced_diagnostics": [("section", "architecture_compat"), ("section", "diagnostics"), ("tab", "prompts"),
-                                 ("tab", "experimental")],
+        "advanced_diagnostics": [("section", "architecture_compat"), ("section", "runtime_cli"), ("section", "diagnostics"),
+                                 ("section", "work_methods"), ("tab", "prompts"), ("tab", "experimental")],
     }
     related = {c["id"]: [r["id"] for r in c["related"]] for c in nav["categories"]}
     assert related["interface_interactions"] == ["experimental"]  # les préférences Bare Hands, encore dans Expérimental
-    assert related["advanced_diagnostics"] == ["cli", "memory", "subagents"]
+    assert related["advanced_diagnostics"] == ["memory"]
     assert related["voice_audio"] == related["connections"] == []
+
+
+def test_agent_legacy_ids_open_their_sections(tmp_path):
+    """Slice 04 : `cli`, `routing`, `subagents` (onglets disparus) et les sections cibles s'ouvrent ; aucun onglet
+    `cli` ni `subagents` dans la navigation."""
+    page = HTML.read_text(encoding="utf-8")
+    assert not {"cli", "subagents"} & set(base_tab_ids())
+    out = run(tmp_path, f"""
+globalThis.window=globalThis;window.JarvisSettingsRegistry=R;
+const TABS={json.dumps(assembled_tabs())};
+const SET={{open:true,tab:null,category:'voice_audio',section:'conversation',lastItem:{{}},routingGeneration:0}},warn=[];
+console.warn=(c,x)=>warn.push([c,x]);console.error=noop;
+const openSettings=()=>Promise.resolve(),renderTabs=noop,renderTab=noop;
+{_page_routing(page)}
+{REGISTER_SLICE_03}
+const seen={{}};
+for(const target of ['cli','routing','subagents','agents_models','subagent_models','work_methods','main_agent','agent_behavior','runtime_cli'])
+  {{selectTab(target);seen[target]=[SET.category,SET.tab,SET.section]}}
+out({{seen,warn,resolved:['cli','routing','subagents'].map(t=>R.page.resolve(t))}});""")
+    seen = out["seen"]
+    assert seen["cli"] == ["agents_models", None, "main_agent"]
+    assert seen["routing"] == seen["runtime_cli"] == ["advanced_diagnostics", None, "runtime_cli"]
+    assert seen["subagents"] == ["agents_models", None, "subagents"]
+    assert seen["agents_models"] == ["agents_models", None, "subagents"]  # dernière entrée ouverte de la catégorie
+    assert seen["work_methods"] == ["advanced_diagnostics", None, "work_methods"]
+    assert seen["subagent_models"][2] == "subagent_models" and seen["agent_behavior"][2] == "agent_behavior"
+    assert [r["source"] for r in out["resolved"]] == ["section_alias", "section_alias", "section"]
+    assert out["warn"] == []
 
 
 def test_registered_section_takes_over_its_legacy_tab_and_a_stray_tab_stays_reachable(tmp_path):

@@ -112,9 +112,10 @@ registerSettingsSection({               // porte de la page : R.page.register de
 - **Pied Enregistrer :** `save: 'footer'` montre le pied et le bouton ; la section écrit dans `context.draft()`,
   appelle `context.markDirty()`, et « Enregistrer » envoie `/api/settings` comme aujourd'hui (`saveDraft`).
   `self` et `readonly` cachent le pied : la section porte ses propres notices. Pour les onglets hérités, le
-  comportement d'avant est conservé (`TABS[].save`, pied caché pour `subagents`).
+  comportement d'avant est conservé (`TABS[].save`).
 - Les brouillons ne sont pas gardés par le shell au changement de section : chaque module garde son contrat actuel
-  (par exemple `SET.subagentDrafts`, le brouillon partagé `SET.draft` des sections Voix, l'état du module Mot d'éveil).
+  (par exemple `SET.subagentDrafts` des rôles de sous-agents, le brouillon partagé `SET.draft` des sections Voix et
+  Agents & modèles, l'état du module Mot d'éveil).
 - **Diagnostics en parties (Slice 03).** La section `advanced_diagnostics` / `diagnostics` (lecture seule) monte, dans
   l'ordre, les parties inscrites par `registerSettingsDiagnostic({id, label, order, mount(host, context), destroy()})` :
   chaque partie a son titre (`JarvisSettingsUI.section`), reçoit le même `context` que la section et est détruite avec

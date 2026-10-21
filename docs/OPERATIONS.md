@@ -156,9 +156,10 @@ catégorie, qui ouvre les réglages directement sur elle) ouvrent les réglages 
 « Fermer » ou `Échap` (plus de clic à l'extérieur : il n'y en a plus). Six catégories à
 gauche — Voix & audio, Agents & modèles, Mémoire & connaissances, Interface & interactions,
 Connexions, Avancé & diagnostic — ; Ctrl+→ / Ctrl+← passent de l'une à l'autre. Pendant la
-migration, chaque catégorie montre en haut les anciens onglets qui lui reviennent (Voix, Mot
-d'éveil, Prompts, Agent / CLI, API Keys, Raccourcis, Mémoire, Sous-agents, Apparence,
-Expérimental) ; ce guide écrit encore « Réglages → onglet ».
+migration, chaque catégorie montre en haut les anciens onglets qui lui reviennent (Prompts, API
+Keys, Raccourcis, Mémoire, Apparence, Expérimental) ; Voix et Mot d'éveil (Slice 03), Agent / CLI
+et Sous-agents (Slice 04) sont devenus des sections (`docs/settings/voice-audio.md`,
+`docs/settings/agents-models.md`) ; ce guide écrit encore « Réglages → onglet ».
 
 Un principe la traverse : **la page ne connaît aucun réglage**. Le serveur
 décrit ce qui existe — les piles vocales, leurs champs, les CLI, leurs modes,
@@ -235,6 +236,10 @@ fournisseurs ne les expose par une API. La persona vit dans `JARVIS_PERSONA`,
 `jarvis/adapters/openai_realtime.py`, et sert aux deux piles.
 
 ### Agent / CLI
+
+Depuis la Slice 04 de la refonte des Réglages : **Agents & modèles › Agent principal** (CLI, modèle
+principal), **Comportement**, **Modèles des sous-agents** ; commande, chemin et autorisations sous
+**Avancé & diagnostic › Runtime & CLI** (`docs/settings/agents-models.md`).
 
 | CLI | Pilotage | Console | Modèles listés depuis |
 | --- | --- | --- | --- |
@@ -5262,11 +5267,12 @@ routes Agent `ask` et `send` comme sur les jobs possédés. Ajout de tour sauveg
 et comportement généré partagent une borne de 8 192 caractères, validée avant
 toute écriture. Détails et contrat de test : `docs/settings/INDEX.md`.
 
-L'onglet **Agent / CLI** place les réglages techniques avant le comportement et
-le catalogue. Le mode **Dupliqué** conserve le modèle du CLI/appelant sans
+Agents & modèles sépare l'agent principal, le comportement et les modèles des
+sous-agents ; Runtime & CLI (Avancé) porte la commande, les autorisations et les
+profils (`docs/settings/agents-models.md`). Le mode **Dupliqué** conserve le modèle du CLI/appelant sans
 dupliquer l'exécution. Le mode **Auto** applique à chaque profil le premier
 candidat autorisé *et* utilisable. Les profils et recours restent accessibles
-sous **Configuration avancée des sous-agents**.
+sous **Configuration avancée des sous-agents**, dans Avancé & diagnostic › Runtime & CLI.
 
 Quatre profils : **Poste de travail** (navigateur, fichiers ouverts), **Code
 avancé**, **Sémantique rapide**, **Général** — ce dernier servant aussi de

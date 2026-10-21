@@ -93,7 +93,8 @@ async def test_categories_keyboard_shortcuts_escape_and_focus_return(served):
     assert focused["wrap"] == "settingsCat-advanced_diagnostics"
     entered = got(step, "entered")
     assert entered["selected"] == "advanced_diagnostics" and entered["focus"] == "settingsCat-advanced_diagnostics"
-    assert entered["items"] == ["Architecture & compatibilité", "Diagnostics", "Prompts", "Expérimental"]
+    assert entered["items"] == ["Architecture & compatibilité", "Runtime & CLI", "Diagnostics", "Work Methods apprises", "Prompts",
+                                "Expérimental"]
     assert got(step, "next")["selected"] == "voice_audio"  # Ctrl+→ en boucle après la sixième
     assert got(step, "prev")["selected"] == "connections"  # Ctrl+← deux fois : Avancé, puis Connexions
     assert got(step, "clickedVoid")["open"] is True  # pas de fermeture au clic dans le shell

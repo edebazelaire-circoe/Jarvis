@@ -17,10 +17,11 @@
 | `jarvis/runtime/prompt_overrides.py` | Keep saved prompt edits separate from runtime-only behavior merge into shared backend turn composition | `stored_prompt_override_document`, `prompt_override_document` |
 | `jarvis/runtime/prompt_runtime.py` | One bounded Agent-turn composition for ask, direct send and owned jobs | `compose_agent_turn` |
 | `jarvis/runtime/memory_settings.py` | Memory settings (`memory` key): tolerant read, strict whole-request write, server-described schema, `has_secret` only; see [`memory.md`](memory.md) | `read_memory_settings`, `validate_memory_settings_write`, `describe_memory_settings`, `read_loadout_policy` (`memory.loadouts`, Slice 09) |
-| `jarvis/runtime/control_center_subagents_settings.js` | Settings tab `Sous-agents`: role catalogue, role sheet, Work Methods, order of the appended brief, running instances; only writes role instructions through `POST /api/prompts/subagent_role.<id>`; see [`../subagent-roles.md`](../subagent-roles.md) § 8 | `JarvisSubagentSettings.create`, `show` |
+| `jarvis/runtime/control_center_subagents_settings.js` | Sub-agent settings, two views: `roles` (section `agents_models` › `subagents`: role catalogue, role sheet, read-only Work Methods, order of the appended brief, running instances; writes role instructions through `POST /api/prompts/subagent_role.<id>`) and `work_methods` (section `advanced_diagnostics` › `work_methods`: observed approaches and explicit promotion); see [`../subagent-roles.md`](../subagent-roles.md) § 8 | `JarvisSubagentSettings.create(host, {view})`, `show` |
 | `jarvis/runtime/control_center_settings_registry.js` | Canonical Settings navigation: six frozen categories, section registration with deterministic refusals, legacy tab aliases, the legacy-tab adapter and the shell navigation model; see [`navigation-registry.md`](navigation-registry.md) | `JarvisSettingsRegistry.page.register`, `resolve`, `legacyTabFor`, `shellNavigation`, `shellTarget` |
 | `jarvis/runtime/control_center.html` (Settings shell) | Full-screen six-category Settings shell: category rail, category entries, focus/keyboard/Escape, section mount and cleanup, footer save policy; see [`settings-shell.md`](settings-shell.md) | `registerSettingsSection`, `selectTab`, `openSettingsTab`, `settingsTabs`, `mountRegisteredSection` |
 | `jarvis/runtime/voice_settings_schema.py` (`surface`) + `control_center.html` (`VOICE_SECTIONS`, section `diagnostics`) + `control_center_wake_word.js` | Voix & audio : cinq sections orientées tâche, Architecture & compatibilité et Diagnostics sous Avancé, une destination par option décrite par le serveur; see [`voice-audio.md`](voice-audio.md) | `voiceSectionSpec`, `registerSettingsDiagnostic`, `voiceOptions(section)` |
+| `jarvis/runtime/control_center.html` (`AGENT_SECTIONS`, `SUBAGENT_SECTIONS`) | Agents & modèles: four task sections (Agent principal, Comportement, Modèles des sous-agents, Rôles des sous-agents), Runtime & CLI and Work Methods apprises under Advanced; one destination per Agent/CLI setting, unchanged save payload; see [`agents-models.md`](agents-models.md) | `agentSectionSpec`, `subagentSectionSpec`, `installAgentSettingsSections` |
 | `jarvis/runtime/control_center_settings_ui.js` | Pure Settings visual primitives (intro, section, field, badge, notice, advanced disclosure, action row); see [`settings-shell.md`](settings-shell.md) § 5 | `JarvisSettingsUI.section`, `field`, `notice` |
 | `jarvis/runtime/control_center.py` | `/api/settings` projection/save, alias conflict rejection, active-agent refresh | `_settings_payload`, `save_settings`, `_apply_cli`, `agent_ask` |
 | `jarvis/runtime/agent_settings.py` + `back_brain_worker.py` | Carry and consume behavior choice for owned background agent executions | `resolve_agent_execution`, `execute_with_progress` |
@@ -42,28 +43,34 @@ non-selectable in Auto. No cross-CLI fallback or fan-out is attempted.
 
 ## Control Center surface
 
-The single `Agent / CLI` tab renders three sections in order: Technique,
-Comportement, then Sous-agents / Modèles. Delegation and behavior controls are
+Since `jarvis-settings-ui-reorganization` Slice 04 there is no `Agent / CLI` tab: its
+settings are registered sections, one destination each
+([`agents-models.md`](agents-models.md)). `agents_models` › `main_agent` (CLI identity,
+availability, main model), `agent_behavior` (verbosity, politeness/formality, agenda
+reminders), `subagent_models` (Auto/Dupliqué mode, sub-agent model catalog);
+`advanced_diagnostics` › `runtime_cli` (command, resolved path, re-probe, permission
+mode, profiles and candidate ordering). Delegation and behavior controls are
 generated from `cli.delegation_mode_metadata` and `cli.behavior.fields`; the
-page contains no duplicate option vocabulary. Its canonical draft is
+page contains no duplicate option vocabulary. The canonical draft is unchanged,
+shared by these sections and sent by the footer « Enregistrer »:
 `cli={agent,settings,delegation_mode,behavior}` plus
 `routing={profiles}`—the legacy `routing.enabled` alias is never sent beside
 the canonical mode.
 
 Profile activation, ordered candidates and General fallback remain available
-under `Configuration avancée des sous-agents`. The compatibility candidates
-endpoint stays internal, including saved unavailable candidates. The main
+under `Configuration avancée des sous-agents`, in Runtime & CLI. The compatibility
+candidates endpoint stays internal, including saved unavailable candidates. The
 inventory mounts `JarvisCatalog` with `surface=subagents` and `role=subagent`;
 it loads independently from settings save and exposes no request/add action.
-Technique, Comportement and the catalog shell render before CLI/model probes
-finish. CLI and model hydration replaces and rebinds only the Technique
-container, preserving the mounted catalog controller and its search, filters
-and comparison selection. Failures stay local and expose retry controls. The
+Each section renders before CLI/model probes finish. CLI and model hydration
+replaces and rebinds only the `#cliTechnical` container of Agent principal or
+Runtime & CLI. Failures stay local and expose retry controls. The
 candidates endpoint is called only when the advanced disclosure opens, with
 its own local retryable error.
-Its controller is destroyed before tab re-render, switch or modal close, so
-requests and delegated handlers cannot outlive their surface. Programmatic
-selection of the old `routing` tab ID maps to `cli` without persisting anything.
+The catalog controller is created by the Modèles des sous-agents section and
+destroyed by its `destroy` (section or category switch, modal close), so
+requests and delegated handlers cannot outlive their surface. The old IDs
+`cli` and `routing` open `main_agent` and `runtime_cli` (aliases).
 
 Behavior is persisted only under `agent_behavior.response_verbosity` and
 `agent_behavior.politeness_formality`. Invalid stored values read as `inherit`
@@ -77,15 +84,19 @@ The saved turn addition plus generated behavior share the existing 8,192
 character override bound. Both Settings save and Prompts edit validate the
 combined layer before their atomic writer runs.
 
-## Sous-agents tab
+## Sub-agent roles and Work Methods
 
-Tab `subagents` (label `Sous-agents`, no footer save button), after `Mémoire`. It reads
-`GET /api/subagent-roles` (v2) and `GET /api/agent/tasks`, and writes nothing but role instructions, through
-the existing prompt route with optimistic revisions (`base_revision` + `expected_effective_revision`).
-Capabilities and Work Methods are labelled read-only. A non-editable default Work Method is shown as
-appended after the editable instructions. Not to be confused with the `Sous-agents / Modèles` section of
-the `Agent / CLI` tab, which routes models. Full contract, states and error codes:
-[`../subagent-roles.md`](../subagent-roles.md) § 8. Regression: `tests/unit/test_control_center_subagents_settings_js.py`,
+Section `agents_models` › `subagents` (label `Rôles des sous-agents`, `save: 'self'`, no footer save
+button; the old tab ID `subagents` is its ID). It reads `GET /api/subagent-roles` (v2) and
+`GET /api/agent/tasks`, and writes nothing but role instructions, through the existing prompt route with
+optimistic revisions (`base_revision` + `expected_effective_revision`). Capabilities and Work Methods are
+labelled read-only. A non-editable default Work Method is shown as appended after the editable
+instructions. Sub-agent models are set in `agents_models` › `subagent_models`. Observed approaches and
+their explicit promotion live in `advanced_diagnostics` › `work_methods` (group `labs`), the same module
+with `view: 'work_methods'`. Full contract, states and error codes:
+[`../subagent-roles.md`](../subagent-roles.md) § 8 and [`agents-models.md`](agents-models.md).
+Regression: `tests/unit/test_control_center_subagents_settings_js.py`,
+`tests/unit/test_agents_models_settings_browser.py`,
 `tests/integration/test_settings_redesign_migration.py` (assembled navigation).
 
 ## Observability / Test Contract

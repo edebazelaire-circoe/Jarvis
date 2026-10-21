@@ -101,12 +101,12 @@ Destination principale de chaque ID d'onglet actuel, plus les autres destination
 | `voice` | `voice_audio` / `conversation` | `voice_audio` / `voice_output`, `microphone_sound`, `turns_interruptions` ; `advanced_diagnostics` / `architecture_compat`, `diagnostics` |
 | `wakeword` | `voice_audio` / `wake_word` | `advanced_diagnostics` / `diagnostics` |
 | `prompts` | `advanced_diagnostics` / `prompts` | — |
-| `cli` | `agents_models` / `main_agent` | `agents_models` / `agent_behavior` ; `advanced_diagnostics` / `runtime_cli` |
+| `cli` | `agents_models` / `main_agent` | `agents_models` / `agent_behavior`, `subagent_models` ; `advanced_diagnostics` / `runtime_cli` |
 | `routing` (déjà redirigé vers `cli`) | `advanced_diagnostics` / `runtime_cli` | — |
 | `keys` | `connections` / `providers` | — |
 | `shortcuts` | `interface_interactions` / `shortcuts` | — |
 | `memory` | `memory_knowledge` / `recall` | `memory_knowledge` / `semantic_retrieval`, `consolidation`, `knowledge_sources`, `memory_center` ; `advanced_diagnostics` / `diagnostics` |
-| `subagents` | `agents_models` / `subagents` | `advanced_diagnostics` / `labs` (promotion de Work Methods) |
+| `subagents` | `agents_models` / `subagents` | `advanced_diagnostics` / `work_methods` (promotion de Work Methods, groupe `labs`) |
 | `appearance` | `interface_interactions` / `theme_scene` | — |
 | `experimental` | `advanced_diagnostics` / `labs` | `interface_interactions` / `bare_hands` |
 
@@ -117,11 +117,12 @@ utilisées par `JarvisBarehands.showSettings(section)`) : `barehandsSettings` et
 
 Sections cibles prévues (enregistrées par les Slices 03 à 08) :
 `voice_audio` : `conversation`, `voice_output`, `microphone_sound`, `turns_interruptions`, `wake_word` ·
-`agents_models` : `main_agent`, `agent_behavior`, `subagents` ·
+`agents_models` : `main_agent`, `agent_behavior`, `subagent_models`, `subagents` ·
 `memory_knowledge` : `recall`, `semantic_retrieval`, `consolidation`, `knowledge_sources`, `memory_center` ·
 `interface_interactions` : `theme_scene`, `shortcuts`, `bare_hands` ·
 `connections` : `providers` ·
-`advanced_diagnostics` (un groupe par section) : `architecture_compat`, `prompts`, `runtime_cli`, `diagnostics`, `labs`.
+`advanced_diagnostics` (un groupe par section, sauf `work_methods`, du groupe `labs`) : `architecture_compat`, `prompts`,
+`runtime_cli`, `diagnostics`, `work_methods`, `labs`.
 
 ## 4. Cas particuliers relevés par l'audit
 
@@ -138,7 +139,7 @@ Sections cibles prévues (enregistrées par les Slices 03 à 08) :
   reste servie par l'alias, qui ouvre `voice_audio` / `conversation` depuis la Slice 03 (passage à
   `voice_audio` dans la roue : Slice 09).
 - **Pied de page.** `save: 'footer'` montre le bouton Enregistrer du shell ; `self` et
-  `readonly` le cachent (aujourd'hui : `TABS[].save` et le cas `subagents`).
+  `readonly` le cachent (onglets hérités restants : `TABS[].save`).
 - **Nettoyage.** Le shell appelle `destroy` de la section quittée avant d'en monter une autre ;
   `cleanupSettingsSurface()` reste le point d'appel pendant la migration.
 
@@ -162,6 +163,9 @@ Tant que des onglets de `TABS` existent :
   (`control_center_wake_word.js`), et sous `advanced_diagnostics` : `architecture_compat`,
   `diagnostics` (page ; Diagnostics est fait de parties, `registerSettingsDiagnostic`).
   Destinations des options Voix : [`voice-audio.md`](voice-audio.md).
+- Slice 04 : ni `cli` ni `subagents` ne sont des onglets. Sections enregistrées (page) : `main_agent` (alias `cli`),
+  `agent_behavior`, `subagent_models`, `subagents`, et sous `advanced_diagnostics` : `runtime_cli` (alias `routing`,
+  groupe `runtime_cli`), `work_methods` (groupe `labs`). Destinations : [`agents-models.md`](agents-models.md).
 
 ## 6. Navigation du shell (Slice 02)
 

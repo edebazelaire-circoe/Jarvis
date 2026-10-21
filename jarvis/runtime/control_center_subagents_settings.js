@@ -1,4 +1,8 @@
-/* Onglet Réglages « Sous-agents » (jarvis-organic-agent-orchestration, Slice 10).
+/* Réglages des sous-agents (jarvis-organic-agent-orchestration, Slice 10 ; sections depuis
+   jarvis-settings-ui-reorganization Slice 04).
+
+   Deux vues (`options.view`) : `roles` (défaut, section Agents & modèles › Rôles des sous-agents) et
+   `work_methods` (section Avancé & diagnostic › Work Methods apprises : approches observées et promotion).
 
    Rend le registre des rôles servi par `GET /api/subagent-roles` (`schema_version` 2) : liste des rôles,
    fiche détaillée (mission, capacités, savoirs, Work Methods, ordre de la consigne apposée), et les instances
@@ -17,7 +21,7 @@
    Échecs : chaque refus est affiché dans la zone concernée (texte et code du serveur) et journalisé en console
    (`console.error('<code>', erreur)`), comme le reste du Control Center ; le serveur journalise de son côté
    `prompt.override.rejected`. Chaque attente porte un compteur et une échéance (`timeoutMs`).
-   Point de montage : `#subagentSettingsMount` (créé par l'onglet). Contrat : `docs/subagent-roles.md` § 8. */
+   Point de montage : `#subagentSettingsMount` (créé par la section). Contrat : `docs/subagent-roles.md` § 8. */
 (function(root){
   'use strict';
   const MOUNT_ID='subagentSettingsMount';
@@ -60,6 +64,8 @@
 
   function create(host,options){
     const opts=options||{};
+    /* La promotion d'une approche observée est un outil d'opérateur (Avancé), pas une configuration de rôle. */
+    const view=opts.view==='work_methods'?'work_methods':'roles';
     const timeoutMs=Number(opts.timeoutMs)>0?Number(opts.timeoutMs):DEFAULT_TIMEOUT_MS;
     const now=typeof opts.now==='function'?opts.now:()=>Date.now();
     const setTimer=opts.setInterval||((fn,ms)=>root.setInterval?root.setInterval(fn,ms):null);
@@ -225,22 +231,27 @@
         <p class="hint">${Number(c.uses)||0} mission(s) close(s) · ${Number(c.positive)||0} bonne(s) · ${Number(c.negative)||0} mauvaise(s) · ${Number(c.unrated)||0} non notée(s) · ${(c.evidence_refs||[]).length} preuve(s)</p>
         ${mine?waitingHtml('Promotion en cours…',st.promote.startedAt):''}${action}</li>`;
     }
-    function learnedHtml(role){
-      const l=st.learned,t=l.thresholds||{};
+    /* Vue `work_methods` : une seule lecture des candidats, un bloc par rôle qui peut porter une mission. */
+    function learnedRoleHtml(role){
+      const t=st.learned.thresholds||{},mine=st.learned.items.filter(c=>c&&c.role_id===role.id);
+      return `<section class="sar-block" style="${accentStyle(accentOf(role))}" aria-labelledby="sar-learned-${esc(role.id)}" data-sar-learned-role="${esc(role.id)}">
+        <h4 id="sar-learned-${esc(role.id)}">${identity(role,'sm')}<span>${esc(role.name)}</span></h4>
+        ${mine.length?`<ul class="sar-methods">${mine.map(c=>candidateHtml(c,t)).join('')}</ul>`:'<p class="hint">Aucune mission close de ce rôle dans l’historique récent.</p>'}</section>`;
+    }
+    function learnedHtml(){
+      const l=st.learned,t=l.thresholds||{},owners=roles().filter(r=>r.can_own_mission);
       let body;
       if(l.phase==='loading')body=waitingHtml('Lecture des approches observées…',l.startedAt||st.startedAt);
       else if(l.phase==='error')body=`<div class="notice bad">Approches observées illisibles : ${esc(l.error&&l.error.message)}${codeLine(l.error&&l.error.code)}</div><div class="sar-actions"><button type="button" class="action" data-sar-learned-retry>Réessayer</button></div>`;
       else{
-        const mine=l.items.filter(c=>c&&c.role_id===role.id);
         const partial=l.scan&&l.scan.partial?'<div class="notice">Lecture partielle : une partie de l’historique est illisible et a été écartée (voir le journal des erreurs).</div>':'';
-        body=partial+(mine.length?`<ul class="sar-methods">${mine.map(c=>candidateHtml(c,t)).join('')}</ul>`
-          :'<p class="hint">Aucune mission close de ce rôle dans l’historique récent.</p>');
+        body=partial+(owners.length?owners.map(learnedRoleHtml).join(''):'<p class="hint">Aucun rôle ne peut porter de mission : rien à apprendre.</p>');
       }
       const n=st.promoteNotice;
       const notice=n?`<div class="notice ${n.tone==='bad'?'bad':'ok'}" data-sar-promote-notice>${esc(n.text)}${n.hint?`<div class="hint">${esc(n.hint)}</div>`:''}${codeLine(n.code)}</div>`:'';
-      return `<section class="sar-block" aria-labelledby="sar-learned"><h4 id="sar-learned">Approches observées ${chip('apprentissage explicite')}</h4>
-        <p class="hint">Tirées des missions closes : une approche qui revient (${Number(t.min_uses)||3} fois) avec de bonnes issues prouvées par un verdict QA devient candidate. Rien n’est promu sans vous.</p>
-        ${notice}${body}</section>`;
+      return `<div class="sar sar-wm" data-subagent-work-methods="1">
+        <p class="hint">Approches observées ${chip('apprentissage explicite')} : tirées des missions closes, une approche qui revient (${Number(t.min_uses)||3} fois) avec de bonnes issues prouvées par un verdict QA devient candidate. Rien n’est promu sans vous.</p>
+        ${notice}${body}</div>`;
     }
 
     function compositionHtml(role){
@@ -321,7 +332,7 @@
         <section class="sar-block" aria-labelledby="sar-methods"><h4 id="sar-methods">Work Methods ${chip('lecture seule')}</h4>
           ${methods.length?`<ul class="sar-methods">${ordered.map(id=>methodHtml(id,id===role.default_work_method)).join('')}</ul>`:'<p class="hint">Aucune Work Method : les instructions du rôle tiennent lieu de méthode.</p>'}
           ${methods.length&&!role.default_work_method?'<p class="hint">Aucune n’est apposée par défaut ; un Mission Owner pourra en choisir une.</p>':''}</section>
-        ${role.can_own_mission?learnedHtml(role):''}
+        ${role.can_own_mission?`<p class="hint" data-sar-learned-link>Approches observées de ce rôle et promotion en Work Method : ${opts.openTab?'<button type="button" class="sar-link" data-sar-open-learned>Avancé &amp; diagnostic › Work Methods apprises</button>':'Avancé &amp; diagnostic › Work Methods apprises'}.</p>`:''}
         <section class="sar-block" aria-labelledby="sar-compose"><h4 id="sar-compose">Consigne transmise au sous-agent</h4>${compositionHtml(role)}</section>
         ${editorHtml(role)}
       </article>`;
@@ -376,6 +387,7 @@
       }
     }
     function renderReady(){
+      if(view==='work_methods'){host.innerHTML=learnedHtml();bind();tick();return}
       if(!roles().length){
         host.innerHTML=`<div class="sar-state">${summaryHtml()}<div class="notice bad" role="status"><strong>Aucun rôle dans le registre.</strong> Les sous-agents s'exécutent alors sans rôle, comme agents généraux.</div></div>`;
         tick();return;
@@ -387,7 +399,7 @@
           <ul class="sar-list" role="list" aria-label="Rôles de sous-agent" data-sar-list>${roles().map(listItem).join('')}</ul>
           <p class="hint">Flèches haut et bas pour parcourir les rôles.</p>
           ${instancesHtml()}
-          <p class="hint sar-models">Les modèles des sous-agents se règlent ailleurs : ${opts.openTab?'<button type="button" class="sar-link" data-sar-open-cli>Agent / CLI › Sous-agents / Modèles</button>':'Agent / CLI › Sous-agents / Modèles'}.</p></div>
+          <p class="hint sar-models">Les modèles des sous-agents se règlent dans ${opts.openTab?'<button type="button" class="sar-link" data-sar-open-models>Agents &amp; modèles › Modèles des sous-agents</button>':'Agents &amp; modèles › Modèles des sous-agents'}.</p></div>
         <div class="sar-detail-pane" role="region" aria-label="Fiche du rôle">${detailHtml(roleById(st.selected))}</div></div>`;
       const pane=host.querySelector('.sar-detail-pane');if(pane&&scroll)pane.scrollTop=scroll;
       bind();tick();
@@ -395,7 +407,7 @@
 
     /* Compteur vivant des attentes : un seul minuteur, arrêté dès qu'aucune attente n'est affichée. */
     function tick(){
-      const waiting=!st.destroyed&&(st.phase==='loading'||st.tasks.phase==='loading'||!!st.save||st.learned.phase==='loading'||!!st.promote);
+      const waiting=!st.destroyed&&(st.phase==='loading'||(view==='roles'?st.tasks.phase==='loading'||!!st.save:st.learned.phase==='loading'||!!st.promote));
       if(waiting&&ticker==null)ticker=setTimer(()=>{
         if(!host.querySelectorAll)return;
         host.querySelectorAll('[data-sar-since]').forEach(el=>{el.textContent=elapsed(Number(el.dataset.sarSince))+' s'});
@@ -456,7 +468,8 @@
       const inst=host.querySelector('[data-sar-instances]');if(inst)inst.addEventListener('toggle',()=>{st.instancesOpen=inst.open});
       host.querySelectorAll('[data-sar-reread]').forEach(b=>b.addEventListener('click',()=>reread(b.dataset.sarReread)));
       const back=host.querySelector('[data-sar-back]');if(back)back.addEventListener('click',()=>{const b=host.querySelector(`[data-sar-role="${st.selected}"]`);if(b){if(b.scrollIntoView)b.scrollIntoView({block:'center'});b.focus()}});
-      const cli=host.querySelector('[data-sar-open-cli]');if(cli)cli.addEventListener('click',()=>opts.openTab('cli'));
+      const models=host.querySelector('[data-sar-open-models]');if(models)models.addEventListener('click',()=>opts.openTab('subagent_models'));
+      const learned=host.querySelector('[data-sar-open-learned]');if(learned)learned.addEventListener('click',()=>opts.openTab('work_methods'));
       const learnedRetry=host.querySelector('[data-sar-learned-retry]');if(learnedRetry)learnedRetry.addEventListener('click',()=>loadCandidates());
       host.querySelectorAll('[data-sar-promote]').forEach(b=>b.addEventListener('click',()=>{
         const id=b.dataset.sarPromote;
@@ -483,7 +496,8 @@
         if(st.destroyed)return null;
         st.phase='error';st.error=e;logError('subagent_settings_load_failed',e,{path:ROLES_PATH});
       }finally{render()}
-      if(st.phase==='ready'){loadTasks();loadCandidates()}
+      /* Chaque vue ne lit que ce qu'elle montre : les instances pour les rôles, les candidats pour les Work Methods. */
+      if(st.phase==='ready'){if(view==='work_methods')loadCandidates();else loadTasks()}
       return st.payload;
     }
     async function loadTasks(){
@@ -627,7 +641,7 @@
 
     host.setAttribute&&host.setAttribute('data-subagent-settings-host','1');
     render();
-    return {load,loadTasks,loadCandidates,promote,render,save,reset,reread,select,destroy,hasUnsaved,resolveMarker,state:st};
+    return {view,load,loadTasks,loadCandidates,promote,render,save,reset,reread,select,destroy,hasUnsaved,resolveMarker,state:st};
   }
 
   root.JarvisSubagentSettings=Object.freeze({mountId:MOUNT_ID,ICONS:Object.freeze(Object.keys(ICONS)),create,

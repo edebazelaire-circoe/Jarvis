@@ -217,12 +217,13 @@ def test_the_page_shows_why_a_candidate_cannot_be_used():
 def test_policy_ui_is_advanced_inside_agent_cli_and_saved_canonically():
     page = PAGE.read_text(encoding="utf-8")
 
-    assert re.search(r"\{id:'cli',label:'Agent / CLI',save:true\}", page)
+    # Slice 04 (jarvis-settings-ui-reorganization) : plus d'onglet `cli` ; les profils et l'ordre des candidats
+    # vivent sous Avancé & diagnostic › Runtime & CLI, que l'ancien ID `routing` ouvre.
+    assert not re.search(r"\{id:'cli',label:'Agent / CLI',save:true\}", page)
     assert "id:'routing'" not in page
+    assert "{id:'runtime_cli',category:'advanced_diagnostics',group:'runtime_cli',order:30,advanced:true,label:'Runtime & CLI',aliases:['routing']," in page
     assert "Configuration avancée des sous-agents" in page
-    # Awaited panels publish only after the render revision guard; an older
-    # catalog response cannot overwrite a newly selected voice architecture.
-    assert "else if(SET.tab==='cli')content=tabCli()" in page
+    assert "body:runtimeCliHtml,start:revision=>{hydrateCliAgents(revision);bindRoutingDisclosure(revision)}}" in page
     assert "if(revision!==SET.renderRevision||SET.open===false)return" in page
     # Le brouillon envoie le mode via cli, jamais le switch historique en double.
     assert "delegation_mode:data.cli.delegation_mode" in page
@@ -315,7 +316,7 @@ const SET={routingPick:{},dirty:false,routing:null,open:true,tab:'cli',renderRev
   draft:{routing:{profiles:{code:{candidates:[],enabled:true,allow_general_fallback:true}}}}};
 let BODY=makeBody([]);
 const $=()=>BODY;
-const currentAgentTab=()=>true;
+const currentAgentSection=()=>true;
 const document={activeElement:null};
 const copy=()=>JSON.parse(JSON.stringify(SET.draft.routing.profiles.code.candidates||[]));
 const find=sel=>BODY.querySelector(sel);

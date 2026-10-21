@@ -150,8 +150,10 @@ def test_settings_window_is_a_full_screen_shell_closed_explicitly():
     keys = keys[: keys.index("\n});")]
     assert "event.key==='Escape'" in keys and "closeSettings()" in keys and "SET.capture" in keys
     assert "target.tagName==='TEXTAREA'" in keys and "event.defaultPrevented" in keys
-    for label in ("Voix", "Prompts", "Agent / CLI", "API Keys", "Raccourcis"):
+    # Slice 04 : « Agent / CLI » n'est plus un onglet, ses réglages sont des sections enregistrées.
+    for label in ("Voix", "Prompts", "Agent principal", "API Keys", "Raccourcis"):
         assert f"label:'{label}'" in html
+    assert "label:'Agent / CLI'" not in html
     assert "id:'config'" not in html
     # Les listes de modèles passent par le catalogue du serveur : aucune liste
     # de modèles ne doit être écrite dans la page.

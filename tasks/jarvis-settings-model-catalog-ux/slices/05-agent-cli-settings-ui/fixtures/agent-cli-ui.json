@@ -7,10 +7,6 @@
       "label": "Prompts"
     },
     {
-      "id": "cli",
-      "label": "Agent / CLI"
-    },
-    {
       "id": "keys",
       "label": "API Keys"
     },
@@ -24,9 +20,10 @@
     }
   ],
   "agent_section_order": [
-    "Technique",
+    "Agent principal",
     "Comportement",
-    "Sous-agents / Modèles"
+    "Modèles des sous-agents",
+    "Rôles des sous-agents"
   ],
   "cli_payload_keys": [
     "agent",
@@ -46,6 +43,21 @@
       "category": "voice_audio",
       "section": "conversation",
       "since": "jarvis-settings-ui-reorganization Slice 03"
+    },
+    "cli": {
+      "category": "agents_models",
+      "section": "main_agent",
+      "since": "jarvis-settings-ui-reorganization Slice 04"
+    },
+    "routing": {
+      "category": "advanced_diagnostics",
+      "section": "runtime_cli",
+      "since": "jarvis-settings-ui-reorganization Slice 04"
+    },
+    "subagents": {
+      "category": "agents_models",
+      "section": "subagents",
+      "since": "jarvis-settings-ui-reorganization Slice 04"
     }
   }
 }

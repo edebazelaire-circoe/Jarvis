@@ -244,6 +244,9 @@ textarea{width:100%;min-height:80px;background:#071015;border:1px solid var(--li
 @media(prefers-reduced-motion:reduce){.sar-spin{animation-duration:2.4s}}
 .sar-state{max-width:640px}
 .sar-code code{word-break:normal;overflow-wrap:anywhere}
+/* Vue Work Methods apprises (Avancé, Slice 04) : une colonne, un bloc par rôle porteur de mission. */
+.sar.sar-wm{display:block;height:auto;max-width:780px}
+.sar-wm .sar-block h4{gap:10px;font-size:14px;letter-spacing:.01em;text-transform:none;color:var(--text)}
 .sar-instances{margin-top:4px;padding-top:10px;border-top:1px solid var(--line)}
 .sar-instances>summary{cursor:pointer;display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
 .sar-instances[open]>summary{margin-bottom:8px}
@@ -3158,8 +3161,8 @@ const STATUS={
 /*__CONTROL_CENTER_PREFABS_JS__*/
 /* Mémoire (jarvis-memory-intelligence-knowledge, Slice 10b) : accroches servies, remplies par les Slices 11 et 12. */
 /*__CONTROL_CENTER_MEMORY_SETTINGS_JS__*/
-/* Onglet Sous-agents des Réglages (jarvis-organic-agent-orchestration, Slice 10) : `control_center_subagents_settings.js`,
-   `window.JarvisSubagentSettings`, monté par `renderTab` (`mountSubagentSettings`). */
+/* Sous-agents des Réglages (jarvis-organic-agent-orchestration, Slice 10) : `control_center_subagents_settings.js`,
+   `window.JarvisSubagentSettings`, monté par les sections `subagents` et `work_methods` (`mountSubagentSettings`). */
 /*__CONTROL_CENTER_SUBAGENTS_SETTINGS_JS__*/
 /*__CONTROL_CENTER_MEMORY_JS__*/
 /* Chat (handoff jarvis-unified-chat-and-board-drop, Slice 06) : modèle pur de la Slice 02
@@ -4429,16 +4432,16 @@ function bindSend(after){
    aucun champ n'est écrit en dur ici, et les listes de modèles viennent du
    catalogue réel du fournisseur, jamais d'une liste figée.                */
 
-/* `voice` n'est plus un onglet (Slice 03) : `voice_audio` monte ses sections enregistrées, l'alias `voice` y mène. */
+/* `voice` n'est plus un onglet (Slice 03) : `voice_audio` monte ses sections enregistrées, l'alias `voice` y mène.
+   Ni `cli` ni `subagents` (Slice 04) : `agents_models` et Avancé montent leurs sections, les alias `cli`, `routing` et
+   `subagents` y mènent (`docs/legacy/settings-tab-aliases.md`). */
 const TABS=[
   {id:'prompts',label:'Prompts',save:false},
-  {id:'cli',label:'Agent / CLI',save:true},
   {id:'keys',label:'API Keys',save:false},
   {id:'shortcuts',label:'Raccourcis',save:false},
   {id:'memory',label:'Mémoire',save:false},
-  {id:'subagents',label:'Sous-agents',save:false},
 ];
-const SET={open:false,tab:null,category:null,section:null,lastItem:{},opener:null,sectionView:null,voiceTab:null,voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:'',subagentView:null,subagentDrafts:{}};
+const SET={open:false,tab:null,category:null,section:null,lastItem:{},opener:null,sectionView:null,voiceTab:null,voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:'',subagentView:null,subagentDrafts:{},agentSection:null};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
 
 function say(text,kind){modalStatus.className='status'+(kind?' '+kind:'');modalStatus.textContent=text||''}
@@ -4880,51 +4883,69 @@ function behaviorHtml(){
   }).join('');
 }
 
+/* `agents_models` › Agent principal et `advanced_diagnostics` › Runtime & CLI (Slice 04) lisent la même détection
+   (`/api/cli/agents`) dans le même conteneur `#cliTechnical` ; une seule de ces sections est montée à la fois
+   (`SET.agentSection`). Agent principal : identité, modèle principal, disponibilité. Runtime & CLI : commande,
+   chemin résolu, re-détection, permission. Les deux écrivent dans `SET.draft.cli.settings[<CLI>]` : charge inchangée. */
 function cliTechnicalHtml(){
   if(!SET.clis)return '<div class="notice info" id="cliStatus">Détection des CLI…</div>';
   const draft=SET.draft.cli,detected=SET.clis.agents||[];
   const spec=detected.find(a=>a.id===draft.agent)||detected[0];
   if(!spec)return `<div class="notice bad" id="cliStatus">${esc(SET.clis.error||'Aucun CLI détecté.')} <button type="button" class="linkish" data-cli-retry>réessayer</button></div>`;
+  return SET.agentSection==='runtime_cli'?cliRuntimeHtml(spec):cliMainAgentHtml(spec,detected);
+}
+function cliMainAgentHtml(spec,detected){
+  const draft=SET.draft.cli;
   const choices=detected.map(a=>{
     const tag=a.available?`<span class="tag ok">${esc(a.version||'installé')}</span>`:`<span class="tag bad">introuvable</span>`;
     return `<label class="choice ${a.id===draft.agent?'selected':''}">
       <input type="radio" name="clicagent" value="${esc(a.id)}" ${a.id===draft.agent?'checked':''}>
       <div><div class="title"><strong>${esc(a.label)}</strong>${tag}${keyStateFor(a.model_provider)}</div>
       <div class="hint" style="margin-top:5px">${esc(a.description)}</div>
-      <div class="hint" style="margin-top:4px">${a.available?esc(a.path):esc(a.error||'')}</div></div>
+      ${a.available?'':`<div class="hint" style="margin-top:4px">${esc(a.error||'')}</div>`}</div>
     </label>`}).join('');
-  const values=SET.draft.cli.settings[spec.id];
+  const values=draft.settings[spec.id];
   const modelResult=SET.catalog[spec.model_provider+':text'];
   const modelOptions=((modelResult&&modelResult.models)||[]).map(m=>({value:m.id,label:m.label&&m.label!==m.id?`${m.id} — ${m.label}`:m.id}));
-  const permission=`<div class="field"><label for="f_cli_perm">${esc(spec.permission_label)}</label>
-    <select id="f_cli_perm" data-cli-field="permission_mode" data-scope="${esc(spec.id)}">${selectOptions((spec.permission_modes||[]).map(m=>({value:m,label:m})),values.permission_mode,'')}</select>
-    <div class="hint">En vocal, personne ne peut répondre à une demande d'autorisation : hors mode permissif, l'agent refusera d'écrire ou d'exécuter.</div></div>`;
-  const unavailable=spec.available?'':`<div class="notice bad">${esc(spec.error||'CLI introuvable.')} Tant que la commande n'est pas résolue, cet agent ne peut pas démarrer.</div>`;
+  const unavailable=spec.available?'':`<div class="notice bad">${esc(spec.error||'CLI introuvable.')} Tant que la commande n'est pas résolue, cet agent ne peut pas démarrer. <button type="button" class="linkish" data-settings-open="runtime_cli">Régler la commande</button></div>`;
   const modelSource=modelResult
     ? `${catalogNote(modelResult,spec.model_provider)} <button class="linkish" data-cli-model-refresh>rafraîchir</button>`
     : '<span class="note">Chargement du catalogue du CLI…</span>';
   return `<div class="notice info"><strong>Agent piloté</strong> — CLI principal utilisé par JARVIS pour les demandes directes et les sous-agents.</div>
     <div class="choices">${choices}</div>${unavailable}
-    <h3>Réglages techniques de ${esc(spec.label)}</h3>
-    <div class="field"><label for="f_cli_cmd">Commande</label>
-      <input id="f_cli_cmd" data-cli-field="command" data-scope="${esc(spec.id)}" value="${esc(values.command)}">
-      <div class="source">${spec.available?`<span class="tag ok">résolu</span> ${esc(spec.path)}`:`<span class="tag bad">non résolu</span>`} <button class="linkish" id="reprobe">re-détecter</button></div>
-      <div class="hint">Nom dans le PATH ou chemin complet. Documentation : <code>${esc(spec.docs)}</code></div></div>
-    <div class="field"><label for="f_cli_model">Modèle</label>
+    <div class="field"><label for="f_cli_model">Modèle principal de ${esc(spec.label)}</label>
       <select id="f_cli_model" data-cli-field="model" data-scope="${esc(spec.id)}">${selectOptions(modelOptions,values.model,'Modèle par défaut du CLI')}</select>
       <div class="source">${modelSource}</div>
-      <div class="hint">Liste demandée à l'API ${esc(providerLabel(spec.model_provider))}. Sans clé de ce fournisseur, aucun modèle ne peut être listé : le CLI garde alors son modèle par défaut.</div></div>
-    ${permission}`;
+      <div class="hint">Liste demandée à l'API ${esc(providerLabel(spec.model_provider))}. Sans clé de ce fournisseur, aucun modèle ne peut être listé : le CLI garde alors son modèle par défaut.</div></div>`;
+}
+function cliRuntimeHtml(spec){
+  const values=SET.draft.cli.settings[spec.id];
+  return `<div class="notice info">Réglages de <strong>${esc(spec.label)}</strong>, l'agent choisi dans <button type="button" class="linkish" data-settings-open="main_agent">Agents &amp; modèles › Agent principal</button>.</div>
+    <div class="field"><label for="f_cli_cmd">Commande</label>
+      <input id="f_cli_cmd" data-cli-field="command" data-scope="${esc(spec.id)}" value="${esc(values.command)}">
+      <div class="source">${spec.available?`<span class="tag ok">résolu</span> ${esc(spec.path)}`:`<span class="tag bad">non résolu</span> ${esc(spec.error||'')}`} <button class="linkish" id="reprobe">re-détecter</button></div>
+      <div class="hint">Nom dans le PATH ou chemin complet. Documentation : <code>${esc(spec.docs)}</code></div></div>
+    <div class="field"><label for="f_cli_perm">${esc(spec.permission_label)}</label>
+    <select id="f_cli_perm" data-cli-field="permission_mode" data-scope="${esc(spec.id)}">${selectOptions((spec.permission_modes||[]).map(m=>({value:m,label:m})),values.permission_mode,'')}</select>
+    <div class="hint">En vocal, personne ne peut répondre à une demande d'autorisation : hors mode permissif, l'agent refusera d'écrire ou d'exécuter.</div></div>`;
 }
 
-function tabCli(){
-  return `<section><h3>Technique</h3>${delegationModeHtml()}<div id="cliTechnical">${cliTechnicalHtml()}</div>
-    <h3>Comportement</h3>${behaviorHtml()}
-    <h3>Sous-agents / Modèles</h3>
+/* Contenu des sections de `agents_models` et de Runtime & CLI (Slice 04). Aucun appel réseau ici : chaque section monte
+   d'abord son contenu, puis hydrate (CLI, modèles, catalogue) sans bloquer. `data-settings-open` : lien vers une
+   autre section (`context.open`). */
+function mainAgentHtml(){
+  return `<div id="cliTechnical">${cliTechnicalHtml()}</div>
+    <p class="hint">Commande, chemin et permissions du CLI : <button type="button" class="linkish" data-settings-open="runtime_cli">Avancé &amp; diagnostic › Runtime &amp; CLI</button></p>`;
+}
+function agentBehaviorHtml(){return behaviorHtml()+tabAgenda()}
+function subagentModelsHtml(){
+  return `${delegationModeHtml()}
     <div class="agent-catalog-head"><div class="hint">Inventaire sourcé de comparaison. La disponibilité et les actions viennent uniquement du backend.</div><button type="button" class="linkish" id="agentCatalogRefresh">rafraîchir</button></div>
     <div id="agentCatalog" aria-label="Catalogue des modèles de sous-agents"></div>
-    ${routingAdvancedShell()}
-  </section>`;
+    <p class="hint">Profils, ordre des candidats et recours au profil Général : <button type="button" class="linkish" data-settings-open="runtime_cli">Avancé &amp; diagnostic › Runtime &amp; CLI</button></p>`;
+}
+function runtimeCliHtml(){
+  return `<div id="cliTechnical">${cliTechnicalHtml()}</div>${routingAdvancedShell()}`;
 }
 
 /* --- configuration avancée des sous-agents ------------------------------
@@ -5044,12 +5065,13 @@ function routingAdvancedShell(){
     <div id="routingAdvancedBody">${routingAdvancedBody()}</div></details>`;
 }
 
-function currentAgentTab(revision){
-  return SET.open&&SET.tab==='cli'&&revision===SET.renderRevision;
+/* Une réponse tardive n'écrit que dans la section `agents_models` ou Runtime & CLI encore montée, à la même révision. */
+function currentAgentSection(revision){
+  return SET.open&&!!SET.agentSection&&SET.section===SET.agentSection&&revision===SET.renderRevision;
 }
 
 function renderCliTechnical(revision){
-  if(!currentAgentTab(revision))return;
+  if(!currentAgentSection(revision))return;
   const host=$('#cliTechnical');
   if(!host)return;
   host.innerHTML=cliTechnicalHtml();bindCliTechnical(host,revision);
@@ -5072,26 +5094,26 @@ function bindCliTechnical(host,revision){
   if(reprobe)reprobe.addEventListener('click',async()=>{
     reprobe.textContent='…';
     try{await saveDraft({silent:true})}catch(e){say(e.message,'error');return}
-    if(!currentAgentTab(revision))return;
+    if(!currentAgentSection(revision))return;
     SET.clis=null;renderCliTechnical(revision);hydrateCliAgents(revision,true);
   });
 }
 
 async function hydrateCliAgents(revision,refresh=false){
-  if(!currentAgentTab(revision))return;
+  if(!currentAgentSection(revision))return;
   if(SET.clis&&SET.clis.ok!==false&&!refresh){await hydrateCliModel(revision);return}
   if(refresh||SET.clis&&SET.clis.ok===false){SET.clis=null;renderCliTechnical(revision)}
   const requestId=++SET.cliGeneration;
   let state;
   try{state=await api('/api/cli/agents')}
   catch(e){state={ok:false,error:e.message,agents:[]}}
-  if(!currentAgentTab(revision)||requestId!==SET.cliGeneration)return;
+  if(!currentAgentSection(revision)||requestId!==SET.cliGeneration)return;
   SET.clis=state;renderCliTechnical(revision);
   if(state.ok!==false&&(state.agents||[]).length)await hydrateCliModel(revision);
 }
 
 async function hydrateCliModel(revision,refresh=false){
-  if(!currentAgentTab(revision)||!SET.clis)return;
+  if(!currentAgentSection(revision)||!SET.clis||SET.agentSection!=='main_agent')return;  // seul Agent principal montre le modèle
   const detected=SET.clis.agents||[],draft=SET.draft.cli;
   const spec=detected.find(agent=>agent.id===draft.agent)||detected[0];
   if(!spec)return;
@@ -5099,7 +5121,7 @@ async function hydrateCliModel(revision,refresh=false){
   if(SET.catalog[key]&&!refresh)return;
   const requestId=++SET.cliModelGeneration;
   const state=await requestCatalog(spec.model_provider,'text',refresh);
-  if(!currentAgentTab(revision)||requestId!==SET.cliModelGeneration)return;
+  if(!currentAgentSection(revision)||requestId!==SET.cliModelGeneration)return;
   SET.catalog[key]=state;
   renderCliTechnical(revision);
 }
@@ -5129,7 +5151,7 @@ function routingFocusTarget(body,focused,rank){
   return null;
 }
 function renderRoutingAdvanced(revision){
-  if(!currentAgentTab(revision)||!SET.routingAdvancedOpen)return;
+  if(!currentAgentSection(revision)||!SET.routingAdvancedOpen)return;
   const body=$('#routingAdvancedBody');
   if(!body)return;
   const active=document.activeElement;
@@ -5142,9 +5164,9 @@ function renderRoutingAdvanced(revision){
 }
 
 /* Le mode des sous-agents est le switch d'aiguillage lui-même : « Auto »
-   applique les profils ci-dessous, « Dupliqué » les laisse dormir. Il vit dans
-   la section Technique, hors du corps rechargé de la configuration avancée —
-   on le retrouve donc depuis la fenêtre, pas depuis ce corps. */
+   applique les profils de Runtime & CLI, « Dupliqué » les laisse dormir. Il vit
+   dans la section Modèles des sous-agents (Slice 04), hors du corps rechargé de
+   la configuration avancée — on le retrouve donc depuis la fenêtre. */
 function bindDelegationMode(){
   const delegationMode=modalContent.querySelector('[data-delegation-mode]');
   if(!delegationMode)return;
@@ -5212,7 +5234,7 @@ function bindRoutingAdvanced(revision){
 }
 
 async function hydrateRoutingAdvanced(revision,refresh=false){
-  if(!currentAgentTab(revision)||!SET.routingAdvancedOpen)return;
+  if(!currentAgentSection(revision)||!SET.routingAdvancedOpen)return;
   /* « Rafraîchir » relit la machine : le harness et le modèle en cours de
      choix peuvent avoir disparu, on repart d'une page propre. */
   if(refresh)SET.routingPick={};
@@ -5220,7 +5242,7 @@ async function hydrateRoutingAdvanced(revision,refresh=false){
   const requestId=++SET.routingGeneration,body=$('#routingAdvancedBody');
   if(body)body.innerHTML='<div class="notice info">Chargement des profils et candidats…</div>';
   const state=await loadRoutingCandidates();
-  if(!currentAgentTab(revision)||!SET.routingAdvancedOpen||requestId!==SET.routingGeneration)return;
+  if(!currentAgentSection(revision)||!SET.routingAdvancedOpen||requestId!==SET.routingGeneration)return;
   SET.routing=state;renderRoutingAdvanced(revision);
 }
 
@@ -5231,6 +5253,85 @@ async function hydrateRoutingAdvanced(revision,refresh=false){
 async function loadRoutingCandidates(){
   try{return await api('/api/routing/candidates')}
   catch(e){return {ok:false,error:e.message,profiles:[],harnesses:[]}}
+}
+
+/* --- `agents_models` et leurs sections d'Avancé (Slice 04) ----------------------------------------------------------
+   Contrat : `docs/settings/agents-models.md`. Quatre sections ordinaires — Agent principal, Comportement, Modèles des
+   sous-agents (`save: 'footer'`, brouillon partagé `SET.draft`, charge `/api/settings` inchangée) et Rôles des
+   sous-agents (`save: 'self'`, module `control_center_subagents_settings.js`, écriture par la voie des prompts) — et
+   deux sections de `advanced_diagnostics` : Runtime & CLI (`footer`) et Work Methods apprises (`self`, groupe Labs).
+   `body` rend sans réseau ; `start` hydrate après le montage ; `stop` arrête ce que la section a lancé. */
+const AGENT_SECTIONS=[
+  {id:'main_agent',category:'agents_models',order:10,label:'Agent principal',aliases:['cli'],
+    description:'Le CLI qui répond à vos demandes et son modèle principal.',
+    body:mainAgentHtml,start:revision=>hydrateCliAgents(revision)},
+  {id:'agent_behavior',category:'agents_models',order:20,label:'Comportement',
+    description:'Longueur et ton des réponses, rappels de rendez-vous.',body:agentBehaviorHtml},
+  {id:'subagent_models',category:'agents_models',order:30,label:'Modèles des sous-agents',
+    description:'Mode de choix du modèle d’un sous-agent et inventaire comparatif des modèles disponibles.',
+    body:subagentModelsHtml,start:revision=>mountAgentCatalog(revision),stop:destroyAgentCatalog},
+  {id:'runtime_cli',category:'advanced_diagnostics',group:'runtime_cli',order:30,advanced:true,label:'Runtime & CLI',aliases:['routing'],
+    description:'Commande, chemin et permissions du CLI, re-détection, profils et ordre des candidats des sous-agents.',
+    body:runtimeCliHtml,start:revision=>{hydrateCliAgents(revision);bindRoutingDisclosure(revision)}},
+];
+function agentSectionSpec(spec){
+  const {body,start,stop,...entry}=spec;
+  return {...entry,save:'footer',
+    mount(host,context){
+      if(!SET.data||!SET.draft){host.innerHTML='<div class="empty">Chargement…</div>';return}  // `openSettings` remonte la section à l'arrivée des réglages
+      SET.agentSection=spec.id;
+      host.innerHTML=context.ui.section({id:`agentSection_${spec.id}`,title:spec.label,description:spec.description,advanced:!!spec.advanced,body:body()});
+      bindAgentSection(host,context);
+      if(start)start(context.revision);
+    },
+    destroy(){if(stop)stop();SET.agentSection=null;++SET.cliGeneration;++SET.cliModelGeneration},
+  };
+}
+/* Liaisons communes : chaque `querySelector` ne trouve que ce que la section montée a rendu. */
+function bindAgentSection(host,context){
+  const cliTechnical=host.querySelector('#cliTechnical');
+  if(cliTechnical)bindCliTechnical(cliTechnical,context.revision);
+  bindDelegationMode();
+  host.querySelectorAll('[data-behavior-field]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.cli.behavior[el.dataset.behaviorField]=el.value;context.markDirty()}));
+  bindAgenda();
+  /* Délégué : `#cliTechnical` est redessiné par l'hydratation, ses liens aussi. */
+  host.addEventListener('click',event=>{
+    const link=event.target&&event.target.closest?event.target.closest('[data-settings-open]'):null;
+    if(link&&host.contains(link))context.open(link.dataset.settingsOpen);
+  });
+}
+/* La configuration avancée (profils, candidats) n'est demandée qu'à l'ouverture de sa divulgation. */
+function bindRoutingDisclosure(revision){
+  const routingAdvanced=$('#routingAdvanced');
+  if(!routingAdvanced)return;
+  routingAdvanced.addEventListener('toggle',()=>{
+    SET.routingAdvancedOpen=routingAdvanced.open;
+    if(routingAdvanced.open)hydrateRoutingAdvanced(revision);
+    else ++SET.routingGeneration;
+  });
+  if(routingAdvanced.open){
+    if(SET.routing)bindRoutingAdvanced(revision);
+    else hydrateRoutingAdvanced(revision);
+  }
+}
+/* Rôles des sous-agents et Work Methods apprises : deux vues du même module (`view`), qui s'enregistrent elles-mêmes. */
+const SUBAGENT_SECTIONS=[
+  {id:'subagents',category:'agents_models',order:40,label:'Rôles des sous-agents',view:'roles',
+    description:'Mission, capacités et instructions de chaque rôle, et les sous-agents en cours.'},
+  {id:'work_methods',category:'advanced_diagnostics',group:'labs',order:50,advanced:true,label:'Work Methods apprises',view:'work_methods',
+    description:'Approches observées dans les missions closes et leur promotion explicite en Work Method.'},
+];
+function installAgentSettingsSections(){
+  AGENT_SECTIONS.forEach(spec=>registerSettingsSection(agentSectionSpec(spec)));
+  SUBAGENT_SECTIONS.forEach(spec=>registerSettingsSection(subagentSectionSpec(spec)));
+}
+function subagentSectionSpec(spec){
+  const {view,...entry}=spec;
+  return {...entry,save:'self',
+    mount(host,context){host.innerHTML='<div id="subagentSettingsMount"></div>';mountSubagentSettings(host.firstElementChild,context.revision,view)},
+    destroy(){destroySubagentSettings()},
+  };
 }
 
 /* --- onglet Config ------------------------------------------------------ */
@@ -5296,20 +5397,20 @@ function destroyRegisteredSection(){
   try{view.entry.destroy(view.host)}
   catch(e){console.error('settings_section_destroy_failed',{section:view.entry.id,error:String(e&&e.message||e)})}
 }
-/* Onglet Sous-agents (`control_center_subagents_settings.js`) : sa vue arrête son compteur d'attente et ignore
-   ses réponses tardives une fois détruite ; ses brouillons vivent dans `SET.subagentDrafts`, d'un onglet à l'autre. */
+/* Rôles des sous-agents et Work Methods apprises (`control_center_subagents_settings.js`, Slice 04 : sections) : la
+   vue arrête son compteur d'attente et ignore ses réponses tardives une fois détruite ; ses brouillons vivent dans
+   `SET.subagentDrafts`, d'une section à l'autre. */
 function destroySubagentSettings(){if(SET.subagentView){SET.subagentView.destroy();SET.subagentView=null}}
-function mountSubagentSettings(revision){
-  const host=modalContent.querySelector('#subagentSettingsMount');
+function mountSubagentSettings(host,revision,mode){
   if(!host)return;
-  if(!window.JarvisSubagentSettings){host.innerHTML='<div class="notice bad" role="alert">Module de l’onglet Sous-agents absent de la page servie.</div>';console.error('subagent_settings_module_missing');return}
-  const view=window.JarvisSubagentSettings.create(host,{drafts:SET.subagentDrafts,openTab:selectTab});
+  if(!window.JarvisSubagentSettings){host.innerHTML='<div class="notice bad" role="alert">Module des sous-agents absent de la page servie.</div>';console.error('subagent_settings_module_missing');return}
+  const view=window.JarvisSubagentSettings.create(host,{drafts:SET.subagentDrafts,openTab:selectTab,view:mode});
   if(revision!==SET.renderRevision){view.destroy();return}
   SET.subagentView=view;
   /* `load` ne rejette pas (il rend son état d'erreur) ; ce filet attrape tout le reste, visible et codé. */
   Promise.resolve().then(()=>view.load()).catch(e=>{
     console.error('subagent_settings_mount_failed',e);
-    host.innerHTML=`<div class="notice bad" role="alert"><strong>Onglet Sous-agents indisponible.</strong> ${esc(e&&e.message||String(e))}<div class="hint">Code : <code>subagent_settings_mount_failed</code></div></div>`;
+    host.innerHTML=`<div class="notice bad" role="alert"><strong>Sous-agents indisponibles.</strong> ${esc(e&&e.message||String(e))}<div class="hint">Code : <code>subagent_settings_mount_failed</code></div></div>`;
   });
 }
 /* --- shell à six catégories (Slice 02) ----------------------------------------
@@ -5419,6 +5520,10 @@ function installVoiceSettingsSections(){
   registerSettingsDiagnostic(VOICE_DIAGNOSTIC);
 }
 if(typeof window!=='undefined')installVoiceSettingsSections();
+/* Sections de `agents_models` (Slice 04) : enregistrées ici, après `SETTINGS_REJECTED` (un refus y est noté). Les extraits node qui
+   ne portent pas le bloc de ces sections n'ont pas la fonction (`typeof` d'une déclaration absente : 'undefined') ;
+   dans la page, elle est toujours déclarée (remontée). */
+if(typeof window!=='undefined'&&typeof installAgentSettingsSections==='function')installAgentSettingsSections();
 
 /* Où en est le shell : catégorie, puis section enregistrée OU onglet hérité. Un module hérité peut encore poser
    `SET.tab` lui-même (Bare Hands) : un onglet posé l'emporte et la catégorie suit. */
@@ -5467,10 +5572,10 @@ function renderTabs(){
   /* En largeur étroite les deux barres défilent : l'entrée active est ramenée dans la vue. */
   for(const on of [rail.querySelector('[aria-selected=true]'),items.querySelector('[aria-selected=true]')])
     if(on&&on.scrollIntoView)on.scrollIntoView({block:'nearest',inline:'nearest'});
-  /* Le pied (état + Enregistrer) : rien à dire dans l'onglet Sous-agents (ses propres notices) ni dans une section
-     enregistrée qui s'enregistre elle-même ou se lit seulement (`save` ≠ 'footer'). */
+  /* Le pied (état + Enregistrer) : rien à dire dans une section enregistrée qui s'enregistre elle-même ou se lit
+     seulement (`save` ≠ 'footer'), ni dans une catégorie vide. */
   const entry=SET.section?R.page.section(SET.section):null;
-  const footer=modalSave.closest('footer');if(footer)footer.hidden=entry?entry.save!=='footer':(!SET.tab||SET.tab==='subagents');
+  const footer=modalSave.closest('footer');if(footer)footer.hidden=entry?entry.save!=='footer':!SET.tab;
 }
 /* Clavier des deux listes (onglets ARIA à activation manuelle : une catégorie charge des données, la parcourir ne
    doit rien charger) : flèches (les deux axes, la liste change d'orientation en largeur étroite), Début, Fin
@@ -5523,8 +5628,6 @@ async function renderTab(){
   const tab=TABS.find(t=>t.id===SET.tab);
   modalSave.style.display=tab.save?'':'none';
   modalSub.textContent={
-    cli:'Configuration technique, comportement et modèles des agents.',
-    subagents:'Rôles, capacités et Work Methods des sous-agents. Vous modifiez les instructions d’un rôle et promouvez, si vous le choisissez, une approche observée en Work Method ; le reste suit le code.',
     prompts:'Chaque couche est enregistrée avec son propre bouton.',
     keys:'Les clés sont enregistrées immédiatement sans jamais être relues par la page.',
     shortcuts:'Les raccourcis sont enregistrés immédiatement.',
@@ -5533,19 +5636,14 @@ async function renderTab(){
   try{
     let content;
     if(SET.tab==='prompts')content=await tabPrompts();
-    else if(SET.tab==='cli')content=tabCli()+tabAgenda();
     else if(SET.tab==='keys')content=tabKeys();
     else if(SET.tab==='memory')content='<div id="memorySettingsMount"></div>';
-    else if(SET.tab==='subagents')content='<div id="subagentSettingsMount"></div>';
     else content=tabShortcuts();
     if(revision!==SET.renderRevision||SET.open===false)return;
     modalContent.innerHTML=content;
   }catch(e){if(revision===SET.renderRevision&&SET.open!==false)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
   bindTab(revision);
   if(SET.tab==='memory'&&window.JarvisMemorySettings)window.JarvisMemorySettings.show(modalContent.querySelector('#memorySettingsMount'));
-  if(SET.tab==='subagents')mountSubagentSettings(revision);
-  if(SET.tab==='cli')bindAgenda();
-  if(SET.tab==='cli'){mountAgentCatalog(revision);hydrateCliAgents(revision)}
   if(SET.dirty&&tab.save)say('Modifications non enregistrées.','');
 }
 
@@ -5561,7 +5659,7 @@ function tabAgenda(){
         :`<input type="text" id="${id}" data-agenda="${esc(f.key)}" value="${esc(value)}" placeholder="vide = désactivé">`;
     return `<div class="field"><label for="${id}">${esc(f.label)}</label>${input}<div class="hint">${esc(f.help)} Défaut : ${esc(f.type==='boolean'?(f.default?'activé':'désactivé'):(f.default===''?'vide':f.default))}.</div></div>`;
   }).join('');
-  return `<section id="agendaReminders"><h3>Rappels de rendez-vous</h3><div class="hint">JARVIS te rappelle tes rendez-vous de lui-même. Les changements agissent à chaud, sans redémarrage de Core.</div>${rows}</section>`;
+  return `<section id="agendaReminders"><h3>Rappels de rendez-vous</h3><div class="hint">JARVIS vous rappelle vos rendez-vous de lui-même. Les changements agissent à chaud, sans redémarrage de Core.</div>${rows}</section>`;
 }
 function bindAgenda(){
   modalContent.querySelectorAll('[data-agenda]').forEach(el=>el.addEventListener('change',()=>{
@@ -5581,25 +5679,9 @@ function bindTab(revision){
     const spec=SET.data.voice.stacks.find(s=>s.id===el.dataset.scope);
     if(spec&&spec.fields.some(f=>f.depends_on===el.dataset.field))renderTab();else say('Modifications non enregistrées.','');
   }));
-  const cliTechnical=$('#cliTechnical');
-  if(cliTechnical)bindCliTechnical(cliTechnical,revision);
-  bindDelegationMode();
-  modalContent.querySelectorAll('[data-behavior-field]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.cli.behavior[el.dataset.behaviorField]=el.value;SET.dirty=true;say('Modifications non enregistrées.','')}));
   modalContent.querySelectorAll('[data-refresh]').forEach(el=>el.addEventListener('click',async()=>{
     const [provider,role]=el.dataset.refresh.split(':');el.textContent='…';
     await catalog(provider,role,true);renderTab()}));
-
-  const routingAdvanced=$('#routingAdvanced');
-  if(routingAdvanced)routingAdvanced.addEventListener('toggle',()=>{
-    SET.routingAdvancedOpen=routingAdvanced.open;
-    if(routingAdvanced.open)hydrateRoutingAdvanced(revision);
-    else ++SET.routingGeneration;
-  });
-  if(routingAdvanced&&routingAdvanced.open){
-    if(SET.routing)bindRoutingAdvanced(revision);
-    else hydrateRoutingAdvanced(revision);
-  }
 
   const form=$('#keyForm');
   if(form)form.addEventListener('submit',addCredential);
@@ -5675,9 +5757,10 @@ function applySettingsTarget(hit,nav){
 function selectTab(id){
   const hit=settingsTarget(id);
   if(!hit){console.warn('settings_target_unknown',{target:id});return}
-  const leaving=SET.tab;
+  const leaving=SET.section;
   applySettingsTarget(hit);
-  if(leaving==='cli'&&SET.tab!=='cli'){SET.routingAdvancedOpen=false;++SET.routingGeneration}
+  /* Quitter Runtime & CLI referme sa configuration avancée ; la remonter (enregistrement, réglages relus) la garde. */
+  if(leaving==='runtime_cli'&&SET.section!=='runtime_cli'){SET.routingAdvancedOpen=false;++SET.routingGeneration}
   renderTabs();renderTab();
 }
 
@@ -5687,7 +5770,7 @@ function destroyAgentCatalog(){
 }
 
 function mountAgentCatalog(revision){
-  if(!currentAgentTab(revision))return;
+  if(!currentAgentSection(revision))return;
   const host=$('#agentCatalog');
   if(!host)return;
   destroyAgentCatalog();

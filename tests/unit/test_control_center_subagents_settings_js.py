@@ -249,12 +249,16 @@ process.stdout.write(JSON.stringify({html:host.innerHTML,errors}));""")
     assert out["html"] == "other tab" and out["errors"] == []
 
 
-def test_served_page_carries_the_tab_and_the_module(tmp_path):
+def test_served_page_carries_the_sections_and_the_module(tmp_path):
     served = asyncio.run(ControlCenter(runtime_root=tmp_path, project_root=tmp_path).index(None)).text
-    assert "{id:'subagents',label:'Sous-agents',save:false}" in served
+    # jarvis-settings-ui-reorganization Slice 04 : plus d'onglet `subagents` ; deux sections du même module.
+    assert "{id:'subagents',label:'Sous-agents',save:false}" not in served
+    assert "{id:'subagents',category:'agents_models',order:40,label:'Rôles des sous-agents',view:'roles'," in served
+    assert "{id:'work_methods',category:'advanced_diagnostics',group:'labs',order:50,advanced:true,label:'Work Methods apprises',view:'work_methods'," in served
     assert "root.JarvisSubagentSettings=Object.freeze" in served
     assert "/*__CONTROL_CENTER_SUBAGENTS_SETTINGS_JS__*/" not in served
-    assert 'content=\'<div id="subagentSettingsMount"></div>\'' in served
+    assert """host.innerHTML='<div id="subagentSettingsMount"></div>';mountSubagentSettings(host.firstElementChild,context.revision,view)""" in served
+    assert "{...entry,save:'self'," in served and "destroy(){destroySubagentSettings()}" in served
 
 
 def test_route_serves_relation_labels_additively(tmp_path):
@@ -393,14 +397,15 @@ def test_served_page_hides_the_empty_footer_scrolls_the_active_tab_and_links_mod
     served = asyncio.run(ControlCenter(runtime_root=tmp_path, project_root=tmp_path).index(None)).text
     # Shell à six catégories (Slice 02 de jarvis-settings-ui-reorganization) : même pied caché pour Sous-agents,
     # même défilement de l'entrée active dans les deux barres.
-    assert "footer.hidden=entry?entry.save!=='footer':(!SET.tab||SET.tab==='subagents')" in served
+    assert "footer.hidden=entry?entry.save!=='footer':!SET.tab" in served
     assert "on.scrollIntoView({block:'nearest',inline:'nearest'})" in served
     assert "openTab:selectTab" in served and "subagent_settings_mount_failed" in served
     payload = roles_payload(tmp_path)
     out = run_node(tmp_path, payload, """
 const opened=[];const v=M.create(host,{fetch:reply,openTab:t=>opened.push(t),...quiet});await v.load();
 process.stdout.write(JSON.stringify({html:host.innerHTML}));""")
-    assert "data-sar-open-cli" in out["html"] and "Agent / CLI › Sous-agents / Modèles" in out["html"]
+    assert "data-sar-open-models" in out["html"] and "Agents &amp; modèles › Modèles des sous-agents" in out["html"]
+    assert "Agent / CLI" not in out["html"]
     assert 'aria-live' not in out["html"]  # la fiche n'est plus une région live
 
 
@@ -426,23 +431,37 @@ def _candidates() -> dict:
 
 
 def test_observed_approaches_are_shown_for_mission_owner_roles_only(tmp_path):
+    """Slice 04 (jarvis-settings-ui-reorganization) : la promotion est un outil d'opérateur, rangé sous Avancé
+    (vue `work_methods`) ; la fiche d'un rôle porteur de mission n'y renvoie que par un lien."""
     out = run_node(tmp_path, roles_payload(tmp_path), """
-const v=M.create(host,{fetch:reply,...quiet});await v.load();
-v.select('research-lead');const lead=host.innerHTML;v.select('research');const research=host.innerHTML;
-process.stdout.write(JSON.stringify({lead,research,errors,infos}));""", candidates=_candidates())
-    assert out["errors"] == []
-    assert "Approches observées" in out["lead"] and "Approches observées" not in out["research"]
-    assert 'data-sar-promote="wmc-aaaaaaaaaaaaaaaa"' in out["lead"] and "Promouvoir en deep-research@2" in out["lead"]
+const opened=[];
+const r=M.create(host,{fetch:reply,openTab:t=>opened.push(t),...quiet});await r.load();
+r.select('research-lead');const roleLead=host.innerHTML;r.select('research');const roleResearch=host.innerHTML;
+const rolesCalls=calls.map(c=>c[0]);calls.length=0;
+const v=M.create(host,{fetch:reply,view:'work_methods',...quiet});await v.load();
+process.stdout.write(JSON.stringify({roleLead,roleResearch,rolesCalls,wmCalls:calls.map(c=>c[0]),lead:host.innerHTML,
+  view:[r.view,v.view],errors,infos}));""", candidates=_candidates())
+    assert out["errors"] == [] and out["view"] == ["roles", "work_methods"]
+    # Vue des rôles : un lien vers Avancé pour un rôle porteur de mission, aucune promotion, aucune lecture des candidats.
+    assert "data-sar-open-learned" in out["roleLead"] and "data-sar-open-learned" not in out["roleResearch"]
+    assert "data-sar-promote" not in out["roleLead"] and "/api/work-methods/candidates" not in out["rolesCalls"]
+    # Vue Work Methods : un bloc par rôle porteur de mission, une seule lecture, pas les instances.
+    assert out["wmCalls"] == ["/api/subagent-roles", "/api/work-methods/candidates"]
+    lead = out["lead"]
+    assert 'data-sar-learned-role="research-lead"' in lead and 'data-sar-learned-role="coder"' in lead
+    assert 'data-sar-learned-role="research"' not in lead
+    assert 'data-sar-promote="wmc-aaaaaaaaaaaaaaaa"' in lead and "Promouvoir en deep-research@2" in lead
     # Pas de bouton sans seuils atteints ; la raison réelle est dite, le silence n'est pas une approbation.
-    assert 'data-sar-promote="wmc-bbbbbbbbbbbbbbbb"' not in out["lead"]
-    assert "une mission terminée sans verdict QA ne compte pas" in out["lead"]
-    assert "Rien n’est promu sans vous" in out["lead"]
+    assert 'data-sar-promote="wmc-bbbbbbbbbbbbbbbb"' not in lead
+    assert "une mission terminée sans verdict QA ne compte pas" in lead
+    assert "Rien n’est promu sans vous" in lead
+    assert 'data-sar-text=' not in lead  # aucune édition d'instructions dans cette vue
     assert any(name == "subagent_settings.candidates_loaded" for name, _ in out["infos"])
 
 
 def test_a_promotion_is_confirmed_then_posts_the_draft_with_its_revision(tmp_path):
     out = run_node(tmp_path, roles_payload(tmp_path), """
-const v=M.create(host,{fetch:reply,...quiet});await v.load();await v.loadCandidates();v.select('research-lead');
+const v=M.create(host,{fetch:reply,view:'work_methods',...quiet});await v.load();await v.loadCandidates();
 v.state.confirmPromote='wmc-aaaaaaaaaaaaaaaa';v.render();const confirming=host.innerHTML;
 await v.promote('wmc-aaaaaaaaaaaaaaaa');
 process.stdout.write(JSON.stringify({confirming,calls,notice:v.state.promoteNotice,html:host.innerHTML,errors,
@@ -464,7 +483,7 @@ process.stdout.write(JSON.stringify({confirming,calls,notice:v.state.promoteNoti
 def test_a_refused_promotion_shows_the_server_words_and_rereads(tmp_path):
     out = run_node(tmp_path, roles_payload(tmp_path), """
 const failing=async(p,i)=>{if(i&&i.method==='POST'){const e=new Error('deep-research is now at version 2, not 1');e.code='work_method_revision_conflict';e.status=409;throw e}return reply(p,i)};
-const v=M.create(host,{fetch:failing,...quiet});await v.load();await v.loadCandidates();v.select('research-lead');
+const v=M.create(host,{fetch:failing,view:'work_methods',...quiet});await v.load();await v.loadCandidates();
 await v.promote('wmc-aaaaaaaaaaaaaaaa');
 process.stdout.write(JSON.stringify({notice:v.state.promoteNotice,html:host.innerHTML,errors,calls,
   learned:v.state.learned.phase}));""", candidates=_candidates())
@@ -478,7 +497,7 @@ process.stdout.write(JSON.stringify({notice:v.state.promoteNotice,html:host.inne
 def test_an_unknown_outcome_rereads_and_says_how_to_tell(tmp_path):
     out = run_node(tmp_path, roles_payload(tmp_path), """
 const failing=async(p,i)=>{if(i&&i.method==='POST'){const e=new Error('Pas de réponse du Control Center après 15 s.');e.code='subagent_settings_timeout';throw e}return reply(p,i)};
-const v=M.create(host,{fetch:failing,...quiet});await v.load();await v.loadCandidates();v.select('research-lead');
+const v=M.create(host,{fetch:failing,view:'work_methods',...quiet});await v.load();await v.loadCandidates();
 await v.promote('wmc-aaaaaaaaaaaaaaaa');
 process.stdout.write(JSON.stringify({notice:v.state.promoteNotice}));""", candidates=_candidates())
     assert out["notice"]["text"].startswith("Résultat inconnu")
@@ -488,18 +507,19 @@ process.stdout.write(JSON.stringify({notice:v.state.promoteNotice}));""", candid
 def test_unreadable_candidates_say_so_with_a_retry_and_leave_the_rest_usable(tmp_path):
     out = run_node(tmp_path, roles_payload(tmp_path), """
 const failing=async(p,i)=>{if(p==='/api/work-methods/candidates'){const e=new Error('Core injoignable : ConnectionRefusedError');e.code='core_unreachable';e.status=503;throw e}return reply(p,i)};
-const v=M.create(host,{fetch:failing,...quiet});await v.load();v.select('research-lead');
-process.stdout.write(JSON.stringify({html:host.innerHTML,errors}));""")
+const v=M.create(host,{fetch:failing,view:'work_methods',...quiet});await v.load();const html=host.innerHTML;
+const r=M.create(host,{fetch:failing,...quiet});await r.load();r.select('research-lead');
+process.stdout.write(JSON.stringify({html,roles:host.innerHTML,errors}));""")
     assert "Approches observées illisibles : Core injoignable" in out["html"]
     assert "data-sar-learned-retry" in out["html"] and "<code>core_unreachable</code>" in out["html"]
-    assert 'data-sar-text="research-lead"' in out["html"]  # l'éditeur reste là
+    assert 'data-sar-text="research-lead"' in out["roles"]  # la fiche des rôles ne dépend pas des candidats
     assert out["errors"] == [["subagent_settings_candidates_failed", "core_unreachable",
                               {"path": "/api/work-methods/candidates"}]]
 
 
 def test_a_stale_candidate_is_never_a_silent_button(tmp_path):
     out = run_node(tmp_path, roles_payload(tmp_path), """
-const v=M.create(host,{fetch:reply,...quiet});await v.load();await v.loadCandidates();v.select('research-lead');
+const v=M.create(host,{fetch:reply,view:'work_methods',...quiet});await v.load();await v.loadCandidates();
 await v.promote('wmc-bbbbbbbbbbbbbbbb');
 process.stdout.write(JSON.stringify({notice:v.state.promoteNotice,calls,errors}));""", candidates=_candidates())
     assert out["notice"]["code"] == "subagent_settings_candidate_stale" and "Rien n’a été écrit" in out["notice"]["text"]
@@ -510,7 +530,7 @@ process.stdout.write(JSON.stringify({notice:v.state.promoteNotice,calls,errors})
 def test_a_promotion_not_yet_handed_to_the_hook_is_said(tmp_path):
     out = run_node(tmp_path, roles_payload(tmp_path), """
 const answering=async(p,i)=>{if(i&&i.method==='POST')return {ok:true,method:{method_id:'deep-research',version:2},snapshot:{written:false,code:'PermissionError'}};return reply(p,i)};
-const v=M.create(host,{fetch:answering,...quiet});await v.load();await v.loadCandidates();v.select('research-lead');
+const v=M.create(host,{fetch:answering,view:'work_methods',...quiet});await v.load();await v.loadCandidates();
 await v.promote('wmc-aaaaaaaaaaaaaaaa');
 process.stdout.write(JSON.stringify({notice:v.state.promoteNotice}));""", candidates=_candidates())
     assert out["notice"]["tone"] == "bad" and out["notice"]["code"] == "PermissionError"
@@ -527,7 +547,8 @@ def test_the_effective_promoted_version_is_marked_and_a_partial_reading_is_said(
                                     "evidence_refs": ["m1"]}
     candidates = {**_candidates(), "scan": {"partial": True}}
     out = run_node(tmp_path, payload, """
-const v=M.create(host,{fetch:reply,...quiet});await v.load();await v.loadCandidates();v.select('research-lead');
-process.stdout.write(JSON.stringify({html:host.innerHTML}));""", candidates=candidates)
-    assert "deep-research@2" in out["html"] and "version promue" in out["html"]
+const r=M.create(host,{fetch:reply,...quiet});await r.load();r.select('research-lead');const roles=host.innerHTML;
+const v=M.create(host,{fetch:reply,view:'work_methods',...quiet});await v.load();
+process.stdout.write(JSON.stringify({roles,html:host.innerHTML}));""", candidates=candidates)
+    assert "deep-research@2" in out["roles"] and "version promue" in out["roles"]
     assert "Lecture partielle" in out["html"]

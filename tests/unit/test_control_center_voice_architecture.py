@@ -129,20 +129,20 @@ def test_async_browser_render_does_not_restore_a_previous_panel(tmp_path):
     render = page[page.index('async function renderTab()'):page.index('function bindTab(revision)')]
     script = r'''
 const assert=require('node:assert/strict');
-const SET={tab:'prompts',data:{},draft:{}},TABS=[{id:'prompts',save:false},{id:'cli',save:true}];
+const SET={tab:'prompts',data:{},draft:{}},TABS=[{id:'prompts',save:false},{id:'keys',save:false}];
 const modalContent={querySelectorAll:()=>[]},modalSub={},modalSave={style:{}};
 const esc=String,say=()=>{},bindTab=()=>{},bindVoiceSurface=()=>{},destroyAgentCatalog=()=>{},destroyVoiceCatalog=()=>{},cleanupSettingsSurface=()=>{destroyAgentCatalog();destroyVoiceCatalog()},mountAgentCatalog=()=>{},hydrateCliAgents=()=>{};
 let finish;
 const tabPrompts=()=>new Promise(resolve=>{finish=resolve});
-const tabCli=()=>'<new agent panel>';
+const tabKeys=()=>'<new keys panel>';
 ''' + render + r'''
 (async()=>{
 const first=renderTab();
-SET.tab='cli';
+SET.tab='keys';
 await renderTab();
 finish('<old prompts panel>');
 await first;
-assert.ok(modalContent.innerHTML.startsWith('<new agent panel>'),modalContent.innerHTML);
+assert.ok(modalContent.innerHTML.startsWith('<new keys panel>'),modalContent.innerHTML);
 assert.ok(!modalContent.innerHTML.includes('old prompts panel'));
 })().catch(error=>{console.error(error);process.exitCode=1});
 '''

@@ -236,6 +236,7 @@ livrée (`subagent_roles.effective_method`) :
 
 - Fait (Slice 12) : preuve d'usage durable, candidats, seuils, promotion explicite, versions promues en ajout
   seul, application par le hook via l'instantané, routes, écran.
-- Écran : Réglages > Sous-agents, fiche d'un rôle qui peut porter une mission, bloc « Approches observées »
-  ([subagent-roles.md](subagent-roles.md) § 8). La confirmation montre les principes, critères et relations
+- Écran : Réglages > Avancé & diagnostic › Work Methods apprises (depuis la Slice 04 de
+  jarvis-settings-ui-reorganization ; avant : fiche d'un rôle de l'onglet Sous-agents), un bloc « Approches observées »
+  par rôle qui peut porter une mission ([subagent-roles.md](subagent-roles.md) § 8). La confirmation montre les principes, critères et relations
   publiés. Une candidate sans méthode de base ne se promeut que par l'API.

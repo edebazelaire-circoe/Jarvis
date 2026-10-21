@@ -430,9 +430,10 @@ def test_top_navigation_has_no_config_and_wake_shortcut_has_one_editor_in_shortc
     work = PAGE.with_name("control_center_work.js").read_text(encoding="utf-8")
 
     assert f"id:'{fixture['removed_top_tab']}'" not in tabs
-    # « Voix » n'est plus un onglet (Slice 03 de jarvis-settings-ui-reorganization) : sections de `voice_audio`.
-    assert all(f"label:'{label}'" in tabs for label in fixture["top_tabs"] if label not in {"Apparence", "Voix"})
-    assert "id:'voice'" not in tabs
+    # « Voix » (Slice 03) et « Agent / CLI » (Slice 04) de jarvis-settings-ui-reorganization ne sont plus des
+    # onglets : sections enregistrées de `voice_audio` et de `agents_models`.
+    assert all(f"label:'{label}'" in tabs for label in fixture["top_tabs"] if label not in {"Apparence", "Voix", "Agent / CLI"})
+    assert "id:'voice'" not in tabs and "id:'cli'" not in tabs
     assert "{id:'appearance',label:'Apparence',save:false}" in work
     # Un seul éditeur de `wake_toggle` : les Raccourcis (plus de filtre, plus de renvoi vers Voix).
     assert "wake_toggle'" not in shortcuts.replace("`wake_toggle` compris", "")

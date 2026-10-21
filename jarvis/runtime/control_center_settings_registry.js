@@ -52,8 +52,11 @@
     wakeword:Object.freeze({category:'voice_audio',section:'wake_word',
       also:freezeAll([{category:'advanced_diagnostics',section:'diagnostics'}])}),
     prompts:Object.freeze({category:'advanced_diagnostics',section:'prompts',also:freezeAll([])}),
+    /* Slice 04 : `cli` et `subagents` ne sont plus des onglets. Le mode et le catalogue des sous-agents vont dans
+       `subagent_models` ; la promotion des Work Methods dans `work_methods` (groupe Labs d'Avancé). */
     cli:Object.freeze({category:'agents_models',section:'main_agent',
-      also:freezeAll([{category:'agents_models',section:'agent_behavior'},{category:'advanced_diagnostics',section:'runtime_cli'}])}),
+      also:freezeAll([{category:'agents_models',section:'agent_behavior'},{category:'agents_models',section:'subagent_models'},
+        {category:'advanced_diagnostics',section:'runtime_cli'}])}),
     routing:Object.freeze({category:'advanced_diagnostics',section:'runtime_cli',tab:'cli',also:freezeAll([])}),
     keys:Object.freeze({category:'connections',section:'providers',also:freezeAll([])}),
     shortcuts:Object.freeze({category:'interface_interactions',section:'shortcuts',also:freezeAll([])}),
@@ -62,7 +65,7 @@
         {category:'memory_knowledge',section:'knowledge_sources'},
         {category:'memory_knowledge',section:'memory_center'},{category:'advanced_diagnostics',section:'diagnostics'}])}),
     subagents:Object.freeze({category:'agents_models',section:'subagents',
-      also:freezeAll([{category:'advanced_diagnostics',section:'labs'}])}),
+      also:freezeAll([{category:'advanced_diagnostics',section:'work_methods'}])}),
     appearance:Object.freeze({category:'interface_interactions',section:'theme_scene',also:freezeAll([])}),
     /* Onglet partagé par Bare Hands et `control_center_scene_settings.js`. Son
        nom et son contenu d'opérateur (porte de test de la scène, enregistrement,

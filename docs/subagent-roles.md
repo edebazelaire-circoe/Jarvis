@@ -470,12 +470,17 @@ lancement, le cerveau ne promet pas de compte rendu ; un échec est toujours ann
 | Règles du cerveau (rôles proposés : `offered_to_brain` de `research-lead` et `qa`, éphémère élargie, `[mission]` enseigné au cerveau) | fait (Slice 07, section 9) |
 | Rôle dans la scène, badge Mission Owner | Slice 08 |
 
-## 8. Interface : Réglages > Sous-agents
+## 8. Interface : Réglages > Agents & modèles › Rôles des sous-agents
 
-Onglet `subagents` des Réglages du Control Center (Slice 10), après « Mémoire ». Module
-`jarvis/runtime/control_center_subagents_settings.js` (`window.JarvisSubagentSettings`), monté par
-`renderTab` dans `#subagentSettingsMount`, détruit par `cleanupSettingsSurface` au changement d'onglet.
-Tests : `tests/unit/test_control_center_subagents_settings_js.py` (node, sur la vraie charge utile v2).
+Section `subagents` de la catégorie Agents & modèles (Slice 10 ; onglet jusqu'à la Slice 04 de
+jarvis-settings-ui-reorganization, l'ancien ID ouvre la section). Module
+`jarvis/runtime/control_center_subagents_settings.js` (`window.JarvisSubagentSettings`), monté par la section
+(`subagentSectionSpec`, vue `roles`) dans `#subagentSettingsMount`, détruit par son `destroy` au changement de section.
+Les approches observées et leur promotion sont la vue `work_methods` du même module, section **Avancé & diagnostic ›
+Work Methods apprises** (`work_methods`, groupe Labs) : outil d'opérateur, pas configuration d'un rôle (voir
+[settings/agents-models.md](settings/agents-models.md) § 2). La fiche d'un rôle porteur de mission y renvoie par un lien.
+Tests : `tests/unit/test_control_center_subagents_settings_js.py` (node, sur la vraie charge utile v2),
+`tests/unit/test_agents_models_settings_browser.py` (vrai Chrome).
 
 **Sources.** Lecture seule de `GET /api/subagent-roles` (section 1ter) pour le catalogue, et de
 `GET /api/agent/tasks` (champ `role`, le marqueur tel que le hook le lit) pour les instances en cours. Aucune
@@ -501,7 +506,7 @@ autre donnée, aucune liste recopiée : libellés, capacités, méthodes, libell
   liste reste un alias, nommé avec sa cible), « Marqueur hors registre » pour un mot inconnu, « Général, aucun
   rôle déclaré » sans marqueur, étiquette éphémère. Seules les clés propres de `aliases` comptent
   (`constructor` n'est pas un alias) ;
-- un renvoi vers « Agent / CLI › Sous-agents / Modèles », qui règle les modèles des sous-agents.
+- un renvoi vers « Agents & modèles › Modèles des sous-agents », qui règle les modèles des sous-agents.
 
 **Identité visuelle.** `visual.accent` est un jeton : il devient `var(--role-accent-<jeton>)`, défini une
 seule fois dans `control_center.html` pour les dix jetons de `ROLE_ACCENTS` (table partagée avec le graphe des
@@ -523,7 +528,8 @@ texte s'applique au prochain sous-agent lancé avec ce rôle. Si la réponse por
 `subagent_roles_snapshot.written: false`, l'écran dit que le texte est enregistré mais pas encore transmis au
 hook. Capacités et méthodes sont marquées « lecture seule » : aucune voie d'écriture n'existe pour elles.
 
-**Approches observées (Slice 12).** Pour un rôle qui peut porter une mission, la fiche lit
+**Approches observées (Slice 12 ; vue `work_methods`, Avancé & diagnostic › Work Methods apprises).** Pour chaque
+rôle qui peut porter une mission, la vue lit
 `GET /api/work-methods/candidates` (lecture indépendante, compteur, erreur codée avec « Réessayer ») et
 liste les approches de ce rôle : statut (`Candidate`, `En observation`, `Issues insuffisantes`, `Déjà décrite
 par la méthode`, `Promue`), raison réelle, comptes et nombre de preuves. Une candidate qui a un brouillon offre
@@ -556,7 +562,7 @@ périmée (`work_method_revision_conflict`...) ; sans réponse : « Résultat in
 | refus d'enregistrement (réponse d'erreur du serveur) | « Enregistrement refusé. Refus du serveur : « … ». Rien n'a été écrit. », le code, brouillon gardé ; console `subagent_settings_save_failed` |
 | instances illisibles | alerte locale ; le catalogue reste utilisable ; console `subagent_settings_tasks_failed` |
 
-Les brouillons vivent dans `SET.subagentDrafts` : changer d'onglet des Réglages ne perd pas un texte non
+Les brouillons vivent dans `SET.subagentDrafts` : changer de section des Réglages ne perd pas un texte non
 enregistré (fermer la page, si). Le chemin normal est journalisé en console à `info`
 (`subagent_settings.loaded`, `subagent_settings.instructions_edit|reset`) ; le serveur journalise
 `prompt.override.*` et `subagent_roles.snapshot_*`. Le Control Center n'a pas de route d'écriture des erreurs
@@ -566,7 +572,7 @@ du navigateur : les échecs du navigateur restent en console et à l'écran.
 seulement les notices. En couleurs forcées, la sélection est marquée par une bordure épaisse `Highlight` et
 un soulignement, pas par la couleur. Sous 900 px, une seule colonne : choisir un rôle amène la fiche à l'écran,
 focus sur son titre, avec « Revenir à la liste des rôles ». La barre d'onglets des Réglages ramène l'onglet actif
-dans la vue (pour tous les onglets). Le pied de la modale est masqué dans cet onglet, qui porte ses propres
+dans la vue. Le pied des Réglages est masqué dans cette section (`save: 'self'`), qui porte ses propres
 notices. Les couleurs du CSS `.sar-*` sont des jetons du thème (`--text`, `--muted`, `--solid`, `--line`,
 `--accent`, `--role-accent-*`).
 
