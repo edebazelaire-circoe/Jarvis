@@ -20,7 +20,7 @@
   const STATUS={ok:['Actif','ok'],disabled:['Désactivé','info'],unavailable:['Indisponible','bad']};
   const LEG_LABEL={lexical:'Recherche par mots',recall:'Rappel dans le tour',semantic:'Recherche sémantique',tencent:'Sidecar Tencent',
     'knowledge:wiki':'Wiki','knowledge:codegraph':'Graphe de code','knowledge:skills':'Skills'};
-  const SECRET_HINT={semantic:'clé du fournisseur',tencent:'jeton du sidecar'};
+  const SECRET_HINT={semantic:'Clé du fournisseur',tencent:'Jeton du sidecar'};
   const own=(o,k)=>Object.prototype.hasOwnProperty.call(o,k);
 
   /* Étages d'une section du bloc : le sien (`recall`, `semantic`, `tencent`), ou ses `knowledge:*`. */
@@ -107,7 +107,7 @@
 
     function secretLine(sectionId){
       const s=(st.memory.secrets||{})[sectionId];if(!s)return '';
-      return `<p class="hint mem-secret">${esc(SECRET_HINT[sectionId]||'clé')} : <strong>${s.has_secret?'présent':'absent'}</strong>. Il se règle dans `
+      return `<p class="hint mem-secret">${esc(SECRET_HINT[sectionId]||'Clé')} : <strong>${s.has_secret?'présent':'absent'}</strong>. Il se règle dans `
         +`<button type="button" class="linkish" data-mem-open="keys">API Keys</button>, jamais ici.</p>`;
     }
     /* Moment d'application d'un groupe de champs, lu dans `restart_required` du serveur ; `null` si le groupe mélange. */

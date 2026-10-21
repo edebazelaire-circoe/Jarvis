@@ -1,0 +1,457 @@
+{
+ "sandbox": {
+  "worktree": "C:/Projects/jarvis/setui",
+  "head": "36085b29 + CSS/libellé (commit S5 suivant)",
+  "core": "127.77.0.1:27653",
+  "control_center": "127.0.0.1:27654",
+  "data_root": "scratchpad/s05/data",
+  "runtime_dir": "scratchpad/s05/runtime",
+  "visualizer": "0",
+  "user_core": "127.77.0.1:17653 PID 31824 intact"
+ },
+ "harness": "tests/unit/_wake_word_settings_browser.mjs (copie lisant le plan depuis un fichier), Chrome sans tête, vrais clics et frappes CDP",
+ "first_run_note": "Première passe : la séquence clavier du plan était fausse (Entrée sur « Fermer »), et la partie Mémoire était à 2 935 px sous le haut après le lien profond (parties Voix et Mot d’éveil qui grandissent) : corrigé (commit 36085b29), tout rejoué.",
+ "first_run_posts": [
+  [
+   "POST",
+   "/api/settings",
+   "{\"memory\":{\"recall\":{\"max_items\":4}}}"
+  ],
+  [
+   "POST",
+   "/api/settings",
+   "{\"memory\":{\"semantic\":{\"provider\":\"openai\",\"enabled\":true}}}"
+  ]
+ ],
+ "tour_and_actions": {
+  "0:focus0": "voice_audio",
+  "0:keyboard": {
+   "cat": "memory_knowledge",
+   "section": "recall",
+   "focus": "memory_knowledge"
+  },
+  "0:tab1": "closeModal",
+  "0:tab2": "BUTTON",
+  "0:kright": "BUTTON",
+  "0:kenter": "BUTTON",
+  "0:keyboard2": {
+   "cat": "memory_knowledge",
+   "section": "semantic_retrieval",
+   "focus": "Recherche sémantique"
+  },
+  "0:info_recall": {
+   "cat": "memory_knowledge",
+   "section": "recall",
+   "items": [
+    "Rappel",
+    "Recherche sémantique",
+    "Consolidation",
+    "Sources de connaissances",
+    "Centre mémoire"
+   ],
+   "footer": false,
+   "fields": [
+    "recall.enabled",
+    "recall.max_items",
+    "recall.timeout_ms"
+   ],
+   "status": "Rappel dans le tour Actif1 point à vérifier dans la mémoire.Voir le diagnostic mémoire",
+   "badges": [
+    "Au prochain tour",
+    "Actif"
+   ],
+   "overflow": 0,
+   "content": 0,
+   "text": "Rappel\nAu prochain tour\n\nLes souvenirs que JARVIS ajoute à chaque tour : combien, et combien de temps il les cherche.\n\nRappel dans le tour\nActif\n1 point à vérifier dans la mémoire.\nVoir le diagnostic mémoire\nRappel actif\n\nInjecte les souvenirs pertinents dans le tour.\n\nSouvenirs par tour\n1 À 10\n\nNom"
+  },
+  "0:info_semantic_retrieval": {
+   "cat": "memory_knowledge",
+   "section": "semantic_retrieval",
+   "items": [
+    "Rappel",
+    "Recherche sémantique",
+    "Consolidation",
+    "Sources de connaissances",
+    "Centre mémoire"
+   ],
+   "footer": false,
+   "fields": [
+    "semantic.enabled",
+    "semantic.provider",
+    "semantic.allow_private"
+   ],
+   "status": "Recherche sémantique Indisponible1 point à vérifier dans la mémoire.Voir le diagnostic mémoire",
+   "badges": [
+    "Au prochain démarrage de Core",
+    "Indisponible"
+   ],
+   "overflow": 0,
+   "content": 0,
+   "text": "Recherche sémantique\nAu prochain démarrage de Core\n\nRetrouver un souvenir par son sens et pas seulement par ses mots, grâce à un fournisseur externe.\n\nRecherche sémantique\nIndisponible\n1 point à vérifier dans la mémoire.\nVoir le diagnostic mémoire\nRecherche sémantique\n\nAjoute une recherche par sens "
+  },
+  "0:info_consolidation": {
+   "cat": "memory_knowledge",
+   "section": "consolidation",
+   "items": [
+    "Rappel",
+    "Recherche sémantique",
+    "Consolidation",
+    "Sources de connaissances",
+    "Centre mémoire"
+   ],
+   "footer": false,
+   "fields": [
+    "consolidation.mode",
+    "consolidation.auto_min_confidence",
+    "consolidation.max_candidates_per_run"
+   ],
+   "status": "1 point à vérifier dans la mémoire.Voir le diagnostic mémoire",
+   "badges": [
+    "Au prochain tour"
+   ],
+   "overflow": 0,
+   "content": 0,
+   "text": "Consolidation\nAu prochain tour\n\nComment les propositions de souvenirs deviennent des notes : décision manuelle ou automatique.\n\n1 point à vérifier dans la mémoire.\nVoir le diagnostic mémoire\nMode de consolidation\nManual\nAuto\n\nManuel : l'utilisateur tranche. Auto : exige la recherche sémantique.\n\nCon"
+  },
+  "0:info_knowledge_sources": {
+   "cat": "memory_knowledge",
+   "section": "knowledge_sources",
+   "items": [
+    "Rappel",
+    "Recherche sémantique",
+    "Consolidation",
+    "Sources de connaissances",
+    "Centre mémoire"
+   ],
+   "footer": false,
+   "fields": [
+    "tencent.enabled",
+    "tencent.url",
+    "tencent.service_id",
+    "tencent.allow_private",
+    "knowledge.wiki_enabled",
+    "knowledge.codegraph_enabled",
+    "knowledge.skills_enabled"
+   ],
+   "status": "Sidecar Tencent DésactivéWiki ActifGraphe de code ActifSkills Actif1 point à vérifier dans la mémoire.Voir le diagnostic mémoire",
+   "badges": [
+    "Désactivé",
+    "Actif",
+    "Actif",
+    "Actif",
+    "Désactivé",
+    "Au prochain démarrage de Core",
+    "Au prochain tour"
+   ],
+   "overflow": 0,
+   "content": 0,
+   "text": "Sources de connaissances\n\nWiki, graphe de code, Skills et sidecar Tencent proposés au cerveau, et ce que reçoit chaque agent.\n\nSidecar Tencent\nDésactivé\nWiki\nActif\nGraphe de code\nActif\nSkills\nActif\n1 point à vérifier dans la mémoire.\nVoir le diagnostic mémoire\nSidecar Tencent\nDésactivé\nAu prochain d"
+  },
+  "0:info_memory_center": {
+   "cat": "memory_knowledge",
+   "section": "memory_center",
+   "items": [
+    "Rappel",
+    "Recherche sémantique",
+    "Consolidation",
+    "Sources de connaissances",
+    "Centre mémoire"
+   ],
+   "footer": false,
+   "fields": [],
+   "status": "1 point à vérifier dans la mémoire.Voir le diagnostic mémoire",
+   "badges": [],
+   "overflow": 0,
+   "content": 0,
+   "text": "Centre mémoire\n\nInspecter les notes, décider des candidats, vérifier les index et tester le rappel.\n\n1 point à vérifier dans la mémoire.\nVoir le diagnostic mémoire\nOuvrir le Memory Center\n\nNotes, candidats à décider, santé des index, connaissances et test de rappel. Les Réglages se ferment à l’ouver"
+  },
+  "0:info_diagnostics": {
+   "cat": "advanced_diagnostics",
+   "section": "diagnostics",
+   "items": [
+    "Architecture & compatibilité",
+    "Runtime & CLI",
+    "Diagnostics",
+    "Work Methods apprises",
+    "Prompts",
+    "Expérimental"
+   ],
+   "footer": false,
+   "fields": [],
+   "status": null,
+   "badges": [
+    "Actif",
+    "Actif",
+    "Indisponible",
+    "Désactivé",
+    "Actif",
+    "Actif",
+    "Actif"
+   ],
+   "overflow": 0,
+   "content": 0,
+   "text": "Lecture seule : ce qui a été constaté, rien ici ne modifie un réglage.\nVoix\nPile effective :\nopenai_realtime\n· pile historique conservée :\nopenai_realtime\nrelire l’état\nProfil vocal\n\"C:\\\\Users\\\\Clarice\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Projects-jarvis-jarvis\\\\27bb85db-d7ce-4168-b4b8-691f54979c31\\\\sc"
+  },
+  "0:alias_memory": [
+   "memory_knowledge",
+   null,
+   "recall"
+  ],
+  "0:recall_change": {
+   "before": "4",
+   "after": "5",
+   "save": true
+  },
+  "0:elsewhere": "Enregistre aussi les changements en attente dans d’autres sections : Souvenirs par tour.",
+  "0:recall_kept": "5",
+  "0:recall_saved": "Rappel\nAu prochain tour\n\nLes souvenirs que JARVIS ajoute à chaque tour : combien, et combien de temps il les cherche.\n\nRappel dans le tour\nActif\n1 point à vérifier dans la mémoire.\nVoir le diagnostic mémoire\nRappel actif\n\nInjecte les souvenirs pertinents dans le tour.\n\nSouvenirs par tour\n1 À 10\n\nNombre maximal de souvenirs rappelés.\n\nDélai de rappel (ms)\n100 À 1500\n\nAu-delà, le tour continue sans rappel.\n\nRéglages mémoire enregistrés.\nEnregistrer la mémoire\nAnnuler les changements",
+  "0:status_degraded": "Recherche sémantique Indisponible1 point à vérifier dans la mémoire.Voir le diagnostic mémoire",
+  "0:diag_link": {
+   "cat": "advanced_diagnostics",
+   "section": "diagnostics",
+   "focus": "diagnostic_memory",
+   "top": 668.828125,
+   "inView": true,
+   "text": "Mémoire\nRecherche par mots\nActif\nRappel dans le tour\nActif\nRecherche sémantique\nIndisponible\nSidecar Tencent\nDésactivé\nWiki\nActif\nGraphe de code\nActif\nSkills\nActif\nRecherche sémantique\nRecherche sémantique activée mais aucune clé du fournisseur d'embeddings. semantic_no_key\nAjouter la clé dans API K"
+  },
+  "0:semantic_change": {
+   "before": true,
+   "after": false,
+   "save": true
+  },
+  "0:restart_pending": [
+   "Redémarrage de Core nécessaire pour : Recherche sémantique."
+  ],
+  "0:restart_after": [
+   "Enregistré. La recherche sémantique et le sidecar ne s’appliquent qu’au prochain démarrage de Core ; le rappel, les budgets et les connaissances dès le prochain tour.",
+   "Réglages mémoire enregistrés."
+  ],
+  "0:status_after": "Recherche sémantique DésactivéAucun problème détecté dans la mémoire.Voir le diagnostic mémoire",
+  "0:center_open": {
+   "settingsOpen": false,
+   "center": true,
+   "focus": "mc-tab-notes"
+  },
+  "1:recall_reloaded": "5",
+  "1:semantic_reloaded": {
+   "provider": "openai",
+   "enabled": false
+  },
+  "1:server_state": {
+   "values": {
+    "max": 5,
+    "sem": false,
+    "prov": "openai"
+   },
+   "legs": {
+    "lexical": "ok",
+    "recall": "ok",
+    "semantic": "disabled",
+    "tencent": "disabled",
+    "knowledge:wiki": "ok",
+    "knowledge:codegraph": "ok",
+    "knowledge:skills": "ok"
+   }
+  }
+ },
+ "posts": [
+  [
+   "POST",
+   "/api/settings",
+   "{\"memory\":{\"recall\":{\"max_items\":5}}}"
+  ],
+  [
+   "POST",
+   "/api/settings",
+   "{\"memory\":{\"semantic\":{\"enabled\":false}}}"
+  ]
+ ],
+ "console": [],
+ "layout_overflow": {
+  "1920x1080-100": [
+   {
+    "section": "recall",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "semantic_retrieval",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "consolidation",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "knowledge_sources",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "memory_center",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "diagnostics",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   }
+  ],
+  "1920x1080-125 (1536x864)": [
+   {
+    "section": "recall",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "semantic_retrieval",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "consolidation",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "knowledge_sources",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "memory_center",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "diagnostics",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   }
+  ],
+  "1366x768-100": [
+   {
+    "section": "recall",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "semantic_retrieval",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "consolidation",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "knowledge_sources",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "memory_center",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "diagnostics",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   }
+  ],
+  "1366x768-125 (1093x614)": [
+   {
+    "section": "recall",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "semantic_retrieval",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "consolidation",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "knowledge_sources",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "memory_center",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   },
+   {
+    "section": "diagnostics",
+    "page": 0,
+    "content": 0,
+    "main": 0,
+    "wide": []
+   }
+  ]
+ },
+ "pids_stopped": {
+  "brain_claude": 22472,
+  "control_center": 26960,
+  "control_center_launcher": "3776 (parti avec son enfant)",
+  "core": 528,
+  "core_launcher": "17780 (parti avec son enfant)",
+  "brain_mcp_children": "27300 32088 7832 28564 31204 36880 16388 27540 7580 19188 partis avec le cerveau (vérifié)"
+ },
+ "data_left_in_place": true
+}
