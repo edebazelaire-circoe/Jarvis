@@ -3,9 +3,15 @@
 Seul endroit qui lance ou tue un processus pour les capacités locales
 (`docs/local-capabilities.md` §4, `docs/remotion-runtime.md`). Sous Windows,
 `Popen.kill()` ne tue que le processus direct : `npm.cmd`, `node` et leurs
-petits-enfants survivraient. On tue donc l'arbre par `taskkill /T /F`. Une
-référence de processus est `pid:début` (heure de création) pour qu'un pid
-réutilisé par un autre programme ne passe jamais pour notre enfant.
+petits-enfants survivraient. On tue donc l'arbre, mais jamais par
+`taskkill /T` : Windows ne rafraîchit pas le PID parent d'un orphelin, et
+`/T` tuerait un processus étranger dont le PPID périmé égale un PID vivant.
+L'arbre est parcouru ici : un enfant n'en fait partie que s'il est né après
+son parent (heure de création), et chaque processus est tué par une poignée
+ouverte après relecture de son identité. Une référence de processus est
+`pid:début` (heure de création) pour qu'un pid réutilisé par un autre
+programme ne passe jamais pour notre enfant ; `kill_tree(pid, started=…)`
+refuse de suivre un pid dont l'heure de création a changé.
 
 Aucun secret : l'environnement de l'enfant est une liste blanche (`clean_env`).
 """
@@ -56,14 +62,102 @@ def _creationflags() -> int:
     return subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
 
 
-def kill_tree(pid: int) -> bool:
-    """Tue le processus et tous ses descendants ; rend vrai si l'arbre n'existe plus."""
+def _windows_parent_table() -> list[tuple[int, int]]:
+    """(pid, ppid) de chaque processus du poste, par un instantané Toolhelp ; [] si l'instantané échoue."""
+
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", ctypes.c_wchar * 260)]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)  # TH32CS_SNAPPROCESS
+    if not snapshot or snapshot == wintypes.HANDLE(-1).value:
+        return []
+    rows: list[tuple[int, int]] = []
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            rows.append((int(entry.th32ProcessID), int(entry.th32ParentProcessID)))
+            more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return rows
+
+
+def verified_descendants(pid: int, started: str, table: Sequence[tuple[int, int]],
+                         born_of: Callable[[int], str | None]) -> list[tuple[int, str]]:
+    """Descendants de `pid` (né à `started`) qu'un PPID périmé ne peut pas usurper : chaque enfant est né après son parent.
+
+    Pur (la table et la lecture des heures sont injectées) : `born_of` rend l'heure de création comparable (FILETIME en
+    entier décimal) ou None si le processus est parti. Ordre : du plus proche au plus lointain.
+    """
+
+    children: dict[int, list[int]] = {}
+    for child, parent in table:
+        if child != parent:
+            children.setdefault(parent, []).append(child)
+    found: list[tuple[int, str]] = []
+    seen = {pid}
+    queue: deque[tuple[int, str]] = deque([(pid, started)])
+    while queue:
+        parent, parent_born = queue.popleft()
+        for child in children.get(parent, ()):
+            if child in seen:
+                continue
+            born = born_of(child)
+            if not born or not born.isdigit() or not parent_born.isdigit() or int(born) < int(parent_born):
+                continue  # né avant son « parent » : orphelin dont le PPID a été réemployé, jamais suivi
+            seen.add(child)
+            found.append((child, born))
+            queue.append((child, born))
+    return found
+
+
+def _windows_terminate_if(pid: int, started: str) -> None:
+    """Tue `pid` par une poignée ouverte, seulement si son heure de création est toujours `started`."""
+
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    handle = kernel32.OpenProcess(0x0001 | 0x1000, False, pid)  # PROCESS_TERMINATE | QUERY_LIMITED_INFORMATION
+    if not handle:
+        return  # parti, ou inaccessible : rien à tuer sous notre identité
+    try:
+        created, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
+        if not kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited), ctypes.byref(kernel), ctypes.byref(user)):
+            return
+        if str((created.dwHighDateTime << 32) | created.dwLowDateTime) != started:
+            return  # pid réemployé entre le parcours et l'arrêt
+        kernel32.TerminateProcess(handle, 1)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def kill_tree(pid: int, started: str | None = None) -> bool:
+    """Tue le processus et ses descendants vérifiés ; rend vrai si l'arbre n'existe plus.
+
+    `started` (heure de création d'une référence `pid:début`) : si le pid vit sous une autre identité, rien n'est tué
+    et l'arbre est tenu pour parti (le nôtre n'existe plus). Sans `started`, l'heure lue maintenant fait foi.
+    """
 
     if pid <= 0:
         return True
     if IS_WINDOWS:
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=20,
-                       creationflags=subprocess.CREATE_NO_WINDOW, check=False)
+        root_born = _windows_start_time(pid)
+        if root_born is None or (started is not None and root_born != started):
+            return True  # parti, ou ce pid appartient désormais à un autre programme : on ne le suit jamais
+        tree = [(pid, root_born), *verified_descendants(pid, root_born, _windows_parent_table(), _windows_start_time)]
+        for member, born in tree:  # racine d'abord : elle ne relance plus d'enfant pendant qu'on tue les autres
+            _windows_terminate_if(member, born)
     else:
         try:
             os.killpg(os.getpgid(pid), signal.SIGKILL)

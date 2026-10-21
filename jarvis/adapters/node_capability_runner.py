@@ -579,7 +579,7 @@ class NodeCapabilityRunner:
         parsed = process_tree.parse_process_ref(process_ref)
         if parsed is None or not process_tree.ref_alive(process_ref):
             return
-        if not process_tree.kill_tree(parsed[0]):
+        if not process_tree.kill_tree(parsed[0], started=parsed[1]):
             raise LocalCapabilityError(C.STOP_FAILED, "the process tree is still alive after taskkill/kill")
 
     def is_alive(self, process_ref: str) -> bool:

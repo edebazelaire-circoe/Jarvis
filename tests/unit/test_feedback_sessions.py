@@ -6,6 +6,7 @@ from jarvis.runtime.feedback_sessions import FEEDBACK_DIR_ENV, LAUNCHED_AT_ENV, 
 def test_session_dir_is_named_by_launch_second_and_exported(tmp_path, monkeypatch):
     monkeypatch.delenv(LAUNCHED_AT_ENV, raising=False)
     monkeypatch.delenv(FEEDBACK_DIR_ENV, raising=False)
+    monkeypatch.delenv("JARVIS_DATA_ROOT", raising=False)
 
     directory = feedback_session_dir(tmp_path, now=1789654261.73)
 
@@ -18,6 +19,7 @@ def test_session_dir_is_named_by_launch_second_and_exported(tmp_path, monkeypatc
 def test_launch_stamp_is_fixed_once_per_session(tmp_path, monkeypatch):
     monkeypatch.setenv(LAUNCHED_AT_ENV, "1789650000")
     monkeypatch.delenv(FEEDBACK_DIR_ENV, raising=False)
+    monkeypatch.delenv("JARVIS_DATA_ROOT", raising=False)
 
     first = feedback_session_dir(tmp_path, now=1789654261)
     again = feedback_session_dir(tmp_path, now=1789659999)
@@ -27,3 +29,22 @@ def test_launch_stamp_is_fixed_once_per_session(tmp_path, monkeypatch):
 
 def test_brain_is_told_where_feedback_goes():
     assert FEEDBACK_DIR_ENV in BRAIN_SYSTEM_PROMPT
+
+
+def test_an_isolated_start_with_a_data_root_creates_nothing_under_the_repository(tmp_path, monkeypatch):
+    repo, data = tmp_path / "repo", tmp_path / "data"
+    repo.mkdir()
+    monkeypatch.setenv("JARVIS_DATA_ROOT", str(data))
+    monkeypatch.setenv(LAUNCHED_AT_ENV, "1789650000")
+    monkeypatch.delenv(FEEDBACK_DIR_ENV, raising=False)
+
+    directory = feedback_session_dir(repo)
+
+    assert directory == data / "retours-utilisateur" / "1789650000" and directory.is_dir()
+    assert list(repo.iterdir()) == [], "nothing is created in the working tree"
+
+
+def test_without_a_data_root_the_daily_jarvis_keeps_its_folder_under_the_repository(tmp_path, monkeypatch):
+    monkeypatch.setenv("JARVIS_DATA_ROOT", "  ")
+    monkeypatch.setenv(LAUNCHED_AT_ENV, "1789650000")
+    assert feedback_session_dir(tmp_path) == tmp_path / "retours-utilisateur" / "1789650000"

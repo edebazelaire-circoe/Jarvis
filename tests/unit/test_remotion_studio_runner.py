@@ -286,7 +286,7 @@ def test_a_process_that_exits_during_start_reports_its_log(runtime):
 
 def test_a_studio_that_never_answers_times_out_and_is_killed(runtime, monkeypatch):
     killed = []
-    monkeypatch.setattr(R.process_tree, "kill_tree", lambda pid: killed.append(pid) or True)
+    monkeypatch.setattr(R.process_tree, "kill_tree", lambda pid, started=None: killed.append(pid) or True)
     ticks = iter(range(0, 10_000))
     runner = make(runtime, spawn=lambda *a, **k: os.getpid(), port_chooser=lambda: 1, clock=lambda: next(ticks) * 20, sleep=lambda s: None,
                   start_timeout_s=50)
@@ -300,7 +300,7 @@ def test_a_studio_that_never_answers_times_out_and_is_killed(runtime, monkeypatc
 
 def test_stop_never_kills_a_process_whose_identity_changed(runtime, monkeypatch):
     killed = []
-    monkeypatch.setattr(R.process_tree, "kill_tree", lambda pid: killed.append(pid) or True)
+    monkeypatch.setattr(R.process_tree, "kill_tree", lambda pid, started=None: killed.append(pid) or True)
     runner = make(runtime)
     runner.stop(f"{os.getpid()}:1")  # pid vivant, heure de création différente : un autre programme a réutilisé ce pid
     runner.stop("not a ref")
@@ -310,7 +310,7 @@ def test_stop_never_kills_a_process_whose_identity_changed(runtime, monkeypatch)
 
 
 def test_a_failed_kill_is_a_typed_error_not_a_silent_success(runtime, monkeypatch):
-    monkeypatch.setattr(R.process_tree, "kill_tree", lambda pid: False)
+    monkeypatch.setattr(R.process_tree, "kill_tree", lambda pid, started=None: False)
     with pytest.raises(StudioError) as caught:
         make(runtime).stop(R.process_tree.make_process_ref(os.getpid()))
     assert caught.value.code is C.STOP_FAILED

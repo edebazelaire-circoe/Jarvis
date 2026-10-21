@@ -487,7 +487,7 @@ class RemotionRenderRunner:
         parsed = process_tree.parse_process_ref(process_ref)
         if parsed is None or not process_tree.ref_alive(process_ref):
             return True  # parti, ou le pid appartient à un autre programme : on ne tue jamais à l'aveugle
-        return process_tree.kill_tree(parsed[0])
+        return process_tree.kill_tree(parsed[0], started=parsed[1])
 
     def alive(self, process_ref: str) -> bool:
         return process_tree.ref_alive(process_ref)

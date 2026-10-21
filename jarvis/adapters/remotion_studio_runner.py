@@ -684,7 +684,7 @@ class RemotionStudioRunner:
         parsed = process_tree.parse_process_ref(process_ref)
         if parsed is None or not process_tree.ref_alive(process_ref):
             return  # déjà parti, ou le pid appartient à un autre programme : on ne tue jamais à l'aveugle
-        if not process_tree.kill_tree(parsed[0]):
+        if not process_tree.kill_tree(parsed[0], started=parsed[1]):
             raise StudioError(C.STOP_FAILED, "the Studio process tree is still alive after the kill")
 
     def activity(self, launch_id: str) -> Mapping[str, object]:

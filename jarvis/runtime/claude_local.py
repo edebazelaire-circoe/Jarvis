@@ -21,8 +21,8 @@ from jarvis.runtime.agent_tasks import EPHEMERAL_MARKER, AgentTaskTracker
 from jarvis.runtime.subagent_conversation import SubagentConversationScope, consumed_message_uuids
 from jarvis.runtime.cli_catalog import resolve_command, unsafe_through_cmd_shim
 from jarvis.runtime.cli_stream import (
-    MAX_LINE_BYTES, OversizeLine, clip_text, iter_lines, journal_view, may_carry_media, redact_media,
-    restricted_event_view,
+    MAX_LINE_BYTES, OversizeLine, ToolContentRedactor, clip_text, iter_lines, journal_view, may_carry_media,
+    redact_media, restricted_event_view,
 )
 from jarvis.runtime.display_mcp import (
     RECOMMENDED_ARTIFACT_CATEGORIES as DISPLAY_ARTIFACT_CATEGORIES,
@@ -712,6 +712,8 @@ class ClaudeLocalAgent:
         self._events: list[dict[str, Any]] = []
         self._event_times: list[int] = []
         self.subtasks = AgentTaskTracker(provider="claude", journal=self.journal, formatter=self._transcript_entry)
+        # Journal diagnostique : le texte des outils de relation n'y est jamais recopié (D13), les résultats y sont bornés.
+        self._journal_redactor = ToolContentRedactor()
         self._lock = asyncio.Lock()
         # Identifiant de la conversation en cours : c'est lui qui permet à la
         # console de debug de reprendre *la même* conversation.
@@ -2184,7 +2186,7 @@ class ClaudeLocalAgent:
                 self.journal.emit("agent.event", str(event.get("type") or "event"),
                                   data=(restricted_event_view(event, size=len(raw))
                                         if self.execution_profile in RESTRICTED_PROFILES
-                                        else journal_view(event, size=len(raw))))
+                                        else journal_view(self._journal_redactor.view(event), size=len(raw))))
         if self.process is not None:
             process = self.process
             self._stream_ended = process

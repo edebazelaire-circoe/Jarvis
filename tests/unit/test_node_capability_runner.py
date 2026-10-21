@@ -436,7 +436,7 @@ def test_start_refuses_a_worker_whose_identity_cannot_be_read_and_kills_it(env, 
     monkeypatch.setattr(process_tree, "spawn_detached", spawn)
     monkeypatch.setattr(NodeCapabilityRunner, "_get_health", staticmethod(lambda port, pid: None))
     monkeypatch.setattr(process_tree, "make_process_ref", lambda pid: "")
-    monkeypatch.setattr(process_tree, "kill_tree", lambda pid: killed.append(pid) or True)
+    monkeypatch.setattr(process_tree, "kill_tree", lambda pid, started=None: killed.append(pid) or True)
     with pytest.raises(LocalCapabilityError) as err:
         runner.start(MANIFEST, runtime)
     assert err.value.detail.startswith("process_identity_unavailable") and killed == [77]
@@ -583,7 +583,7 @@ def test_removal_reaches_files_beyond_the_260_character_windows_limit(tmp_path):
 def test_cancel_all_kills_every_tracked_process_tree_and_marks_the_install_cancelled(env, monkeypatch):
     runner, node, runtime, *_ = env
     killed: list[int] = []
-    monkeypatch.setattr(process_tree, "kill_tree", lambda pid: killed.append(pid) or True)
+    monkeypatch.setattr(process_tree, "kill_tree", lambda pid, started=None: killed.append(pid) or True)
 
     def execute(argv, *, cwd, env, timeout_s, on_start=None):
         if "ci" in argv:

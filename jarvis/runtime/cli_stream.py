@@ -17,14 +17,21 @@ Handoff jarvis-constellation-scene-runtime, Slice 09 (reprise QA). Trouvé par l
 - `restricted_event_view(event, size)` (session-context, reprise QA Slice 08) : pour un profil
   restreint (enrichissement, spéculatif, préparation), **métadonnées seulement** — type, sous-type,
   tailles, jetons, coût, durée, codes — jamais un texte : sa sortie résume la parole de la salle.
+- `ToolContentRedactor.view(event)` (organic orchestration, Slice 13) : avant `journal_view`, le
+  texte libre des outils de relation (`mcp__jarvis-workspace__relation_*` : messages, packet de relais,
+  synthèses) devient sa taille, leurs résultats aussi ; tout autre résultat d'outil est borné à
+  `JOURNAL_TOOL_RESULT_CHARS`. Restent les identifiants, codes, drapeaux et tailles, ce qui suffit au
+  diagnostic ; le tableau de relation et l'historique de mission gardent seuls le texte délibéré.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from collections import OrderedDict
 from dataclasses import dataclass
 import json
+import re
 from typing import Any
 
 #: Plus longue ligne gardée ; au-delà, la ligne entière est écartée et signalée.
@@ -35,6 +42,14 @@ READ_CHUNK_BYTES = 64 * 1024
 MAX_JOURNAL_EVENT_BYTES = 256 * 1024
 #: Aperçu gardé d'une ligne de texte trop grosse pour le journal.
 JOURNAL_PREVIEW_CHARS = 2_000
+#: Outils dont le texte est une communication délibérée entre agents : jamais recopiée dans le journal.
+RELATION_TOOL_PREFIX = "mcp__jarvis-workspace__relation_"
+#: Aperçu gardé du résultat d'un autre outil dans le journal diagnostique (le reste : sa taille).
+JOURNAL_TOOL_RESULT_CHARS = 1_000
+#: Identifiants d'appels d'outil de relation retenus pour reconnaître leur résultat (borne mémoire).
+_RELATION_CALLS_KEPT = 256
+#: Valeur gardée telle quelle dans l'entrée d'un outil de relation : un identifiant ou un code, jamais une phrase.
+_TOKEN_VALUE = re.compile(r"[A-Za-z0-9_.:@/-]{1,96}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +211,102 @@ def restricted_event_view(event: dict[str, Any], *, size: int) -> dict[str, Any]
     if isinstance(errors, list):
         view["errors"] = len(errors)
     return view
+
+
+def _token_view(value: Any) -> Any:
+    """Entrée d'un outil de relation : identifiants, codes, nombres et drapeaux gardés ; tout texte libre → sa taille."""
+
+    if isinstance(value, dict):
+        return {str(key): _token_view(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_token_view(item) for item in value[:32]]
+    if isinstance(value, str):
+        return value if _TOKEN_VALUE.fullmatch(value) else {"redacted_chars": len(value)}
+    return value
+
+
+def _result_chars(content: Any) -> int:
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, list):
+        return sum(len(str(item.get("text") or "")) for item in content if isinstance(item, dict))
+    return len(json.dumps(content, ensure_ascii=False, default=str)) if content is not None else 0
+
+
+def _bounded_result(content: Any, limit: int) -> Any:
+    """Résultat d'outil borné à `limit` caractères de texte au total ; les blocs sans texte restent tels quels."""
+
+    if isinstance(content, str):
+        return clip_text(content, limit)
+    if not isinstance(content, list):
+        return content
+    out: list[Any] = []
+    left = limit
+    for item in content:
+        if isinstance(item, dict) and isinstance(item.get("text"), str):
+            text = item["text"]
+            out.append({**item, "text": clip_text(text, left) if left > 0 else f"…[+{len(text)} caractères]"})
+            left -= len(text)
+        else:
+            out.append(item)
+    return out
+
+
+class ToolContentRedactor:
+    """Vue journal d'un événement stream-json : contenu des outils de relation retiré, autres résultats bornés.
+
+    Garde en mémoire (bornée) les `tool_use_id` des appels de relation vus, pour reconnaître leur résultat, qui
+    arrive dans un événement `user` ultérieur. Ne modifie jamais l'événement reçu (copie des seules parties changées).
+    """
+
+    def __init__(self, *, result_chars: int = JOURNAL_TOOL_RESULT_CHARS) -> None:
+        self._relation_calls: OrderedDict[str, None] = OrderedDict()
+        self._result_chars = result_chars
+
+    def _remember(self, tool_use_id: str) -> None:
+        self._relation_calls[tool_use_id] = None
+        while len(self._relation_calls) > _RELATION_CALLS_KEPT:
+            self._relation_calls.popitem(last=False)
+
+    def view(self, event: dict[str, Any]) -> dict[str, Any]:
+        message = event.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            return event
+        changed = relation_result = False
+        blocks: list[Any] = []
+        for block in content:
+            if not isinstance(block, dict):
+                blocks.append(block)
+                continue
+            kind = block.get("type")
+            if kind == "tool_use" and str(block.get("name") or "").startswith(RELATION_TOOL_PREFIX):
+                if isinstance(block.get("id"), str):
+                    self._remember(block["id"])
+                blocks.append({**block, "input": _token_view(block.get("input"))})
+                changed = True
+            elif kind == "tool_result":
+                chars = _result_chars(block.get("content"))
+                if block.get("tool_use_id") in self._relation_calls:
+                    relation_result = True
+                    kept = {key: value for key, value in block.items() if key != "content"}
+                    blocks.append({**kept, "content_withheld": True, "content_chars": chars})
+                    changed = True
+                elif chars > self._result_chars:
+                    blocks.append({**block, "content": _bounded_result(block.get("content"), self._result_chars),
+                                   "content_chars": chars})
+                    changed = True
+                else:
+                    blocks.append(block)
+            else:
+                blocks.append(block)
+        if not changed:
+            return event
+        out = {**event, "message": {**message, "content": blocks}}
+        if relation_result and "tool_use_result" in out:
+            out["tool_use_result"] = {"withheld": True,
+                                      "chars": len(json.dumps(out["tool_use_result"], ensure_ascii=False, default=str))}
+        return out
 
 
 def clip_text(text: str, limit: int = MAX_JOURNAL_EVENT_BYTES) -> str:
