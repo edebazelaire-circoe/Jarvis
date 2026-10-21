@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-SETTINGS-008",
+      "description": "From the Jarvis wheel, open Paramètres and the 'Réglages de la voix' row. Confirm the six categories are listed and the voice row lands on Voix & audio."
+    }
+  ]
+}

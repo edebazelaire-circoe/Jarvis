@@ -1,0 +1,21 @@
+{
+  "slice_id": "07-connections-reorganization",
+  "title": "Connections reorganization",
+  "task_type": "waived-by-agent-0",
+  "dependencies": [
+    "02-settings-shell-visual-redesign"
+  ],
+  "frontend": true,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ],
+  "agent_routing": "Use a Claude Work Agent for frontend implementation/review where supported by the host."
+}

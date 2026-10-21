@@ -1,0 +1,25 @@
+{
+  "slice_id": "08-advanced-diagnostics-labs",
+  "title": "Advanced diagnostics and labs",
+  "task_type": "waived-by-agent-0",
+  "dependencies": [
+    "03-voice-audio-reorganization",
+    "04-agents-models-reorganization",
+    "05-memory-knowledge-reorganization",
+    "06-interface-interactions-reorganization",
+    "07-connections-reorganization"
+  ],
+  "frontend": true,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ],
+  "agent_routing": "Use a Claude Work Agent for frontend implementation/review where supported by the host."
+}

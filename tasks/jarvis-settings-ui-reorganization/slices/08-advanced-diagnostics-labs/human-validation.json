@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-SETTINGS-007",
+      "description": "Open Avance & diagnostic. Confirm it is organized into clear groups (architecture, prompts, runtime/CLI, diagnostics, labs) and that the prompt workbench and scene test gate are found there."
+    }
+  ]
+}

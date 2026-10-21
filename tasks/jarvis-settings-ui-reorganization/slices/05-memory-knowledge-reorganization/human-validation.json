@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-SETTINGS-004",
+      "description": "Open Memoire & connaissances. Confirm recall, semantic search, consolidation and knowledge sources are understandable without reading diagnostics, and that the Memory Center opens from there."
+    }
+  ]
+}

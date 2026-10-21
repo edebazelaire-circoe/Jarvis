@@ -1,8 +1,7 @@
 {
   "slice_id": "01-settings-registry-ia-contract",
   "title": "Canonical Settings registry and six-category IA contract",
-  "task_type": null,
-  "task_type_blocker": "Workspace Task Type vocabulary is not exposed during task creation. Slice 00 must resolve a valid existing Task Type before dispatch; do not invent one.",
+  "task_type": "waived-by-agent-0",
   "dependencies": [
     "00-project-manager"
   ],

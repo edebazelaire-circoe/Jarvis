@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-SETTINGS-006",
+      "description": "In Connexions, confirm each provider shows whether it is configured and which credential is active, without ever revealing a key value."
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-SETTINGS-005",
+      "description": "In Interface & interactions, change the theme, rebind the wake/send/interrupt key (F9 by default) and adjust a Bare Hands preference. Confirm each has a single obvious place and applies as before."
+    }
+  ]
+}
