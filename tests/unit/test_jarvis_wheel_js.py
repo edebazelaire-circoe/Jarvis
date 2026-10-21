@@ -180,4 +180,4 @@ def test_inserted_after_the_wheel_and_fed_by_the_one_status_beat():
     assert "fetch(" not in source and "setInterval" not in source and "setTimeout" not in source, "aucun second sondage"
     # Les deux portes sont les routes existantes : le bouton Agents et le modal des réglages.
     assert "getElementById('agentsButton')" in source and "root.openSettingsTab(" in source
-    assert re.search(r"function openSettingsTab\(tab\)\{", html) and re.search(r"function settingsTabs\(\)\{", html)
+    assert re.search(r"function openSettingsTab\(tab,options\)\{", html) and re.search(r"function settingsTabs\(\)\{", html)

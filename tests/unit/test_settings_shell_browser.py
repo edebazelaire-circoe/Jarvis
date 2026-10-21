@@ -54,6 +54,7 @@ LAYOUT = """(async()=>{const R=window.JarvisSettingsRegistry,out=[];
       main:document.getElementById('settingsMain').scrollWidth-document.getElementById('settingsMain').clientWidth,
       closeInside:close.left>=0&&close.right<=innerWidth&&close.top>=0&&close.bottom<=innerHeight,
       railInside:rail.every(r=>r.left>=0&&r.right<=innerWidth+0.5),bodyHeight:body.clientHeight,
+      clipped:[...document.querySelectorAll('#settingsCategories .set-cat-desc')].filter(d=>d.getClientRects().length&&d.scrollHeight>d.clientHeight+1).map(d=>d.textContent),
       title:document.getElementById('settingsCategoryTitle').textContent});
   }
   return out})()"""
@@ -98,6 +99,43 @@ async def test_categories_keyboard_shortcuts_escape_and_focus_return(served):
     closed = got(step, "closed")
     assert closed["open"] is False and closed["focus"] == "dockMore"  # rendu à « Plus d’outils »
     assert got(step, "closedByButton")["open"] is False
+    assert got(step, "field") in ("INPUT", "SELECT")  # un vrai champ avait le focus quand Échap a fermé
+    assert out["console"] == [], out["console"]
+
+
+INSIDE = "document.getElementById('settingsShell').contains(document.activeElement)"
+
+
+async def test_tab_trap_textarea_body_focus_and_save_keep_the_focus_contract(served):
+    """QA Slice 02 : piège de Tab, exception des zones de texte, Échap et Tab depuis `body` avec `ui_close`
+    réaffecté, focus rendu au bouton Enregistrer après l'envoi."""
+    last = ("(()=>{const all=[...document.querySelectorAll('#settingsShell button,#settingsShell input,#settingsShell select,"
+            "#settingsShell textarea,#settingsShell summary,#settingsShell a[href],#settingsShell [tabindex]')]"
+            ".filter(e=>!e.disabled&&e.tabIndex>=0&&e.getClientRects().length>0);all[all.length-1].focus();return all.length})()")
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        *OPEN, wait("!!document.getElementById('modalSave')&&!document.querySelector('#modalContent .empty')"),
+        eval_(last, "count"), {**key("Tab"), "id": "wrapForward"}, eval_(INSIDE, "afterWrap"),
+        eval_("document.querySelector('#settingsCategories [aria-selected=true]').focus(),1"),
+        {**key("Tab", shift=True), "id": "wrapBack"}, eval_(INSIDE, "afterBack"),
+        eval_("(()=>{const a=document.createElement('textarea');a.id='s02Area';document.getElementById('modalContent').prepend(a);a.focus();return document.activeElement.id})()", "area"),
+        {**key("Escape"), "id": "escArea"}, _state("afterAreaEscape"),
+        eval_("(SET.shortcuts.values.ui_close='q',document.activeElement.blur(),document.activeElement===document.body)", "onBody"),
+        {**key("Tab"), "id": "tabFromBody"}, eval_(INSIDE, "afterBodyTab"),
+        eval_("(document.activeElement.blur(),document.activeElement===document.body)", "onBodyAgain"),
+        {**key("Escape"), "id": "escBody"}, _state("afterBodyEscape"),
+        *OPEN, wait("!!document.getElementById('modalSave')&&!document.querySelector('#modalContent .empty')"),
+        eval_("document.getElementById('modalSave').focus(),1"), {**key("Enter"), "id": "save"},
+        wait("/Enregistré|rror|Erreur/.test(document.getElementById('modalStatus').textContent)&&!document.getElementById('modalSave').disabled", 8000),
+        eval_("({focus:document.activeElement.id,status:document.getElementById('modalStatus').textContent})", "saved"),
+    ]}])
+    step = out["steps"][0]
+    assert got(step, "count") > 3
+    assert got(step, "afterWrap") is True and got(step, "afterBack") is True  # Tab boucle dans le shell
+    assert got(step, "area") == "s02Area" and got(step, "afterAreaEscape")["open"] is True  # saisie longue : pas de fermeture
+    assert got(step, "onBody") is True and got(step, "afterBodyTab") is True  # depuis body, Tab entre dans le shell
+    assert got(step, "onBodyAgain") is True and got(step, "afterBodyEscape")["open"] is False  # Échap malgré ui_close='q'
+    saved = got(step, "saved")
+    assert saved["focus"] == "modalSave", saved
     assert out["console"] == [], out["console"]
 
 
@@ -110,6 +148,7 @@ async def test_no_category_overflows_at_desktop_sizes_and_125_percent_zoom(serve
     for row in layout:
         assert row["page"] <= 0 and row["shell"] <= 0 and row["main"] <= 0, row
         assert row["closeInside"] and row["railInside"], row
+        assert row["clipped"] == [], row  # aucune description de catégorie tronquée
         assert row["bodyHeight"] > 150, row  # le contenu garde de la place pour défiler
     assert out["console"] == [], out["console"]
 

@@ -90,3 +90,13 @@ QA (qa-verification + code-review, read-only, 10/10 mutations caught, page assem
 ### Preuves
 
 Bac à sable `setui` (Core 27653, Control Center 27654, données au scratchpad, visualiseur coupé). Avant : `references/current-settings-ui.png`. Après : `evidence/s02/` — 6 catégories × {1920×1080, 1366×768} × {100 %, 125 %} (125 % = largeur CSS /1,25, deviceScaleFactor 1,25), PNG quantifiés (2,1 Mo), `runtime-check.json` (débordement horizontal 0 partout, pied caché sur Sous-agents, Bare Hands `showSettings` → Avancé/Expérimental ; console sans erreur JS, seul le 424 réel de `/api/models` sans clé Anthropic).
+
+## 2026-10-21 - Slice 02 QA decision (agent 0)
+
+QA (qa-verification + code-review + runtime-validation, independent sandbox run, 11 mutations / 9 killed): REWORK. Blocking B1: opened from the Jarvis wheel, focus ends on the wheel anchor outside the `aria-modal` shell (wheel `restoreFocus` overrides `settingsFocusIn`). Sent back with N1 (Escape/Tab trap lost when focus is on `body` and `ui_close` rebound), N2 (focus lost after Save), N3 (surviving mutations: Tab trap, textarea exception), N4 (inexact textarea comment), N5 (truncated Memory description). Deferred polish: empty footer band on non-save tabs, crowded "encore dans" row in Advanced, disabled/read-only contrast (Slice 10).
+
+## 2026-10-21 - Slice 02 rework (QA)
+
+- B1 : la roue d'outils ne reprend plus un focus qu'une action a porté hors d'elle (`restoreFocus`, `control_center_tool_wheel.js`) ; `openSettingsTab(cible, {returnFocus})` (la roue passe son ancre) ; ouverture par la roue → focus sur la catégorie active, toujours là 800 ms après, Tab reste dans le shell, Échap rend le focus à l'ancre (`test_jarvis_wheel_browser`).
+- N1 : écoute Échap/Tab sur `document` tant que les réglages sont ouverts (cible dans le shell ou `body`) : Échap ferme avec `ui_close` réaffecté et focus sur `body`, Tab depuis `body` entre dans le shell. N2 : focus rendu à « Enregistrer » après `saveDraft`. N3 : tests du piège de Tab, de l'exception textarea, de `body`, du champ réellement focalisé. N4 : formulation « une saisie longue ne ferme pas la page » (code + `settings-shell.md`). N5 : descriptions des catégories raccourcies au registre, plus de troncature au rail (testé aux quatre tailles), captures `evidence/s02/` refaites.
+- Tests : shell node + mvp + quality + agent_cli + voice_architecture + intégration migration + appearance + subagents + voice_settings_ui 183 passed ; registre + wheel_js + wheel_browser 22 passed ; settings_shell_browser 7 passed ; tool_wheel js+browser 36 passed ; `-k shortcut` 18 passed. Bac à sable : Core 9700/34284, Control Center 28096/16536, arrêtés par PID.

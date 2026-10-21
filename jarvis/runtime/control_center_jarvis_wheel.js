@@ -223,7 +223,8 @@
         return undefined;
       }
       log('info','jarvis_wheel.open_settings',{tab:tab||null,source:source||null});
-      return root.openSettingsTab(tab||null);
+      /* L'ancre reprend le focus à la fermeture des Réglages (QA Slice 02 de jarvis-settings-ui-reorganization). */
+      return root.openSettingsTab(tab||null,{returnFocus:document.querySelector('#toolWheel .tw-anchor')});
     }
 
     function items(){

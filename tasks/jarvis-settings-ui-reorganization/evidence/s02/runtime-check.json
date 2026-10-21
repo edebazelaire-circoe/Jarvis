@@ -1,5 +1,5 @@
 {
- "note": "Bac à sable S02 : Core 27653, Control Center 27654, données sous le scratchpad. 125 % = largeur CSS /1.25 avec deviceScaleFactor 1.25. page/shell/main = débordement horizontal en px (0 = aucun). Le 424 de /api/models est l'état réel du catalogue sans clé Anthropic dans le bac à sable, rendu par la page, pas une erreur JS.",
+ "note": "Bac à sable S02 (rework) : Core 27653, Control Center 27654, données sous le scratchpad. 125 % = largeur CSS /1.25 avec deviceScaleFactor 1.25. page/shell/main = débordement horizontal en px (0 = aucun). Le 424 de /api/models est l'état réel du catalogue sans clé Anthropic dans le bac à sable, rendu par la page, pas une erreur JS.",
  "runs": [
   {
    "viewport": "1920x1080-100",

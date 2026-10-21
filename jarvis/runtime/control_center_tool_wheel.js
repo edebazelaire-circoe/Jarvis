@@ -1111,13 +1111,18 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
             try{el.focus({preventScroll:true})}catch(_){el.focus()}
             break;
           }
-          case 'restoreFocus':
+          case 'restoreFocus':{
             /* Le focus ne reste jamais sur un élément caché : il revient à
-               l'ancre, qui l'avait ouvert. */
+               l'ancre, qui l'avait ouvert. Sauf si l'action vient de le porter
+               ailleurs, hors de la roue (les Réglages ouverts par Paramètres,
+               jarvis-settings-ui-reorganization Slice 02) : on ne le reprend pas. */
+            const active=document.activeElement;
+            if(active&&active!==document.body&&!host.contains(active))break;
             if(built&&(focusInside||built.panel.contains(document.activeElement))){
               try{built.anchor.focus({preventScroll:true})}catch(_){built.anchor.focus()}
             }
             break;
+          }
           case 'activate':{
             const slot=SLOTS[fx.index];
             const action=actions.get(slot.id);

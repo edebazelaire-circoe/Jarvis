@@ -194,3 +194,25 @@ def test_the_two_jarvis_routes_and_every_settings_row_open_existing_surfaces(tmp
         errors = [c for c in step["console"] if c["type"] in ("exception", "error")]
         # Le double ne sert ni `/api/settings` ni le détail des agents : la page le dit, rien d'autre.
         assert all("not stubbed" in c["text"] or "404" in c["text"] for c in errors), errors
+
+
+#: Où est le focus : dans le shell des Réglages (et sur quelle catégorie), ou ailleurs.
+FOCUS = r"""(()=>{const ae=document.activeElement,shell=document.getElementById('settingsShell');
+  return {open:document.getElementById('overlay').classList.contains('open'),inShell:!!(shell&&shell.contains(ae)),
+    cat:ae&&ae.dataset?ae.dataset.category||null:null,anchor:!!(ae&&ae.classList&&ae.classList.contains('tw-anchor')),
+    id:ae?(ae.id||ae.className||ae.tagName):null}})()"""
+
+
+def test_settings_opened_from_the_wheel_keep_the_focus_and_give_it_back_to_the_anchor(tmp_path):
+    """QA Slice 02 de jarvis-settings-ui-reorganization : la roue ne reprend pas le focus que les Réglages ont pris."""
+    out = _drive(tmp_path, [{"width": 1280, "height": 720, "seed": ONLINE, "actions": [
+        *_open("settings"), ["click", "agents", "#toolWheel .tw-item[data-tw-item='tab:agents_models']", 100],
+        ["eval", "now", FOCUS, 0], ["eval", "later", FOCUS, 800],
+        ["key", "tab1", "Tab", 80], ["key", "tab2", "Tab", 80], ["key", "tab3", "Tab", 80], ["eval", "tabbed", FOCUS, 50],
+        ["key", "back", "Tab", 80, True], ["eval", "shifted", FOCUS, 50],
+        ["key", "esc", "Escape", 200], ["eval", "closed", FOCUS, 50]]}])
+    r = out[0]["results"]
+    assert r["now"]["open"] and r["now"]["inShell"] and r["now"]["cat"] == "agents_models", r["now"]
+    assert r["later"]["inShell"] and r["later"]["cat"] == "agents_models", r["later"]
+    assert r["tabbed"]["inShell"] and r["shifted"]["inShell"], (r["tabbed"], r["shifted"])
+    assert r["closed"]["open"] is False and r["closed"]["anchor"] is True, (r["closed"]["id"], r["closed"])

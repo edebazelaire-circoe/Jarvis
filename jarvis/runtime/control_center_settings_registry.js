@@ -27,12 +27,12 @@
   /* Ordre canonique = ordre d'affichage. Les identifiants sont stables (ASCII) ;
      les libellés ne sont que de la présentation. */
   const CATEGORIES=freezeAll([
-    {id:'voice_audio',label:'Voix & audio',description:'Conversation, voix, micro, tours de parole et mot d’éveil.'},
-    {id:'agents_models',label:'Agents & modèles',description:'Agent principal, modèles, comportement et sous-agents.'},
-    {id:'memory_knowledge',label:'Mémoire & connaissances',description:'Rappel, recherche sémantique, consolidation et sources de connaissances.'},
-    {id:'interface_interactions',label:'Interface & interactions',description:'Thème, scène, raccourcis clavier et Bare Hands.'},
+    {id:'voice_audio',label:'Voix & audio',description:'Conversation, voix, micro et mot d’éveil.'},
+    {id:'agents_models',label:'Agents & modèles',description:'Agent principal, modèles et sous-agents.'},
+    {id:'memory_knowledge',label:'Mémoire & connaissances',description:'Rappel, recherche, consolidation et sources.'},
+    {id:'interface_interactions',label:'Interface & interactions',description:'Thème, scène, raccourcis et Bare Hands.'},
     {id:'connections',label:'Connexions',description:'Fournisseurs et identifiants enregistrés.'},
-    {id:'advanced_diagnostics',label:'Avancé & diagnostic',description:'Architecture, prompts, runtime, diagnostics et outils de test.'},
+    {id:'advanced_diagnostics',label:'Avancé & diagnostic',description:'Architecture, prompts, diagnostics et essais.'},
   ]);
   const CATEGORY_IDS=Object.freeze(CATEGORIES.map(c=>c.id));
 

@@ -146,9 +146,10 @@ def test_settings_window_is_a_full_screen_shell_closed_explicitly():
     assert 'role="dialog" aria-modal="true" aria-labelledby="modalTitle"' in shell
     assert 'id="closeModal" aria-label="Fermer les réglages"' in shell and "<kbd>Échap</kbd>" in shell
     assert 'id="settingsCategories" role="tablist"' in shell and 'id="modalStatus" role="status" aria-live="polite"' in shell
-    keys = html[html.index("overlay.addEventListener('keydown'") :]
+    keys = html[html.index("document.addEventListener('keydown',event=>{\n  if(!SET.open)return;") :]
     keys = keys[: keys.index("\n});")]
     assert "event.key==='Escape'" in keys and "closeSettings()" in keys and "SET.capture" in keys
+    assert "target.tagName==='TEXTAREA'" in keys and "event.defaultPrevented" in keys
     for label in ("Voix", "Prompts", "Agent / CLI", "API Keys", "Raccourcis"):
         assert f"label:'{label}'" in html
     assert "id:'config'" not in html

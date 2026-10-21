@@ -67,10 +67,16 @@ ouverte dans chaque catégorie pendant la session.
   flèches (les deux axes), Début, Fin déplacent le focus sans rien charger ; Entrée, Espace ou un clic ouvre.
   Une catégorie charge des données : la parcourir au clavier ne doit pas déclencher six chargements.
 - Après chaque rendu de la navigation, le focus revient sur l'entrée active de la liste qui l'avait.
-- Tab et Maj+Tab bouclent dans le shell.
-- **Échap ferme toujours**, même si `ui_close` est réaffecté et même depuis un champ, sauf : capture d'un raccourci
-  en cours (elle le prend avant), zone de texte longue ou éditable (Échap y abandonne la saisie, pas la page), ou
-  événement déjà consommé (`defaultPrevented`). Le bouton « Fermer » et `ui_close` ferment aussi.
+- Tab et Maj+Tab bouclent dans le shell ; depuis `body`, ils y entrent.
+- Quelle que soit la route d'ouverture (bouton, raccourci `s`, roue › Paramètres, `openSettingsTab`), le focus
+  finit sur la catégorie active : la roue ne reprend pas un focus qu'une action a porté hors d'elle, et le retour
+  à la fermeture se fait sur l'ancre de la roue quand c'est elle qui a ouvert.
+- Après « Enregistrer » (bouton désactivé pendant l'envoi), le focus est rendu au bouton.
+- **Échap ferme toujours**, même si `ui_close` est réaffecté, même depuis un champ et même quand le focus est
+  retombé sur `body` (écoute sur `document` tant que les réglages sont ouverts), sauf : capture d'un raccourci en
+  cours (elle le prend avant), zone de texte longue ou éditable (une saisie longue ne ferme pas la page),
+  événement déjà consommé (`defaultPrevented`), ou cible hors du shell autre que `body` (une confirmation ouverte
+  par-dessus garde son Échap). Le bouton « Fermer » et `ui_close` ferment aussi.
 - **Pas de fermeture au clic extérieur.** Le shell couvre toute la fenêtre : il n'y a plus d'extérieur, et un clic
   dans un vide du shell fermerait par accident une page en cours de réglage.
 - Focus visible : `outline` 2 px accent sur tout élément du shell en `:focus-visible` ; en couleurs forcées,

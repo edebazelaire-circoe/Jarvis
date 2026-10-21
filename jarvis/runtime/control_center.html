@@ -879,7 +879,7 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
 @media(max-height:700px) and (min-width:901px){
   .set-rail{padding-top:20px}.set-rail-title{margin-bottom:14px}
-  .set-cat{padding:8px 10px}.set-cat-desc{-webkit-line-clamp:1}
+  .set-cat{padding:8px 10px}
   .set-head{padding-top:20px}.set-items{margin-top:14px}
 }
 @media(max-width:900px){
@@ -5856,9 +5856,10 @@ async function openSettings(){
    `#openSettings`. Catégorie, section, alias ou ancien identifiant d'onglet (`'voice'` → `voice_audio`, onglet
    Voix) ; l'emplacement est posé AVANT l'ouverture (`openSettings` peint l'emplacement tel qu'il le trouve). Une
    cible inconnue se dit (`settings_target_unknown`) et ouvre les réglages tels quels. */
-function openSettingsTab(tab){
+function openSettingsTab(tab,options){
   const hit=typeof tab==='string'?settingsTarget(tab):null;
   if(typeof tab==='string'&&!hit)console.warn('settings_target_unknown',{target:tab});
+  if(!SET.open&&options&&options.returnFocus)SET.openerHint=options.returnFocus;
   if(!SET.open){if(hit)applySettingsTarget(hit);return openSettings()}
   if(hit)selectTab(tab);
   return Promise.resolve();
@@ -5887,7 +5888,14 @@ function settingsNavigation(){
 function settingsRememberOpener(){
   if(typeof document==='undefined')return;
   const active=document.activeElement;
-  SET.opener=active&&active!==document.body&&!overlay.contains(active)?active:null;
+  /* `returnFocus` donné par l'appelant (`openSettingsTab(cible, {returnFocus})` : la roue donne son ancre, car
+     l'entrée qui a servi disparaît avec elle et, à la souris, le focus est déjà retombé sur `body`). Sinon, une
+     entrée de la roue encore focalisée rend aussi la main à l'ancre. */
+  const hint=SET.openerHint;SET.openerHint=null;
+  if(hint&&hint.isConnected){SET.opener=hint;return}
+  const wheel=active&&active.closest?active.closest('#toolWheel'):null;
+  const anchor=wheel?wheel.querySelector('.tw-anchor'):null;
+  SET.opener=anchor||(active&&active!==document.body&&!overlay.contains(active)?active:null);
 }
 function settingsFocusIn(){
   if(typeof document==='undefined')return;
@@ -5927,7 +5935,11 @@ async function saveDraft(options){
   }catch(e){
     if(!silent)say(e.message,'error');
     throw e;
-  }finally{modalSave.disabled=false}
+  }finally{
+    modalSave.disabled=false;
+    /* Le bouton désactivé pendant l'envoi perd le focus (il retombe sur `body`) : il lui est rendu (Slice 02). */
+    if(!silent&&SET.open&&typeof document!=='undefined'&&(!document.activeElement||document.activeElement===document.body))modalSave.focus({preventScroll:true});
+  }
 }
 
 modalSave.addEventListener('click',()=>saveDraft().catch(()=>{}));
@@ -5936,14 +5948,18 @@ $('#openSettings').addEventListener('click',openSettings);
 /* Pas de fermeture au clic extérieur (Slice 02) : le shell couvre toute la fenêtre, il n'y a plus d'« extérieur »,
    et un clic dans un vide du shell fermerait par accident une page en cours de réglage. Ferment : le bouton
    « Fermer », Échap, et le raccourci `ui_close`.
-   Échap ferme toujours, même si `ui_close` a été réaffecté et même depuis un champ : sauf pendant la capture d'un
-   raccourci (elle le prend avant, en capture), dans une zone de texte longue ou éditable (Échap y abandonne la
-   saisie en cours, pas la page), ou si un contrôle l'a déjà consommé (`defaultPrevented`). Tab et Maj+Tab
-   bouclent dans le shell : le focus ne part pas derrière lui. */
-overlay.addEventListener('keydown',event=>{
+   Échap ferme toujours, même si `ui_close` a été réaffecté, même depuis un champ et même quand le focus est
+   retombé sur `body` (clic dans un vide du shell) : l'écoute est sur `document`, tant que les réglages sont
+   ouverts. Exceptions : capture d'un raccourci en cours (elle prend la touche avant, en capture), zone de texte
+   longue ou éditable (une saisie longue ne ferme pas la page), événement déjà consommé (`defaultPrevented`), ou
+   cible hors du shell autre que `body` (une confirmation ouverte par-dessus garde son Échap). Tab et Maj+Tab
+   bouclent dans le shell ; depuis `body`, ils y entrent : le focus ne part jamais derrière lui. */
+document.addEventListener('keydown',event=>{
   if(!SET.open)return;
+  const target=event.target;
+  const loose=!target||target===document.body||target===document.documentElement;
+  if(!loose&&!overlay.contains(target))return;
   if(event.key==='Escape'){
-    const target=event.target;
     if(SET.capture||event.defaultPrevented||target&&(target.tagName==='TEXTAREA'||target.isContentEditable))return;
     event.preventDefault();event.stopPropagation();closeSettings();return;
   }
@@ -5952,6 +5968,7 @@ overlay.addEventListener('keydown',event=>{
     .filter(el=>!el.disabled&&el.tabIndex>=0&&el.getClientRects().length>0);
   if(!all.length)return;
   const first=all[0],last=all[all.length-1];
+  if(loose){event.preventDefault();(event.shiftKey?last:first).focus();return}
   if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}
   else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}
 });

@@ -283,7 +283,7 @@ out(Object.fromEntries(Object.values(P).flat().map(s=>[s,R.legacyTabFor(s,T)])))
 def _page_routing(page: str) -> str:
     """Les fonctions de la page qui routent une cible : résolution, pose de l'emplacement, ouverture, roue."""
     canonical = page[page.index("function canonicalSettingsTab") : page.index("function destroyAgentCatalog()")]
-    door = page[page.index("function openSettingsTab(tab){") : page.index("function closeSettings(){")]
+    door = page[page.index("function openSettingsTab(tab,options){") : page.index("function closeSettings(){")]
     return canonical + door
 
 
