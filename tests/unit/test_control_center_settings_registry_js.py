@@ -57,7 +57,8 @@ ALIASES = {
     "experimental": ("advanced_diagnostics", "labs"),
 }
 #: Modules qui injectent encore un onglet de premier niveau (`TABS.push/splice`), retirés par la Slice 09.
-LEGACY_INJECTORS = {"control_center_wake_word.js", "control_center_work.js", "control_center_barehands.js"}
+# `control_center_wake_word.js` en est sorti (Slice 03) : il enregistre la section `wake_word`.
+LEGACY_INJECTORS = {"control_center_work.js", "control_center_barehands.js"}
 
 
 def run(tmp_path: Path, body: str):
@@ -92,12 +93,31 @@ def injected_tab_ids() -> list[str]:
 
 
 def assembled_tabs() -> list[dict]:
-    """L'ordre réel du shell : base, `wakeword` après `voice`, `appearance` en fin (pas de `config`), puis `experimental`."""
+    """L'ordre réel du shell : base, `appearance` en fin (pas de `config`), puis `experimental`. Depuis la Slice 03, ni
+    `voice` ni `wakeword` ne sont des onglets : Voix & audio n'a que des sections enregistrées."""
     ids = base_tab_ids()
-    ids.insert(ids.index("voice") + 1, "wakeword")
     ids += ["appearance", "experimental"]
     assert set(ids) == set(base_tab_ids()) | set(injected_tab_ids())
+    assert "voice" not in ids and "wakeword" not in ids
     return [{"id": i, "label": i} for i in ids]
+
+
+def legacy_voice_tabs() -> list[dict]:
+    """Fixture historique de l'adaptateur (avant la Slice 03) : `voice` et `wakeword` encore onglets. L'adaptateur reste
+    en place pour les onglets que les Slices 04 à 08 n'ont pas encore rehébergés : sa règle est testée sur ce cas."""
+    return [{"id": "voice", "label": "voice"}, {"id": "wakeword", "label": "wakeword"}, *assembled_tabs()]
+
+
+#: Sections enregistrées par la page servie depuis la Slice 03 (`control_center.html`, `control_center_wake_word.js`).
+SLICE_03_SECTIONS = (
+    ("conversation", "voice_audio", 10, "footer"), ("voice_output", "voice_audio", 20, "footer"),
+    ("microphone_sound", "voice_audio", 30, "footer"), ("turns_interruptions", "voice_audio", 40, "footer"),
+    ("wake_word", "voice_audio", 50, "self"), ("architecture_compat", "advanced_diagnostics", 10, "footer"),
+    ("diagnostics", "advanced_diagnostics", 40, "readonly"),
+)
+REGISTER_SLICE_03 = "".join(
+    f"R.page.register({{id:'{i}',category:'{c}',label:'{i}',order:{o},save:'{v}',mount:noop}});" for i, c, o, v in SLICE_03_SECTIONS
+)
 
 
 def test_exactly_six_frozen_categories_in_canonical_order(tmp_path):
@@ -235,18 +255,19 @@ out({{map:targets.map(t=>[String(t),R.legacyTabFor(t,T)]),nav:R.navigationFromLe
     mapped = dict(out["map"])
     for tab in tabs:  # un identifiant actuel reste exactement son onglet
         assert mapped.get(tab["id"], tab["id"]) == tab["id"]
+    # Voix & audio n'a plus d'onglet (Slice 03) : ses cibles sont des sections enregistrées, servies par le shell.
     assert mapped == {
-        "voice": "voice", "wakeword": "wakeword", "cli": "cli", "routing": "cli", "keys": "keys", "memory": "memory",
-        "experimental": "experimental", "voice_audio": "voice", "agents_models": "cli", "memory_knowledge": "memory",
+        "voice": None, "wakeword": None, "cli": "cli", "routing": "cli", "keys": "keys", "memory": "memory",
+        "experimental": "experimental", "voice_audio": None, "agents_models": "cli", "memory_knowledge": "memory",
         "interface_interactions": "shortcuts", "connections": "keys", "advanced_diagnostics": "prompts",
-        "wake_word": "wakeword", "runtime_cli": "cli", "labs": "experimental", "bare_hands": "experimental",
-        "theme_scene": "appearance", "diagnostics": "voice", "barehandsRecord": "experimental", "nope": None, "null": None,
+        "wake_word": None, "runtime_cli": "cli", "labs": "experimental", "bare_hands": "experimental",
+        "theme_scene": "appearance", "diagnostics": "memory", "barehandsRecord": "experimental", "nope": None, "null": None,
     }
     nav = out["nav"]
     assert nav["unassigned"] == []
     assert [c["id"] for c in nav["categories"]] == [c[0] for c in CATEGORIES]
     assert {c["id"]: [t["id"] for t in c["tabs"]] for c in nav["categories"]} == {
-        "voice_audio": ["voice", "wakeword"],
+        "voice_audio": [],
         "agents_models": ["cli", "subagents"],
         "memory_knowledge": ["memory"],
         "interface_interactions": ["shortcuts", "appearance"],
@@ -269,13 +290,18 @@ PLANNED_SECTIONS = {
 
 
 def test_every_planned_target_section_is_served_by_a_current_tab(tmp_path):
-    """QA Slice 01 : `voice_output`, `semantic_retrieval`… rendaient `null` ; chaque section cible prévue s'ouvre."""
+    """QA Slice 01 : `voice_output`, `semantic_retrieval`… rendaient `null` ; chaque section cible prévue s'ouvre :
+    par un onglet hérité, ou (depuis la Slice 03) parce qu'elle est enregistrée par la page."""
+    registered = {i for i, *_ in SLICE_03_SECTIONS}
     out = run(tmp_path, f"""
 const T={json.dumps(assembled_tabs())},P={json.dumps(PLANNED_SECTIONS)};
 out(Object.fromEntries(Object.values(P).flat().map(s=>[s,R.legacyTabFor(s,T)])));""")
-    assert all(out.values()), {k: v for k, v in out.items() if not v}
-    assert {k: out[k] for k in ("voice_output", "microphone_sound", "turns_interruptions")} == dict.fromkeys(
-        ("voice_output", "microphone_sound", "turns_interruptions"), "voice")
+    assert all(v for k, v in out.items() if k not in registered), {k: v for k, v in out.items() if not v}
+    assert registered <= {s for sections in PLANNED_SECTIONS.values() for s in sections}
+    # Les sections Voix ne sont plus servies par un onglet (`diagnostics` l'est encore par Mémoire, en partie).
+    assert {k: out[k] for k in ("conversation", "voice_output", "microphone_sound", "turns_interruptions", "wake_word",
+                                "architecture_compat")} == dict.fromkeys(
+        ("conversation", "voice_output", "microphone_sound", "turns_interruptions", "wake_word", "architecture_compat"), None)
     assert {k: out[k] for k in ("semantic_retrieval", "consolidation", "knowledge_sources")} == dict.fromkeys(
         ("semantic_retrieval", "consolidation", "knowledge_sources"), "memory")
 
@@ -292,11 +318,12 @@ def test_page_routes_categories_sections_and_legacy_ids_into_the_six_category_sh
     out = run(tmp_path, f"""
 globalThis.window=globalThis;window.JarvisSettingsRegistry=R;
 const TABS={json.dumps(assembled_tabs())};
-const SET={{open:false,tab:'voice',category:null,section:null,lastItem:{{}},routingGeneration:0}},warn=[],errors=[];
+const SET={{open:false,tab:null,category:null,section:null,lastItem:{{}},routingGeneration:0}},warn=[],errors=[];
 console.warn=(c,x)=>warn.push([c,x]);console.error=(c,x)=>errors.push([c,x]);
 let opened=0,rendered=0;const openSettings=()=>{{opened++;SET.open=true;return Promise.resolve()}};
 const renderTabs=()=>{{}},renderTab=()=>{{rendered++}};
 {_page_routing(page)}
+{REGISTER_SLICE_03}
 const at=()=>[SET.category,SET.tab,SET.section];
 (async()=>{{
   await openSettingsTab('connections');const first=at();
@@ -313,13 +340,14 @@ const at=()=>[SET.category,SET.tab,SET.section];
     assert seen["memory"] == ["memory_knowledge", "memory", None]
     assert seen["routing"] == ["agents_models", "cli", None]
     assert seen["labs"] == seen["bare_hands"] == seen["barehandsCalibration"] == ["advanced_diagnostics", "experimental", None]
-    # La ligne « Réglages de la voix » de la roue (`'voice'`) atterrit sur Voix & audio.
-    assert seen["voice"] == seen["voice_output"] == ["voice_audio", "voice", None]
+    # La ligne « Réglages de la voix » de la roue (`'voice'`) atterrit sur Voix & audio, section Conversation.
+    assert seen["voice"] == ["voice_audio", None, "conversation"]
+    assert seen["voice_output"] == ["voice_audio", None, "voice_output"]
     assert seen["semantic_retrieval"] == ["memory_knowledge", "memory", None]
     # Une catégorie seule rouvre la dernière entrée ouverte dans cette catégorie (Apparence), sinon la première.
-    assert seen["voice_audio"] == ["voice_audio", "voice", None]
+    assert seen["voice_audio"] == ["voice_audio", None, "voice_output"]
     assert seen["interface_interactions"] == ["interface_interactions", "appearance", None]
-    assert seen["wake_word"] == ["voice_audio", "wakeword", None]
+    assert seen["wake_word"] == ["voice_audio", None, "wake_word"]
     assert out["afterUnknown"] == seen["wake_word"]  # une cible inconnue ne change rien…
     assert out["warn"] == [["settings_target_unknown", {"target": "nope"}]]  # … mais se dit
     assert out["same"] is True and out["errors"] == []
@@ -328,16 +356,18 @@ const at=()=>[SET.category,SET.tab,SET.section];
     nav = out["nav"]
     assert [c["id"] for c in nav["categories"]] == [c[0] for c in CATEGORIES] and nav["unassigned"] == []
     assert {c["id"]: [(i["kind"], i["id"]) for i in c["items"]] for c in nav["categories"]} == {
-        "voice_audio": [("tab", "voice"), ("tab", "wakeword")],
+        "voice_audio": [("section", "conversation"), ("section", "voice_output"), ("section", "microphone_sound"),
+                        ("section", "turns_interruptions"), ("section", "wake_word")],
         "agents_models": [("tab", "cli"), ("tab", "subagents")],
         "memory_knowledge": [("tab", "memory")],
         "interface_interactions": [("tab", "shortcuts"), ("tab", "appearance")],
         "connections": [("tab", "keys")],
-        "advanced_diagnostics": [("tab", "prompts"), ("tab", "experimental")],
+        "advanced_diagnostics": [("section", "architecture_compat"), ("section", "diagnostics"), ("tab", "prompts"),
+                                 ("tab", "experimental")],
     }
     related = {c["id"]: [r["id"] for r in c["related"]] for c in nav["categories"]}
     assert related["interface_interactions"] == ["experimental"]  # les préférences Bare Hands, encore dans Expérimental
-    assert related["advanced_diagnostics"] == ["voice", "wakeword", "cli", "memory", "subagents"]
+    assert related["advanced_diagnostics"] == ["cli", "memory", "subagents"]
     assert related["voice_audio"] == related["connections"] == []
 
 
@@ -345,7 +375,7 @@ def test_registered_section_takes_over_its_legacy_tab_and_a_stray_tab_stays_reac
     page = HTML.read_text(encoding="utf-8")
     out = run(tmp_path, f"""
 globalThis.window=globalThis;window.JarvisSettingsRegistry=R;
-const TABS=[...{json.dumps(assembled_tabs())},{{id:'stray',label:'Égaré'}}];
+const TABS=[...{json.dumps(legacy_voice_tabs())},{{id:'stray',label:'Égaré'}}];
 const SET={{open:true,tab:'voice',category:'voice_audio',section:null,lastItem:{{}},routingGeneration:0}},errors=[];
 console.warn=noop;console.error=(c,x)=>errors.push([c,x]);
 const openSettings=()=>Promise.resolve(),renderTabs=noop,renderTab=noop;

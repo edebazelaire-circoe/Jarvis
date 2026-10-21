@@ -495,8 +495,9 @@ micro réel : `docs/HARDWARE_ACCEPTANCE.md`, « Configurable wake word (openWake
   s'applique qu'au prochain démarrage de Voice. » Le bloc est consommé en
   PRESENTATION (Slice 04) et en SIMPLE (Slice 05) ; l'ancienne précision « et
   seulement là où le mot d'éveil configurable est câblé » est retirée (Slice 07).
-- **Où le régler : Réglages -> « Mot d'éveil »** (onglet juste après « Voix »,
-  `jarvis/runtime/control_center_wake_word.js`). Il lit `GET /api/wake-word` et
+- **Où le régler : Réglages -> Voix & audio -> « Mot d'éveil »** (section
+  enregistrée `wake_word`, `jarvis/runtime/control_center_wake_word.js` ; l'ancien
+  ID d'onglet `wakeword` y mène ; destinations : `docs/settings/voice-audio.md`). Il lit `GET /api/wake-word` et
   écrit par `POST /api/wake-word`, rien d'autre : aucune écriture directe du
   fichier, aucun stockage dans le navigateur.
   - Interrupteur « Activer le mot d'éveil » (décoché par défaut ; l'écran dit que
@@ -506,8 +507,10 @@ micro réel : `docs/HARDWARE_ACCEPTANCE.md`, « Configurable wake word (openWake
     openWakeWord, champ avec conseil de saisie pour Porcupine), curseur de
     sensibilité de 0 à 1 (plus haut : plus de faux positifs ; plus bas : plus de
     faux négatifs) et délai anti-rebond de 80 à 30 000 ms.
-  - « État effectif » : le `state`, les `problems` et les `ignored_fields` de
-    `describe()`, tels que le serveur les dit. Un bloc d'une **version étrangère**
+  - « État effectif » : le `state` de `describe()`, tel que le serveur le dit ;
+    les `problems` et les `ignored_fields`, ainsi que le dernier événement du
+    détecteur, se lisent dans Avancé & diagnostic -> Diagnostics (partie « Mot
+    d'éveil »), avec un lien depuis la section quand il y en a. Un bloc d'une **version étrangère**
     (`wake_word_foreign_version`) a son message et son bouton « Enregistrer »
     désactivé ; un bloc abîmé reste enregistrable (enregistrer le remplace).
   - Après un enregistrement : bandeau « Redémarrage de Voice requis » (le

@@ -83,7 +83,8 @@ async def test_categories_keyboard_shortcuts_escape_and_focus_return(served):
     opened = got(step, "opened")
     assert opened["open"] and opened["cats"] == CATEGORY_IDS and len(set(opened["labels"])) == 6
     assert opened["selected"] == "voice_audio" and opened["focus"] == "settingsCat-voice_audio"
-    assert opened["items"][:2] == ["Voix", "Mot d’éveil"] and opened["title"] == "Voix & audio"
+    assert opened["items"] == ["Conversation", "Voix & transcription", "Micro & son", "Tours & interruptions", "Mot d’éveil"]
+    assert opened["title"] == "Voix & audio"
     after_down = got(step, "afterDown")
     assert after_down["focus"] == "settingsCat-agents_models" and after_down["selected"] == "voice_audio"  # rien n'est ouvert
     assert after_down["ring"] not in (None, "none")  # focus clavier visible
@@ -92,7 +93,7 @@ async def test_categories_keyboard_shortcuts_escape_and_focus_return(served):
     assert focused["wrap"] == "settingsCat-advanced_diagnostics"
     entered = got(step, "entered")
     assert entered["selected"] == "advanced_diagnostics" and entered["focus"] == "settingsCat-advanced_diagnostics"
-    assert entered["items"] == ["Prompts", "Expérimental"]
+    assert entered["items"] == ["Architecture & compatibilité", "Diagnostics", "Prompts", "Expérimental"]
     assert got(step, "next")["selected"] == "voice_audio"  # Ctrl+→ en boucle après la sixième
     assert got(step, "prev")["selected"] == "connections"  # Ctrl+← deux fois : Avancé, puis Connexions
     assert got(step, "clickedVoid")["open"] is True  # pas de fermeture au clic dans le shell

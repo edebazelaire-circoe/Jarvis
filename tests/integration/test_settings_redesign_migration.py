@@ -358,7 +358,7 @@ async def test_assembled_primary_navigation_has_six_tabs_and_no_legacy_navigatio
         {},
         tabs
         + r"""
-        const SET={tab:'voice'},modalSave={style:{}},modalSub={textContent:''},modalContent={innerHTML:''};
+        const SET={tab:null},modalSave={style:{}},modalSub={textContent:''},modalContent={innerHTML:''};
         const cleanupSettingsSurface=()=>{},appearanceHtml=()=>'',bindAppearance=()=>{},say=()=>{};
         let renderTab=async()=>{};
         """
@@ -366,8 +366,8 @@ async def test_assembled_primary_navigation_has_six_tabs_and_no_legacy_navigatio
         + "installSettingsTab();process.stdout.write(JSON.stringify(TABS.map(({id,label})=>({id,label}))));",
     )
 
+    # « Voix » n'est plus un onglet (jarvis-settings-ui-reorganization, Slice 03) : sections enregistrées de Voix & audio.
     assert rendered == [
-        {"id": "voice", "label": "Voix"},
         {"id": "prompts", "label": "Prompts"},
         {"id": "cli", "label": "Agent / CLI"},
         {"id": "keys", "label": "API Keys"},
@@ -380,7 +380,8 @@ async def test_assembled_primary_navigation_has_six_tabs_and_no_legacy_navigatio
     # depuis par d'autres handoffs (Mémoire, Sous-agents) s'intercalent sans changer l'ordre des siens.
     added_since_contract = {"memory", "subagents"}
     contract_navigation = json.loads(IA_CONTRACT.read_text(encoding="utf-8"))["navigation"]
-    assert [item["label"] for item in contract_navigation] == [
+    rehosted_as_sections = {"voice"}
+    assert [item["label"] for item in contract_navigation if item["id"] not in rehosted_as_sections] == [
         item["label"] for item in rendered if item["id"] not in added_since_contract
     ]
     assert [item["id"] for item in contract_navigation] == [

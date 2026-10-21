@@ -83,7 +83,7 @@ const data=JSON.parse(require('node:fs').readFileSync(process.argv[2],'utf8'));
 const SET={data,dirty:false},modalSave={};
 const esc=x=>String(x??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
 const renderField=async(field)=>`<input data-stack-field="${field.key}">`;
-const authSectionHtml=async()=>'',aecHtml=()=>'',selectOptions=()=>'';
+const authSectionHtml=async()=>'',aecHtml=()=>'',selectOptions=()=>'',authValues=()=>({});
 const say=()=>{},renderTab=async()=>{};
 let sent;
 const api=async(_url,options)=>{sent=JSON.parse(options.body);return data};
@@ -129,21 +129,21 @@ def test_async_browser_render_does_not_restore_a_previous_panel(tmp_path):
     render = page[page.index('async function renderTab()'):page.index('function bindTab(revision)')]
     script = r'''
 const assert=require('node:assert/strict');
-const SET={tab:'voice',data:{},draft:{}},TABS=[{id:'voice',save:true},{id:'cli',save:true}];
+const SET={tab:'prompts',data:{},draft:{}},TABS=[{id:'prompts',save:false},{id:'cli',save:true}];
 const modalContent={querySelectorAll:()=>[]},modalSub={},modalSave={style:{}};
 const esc=String,say=()=>{},bindTab=()=>{},bindVoiceSurface=()=>{},destroyAgentCatalog=()=>{},destroyVoiceCatalog=()=>{},cleanupSettingsSurface=()=>{destroyAgentCatalog();destroyVoiceCatalog()},mountAgentCatalog=()=>{},hydrateCliAgents=()=>{};
 let finish;
-const tabVoice=()=>new Promise(resolve=>{finish=resolve});
+const tabPrompts=()=>new Promise(resolve=>{finish=resolve});
 const tabCli=()=>'<new agent panel>';
 ''' + render + r'''
 (async()=>{
 const first=renderTab();
 SET.tab='cli';
 await renderTab();
-finish('<old voice panel>');
+finish('<old prompts panel>');
 await first;
 assert.ok(modalContent.innerHTML.startsWith('<new agent panel>'),modalContent.innerHTML);
-assert.ok(!modalContent.innerHTML.includes('old voice panel'));
+assert.ok(!modalContent.innerHTML.includes('old prompts panel'));
 })().catch(error=>{console.error(error);process.exitCode=1});
 '''
     path = tmp_path / 'settings-render.cjs'

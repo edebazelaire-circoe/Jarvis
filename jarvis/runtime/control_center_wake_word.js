@@ -1,5 +1,7 @@
-/* Réglages du mot d'éveil : onglet « Mot d'éveil » des Réglages du Control Center
-   (handoff jarvis-wake-word, Slice 07).
+/* Réglages du mot d'éveil : section « Mot d'éveil » de Voix & audio dans les Réglages du
+   Control Center (handoff jarvis-wake-word, Slice 07 ; rehébergée par la Slice 03 de
+   jarvis-settings-ui-reorganization). Le dernier événement du détecteur, les clés ignorées et
+   les diagnostics du bloc lu vivent dans Avancé & diagnostic › Diagnostics.
 
    Deux parties, comme `control_center_scene_settings.js` :
    - `JarvisWakeWordSettings`, logique pure : le formulaire, la charge utile,
@@ -7,7 +9,8 @@
      `/api/wake-word` (Slice 03) et la lecture du dernier événement du détecteur
      dans le journal. Les tests l'exécutent avec node
      (`tests/unit/test_wake_word_settings_ui.py`) ;
-   - un bloc navigateur : l'onglet, ses contrôles, l'appel de la route.
+   - un bloc navigateur : la section enregistrée (`registerSettingsSection`, alias `wakeword`),
+     ses contrôles, l'appel de la route, et sa partie de diagnostic (`registerSettingsDiagnostic`).
 
    Ce que cet écran sait, et ce qu'il ne sait pas.
    - Il sait ce que la route décrit (`describe()` côté serveur) : le réglage lu,
@@ -304,13 +307,19 @@
 })(typeof globalThis!=='undefined'?globalThis:this);
 
 /* --------------------------------------------------------------------------
-   Bloc navigateur : l'onglet « Mot d'éveil ». Les tests node ne l'exécutent pas.
+   Bloc navigateur : la section « Mot d'éveil » et sa partie de diagnostic. Les tests node ne
+   l'exécutent pas.
    -------------------------------------------------------------------------- */
 (function installJarvisWakeWordSettings(){
   if(typeof window==='undefined'||typeof document==='undefined')return;
   const Logic=window.JarvisWakeWordSettings;
-  const TAB_ID='wakeword';
   const SECTION_ID='wakeWordSettings';
+  const DIAG_ID='wakeWordDiagnostics';
+  /* Où l'écran est monté : la section (formulaire) et la partie de diagnostic, chacune avec le
+     `isCurrent()` que le shell lui a donné (faux dès qu'elle est quittée : une réponse tardive
+     ne dessine plus rien). `view` survit aux montages : la saisie en cours n'est pas perdue en
+     changeant de section ou de catégorie. */
+  const mounted={form:null,diag:null};
   /* `state` : la dernière réponse de la route. `form` : ce qui est tapé (survit
      à un refus). `saved` : un enregistrement a réussi depuis le chargement de la
      page (en mémoire seulement : le bandeau ne dit pas que Voice a redémarré). */
@@ -319,7 +328,9 @@
     detector:null,detectorBusy:false,generation:0};
 
   const log=(level,event,data)=>{try{console[level==='error'?'error':level==='warn'?'warn':'info']('[mot d’éveil] '+event,data||{})}catch(_error){/* console absente */}};
-  const tabOpen=()=>typeof SET!=='undefined'&&SET.open&&SET.tab===TAB_ID;
+  const isOpen=where=>!!where&&where.host.isConnected&&where.isCurrent();
+  const formOpen=()=>isOpen(mounted.form);
+  const diagOpen=()=>isOpen(mounted.diag);
 
   function node(tag,attrs,children){
     const el=document.createElement(tag);
@@ -344,7 +355,7 @@
     button.addEventListener('click',event=>{
       event.preventDefault();
       const open=!wrap.classList.contains('open');
-      document.querySelectorAll('#wakeWordSettings .ww-helpwrap.open').forEach(w=>{w.classList.remove('open');w.firstChild.setAttribute('aria-expanded','false')});
+      document.querySelectorAll(':is(#wakeWordSettings,#wakeWordDiagnostics) .ww-helpwrap.open').forEach(w=>{w.classList.remove('open');w.firstChild.setAttribute('aria-expanded','false')});
       if(open){wrap.classList.add('open');button.setAttribute('aria-expanded','true')}
     });
     wrap.addEventListener('keydown',event=>{
@@ -394,8 +405,11 @@
 
   function sectionNode(){
     const section=node('section',{id:SECTION_ID,'aria-labelledby':'wwTitle','data-wake-word':''});
+    const title=node('h3',{id:'wwTitle',text:'Mot d’éveil'});
+    /* Badge du moment d'application, en mots (primitive du shell, `docs/settings/settings-shell.md` § 5). */
+    if(window.JarvisSettingsUI)title.insertAdjacentHTML('beforeend',' '+window.JarvisSettingsUI.appliesBadge('next_voice_start'));
     section.append(
-      node('h3',{id:'wwTitle',text:'Mot d’éveil'}),
+      title,
       node('div',{className:'hint ww-lead',style:'margin-bottom:14px'},[
         document.createTextNode('Réveillez JARVIS à la voix. '),
         help('Mot d’éveil','Prononcez la phrase de réveil pour démarrer l’écoute, sans toucher le clavier. La touche manuelle reste toujours disponible.'),
@@ -433,18 +447,14 @@
       ]),
       node('div',{className:'hint',text:STATE_SHORT[model.kind]||model.title}),
     ]));
-    if(model.problems.length){
-      const list=node('ul',{className:'ww-list','data-ww-problems':''});
-      for(const problem of model.problems)
-        list.append(node('li',{},[node('span',{className:'tag bad',text:problem.code||'code illisible'}),
-          document.createTextNode(` ${problem.field?problem.field+' : ':''}${problem.text}`)]));
-      section.append(node('div',{className:'notice bad'},[node('strong',{text:'Diagnostic du fichier de réglages'}),list]));
+    /* Diagnostic du bloc lu (clés ignorées, version illisible) : dans Avancé & diagnostic, un lien ici. */
+    if(model.problems.length||model.ignored.length){
+      const open=node('button',{type:'button',className:'linkish','data-ww-open-diagnostics':'',text:'Voir le diagnostic'});
+      open.addEventListener('click',()=>{if(mounted.form&&mounted.form.open)mounted.form.open('diagnostics')});
+      const count=model.problems.length+model.ignored.length;
+      section.append(node('div',{className:'notice info','data-ww-diagnostic-link':''},[
+        document.createTextNode(`Le réglage lu porte ${count} remarque${count>1?'s':''} (Avancé & diagnostic › Diagnostics). `),open]));
     }
-    if(model.ignored.length)
-      section.append(node('div',{className:'notice info','data-ww-ignored':''},[
-        node('strong',{text:'Clés ignorées'}),
-        node('div',{className:'hint',text:`Le bloc contient des clés que ce serveur ne connaît pas : ${model.ignored.join(', ')}. Elles sont ignorées, sans effet.`}),
-      ]));
 
     /* Interrupteur. */
     const enabled=node('input',{type:'checkbox',id:'ww_enabled','data-ww-field':'enabled',
@@ -575,6 +585,39 @@
         help('Redémarrage',view.saved.message+' Cette page ne peut ni le faire ni savoir quand c’est fait.'),
       ]));
 
+    return section;
+  }
+
+  /* Partie « Mot d'éveil » d'Avancé & diagnostic › Diagnostics : l'état du bloc lu, ses
+     diagnostics (clés ignorées, version illisible) et le dernier événement du détecteur. */
+  function diagnosticsNode(){
+    const section=node('div',{id:DIAG_ID,'data-wake-word-diagnostics':''});
+    if(view.loadError)section.append(node('div',{className:'notice bad',role:'alert'},[
+      node('strong',{text:'Réglage du mot d’éveil illisible'}),node('div',{className:'hint',text:view.loadError})]));
+    else if(!view.state)section.append(node('div',{className:'empty',role:'status',text:'Chargement…'}));
+    else{
+      const model=Logic.describe(view.state);
+      section.append(node('div',{className:'row',style:'gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px'},[
+        node('strong',{text:'Bloc lu'}),
+        node('span',{className:`tag ${model.tone}`,'data-ww-diag-pill':model.kind,text:model.pill}),
+        node('span',{className:'hint',text:model.serverState?'Selon le serveur : '+model.serverState+'.':''}),
+      ]));
+      if(model.problems.length){
+        const list=node('ul',{className:'ww-list','data-ww-problems':''});
+        for(const problem of model.problems)
+          list.append(node('li',{},[node('span',{className:'tag bad',text:problem.code||'code illisible'}),
+            document.createTextNode(` ${problem.field?problem.field+' : ':''}${problem.text}`)]));
+        section.append(node('div',{className:'notice bad'},[node('strong',{text:'Diagnostic du fichier de réglages'}),list]));
+      }
+      if(model.ignored.length)
+        section.append(node('div',{className:'notice info','data-ww-ignored':''},[
+          node('strong',{text:'Clés ignorées'}),
+          node('div',{className:'hint',text:`Le bloc contient des clés que ce serveur ne connaît pas : ${model.ignored.join(', ')}. Elles sont ignorées, sans effet.`}),
+        ]));
+
+      if(!model.problems.length&&!model.ignored.length)
+        section.append(node('div',{className:'hint','data-ww-no-problem':'',text:'Aucune remarque sur le bloc lu.'}));
+    }
     section.append(detectorNode());
     return section;
   }
@@ -620,10 +663,9 @@
 
   /* Redessine la section en gardant le focus sur le contrôle qui l'avait. */
   function refresh(focusSelector){
-    if(!tabOpen())return;
-    const content=document.getElementById('modalContent');
-    const previous=document.getElementById(SECTION_ID);
-    if(!content||!previous)return;
+    if(!formOpen())return;
+    const previous=mounted.form.host.querySelector('#'+SECTION_ID);
+    if(!previous)return;
     const active=document.activeElement;
     const key=focusSelector||(previous.contains(active)&&active.id?'#'+active.id:null);
     /* Champ texte actif : le curseur (ou la sélection) est rendu où il était. */
@@ -646,12 +688,27 @@
   /* Ne redessine que le bloc du détecteur : les champs, leur focus et leur
      curseur ne sont pas touchés (lire le journal n'a rien à voir avec la saisie). */
   function refreshDetector(){
-    if(!tabOpen())return;
-    const previous=document.getElementById('wwHealth');
-    if(!previous){refresh();return}
+    if(!diagOpen())return;
+    const previous=mounted.diag.host.querySelector('#wwHealth');
+    if(!previous){refreshDiagnostics();return}
     const active=document.activeElement;
     const key=previous.contains(active)&&active.id?'#'+active.id:null;
     const next=detectorNode();
+    previous.replaceWith(next);
+    if(key){
+      const target=next.querySelector(key);
+      if(target&&!target.disabled)try{target.focus({preventScroll:true})}catch(_error){/* retiré entre-temps */}
+    }
+  }
+
+  /* Redessine la partie de diagnostic (après une lecture de la route), focus gardé par identifiant. */
+  function refreshDiagnostics(){
+    if(!diagOpen())return;
+    const previous=mounted.diag.host.querySelector('#'+DIAG_ID);
+    if(!previous)return;
+    const active=document.activeElement;
+    const key=previous.contains(active)&&active.id?'#'+active.id:null;
+    const next=diagnosticsNode();
     previous.replaceWith(next);
     if(key){
       const target=next.querySelector(key);
@@ -674,7 +731,7 @@
     const keep=Boolean(opts.keep&&view.state);
     const generation=++view.generation;
     view.loading=true;
-    if(!keep){view.loadError=null;refresh()}
+    if(!keep){view.loadError=null;refresh();refreshDiagnostics()}
     try{
       const state=await api(Logic.ROUTE);
       if(generation!==view.generation)return;
@@ -688,12 +745,12 @@
       if(generation!==view.generation)return;
       const message=String(error&&error.message||error);
       log('error','wake_word.settings_load_failed',{error:message,status:error&&error.status});
-      if(!keep)view.loadError=message;
+      if(!keep){view.loadError=message;view.failedOpening=typeof SET!=='undefined'?SET.openGeneration:0}
       if(typeof toast==='function')toast({title:'Mot d’éveil : réglage illisible',sub:message,kind:'bad',ms:7000});
     }finally{
       if(generation===view.generation){
-        view.loading=false;refresh();
-        if(!keep||!view.detector)readDetector();
+        view.loading=false;refresh();refreshDiagnostics();
+        if(diagOpen()&&(!keep||!view.detector))readDetector();
       }
     }
   }
@@ -737,7 +794,7 @@
   }
 
   async function readDetector(){
-    if(view.detectorBusy||!tabOpen())return;
+    if(view.detectorBusy||!diagOpen())return;
     view.detectorBusy=true;refreshDetector();
     try{
       const [lines,status]=await Promise.all([
@@ -754,29 +811,30 @@
     }
   }
 
-  const STYLE=`#wakeWordSettings .ww-list{margin:6px 0 0;padding-left:18px}
-#wakeWordSettings .ww-labelrow{display:flex;align-items:center;gap:8px;min-height:24px}
-#wakeWordSettings .ww-helpwrap{position:relative;display:inline-flex;vertical-align:middle}
-#wakeWordSettings .ww-help{width:24px;height:24px;min-height:24px;padding:0;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--muted);font:600 12px/1 inherit;cursor:help}
-#wakeWordSettings .ww-help:hover,#wakeWordSettings .ww-help:focus-visible,#wakeWordSettings .ww-helpwrap.open .ww-help{color:var(--text);border-color:var(--accent)}
-#wakeWordSettings .ww-tip{display:none;position:absolute;z-index:30;left:0;top:calc(100% + 6px);width:min(340px,72vw);padding:9px 11px;border:1px solid var(--accent);border-radius:6px;background:#0b1a22;color:var(--text);font-size:12px;line-height:1.5;font-weight:normal;letter-spacing:0;text-transform:none;box-shadow:0 6px 20px rgba(0,0,0,.5)}
-#wakeWordSettings .ww-helpwrap:hover .ww-tip,#wakeWordSettings .ww-helpwrap:focus-within .ww-tip,#wakeWordSettings .ww-helpwrap.open .ww-tip{display:block}
-#wakeWordSettings .ww-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
-#wakeWordSettings .ww-pair{display:flex;gap:12px;align-items:center}
-#wakeWordSettings .ww-pair input[type=range]{flex:1;width:auto;height:28px;min-height:28px;padding:0;accent-color:var(--accent)}
-#wakeWordSettings input[aria-invalid=true],#wakeWordSettings select[aria-invalid=true]{border-color:var(--danger)}
-#wakeWordSettings input:focus-visible,#wakeWordSettings select:focus-visible,#wakeWordSettings button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-#wakeWordSettings [aria-disabled=true]{opacity:.6;cursor:wait}
-#wakeWordSettings :disabled{opacity:.6;cursor:not-allowed}
-#wakeWordSettings input:disabled,#wakeWordSettings select:disabled{border-style:dashed;background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(255,255,255,.07) 6px 12px)}
-#wakeWordSettings .ww-check{display:flex;align-items:center;gap:10px;min-height:32px;width:fit-content;max-width:100%;cursor:pointer;color:var(--text);font-size:13px}
-#wakeWordSettings .ww-check input[type=checkbox]{width:20px;height:20px;padding:0;margin:0;flex:none}
-#wakeWordSettings input[type=checkbox]:disabled+span{text-decoration:underline dotted}
-#wakeWordSettings #wwHealthTitle{margin:18px 0 8px;font-size:11px;font-weight:normal;letter-spacing:.06em;color:var(--muted)}
-#wakeWordSettings #wwError:focus{outline:2px solid var(--accent);outline-offset:2px}
-#wakeWordSettings .ww-restart{animation:wwIn .25s ease-out}
+  const STYLE=`#wakeWordSettings{max-width:860px}
+:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-list{margin:6px 0 0;padding-left:18px}
+:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-labelrow{display:flex;align-items:center;gap:8px;min-height:24px}
+:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-helpwrap{position:relative;display:inline-flex;vertical-align:middle}
+:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-help{width:24px;height:24px;min-height:24px;padding:0;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--muted);font:600 12px/1 inherit;cursor:help}
+:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-help:hover,:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-help:focus-visible,:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-helpwrap.open .ww-help{color:var(--text);border-color:var(--accent)}
+:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-tip{display:none;position:absolute;z-index:30;left:0;top:calc(100% + 6px);width:min(340px,72vw);padding:9px 11px;border:1px solid var(--accent);border-radius:6px;background:#0b1a22;color:var(--text);font-size:12px;line-height:1.5;font-weight:normal;letter-spacing:0;text-transform:none;box-shadow:0 6px 20px rgba(0,0,0,.5)}
+:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-helpwrap:hover .ww-tip,:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-helpwrap:focus-within .ww-tip,:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-helpwrap.open .ww-tip{display:block}
+:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-pair{display:flex;gap:12px;align-items:center}
+:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-pair input[type=range]{flex:1;width:auto;height:28px;min-height:28px;padding:0;accent-color:var(--accent)}
+:is(#wakeWordSettings,#wakeWordDiagnostics) input[aria-invalid=true],:is(#wakeWordSettings,#wakeWordDiagnostics) select[aria-invalid=true]{border-color:var(--danger)}
+:is(#wakeWordSettings,#wakeWordDiagnostics) input:focus-visible,:is(#wakeWordSettings,#wakeWordDiagnostics) select:focus-visible,:is(#wakeWordSettings,#wakeWordDiagnostics) button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+:is(#wakeWordSettings,#wakeWordDiagnostics) [aria-disabled=true]{opacity:.6;cursor:wait}
+:is(#wakeWordSettings,#wakeWordDiagnostics) :disabled{opacity:.6;cursor:not-allowed}
+:is(#wakeWordSettings,#wakeWordDiagnostics) input:disabled,:is(#wakeWordSettings,#wakeWordDiagnostics) select:disabled{border-style:dashed;background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(255,255,255,.07) 6px 12px)}
+:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-check{display:flex;align-items:center;gap:10px;min-height:32px;width:fit-content;max-width:100%;cursor:pointer;color:var(--text);font-size:13px}
+:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-check input[type=checkbox]{width:20px;height:20px;padding:0;margin:0;flex:none}
+:is(#wakeWordSettings,#wakeWordDiagnostics) input[type=checkbox]:disabled+span{text-decoration:underline dotted}
+:is(#wakeWordSettings,#wakeWordDiagnostics) #wwHealthTitle{margin:18px 0 8px;font-size:11px;font-weight:normal;letter-spacing:.06em;color:var(--muted)}
+:is(#wakeWordSettings,#wakeWordDiagnostics) #wwError:focus{outline:2px solid var(--accent);outline-offset:2px}
+:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-restart{animation:wwIn .25s ease-out}
 @keyframes wwIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
-@media(prefers-reduced-motion:reduce){#wakeWordSettings .ww-restart{animation:none}}
+@media(prefers-reduced-motion:reduce){:is(#wakeWordSettings,#wakeWordDiagnostics) .ww-restart{animation:none}}
 .ww-sr{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}`;
 
   function ensureStyle(){
@@ -786,34 +844,43 @@
     document.head.appendChild(style);
   }
 
-  /* L'onglet se glisse juste après « Voix » (même famille) et dessine sa
-     section dans le contenu de la fenêtre de réglages. */
-  function installTab(){
-    if(typeof TABS==='undefined'||!Array.isArray(TABS)||typeof renderTab!=='function'||TABS.some(tab=>tab.id===TAB_ID))return;
+  /* La section s'enregistre dans Voix & audio (alias `wakeword` : l'ancien onglet y mène) et sa
+     partie de diagnostic dans Avancé & diagnostic. Différé : ce module est inséré avant le script
+     des Réglages, dont les fonctions et l'état ne sont prêts qu'à la fin du chargement. */
+  function install(){
+    if(typeof registerSettingsSection!=='function'){log('error','wake_word.settings_shell_missing');return}
     ensureStyle();
-    const after=TABS.findIndex(tab=>tab.id==='voice');
-    TABS.splice(after>=0?after+1:TABS.length,0,{id:TAB_ID,label:'Mot d’éveil',save:false});
-    const baseRenderTab=renderTab;
-    renderTab=async function(){
-      if(SET.tab!==TAB_ID)return baseRenderTab.apply(this,arguments);
-      if(typeof cleanupSettingsSurface==='function')cleanupSettingsSurface();
-      SET.renderRevision=(SET.renderRevision||0)+1;
-      modalSave.style.display='none';
-      modalSub.textContent='Enregistré tout de suite, appliqué au prochain démarrage de Voice.';
-      /* Déjà dessiné et lu (par exemple `openSettings` rappelle `renderTab` quand
-         les réglages généraux arrivent après un clic sur l'onglet) : relire sur place,
-         sans effacer l'écran. */
-      const shown=document.getElementById(SECTION_ID);
-      if(shown&&modalContent.contains(shown)&&view.state){load({keep:true});return}
-      modalContent.innerHTML='';
-      modalContent.append(sectionNode());
-      say('','');
-      view.error=null;view.state=null;view.form=null;view.loadError=null;
-      load();
-    };
+    registerSettingsSection({id:'wake_word',category:'voice_audio',label:'Mot d’éveil',order:50,save:'self',
+      applies:'next_voice_start',aliases:['wakeword'],
+      description:'Réveiller JARVIS à la voix : moteur, phrase, sensibilité, pause après un réveil.',
+      mount(host,context){
+        mounted.form={host,isCurrent:context.isCurrent,open:context.open};
+        context.say('','');
+        view.error=null;
+        host.append(sectionNode());
+        /* Lecture déjà refusée pendant cette ouverture des Réglages (le shell remonte la section quand
+           `/api/settings` arrive) : le refus reste affiché, « Réessayer » relit ; pas de relecture en boucle. */
+        const opening=typeof SET!=='undefined'?SET.openGeneration:0;
+        if(view.loadError&&!view.state&&view.failedOpening===opening)return;
+        view.failedOpening=null;
+        /* Déjà lu : relecture sur place (la saisie en cours est gardée), sans écran de chargement. */
+        load(view.state?{keep:true}:undefined);
+      },
+      destroy(){mounted.form=null},
+    });
+    if(typeof registerSettingsDiagnostic!=='function'){log('error','wake_word.diagnostics_shell_missing');return}
+    registerSettingsDiagnostic({id:'wake_word',label:'Mot d’éveil',order:20,
+      mount(host,context){
+        mounted.diag={host,isCurrent:context.isCurrent};
+        host.append(diagnosticsNode());
+        if(!view.state&&!view.loading)load();
+        else if(view.state)readDetector();
+      },
+      destroy(){mounted.diag=null},
+    });
   }
 
-  setTimeout(installTab,0);
+  setTimeout(install,0);
   window.JarvisWakeWordSettingsView=Object.freeze({
     inspect:()=>({state:view.state,form:view.form?{...view.form}:null,busy:view.busy,error:view.error,saved:view.saved,detector:view.detector}),
   });

@@ -114,7 +114,12 @@ registerSettingsSection({               // porte de la page : R.page.register de
   `self` et `readonly` cachent le pied : la section porte ses propres notices. Pour les onglets hérités, le
   comportement d'avant est conservé (`TABS[].save`, pied caché pour `subagents`).
 - Les brouillons ne sont pas gardés par le shell au changement de section : chaque module garde son contrat actuel
-  (par exemple `SET.subagentDrafts`).
+  (par exemple `SET.subagentDrafts`, le brouillon partagé `SET.draft` des sections Voix, l'état du module Mot d'éveil).
+- **Diagnostics en parties (Slice 03).** La section `advanced_diagnostics` / `diagnostics` (lecture seule) monte, dans
+  l'ordre, les parties inscrites par `registerSettingsDiagnostic({id, label, order, mount(host, context), destroy()})` :
+  chaque partie a son titre (`JarvisSettingsUI.section`), reçoit le même `context` que la section et est détruite avec
+  elle ; un `mount` qui lève laisse une notice `role=alert` dans sa seule partie. Parties actuelles : Voix (page),
+  Mot d'éveil (`control_center_wake_word.js`). Voir [`voice-audio.md`](voice-audio.md).
 
 ## 5. Primitives (`window.JarvisSettingsUI`)
 

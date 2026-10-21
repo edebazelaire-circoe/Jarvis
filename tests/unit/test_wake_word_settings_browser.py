@@ -5,7 +5,7 @@ port libre, aucun lien avec le JARVIS vivant) est servi, Chrome sans tête le
 charge, et le harnais CDP clique, tape et appuie sur de vraies touches. Ce que
 le fichier prouve :
 
-- la section existe, juste après « Voix », avec ses défauts (désactivé) ;
+- la section existe dans Voix & audio, après les quatre sections Voix, avec ses défauts (désactivé) ;
 - enregistrer écrit le fichier de réglages du runtime temporaire par la route
   et par elle seule, affiche le bandeau « Redémarrage de Voice requis », et le
   rechargement relit les valeurs ;
@@ -17,7 +17,9 @@ le fichier prouve :
 - tout se fait au clavier, avec des noms accessibles et un focus visible ;
 - `prefers-reduced-motion` arrête vraiment l'animation du bandeau ;
 - l'état du détecteur est le DERNIER événement du journal, daté, jamais une
-  mesure en direct.
+  mesure en direct ; il vit dans Avancé & diagnostic › Diagnostics (Slice 03 de
+  jarvis-settings-ui-reorganization), avec les clés ignorées et la version illisible ;
+- la saisie survit à un passage par une autre section.
 
 Aucun micro n'est ouvert. Le test se saute proprement si Chrome ou node est
 absent.
@@ -146,19 +148,41 @@ def got(step: dict, id: str):
     return found[0]["value"]
 
 
-#: Ouvrir les Réglages, puis l'onglet du mot d'éveil, jusqu'à ce que la section soit chargée.
+#: Ouvrir les Réglages, puis la section du mot d'éveil (Voix & audio), jusqu'à ce qu'elle soit chargée.
+WAKE_ENTRY = "#modalTabs [data-section=wake_word]"
 OPEN = [
     wait("!!document.getElementById('openSettings')"),
     # Réglages est replié dans « Plus d’outils » depuis la Slice 04 de la refonte roue/dossier.
     click("#dockMore"), click("#openSettings"),
-    wait("!!document.querySelector('#modalTabs [data-tab=wakeword]')"),
-    click("#modalTabs [data-tab=wakeword]"),
+    # Réglages lus (la section Conversation ne se dessine qu'avec eux) : sans cela, `openSettings` remonte la section
+    # du mot d'éveil quand `/api/settings` arrive, au milieu des actions du test (le cas est couvert à part, I3).
+    wait("!!document.getElementById('voiceSection_conversation')"),
+    wait(f"!!document.querySelector('{WAKE_ENTRY}')"),
+    click(WAKE_ENTRY),
+    wait("!!document.getElementById('ww_save')"),
+]
+
+#: Avancé & diagnostic › Diagnostics, jusqu'à ce que le détecteur y soit lu.
+DIAG = [
+    click("#settingsCategories [data-category=advanced_diagnostics]"),
+    wait("!!document.querySelector('#modalTabs [data-section=diagnostics]')"),
+    click("#modalTabs [data-section=diagnostics]"),
+    wait("!!document.getElementById('wwDetector')&&document.getElementById('wwDetector').dataset.wwDetectorKind!=='unread'"),
+]
+
+#: Retour à la section du mot d'éveil, par la catégorie Voix & audio.
+BACK = [
+    click("#settingsCategories [data-category=voice_audio]"),
+    wait(f"!!document.querySelector('{WAKE_ENTRY}')"),
+    click(WAKE_ENTRY),
     wait("!!document.getElementById('ww_save')"),
 ]
 
 SNAP = """(()=>{
-  const q=s=>document.querySelector(s), sec=q('#wakeWordSettings');
-  if(!sec)return {present:false};
+  const q=s=>document.querySelector(s), sec=q('#wakeWordSettings'), det0=q('#wwDetector');
+  // Hors de la section (Avancé & diagnostic › Diagnostics) : seulement ce qu'on y lit.
+  if(!sec)return {present:false,detector:det0?{kind:det0.dataset.wwDetectorKind,text:det0.textContent}:null,
+    diag:(q('#wakeWordDiagnostics')||{}).textContent||null};
   const val=id=>{const e=document.getElementById(id);return e?e.value:null};
   const err=q('#wwError'), kw=q('#ww_keyword'), det=q('#wwDetector'), restart=q('#wwRestart');
   return {present:true,
@@ -177,6 +201,8 @@ SNAP = """(()=>{
     license:(q('[data-ww-license]')||{}).textContent||null,
     text:sec.textContent,
     detector:det?{kind:det.dataset.wwDetectorKind,text:det.textContent}:null,
+    diagLink:(q('[data-ww-diagnostic-link]')||{}).textContent||null,
+    diag:(q('#wakeWordDiagnostics')||{}).textContent||null,
     dirty:q('#wwDirty').textContent,
     focus:document.activeElement&&document.activeElement.id,
     toasts:[...document.querySelectorAll('.toast')].map(t=>t.className+'|'+t.textContent),
@@ -211,13 +237,18 @@ async def test_la_section_est_rendue_avec_ses_defauts_et_n_ecrit_rien(served, tm
         wait("document.getElementById('ww_keyword').tagName==='SELECT'"),
         snapshot("second"),
         {"a": "shot", "path": str(shots / "s7-wakeword-openwakeword-1440.png")},
+        *DIAG,
+        snapshot("diag"),
+        *BACK,
+        snapshot("back"),
     ]}])
     step = out["steps"][0]
     first, second = got(step, "first"), got(step, "second")
 
-    # L'onglet vient juste après « Voix ».
-    assert first["tabs"][:2] == ["Voix", TAB_LABEL], first["tabs"]
+    # La section vient après les quatre sections Voix, dans Voix & audio ; plus d'onglet « Mot d'éveil » à part.
+    assert first["tabs"] == ["Conversation", "Voix & transcription", "Micro & son", "Tours & interruptions", TAB_LABEL], first["tabs"]
     assert first["activeTab"] == TAB_LABEL
+    assert "Au prochain démarrage de Voice" in first["text"], "le moment d'application est dit"
 
     # Défauts : désactivé, Porcupine, mot « jarvis » (champ de texte), 0,5, 2000.
     assert first["enabled"] is False
@@ -232,8 +263,16 @@ async def test_la_section_est_rendue_avec_ses_defauts_et_n_ecrit_rien(served, tm
     assert first["restart"] is None, "pas de bandeau avant le moindre enregistrement"
     assert first["saveDisabled"] is False
     assert first["license"] is None, "la licence n'est dite que pour le fournisseur qui la porte"
-    assert first["detector"]["kind"] == "unread" or first["detector"]["kind"] == "none"
+    # Le détecteur n'est plus dans la vue ordinaire : il se lit dans Avancé & diagnostic.
+    assert first["detector"] is None and first["diagLink"] is None
+    diag = got(step, "diag")
+    assert diag["detector"]["kind"] == "none", diag["detector"]
+    assert "Aucune remarque sur le bloc lu." in diag["diag"]
     assert first["storage"] == [], "la page ne stocke rien de ce réglage"
+    # La saisie non enregistrée survit au passage par une autre catégorie.
+    back = got(step, "back")
+    assert back["provider"] == "openwakeword" and back["keyword"] == "hey_jarvis"
+    assert back["dirty"] == "Modifications non enregistrées."
 
     # openWakeWord : liste fermée, exigences et licence non commerciale.
     assert second["keywordTag"] == "SELECT" and second["keywordOptions"] == ["hey_jarvis"]
@@ -377,13 +416,19 @@ async def test_un_bloc_d_une_version_etrangere_desactive_l_enregistrement(served
         eval_("document.getElementById('ww_save').dispatchEvent(new MouseEvent('click',{bubbles:true}));1"),
         {"a": "shot", "path": str(shots / "s7-wakeword-foreign-1440.png")},
         snapshot("after"),
+        click("[data-ww-open-diagnostics]"),
+        wait("!!document.getElementById('wwDetector')"),
+        snapshot("diag"),
     ]}])
     seen = got(out["steps"][0], "seen")
     assert seen["pill"] == {"kind": "foreign", "text": "Version étrangère"}
     assert seen["saveDisabled"] is True
     assert all(seen["inputsDisabled"]), "les champs sont figés aussi : rien à saisir qui ne pourrait être écrit"
     assert "autre version de JARVIS" in seen["stateText"] and "Enregistrer est désactivé" in seen["stateText"]
-    assert "wake_word_stored_version_unreadable" in seen["text"], "le diagnostic du fichier est montré"
+    assert "remarque" in seen["diagLink"] and "Voir le diagnostic" in seen["diagLink"], "un lien vers le diagnostic"
+    assert "wake_word_stored_version_unreadable" not in seen["text"], "le diagnostic n'encombre plus la vue ordinaire"
+    diag = got(out["steps"][0], "diag")
+    assert "wake_word_stored_version_unreadable" in diag["diag"], "le diagnostic du fichier est montré dans Avancé"
     assert seen["enabled"] is False, "le bloc étranger n'est pas lu : valeurs par défaut affichées"
     # Cliquer ne fait rien : aucune requête d'écriture, fichier octet pour octet identique.
     assert posts(out) == []
@@ -445,12 +490,12 @@ async def test_la_section_reste_lisible_dans_chaque_theme(served, tmp_path, them
 # ======================================================================
 
 
-HELP_STOPS = 6  # activer, moteur, phrase, sensibilité, pause, détecteur
+HELP_STOPS = 5  # activer, moteur, phrase, sensibilité, pause (le détecteur vit dans Avancé & diagnostic)
 
 
 async def test_tout_se_fait_au_clavier_avec_des_noms_et_un_focus_visible(served):
     order = ["ww_enabled", "ww_provider", "ww_keyword", "ww_sensitivity", "ww_sensitivity_value",
-             "ww_cooldown", "ww_save", "ww_detector_read"]
+             "ww_cooldown", "ww_save"]
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         *OPEN,
         eval_("document.getElementById('ww_enabled').focus();document.activeElement.id"),
@@ -483,7 +528,7 @@ async def test_tout_se_fait_au_clavier_avec_des_noms_et_un_focus_visible(served)
     # Chaque « ? » est un arrêt de plus, ignoré ici : seul l'ordre des contrôles compte.
     controls = lambda names: [i for i in names if not i.startswith("wwHelpBtn")]
     assert controls(focused[f"fwd{n}"] for n in range(len(order) - 1 + HELP_STOPS)) == order[1:], focused
-    assert controls(focused[f"back{n}"] for n in range(3)) == ["ww_save", "ww_cooldown"], focused
+    assert controls(focused[f"back{n}"] for n in range(3)) == ["ww_cooldown", "ww_sensitivity_value"], focused
     assert got(step, "checked") is True, "Espace coche l'interrupteur"
     assert float(got(step, "sens")) > 0.5, "la flèche droite fait monter le curseur et la valeur exacte suit"
     ring = got(step, "ring")
@@ -544,8 +589,8 @@ async def test_une_lecture_en_echec_se_dit_et_se_reessaie(served, monkeypatch):
         wait("!!document.getElementById('openSettings')"),
         # Réglages est replié dans « Plus d’outils » depuis la Slice 04 de la refonte roue/dossier.
         click("#dockMore"), click("#openSettings"),
-        wait("!!document.querySelector('#modalTabs [data-tab=wakeword]')"),
-        click("#modalTabs [data-tab=wakeword]"),
+        wait(f"!!document.querySelector('{WAKE_ENTRY}')"),
+        click(WAKE_ENTRY),
         wait("!!document.querySelector('[data-ww-load-error]')"),
         eval_("({role:document.querySelector('[data-ww-load-error]').getAttribute('role'),"
               "save:!!document.getElementById('ww_save'),text:document.querySelector('[data-ww-load-error]').textContent})", "failed"),
@@ -574,16 +619,21 @@ async def test_l_etat_du_detecteur_est_le_dernier_evenement_du_journal(served):
                  data={"code": "wake_engine_unavailable", "cause_code": "wake_package_missing", "provider": "openwakeword"})
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         *OPEN,
+        *DIAG,
         wait("document.getElementById('wwDetector').dataset.wwDetectorKind==='failed'"),
         snapshot("seen"),
+        eval_("({h3:parseFloat(getComputedStyle(document.getElementById('diagnostic_wake_word-title')).fontSize),"
+              "h4:parseFloat(getComputedStyle(document.getElementById('wwHealthTitle')).fontSize)})", "titles"),
         eval_("document.getElementById('ww_detector_read').click();1"),
         wait("document.getElementById('wwDetector').dataset.wwDetectorKind==='failed'"),
     ]}])
     seen = got(out["steps"][0], "seen")
+    titles = got(out["steps"][0], "titles")
+    assert titles["h4"] <= titles["h3"], titles
     detector = seen["detector"]["text"]
     assert "en panne" in detector and "wake_package_missing" in detector and "extra Python" in detector
     assert "hors ligne" in detector, "Voice n'est pas en ligne dans cette instance isolée : l'événement est du passé"
-    assert "Secret" not in seen["text"] and "dll" not in seen["text"], "le texte libre du journal n'est jamais repris"
+    assert "Secret" not in seen["diag"] and "dll" not in seen["diag"], "le texte libre du journal n'est jamais repris"
     assert "écoute" not in detector.lower().replace("l’écoute", "")
     assert posts(out) == [], "relire le journal n'écrit rien"
     assert_clean(out)
@@ -696,6 +746,11 @@ def hostile_stub(post_mode: str) -> str:
   }};return 1}})()"""
 
 
+HOSTILE_DIAG = """(()=>({xss:typeof window.__xss,imgs:document.querySelectorAll('#wakeWordDiagnostics img').length,
+  diag:document.getElementById('wakeWordDiagnostics').textContent,
+  ignored:(document.querySelector('[data-ww-ignored]')||{}).textContent||null}))()"""
+
+
 HOSTILE_SEE = """(()=>({xss:typeof window.__xss,imgs:document.querySelectorAll('#wakeWordSettings img,#toasts img').length,
   section:document.getElementById('wakeWordSettings').textContent,toasts:document.getElementById('toasts').textContent,
   ignored:(document.querySelector('[data-ww-ignored]')||{}).textContent||null,
@@ -711,6 +766,9 @@ async def test_des_donnees_hostiles_du_serveur_sont_rendues_litteralement(served
         *OPEN,
         eval_("new Promise(r=>setTimeout(r,300))"),
         eval_(HOSTILE_SEE, "read"),
+        *DIAG,
+        eval_(HOSTILE_DIAG, "diag"),
+        *BACK,
         click("#ww_save"),
         wait("!!document.getElementById('wwError')"),
         eval_("new Promise(r=>setTimeout(r,300))"),
@@ -722,12 +780,13 @@ async def test_des_donnees_hostiles_du_serveur_sont_rendues_litteralement(served
         eval_(HOSTILE_SEE, "saved"),
     ]}])
     step = out["steps"][0]
-    read, refused, saved = got(step, "read"), got(step, "refused"), got(step, "saved")
-    for phase in (read, refused, saved):
+    read, refused, saved, diag = got(step, "read"), got(step, "refused"), got(step, "saved"), got(step, "diag")
+    for phase in (read, refused, saved, diag):
         assert phase["xss"] == "undefined", "le gestionnaire onerror ne doit jamais s'exécuter"
         assert phase["imgs"] == 0, "aucun élément n'a été créé à partir du texte du serveur"
-    assert HOSTILE in read["ignored"], "clé ignorée rendue littéralement"
-    assert read["section"].count(HOSTILE) >= 3, "clé ignorée, champ du diagnostic et état du serveur, littéralement"
+    assert HOSTILE in diag["ignored"], "clé ignorée rendue littéralement"
+    assert diag["diag"].count(HOSTILE) >= 3, "clé ignorée, champ du diagnostic et état du serveur, littéralement"
+    assert read["section"].count(HOSTILE) >= 1, "état du serveur, littéralement, dans la vue ordinaire"
     assert HOSTILE in refused["error"] and HOSTILE in refused["toasts"], "corps d'erreur 500 littéral"
     assert HOSTILE in saved["restart"], "restart_message littéral"
     assert_clean(out)
@@ -757,7 +816,7 @@ GEOMETRY = """(()=>{
   const label=document.querySelector('label[for=ww_enabled]').getBoundingClientRect();
   const fs=sel=>parseFloat(getComputedStyle(document.querySelector(sel)).fontSize);
   const cs=id=>{const c=getComputedStyle(document.getElementById(id));return {border:c.borderTopStyle,cursor:c.cursor,opacity:c.opacity,bg:c.backgroundImage}};
-  return {h3:fs('#wwTitle'),h4:fs('#wwHealthTitle'),label:{w:label.width,h:label.height},box:r('ww_enabled'),range:r('ww_sensitivity'),
+  return {h3:fs('#wwTitle'),label:{w:label.width,h:label.height},box:r('ww_enabled'),range:r('ww_sensitivity'),
     select:cs('ww_provider'),text:cs('ww_cooldown')}})()"""
 
 
@@ -772,7 +831,7 @@ async def test_les_titres_et_les_cibles_tactiles_sont_mesures(served):
     ]}])
     step = out["steps"][0]
     geometry = got(step, "geometry")
-    assert geometry["h4"] <= geometry["h3"], geometry
+    assert geometry["h3"] >= 13, geometry  # le titre du détecteur (h4) est mesuré dans le test du détecteur
     assert geometry["label"]["h"] >= 24 and geometry["label"]["w"] >= 24, geometry["label"]
     assert geometry["box"]["w"] >= 20 and geometry["box"]["h"] >= 20, geometry["box"]
     assert geometry["range"]["h"] >= 24, geometry["range"]
@@ -796,27 +855,27 @@ async def test_l_etat_fige_se_distingue_sans_perdre_le_contraste(served):
     assert_clean(out)
 
 
-async def test_relire_ne_redessine_pas_le_champ_en_cours_d_edition(served):
-    """P5 : le curseur ne saute plus en fin de champ quand « Relire » redessine la section."""
+async def test_relire_le_detecteur_ne_perd_pas_la_saisie_en_cours(served):
+    """P5, depuis la Slice 03 : le détecteur vit dans Avancé & diagnostic ; l'actualiser puis revenir rend la saisie
+    telle qu'elle était (non enregistrée, toujours signalée)."""
 
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         *OPEN,
-        wait("document.getElementById('wwDetector').dataset.wwDetectorKind!=='unread'"),
         type_in("#ww_keyword", "jarvis"),
-        eval_("(()=>{const e=document.getElementById('ww_keyword');window.__kw=e;e.focus();e.setSelectionRange(2,3);return 1})()"),
-        eval_("document.getElementById('ww_detector_read').click();1"),
-        wait("document.getElementById('ww_detector_read').getAttribute('aria-busy')===null"),
-        eval_("(()=>{const e=document.getElementById('ww_keyword');return {focus:document.activeElement.id,"
-              "start:e.selectionStart,end:e.selectionEnd,value:e.value,same:e===window.__kw}})()", "kw"),
         type_in("#ww_cooldown", "2500"),
-        eval_("document.getElementById('ww_detector_read').click();1"),
+        *DIAG,
+        eval_("(()=>{const b=document.getElementById('ww_detector_read');b.focus();b.click();return 1})()"),
         wait("document.getElementById('ww_detector_read').getAttribute('aria-busy')===null"),
-        eval_("({focus:document.activeElement.id,value:document.getElementById('ww_cooldown').value})", "cd"),
+        eval_("document.activeElement&&document.activeElement.id", "focus"),
+        *BACK,
+        eval_("({keyword:document.getElementById('ww_keyword').value,cooldown:document.getElementById('ww_cooldown').value,"
+              "dirty:document.getElementById('wwDirty').textContent})", "form"),
     ]}])
     step = out["steps"][0]
-    kw, cd = got(step, "kw"), got(step, "cd")
-    assert kw == {"focus": "ww_keyword", "start": 2, "end": 3, "value": "jarvis", "same": True}, kw
-    assert cd == {"focus": "ww_cooldown", "value": "2500"}, cd
+    assert got(step, "focus") == "ww_detector_read", "le focus reste sur « Actualiser » après la lecture"
+    assert got(step, "form") == {"keyword": "jarvis", "cooldown": "2500", "dirty": "Modifications non enregistrées."}
+    assert posts(out) == []
+    assert_clean(out)
 
 
 def slow_settings_stub() -> str:
@@ -834,9 +893,9 @@ async def test_cliquer_l_onglet_pendant_l_ouverture_ne_fait_pas_clignoter_la_sec
         eval_(slow_settings_stub()),
         # Réglages est replié dans « Plus d’outils » depuis la Slice 04 de la refonte roue/dossier.
         click("#dockMore"), click("#openSettings"),
-        wait("!!document.querySelector('#modalTabs [data-tab=wakeword]')"),
+        wait(f"!!document.querySelector('{WAKE_ENTRY}')"),
         wait("typeof window.__gate==='function'"),
-        click("#modalTabs [data-tab=wakeword]"),
+        click(WAKE_ENTRY),
         wait("!!document.getElementById('ww_save')"),
         eval_("(()=>{window.__gaps=0;new MutationObserver(()=>{if(!document.getElementById('ww_provider'))window.__gaps++})"
               ".observe(document.getElementById('modalContent'),{childList:true,subtree:true});window.__gate();return 1})()"),

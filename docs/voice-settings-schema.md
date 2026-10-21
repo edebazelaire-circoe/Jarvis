@@ -60,11 +60,20 @@ suite.
 
 ## Control Center rendering
 
-The top-level `Voix` tab renders its seven sub-tabs directly from ordered
-`voice.categories`. Each `voice.option_metadata` entry is rendered exactly once
-under its backend-provided category. Generic persistence adapters update the
-existing `voice`, `audio`, authorization, architecture, and shortcut request
-shapes; the browser does not maintain a second setting-to-category map.
+Since `jarvis-settings-ui-reorganization` Slice 03 there is no `Voix` tab and
+no sub-tab: each entry also carries `surface` = `{category, section}` (plus
+`context` for `wake_toggle`), its single destination in the six-category
+Settings (`SURFACE_SECTIONS` / `_SURFACE` in `voice_settings_schema.py`; a
+record without destination raises). `voice_audio` sections `conversation`,
+`voice_output`, `microphone_sound`, `turns_interruptions` and
+`advanced_diagnostics` sections `architecture_compat`, `diagnostics` render
+exactly the entries addressed to them; `wake_toggle` is edited in Shortcuts and
+only shown read-only in `turns_interruptions`. `categories`, `category` and
+`destination` are unchanged (contract kept, no longer used for navigation).
+Mapping table and surface rules: [`settings/voice-audio.md`](settings/voice-audio.md).
+Generic persistence adapters update the existing `voice`, `audio`,
+authorization, architecture, and shortcut request shapes; the browser does not
+maintain a second setting-to-section map.
 
 Audio device discovery and diagnostic refresh are local, guarded asynchronous
 operations. A closed or superseded panel cannot publish its response. Device
@@ -76,8 +85,8 @@ unavailable evidence, and never remount the shared comparison catalog. A
 strict `provider:role` source plus `voice_stack_settings.*` persistence gate
 keeps architecture model selectors on registry-provided options only. A
 diagnostic refresh replaces only read-only server state while preserving the
-draft. The Models panel owns a separate shared catalog controller for the
-backend roles `realtime`, `transcription`, and `speech`; switching sub-tabs,
+draft. The `voice_output` section owns a separate shared catalog controller for the
+backend roles `realtime`, `transcription`, and `speech`; switching sections,
 rerendering, or closing aborts and destroys that controller. Search, filters,
 sort, and comparison selection are retained per role. Diagnostic metadata is
 the single rendering inventory; its owner profile path comes from the
@@ -85,7 +94,7 @@ effective verifier settings and is not repeated by parallel raw-status blocks.
 
 ## Qui coupe la voix de JARVIS (`barge_in_decider`)
 
-Réglage Duplex, catégorie « Tours & interruptions », persisté dans
+Réglage Duplex, section « Tours & interruptions » (`turns_interruptions`), persisté dans
 `voice_architecture.config.barge_in_decider`.
 
 - `local` (**défaut**) : JARVIS se tait dès que ce poste mesure une voix

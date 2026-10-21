@@ -56,6 +56,7 @@ SUB = r"""(()=>{const host=document.getElementById('toolWheel');const ae=documen
     reads:performance.getEntriesByType('resource').length}})()"""
 OVERLAY = r"""(()=>({open:document.getElementById('overlay').classList.contains('open'),
   tab:(document.querySelector('#modalTabs button.active')||{}).dataset?.tab||null,
+  section:(document.querySelector('#modalTabs button.active')||{}).dataset?.section||null,
   category:(document.querySelector('#settingsCategories [aria-selected=true]')||{}).dataset?.category||null,
   panel:document.getElementById('panel').classList.contains('open')?document.getElementById('panelTitle').textContent:null,
   wheel:window.JarvisToolWheel.isOpen()}))()"""
@@ -178,8 +179,8 @@ def test_the_two_jarvis_routes_and_every_settings_row_open_existing_surfaces(tmp
     ])
     assert out[0]["results"]["agents"]["panel"].startswith("Agents") and out[0]["results"]["agents"]["wheel"] is False
     voice = out[1]["results"]["voice"]
-    assert voice["open"] is True and voice["tab"] == "voice" and voice["wheel"] is False
-    assert voice["category"] == "voice_audio"  # « Réglages de la voix » atterrit sur Voix & audio
+    assert voice["open"] is True and voice["section"] == "conversation" and voice["wheel"] is False
+    assert voice["category"] == "voice_audio"  # « Réglages de la voix » atterrit sur Voix & audio (section Conversation, Slice 03)
     sub = out[2]["results"]["sub"]
     assert sub["head"] == "Paramètres"
     ids = [i["id"] for i in sub["items"]]

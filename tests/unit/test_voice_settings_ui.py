@@ -24,7 +24,7 @@ class JsonRequest:
         return self.payload
 
 
-def run_node(tmp_path: Path, data: object, source: str) -> object:
+def run_node(tmp_path: Path, data: object, source: str, *args: str) -> object:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node absent")
@@ -36,7 +36,7 @@ def run_node(tmp_path: Path, data: object, source: str) -> object:
         encoding="utf-8",
     )
     result = subprocess.run(
-        [node, str(script), str(data_path)], capture_output=True, text=True,
+        [node, str(script), str(data_path), *args], capture_output=True, text=True,
         encoding="utf-8", timeout=30, check=False,
     )
     assert result.returncode == 0, result.stderr
@@ -54,7 +54,10 @@ def voice_renderer_source(page: str) -> str:
     return page[page.index("function voiceArchitectureConfig()") : page.index("/* --- onglet Agent / CLI")]
 
 
-async def test_every_backend_voice_category_and_option_is_rendered_exactly_once_and_escaped(
+VOICE_PAGE_SECTIONS = ("conversation", "voice_output", "microphone_sound", "turns_interruptions", "architecture_compat", "diagnostics")
+
+
+async def test_every_backend_voice_option_is_rendered_exactly_once_in_its_section_and_escaped(
     control: ControlCenter, tmp_path: Path,
 ):
     data = json.loads((await control.get_settings(None)).text)
@@ -65,79 +68,74 @@ async def test_every_backend_voice_category_and_option_is_rendered_exactly_once_
         data,
         r"""
         const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-        const SET={data,voiceTab:'architecture',voiceCatalogRole:'realtime',catalog:{},devices:null,architectureDirty:false,restartNotice:false,
+        const SET={data,voiceTab:'conversation',voiceCatalogRole:'realtime',catalog:{},devices:null,architectureDirty:false,restartNotice:false,
           shortcuts:data.shortcuts,draft:{voice:{stack:data.voice.stack,arch:data.voice.arch||'',settings:JSON.parse(JSON.stringify(data.voice.settings)),authorization:{},architecture:JSON.parse(JSON.stringify(data.voice.architecture.selection.config))},audio:{...data.audio}}};
         const authValues=a=>({...a.stored,...(a.verifier_settings&&a.verifier_settings.stored||{}),...SET.draft.voice.authorization});
         const authVerdictHtml=()=>'',verifierHtml=()=>'',authEffectiveHtml=()=>'',aecHtml=()=>'',deviceOptions=()=>'';
         """
         + voice_renderer_source(page)
         + r"""
-        (async()=>{const rendered={};for(const category of data.voice.categories){SET.voiceTab=category.id;rendered[category.id]=await voicePanelHtml()}
+        const sections=JSON.parse(process.argv[3]);
+        (async()=>{const rendered={};for(const section of sections){SET.voiceTab=section;rendered[section]=await voicePanelHtml()}
           SET.draft.voice.settings.openai_realtime.turn_mode='manual';const hiddenVad=voiceOptionHtml(voiceOption('openai.vad_type'));
           SET.draft.voice.authorization.conversation_mode='solo_owner';const soloVerification=voiceOptionHtml(voiceOption('speaker_verification'));
-          const shell=await tabVoice();process.stdout.write(JSON.stringify({rendered,shell,hiddenVad,soloVerification}));})().catch(error=>{console.error(error);process.exitCode=1});
+          process.stdout.write(JSON.stringify({rendered,hiddenVad,soloVerification}));})().catch(error=>{console.error(error);process.exitCode=1});
         """,
+        json.dumps(VOICE_PAGE_SECTIONS),
     )
 
-    categories = data["voice"]["categories"]
-    for category in categories:
-        expected = [item["id"] for item in data["voice"]["option_metadata"] if item["category"] == category["id"]]
-        html = result["rendered"][category["id"]]
-        actual = []
+    metadata = data["voice"]["option_metadata"]
+    everything = "".join(result["rendered"].values())
+    for section in VOICE_PAGE_SECTIONS:
+        html = result["rendered"][section]
+        expected = [item["id"] for item in metadata if item["surface"]["section"] == section]
+        assert expected, section
         for identifier in expected:
-            marker = f'data-voice-option="{identifier}"'
-            assert html.count(marker) == 1, (category["id"], identifier)
-            actual.append(identifier)
-        assert len(actual) == len(expected)
+            assert html.count(f'data-voice-option="{identifier}"') == 1, (section, identifier)
         html_ids = re.findall(r'\sid="([^"]+)"', html)
-        assert len(html_ids) == len(set(html_ids)), category["id"]
-    assert "<img " not in result["rendered"]["architecture"]
-    assert "&lt;img src=x onerror=&quot;boom&quot;&gt;" in result["rendered"]["architecture"]
+        assert len(html_ids) == len(set(html_ids)), section
+        # Plus de sous-onglets techniques : une section est une page, pas une liste d'onglets.
+        assert 'role="tab"' not in html and "data-voice-tab" not in html, section
+    # Chaque option a exactement une destination : rendue une fois en tout, ou éditée hors de Voix (raccourci).
+    for item in metadata:
+        count = everything.count(f'data-voice-option="{item["id"]}"')
+        assert count == (0 if item["surface"]["section"] == "shortcuts" else 1), item["id"]
+    # `wake_toggle` : la touche effective en contexte, sans éditeur ni capture dans Voix.
+    turns = result["rendered"]["turns_interruptions"]
+    assert turns.count('data-voice-context="wake_toggle"') == 1 and 'data-voice-open="shortcuts"' in turns
+    assert "data-shortcut" not in everything and "keycap\" data-shortcut" not in everything
+    assert "<img " not in result["rendered"]["architecture_compat"]
+    assert "&lt;img src=x onerror=&quot;boom&quot;&gt;" in result["rendered"]["architecture_compat"]
     assert "settings_fields" not in json.dumps(result)
-    assert result["shell"].count('role="tab"') == len(categories)
-    assert 'role="tablist"' in result["shell"] and 'role="tabpanel"' in result["shell"]
     assert 'data-voice-option="openai.vad_type" hidden' in result["hiddenVad"]
     assert 'value="enforce"' in result["soloVerification"]
     assert 'value="shadow"' not in result["soloVerification"]
 
 
-def test_voice_subtab_keyboard_navigation_updates_state_focus_and_aria(tmp_path: Path):
-    page = PAGE.read_text(encoding="utf-8")
-    update = page[page.index("function updateVoiceTabs()") : page.index("async function renderVoicePanel")]
-    binding = page[page.index("function bindVoiceSurface") : page.index("function voiceChanged")]
-    result = run_node(
-        tmp_path,
-        {},
-        r"""
-        const ids=['architecture','conversation','turn_taking','models','audio','advanced','diagnostic'];let renders=[],focused='';
-        const buttons=ids.map(id=>({dataset:{voiceTab:id},handlers:{},setAttribute(k,v){this[k]=v},addEventListener(k,v){this.handlers[k]=v},focus(){focused=id}}));
-        const SET={voiceTab:'architecture',data:{voice:{categories:ids.map(id=>({id}))}}};
-        const document={querySelectorAll:()=>buttons};
-        const $=selector=>buttons.find(button=>selector===`#voiceTab_${button.dataset.voiceTab}`);
-        const renderVoicePanel=async revision=>{renders.push([revision,SET.voiceTab])},bindVoicePanel=()=>{},mountVoiceCatalog=()=>{};
-        """
-        + update
-        + binding
-        + r"""
-        (async()=>{bindVoiceSurface(12);let prevented=false;buttons[0].handlers.keydown({key:'End',preventDefault(){prevented=true}});await Promise.resolve();await Promise.resolve();
-          process.stdout.write(JSON.stringify({voiceTab:SET.voiceTab,focused,prevented,renders,selected:buttons.map(item=>item['aria-selected']),indexes:buttons.map(item=>item.tabIndex)}));})().catch(error=>{console.error(error);process.exitCode=1});
-        """,
-    )
+def test_voice_sub_tabs_are_gone_and_voice_sections_use_the_reserved_registry_ids():
+    """Slice 03 : les sept sous-onglets disparaissent ; le clavier des sections est celui du shell (listes ARIA testées
+    par `test_control_center_settings_shell_js` et `test_settings_shell_browser`)."""
 
-    assert result["voiceTab"] == "diagnostic" and result["focused"] == "diagnostic"
-    assert result["prevented"] is True and result["renders"] == [[12, "diagnostic"]]
-    assert result["selected"][-1] == "true" and result["indexes"][-1] == 0
+    page = PAGE.read_text(encoding="utf-8")
+    assert "data-voice-tab" not in page and "voice-tabs" not in page and "function tabVoice" not in page
+    sections = page[page.index("const VOICE_SECTIONS=[") : page.index("function voiceSectionSpec")]
+    ids = re.findall(r"\{id:'([a-z_]+)',category:'([a-z_]+)'", sections)
+    assert ids == [
+        ("conversation", "voice_audio"), ("voice_output", "voice_audio"), ("microphone_sound", "voice_audio"),
+        ("turns_interruptions", "voice_audio"), ("architecture_compat", "advanced_diagnostics"),
+    ]
+    assert "registerSettingsSection({id:'diagnostics',category:'advanced_diagnostics'" in page
 
 
 def test_voice_catalog_has_backend_roles_owned_lifecycle_and_preserved_per_role_state(tmp_path: Path):
     page = PAGE.read_text(encoding="utf-8")
-    source = page[page.index("function destroyVoiceCatalog()") : page.index("function updateVoiceTabs()")]
+    source = page[page.index("function destroyVoiceCatalog()") : page.index("async function renderVoicePanel")]
     result = run_node(
         tmp_path,
         {},
         r"""
         let creates=[],destroys=0,loads=0;const host={};
-        const SET={open:true,tab:'voice',voiceTab:'models',renderRevision:4,voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceCatalog:null};
+        const SET={open:true,section:'voice_output',voiceTab:'voice_output',renderRevision:4,voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceCatalog:null};
         const currentVoicePanel=()=>true,$=()=>host;
         const JarvisCatalog={createCatalogTable:(_host,options)=>{creates.push(options);return {state:{query:'',sort:'name-asc',filters:{},selection:new Set()},render(){},load(){loads+=1},destroy(){destroys+=1}}}};
         """
@@ -168,8 +166,8 @@ def test_audio_and_diagnostic_fetches_are_local_retryable_and_stale_safe(tmp_pat
         function deferred(){let resolve;const promise=new Promise(done=>{resolve=done});return {promise,resolve}}
         let calls=0,renders=0;const late=deferred(),status={textContent:''};
         const draft={voice:{settings:{openai_realtime:{voice:'ash'}}},audio:{active_timeout_s:'0'}};
-        const SET={open:true,tab:'voice',voiceTab:'audio',renderRevision:5,devices:null,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:'',data:{voice:{marker:'old'}},draft};
-        const currentVoicePanel=(revision,category=SET.voiceTab)=>SET.open&&SET.tab==='voice'&&revision===SET.renderRevision&&category===SET.voiceTab;
+        const SET={open:true,section:'microphone_sound',voiceTab:'microphone_sound',renderRevision:5,devices:null,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:'',data:{voice:{marker:'old'}},draft};
+        const currentVoicePanel=(revision,section=SET.voiceTab)=>SET.open&&SET.section===section&&revision===SET.renderRevision&&section===SET.voiceTab;
         const $=()=>status,renderVoicePanel=()=>{renders+=1};
         const api=async path=>{calls+=1;if(path==='/api/audio/devices'&&calls===1)throw new Error('audio offline');if(path==='/api/audio/devices'&&calls===2)return {ok:true,inputs:[],outputs:[]};return late.promise};
         """
@@ -177,7 +175,7 @@ def test_audio_and_diagnostic_fetches_are_local_retryable_and_stale_safe(tmp_pat
         + diagnostic
         + r"""
         (async()=>{await hydrateAudioDevices(5);const failed=SET.devices;await hydrateAudioDevices(5,true);const recovered=SET.devices;
-          SET.voiceTab='diagnostic';const before=JSON.stringify(SET.draft);const refresh=hydrateVoiceDiagnostics(5);SET.voiceTab='models';late.resolve({voice:{marker:'late'}});await refresh;
+          SET.section=SET.voiceTab='diagnostics';const before=JSON.stringify(SET.draft);const refresh=hydrateVoiceDiagnostics(5);SET.section=SET.voiceTab='voice_output';late.resolve({voice:{marker:'late'}});await refresh;
           process.stdout.write(JSON.stringify({failed,recovered,calls,renders,draftSame:before===JSON.stringify(SET.draft),voice:SET.data.voice}));})().catch(error=>{console.error(error);process.exitCode=1});
         """,
     )
@@ -217,12 +215,12 @@ async def test_provider_model_select_hydrates_locally_retries_ignores_stale_and_
         r"""
         const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
         const meta=data.meta,settings=data.settings;settings.voice.settings.openai_realtime.model='saved-removed';
-        const SET={open:true,tab:'voice',voiceTab:'models',renderRevision:5,voiceGeneration:7,voiceModelSources:{},voiceModelGenerations:{},voiceCatalog:{marker:'same'},data:settings,
+        const SET={open:true,section:'voice_output',voiceTab:'voice_output',renderRevision:5,voiceGeneration:7,voiceModelSources:{},voiceModelGenerations:{},voiceCatalog:{marker:'same'},data:settings,
           devices:null,architectureDirty:false,shortcuts:settings.shortcuts,draft:{voice:{stack:settings.voice.stack,arch:settings.voice.arch,settings:JSON.parse(JSON.stringify(settings.voice.settings)),authorization:{},architecture:settings.voice.architecture.selection.config},audio:{...settings.audio}}};
         const authValues=()=>({}),authDraftAfterChange=(draft,key,value)=>({...draft,[key]:value}),say=()=>{};
         const authVerdictHtml=()=>'',verifierHtml=()=>'',authEffectiveHtml=()=>'',aecHtml=()=>'',deviceOptions=()=>'';
         const providerLabel=value=>value,catalogNote=(value,provider)=>`<span>${provider}:${value.source}</span>`;
-        const currentVoicePanel=(revision,category=SET.voiceTab)=>SET.open&&SET.tab==='voice'&&SET.voiceTab===category&&revision===SET.renderRevision;
+        const currentVoicePanel=(revision,section=SET.voiceTab)=>SET.open&&SET.section===section&&SET.voiceTab===section&&revision===SET.renderRevision;
         const field={html:'',set outerHTML(value){this.html=value},get outerHTML(){return this.html},querySelector(){return null}};
         const $=()=>field;
         function deferred(){let resolve;const promise=new Promise(done=>{resolve=done});return {promise,resolve}}
@@ -266,11 +264,11 @@ async def test_models_panel_hydrates_only_the_three_provider_catalog_selects(
         tmp_path,
         data,
         r"""
-        const SET={open:true,tab:'voice',voiceTab:'models',renderRevision:9,voiceGeneration:3,voiceModelSources:{},voiceModelGenerations:{},data};
+        const SET={open:true,section:'voice_output',voiceTab:'voice_output',renderRevision:9,voiceGeneration:3,voiceModelSources:{},voiceModelGenerations:{},data};
         const panel={querySelectorAll:()=>[],querySelector:()=>null};
         const $=selector=>selector==='#voicePanel'?panel:null;
-        const currentVoicePanel=(revision,category=SET.voiceTab)=>SET.open&&SET.tab==='voice'&&SET.voiceTab===category&&revision===SET.renderRevision;
-        const voiceOptions=category=>(data.voice.option_metadata||[]).filter(item=>item.category===category&&item.destination===`voice.${category}`);
+        const currentVoicePanel=(revision,section=SET.voiceTab)=>SET.open&&SET.section===section&&SET.voiceTab===section&&revision===SET.renderRevision;
+        const voiceOptions=section=>(data.voice.option_metadata||[]).filter(item=>item.surface&&item.surface.section===section);
         const voiceOptionId=meta=>'voiceOption_'+String(meta.id).replace(/[^a-zA-Z0-9_-]/g,'_');
         const calls=[];const api=async path=>{calls.push(path);return {ok:true,source:'live',models:[]}};
         const destroyVoiceCatalog=()=>{throw new Error('catalog controller touched')},mountVoiceCatalog=()=>{throw new Error('catalog controller remounted')};
@@ -278,7 +276,7 @@ async def test_models_panel_hydrates_only_the_three_provider_catalog_selects(
         + request
         + model_binding
         + r"""
-        (async()=>{const catalogSelects=voiceOptions('models').filter(item=>item.type==='catalog-select');
+        (async()=>{const catalogSelects=voiceOptions('voice_output').filter(item=>item.type==='catalog-select');
           const hydrated=catalogSelects.filter(voiceProviderModelSource).map(item=>item.id);bindVoicePanel(9);
           await Promise.resolve();await Promise.resolve();
           process.stdout.write(JSON.stringify({all:catalogSelects.map(item=>({id:item.id,source:item.source,persistence:item.persistence})),hydrated,calls}));
@@ -310,13 +308,13 @@ async def test_diagnostic_records_are_authoritative_once_and_use_effective_owner
         data,
         r"""
         const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-        const SET={data,voiceTab:'diagnostic',voiceCatalogStates:{},voiceModelSources:{},devices:null,architectureDirty:false,shortcuts:data.shortcuts,
+        const SET={data,voiceTab:'diagnostics',voiceCatalogStates:{},voiceModelSources:{},devices:null,architectureDirty:false,shortcuts:data.shortcuts,
           draft:{voice:{stack:data.voice.stack,arch:data.voice.arch,settings:data.voice.settings,authorization:{},architecture:data.voice.architecture.selection.config},audio:data.audio}};
         const authValues=()=>({}),authVerdictHtml=()=>'<b>DUPLICATE_AUTH</b>',verifierHtml=()=>'<b>DUPLICATE_VERIFIER</b>',authEffectiveHtml=()=>'<b>DUPLICATE_EFFECTIVE</b>',aecHtml=()=>'<b>DUPLICATE_AEC</b>',deviceOptions=()=>'',catalogNote=()=>'';
         """
         + voice_renderer_source(page)
         + r"""
-        const records=voiceOptions('diagnostic'),html=voiceDiagnosticHtml(records);
+        const records=voiceOptions('diagnostics'),html=voiceDiagnosticHtml(records);
         process.stdout.write(JSON.stringify({html,ids:records.map(item=>item.id)}));
         """,
     )
@@ -340,14 +338,14 @@ async def test_audio_empty_and_partial_hardware_are_explicit_and_not_actionable(
         data,
         r"""
         const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-        const SET={data,voiceTab:'audio',voiceModelSources:{},architectureDirty:false,shortcuts:data.shortcuts,
+        const SET={data,voiceTab:'microphone_sound',voiceModelSources:{},architectureDirty:false,shortcuts:data.shortcuts,
           draft:{voice:{stack:data.voice.stack,arch:data.voice.arch,settings:data.voice.settings,authorization:{},architecture:data.voice.architecture.selection.config},audio:data.audio}};
         const authValues=()=>({}),authVerdictHtml=()=>'',verifierHtml=()=>'',authEffectiveHtml=()=>'',aecHtml=()=>'',catalogNote=()=>'';
         const deviceOptions=(items)=>items.map(item=>`<option value="${item.id}">${item.name}</option>`).join('');
         """
         + voice_renderer_source(page)
         + r"""
-        (async()=>{const records=voiceOptions('audio');const render=async state=>{SET.devices=state;return await voicePanelHtml()};
+        (async()=>{const records=voiceOptions('microphone_sound');const render=async state=>{SET.devices=state;return await voicePanelHtml()};
           process.stdout.write(JSON.stringify({empty:await render({ok:true,inputs:[],outputs:[]}),inputOnly:await render({ok:true,inputs:[{id:'mic',name:'Mic'}],outputs:[]}),outputOnly:await render({ok:true,inputs:[],outputs:[{id:'out',name:'Out'}]}),full:await render({ok:true,inputs:[{id:'mic',name:'Mic'}],outputs:[{id:'out',name:'Out'}]})}));
         })().catch(error=>{console.error(error);process.exitCode=1});
         """,
@@ -423,7 +421,7 @@ async def test_voice_categories_round_trip_without_losing_inactive_stack_audio_o
     assert reloaded["shortcuts"]["values"]["wake_toggle"] == "f10"
 
 
-def test_top_navigation_has_no_config_and_wake_is_not_duplicated_in_shortcuts():
+def test_top_navigation_has_no_config_and_wake_shortcut_has_one_editor_in_shortcuts():
     page = PAGE.read_text(encoding="utf-8")
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
     tabs = page[page.index("const TABS=") : page.index("const SET=")]
@@ -431,8 +429,11 @@ def test_top_navigation_has_no_config_and_wake_is_not_duplicated_in_shortcuts():
     work = PAGE.with_name("control_center_work.js").read_text(encoding="utf-8")
 
     assert f"id:'{fixture['removed_top_tab']}'" not in tabs
-    assert all(f"label:'{label}'" in tabs for label in fixture["top_tabs"] if label != "Apparence")
+    # « Voix » n'est plus un onglet (Slice 03 de jarvis-settings-ui-reorganization) : sections de `voice_audio`.
+    assert all(f"label:'{label}'" in tabs for label in fixture["top_tabs"] if label not in {"Apparence", "Voix"})
+    assert "id:'voice'" not in tabs
     assert "{id:'appearance',label:'Apparence',save:false}" in work
-    assert "item.id!=='wake_toggle'" in shortcuts
-    assert "Voix → Tours &amp; interruptions" in shortcuts
+    # Un seul éditeur de `wake_toggle` : les Raccourcis (plus de filtre, plus de renvoi vers Voix).
+    assert "wake_toggle'" not in shortcuts.replace("`wake_toggle` compris", "")
+    assert "Voix → Tours" not in shortcuts and "data-shortcut" in shortcuts
     assert "function tabConfig" not in page

@@ -101,6 +101,65 @@ DIAGNOSTIC_OPTION_IDS: tuple[str, ...] = (
     "model.adapter_status", "model.availability",
 )
 
+#: Sections des Réglages à six catégories qui hébergent une option Voix
+#: (`docs/settings/navigation-registry.md` : ID réservés au registre). Clé : section,
+#: valeur : catégorie. Présentation seulement, aucune incidence sur la persistance.
+SURFACE_SECTIONS: dict[str, str] = {
+    "conversation": "voice_audio",
+    "voice_output": "voice_audio",
+    "microphone_sound": "voice_audio",
+    "turns_interruptions": "voice_audio",
+    "architecture_compat": "advanced_diagnostics",
+    "diagnostics": "advanced_diagnostics",
+    "shortcuts": "interface_interactions",
+}
+
+#: L'unique destination éditable (ou lisible, pour un diagnostic) de chaque option :
+#: la vue ordinaire « Voix & audio » ou une section d'« Avancé & diagnostic ».
+#: `wake_toggle` est un raccourci : son éditeur est celui des Raccourcis, Voix n'en
+#: montre que la touche effective (`_SURFACE_CONTEXT`).
+_SURFACE: dict[str, str] = {
+    "voice_stack": "architecture_compat", "voice_arch": "architecture_compat",
+    "architecture": "architecture_compat",
+    "conversation_model": "voice_output", "reflex_model": "voice_output", "analysis_model": "voice_output",
+    "speculative_deltas": "architecture_compat", "reasoning_effort": "architecture_compat",
+    "client_delegation": "architecture_compat", "idle_timeout_s": "conversation",
+    "brain_orchestration": "architecture_compat", "barge_in_decider": "turns_interruptions",
+    "openai.model": "voice_output", "openai.voice": "voice_output", "openai.turn_mode": "turns_interruptions",
+    "openai.transcription_model": "voice_output", "openai.transcription_language": "voice_output",
+    "openai.noise_reduction": "microphone_sound", "openai.echo_cancellation": "microphone_sound",
+    "openai.reflex_enabled": "conversation", "openai.ack_delay_ms": "conversation",
+    "openai.vad_type": "turns_interruptions",
+    "openai.vad_eagerness": "architecture_compat", "openai.vad_threshold": "architecture_compat",
+    "openai.vad_prefix_padding_ms": "architecture_compat", "openai.vad_silence_duration_ms": "architecture_compat",
+    "gemini.model": "voice_output", "gemini.voice": "voice_output", "gemini.turn_mode": "turns_interruptions",
+    "gemini.input_transcription": "voice_output", "gemini.output_transcription": "voice_output",
+    "gemini.vad_start_sensitivity": "architecture_compat", "gemini.vad_end_sensitivity": "architecture_compat",
+    "gemini.vad_prefix_padding_ms": "architecture_compat", "gemini.vad_silence_duration_ms": "architecture_compat",
+    "conversation_mode": "conversation", "speaker_verification": "conversation",
+    "owner_buffer_ms": "architecture_compat", "owner_threshold": "architecture_compat",
+    "owner_evidence_ms": "architecture_compat", "owner_short_evidence_ms": "architecture_compat",
+    "owner_short_margin": "architecture_compat", "owner_profile_path": "diagnostics",
+    "audio_input_device": "microphone_sound", "audio_output_device": "microphone_sound",
+    "active_timeout_s": "conversation", "wake_toggle": "shortcuts",
+    **{option_id: "diagnostics" for option_id in DIAGNOSTIC_OPTION_IDS},
+}
+
+#: Sections qui montrent en lecture seule une option éditée ailleurs (un lien, jamais un second éditeur).
+_SURFACE_CONTEXT: dict[str, tuple[str, ...]] = {"wake_toggle": ("turns_interruptions",)}
+
+
+def _surface(option_id: str) -> dict[str, Any]:
+    """Destination d'une option dans les Réglages ; une option sans destination est une dérive."""
+
+    section = _SURFACE.get(option_id)
+    if section not in SURFACE_SECTIONS:
+        raise RuntimeError(f"Voice option without settings destination: {option_id}")
+    surface: dict[str, Any] = {"category": SURFACE_SECTIONS[section], "section": section}
+    if option_id in _SURFACE_CONTEXT:
+        surface["context"] = list(_SURFACE_CONTEXT[option_id])
+    return surface
+
 
 def _options(values: Iterable[Any], labels: Iterable[str] = ()) -> list[dict[str, Any]]:
     label_list = list(labels)
@@ -413,4 +472,6 @@ def describe_voice_settings(
         raise RuntimeError(f"Voice settings inventory drift: {sorted(set(by_id) ^ set(PERSISTABLE_OPTION_IDS))}")
     ordered = [by_id[option_id] for option_id in PERSISTABLE_OPTION_IDS]
     ordered.extend(_diagnostic_records())
+    for record in ordered:
+        record["surface"] = _surface(record["id"])
     return {"categories": deepcopy(list(VOICE_CATEGORIES)), "option_metadata": deepcopy(ordered)}

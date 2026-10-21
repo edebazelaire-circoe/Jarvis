@@ -135,7 +135,8 @@ Sections cibles prévues (enregistrées par les Slices 03 à 08) :
   `openSettingsTab(id)`. Dès la Slice 01, `openSettingsTab` accepte un ID d'onglet, une
   redirection, une catégorie ou une section cible. Depuis la Slice 02, `settingsTabs()` rend
   les six catégories (`{id, label, description}`) ; la ligne « Réglages de la voix » (`'voice'`)
-  reste servie par l'alias (Voix & audio, onglet Voix) jusqu'à son passage à `voice_audio` (Slice 09).
+  reste servie par l'alias, qui ouvre `voice_audio` / `conversation` depuis la Slice 03 (passage à
+  `voice_audio` dans la roue : Slice 09).
 - **Pied de page.** `save: 'footer'` montre le bouton Enregistrer du shell ; `self` et
   `readonly` le cachent (aujourd'hui : `TABS[].save` et le cas `subagents`).
 - **Nettoyage.** Le shell appelle `destroy` de la section quittée avant d'en monter une autre ;
@@ -154,8 +155,13 @@ Tant que des onglets de `TABS` existent :
 - `navigationFromLegacyTabs(TABS)` → `{categories:[{id,label,tabs}], unassigned}` : les
   onglets actuels rangés sous les six catégories (destination principale).
 - `test_no_module_injects_a_new_top_level_tab` fige la liste des modules qui font encore
-  `TABS.push/splice` (`control_center_wake_word.js`, `control_center_work.js`,
-  `control_center_barehands.js`) : tout nouveau module doit enregistrer une section.
+  `TABS.push/splice` (`control_center_work.js`, `control_center_barehands.js`) : tout nouveau
+  module doit enregistrer une section.
+- Slice 03 : `voice_audio` n'a plus d'onglet hérité. Sections enregistrées : `conversation`,
+  `voice_output`, `microphone_sound`, `turns_interruptions` (page), `wake_word`
+  (`control_center_wake_word.js`), et sous `advanced_diagnostics` : `architecture_compat`,
+  `diagnostics` (page ; Diagnostics est fait de parties, `registerSettingsDiagnostic`).
+  Destinations des options Voix : [`voice-audio.md`](voice-audio.md).
 
 ## 6. Navigation du shell (Slice 02)
 

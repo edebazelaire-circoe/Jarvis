@@ -1,0 +1,631 @@
+{
+ "server": "sandbox setui, Core 127.77.0.1:27653, Control Center 127.0.0.1:27654, visualiseur coupé",
+ "console_errors": [],
+ "steps": [
+  {
+   "size": "1920x1080@100%",
+   "sections": {
+    "conversation": {
+     "cat": "voice_audio",
+     "section": "conversation",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "idle_timeout_s",
+      "openai.reflex_enabled",
+      "openai.ack_delay_ms",
+      "conversation_mode",
+      "speaker_verification",
+      "active_timeout_s"
+     ]
+    },
+    "voice_output": {
+     "cat": "voice_audio",
+     "section": "voice_output",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "conversation_model",
+      "reflex_model",
+      "analysis_model",
+      "openai.model",
+      "openai.voice",
+      "openai.transcription_model",
+      "openai.transcription_language",
+      "gemini.model",
+      "gemini.voice",
+      "gemini.input_transcription",
+      "gemini.output_transcription"
+     ]
+    },
+    "microphone_sound": {
+     "cat": "voice_audio",
+     "section": "microphone_sound",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "audio_input_device",
+      "audio_output_device",
+      "openai.noise_reduction",
+      "openai.echo_cancellation"
+     ]
+    },
+    "turns": {
+     "cat": "voice_audio",
+     "section": "turns_interruptions",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "barge_in_decider",
+      "openai.turn_mode",
+      "openai.vad_type",
+      "gemini.turn_mode"
+     ]
+    },
+    "wake": {
+     "cat": "voice_audio",
+     "section": "wake_word",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": false,
+     "options": []
+    },
+    "architecture": {
+     "cat": "advanced_diagnostics",
+     "section": "architecture_compat",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "architecture",
+      "speculative_deltas",
+      "reasoning_effort",
+      "client_delegation",
+      "brain_orchestration",
+      "voice_stack",
+      "voice_arch",
+      "openai.vad_eagerness",
+      "openai.vad_threshold",
+      "openai.vad_prefix_padding_ms",
+      "openai.vad_silence_duration_ms",
+      "gemini.vad_start_sensitivity",
+      "gemini.vad_end_sensitivity",
+      "gemini.vad_prefix_padding_ms",
+      "gemini.vad_silence_duration_ms",
+      "owner_buffer_ms",
+      "owner_threshold",
+      "owner_evidence_ms",
+      "owner_short_evidence_ms",
+      "owner_short_margin"
+     ]
+    },
+    "diagnostics": {
+     "cat": "advanced_diagnostics",
+     "section": "diagnostics",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": false,
+     "options": [
+      "owner_profile_path",
+      "authorization.status",
+      "authorization.runtime",
+      "authorization.verifier",
+      "authorization.worker",
+      "echo_cancellation.status",
+      "switch.status",
+      "catalog.source",
+      "model.adapter_status",
+      "model.availability"
+     ]
+    },
+    "shortcuts": {
+     "cat": "interface_interactions",
+     "section": null,
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": []
+    }
+   },
+   "draftKept": "120",
+   "saved": {
+    "status": "Enregistré.",
+    "restart": true,
+    "value": "120"
+   },
+   "wakeEditors": 1,
+   "aliasVoice": [
+    "voice_audio",
+    "conversation"
+   ],
+   "aliasWake": [
+    "voice_audio",
+    "wake_word"
+   ]
+  },
+  {
+   "size": "1366x768@100%",
+   "sections": {
+    "conversation": {
+     "cat": "voice_audio",
+     "section": "conversation",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "idle_timeout_s",
+      "openai.reflex_enabled",
+      "openai.ack_delay_ms",
+      "conversation_mode",
+      "speaker_verification",
+      "active_timeout_s"
+     ]
+    },
+    "voice_output": {
+     "cat": "voice_audio",
+     "section": "voice_output",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "conversation_model",
+      "reflex_model",
+      "analysis_model",
+      "openai.model",
+      "openai.voice",
+      "openai.transcription_model",
+      "openai.transcription_language",
+      "gemini.model",
+      "gemini.voice",
+      "gemini.input_transcription",
+      "gemini.output_transcription"
+     ]
+    },
+    "microphone_sound": {
+     "cat": "voice_audio",
+     "section": "microphone_sound",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "audio_input_device",
+      "audio_output_device",
+      "openai.noise_reduction",
+      "openai.echo_cancellation"
+     ]
+    },
+    "turns": {
+     "cat": "voice_audio",
+     "section": "turns_interruptions",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "barge_in_decider",
+      "openai.turn_mode",
+      "openai.vad_type",
+      "gemini.turn_mode"
+     ]
+    },
+    "wake": {
+     "cat": "voice_audio",
+     "section": "wake_word",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": false,
+     "options": []
+    },
+    "architecture": {
+     "cat": "advanced_diagnostics",
+     "section": "architecture_compat",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "architecture",
+      "speculative_deltas",
+      "reasoning_effort",
+      "client_delegation",
+      "brain_orchestration",
+      "voice_stack",
+      "voice_arch",
+      "openai.vad_eagerness",
+      "openai.vad_threshold",
+      "openai.vad_prefix_padding_ms",
+      "openai.vad_silence_duration_ms",
+      "gemini.vad_start_sensitivity",
+      "gemini.vad_end_sensitivity",
+      "gemini.vad_prefix_padding_ms",
+      "gemini.vad_silence_duration_ms",
+      "owner_buffer_ms",
+      "owner_threshold",
+      "owner_evidence_ms",
+      "owner_short_evidence_ms",
+      "owner_short_margin"
+     ]
+    },
+    "diagnostics": {
+     "cat": "advanced_diagnostics",
+     "section": "diagnostics",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": false,
+     "options": [
+      "owner_profile_path",
+      "authorization.status",
+      "authorization.runtime",
+      "authorization.verifier",
+      "authorization.worker",
+      "echo_cancellation.status",
+      "switch.status",
+      "catalog.source",
+      "model.adapter_status",
+      "model.availability"
+     ]
+    }
+   }
+  },
+  {
+   "size": "1920x1080@125% (1536x864 CSS, DPR 1.25)",
+   "sections": {
+    "conversation": {
+     "cat": "voice_audio",
+     "section": "conversation",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "idle_timeout_s",
+      "openai.reflex_enabled",
+      "openai.ack_delay_ms",
+      "conversation_mode",
+      "speaker_verification",
+      "active_timeout_s"
+     ]
+    },
+    "voice_output": {
+     "cat": "voice_audio",
+     "section": "voice_output",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "conversation_model",
+      "reflex_model",
+      "analysis_model",
+      "openai.model",
+      "openai.voice",
+      "openai.transcription_model",
+      "openai.transcription_language",
+      "gemini.model",
+      "gemini.voice",
+      "gemini.input_transcription",
+      "gemini.output_transcription"
+     ]
+    },
+    "microphone_sound": {
+     "cat": "voice_audio",
+     "section": "microphone_sound",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "audio_input_device",
+      "audio_output_device",
+      "openai.noise_reduction",
+      "openai.echo_cancellation"
+     ]
+    },
+    "turns": {
+     "cat": "voice_audio",
+     "section": "turns_interruptions",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "barge_in_decider",
+      "openai.turn_mode",
+      "openai.vad_type",
+      "gemini.turn_mode"
+     ]
+    },
+    "wake": {
+     "cat": "voice_audio",
+     "section": "wake_word",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": false,
+     "options": []
+    },
+    "architecture": {
+     "cat": "advanced_diagnostics",
+     "section": "architecture_compat",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "architecture",
+      "speculative_deltas",
+      "reasoning_effort",
+      "client_delegation",
+      "brain_orchestration",
+      "voice_stack",
+      "voice_arch",
+      "openai.vad_eagerness",
+      "openai.vad_threshold",
+      "openai.vad_prefix_padding_ms",
+      "openai.vad_silence_duration_ms",
+      "gemini.vad_start_sensitivity",
+      "gemini.vad_end_sensitivity",
+      "gemini.vad_prefix_padding_ms",
+      "gemini.vad_silence_duration_ms",
+      "owner_buffer_ms",
+      "owner_threshold",
+      "owner_evidence_ms",
+      "owner_short_evidence_ms",
+      "owner_short_margin"
+     ]
+    },
+    "diagnostics": {
+     "cat": "advanced_diagnostics",
+     "section": "diagnostics",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": false,
+     "options": [
+      "owner_profile_path",
+      "authorization.status",
+      "authorization.runtime",
+      "authorization.verifier",
+      "authorization.worker",
+      "echo_cancellation.status",
+      "switch.status",
+      "catalog.source",
+      "model.adapter_status",
+      "model.availability"
+     ]
+    }
+   }
+  },
+  {
+   "size": "1366x768@125% (1093x614 CSS, DPR 1.25)",
+   "sections": {
+    "conversation": {
+     "cat": "voice_audio",
+     "section": "conversation",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "idle_timeout_s",
+      "openai.reflex_enabled",
+      "openai.ack_delay_ms",
+      "conversation_mode",
+      "speaker_verification",
+      "active_timeout_s"
+     ]
+    },
+    "voice_output": {
+     "cat": "voice_audio",
+     "section": "voice_output",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "conversation_model",
+      "reflex_model",
+      "analysis_model",
+      "openai.model",
+      "openai.voice",
+      "openai.transcription_model",
+      "openai.transcription_language",
+      "gemini.model",
+      "gemini.voice",
+      "gemini.input_transcription",
+      "gemini.output_transcription"
+     ]
+    },
+    "microphone_sound": {
+     "cat": "voice_audio",
+     "section": "microphone_sound",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "audio_input_device",
+      "audio_output_device",
+      "openai.noise_reduction",
+      "openai.echo_cancellation"
+     ]
+    },
+    "turns": {
+     "cat": "voice_audio",
+     "section": "turns_interruptions",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "barge_in_decider",
+      "openai.turn_mode",
+      "openai.vad_type",
+      "gemini.turn_mode"
+     ]
+    },
+    "wake": {
+     "cat": "voice_audio",
+     "section": "wake_word",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": false,
+     "options": []
+    },
+    "architecture": {
+     "cat": "advanced_diagnostics",
+     "section": "architecture_compat",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": true,
+     "options": [
+      "architecture",
+      "speculative_deltas",
+      "reasoning_effort",
+      "client_delegation",
+      "brain_orchestration",
+      "voice_stack",
+      "voice_arch",
+      "openai.vad_eagerness",
+      "openai.vad_threshold",
+      "openai.vad_prefix_padding_ms",
+      "openai.vad_silence_duration_ms",
+      "gemini.vad_start_sensitivity",
+      "gemini.vad_end_sensitivity",
+      "gemini.vad_prefix_padding_ms",
+      "gemini.vad_silence_duration_ms",
+      "owner_buffer_ms",
+      "owner_threshold",
+      "owner_evidence_ms",
+      "owner_short_evidence_ms",
+      "owner_short_margin"
+     ]
+    },
+    "diagnostics": {
+     "cat": "advanced_diagnostics",
+     "section": "diagnostics",
+     "overflowX": false,
+     "contentOverflowX": false,
+     "footer": false,
+     "options": [
+      "owner_profile_path",
+      "authorization.status",
+      "authorization.runtime",
+      "authorization.verifier",
+      "authorization.worker",
+      "echo_cancellation.status",
+      "switch.status",
+      "catalog.source",
+      "model.adapter_status",
+      "model.availability"
+     ]
+    }
+   }
+  }
+ ],
+ "writes": [
+  {
+   "method": "POST",
+   "path": "/api/wake-word",
+   "body": {
+    "enabled": false,
+    "provider": "porcupine",
+    "keyword": "jarvis",
+    "sensitivity": 0.6,
+    "cooldown_ms": 2000
+   }
+  },
+  {
+   "method": "POST",
+   "path": "/api/settings",
+   "body": {
+    "voice": {
+     "stack": "openai_realtime",
+     "arch": "",
+     "settings": {
+      "openai_realtime": {
+       "model": "",
+       "voice": "cedar",
+       "turn_mode": "auto",
+       "transcription_model": "gpt-4o-mini-transcribe",
+       "transcription_language": "fr",
+       "noise_reduction": "far_field",
+       "echo_cancellation": true,
+       "reflex_enabled": true,
+       "ack_delay_ms": 1200,
+       "vad_type": "server_vad",
+       "vad_eagerness": "auto",
+       "vad_threshold": 0.55,
+       "vad_prefix_padding_ms": 300,
+       "vad_silence_duration_ms": 1500
+      },
+      "gemini_live": {
+       "model": "",
+       "voice": "Puck",
+       "turn_mode": "auto",
+       "input_transcription": true,
+       "output_transcription": true,
+       "vad_start_sensitivity": "LOW",
+       "vad_end_sensitivity": "LOW",
+       "vad_prefix_padding_ms": 300,
+       "vad_silence_duration_ms": 1500
+      }
+     },
+     "authorization": {}
+    },
+    "cli": {
+     "agent": "claude",
+     "settings": {
+      "claude": {
+       "command": "claude",
+       "model": "",
+       "permission_mode": "bypassPermissions"
+      },
+      "codex": {
+       "command": "codex",
+       "model": "",
+       "permission_mode": "danger-full-access"
+      }
+     },
+     "delegation_mode": "duplicate",
+     "behavior": {
+      "response_verbosity": "inherit",
+      "politeness_formality": "inherit"
+     }
+    },
+    "routing": {
+     "profiles": {
+      "desktop": {
+       "profile": "desktop",
+       "enabled": true,
+       "candidates": [],
+       "allow_general_fallback": true
+      },
+      "code": {
+       "profile": "code",
+       "enabled": true,
+       "candidates": [],
+       "allow_general_fallback": true
+      },
+      "fast": {
+       "profile": "fast",
+       "enabled": true,
+       "candidates": [],
+       "allow_general_fallback": true
+      },
+      "general": {
+       "profile": "general",
+       "enabled": true,
+       "candidates": [],
+       "allow_general_fallback": true
+      }
+     }
+    },
+    "audio": {
+     "input_device": "",
+     "output_device": "",
+     "active_timeout_s": "120"
+    },
+    "agenda_reminders": {
+     "enabled": true,
+     "lead_minutes": "30, 10",
+     "morning_time": "07:45",
+     "evening_time": "19:00",
+     "late_minutes": 5,
+     "refresh_minutes": 10
+    }
+   }
+  }
+ ]
+}

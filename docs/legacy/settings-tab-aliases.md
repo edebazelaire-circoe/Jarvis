@@ -16,9 +16,13 @@
   entrées `{kind:'tab'}` de `shellNavigation`, rendues par `renderTab` et les modules
   injectés), et les liens `related` vers les onglets d'autres catégories
   ([`../settings/settings-shell.md`](../settings/settings-shell.md)).
-- Les injecteurs `TABS.push/splice` de `control_center_wake_word.js`,
-  `control_center_work.js` et `control_center_barehands.js` (liste figée par
-  `test_no_module_injects_a_new_top_level_tab`).
+- Les injecteurs `TABS.push/splice` de `control_center_work.js` et
+  `control_center_barehands.js` (liste figée par `test_no_module_injects_a_new_top_level_tab`).
+  `control_center_wake_word.js` en est sorti à la Slice 03 : il enregistre la section `wake_word`.
+- Slice 03 : les onglets `voice` et `wakeword` n'existent plus ; leurs ID restent des alias
+  (`voice` → `voice_audio` / `conversation`, déclaré par la section ; `wakeword` → `wake_word`).
+  Le renvoi de l'onglet Raccourcis vers Voix pour `wake_toggle` est supprimé : Raccourcis en est
+  l'unique éditeur ([`../settings/voice-audio.md`](../settings/voice-audio.md) § 3).
 
 ## Conditions de retrait
 

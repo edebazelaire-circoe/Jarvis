@@ -973,11 +973,8 @@ details.rd[open]>summary{margin-bottom:14px}
 .catalog-status.ok{color:var(--ok);border-color:rgba(104,224,160,.45)}.catalog-status.warn{color:var(--warn);border-color:rgba(255,184,92,.45)}.catalog-status.bad{color:var(--danger);border-color:rgba(255,101,119,.45)}
 .catalog-evidence{margin-top:5px;color:var(--muted);font-size:10px}.catalog-evidence summary{cursor:pointer}.catalog-evidence ul{margin:5px 0 0;padding-left:18px}
 .agent-catalog-head{display:flex;align-items:start;justify-content:space-between;gap:12px;margin-bottom:10px}.agent-catalog-head .hint{max-width:620px}
-.voice-tabs{display:flex;gap:6px;overflow-x:auto;padding:2px 1px 10px;margin-bottom:12px;border-bottom:1px solid var(--line);scrollbar-width:thin}
-.voice-tabs button{flex:0 0 auto;border:1px solid var(--line);border-radius:16px;padding:7px 11px;background:#071015;color:var(--muted);font:inherit;font-size:11px;cursor:pointer}
-.voice-tabs button[aria-selected=true]{border-color:var(--accent);color:var(--accent);background:rgba(110,231,255,.07)}
-.voice-tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.voice-category-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.voice-category-head h3{margin-top:0}
+.voice-key{display:inline-block;min-width:44px;padding:4px 10px;border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;background:#0b141a;color:var(--text);font-size:13px;text-align:center;text-transform:uppercase;letter-spacing:.06em}
+.voice-group{margin:26px 0 4px;font-size:13px;font-weight:600;letter-spacing:.01em;color:var(--set-ink,var(--text))}.voice-group:first-child{margin-top:0}
 .voice-field-label{display:block;margin-bottom:6px;color:var(--text);font-size:12px}.field output{display:block;color:var(--text)}
 @media(max-width:900px){
   .keyform{grid-template-columns:1fr}
@@ -996,7 +993,6 @@ details.rd[open]>summary{margin-bottom:14px}
   .catalog-table tbody th,.catalog-table td{display:grid;grid-template-columns:minmax(92px,32%) minmax(0,1fr);gap:8px;min-width:0!important;border-bottom:1px solid rgba(113,144,160,.12)}
   .catalog-table tbody th::before,.catalog-table td::before{content:attr(data-label);font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
   .catalog-cell-compare{text-align:left}
-  .voice-tabs{margin-left:-4px;margin-right:-4px;padding-left:4px;padding-right:4px}
 }
 /* ---------- Chronologie de conversation (plein écran) ----------
    Quatre lanes sur un même axe vertical : Utilisateur (blanc), Jarvis · voix
@@ -4430,8 +4426,8 @@ function bindSend(after){
    aucun champ n'est écrit en dur ici, et les listes de modèles viennent du
    catalogue réel du fournisseur, jamais d'une liste figée.                */
 
+/* `voice` n'est plus un onglet (Slice 03) : `voice_audio` monte ses sections enregistrées, l'alias `voice` y mène. */
 const TABS=[
-  {id:'voice',label:'Voix',save:true},
   {id:'prompts',label:'Prompts',save:false},
   {id:'cli',label:'Agent / CLI',save:true},
   {id:'keys',label:'API Keys',save:false},
@@ -4439,7 +4435,7 @@ const TABS=[
   {id:'memory',label:'Mémoire',save:false},
   {id:'subagents',label:'Sous-agents',save:false},
 ];
-const SET={open:false,tab:'voice',category:null,section:null,lastItem:{},opener:null,sectionView:null,voiceTab:'architecture',voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:'',subagentView:null,subagentDrafts:{}};
+const SET={open:false,tab:null,category:null,section:null,lastItem:{},opener:null,sectionView:null,voiceTab:null,voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:'',subagentView:null,subagentDrafts:{}};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
 
 function say(text,kind){modalStatus.className='status'+(kind?' '+kind:'');modalStatus.textContent=text||''}
@@ -4632,9 +4628,15 @@ function voiceArchitectureChanged(key,value){
   }
   delete SET.draft.voice.brain_compatibility;SET.architectureDirty=true;SET.dirty=true;
 }
-function voiceOptions(category){
-  const destination=`voice.${category}`
-  return (SET.data.voice.option_metadata||[]).filter(item=>item.category===category&&item.destination===destination)
+/* Destination de chaque option : `surface.section`, décrite par le serveur (`voice_settings_schema._SURFACE`). La page
+   ne tient aucune table option → section ; une section ne rend que ce que le serveur lui adresse. */
+function voiceOptions(section){
+  return (SET.data.voice.option_metadata||[]).filter(item=>item.surface&&item.surface.section===section)
+}
+/* Options éditées ailleurs que la section montre en contexte (`surface.context`) : la valeur effective et un lien vers
+   l'unique éditeur, jamais un second contrôle (le raccourci `wake_toggle` vit dans les Raccourcis). */
+function voiceContextOptions(section){
+  return (SET.data.voice.option_metadata||[]).filter(item=>item.surface&&(item.surface.context||[]).includes(section))
 }
 function voiceOption(id){return (SET.data.voice.option_metadata||[]).find(item=>item.id===id)}
 function voiceOptionId(meta){return 'voiceOption_'+String(meta.id).replace(/[^a-zA-Z0-9_-]/g,'_')}
@@ -4696,7 +4698,6 @@ function voiceArchitectureOptionHtml(meta){
 function voiceOptionHtml(meta){
   if(meta.persistence&&meta.persistence.startsWith('voice_architecture.config.'))return voiceArchitectureOptionHtml(meta);
   const id=voiceOptionId(meta),value=voiceOptionValue(meta),hidden=!voiceDependencyVisible(meta);
-  if(meta.kind==='key')return `<div class="field" data-voice-option="${esc(meta.id)}"><span class="voice-field-label">${esc(meta.label)}</span><button type="button" class="keycap" data-shortcut="${esc(meta.id)}" data-scope="global">${esc(value??meta.default)}</button><div class="hint" id="shortcutHint">${esc(meta.help)}</div></div>`;
   if(meta.kind==='device'){
     const devices=SET.devices,items=meta.persistence==='audio_input_device'?(devices&&devices.inputs||[]):(devices&&devices.outputs||[]),defaults=devices&&devices.defaults||{};
     const selectedDefault=meta.persistence==='audio_input_device'?defaults.input:defaults.output;
@@ -4706,8 +4707,9 @@ function voiceOptionHtml(meta){
   }
   if(meta.readonly)return `<div class="field" data-voice-option="${esc(meta.id)}"><span class="voice-field-label">${esc(meta.label)}</span><output>${value===undefined||value===null?'—':esc(value)}</output><div class="hint">${esc(meta.help)}</div></div>`;
   const attrs=`data-voice-persistence="${esc(meta.persistence)}" data-voice-meta="${esc(meta.id)}"`,style=hidden?' hidden':'';let input='';
-  if(meta.kind==='toggle')input=`<input id="${id}" type="checkbox" ${attrs} ${value?'checked':''}>`;
-  else if(meta.kind==='number'||meta.kind==='number-or-empty')input=`<input id="${id}" type="number" ${attrs} value="${esc(value??'')}" ${meta.minimum!==undefined?`min="${esc(meta.minimum)}"`:''} ${meta.maximum!==undefined&&meta.maximum!==null?`max="${esc(meta.maximum)}"`:''} ${meta.step!==undefined?`step="${esc(meta.step)}"`:''}>`;
+  /* Case à cocher : sur la ligne de son libellé (`.field.inline`, comme `renderField`). */
+  if(meta.kind==='toggle')return `<div class="field inline" id="${id}_field" data-voice-option="${esc(meta.id)}"${style}><input id="${id}" type="checkbox" ${attrs} ${value?'checked':''}><div><label for="${id}">${esc(meta.label)}${voiceStackTag(meta)}</label><div class="hint">${esc(meta.help)}</div></div></div>`;
+  if(meta.kind==='number'||meta.kind==='number-or-empty')input=`<input id="${id}" type="number" ${attrs} value="${esc(value??'')}" ${meta.minimum!==undefined?`min="${esc(meta.minimum)}"`:''} ${meta.maximum!==undefined&&meta.maximum!==null?`max="${esc(meta.maximum)}"`:''} ${meta.step!==undefined?`step="${esc(meta.step)}"`:''}>`;
   else if(meta.kind==='text')input=`<input id="${id}" ${attrs} value="${esc(value??'')}">`;
   else{
     const source=meta.type==='catalog-select'?(SET.voiceModelSources||{})[meta.id]:null;
@@ -4719,24 +4721,49 @@ function voiceOptionHtml(meta){
     input=`<select id="${id}" ${attrs} ${loading?'disabled aria-busy="true"':''}>${missing}${meta.placeholder?`<option value="">${esc(meta.placeholder)}</option>`:''}${normalized.map(item=>`<option value="${esc(item.value)}" ${String(item.value)===String(value)?'selected':''} ${item.disabled?'disabled':''}>${esc(item.label)}</option>`).join('')}</select>`;
     if(meta.type==='catalog-select')input+=loading?'<div class="hint">Chargement du catalogue fournisseur…</div>':error?`<div class="notice bad">${esc(source.error||'Catalogue indisponible.')} <button type="button" class="linkish" data-voice-model-retry="${esc(meta.id)}">réessayer</button></div>`:catalogNote(source.result,String(meta.source||'').split(':')[0]);
   }
-  return `<div class="field" id="${id}_field" data-voice-option="${esc(meta.id)}"${style}><label for="${id}">${esc(meta.label)}</label>${input}<div class="hint">${esc(meta.help)}</div></div>`;
+  return `<div class="field" id="${id}_field" data-voice-option="${esc(meta.id)}"${style}><label for="${id}">${esc(meta.label)}${voiceStackTag(meta)}</label>${input}<div class="hint">${esc(meta.help)}</div></div>`;
 }
-function voiceRecordsHtml(records,category){
-  if(category==='advanced')return records.map(voiceOptionHtml).join('');
-  const primary=records.filter(item=>!item.advanced),advanced=records.filter(item=>item.advanced);
-  return primary.map(voiceOptionHtml).join('')+(advanced.length?`<details class="rd"><summary>Options avancées</summary>${advanced.map(voiceOptionHtml).join('')}</details>`:'');
+/* Deux piles portent des champs de même libellé (« Fin de tour ») : la pile est dite, d'après son libellé serveur. */
+function voiceStackTag(meta){
+  const persistence=String(meta.persistence||'');if(!persistence.startsWith('voice_stack_settings.'))return '';
+  const stack=((SET.data.voice.stacks||[]).find(item=>item.id===persistence.split('.')[1])||{});
+  return stack.label?` <span class="tag">${esc(stack.label)}</span>`:'';
 }
+/* Les périphériques d'abord : c'est la première chose qu'on vient choisir dans Micro & son. Ordre serveur sinon. */
+function voiceRecordsHtml(records){return [...records.filter(item=>item.kind==='device'),...records.filter(item=>item.kind!=='device')].map(voiceOptionHtml).join('')}
+/* Lien vers l'éditeur d'une option montrée en contexte : libellé de la section si elle est enregistrée, sinon celui de
+   l'onglet hérité qui la sert encore (Raccourcis jusqu'à la Slice 06), précédé de sa catégorie. */
+function voiceHomeLabel(surface){
+  const R=typeof window!=='undefined'?window.JarvisSettingsRegistry:null;
+  const entry=R&&R.page.section(surface.section),tab=typeof TABS!=='undefined'&&TABS.find(item=>item.id===surface.section);
+  const category=R&&R.category(surface.category);
+  return `${category?category.label+' › ':''}${entry?entry.label:tab?tab.label:surface.section}`;
+}
+function voiceContextHtml(section){
+  return voiceContextOptions(section).map(meta=>{
+    const value=voiceOptionValue(meta)??meta.default,home=voiceHomeLabel(meta.surface);
+    return `<div class="field" data-voice-context="${esc(meta.id)}"><span class="voice-field-label">${esc(meta.label)}</span>`
+      +`<div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><kbd class="voice-key" aria-label="Touche actuelle : ${esc(value)}">${esc(value)}</kbd>`
+      +`<button type="button" class="linkish" data-voice-open="${esc(meta.surface.section)}">Modifier dans ${esc(home)}</button></div>`
+      +`<div class="hint">${esc(meta.help)} Lecture seule ici : la touche se règle dans ${esc(home)}.</div></div>`;
+  }).join('');
+}
+/* `advanced_diagnostics` › `architecture_compat` : architecture versionnée, pile et mode historiques, invariants,
+   réglage fin de la détection de parole et du vérificateur de locuteur. */
 async function voiceArchitectureHtml(){
-  const records=voiceOptions('architecture'),compatibility=records.filter(item=>item.runtime_status==='live-compatibility'),primary=records.filter(item=>item.runtime_status!=='live-compatibility'&&!item.advanced),advanced=records.filter(item=>item.runtime_status!=='live-compatibility'&&item.advanced);
+  const records=voiceOptions('architecture_compat'),isArch=item=>String(item.persistence||'').startsWith('voice_architecture.config.');
+  const arch=records.filter(isArch),compatibility=records.filter(item=>!isArch(item)&&item.runtime_status==='live-compatibility'),tuning=records.filter(item=>!isArch(item)&&item.runtime_status!=='live-compatibility');
   const query=SET.data.voice.architecture,config=voiceArchitectureConfig(),profile=(query.architectures||[]).find(item=>item.id===config.architecture);
-  let html=primary.map(voiceOptionHtml).join('');
+  let html='<h4 class="voice-group">Architecture versionnée</h4>'+arch.filter(item=>item.id==='architecture').map(voiceOptionHtml).join('');
   if(profile)html+=`<div class="hint">${esc(profile.description)}</div>`;
   if(query.compatibility_runtime&&!SET.architectureDirty)html+='<div class="notice">Compatibilité conservée. Enregistrer sans modifier l’architecture garde le fonctionnement actuel.</div><button class="action" data-architecture-activate>Utiliser explicitement cette architecture</button>';
   if(query.problem&&!SET.architectureDirty)html+=`<div class="notice bad">${esc(query.problem.message)}</div>`;
   if(!query.compatibility_runtime)html+=SET.draft.voice.brain_compatibility
     ?'<div class="notice">Retour au mode continu avec le cerveau Claude à l’enregistrement : chaque tour part au cerveau, qui lance ses sous-agents.</div>'
     :'<div class="hint">Ces architectures répondent sans le cerveau Claude du Control Center : ni sous-agents pilotés, ni historique dans sa console.</div><button class="action" data-architecture-brain>Revenir au mode continu avec le cerveau Claude</button>';
-  html+=`<details class="rd"><summary>Compatibilité et invariants avancés</summary>${advanced.map(voiceOptionHtml).join('')}${compatibility.map(voiceOptionHtml).join('')}</details>`;
+  html+=arch.filter(item=>item.id!=='architecture').map(voiceOptionHtml).join('');
+  html+=`<h4 class="voice-group">Pile de compatibilité</h4><div class="hint">Lue seulement sans architecture versionnée.</div>${compatibility.map(voiceOptionHtml).join('')}`;
+  html+=`<h4 class="voice-group">Réglage fin : détection de parole et vérificateur de locuteur</h4><div class="hint">Points de départ des mesures, pas des valeurs réglées : ne les changez qu’après mesure (docs/SPEAKER_BENCHMARK.md). Vide = défaut.</div>${tuning.map(voiceOptionHtml).join('')}`;
   return html;
 }
 function voiceDiagnosticValue(id){
@@ -4768,18 +4795,20 @@ function voiceAudioExtraHtml(){
   else if(ready)status='<div class="hint" id="voiceAudioStatus">Entrée et sortie détectées.</div>';
   return `${status}<div class="row"><button type="button" class="action" id="testAudio" ${hasInput&&hasOutput?'':'disabled aria-disabled="true"'}>Tester micro + sortie</button></div><div class="test-result" id="audioTestResult">Le test enregistre 2 secondes puis les rejoue.</div>`;
 }
+/* Contenu d'une section Voix (`SET.voiceTab` = ID de la section enregistrée montée). */
 async function voicePanelHtml(){
-  const category=SET.voiceTab,records=voiceOptions(category),label=((SET.data.voice.categories||[]).find(item=>item.id===category)||{}).label||category;
-  let content=category==='architecture'?await voiceArchitectureHtml():category==='diagnostic'?voiceDiagnosticHtml(records):voiceRecordsHtml(records,category);
-  if(category==='models')content+=voiceCatalogHtml();
-  if(category==='audio')content+=voiceAudioExtraHtml();
-  return `<div class="voice-category-head"><h3>${esc(label)}</h3><span class="tag">${records.length} option(s)</span></div>${content}`;
+  const section=SET.voiceTab,records=voiceOptions(section);
+  let content=section==='architecture_compat'?await voiceArchitectureHtml():section==='diagnostics'?voiceDiagnosticHtml(records):voiceRecordsHtml(records);
+  content+=voiceContextHtml(section);
+  if(section==='voice_output')content+=`<details class="rd"><summary>Comparer les modèles vocaux</summary>${voiceCatalogHtml()}</details>`;
+  if(section==='microphone_sound')content+=voiceAudioExtraHtml();
+  return content;
 }
-async function tabVoice(){
-  const categories=SET.data.voice.categories||[];
-  if(!categories.some(item=>item.id===SET.voiceTab))SET.voiceTab=(categories[0]||{}).id||'architecture';
-  const tabs=categories.map(item=>`<button type="button" role="tab" id="voiceTab_${esc(item.id)}" data-voice-tab="${esc(item.id)}" aria-selected="${item.id===SET.voiceTab?'true':'false'}" aria-controls="voicePanel" tabindex="${item.id===SET.voiceTab?'0':'-1'}">${esc(item.label)}</button>`).join('');
-  return `<section><div class="voice-tabs" role="tablist" aria-label="Catégories des réglages Voice">${tabs}</div><div id="voicePanel" role="tabpanel" aria-labelledby="voiceTab_${esc(SET.voiceTab)}">${await voicePanelHtml()}</div></section>`;
+/* Les réglages Voix sont lus au démarrage de Voice : la section le dit, et dit quand Voice applique encore les anciens. */
+function voiceRestartHtml(){
+  const voice=SET.data.voice,running=(voice.authorization||{}).restart_required||(voice.echo_cancellation||{}).restart_required;
+  if(!SET.restartNotice&&!running)return '';
+  return `<div class="notice" data-voice-restart><strong>Redémarrez Voice pour appliquer</strong> : ces réglages sont lus au démarrage de Voice${running?' — elle applique encore les précédents':''}.</div>`;
 }
 
 /* --- onglet Prompts -----------------------------------------------------
@@ -5240,14 +5269,14 @@ function tabKeys(){
 /* --- onglet Raccourcis --------------------------------------------------- */
 const GLOBAL_KEY_NAMES={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',PageUp:'page_up',PageDown:'page_down',Home:'home',End:'end',Insert:'insert',Delete:'delete',Pause:'pause',ScrollLock:'scroll_lock',ContextMenu:'menu',PrintScreen:'print_screen'};
 function tabShortcuts(){
-  const list=(SET.shortcuts.shortcuts||[]).filter(item=>item.id!=='wake_toggle');
+  /* Tous les raccourcis, `wake_toggle` compris : ceci est leur unique éditeur ; `voice_audio` n'en montre que la touche. */
+  const list=SET.shortcuts.shortcuts||[];
   const rows=list.map(s=>`<div class="shortcut">
       <div><div>${esc(s.label)} <span class="tag">${s.scope==='global'?'système':'interface'}</span></div><div class="desc">${esc(s.description)}</div></div>
       <button class="keycap" data-shortcut="${esc(s.id)}" data-scope="${esc(s.scope)}">${esc(s.value)}</button>
     </div>`).join('');
   return `<section><h3>Raccourcis</h3>
     <div class="hint" style="margin-bottom:14px">Cliquez sur une touche puis appuyez sur la combinaison voulue. Les raccourcis <em>système</em> sont captés même quand JARVIS n'a pas le focus, et n'acceptent qu'une touche seule. Les raccourcis <em>interface</em> ne s'appliquent que sur cette page et ignorent la saisie dans un champ.</div>
-    <div class="notice info">Le raccourci Réveiller / envoyer / interrompre se règle dans Voix → Tours &amp; interruptions.</div>
     ${rows}<div class="hint" id="shortcutHint" style="margin-top:14px">Enregistrement immédiat. Le raccourci système prend effet au prochain redémarrage du runtime Voice.</div></section>`;
 }
 
@@ -5311,6 +5340,76 @@ function registerSettingsSection(spec){
     return null;
   }
 }
+/* --- `voice_audio` (Slice 03) -----------------------------------------------------------------------------------
+   Quatre sections ordinaires (le Mot d'éveil est enregistré par `control_center_wake_word.js`) et deux sections
+   de `advanced_diagnostics`. Chaque section rend les options que le serveur lui adresse (`surface.section`) ; libellés et
+   descriptions ci-dessous sont de la présentation. Toutes écrivent dans le brouillon partagé (`SET.draft`) : le pied
+   « Enregistrer » envoie `/api/settings` exactement comme l'ancien onglet Voix, et le brouillon survit aux changements
+   de section ou de catégorie. Lu au démarrage de Voice : `applies: 'next_voice_start'`. */
+const VOICE_SECTIONS=[
+  {id:'conversation',category:'voice_audio',order:10,label:'Conversation',aliases:['voice'],
+    description:'Qui peut parler à JARVIS, accusés de réception et mise en veille.'},
+  {id:'voice_output',category:'voice_audio',order:20,label:'Voix & transcription',
+    description:'Modèles de conversation, voix de JARVIS et transcription de ce que vous dites.'},
+  {id:'microphone_sound',category:'voice_audio',order:30,label:'Micro & son',
+    description:'Micro, haut-parleur, réduction de bruit et annulation d’écho. Le test joue sur les périphériques choisis.'},
+  {id:'turns_interruptions',category:'voice_audio',order:40,label:'Tours & interruptions',
+    description:'Fin de tour automatique ou manuelle, et qui coupe la voix de JARVIS quand vous parlez par-dessus.'},
+  {id:'architecture_compat',category:'advanced_diagnostics',group:'architecture_compat',order:10,advanced:true,label:'Architecture & compatibilité',
+    description:'Architecture vocale, pile historique, invariants et réglage fin de la détection de parole et du vérificateur.'},
+];
+function voiceSectionSpec(spec){
+  return {...spec,save:'footer',applies:'next_voice_start',
+    mount(host,context){
+      if(!SET.data||!SET.draft){host.innerHTML='<div class="empty">Chargement…</div>';return}  // `openSettings` remonte la section à l'arrivée des réglages
+      SET.voiceTab=spec.id;
+      host.innerHTML=context.ui.section({id:`voiceSection_${spec.id}`,title:spec.label,description:spec.description,
+        advanced:!!spec.advanced,applies:'next_voice_start',body:`${voiceRestartHtml()}<div id="voicePanel"></div>`});
+      return renderVoicePanel(context.revision);
+    },
+    destroy(){destroyVoiceCatalog();++SET.voiceGeneration},
+  };
+}
+VOICE_SECTIONS.forEach(spec=>registerSettingsSection(voiceSectionSpec(spec)));
+
+/* `advanced_diagnostics` › `diagnostics` : une page en lecture seule faite de parties (Voix ici, Mot d'éveil par son module ;
+   la Slice 08 y range les autres). `registerSettingsDiagnostic({id, label, order, mount(host, context), destroy()})`. */
+const SETTINGS_DIAGNOSTICS=[];
+function registerSettingsDiagnostic(part){
+  if(!part||typeof part.id!=='string'||typeof part.mount!=='function'||SETTINGS_DIAGNOSTICS.some(p=>p.id===part.id)){
+    console.error('settings_diagnostic_rejected',{id:part&&part.id});return null}
+  SETTINGS_DIAGNOSTICS.push(part);SETTINGS_DIAGNOSTICS.sort((a,b)=>(a.order||0)-(b.order||0));
+  if(SET.open&&SET.section==='diagnostics')renderTab();
+  return part;
+}
+let settingsDiagnosticsMounted=[];
+registerSettingsSection({id:'diagnostics',category:'advanced_diagnostics',group:'diagnostics',order:40,advanced:true,save:'readonly',
+  label:'Diagnostics',description:'État constaté, en lecture seule : autorisation, vérificateur, annulation d’écho, piles, catalogues, détecteur du mot d’éveil.',
+  mount(host,context){
+    const UI=context.ui;
+    host.innerHTML=`<div style="margin-bottom:28px">${UI.notice({kind:'info',text:'Lecture seule : ce qui a été constaté, rien ici ne modifie un réglage.'})}</div>`
+      +SETTINGS_DIAGNOSTICS.map(p=>UI.section({id:`diagnostic_${p.id}`,title:p.label,body:`<div data-diagnostic-part="${esc(p.id)}"></div>`})).join('');
+    for(const part of SETTINGS_DIAGNOSTICS){
+      const slot=host.querySelector(`[data-diagnostic-part="${CSS.escape(part.id)}"]`);
+      try{part.mount(slot,context);settingsDiagnosticsMounted.push(part)}
+      catch(e){console.error('settings_diagnostic_mount_failed',{part:part.id,error:String(e&&e.message||e)});
+        slot.innerHTML=UI.notice({kind:'bad',live:'assertive',title:`Diagnostic « ${part.label} » indisponible.`,body:`<span class="set-notice-text">${esc(e&&e.message||String(e))}</span>`})}
+    }
+  },
+  destroy(){
+    const parts=settingsDiagnosticsMounted;settingsDiagnosticsMounted=[];
+    for(const part of parts)try{if(typeof part.destroy==='function')part.destroy()}
+      catch(e){console.error('settings_diagnostic_destroy_failed',{part:part.id,error:String(e&&e.message||e)})}
+  },
+});
+registerSettingsDiagnostic({id:'voice',label:'Voix',order:10,
+  mount(host,context){
+    if(!SET.data||!SET.draft){host.innerHTML='<div class="empty">Chargement…</div>';return}
+    SET.voiceTab='diagnostics';host.innerHTML='<div id="voicePanel"></div>';renderVoicePanel(context.revision);
+  },
+  destroy(){++SET.voiceGeneration;++SET.diagnosticGeneration},
+});
+
 /* Où en est le shell : catégorie, puis section enregistrée OU onglet hérité. Un module hérité peut encore poser
    `SET.tab` lui-même (Bare Hands) : un onglet posé l'emporte et la catégorie suit. */
 function ensureSettingsLocation(nav){
@@ -5414,7 +5513,6 @@ async function renderTab(){
   const tab=TABS.find(t=>t.id===SET.tab);
   modalSave.style.display=tab.save?'':'none';
   modalSub.textContent={
-    voice:'Les réglages vocaux sont préparés pour la prochaine activation.',
     cli:'Configuration technique, comportement et modèles des agents.',
     subagents:'Rôles, capacités et Work Methods des sous-agents. Vous modifiez les instructions d’un rôle et promouvez, si vous le choisissez, une approche observée en Work Method ; le reste suit le code.',
     prompts:'Chaque couche est enregistrée avec son propre bouton.',
@@ -5424,8 +5522,7 @@ async function renderTab(){
   }[SET.tab]||'';
   try{
     let content;
-    if(SET.tab==='voice')content=await tabVoice();
-    else if(SET.tab==='prompts')content=await tabPrompts();
+    if(SET.tab==='prompts')content=await tabPrompts();
     else if(SET.tab==='cli')content=tabCli()+tabAgenda();
     else if(SET.tab==='keys')content=tabKeys();
     else if(SET.tab==='memory')content='<div id="memorySettingsMount"></div>';
@@ -5437,7 +5534,6 @@ async function renderTab(){
   bindTab(revision);
   if(SET.tab==='memory'&&window.JarvisMemorySettings)window.JarvisMemorySettings.show(modalContent.querySelector('#memorySettingsMount'));
   if(SET.tab==='subagents')mountSubagentSettings(revision);
-  if(SET.tab==='voice')bindVoiceSurface(revision);
   if(SET.tab==='cli')bindAgenda();
   if(SET.tab==='cli'){mountAgentCatalog(revision);hydrateCliAgents(revision)}
   if(SET.dirty&&tab.save)say('Modifications non enregistrées.','');
@@ -5595,8 +5691,9 @@ function mountAgentCatalog(revision){
   controller.load();
 }
 
-function currentVoicePanel(revision,category=SET.voiceTab){
-  return SET.open&&SET.tab==='voice'&&SET.voiceTab===category&&revision===SET.renderRevision;
+/* Une réponse tardive n'écrit que dans la section Voix encore montée, à la même révision de rendu. */
+function currentVoicePanel(revision,section=SET.voiceTab){
+  return SET.open&&SET.section===section&&SET.voiceTab===section&&revision===SET.renderRevision;
 }
 function destroyVoiceCatalog(){
   if(!SET.voiceCatalog)return;
@@ -5605,7 +5702,7 @@ function destroyVoiceCatalog(){
   SET.voiceCatalog.destroy();SET.voiceCatalog=null;SET.voiceCatalogMountedRole=null;
 }
 function mountVoiceCatalog(revision){
-  if(!currentVoicePanel(revision,'models'))return;
+  if(!currentVoicePanel(revision,'voice_output'))return;
   const host=$('#voiceCatalog');if(!host)return;
   destroyVoiceCatalog();
   const controller=JarvisCatalog.createCatalogTable(host,{surface:'voice',role:SET.voiceCatalogRole,columns:['compare','model','provider','roles','capabilities','guidance','price','availability']});
@@ -5613,41 +5710,14 @@ function mountVoiceCatalog(revision){
   if(saved){controller.state.envelope=saved.envelope;controller.state.error=saved.error||'';controller.state.query=saved.query;controller.state.sort=saved.sort;controller.state.filters={...saved.filters};controller.state.selection=new Set(saved.selection);controller.render()}
   SET.voiceCatalog=controller;SET.voiceCatalogMountedRole=SET.voiceCatalogRole;controller.load();
 }
-function updateVoiceTabs(){
-  document.querySelectorAll('[data-voice-tab]').forEach(button=>{
-    const active=button.dataset.voiceTab===SET.voiceTab;
-    button.setAttribute('aria-selected',active?'true':'false');button.tabIndex=active?0:-1;
-  });
-}
-async function selectVoiceTab(id,revision,focus=false){
-  if(!(SET.data.voice.categories||[]).some(item=>item.id===id))return;
-  SET.voiceTab=id;updateVoiceTabs();await renderVoicePanel(revision);
-  if(focus){const button=$(`#voiceTab_${id}`);if(button)button.focus()}
-}
 async function renderVoicePanel(revision){
   if(!currentVoicePanel(revision))return;
   const requestId=++SET.voiceGeneration;destroyVoiceCatalog();
   const panel=$('#voicePanel');if(!panel)return;
   const html=await voicePanelHtml();
   if(!currentVoicePanel(revision)||requestId!==SET.voiceGeneration)return;
-  panel.setAttribute('aria-labelledby',`voiceTab_${SET.voiceTab}`);panel.innerHTML=html;
-  bindVoicePanel(revision);if(SET.voiceTab==='models')mountVoiceCatalog(revision);
-}
-function bindVoiceSurface(revision){
-  const buttons=[...document.querySelectorAll('[data-voice-tab]')];
-  buttons.forEach((button,index)=>{
-    button.addEventListener('click',()=>selectVoiceTab(button.dataset.voiceTab,revision));
-    button.addEventListener('keydown',event=>{
-      let target=index;
-      if(event.key==='ArrowRight')target=(index+1)%buttons.length;
-      else if(event.key==='ArrowLeft')target=(index-1+buttons.length)%buttons.length;
-      else if(event.key==='Home')target=0;
-      else if(event.key==='End')target=buttons.length-1;
-      else return;
-      event.preventDefault();selectVoiceTab(buttons[target].dataset.voiceTab,revision,true);
-    });
-  });
-  bindVoicePanel(revision);if(SET.voiceTab==='models')mountVoiceCatalog(revision);
+  panel.innerHTML=html;
+  bindVoicePanel(revision);if(SET.voiceTab==='voice_output')mountVoiceCatalog(revision);
 }
 function voiceChanged(element,revision){
   const meta=voiceOption(element.dataset.voiceMeta),persistence=element.dataset.voicePersistence;
@@ -5673,7 +5743,7 @@ function bindVoiceModelField(meta,revision){
   if(retry)retry.addEventListener('click',()=>hydrateVoiceModel(meta,revision,true));
 }
 function renderVoiceModelField(meta,revision){
-  if(!currentVoicePanel(revision,'models'))return;
+  if(!currentVoicePanel(revision,'voice_output'))return;
   const field=$(`#${voiceOptionId(meta)}_field`);if(!field)return;
   field.outerHTML=voiceOptionHtml(meta);bindVoiceModelField(meta,revision);
 }
@@ -5684,12 +5754,12 @@ function voiceProviderModelSource(meta){
   return {provider:parts[0],role:parts[1]};
 }
 async function hydrateVoiceModel(meta,revision,refresh=false){
-  const source=voiceProviderModelSource(meta);if(!currentVoicePanel(revision,'models')||!source)return;
+  const source=voiceProviderModelSource(meta);if(!currentVoicePanel(revision,'voice_output')||!source)return;
   const previous=(SET.voiceModelSources||{})[meta.id];if(previous&&previous.status==='ready'&&!refresh)return;
   const {provider,role}=source,requestId=((SET.voiceModelGenerations||{})[meta.id]||0)+1,panelGeneration=SET.voiceGeneration;
   SET.voiceModelGenerations[meta.id]=requestId;SET.voiceModelSources[meta.id]={...previous,status:'loading',error:''};renderVoiceModelField(meta,revision);
   const result=await requestCatalog(provider,role,refresh);
-  if(!currentVoicePanel(revision,'models')||panelGeneration!==SET.voiceGeneration||SET.voiceModelGenerations[meta.id]!==requestId)return;
+  if(!currentVoicePanel(revision,'voice_output')||panelGeneration!==SET.voiceGeneration||SET.voiceModelGenerations[meta.id]!==requestId)return;
   SET.voiceModelSources[meta.id]={status:result.ok?'ready':'error',error:result.error||'',result};renderVoiceModelField(meta,revision);
 }
 function bindVoicePanel(revision){
@@ -5702,30 +5772,30 @@ function bindVoicePanel(revision){
     const value=element.dataset.architectureKind==='model'?JSON.parse(element.value):element.type==='checkbox'?element.checked:element.type==='number'?Number(element.value):element.value;
     voiceArchitectureChanged(element.dataset.architectureField,value);renderVoicePanel(revision);
   }));
-  panel.querySelectorAll('[data-shortcut]').forEach(element=>element.addEventListener('click',()=>startCapture(element)));
+  panel.querySelectorAll('[data-voice-open]').forEach(element=>element.addEventListener('click',()=>selectTab(element.dataset.voiceOpen)));
   const role=panel.querySelector('#voiceCatalogRole');
   if(role)role.addEventListener('change',()=>{SET.voiceCatalogRole=role.value;renderVoicePanel(revision)});
   const retry=panel.querySelector('#audioRetry');if(retry)retry.addEventListener('click',()=>hydrateAudioDevices(revision,true));
   const test=panel.querySelector('#testAudio');if(test)test.addEventListener('click',runAudioTest);
   const refresh=panel.querySelector('#authRefresh');if(refresh)refresh.addEventListener('click',()=>hydrateVoiceDiagnostics(revision));
-  if(SET.voiceTab==='audio'&&!SET.devices)hydrateAudioDevices(revision);
-  if(SET.voiceTab==='models')voiceOptions('models').filter(voiceProviderModelSource).forEach(meta=>hydrateVoiceModel(meta,revision));
+  if(SET.voiceTab==='microphone_sound'&&!SET.devices)hydrateAudioDevices(revision);
+  if(SET.voiceTab==='voice_output')voiceOptions('voice_output').filter(voiceProviderModelSource).forEach(meta=>hydrateVoiceModel(meta,revision));
 }
 async function hydrateAudioDevices(revision,refresh=false){
-  if(!currentVoicePanel(revision,'audio'))return;
+  if(!currentVoicePanel(revision,'microphone_sound'))return;
   if(SET.devices&&SET.devices.ok!==false&&!refresh)return;
   const requestId=++SET.audioGeneration,status=$('#voiceAudioStatus');if(status)status.textContent='Détection des périphériques…';
   let state;try{state=await api('/api/audio/devices')}catch(e){state={ok:false,error:e.message,inputs:[],outputs:[]}}
-  if(!currentVoicePanel(revision,'audio')||requestId!==SET.audioGeneration)return;
+  if(!currentVoicePanel(revision,'microphone_sound')||requestId!==SET.audioGeneration)return;
   SET.devices=state;renderVoicePanel(revision);
 }
 async function hydrateVoiceDiagnostics(revision){
-  if(!currentVoicePanel(revision,'diagnostic'))return;
+  if(!currentVoicePanel(revision,'diagnostics'))return;
   const requestId=++SET.diagnosticGeneration;SET.voiceDiagnosticError='';
   let data;try{data=await api('/api/settings')}catch(e){
-    if(currentVoicePanel(revision,'diagnostic')&&requestId===SET.diagnosticGeneration){SET.voiceDiagnosticError=e.message;renderVoicePanel(revision)}return;
+    if(currentVoicePanel(revision,'diagnostics')&&requestId===SET.diagnosticGeneration){SET.voiceDiagnosticError=e.message;renderVoicePanel(revision)}return;
   }
-  if(!currentVoicePanel(revision,'diagnostic')||requestId!==SET.diagnosticGeneration)return;
+  if(!currentVoicePanel(revision,'diagnostics')||requestId!==SET.diagnosticGeneration)return;
   SET.data={...SET.data,voice:data.voice};renderVoicePanel(revision);
 }
 
