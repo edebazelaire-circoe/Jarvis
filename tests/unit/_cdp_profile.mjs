@@ -17,9 +17,9 @@
    `assertSafeTarget(page, runtimeRoot)` refuse qu'un harnais pilote le JARVIS vivant de ce poste (ports 17653 et
    17654) ou écrive dans son dossier d'exécution (`~/.jarvis/instances/...`, `runtime/` de la checkout principale). */
 import {execFileSync} from 'node:child_process';
-import {rmSync} from 'node:fs';
-import {homedir} from 'node:os';
-import {resolve, sep} from 'node:path';
+import {existsSync, readFileSync, realpathSync, rmSync} from 'node:fs';
+import {homedir, hostname} from 'node:os';
+import {basename, dirname, join, resolve, sep} from 'node:path';
 
 const KILL_BY_PROFILE=[
   "$p=$env:JARVIS_CDP_PROFILE",
@@ -46,24 +46,81 @@ export function disposeChromeOnExit(chrome, profile){
   });
 }
 
-/* Ports et dossiers du JARVIS vivant : un harnais de test ne les touche jamais (CLAUDE.md du dépôt). */
-const LIVE_PORTS=new Set(['17653','17654']);
-const LIVE_CHECKOUT_RUNTIME=resolve('C:/Projects/jarvis/jarvis/runtime');
-const LIVE_INSTANCES=resolve(homedir(),'.jarvis','instances');
+/* Ports et dossiers du JARVIS vivant : un harnais de test ne les touche jamais (CLAUDE.md du dépôt).
 
-const norm=p=>resolve(p).toLowerCase();
-const within=(child,parent)=>{const c=norm(child),p=norm(parent);return c===p||c.startsWith(p.endsWith(sep)?p:p+sep)};
+   Valeurs par défaut (17653/17654, `~/.jarvis/instances`, `runtime/` de la checkout principale), PLUS celles que ce
+   poste configure vraiment et qui sont lisibles : variables `JARVIS_CORE_PORT`, `JARVIS_UI_PORT`,
+   `JARVIS_RUNTIME_DIR`, `JARVIS_DATA_ROOT` de l'environnement du harnais, et les mêmes clés lues EN LECTURE SEULE
+   dans `.env` et `config/jarvis.toml` (`runtime_dir`) de la checkout principale — seules ces clés sont lues, aucune
+   autre valeur n'est retenue ni affichée.
 
-export function unsafeTargetReason(page, runtimeRoot){
+   Tout chemin est comparé sous sa forme réelle (`canonicalPath`) : préfixe `\\?\` et `\\?\UNC\` retirés, partage
+   administratif local (`\\localhost\c$\...`, `\\127.0.0.1\c$`, `\\<ce poste>\c$`) ramené à son lecteur, puis le
+   plus proche parent existant déplié par `realpathSync.native` (noms courts 8.3, jonctions, liens). */
+const LIVE_CHECKOUT=resolve('C:/Projects/jarvis/jarvis');
+const DEFAULT_PORTS=['17653','17654'];
+const PORT_KEYS=['JARVIS_CORE_PORT','JARVIS_UI_PORT'];
+const DIR_KEYS=['JARVIS_RUNTIME_DIR','JARVIS_DATA_ROOT'];
+const LOCAL_HOSTS=new Set(['localhost','127.0.0.1','::1','.',hostname().toLowerCase()]);
+
+/* `KEY=valeur` de `.env` pour les seules clés demandées. */
+function readEnvFile(path,keys){
+  const out={};
+  let text='';
+  try{text=readFileSync(path,'utf8')}catch(_){return out}  // intentionnel : pas de .env sur ce poste, rien à ajouter
+  for(const line of text.split(/\r?\n/)){
+    const m=line.match(/^\s*(?:export\s+)?([A-Z_]+)\s*=\s*(.*)$/);
+    if(m&&keys.includes(m[1]))out[m[1]]=m[2].replace(/\s+#.*$/,'').trim().replace(/^(['"])(.*)\1$/,'$2');
+  }
+  return out;
+}
+function readTomlRuntimeDir(path){
+  try{const m=readFileSync(path,'utf8').match(/^\s*runtime_dir\s*=\s*["']([^"']+)["']/m);return m?m[1]:''}
+  catch(_){return ''}  // intentionnel : configuration absente, la valeur par défaut est déjà refusée
+}
+
+export function canonicalPath(p){
+  let s=String(p||'');
+  if(process.platform==='win32'){
+    s=s.replace(/\//g,'\\').replace(/^\\\\\?\\UNC\\/i,'\\\\').replace(/^\\\\\?\\/,'').replace(/^\\\\\.\\(?=[a-z]:)/i,'');
+    const share=s.match(/^\\\\([^\\]+)\\([a-z])\$(\\.*)?$/i);
+    if(share&&LOCAL_HOSTS.has(share[1].toLowerCase()))s=`${share[2]}:${share[3]||'\\'}`;
+  }
+  s=resolve(s);
+  let head=s;const tail=[];
+  while(!existsSync(head)){const up=dirname(head);if(up===head)break;tail.unshift(basename(head));head=up}
+  try{head=realpathSync.native(head)}catch(_){/* intentionnel : parent illisible, on compare la forme résolue */}
+  if(process.platform==='win32')head=head.replace(/^\\\\\?\\UNC\\/i,'\\\\').replace(/^\\\\\?\\/,'');
+  const full=tail.length?join(head,...tail):head;
+  return process.platform==='win32'?full.toLowerCase():full;
+}
+const within=(child,parent)=>{const c=canonicalPath(child),p=canonicalPath(parent);return c===p||c.startsWith(p.endsWith(sep)?p:p+sep)};
+
+/* Ce que ce poste désigne comme le JARVIS vivant, relu à chaque appel (l'environnement peut changer en test). */
+export function liveTargets(env=process.env){
+  const file=readEnvFile(join(LIVE_CHECKOUT,'.env'),[...PORT_KEYS,...DIR_KEYS]);
+  const ports=new Set(DEFAULT_PORTS);
+  for(const key of PORT_KEYS)for(const v of [env[key],file[key]])if(v&&/^\d{2,5}$/.test(String(v).trim()))ports.add(String(v).trim());
+  const dirs=[{path:resolve(homedir(),'.jarvis','instances'),why:"la racine d'instance du JARVIS vivant"},
+    {path:join(LIVE_CHECKOUT,'runtime'),why:'le dossier runtime/ de la checkout principale'}];
+  const toml=readTomlRuntimeDir(join(LIVE_CHECKOUT,'config','jarvis.toml'));
+  if(toml)dirs.push({path:resolve(LIVE_CHECKOUT,toml),why:'le runtime_dir configuré du JARVIS vivant'});
+  for(const key of DIR_KEYS)for(const [v,from] of [[env[key],'environnement'],[file[key],'.env']])
+    if(v)dirs.push({path:resolve(LIVE_CHECKOUT,v),why:`le ${key} configuré (${from})`});
+  return {ports,dirs};
+}
+
+export function unsafeTargetReason(page, runtimeRoot, env=process.env){
+  const live=liveTargets(env);
   if(/^https?:\/\//i.test(String(page||''))){
     let url=null;
     try{url=new URL(page)}catch(_){return `refus : URL illisible : ${page}`}
     const port=url.port||(url.protocol==='https:'?'443':'80');
-    if(LIVE_PORTS.has(port))return `refus : ${page} vise le port ${port} du JARVIS vivant (17653/17654) ; utilisez un bac à sable sur d'autres ports.`;
+    if(live.ports.has(port))return `refus : ${page} vise le port ${port} du JARVIS vivant (${[...live.ports].join('/')}) ; utilisez un bac à sable sur d'autres ports.`;
   }
   if(runtimeRoot){
-    if(within(runtimeRoot,LIVE_INSTANCES))return `refus : ${runtimeRoot} est sous la racine d'instance du JARVIS vivant (${LIVE_INSTANCES}) ; donnez le dossier d'exécution d'un bac à sable.`;
-    if(within(runtimeRoot,LIVE_CHECKOUT_RUNTIME))return `refus : ${runtimeRoot} est le dossier runtime/ de la checkout principale ; donnez le dossier d'exécution d'un bac à sable.`;
+    for(const dir of live.dirs)
+      if(within(runtimeRoot,dir.path))return `refus : ${runtimeRoot} est sous ${dir.why} (${dir.path}) ; donnez le dossier d'exécution d'un bac à sable.`;
   }
   return '';
 }

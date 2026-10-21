@@ -50,7 +50,8 @@ Example (Windows, from the repository root)::
 
     .venv\\Scripts\\python.exe scripts\\e2e_session_capture.py matrix --scratch %TEMP%\\jarvis-e2e
 
-Processes are always stopped by the harness (`taskkill /T /F`); their PIDs
+Processes are always stopped by the harness, by identity (PID + creation time, descendants born after
+their parent; Chrome by its handle and throwaway profile), never `taskkill /T` on a remembered PID; their PIDs
 are in each report.
 """
 
@@ -82,6 +83,66 @@ UI_PORT = int(os.environ.get("JARVIS_E2E_UI_PORT", "18954"))
 CORE = f"http://{CORE_HOST}:{CORE_PORT}"
 UI = f"http://127.0.0.1:{UI_PORT}"
 CHROME = os.environ.get("JARVIS_E2E_CHROME", r"C:/Program Files/Google/Chrome/Application/chrome.exe")
+
+
+# --------------------------------------------------------------------------
+# arrêt vérifié des processus lancés (QA S09 de jarvis-organic-agent-orchestration)
+# --------------------------------------------------------------------------
+#
+# Jamais `taskkill /PID <pid> /T` sur un PID mémorisé : Windows réemploie un PID mort, et `/T` suit des liens
+# parent-enfant périmés (un orphelin garde le PPID d'un processus disparu). On n'arrête un arbre que si le PID
+# est toujours CE processus (handle `Popen` encore ouvert, heure de création relevée au lancement), et seulement
+# ses descendants nés après leur parent. Chrome, lui, s'arrête par son handle puis par son profil jetable.
+
+_PS_BORN = ("$p=Get-CimInstance Win32_Process -Filter ('ProcessId='+$env:E2E_PID);"
+            "if($p){$p.CreationDate.ToUniversalTime().ToString('o')}")
+_PS_KILL_TREE = r"""
+$root=[int]$env:E2E_PID; $born=[datetime]::Parse($env:E2E_BORN).ToUniversalTime()
+$all=Get-CimInstance Win32_Process
+$top=$all | Where-Object { $_.ProcessId -eq $root }
+if(-not $top -or [math]::Abs(($top.CreationDate.ToUniversalTime()-$born).TotalSeconds) -gt 1){ 'skip'; exit 0 }
+$todo=@($top); $seen=@()
+while($todo.Count){ $cur=$todo[0]; $todo=@($todo | Select-Object -Skip 1); $seen+=$cur
+  $todo+=@($all | Where-Object { $_.ParentProcessId -eq $cur.ProcessId -and $_.CreationDate -ge $cur.CreationDate }) }
+[array]::Reverse($seen); foreach($x in $seen){ Stop-Process -Id $x.ProcessId -Force -ErrorAction SilentlyContinue }
+'killed'
+"""
+_PS_KILL_PROFILE = (
+    "$p=$env:E2E_PROFILE; if(-not $p -or $p.Length -lt 12){exit 0}; $m='--user-data-dir='+$p;"
+    "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($m) } |"
+    " ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }")
+
+
+def _powershell(script: str, **env: str) -> str:
+    if sys.platform != "win32":
+        return ""
+    done = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True,
+                          text=True, timeout=60, check=False, env={**os.environ, **env})
+    return done.stdout.strip()
+
+
+def process_born(pid: int) -> str | None:
+    """Heure de création (UTC, ISO) du processus `pid`, relevée juste après son lancement."""
+    return _powershell(_PS_BORN, E2E_PID=str(pid)) or None
+
+
+def kill_tree_verified(proc: subprocess.Popen, born: str | None) -> None:
+    """Arrêter `proc` et ses descendants seulement s'il vit encore ET a la même heure de création qu'au lancement."""
+    if proc.poll() is not None:
+        return
+    if sys.platform != "win32" or not born:
+        proc.kill()
+        return
+    _powershell(_PS_KILL_TREE, E2E_PID=str(proc.pid), E2E_BORN=born)
+    if proc.poll() is None:
+        proc.kill()  # handle ouvert : ne peut viser que ce processus
+
+
+def kill_chrome(chrome: subprocess.Popen, profile: Path) -> None:
+    """Chrome par son handle, puis les seuls processus vivants dont la ligne de commande porte son profil jetable."""
+    if chrome.poll() is None:
+        chrome.kill()
+    _powershell(_PS_KILL_PROFILE, E2E_PROFILE=str(profile))
 
 # --------------------------------------------------------------------------
 # child: hooks installed inside the Jarvis process
@@ -422,6 +483,7 @@ class Driver:
             folder.mkdir(parents=True, exist_ok=True)
         self.pids: list[dict] = []
         self.procs: dict[str, subprocess.Popen] = {}
+        self.born: dict[str, str | None] = {}
         self.report: dict = {"phase": name, "steps": []}
         self.env = {**os.environ, "PYTHONPATH": str(tree), "PYTHONDONTWRITEBYTECODE": "1",
                     "JARVIS_DATA_ROOT": str(self.data), "JARVIS_RUNTIME_DIR": str(self.runtime),
@@ -435,7 +497,9 @@ class Driver:
         proc = subprocess.Popen([PY, *args], cwd=self.tree, env={**self.env, **(extra_env or {})}, stdout=log,
                                 stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
         self.procs[role] = proc
-        self.pids.append({"role": role, "pid": proc.pid, "tree": str(self.tree), "at": time.time()})
+        self.born[role] = process_born(proc.pid)
+        self.pids.append({"role": role, "pid": proc.pid, "tree": str(self.tree), "at": time.time(),
+                          "born": self.born[role]})
         say(f"  started {role} pid={proc.pid}")
         return proc
 
@@ -443,11 +507,11 @@ class Driver:
         proc = self.procs.pop(role, None)
         if proc is None:
             return
-        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, check=False)
+        kill_tree_verified(proc, self.born.pop(role, None))
         try:
             proc.wait(timeout=20)
         except subprocess.TimeoutExpired:
-            say(f"  {role} pid={proc.pid} still alive after taskkill")
+            say(f"  {role} pid={proc.pid} still alive after the verified stop")
         say(f"  killed {role} pid={proc.pid} rc={proc.returncode}")
 
     def stop_all(self) -> None:
@@ -686,7 +750,8 @@ def _run_main_core(d: Driver, main_tree: Path, data: Path, runtime: Path, *, sta
     with log_path.open("w", encoding="utf-8") as log:
         proc = subprocess.Popen([PY, "-m", "jarvis", "core"], cwd=main_tree, env=env, stdout=log,
                                 stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
-    d.pids.append({"role": "core(main)", "pid": proc.pid, "tree": str(main_tree), "at": time.time()})
+    born = process_born(proc.pid)
+    d.pids.append({"role": "core(main)", "pid": proc.pid, "tree": str(main_tree), "at": time.time(), "born": born})
     say(f"  started core(main) pid={proc.pid}")
     identity = None
     try:
@@ -707,7 +772,7 @@ def _run_main_core(d: Driver, main_tree: Path, data: Path, runtime: Path, *, sta
     finally:
         exited = proc.poll() is not None
         if not exited:
-            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, check=False)
+            kill_tree_verified(proc, born)
             proc.wait(timeout=20)
         say(f"  core(main) pid={proc.pid} rc={proc.returncode} exited_by_itself={exited}")
     return {"exited": exited, "rc": proc.returncode, "identity": identity,
@@ -1205,12 +1270,11 @@ async def _rail_parity_async(d: Driver, scratch: Path) -> dict:
         d.step("M5_rail_parity", ok, rail=rail, core=truth)
         return {"rail": rail, "core": truth, "ok": ok}
     finally:
-        chrome.kill()
+        kill_chrome(chrome, profile)
         try:
             chrome.wait(timeout=10)
         except subprocess.TimeoutExpired:
             pass
-        subprocess.run(["taskkill", "/PID", str(chrome.pid), "/T", "/F"], capture_output=True, check=False)
         shutil.rmtree(profile, ignore_errors=True)
 
 

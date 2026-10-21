@@ -547,7 +547,8 @@ def test_a_fresh_team_at_100_percent_has_no_mark_on_a_pill_a_label_or_another_ma
          "actions": [["eval", "wait", "new Promise(r=>setTimeout(r,1500))", 50], ["eval", "o", OVERLAPS, 50]]},
         # Gravitation allumée (réglage par défaut) : le tour est une rotation d'ensemble, rien ne se rapproche.
         {"width": 1440, "height": 900, "seed": _fresh_team(),
-         "actions": [["eval", "wait", "new Promise(r=>setTimeout(r,3000))", 50], ["eval", "o", OVERLAPS, 50]]},
+         "actions": [["eval", "wait", "new Promise(r=>setTimeout(r,3000))", 50], ["eval", "o", OVERLAPS, 50],
+                     ["eval", "o2", "new Promise(r=>setTimeout(r,700)).then(()=>" + OVERLAPS + ")", 50]]},
     ])
     for index, step in enumerate(steps):
         seen = step["results"]["o"]
@@ -556,4 +557,41 @@ def test_a_fresh_team_at_100_percent_has_no_mark_on_a_pill_a_label_or_another_ma
         # Champ immobile : aucun recouvrement. Champ qui tourne : la place est recalculée chaque seconde et la
         # pastille glisse entre deux places ; au plus un liseré de 2 px pendant la glissade.
         tolerance = 0 if index < 2 else 2 * 24
-        assert [hit for hit in seen["hits"] if hit[2] > tolerance] == [], seen["hits"]
+        over = {tuple(hit[:2]) for hit in seen["hits"] if hit[2] > tolerance}
+        if index == 2:
+            # Pendant la glissade, une image chargée peut prendre du retard : un recouvrement ne compte que s'il est
+            # encore là 0,7 s plus tard (un recalcul au moins a eu lieu entre-temps).
+            over &= {tuple(hit[:2]) for hit in step["results"]["o2"]["hits"] if hit[2] > tolerance}
+        assert not over, (index, seen["hits"])
+
+
+def test_the_watchdog_ends_a_wait_even_when_the_fetch_abort_never_fires(tmp_path):
+    """R1 : une lecture qui ignore l'abandon (`fetch` qui ne rend ni ne rejette jamais) ; seul le filet de 17 s joue."""
+    deaf = ("(()=>{const f=window.fetch;window.fetch=function(u,o){if(String(u).includes('/api/missions/relations/'))"
+            "return new Promise(()=>{});return f.call(this,u,o)};return 1})()")
+    [step] = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": _seed(), "actions": [
+        ["eval", "deaf", deaf, 50],
+        ["click", "open", ".sc-relmark-communication", 100],
+        ["eval", "early", "new Promise(r=>setTimeout(()=>r(JarvisRelationBoard.instance.state.phase),15500))", 50],
+        ["eval", "wait", "new Promise(r=>setTimeout(r,3500))", 50],
+        ["eval", "board", BOARD, 50]]}])
+    assert step["results"]["early"] == "loading"
+    board = step["results"]["board"]
+    assert board["error"] and "relation_board_timeout" in board["text"], board
+    assert any("relation_board_timeout" in line["text"] for line in step["console"] if line["type"] == "error")
+
+
+def test_an_open_mission_is_reread_with_the_board_and_its_unknown_state_shows_within_5_s(tmp_path):
+    """R8 : la mission est relue avec chaque relecture de 5 s tant qu'elle est ouverte."""
+    flip = f"(()=>{{window.__sc.missions['{MISSION}'].missions[0].live_unknown=true;return 1}})()"
+    [step] = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": _seed(), "actions": [
+        ["click", "open", ".sc-relmark-communication", 100],
+        ["eval", "waitBoard", WAIT_BOARD, 50],
+        ["eval", "before", BOARD, 50],
+        ["eval", "flip", flip, 50],
+        ["eval", "wait", "new Promise(r=>setTimeout(r,6500))", 50],
+        ["eval", "after", BOARD, 50]]}])
+    r = step["results"]
+    assert "État de la mission\nouverte" in r["before"]["text"], r["before"]["text"]
+    assert "État de la mission\nétat inconnu" in r["after"]["text"], r["after"]["text"]
+    assert step["calls"].count(f"GET /api/missions/{MISSION}") >= 3, step["calls"]
