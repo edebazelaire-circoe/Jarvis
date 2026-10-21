@@ -2848,6 +2848,43 @@ person (contract: [work-methods.md](work-methods.md)).
 
 The hook applies the latest promoted version of a method to the roles that cite it; `agent.declared` and `agent.role_applied` carry the applied key (`deep-research@2`). Headers in `promotion_requested` are observable facts, not proof of a click (threat model: work-methods.md › *Promotion*).
 
+### Organic orchestration: going live, degraded mode, rollback (Slice 13)
+
+**Going live** takes one full restart by the user (`project jarvis restart`), never by an agent (`CLAUDE.md`).
+What that restart changes:
+
+| Part | Change | Backup made automatically |
+| --- | --- | --- |
+| `jarvis.sqlite3` | v9 → v10 (mission history: missions, instances, relations, messages, handoff packets) → v11 (`work_method_versions`, append-only) in one start | one `jarvis.sqlite3.v9.bak` (no `.v10.bak`) |
+| `scene.sqlite3` | v1 → v2 (no row rewritten; new runtime-owned `role_ref` and relation kinds) | `scene.sqlite3.v1.bak` |
+| Brain prompt | new rules (roles `research-lead`/`qa` offered, cases A/B/C, ephemeral widened, delivery, oral length) | — : open a **new conversation** |
+| Sub-agents | `claude_local` passes `--agents` (type `jarvis-no-spawn`) and `JARVIS_SPAWN_GUARD=jarvis-no-spawn@1`; the hook matcher is `^(Agent|Task)$|^mcp__jarvis-workspace__relation_` | — |
+| Tools | `jarvis-workspace` gains `relation_start/post/read/close/handoff` | — |
+| Runtime files | `<runtime>/agent-declarations/`, `<runtime>/agent-handoffs/`, `<runtime>/work-methods.json` | — (written by the hook / Control Center) |
+
+Check after the start: `GET /api/missions/health` is `ok`; the trace shows `core.scene.migrated {from 1, to 2}` and the
+state migration lines; Settings › Sous-agents lists 7 roles.
+
+**Degraded mode** never stops Core nor an agent:
+
+| Failure | What you see | What happens |
+| --- | --- | --- |
+| mission store refused | `mission_history.degraded` (error), `/api/missions/health` `degraded` | writes wait (≤ 256) and are replayed by the 30 s sweep; `mission_history.recovered` when it comes back |
+| Core restarted mid-mission | stars « état inconnu depuis le redémarrage »; after 10 min a mission whose owner and team are unknown is `live_unknown` (« état inconnu »), never « en cours » | the Control Center replays the declarations of tasks still tracked (`missions.relay_replayed`); nothing is closed by guess |
+| hook import broken | `agent.routing.failed` (`routing_hook_import_failed`) in `trace.jsonl`/`errors.jsonl`, one line on stderr | `Agent` calls pass unchanged (no role, no declaration); `relation_*` calls are refused explicitly |
+| `work-methods.json` unreadable | `agent.work_method.failed` | builtin method versions applied |
+| prefab refused | `display.prefab_fallback` (info) | the agent delivers readable Markdown and says nothing is on screen |
+
+**Rollback** (only with JARVIS stopped by the user):
+
+1. Put aside — never delete — `jarvis.sqlite3`, `scene.sqlite3` and their `-wal`/`-shm` (`CLAUDE.md`).
+2. Copy `jarvis.sqlite3.v9.bak` to `jarvis.sqlite3` and `scene.sqlite3.v1.bak` to `scene.sqlite3`.
+3. Return the checkout to the previous `main` commit, then start JARVIS.
+
+Everything written after the migration is lost: mission history, promoted Work Methods, scene changes. Never
+lower a `schema_version` by hand: the previous code refuses a newer base (`schema_newer`) and would read
+unknown relation kinds as corrupted. `<runtime>/work-methods.json` is rewritten empty at the next Control Center start.
+
 ### What the Agents panel shows
 
 The sub-agent cards (status, label, current activity, model, start/end, elapsed

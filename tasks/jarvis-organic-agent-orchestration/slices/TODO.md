@@ -47,7 +47,7 @@ State: **READY** (audited `main@336f21be`, evidence `references/readiness-audit.
 - [x] 10-agent-roles-settings-ui (2026-10-20; QA code-review+qa-verification+runtime-validation+impeccable PASS_WITH_NOTES, notes fixed 7480cc5c; HV-ORG-10-01/02 pending)
 - [x] 11-output-quality-prefab-delivery (2026-10-20; QA code-review+qa-verification+runtime-validation+agent-trace FAIL then PASS_WITH_NOTES after rework, notes fixed 3f02464f; HV-ORG-11-01/02 pending)
 - [x] 12-work-method-learning (2026-10-20; QA code-review+qa-verification+runtime-validation+agent-trace+impeccable PASS_WITH_NOTES after rework, notes fixed e6927af2; HV-ORG-12-01 pending)
-- [ ] 13-integration-rollout-quality-docs
+- [ ] 13-integration-rollout-quality-docs (partial 2026-10-21: sweep, migration rehearsal, runbook, HUMAN-CHECKS, acceptance done; real-agent trial + independent QA pending, account limit until 2026-10-24)
 
 ## Task done when
 
