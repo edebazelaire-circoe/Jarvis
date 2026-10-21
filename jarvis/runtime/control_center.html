@@ -5556,18 +5556,27 @@ function memorySettingsStore(){
 }
 /* « Voir le diagnostic mémoire » : ouvre Avancé › Diagnostics (montage synchrone) et porte le focus sur la partie Mémoire.
    Les parties au-dessus (Voix, Mot d'éveil) grandissent quand leur lecture arrive : la partie Mémoire est gardée en vue
-   tant qu'elle a le focus, quelques secondes au plus, et plus du tout dès que l'utilisateur fait défiler. */
+   tant qu'elle a le focus, 4 s au plus. Tout geste de l'utilisateur dans le contenu (molette, touche, pointeur, toucher)
+   rend la main aussitôt ; quitter la partie (section, catégorie, fermeture) arrête observateur, écoutes et minuteur. */
+const MEMORY_PIN_MS=4000;
+const MEMORY_PIN_RELEASE=['wheel','keydown','pointerdown','touchstart'];
+let memoryDiagnosticPin=null;
+function stopMemoryDiagnosticPin(){if(memoryDiagnosticPin){const stop=memoryDiagnosticPin;memoryDiagnosticPin=null;stop()}}
 function openMemoryDiagnostics(context){
+  stopMemoryDiagnosticPin();
   context.open('diagnostics');
   const part=document.getElementById('diagnostic_memory');
   if(!part)return;
   part.setAttribute('tabindex','-1');part.focus({preventScroll:true});
   const pin=()=>part.scrollIntoView({block:'start'});pin();
   if(typeof ResizeObserver!=='function')return;
-  const watch=new ResizeObserver(()=>{if(part.isConnected&&document.activeElement===part)pin();else watch.disconnect()});
+  const watch=new ResizeObserver(()=>{if(part.isConnected&&document.activeElement===part)pin();else stopMemoryDiagnosticPin()});
+  const release=()=>stopMemoryDiagnosticPin();
+  const timer=setTimeout(release,MEMORY_PIN_MS);
   watch.observe(part.parentElement);
-  modalContent.addEventListener('wheel',()=>watch.disconnect(),{once:true,passive:true});
-  setTimeout(()=>watch.disconnect(),4000);
+  MEMORY_PIN_RELEASE.forEach(type=>modalContent.addEventListener(type,release,{capture:true,passive:true}));
+  memoryDiagnosticPin=()=>{watch.disconnect();clearTimeout(timer);
+    MEMORY_PIN_RELEASE.forEach(type=>modalContent.removeEventListener(type,release,{capture:true}))};
 }
 /* Une vue du module dans `host` ; la lecture part tout de suite, un refus s'affiche avec son message réel. */
 function mountMemorySettings(host,context,options){
@@ -5598,7 +5607,7 @@ function memorySectionSpec(spec){
 let memoryDiagnosticView=null;
 const MEMORY_DIAGNOSTIC={id:'memory',label:'Mémoire',order:30,
   mount(host,context){memoryDiagnosticView=mountMemorySettings(host,context,{mode:'diagnostics'})},
-  destroy(){if(memoryDiagnosticView){memoryDiagnosticView.destroy();memoryDiagnosticView=null}},
+  destroy(){stopMemoryDiagnosticPin();if(memoryDiagnosticView){memoryDiagnosticView.destroy();memoryDiagnosticView=null}},
 };
 function installMemorySettingsSections(){
   MEMORY_SECTIONS.forEach(spec=>registerSettingsSection(memorySectionSpec(spec)));

@@ -26,7 +26,9 @@
   /* Étages d'une section du bloc : le sien (`recall`, `semantic`, `tencent`), ou ses `knowledge:*`. */
   function legsOf(legs,sectionId){return Object.keys(legs).filter(k=>k===sectionId||k.startsWith(sectionId+':'))}
   function fields(schema){return (schema.sections||[]).flatMap(s=>s.fields.map(f=>({...f,section:s.id})))}
-  function createStore(){return {memory:null,draft:{},busy:false,message:null,restart:false,loading:null}}
+  /* `views` : le dessin de chaque vue vivante du store. Une lecture ou un enregistrement redessine toutes les vues à sa
+     fin : la section qui l'a lancé a pu être quittée entre-temps, celle qui est affichée doit refléter le résultat. */
+  function createStore(){return {memory:null,draft:{},busy:false,message:null,restart:false,loading:null,views:new Set()}}
 
   /* Primitives du shell (`JarvisSettingsUI`) : celles passées par la page, sinon celles de la page. */
   function primitives(opts){
@@ -45,6 +47,10 @@
       return body;
     });
     const st=opts.store||createStore();
+    if(!st.views)st.views=new Set();
+    /* Le message et l'avis d'après-enregistrement disent ce qui vient d'arriver : une vue montée plus tard ne les reprend
+       pas, sauf si l'enregistrement est encore en cours (elle en recevra l'issue). */
+    if(!st.busy){st.message=null;st.restart=false}
     let dead=false;
 
     const stored=p=>st.memory.values[p];
@@ -221,7 +227,7 @@
       if(!st.memory){
         if(!st.loading){
           st.loading=fetchJson('/api/settings').then(data=>{st.memory=data.memory;st.draft={};return st.memory})
-            .finally(()=>{st.loading=null});
+            .finally(()=>{st.loading=null;renderAll()});
         }
         const pending=st.loading;
         render();
@@ -238,10 +244,12 @@
         st.memory=data.memory;st.draft={};st.restart=needed;st.message={tone:'ok',text:'Réglages mémoire enregistrés.'};
       }catch(e){
         st.message={tone:'bad',text:(e.message||'Enregistrement refusé.')+(e.code?' ('+e.code+')':'')+' Rien n’a été écrit.'};
-      }finally{st.busy=false;render()}
+      }finally{st.busy=false;renderAll()}
     }
-    function destroy(){dead=true}
+    function renderAll(){[...st.views].forEach(draw=>draw())}
+    function destroy(){dead=true;st.views.delete(render)}
     host.setAttribute('data-memory-settings','1');
+    st.views.add(render);
     render();
     return {load,render,state:st,patch,submit,destroy,get destroyed(){return dead}};
   }

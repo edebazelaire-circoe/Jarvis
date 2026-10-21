@@ -324,3 +324,93 @@ def test_the_page_registers_memory_sections_and_has_no_memory_tab():
     assert "aliases:['memory']" in block
     assert "if(typeof window!=='undefined'&&typeof installMemorySettingsSections==='function')installMemorySettingsSections();" in html
     assert "registerSettingsDiagnostic(MEMORY_DIAGNOSTIC);" in html
+
+
+# --- retravail QA Slice 05 : vues du même store, maintien en vue du diagnostic ------------------------------------
+
+@pytest.mark.parametrize("refused", [False, True])
+def test_leaving_a_section_during_a_save_redraws_the_section_now_shown(tmp_path, refused):
+    """Enregistrer depuis Recherche sémantique, passer à Consolidation pendant l'envoi : à l'issue, Consolidation n'est plus
+    figée (« Enregistrement… », champs désactivés) ; elle montre l'issue réelle, succès ou refus."""
+    out = run_node(tmp_path, {}, """
+let answer;const held=new Promise(r=>answer=r);
+const slow=async(p,i)=>{if(!i)return {memory:MEM};await held;
+  if(REFUSED){const e=new Error('refusé');e.code='memory_settings_bad_type';throw e}return {memory:MEM}};
+const store=M.createStore(),sem=fakeHost(),con=fakeHost();
+const s=M.create(sem,{fetch:slow,store,section:'semantic_retrieval'});await s.load();
+change(sem,'semantic.provider',{value:'openai'});
+const saving=s.submit();
+s.destroy();                                         // le shell quitte la section pendant l'envoi
+const c=M.create(con,{fetch:slow,store,section:'consolidation'});await c.load();
+const during=con.innerHTML;
+answer();await saving;
+out({during,after:con.innerHTML,busy:store.busy,draft:store.draft,views:store.views.size});""".replace("REFUSED", "true" if refused else "false"))
+    assert "Enregistrement…" in out["during"]
+    after = out["after"]
+    assert out["busy"] is False and out["views"] == 1
+    assert "Enregistrement…" not in after and "Enregistrer la mémoire" in after
+    assert "mem_consolidation_mode" in after and not __import__("re").search(r'id="mem_consolidation_mode"[^>]*disabled', after)
+    if refused:
+        assert "memory_settings_bad_type" in after and "Rien n" in after
+        assert out["draft"] == {"semantic.provider": "openai"} and "Enregistre aussi" in after
+    else:
+        assert "Réglages mémoire enregistrés." in after and "prochain démarrage de Core" in after
+        assert out["draft"] == {} and "Enregistre aussi" not in after and "Redémarrage de Core nécessaire" not in after
+
+
+def test_a_section_opened_after_a_save_does_not_repeat_its_message(tmp_path):
+    out = run_node(tmp_path, {}, """
+const store=M.createStore(),sem=fakeHost(),con=fakeHost();
+const s=M.create(sem,{fetch:fetchFn,store,section:'semantic_retrieval'});await s.load();
+change(sem,'semantic.provider',{value:'openai'});await s.submit();
+const saved=sem.innerHTML;s.destroy();
+await M.create(con,{fetch:fetchFn,store,section:'consolidation'}).load();
+out({saved,later:con.innerHTML});""")
+    assert "Réglages mémoire enregistrés." in out["saved"] and "prochain démarrage de Core" in out["saved"]
+    assert "Réglages mémoire enregistrés." not in out["later"] and "prochain démarrage de Core" not in out["later"]
+
+
+PIN = r"""
+const listeners={},timers=new Map();let nextTimer=1,pins=0,observer=null;
+globalThis.setTimeout=(fn,ms)=>{const id=nextTimer++;timers.set(id,{fn,ms});return id};
+globalThis.clearTimeout=id=>{timers.delete(id)};
+globalThis.ResizeObserver=class{constructor(cb){this.cb=cb;this.on=false;observer=this}observe(){this.on=true}disconnect(){this.on=false}};
+const part={isConnected:true,parentElement:{},setAttribute(){},focus(){},scrollIntoView(){pins++}};
+const document={getElementById:id=>id==='diagnostic_memory'?part:null,activeElement:part};
+const modalContent={addEventListener(t,fn){(listeners[t]=listeners[t]||new Set()).add(fn)},removeEventListener(t,fn){listeners[t]&&listeners[t].delete(fn)}};
+const context={open(){}};
+""" + "{PAGE_SOURCE}" + r"""
+const live=()=>Object.values(listeners).reduce((n,s)=>n+s.size,0);
+const grow=()=>{if(observer.on)observer.cb()};
+const out={};
+openMemoryDiagnostics(context);grow();
+out.start={pins,timers:[...timers.values()].map(t=>t.ms),types:Object.keys(listeners).sort(),live:live()};
+for(const type of ['wheel','keydown','pointerdown','touchstart']){
+  openMemoryDiagnostics(context);const before=pins;[...listeners[type]][0]();grow();
+  out[type]={pinned:pins-before,observing:observer.on,timers:timers.size,live:live()};
+}
+openMemoryDiagnostics(context);const before=pins;[...timers.values()][0].fn();grow();
+out.timeout={pinned:pins-before,observing:observer.on,timers:timers.size,live:live()};
+openMemoryDiagnostics(context);MEMORY_DIAGNOSTIC.destroy();grow();
+out.destroy={observing:observer.on,timers:timers.size,live:live()};
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def test_the_diagnostic_pin_yields_to_any_user_scroll_and_is_cleaned_up(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    page = HTML.read_text(encoding="utf-8")
+    source = (page[page.index("const MEMORY_PIN_MS=") : page.index("/* Une vue du module dans `host`")]
+              + page[page.index("let memoryDiagnosticView=null;") : page.index("function installMemorySettingsSections()")])
+    script = tmp_path / "pin.cjs"
+    script.write_text(PIN.replace("{PAGE_SOURCE}", source), encoding="utf-8")
+    done = subprocess.run([node, str(script)], capture_output=True, text=True, encoding="utf-8", timeout=60, check=False)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["start"] == {"pins": 2, "timers": [4000], "types": ["keydown", "pointerdown", "touchstart", "wheel"], "live": 4}
+    released = {"pinned": 0, "observing": False, "timers": 0, "live": 0}  # plus aucun replacement après le geste
+    for case in ("wheel", "keydown", "pointerdown", "touchstart", "timeout"):
+        assert out[case] == released, (case, out[case])
+    assert out["destroy"] == {"observing": False, "timers": 0, "live": 0}
