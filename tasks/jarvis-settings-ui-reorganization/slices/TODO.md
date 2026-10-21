@@ -1,7 +1,7 @@
 # Slice Execution Order
 
 1. [x] `00-project-manager` - Project Manager readiness and reconciliation gate. READY (2026-10-21, see LOG).
-2. `01-settings-registry-ia-contract` - Canonical Settings registry and six-category IA contract.
+2. [x] `01-settings-registry-ia-contract` - Canonical Settings registry and six-category IA contract. Approved 2026-10-21 (626e08ab).
 3. `02-settings-shell-visual-redesign` - Settings shell and visual redesign.
 4. `03-voice-audio-reorganization` - Voice and audio reorganization.
 5. `04-agents-models-reorganization` - Agents and models reorganization.
