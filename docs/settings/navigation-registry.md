@@ -166,6 +166,10 @@ Tant que des onglets de `TABS` existent :
 - Slice 04 : ni `cli` ni `subagents` ne sont des onglets. Sections enregistrées (page) : `main_agent` (alias `cli`),
   `agent_behavior`, `subagent_models`, `subagents`, et sous `advanced_diagnostics` : `runtime_cli` (alias `routing`,
   groupe `runtime_cli`), `work_methods` (groupe `labs`). Destinations : [`agents-models.md`](agents-models.md).
+- Slice 05 : `memory` n'est plus un onglet. Sections enregistrées (page) : `recall` (alias `memory`),
+  `semantic_retrieval`, `consolidation`, `knowledge_sources` (`save:'self'`), `memory_center` (`readonly`), et la partie
+  Mémoire de `advanced_diagnostics` / `diagnostics`. Destinations des champs servies par le serveur (`surface`) :
+  [`memory.md`](memory.md).
 
 ## 6. Navigation du shell (Slice 02)
 

@@ -157,9 +157,9 @@ catégorie, qui ouvre les réglages directement sur elle) ouvrent les réglages 
 gauche — Voix & audio, Agents & modèles, Mémoire & connaissances, Interface & interactions,
 Connexions, Avancé & diagnostic — ; Ctrl+→ / Ctrl+← passent de l'une à l'autre. Pendant la
 migration, chaque catégorie montre en haut les anciens onglets qui lui reviennent (Prompts, API
-Keys, Raccourcis, Mémoire, Apparence, Expérimental) ; Voix et Mot d'éveil (Slice 03), Agent / CLI
-et Sous-agents (Slice 04) sont devenus des sections (`docs/settings/voice-audio.md`,
-`docs/settings/agents-models.md`) ; ce guide écrit encore « Réglages → onglet ».
+Keys, Raccourcis, Apparence, Expérimental) ; Voix et Mot d'éveil (Slice 03), Agent / CLI
+et Sous-agents (Slice 04), Mémoire (Slice 05) sont devenus des sections (`docs/settings/voice-audio.md`,
+`docs/settings/agents-models.md`, `docs/settings/memory.md`) ; ce guide écrit encore « Réglages → onglet ».
 
 Un principe la traverse : **la page ne connaît aucun réglage**. Le serveur
 décrit ce qui existe — les piles vocales, leurs champs, les CLI, leurs modes,
@@ -1594,7 +1594,7 @@ Other forms (including `ok`, `confirme`, sentences containing yes/no, or stale c
 
 ## Memory
 
-Canonical files are Markdown under the memory root, `<data_root>/memory` by default (`JARVIS_MEMORY_DIR` or `runtime.memory_dir` to move it; [local-data.md](local-data.md#mémoire--une-seule-racine)). Retention directories (`short_term_memory/`, `long_term_memory/`, `traumatic_memory/`, `eternal_memory/`, `plastic_memory/`, legacy `notes/`), `_candidates/` (consolidation proposals awaiting a human decision) and `.history/` (previous revisions) are durable; everything under `.jarvis/` is derived. Do not rely on `.jarvis/index.sqlite3` as data; it is a derived cache. Settings live in the Memory tab of the Control Center settings ([settings/memory.md](settings/memory.md)); notes, candidates, index health and a recall test are in the Memory Center ([memory.md](memory.md)). The Brain reaches memory through the per-turn memory block and the `jarvis-memory` MCP server (3 calls per turn, candidates only); sub-agents get Wiki, CodeGraph and Skills through loadouts ([skills-and-loadouts.md](skills-and-loadouts.md)).
+Canonical files are Markdown under the memory root, `<data_root>/memory` by default (`JARVIS_MEMORY_DIR` or `runtime.memory_dir` to move it; [local-data.md](local-data.md#mémoire--une-seule-racine)). Retention directories (`short_term_memory/`, `long_term_memory/`, `traumatic_memory/`, `eternal_memory/`, `plastic_memory/`, legacy `notes/`), `_candidates/` (consolidation proposals awaiting a human decision) and `.history/` (previous revisions) are durable; everything under `.jarvis/` is derived. Do not rely on `.jarvis/index.sqlite3` as data; it is a derived cache. Settings live in the Mémoire & connaissances category of the Control Center settings, leg detail under Avancé & diagnostic › Diagnostics ([settings/memory.md](settings/memory.md)); notes, candidates, index health and a recall test are in the Memory Center ([memory.md](memory.md)). The Brain reaches memory through the per-turn memory block and the `jarvis-memory` MCP server (3 calls per turn, candidates only); sub-agents get Wiki, CodeGraph and Skills through loadouts ([skills-and-loadouts.md](skills-and-loadouts.md)).
 
 Rebuild:
 
@@ -1625,7 +1625,7 @@ An unreachable, slow or misbehaving Tencent sidecar never blocks a turn and neve
 
 #### Enabling remote embeddings
 
-Off by default: `semantic.provider = none` sends nothing anywhere. To opt in, in the Memory tab of the settings choose the provider `openai`, enable semantic search, save the key under the `openai` provider in API Keys, then restart Core (semantic settings apply at the next start). Note text is then sent to the embedding provider to be vectorized. Notes in the `private` scope are excluded unless you also tick "Autoriser les scopes privés" (`semantic.allow_private`, default false); legacy notes without front matter are `private`, so with the default they are found by the lexical leg only. To go back, set the provider to `none`; the semantic file is derived and can be deleted.
+Off by default: `semantic.provider = none` sends nothing anywhere. To opt in, in Mémoire & connaissances › Recherche sémantique choose the provider `openai`, enable semantic search, save the key under the `openai` provider in API Keys, then restart Core (semantic settings apply at the next start). Note text is then sent to the embedding provider to be vectorized. Notes in the `private` scope are excluded unless you also tick "Autoriser les scopes privés" (`semantic.allow_private`, default false); legacy notes without front matter are `private`, so with the default they are found by the lexical leg only. To go back, set the provider to `none`; the semantic file is derived and can be deleted.
 
 ### Tencent MemoryCore sidecar
 

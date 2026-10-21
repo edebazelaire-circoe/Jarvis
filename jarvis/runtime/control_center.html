@@ -171,12 +171,16 @@ textarea{width:100%;min-height:80px;background:#071015;border:1px solid var(--li
 .agentEvents{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
 .empty{color:var(--muted);padding:20px 0;text-align:center}
 .mem-legs{list-style:none;margin:0 0 14px;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px 18px}
-.mem-legs li{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12px;border-bottom:1px solid var(--line);padding:5px 0}
-.mem-badge{font-size:10px;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);border-radius:3px;padding:1px 6px;color:var(--muted)}
-.mem-badge.ok{color:var(--ok);border-color:var(--ok)}.mem-badge.bad{color:var(--danger);border-color:var(--danger)}
-.mem-field .hint{grid-column:1/-1}
-.mem-field input[type=number]{max-width:160px}
-.mem-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+.mem-legs li{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;border-bottom:1px solid var(--line);padding:6px 0;min-width:0}
+/* Réglages mémoire (Slice 05) : ligne d'état courte, groupes d'une section, nombres bornés. */
+.mem-status{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;font-size:13px;color:var(--set-ink-2,var(--muted))}
+.mem-leg-mark{display:inline-flex;align-items:center;gap:6px}
+.mem-status-text.bad{color:var(--danger)}
+.mem-group{display:grid;gap:16px;min-width:0;padding-top:14px;border-top:1px solid var(--set-hair,var(--line))}
+.mem-group>h4{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0;font-size:14px;font-weight:600;color:var(--set-ink,var(--text))}
+.mem-number{display:inline-flex;align-items:center;gap:10px}
+.mem-number input[type=number]{max-width:160px}
+.mem-secret,.mem-elsewhere{margin:0}
 .mem-settings button:disabled{opacity:.5;cursor:not-allowed}
 .mem-settings :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 /* Accents des rôles de sous-agent : `subagent_roles.ROLE_ACCENTS` (jetons) -> variables du thème. Seule table de
@@ -3159,7 +3163,9 @@ const STATUS={
    écran du dock `PFB`. Son aperçu passe par `window.JarvisPrefabHost` (mode `preview`),
    lu à l'ouverture : `control_center_prefabs.js`. */
 /*__CONTROL_CENTER_PREFABS_JS__*/
-/* Mémoire (jarvis-memory-intelligence-knowledge, Slice 10b) : accroches servies, remplies par les Slices 11 et 12. */
+/* Mémoire (jarvis-memory-intelligence-knowledge, Slice 10b) : accroches servies, remplies par les Slices 11 et 12.
+   `window.JarvisMemorySettings`, monté par les sections de `memory_knowledge` et la partie « Mémoire » des diagnostics
+   (jarvis-settings-ui-reorganization, Slice 05 : `installMemorySettingsSections`). */
 /*__CONTROL_CENTER_MEMORY_SETTINGS_JS__*/
 /* Sous-agents des Réglages (jarvis-organic-agent-orchestration, Slice 10) : `control_center_subagents_settings.js`,
    `window.JarvisSubagentSettings`, monté par les sections `subagents` et `work_methods` (`mountSubagentSettings`). */
@@ -4434,12 +4440,12 @@ function bindSend(after){
 
 /* `voice` n'est plus un onglet (Slice 03) : `voice_audio` monte ses sections enregistrées, l'alias `voice` y mène.
    Ni `cli` ni `subagents` (Slice 04) : `agents_models` et Avancé montent leurs sections, les alias `cli`, `routing` et
-   `subagents` y mènent (`docs/legacy/settings-tab-aliases.md`). */
+   `subagents` y mènent (`docs/legacy/settings-tab-aliases.md`). Ni `memory` (Slice 05) : `memory_knowledge` monte ses
+   sections, l'alias `memory` mène à Rappel. */
 const TABS=[
   {id:'prompts',label:'Prompts',save:false},
   {id:'keys',label:'API Keys',save:false},
   {id:'shortcuts',label:'Raccourcis',save:false},
-  {id:'memory',label:'Mémoire',save:false},
 ];
 const SET={open:false,tab:null,category:null,section:null,lastItem:{},opener:null,sectionView:null,voiceTab:null,voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:'',subagentView:null,subagentDrafts:{},agentSection:null};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
@@ -5487,7 +5493,7 @@ function registerSettingsDiagnostic(part){
 }
 let settingsDiagnosticsMounted=[];
 const DIAGNOSTICS_SECTION={id:'diagnostics',category:'advanced_diagnostics',group:'diagnostics',order:40,advanced:true,save:'readonly',
-  label:'Diagnostics',description:'État constaté, en lecture seule : autorisation, vérificateur, annulation d’écho, piles, catalogues, détecteur du mot d’éveil.',
+  label:'Diagnostics',description:'État constaté, en lecture seule : autorisation, vérificateur, annulation d’écho, piles, catalogues, détecteur du mot d’éveil, étages de la mémoire.',
   mount(host,context){
     const UI=context.ui;
     host.innerHTML=`<div style="margin-bottom:28px">${UI.notice({kind:'info',text:'Lecture seule : ce qui a été constaté, rien ici ne modifie un réglage.'})}</div>`
@@ -5524,6 +5530,73 @@ if(typeof window!=='undefined')installVoiceSettingsSections();
    ne portent pas le bloc de ces sections n'ont pas la fonction (`typeof` d'une déclaration absente : 'undefined') ;
    dans la page, elle est toujours déclarée (remontée). */
 if(typeof window!=='undefined'&&typeof installAgentSettingsSections==='function')installAgentSettingsSections();
+/* --- `memory_knowledge` (Slice 05) --------------------------------------------------------------------------------
+   Quatre sections de champs et l'entrée du Memory Center. Chaque section rend les champs que le serveur lui adresse
+   (`surface.section` du schéma mémoire) ; libellés et descriptions ci-dessous sont de la présentation. Elles portent leur
+   propre bouton (« Enregistrer la mémoire », correctif mémoire seul) : `save: 'self'`. L'état et le brouillon sont
+   partagés le temps d'une ouverture des Réglages (`memorySettingsStore`) ; chaque montage crée une vue, détruite en
+   quittant la section (réponses tardives ignorées). La partie « Mémoire » d'Avancé › Diagnostics porte le détail. */
+const MEMORY_SECTIONS=[
+  {id:'recall',category:'memory_knowledge',order:10,label:'Rappel',aliases:['memory'],
+    description:'Les souvenirs que JARVIS ajoute à chaque tour : combien, et combien de temps il les cherche.'},
+  {id:'semantic_retrieval',category:'memory_knowledge',order:20,label:'Recherche sémantique',
+    description:'Retrouver un souvenir par son sens et pas seulement par ses mots, grâce à un fournisseur externe.'},
+  {id:'consolidation',category:'memory_knowledge',order:30,label:'Consolidation',
+    description:'Comment les propositions de souvenirs deviennent des notes : décision manuelle ou automatique.'},
+  {id:'knowledge_sources',category:'memory_knowledge',order:40,label:'Sources de connaissances',
+    description:'Wiki, graphe de code, Skills et sidecar Tencent proposés au cerveau, et ce que reçoit chaque agent.'},
+  {id:'memory_center',category:'memory_knowledge',order:50,label:'Centre mémoire',mode:'center',save:'readonly',
+    description:'Inspecter les notes, décider des candidats, vérifier les index et tester le rappel.'},
+];
+function memorySettingsStore(){
+  if(!SET.memoryStore||SET.memoryStoreOpening!==SET.openGeneration){
+    SET.memoryStore=window.JarvisMemorySettings.createStore();SET.memoryStoreOpening=SET.openGeneration}
+  return SET.memoryStore;
+}
+/* « Voir le diagnostic mémoire » : ouvre Avancé › Diagnostics (montage synchrone) et porte le focus sur la partie Mémoire. */
+function openMemoryDiagnostics(context){
+  context.open('diagnostics');
+  const part=document.getElementById('diagnostic_memory');
+  if(!part)return;
+  part.setAttribute('tabindex','-1');part.scrollIntoView({block:'start'});part.focus({preventScroll:true});
+}
+/* Une vue du module dans `host` ; la lecture part tout de suite, un refus s'affiche avec son message réel. */
+function mountMemorySettings(host,context,options){
+  const M=window.JarvisMemorySettings;
+  if(!M){
+    host.innerHTML=context.ui.notice({kind:'bad',live:'assertive',title:'Réglages mémoire indisponibles.',
+      body:'<span class="set-notice-text">Module absent de la page servie. <code>memory_settings_module_missing</code></span>'});
+    console.error('memory_settings_module_missing');return null}
+  host.innerHTML=`<div id="${M.mountId}"></div>`;
+  const slot=host.firstElementChild;
+  const view=M.create(slot,{...options,store:memorySettingsStore(),ui:context.ui,open:context.open,
+    openDiagnostics:()=>openMemoryDiagnostics(context)});
+  view.load().catch(e=>{
+    console.error('memory_settings_load_failed',{error:String(e&&e.message||e),code:e&&e.code||''});
+    if(!view.destroyed)slot.innerHTML=context.ui.notice({kind:'bad',live:'assertive',title:'Réglages mémoire illisibles.',
+      body:`<span class="set-notice-text">${esc(e&&e.message||String(e))}${e&&e.code?` <code>${esc(e.code)}</code>`:''}</span>`});
+  });
+  return view;
+}
+function memorySectionSpec(spec){
+  const {mode,...entry}=spec;
+  let view=null;
+  return {save:'self',...entry,
+    mount(host,context){view=mountMemorySettings(host,context,{mode:mode||'fields',section:spec.id,label:spec.label,description:spec.description})},
+    destroy(){if(view){view.destroy();view=null}},
+  };
+}
+let memoryDiagnosticView=null;
+const MEMORY_DIAGNOSTIC={id:'memory',label:'Mémoire',order:30,
+  mount(host,context){memoryDiagnosticView=mountMemorySettings(host,context,{mode:'diagnostics'})},
+  destroy(){if(memoryDiagnosticView){memoryDiagnosticView.destroy();memoryDiagnosticView=null}},
+};
+function installMemorySettingsSections(){
+  MEMORY_SECTIONS.forEach(spec=>registerSettingsSection(memorySectionSpec(spec)));
+  registerSettingsDiagnostic(MEMORY_DIAGNOSTIC);
+}
+/* Même garde que les sections Agents : les extraits node sans ce bloc n'ont pas la fonction. */
+if(typeof window!=='undefined'&&typeof installMemorySettingsSections==='function')installMemorySettingsSections();
 
 /* Où en est le shell : catégorie, puis section enregistrée OU onglet hérité. Un module hérité peut encore poser
    `SET.tab` lui-même (Bare Hands) : un onglet posé l'emporte et la catégorie suit. */
@@ -5631,19 +5704,16 @@ async function renderTab(){
     prompts:'Chaque couche est enregistrée avec son propre bouton.',
     keys:'Les clés sont enregistrées immédiatement sans jamais être relues par la page.',
     shortcuts:'Les raccourcis sont enregistrés immédiatement.',
-    memory:'Ce que JARVIS retient et rappelle. Enregistrement par le bouton de cet onglet.',
   }[SET.tab]||'';
   try{
     let content;
     if(SET.tab==='prompts')content=await tabPrompts();
     else if(SET.tab==='keys')content=tabKeys();
-    else if(SET.tab==='memory')content='<div id="memorySettingsMount"></div>';
     else content=tabShortcuts();
     if(revision!==SET.renderRevision||SET.open===false)return;
     modalContent.innerHTML=content;
   }catch(e){if(revision===SET.renderRevision&&SET.open!==false)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
   bindTab(revision);
-  if(SET.tab==='memory'&&window.JarvisMemorySettings)window.JarvisMemorySettings.show(modalContent.querySelector('#memorySettingsMount'));
   if(SET.dirty&&tab.save)say('Modifications non enregistrées.','');
 }
 

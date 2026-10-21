@@ -30,6 +30,11 @@
   (seulement aux extraits de tests) : retrait à la Slice 09
   ([`../settings/agents-models.md`](../settings/agents-models.md)). Testé : `test_agent_legacy_ids_open_their_sections`
   (registre), `test_category_sections_destinations_and_legacy_ids` (vrai Chrome).
+- Slice 05 : l'onglet `memory` n'existe plus ; son ID reste l'alias de la section `recall` (`memory_knowledge`,
+  déclaré par la section : `aliases:['memory']`). Appelant connu : le bouton Réglages du Memory Center
+  (`selectTab('memory')`). Le détail des étages va dans la partie Mémoire de `advanced_diagnostics` / `diagnostics`
+  ([`../settings/memory.md`](../settings/memory.md)). Testé : `test_memory_legacy_id_opens_recall_and_every_memory_section`
+  (registre), `test_sections_destinations_alias_and_links` (vrai Chrome).
 
 ## Conditions de retrait
 

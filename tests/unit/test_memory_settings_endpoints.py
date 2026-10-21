@@ -196,5 +196,7 @@ def test_the_control_center_serves_the_two_hooks(control):
 async def test_the_page_carries_both_hooks(control):
     html = (await control.index(None)).text
     assert "JarvisMemorySettings" in html and "JarvisMemoryCenter" in html
-    assert 'id="memorySettingsMount"' in html and 'id="memoryCenterMount"' in html
+    # Depuis jarvis-settings-ui-reorganization Slice 05, chaque section mémoire crée son point de montage (`mountId`).
+    assert "MOUNT_ID='memorySettingsMount'" in html and "installMemorySettingsSections();" in html
+    assert 'id="memoryCenterMount"' in html
     assert "__CONTROL_CENTER_MEMORY" not in html

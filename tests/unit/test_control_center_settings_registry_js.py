@@ -122,11 +122,18 @@ SLICE_04_SECTIONS = (
     ("subagent_models", "agents_models", 30, "footer", []), ("subagents", "agents_models", 40, "self", []),
     ("runtime_cli", "advanced_diagnostics", 30, "footer", ["routing"]), ("work_methods", "advanced_diagnostics", 50, "self", []),
 )
+#: Sections enregistrées par la page servie depuis la Slice 05 (`control_center.html` : `MEMORY_SECTIONS`) ; l'onglet
+#: `memory` a disparu, son identifiant est l'alias de Rappel.
+SLICE_05_SECTIONS = (
+    ("recall", "memory_knowledge", 10, "self", ["memory"]), ("semantic_retrieval", "memory_knowledge", 20, "self", []),
+    ("consolidation", "memory_knowledge", 30, "self", []), ("knowledge_sources", "memory_knowledge", 40, "self", []),
+    ("memory_center", "memory_knowledge", 50, "readonly", []),
+)
 REGISTER_SLICE_03 = "".join(
     f"R.page.register({{id:'{i}',category:'{c}',label:'{i}',order:{o},save:'{v}',mount:noop}});" for i, c, o, v in SLICE_03_SECTIONS
 ) + "".join(
     f"R.page.register({{id:'{i}',category:'{c}',label:'{i}',order:{o},save:'{v}',aliases:{json.dumps(a)},mount:noop}});"
-    for i, c, o, v, a in SLICE_04_SECTIONS
+    for i, c, o, v, a in (*SLICE_04_SECTIONS, *SLICE_05_SECTIONS)
 )
 
 
@@ -267,11 +274,11 @@ out({{map:targets.map(t=>[String(t),R.legacyTabFor(t,T)]),nav:R.navigationFromLe
         assert mapped.get(tab["id"], tab["id"]) == tab["id"]
     # Voix & audio n'a plus d'onglet (Slice 03) : ses cibles sont des sections enregistrées, servies par le shell.
     assert mapped == {
-        "voice": None, "wakeword": None, "cli": None, "routing": None, "keys": "keys", "memory": "memory",
-        "experimental": "experimental", "voice_audio": None, "agents_models": None, "memory_knowledge": "memory",
+        "voice": None, "wakeword": None, "cli": None, "routing": None, "keys": "keys", "memory": None,
+        "experimental": "experimental", "voice_audio": None, "agents_models": None, "memory_knowledge": None,
         "interface_interactions": "shortcuts", "connections": "keys", "advanced_diagnostics": "prompts",
         "wake_word": None, "runtime_cli": None, "labs": "experimental", "bare_hands": "experimental",
-        "theme_scene": "appearance", "diagnostics": "memory", "barehandsRecord": "experimental", "nope": None, "null": None,
+        "theme_scene": "appearance", "diagnostics": None, "barehandsRecord": "experimental", "nope": None, "null": None,
     }
     nav = out["nav"]
     assert nav["unassigned"] == []
@@ -279,7 +286,7 @@ out({{map:targets.map(t=>[String(t),R.legacyTabFor(t,T)]),nav:R.navigationFromLe
     assert {c["id"]: [t["id"] for t in c["tabs"]] for c in nav["categories"]} == {
         "voice_audio": [],
         "agents_models": [],
-        "memory_knowledge": ["memory"],
+        "memory_knowledge": [],
         "interface_interactions": ["shortcuts", "appearance"],
         "connections": ["keys"],
         "advanced_diagnostics": ["prompts", "experimental"],
@@ -302,18 +309,18 @@ PLANNED_SECTIONS = {
 def test_every_planned_target_section_is_served_by_a_current_tab(tmp_path):
     """QA Slice 01 : `voice_output`, `semantic_retrieval`… rendaient `null` ; chaque section cible prévue s'ouvre :
     par un onglet hérité, ou (depuis la Slice 03) parce qu'elle est enregistrée par la page."""
-    registered = {i for i, *_ in SLICE_03_SECTIONS} | {i for i, *_ in SLICE_04_SECTIONS}
+    registered = {i for i, *_ in (*SLICE_03_SECTIONS, *SLICE_04_SECTIONS, *SLICE_05_SECTIONS)}
     out = run(tmp_path, f"""
 const T={json.dumps(assembled_tabs())},P={json.dumps(PLANNED_SECTIONS)};
 out(Object.fromEntries(Object.values(P).flat().map(s=>[s,R.legacyTabFor(s,T)])));""")
     assert all(v for k, v in out.items() if k not in registered), {k: v for k, v in out.items() if not v}
     assert registered <= {s for sections in PLANNED_SECTIONS.values() for s in sections}
-    # Les sections Voix ne sont plus servies par un onglet (`diagnostics` l'est encore par Mémoire, en partie).
+    # Les sections Voix et Mémoire ne sont plus servies par un onglet (Slices 03 et 05).
     assert {k: out[k] for k in ("conversation", "voice_output", "microphone_sound", "turns_interruptions", "wake_word",
                                 "architecture_compat")} == dict.fromkeys(
         ("conversation", "voice_output", "microphone_sound", "turns_interruptions", "wake_word", "architecture_compat"), None)
-    assert {k: out[k] for k in ("semantic_retrieval", "consolidation", "knowledge_sources")} == dict.fromkeys(
-        ("semantic_retrieval", "consolidation", "knowledge_sources"), "memory")
+    memory = ("recall", "semantic_retrieval", "consolidation", "knowledge_sources", "memory_center", "diagnostics")
+    assert {k: out[k] for k in memory} == dict.fromkeys(memory, None)
 
 
 def _page_routing(page: str) -> str:
@@ -347,14 +354,14 @@ const at=()=>[SET.category,SET.tab,SET.section];
 }})();""")
     assert out["first"] == ["connections", "keys", None] and out["opened"] == 1
     seen = out["seen"]
-    assert seen["memory"] == ["memory_knowledge", "memory", None]
+    assert seen["memory"] == ["memory_knowledge", None, "recall"]  # Slice 05 : l'alias de Rappel
     # Slice 04 : `routing` → Runtime & CLI ; `cli` et `subagents` ouvrent leurs sections (test suivant).
     assert seen["routing"] == ["advanced_diagnostics", None, "runtime_cli"]
     assert seen["labs"] == seen["bare_hands"] == seen["barehandsCalibration"] == ["advanced_diagnostics", "experimental", None]
     # La ligne « Réglages de la voix » de la roue (`'voice'`) atterrit sur Voix & audio, section Conversation.
     assert seen["voice"] == ["voice_audio", None, "conversation"]
     assert seen["voice_output"] == ["voice_audio", None, "voice_output"]
-    assert seen["semantic_retrieval"] == ["memory_knowledge", "memory", None]
+    assert seen["semantic_retrieval"] == ["memory_knowledge", None, "semantic_retrieval"]
     # Une catégorie seule rouvre la dernière entrée ouverte dans cette catégorie (Apparence), sinon la première.
     assert seen["voice_audio"] == ["voice_audio", None, "voice_output"]
     assert seen["interface_interactions"] == ["interface_interactions", "appearance", None]
@@ -371,7 +378,8 @@ const at=()=>[SET.category,SET.tab,SET.section];
                         ("section", "turns_interruptions"), ("section", "wake_word")],
         "agents_models": [("section", "main_agent"), ("section", "agent_behavior"), ("section", "subagent_models"),
                           ("section", "subagents")],
-        "memory_knowledge": [("tab", "memory")],
+        "memory_knowledge": [("section", "recall"), ("section", "semantic_retrieval"), ("section", "consolidation"),
+                             ("section", "knowledge_sources"), ("section", "memory_center")],
         "interface_interactions": [("tab", "shortcuts"), ("tab", "appearance")],
         "connections": [("tab", "keys")],
         "advanced_diagnostics": [("section", "architecture_compat"), ("section", "runtime_cli"), ("section", "diagnostics"),
@@ -379,8 +387,7 @@ const at=()=>[SET.category,SET.tab,SET.section];
     }
     related = {c["id"]: [r["id"] for r in c["related"]] for c in nav["categories"]}
     assert related["interface_interactions"] == ["experimental"]  # les préférences Bare Hands, encore dans Expérimental
-    assert related["advanced_diagnostics"] == ["memory"]
-    assert related["voice_audio"] == related["connections"] == []
+    assert related["voice_audio"] == related["connections"] == related["advanced_diagnostics"] == []
 
 
 def test_agent_legacy_ids_open_their_sections(tmp_path):
@@ -409,6 +416,45 @@ out({{seen,warn,resolved:['cli','routing','subagents'].map(t=>R.page.resolve(t))
     assert seen["subagent_models"][2] == "subagent_models" and seen["agent_behavior"][2] == "agent_behavior"
     assert [r["source"] for r in out["resolved"]] == ["section_alias", "section_alias", "section"]
     assert out["warn"] == []
+
+
+def test_memory_legacy_id_opens_recall_and_every_memory_section(tmp_path):
+    """Slice 05 : `memory` (onglet disparu, Memory Center › Réglages) ouvre Rappel ; chaque section mémoire s'ouvre ;
+    la catégorie rouvre la dernière section mémoire ouverte ; aucun onglet `memory` dans la navigation."""
+    page = HTML.read_text(encoding="utf-8")
+    assert "memory" not in base_tab_ids()
+    out = run(tmp_path, f"""
+globalThis.window=globalThis;window.JarvisSettingsRegistry=R;
+const TABS={json.dumps(assembled_tabs())};
+const SET={{open:true,tab:null,category:'voice_audio',section:'conversation',lastItem:{{}},routingGeneration:0}},warn=[];
+console.warn=(c,x)=>warn.push([c,x]);console.error=noop;
+const openSettings=()=>Promise.resolve(),renderTabs=noop,renderTab=noop;
+{_page_routing(page)}
+{REGISTER_SLICE_03}
+const seen={{}};
+for(const target of ['memory','semantic_retrieval','consolidation','knowledge_sources','memory_center','voice_audio','memory_knowledge'])
+  {{selectTab(target);seen[target]=[SET.category,SET.tab,SET.section]}}
+const nav=settingsNavigation().categories.find(c=>c.id==='memory_knowledge');
+out({{seen,warn,resolved:R.page.resolve('memory'),items:nav.items.map(i=>[i.kind,i.id,i.save])}});""")
+    seen = out["seen"]
+    assert seen["memory"] == ["memory_knowledge", None, "recall"]
+    for section in ("semantic_retrieval", "consolidation", "knowledge_sources", "memory_center"):
+        assert seen[section] == ["memory_knowledge", None, section]
+    assert seen["memory_knowledge"] == ["memory_knowledge", None, "memory_center"]  # dernière entrée ouverte
+    assert out["resolved"] == {"category": "memory_knowledge", "section": "recall", "source": "section_alias"}
+    assert out["items"] == [["section", "recall", "self"], ["section", "semantic_retrieval", "self"],
+                            ["section", "consolidation", "self"], ["section", "knowledge_sources", "self"],
+                            ["section", "memory_center", "readonly"]]
+    assert out["warn"] == []
+
+
+def test_page_memory_sections_match_the_registered_fixture():
+    """La fixture `SLICE_05_SECTIONS` dit ce que la page enregistre vraiment (`MEMORY_SECTIONS`)."""
+    page = HTML.read_text(encoding="utf-8")
+    block = page[page.index("const MEMORY_SECTIONS=[") : page.index("function memorySettingsStore()")]
+    found = re.findall(r"\{id:'([a-z_]+)',category:'([a-z_]+)',order:(\d+),label:'[^']+'((?:,aliases:\[[^\]]*\])?)((?:,mode:'\w+')?)((?:,save:'\w+')?)", block)
+    assert [(i, c, int(o), save[7:-1] if save else "self", re.findall(r"'(\w+)'", aliases)) for i, c, o, aliases, _m, save in found] == [
+        (i, c, o, v, a) for i, c, o, v, a in SLICE_05_SECTIONS]
 
 
 def test_registered_section_takes_over_its_legacy_tab_and_a_stray_tab_stays_reachable(tmp_path):

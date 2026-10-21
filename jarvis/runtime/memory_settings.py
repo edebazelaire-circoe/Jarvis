@@ -19,7 +19,9 @@ le reste du chemin, sur le modèle de `agent_routing` : le bloc vit sous la clé
   inconnu ou du scope privé sans `allow_private`. Lecture tolérante : une règle
   abîmée est ignorée, donc le préréglage (le plus restrictif) s'applique ;
 - **une seule table décrit tout** (`_FIELDS`) : lecture, écriture, variables
-  d'environnement et schéma servi à l'interface, qui ne code aucune borne.
+  d'environnement et schéma servi à l'interface, qui ne code aucune borne ;
+- **chaque champ dit sa section de Réglages** (`surface`, `SURFACE_SECTIONS`) : la
+  page range les champs par cette destination, jamais par une liste recopiée.
 
 Précédence d'un champ : variable d'environnement, puis fichier, puis défaut.
 """
@@ -101,6 +103,19 @@ _READ_ONLY_KEYS = frozenset({"has_secret"})
 #: Clé du bloc des loadouts, hors `_SECTIONS` : ce n'est pas une section de champs plats.
 LOADOUTS_KEY = "loadouts"
 MAX_LOADOUT_RULES = len(LOADOUT_PROFILES) * (1 + len(LOADOUT_ROLES))
+#: Destination de chaque champ dans les Réglages à six catégories (jarvis-settings-ui-reorganization, Slice 05) :
+#: la seule section qui l'édite. Présentation seulement : ni valeur, ni précédence, ni charge utile n'en dépendent.
+#: Le sidecar Tencent est une source de récupération externe : il vit avec les sources de connaissances.
+SURFACE_CATEGORY = "memory_knowledge"
+SURFACE_SECTIONS = ("recall", "semantic_retrieval", "consolidation", "knowledge_sources")
+_SURFACE = {
+    "recall": "recall",
+    "semantic": "semantic_retrieval",
+    "consolidation": "consolidation",
+    "tencent": "knowledge_sources",
+    "knowledge": "knowledge_sources",
+    LOADOUTS_KEY: "knowledge_sources",  # résumé en lecture seule des règles par agent
+}
 _RULE_BOOLS = ("allow_private", "wiki", "codegraph", "skills")
 _RULE_FIELDS = frozenset({"memory_scopes", *_RULE_BOOLS})
 _TRUE = frozenset({"1", "true", "yes", "on"})
@@ -160,7 +175,16 @@ class _Field:
             out["max_length"] = MAX_SERVICE_ID_CHARS
         if self.kind == "enum":
             out["options"] = [{"id": key, "label": label} for key, label in self.options]
+        out["surface"] = surface(self.section)
         return out
+
+
+def surface(section: str) -> dict[str, str]:
+    """`{category, section}` des Réglages pour une section du bloc ; une section sans destination est une erreur."""
+    target = _SURFACE.get(section)
+    if target not in SURFACE_SECTIONS:
+        raise RuntimeError(f"memory settings section without settings destination: {section}")
+    return {"category": SURFACE_CATEGORY, "section": target}
 
 
 _FIELDS: tuple[_Field, ...] = (
@@ -651,6 +675,7 @@ def describe_memory_settings() -> dict[str, Any]:
             "profiles": list(LOADOUT_PROFILES),
             "roles": list(LOADOUT_ROLES),
             "max_rules": MAX_LOADOUT_RULES,
+            "surface": surface(LOADOUTS_KEY),
             "fields": [
                 {"id": "memory_scopes", "type": "list", "item": "scope", "max_items": MAX_LOADOUT_ENTRIES,
                  "default": []},

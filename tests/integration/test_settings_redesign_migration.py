@@ -371,12 +371,12 @@ async def test_assembled_primary_navigation_has_six_tabs_and_no_legacy_navigatio
         {"id": "prompts", "label": "Prompts"},
         {"id": "keys", "label": "API Keys"},
         {"id": "shortcuts", "label": "Raccourcis"},
-        {"id": "memory", "label": "Mémoire"},
         {"id": "appearance", "label": "Apparence"},
     ]
     # Le contrat de navigation de jarvis-settings-model-catalog-ux (six onglets) est figé ; les onglets ajoutés
-    # depuis par d'autres handoffs (Mémoire, Sous-agents) s'intercalent sans changer l'ordre des siens.
-    added_since_contract = {"memory"}
+    # depuis par d'autres handoffs s'intercalaient sans changer l'ordre des siens. Mémoire (Slice 05) et Sous-agents
+    # (Slice 04) sont devenus des sections enregistrées : il n'en reste aucun.
+    added_since_contract: set[str] = set()
     contract_navigation = json.loads(IA_CONTRACT.read_text(encoding="utf-8"))["navigation"]
     # Voix (Slice 03) puis Agent / CLI (Slice 04) : sections enregistrées, plus des onglets.
     rehosted_as_sections = {"voice", "agent_cli"}

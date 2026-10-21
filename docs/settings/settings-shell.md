@@ -120,7 +120,8 @@ registerSettingsSection({               // porte de la page : R.page.register de
   l'ordre, les parties inscrites par `registerSettingsDiagnostic({id, label, order, mount(host, context), destroy()})` :
   chaque partie a son titre (`JarvisSettingsUI.section`), reçoit le même `context` que la section et est détruite avec
   elle ; un `mount` qui lève laisse une notice `role=alert` dans sa seule partie. Parties actuelles : Voix (page),
-  Mot d'éveil (`control_center_wake_word.js`). Voir [`voice-audio.md`](voice-audio.md).
+  Mot d'éveil (`control_center_wake_word.js`), Mémoire (page, `installMemorySettingsSections`). Voir
+  [`voice-audio.md`](voice-audio.md) et [`memory.md`](memory.md).
 
 ## 5. Primitives (`window.JarvisSettingsUI`)
 
