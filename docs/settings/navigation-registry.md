@@ -103,7 +103,7 @@ Destination principale de chaque ID d'onglet actuel, plus les autres destination
 | `prompts` | `advanced_diagnostics` / `prompts` | — |
 | `cli` | `agents_models` / `main_agent` | `agents_models` / `agent_behavior`, `subagent_models` ; `advanced_diagnostics` / `runtime_cli` |
 | `routing` (déjà redirigé vers `cli`) | `advanced_diagnostics` / `runtime_cli` | — |
-| `keys` | `connections` / `providers` | — |
+| `keys` | `connections` / `providers` (section enregistrée depuis la Slice 07, [`connections.md`](connections.md)) | — |
 | `shortcuts` | `interface_interactions` / `shortcuts` | — |
 | `memory` | `memory_knowledge` / `recall` | `memory_knowledge` / `semantic_retrieval`, `consolidation`, `knowledge_sources`, `memory_center` ; `advanced_diagnostics` / `diagnostics` |
 | `subagents` | `agents_models` / `subagents` | `advanced_diagnostics` / `work_methods` (promotion de Work Methods, groupe `labs`) |

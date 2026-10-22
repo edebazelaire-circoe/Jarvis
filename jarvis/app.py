@@ -1114,7 +1114,7 @@ async def _run_voice_v2() -> int:
         switch_bus.mark_pending_restart_failed(code="replacement_credentials_missing")
         raise RuntimeError(
             f"La pile vocale « {stack.label} » a besoin d'une clé {provider.label}. "
-            "Ajoutez-la dans l'onglet API Keys des réglages du Control Center, "
+            "Ajoutez-la dans Réglages › Connexions du Control Center, "
             f"ou définissez {env_names} dans le .env du projet, puis relancez Voice."
         )
     core = LocalCoreClient(host=settings.core_host, port=settings.core_port, token=token)

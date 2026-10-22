@@ -69,6 +69,7 @@ def test_navigation_fixture_matches_unified_agent_cli_tab_and_legacy_programmati
                 + page[page.index("const AGENT_SECTIONS=[") : page.index("function agentSectionSpec")]
                 + page[page.index("const SUBAGENT_SECTIONS=[") : page.index("function installAgentSettingsSections")]
                 + page[page.index("const SHORTCUTS_SECTION=") : page.index("function renderShortcutsSection")]
+                + page[page.index("const CONNECTIONS_SECTION=") : page.index("/* --- `interface_interactions` › Raccourcis")]
                 + work[work.index("const THEME_SCENE_SECTION=") : work.index("function installSettingsSection")])
     for legacy_id, target in expected["rehosted_as_sections"].items():
         assert legacy_id not in [identifier for identifier, _label in tabs]
@@ -144,7 +145,7 @@ def test_main_agent_and_runtime_split_the_cli_fields_without_changing_the_draft(
         tmp_path,
         {},
         """
-        const esc=value=>String(value),keyStateFor=()=>'',providerLabel=String,catalogNote=()=>'NOTE';
+        const esc=value=>String(value),keyStateFor=()=>'',providerLabel=String,catalogNote=()=>'NOTE',connectionCardId=p=>'connection_'+p;
         const selectOptions=(values,selected,placeholder)=>(placeholder?`<option value="">${placeholder}</option>`:'')+values.map(v=>`<option value="${v.value}">${v.label}</option>`).join('');
         const SET={agentSection:'main_agent',catalog:{'anthropic:text':{ok:true,models:[{id:'m1'}]}},
           clis:{agents:[{id:'claude',label:'Claude Code',available:true,version:'9.9',path:'C:/bin/claude.exe',description:'D',model_provider:'anthropic',permission_label:'Permissions',permission_modes:['default','bypass'],docs:'docs'},
@@ -164,6 +165,10 @@ def test_main_agent_and_runtime_split_the_cli_fields_without_changing_the_draft(
     assert "C:/bin/claude.exe" in runtime and 'id="reprobe"' in runtime
     assert 'name="clicagent"' not in runtime and 'data-cli-field="model"' not in runtime
     assert 'data-scope="claude"' in main and 'data-scope="claude"' in runtime
+    # Slice 07 : la clé du fournisseur du modèle se règle dans Connexions, focus sur sa carte.
+    assert ('data-settings-open="providers" data-settings-focus="#connection_anthropic_title">Connexions › anthropic</button>'
+            in main)
+    assert "data-settings-focus" not in runtime
 
 
 @pytest.mark.asyncio

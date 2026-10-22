@@ -45,6 +45,13 @@
   `test_sections_aliases_single_wake_editor_and_barehands_split` (vrai Chrome),
   `test_page_routes_categories_sections_and_legacy_ids_into_the_six_category_shell` (registre).
 
+- Slice 07 : l'onglet `keys` (« API Keys ») n'existe plus ; son ID est l'alias de la section `providers` de
+  `connections` (déclaré par la section : `aliases:['keys']`). `TABS` = `prompts`, `experimental` (Slice 08).
+  Appelants du dépôt : aucun par l'ancien ID (les liens de la Mémoire et d'Agent principal visent `providers`)
+  ([`../settings/connections.md`](../settings/connections.md)). Testé :
+  `test_page_routes_categories_sections_and_legacy_ids_into_the_six_category_shell` (registre),
+  `test_category_cards_alias_environment_fallback_and_links` (vrai Chrome).
+
 ## Conditions de retrait
 
 - Adaptateur, entrées `{kind:'tab'}` et liens `related` : quand toutes les catégories sont

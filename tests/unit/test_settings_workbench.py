@@ -232,7 +232,7 @@ async def test_a_missing_key_says_so_instead_of_returning_an_empty_catalogue(tmp
     with pytest.raises(CatalogError) as excinfo:
         await catalog.models("openai", "")
     assert excinfo.value.code == "catalog_no_key"
-    assert "API Keys" in str(excinfo.value)
+    assert "Réglages › Connexions" in str(excinfo.value)
 
 
 @pytest.mark.asyncio

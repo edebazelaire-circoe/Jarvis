@@ -257,7 +257,7 @@ class ModelCatalog:
         if not key:
             raise CatalogError(
                 "catalog_no_key",
-                f"Ajoutez une clé {provider_spec(name).label} dans l'onglet API Keys "
+                f"Ajoutez une clé {provider_spec(name).label} dans Réglages › Connexions "
                 "pour lister les modèles réels.",
             )
         cached = self._cache.get(name)

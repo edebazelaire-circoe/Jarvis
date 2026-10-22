@@ -114,7 +114,7 @@
     function secretLine(sectionId){
       const s=(st.memory.secrets||{})[sectionId];if(!s)return '';
       return `<p class="hint mem-secret">${esc(SECRET_HINT[sectionId]||'Clé')} : <strong>${s.has_secret?'présent':'absent'}</strong>. Il se règle dans `
-        +`<button type="button" class="linkish" data-mem-open="keys">API Keys</button>, jamais ici.</p>`;
+        +`<button type="button" class="linkish" data-mem-open="providers">Connexions</button>, jamais ici.</p>`;
     }
     /* Moment d'application d'un groupe de champs, lu dans `restart_required` du serveur ; `null` si le groupe mélange. */
     function applies(list){

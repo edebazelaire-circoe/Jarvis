@@ -793,6 +793,10 @@ PREFABS_SCRIPT_MARKER = "/*__CONTROL_CENTER_PREFABS_JS__*/"
 #: la section `memory` de `/api/settings` et `/api/memory/*`.
 MEMORY_SETTINGS_SCRIPT_FILE = "control_center_memory_settings.js"
 MEMORY_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MEMORY_SETTINGS_JS__*/"
+#: Connexions des Réglages (jarvis-settings-ui-reorganization, Slice 07) : une carte par fournisseur du magasin de clés,
+#: jamais de valeur (`window.JarvisConnectionsSettings`). Contrat : `docs/settings/connections.md`.
+CONNECTIONS_SETTINGS_SCRIPT_FILE = "control_center_connections_settings.js"
+CONNECTIONS_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_CONNECTIONS_SETTINGS_JS__*/"
 #: Onglet Réglages « Sous-agents » (jarvis-organic-agent-orchestration, Slice 10) : lit `GET /api/subagent-roles` et
 #: `GET /api/agent/tasks`, n'écrit que par `POST /api/prompts/subagent_role.<id>`. Contrat : `docs/subagent-roles.md` § 8.
 SUBAGENTS_SETTINGS_SCRIPT_FILE = "control_center_subagents_settings.js"
@@ -2637,6 +2641,7 @@ class ControlCenter:
                              (RELATION_BOARD_SCRIPT_MARKER, RELATION_BOARD_SCRIPT_FILE),
                              (SCENE_ROLES_SCRIPT_MARKER, SCENE_ROLES_SCRIPT_FILE),
                              (MEMORY_SETTINGS_SCRIPT_MARKER, MEMORY_SETTINGS_SCRIPT_FILE),
+                             (CONNECTIONS_SETTINGS_SCRIPT_MARKER, CONNECTIONS_SETTINGS_SCRIPT_FILE),
                              (SUBAGENTS_SETTINGS_SCRIPT_MARKER, SUBAGENTS_SETTINGS_SCRIPT_FILE),
                              (MEMORY_SCRIPT_MARKER, MEMORY_SCRIPT_FILE),
                              (CHAT_MODEL_SCRIPT_MARKER, CHAT_MODEL_SCRIPT_FILE),

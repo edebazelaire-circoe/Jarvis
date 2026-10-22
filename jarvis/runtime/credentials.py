@@ -28,7 +28,7 @@ class ProviderSpec:
     hint: str
 
 
-# Fournisseurs proposés dans l'onglet API Keys. `env` est la retombée lorsque
+# Fournisseurs proposés dans Réglages › Connexions (une carte chacun, `hint` = note d'usage affichée). `env` est la retombée lorsque
 # aucune clé n'est enregistrée : le .env du projet reste une source valide.
 PROVIDERS: tuple[ProviderSpec, ...] = (
     ProviderSpec(

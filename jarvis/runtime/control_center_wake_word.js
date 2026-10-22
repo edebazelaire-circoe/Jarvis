@@ -186,7 +186,7 @@
     };
     return {
       label:PROVIDER_LABEL[PROVIDER_PORCUPINE],
-      requires:['Une clé d’accès Picovoice (onglet API Keys).','Un mot intégré à la bibliothèque, par exemple « jarvis ».'],
+      requires:['Une clé d’accès Picovoice (Réglages › Connexions).','Un mot intégré à la bibliothèque, par exemple « jarvis ».'],
       license:null,
     };
   }

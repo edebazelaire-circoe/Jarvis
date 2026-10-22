@@ -188,7 +188,7 @@ def test_audio_and_diagnostic_fetches_are_local_retryable_and_stale_safe(tmp_pat
 
 def test_audio_device_renderer_preserves_missing_and_system_default_choices(tmp_path: Path):
     page = PAGE.read_text(encoding="utf-8")
-    source = page[page.index("function deviceOptions") : page.index("/* --- onglet API Keys")]
+    source = page[page.index("function deviceOptions") : page.index("/* --- `connections` › Fournisseurs (Slice 07)")]
     result = run_node(
         tmp_path,
         {},
@@ -432,10 +432,11 @@ def test_top_navigation_has_no_config_and_wake_shortcut_has_one_editor_in_shortc
     assert f"id:'{fixture['removed_top_tab']}'" not in tabs
     # « Voix » (Slice 03) et « Agent / CLI » (Slice 04) de jarvis-settings-ui-reorganization ne sont plus des
     # onglets : sections enregistrées de `voice_audio` et de `agents_models`.
-    # Raccourcis et Apparence (Slice 06) : sections d'Interface & interactions.
+    # Raccourcis et Apparence (Slice 06) : sections d'Interface & interactions. API Keys (Slice 07) : section
+    # Fournisseurs de Connexions.
     assert all(f"label:'{label}'" in tabs for label in fixture["top_tabs"]
-               if label not in {"Apparence", "Voix", "Agent / CLI", "Raccourcis"})
-    assert "id:'voice'" not in tabs and "id:'cli'" not in tabs and "id:'shortcuts'" not in tabs
+               if label not in {"Apparence", "Voix", "Agent / CLI", "Raccourcis", "API Keys"})
+    assert "id:'voice'" not in tabs and "id:'cli'" not in tabs and "id:'shortcuts'" not in tabs and "id:'keys'" not in tabs
     assert "const THEME_SCENE_SECTION={id:'theme_scene'" in work and "TABS.splice" not in work
     # Un seul éditeur de `wake_toggle` : les Raccourcis (plus de filtre, plus de renvoi vers Voix).
     assert "wake_toggle'" not in shortcuts.replace("`wake_toggle` compris", "")

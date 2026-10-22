@@ -5,10 +5,6 @@
     {
       "id": "prompts",
       "label": "Prompts"
-    },
-    {
-      "id": "keys",
-      "label": "API Keys"
     }
   ],
   "agent_section_order": [
@@ -60,6 +56,11 @@
       "category": "interface_interactions",
       "section": "theme_scene",
       "since": "jarvis-settings-ui-reorganization Slice 06"
+    },
+    "keys": {
+      "category": "connections",
+      "section": "providers",
+      "since": "jarvis-settings-ui-reorganization Slice 07"
     }
   }
 }

@@ -937,12 +937,41 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
    le montrer — ce sont les attributs `disabled` posés sur chaque commande qui
    l'imposent, au clavier comme à la souris. */
 .routing-off{opacity:.5}
-table.keys{width:100%;border-collapse:collapse;font-size:13px}
-table.keys th{text-align:left;font-weight:normal;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:0 10px 8px 0;border-bottom:1px solid var(--line)}
-table.keys td{padding:10px 10px 10px 0;border-bottom:1px solid rgba(113,144,160,.12);vertical-align:middle}
-table.keys input[type=radio]{accent-color:var(--accent)}
-.keyform{display:grid;grid-template-columns:170px 1fr 1fr auto;gap:10px;align-items:end;margin-top:8px}
-.keyform .field{margin:0}
+/* Connexions › Fournisseurs (Slice 07, `control_center_connections_settings.js`) : une carte par fournisseur. */
+.conn{display:grid;gap:14px;max-width:860px}
+.conn-lead{margin:0;max-width:68ch;font-size:13.5px;color:var(--set-ink-2)}
+.conn-live:empty{display:none}
+.conn-live{padding:9px 13px;border:1px solid color-mix(in srgb,var(--ok) 32%,transparent);border-radius:10px;background:rgba(104,224,160,.06);font-size:13px}
+.conn-error{border-color:color-mix(in srgb,var(--danger) 36%,transparent);background:rgba(255,101,119,.07)}
+.conn-list{display:grid;gap:12px}
+.conn-card{display:grid;gap:10px;min-width:0;padding:15px 18px;border:1px solid var(--set-hair-2);border-radius:12px;background:rgba(113,144,160,.035)}
+.conn-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 12px}
+.conn-head h4{margin:0;font-size:15px;font-weight:600;color:var(--set-ink)}
+.conn-use{margin:0;max-width:68ch;font-size:13px;color:var(--set-ink-2)}
+.conn-env{margin:0;max-width:72ch;font-size:12.5px;color:var(--set-ink-3)}
+.conn-env code{font-size:12px;color:var(--set-ink-2)}
+.conn-keys{margin:0;padding:0;border:0;min-width:0}
+.conn-keys legend{padding:0;margin-bottom:6px;font-size:12px;font-weight:500;color:var(--set-ink-3)}
+.conn-key-list{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.conn-key{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px 12px;padding:8px 10px;border:1px solid var(--set-hair);border-radius:8px}
+.conn-key.is-active{border-color:color-mix(in srgb,var(--ok) 34%,transparent)}
+.conn-key>input[type=radio]{accent-color:var(--accent);margin:0}
+.conn-key>label{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;min-width:0;cursor:pointer}
+.conn-key-name{font-weight:500;overflow-wrap:anywhere}
+.conn-hint{font-size:12.5px;color:var(--set-ink-3)}
+.conn-key-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px}
+.conn-key:has(details[open]) .conn-key-actions{grid-column:1/-1;justify-content:flex-start}
+.conn-key-actions>details[open]{flex-basis:100%}
+.conn-confirm{display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px}
+button.action.conn-danger{border-color:color-mix(in srgb,var(--danger) 55%,transparent);color:var(--danger)}
+.conn-add>summary,.conn-replace>summary{display:inline-block;padding:3px 0;color:var(--accent);font-size:13px;cursor:pointer}
+.conn-replace>summary{font-size:12.5px}
+.conn-form{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr) auto;align-items:end;gap:10px;margin-top:8px}
+.conn-form-one{grid-template-columns:minmax(0,1fr) auto}
+.conn-field{display:grid;gap:5px;min-width:0}
+.conn-field label{font-size:12.5px;color:var(--set-ink-2)}
+.conn-field input{width:100%;padding:8px 10px;border:1px solid var(--set-hair-2);border-radius:8px;background:var(--set-field-bg);color:var(--set-ink);font:inherit;font-size:14px}
+.conn :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .shortcut{display:grid;grid-template-columns:1fr 190px;gap:14px;align-items:center;padding:12px 0;border-bottom:1px solid rgba(113,144,160,.12)}
 .shortcut .desc{font-size:11px;color:var(--muted);line-height:1.5;margin-top:3px}
 .keycap{width:100%;border:1px solid var(--line);background:#0b141a;color:var(--text);padding:9px;border-radius:5px;font:inherit;cursor:pointer;text-align:center;letter-spacing:.06em}
@@ -988,7 +1017,9 @@ details.rd[open]>summary{margin-bottom:14px}
 .voice-group{margin:26px 0 4px;font-size:13px;font-weight:600;letter-spacing:.01em;color:var(--set-ink,var(--text))}.voice-group:first-child{margin-top:0}
 .voice-field-label{display:block;margin-bottom:6px;color:var(--text);font-size:12px}.field output{display:block;color:var(--text)}
 @media(max-width:900px){
-  .keyform{grid-template-columns:1fr}
+  .conn-form,.conn-form-one{grid-template-columns:1fr}
+  .conn-key{grid-template-columns:auto minmax(0,1fr)}
+  .conn-key-actions{grid-column:1/-1;justify-content:flex-start}
 }
 @media(max-width:700px){
   /* Géométrie de la coque à cette largeur : règle commune aux deux thèmes plus
@@ -3168,6 +3199,9 @@ const STATUS={
    `window.JarvisMemorySettings`, monté par les sections de `memory_knowledge` et la partie « Mémoire » des diagnostics
    (jarvis-settings-ui-reorganization, Slice 05 : `installMemorySettingsSections`). */
 /*__CONTROL_CENTER_MEMORY_SETTINGS_JS__*/
+/* Connexions des Réglages (jarvis-settings-ui-reorganization, Slice 07) : `window.JarvisConnectionsSettings`, monté par
+   la section `connections` › `providers` (`CONNECTIONS_SECTION`). */
+/*__CONTROL_CENTER_CONNECTIONS_SETTINGS_JS__*/
 /* Sous-agents des Réglages (jarvis-organic-agent-orchestration, Slice 10) : `control_center_subagents_settings.js`,
    `window.JarvisSubagentSettings`, monté par les sections `subagents` et `work_methods` (`mountSubagentSettings`). */
 /*__CONTROL_CENTER_SUBAGENTS_SETTINGS_JS__*/
@@ -4445,10 +4479,10 @@ function bindSend(after){
    sections, l'alias `memory` mène à Rappel. Ni `shortcuts` ni `appearance` (Slice 06) : `interface_interactions` monte
    Thème & scène visuelle (`control_center_work.js`), Raccourcis (ici) et Bare Hands (`control_center_barehands.js`).
    `experimental` n'est plus injecté par Bare Hands : il ne porte plus que la porte de test de la scène
-   (`control_center_scene_settings.js`), déclaré ici jusqu'à son déménagement dans Labs (Slice 08). */
+   (`control_center_scene_settings.js`), déclaré ici jusqu'à son déménagement dans Labs (Slice 08). Ni `keys`
+   (Slice 07) : `connections` monte la section Fournisseurs, l'alias `keys` y mène. */
 const TABS=[
   {id:'prompts',label:'Prompts',save:false},
-  {id:'keys',label:'API Keys',save:false},
   {id:'experimental',label:'Expérimental',save:false},
 ];
 const SET={open:false,tab:null,category:null,section:null,lastItem:{},opener:null,sectionView:null,voiceTab:null,voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:'',subagentView:null,subagentDrafts:{},agentSection:null};
@@ -4517,6 +4551,11 @@ async function renderField(field,values,scope){
   return `<div class="field"><label for="${id}">${esc(field.label)}</label><select id="${id}" data-field="${esc(field.key)}" data-scope="${esc(scope)}">${selectOptions(options,value,field.placeholder||'')}</select>${hint}</div>`;
 }
 
+/* Carte d'un fournisseur dans Connexions (Slice 07) : cible des liens « Connexions › <fournisseur> ». */
+function connectionCardId(provider){
+  const M=typeof window!=='undefined'?window.JarvisConnectionsSettings:null;
+  return M?M.cardId(provider):'connection_'+String(provider||'').replace(/[^A-Za-z0-9_-]/g,'_');
+}
 function providerLabel(id){
   const found=(SET.data.credentials.providers||[]).find(p=>p.id===id);
   return found?found.label:id;
@@ -4931,7 +4970,7 @@ function cliMainAgentHtml(spec,detected){
     <div class="field"><label for="f_cli_model">Modèle principal de ${esc(spec.label)}</label>
       <select id="f_cli_model" data-cli-field="model" data-scope="${esc(spec.id)}">${selectOptions(modelOptions,values.model,'Modèle par défaut du CLI')}</select>
       <div class="source">${modelSource}</div>
-      <div class="hint">Liste demandée à l'API ${esc(providerLabel(spec.model_provider))}. Sans clé de ce fournisseur, aucun modèle ne peut être listé : le CLI garde alors son modèle par défaut.</div></div>`;
+      <div class="hint">Liste demandée à l'API ${esc(providerLabel(spec.model_provider))}. Sans clé de ce fournisseur, aucun modèle ne peut être listé : le CLI garde alors son modèle par défaut. <button type="button" class="linkish" data-settings-open="providers" data-settings-focus="#${connectionCardId(spec.model_provider)}_title">Connexions › ${esc(providerLabel(spec.model_provider))}</button></div></div>`;
 }
 function cliRuntimeHtml(spec){
   const values=SET.draft.cli.settings[spec.id];
@@ -5313,7 +5352,7 @@ function bindAgentSection(host,context){
   /* Délégué : `#cliTechnical` est redessiné par l'hydratation, ses liens aussi. */
   host.addEventListener('click',event=>{
     const link=event.target&&event.target.closest?event.target.closest('[data-settings-open]'):null;
-    if(link&&host.contains(link))context.open(link.dataset.settingsOpen);
+    if(link&&host.contains(link))context.open(link.dataset.settingsOpen,link.dataset.settingsFocus?{focus:link.dataset.settingsFocus}:undefined);
   });
 }
 /* La configuration avancée (profils, candidats) n'est demandée qu'à l'ouverture de sa divulgation. */
@@ -5356,34 +5395,27 @@ function deviceOptions(items,selected,defaultId){
   return missing+`<option value="" ${chosen===''?'selected':''}>Système par défaut${def?` (${esc(def.name)})`:''}</option>`+
     items.map(x=>`<option value="${esc(x.id)}" ${chosen===String(x.id)?'selected':''}>${esc(x.name)}${x.hostapi?' · '+esc(x.hostapi):''}</option>`).join('');
 }
-/* --- onglet API Keys ---------------------------------------------------- */
-function tabKeys(){
-  const state=SET.data.credentials,items=state.credentials||[];
-  const providerOptions=state.providers.map(p=>`<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
-  const rows=items.length?items.map(c=>{
-    const provider=state.providers.find(p=>p.id===c.provider)||{label:c.provider};
-    return `<tr>
-      <td><input type="radio" name="bind_${esc(c.provider)}" data-bind-provider="${esc(c.provider)}" data-bind-id="${esc(c.id)}" ${c.bound?'checked':''} title="Utiliser cette clé pour ${esc(provider.label)}"></td>
-      <td>${esc(provider.label)}</td><td>${esc(c.name)}</td><td class="hint">${esc(c.hint)}</td>
-      <td><button class="linkish" data-delete-key="${esc(c.id)}">supprimer</button></td></tr>`}).join('')
-    :'<tr><td colspan="5" class="hint" style="padding:18px 0">Aucune clé enregistrée. Les clés du fichier .env restent utilisées en secours.</td></tr>';
-  const envRows=Object.entries(state.environment||{}).filter(([,names])=>names.length)
-    .map(([provider,names])=>`<li>${esc(provider)} — ${names.map(esc).join(', ')}</li>`).join('');
-  return `<section><h3>Clés enregistrées</h3>
-    <table class="keys"><thead><tr><th style="width:34px">Active</th><th>Fournisseur</th><th>Nom</th><th>Valeur</th><th></th></tr></thead><tbody>${rows}</tbody></table>
-    <div class="hint" style="margin-top:10px">Le bouton de la colonne « Active » désigne la clé qu'utilisent les services de ce fournisseur. Les valeurs ne sont jamais renvoyées à cette page : seuls les quatre derniers caractères sont affichés.</div>
-    <h3>Ajouter une clé</h3>
-    <form class="keyform" id="keyForm">
-      <div class="field"><label for="k_provider">Type</label><select id="k_provider" name="provider">${providerOptions}</select></div>
-      <div class="field"><label for="k_name">Nom</label><input id="k_name" name="name" placeholder="Perso, Travail…" autocomplete="off"></div>
-      <div class="field"><label for="k_value">Valeur</label><input id="k_value" name="value" type="password" placeholder="collez la clé" autocomplete="off"></div>
-      <button class="action primary" type="submit">Ajouter</button>
-    </form>
-    <div class="hint" id="keyHint" style="margin-top:10px"></div>
-    ${envRows?`<h3>Détectées dans l'environnement</h3><ul class="hint" style="padding-left:18px">${envRows}</ul>
-    <div class="hint">Utilisées uniquement si aucune clé enregistrée ne couvre le fournisseur.</div>`:''}
-  </section>`;
-}
+/* --- `connections` › Fournisseurs (Slice 07) ------------------------------------------------------------------------
+   Une carte par fournisseur servi par le serveur (`control_center_connections_settings.js`, `docs/settings/connections.md`).
+   Chaque action s'enregistre seule (`save:'self'`), charges du magasin de clés inchangées. L'état reçu remplace
+   `SET.data.credentials` et vide les catalogues (une clé peut ouvrir un catalogue), même si la section a été quittée
+   entre-temps ; une réponse tardive ne redessine rien (`isCurrent`). Alias `keys` : l'ancien onglet API Keys. */
+let connectionsView=null;
+const CONNECTIONS_SECTION={id:'providers',category:'connections',order:10,save:'self',aliases:['keys'],label:'Fournisseurs',
+  description:'Une carte par fournisseur : clé active, clés enregistrées, retombée sur l’environnement.',
+  mount(host,context){
+    const M=window.JarvisConnectionsSettings;
+    if(!M){
+      host.innerHTML=context.ui.notice({kind:'bad',live:'assertive',title:'Connexions indisponibles.',
+        body:'<span class="set-notice-text">Module absent de la page servie. <code>connections_settings_module_missing</code></span>'});
+      console.error('connections_settings_module_missing');return}
+    const data=context.data();
+    connectionsView=M.create(host,{request:api,state:data&&data.credentials||null,isCurrent:context.isCurrent,
+      onState:state=>{if(SET.data)SET.data.credentials=state;SET.catalog={}}});
+    return connectionsView.load();
+  },
+  destroy(){if(connectionsView){connectionsView.destroy();connectionsView=null}},
+};
 
 /* --- `interface_interactions` › Raccourcis (Slice 06) ------------------------------------------------------------------ */
 const GLOBAL_KEY_NAMES={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',PageUp:'page_up',PageDown:'page_down',Home:'home',End:'end',Insert:'insert',Delete:'delete',Pause:'pause',ScrollLock:'scroll_lock',ContextMenu:'menu',PrintScreen:'print_screen'};
@@ -5622,6 +5654,8 @@ function installMemorySettingsSections(){
 if(typeof window!=='undefined'&&typeof installMemorySettingsSections==='function')installMemorySettingsSections();
 /* Raccourcis (Slice 06) : même garde ; Thème & scène et Bare Hands s'enregistrent depuis leurs modules. */
 if(typeof window!=='undefined'&&typeof SHORTCUTS_SECTION!=='undefined')registerSettingsSection(SHORTCUTS_SECTION);
+/* Connexions (Slice 07) : même garde. */
+if(typeof window!=='undefined'&&typeof CONNECTIONS_SECTION!=='undefined')registerSettingsSection(CONNECTIONS_SECTION);
 
 /* Où en est le shell : catégorie, puis section enregistrée OU onglet hérité. Un module hérité peut encore poser
    `SET.tab` lui-même (plus Bare Hands depuis la Slice 06) : un onglet posé l'emporte et la catégorie suit. */
@@ -5727,13 +5761,11 @@ async function renderTab(){
   modalSave.style.display=tab.save?'':'none';
   modalSub.textContent={
     prompts:'Chaque couche est enregistrée avec son propre bouton.',
-    keys:'Les clés sont enregistrées immédiatement sans jamais être relues par la page.',
     experimental:'Fonctions en test, enregistrées immédiatement ; chaque section dit quand elle prend effet.',
   }[SET.tab]||'';
   try{
     let content;
     if(SET.tab==='prompts')content=await tabPrompts();
-    else if(SET.tab==='keys')content=tabKeys();
     /* `experimental` : vide ici, la porte de test de la scène s'y ajoute (`control_center_scene_settings.js`). */
     else content='';
     if(revision!==SET.renderRevision||SET.open===false)return;
@@ -5779,10 +5811,6 @@ function bindTab(revision){
     const [provider,role]=el.dataset.refresh.split(':');el.textContent='…';
     await catalog(provider,role,true);renderTab()}));
 
-  const form=$('#keyForm');
-  if(form)form.addEventListener('submit',addCredential);
-  modalContent.querySelectorAll('[data-delete-key]').forEach(el=>el.addEventListener('click',()=>deleteCredential(el.dataset.deleteKey)));
-  modalContent.querySelectorAll('[data-bind-provider]').forEach(el=>el.addEventListener('change',()=>bindCredential(el.dataset.bindProvider,el.dataset.bindId)));
   modalContent.querySelectorAll('[data-prompt-save]').forEach(el=>el.addEventListener('click',()=>savePromptLayer(el)));
   modalContent.querySelectorAll('[data-prompt-reset]').forEach(el=>el.addEventListener('click',()=>resetPromptLayer(el)));
 }
@@ -6044,35 +6072,6 @@ async function runAudioTest(){
     result.textContent=`Test réussi · pic ${r.peak_dbfs} dBFS · enregistrement rejoué et sélection enregistrée.`;
   }catch(e){result.className='test-result error';result.textContent=e.message}
   finally{test.disabled=!SET.devices||SET.devices.ok===false||!(SET.devices.inputs||[]).length||!(SET.devices.outputs||[]).length}
-}
-
-async function addCredential(event){
-  event.preventDefault();
-  const form=event.target,hint=$('#keyHint');
-  const payload={provider:form.provider.value,name:form.name.value,value:form.value.value};
-  hint.textContent='Enregistrement…';
-  try{
-    const r=await api('/api/credentials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    SET.data.credentials={providers:r.providers,credentials:r.credentials,bindings:r.bindings,environment:r.environment};
-    SET.catalog={};  // Une nouvelle clé peut ouvrir un catalogue jusque-là vide.
-    renderTab();
-  }catch(e){hint.textContent=e.message}
-}
-
-async function deleteCredential(id){
-  try{
-    const r=await api('/api/credentials/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
-    SET.data.credentials={providers:r.providers,credentials:r.credentials,bindings:r.bindings,environment:r.environment};
-    SET.catalog={};renderTab();
-  }catch(e){$('#keyHint').textContent=e.message}
-}
-
-async function bindCredential(provider,id){
-  try{
-    const r=await api('/api/credentials/bind',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider,id})});
-    SET.data.credentials={providers:r.providers,credentials:r.credentials,bindings:r.bindings,environment:r.environment};
-    SET.catalog={};renderTab();
-  }catch(e){$('#keyHint').textContent=e.message}
 }
 
 /* Capture d'un raccourci : on lit la prochaine frappe au lieu de demander à

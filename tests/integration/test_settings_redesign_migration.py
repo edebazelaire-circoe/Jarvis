@@ -359,7 +359,6 @@ async def test_assembled_primary_navigation_has_six_tabs_and_no_legacy_navigatio
     # d'onglet, et `experimental` (la porte de test de la scène seule) est déclaré dans la base jusqu'à la Slice 08.
     assert rendered == [
         {"id": "prompts", "label": "Prompts"},
-        {"id": "keys", "label": "API Keys"},
         {"id": "experimental", "label": "Expérimental"},
     ]
     assert "TABS.push(" not in scripts and "TABS.splice(" not in scripts
@@ -369,7 +368,8 @@ async def test_assembled_primary_navigation_has_six_tabs_and_no_legacy_navigatio
     added_since_contract = {"experimental"}
     contract_navigation = json.loads(IA_CONTRACT.read_text(encoding="utf-8"))["navigation"]
     # Voix (Slice 03), Agent / CLI (Slice 04), Raccourcis et Apparence (Slice 06) : sections enregistrées.
-    rehosted_as_sections = {"voice", "agent_cli", "shortcuts", "appearance"}
+    # API Keys (Slice 07) : section Fournisseurs de Connexions, alias `keys`.
+    rehosted_as_sections = {"voice", "agent_cli", "shortcuts", "appearance", "credentials"}
     assert [item["label"] for item in contract_navigation if item["id"] not in rehosted_as_sections] == [
         item["label"] for item in rendered if item["id"] not in added_since_contract
     ]

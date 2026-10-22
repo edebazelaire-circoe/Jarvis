@@ -286,11 +286,16 @@ un modèle retiré du service qui resterait proposé dans un menu est un piège,
 un secours. Sans clé du fournisseur, le menu reste sur « valeur par défaut du
 service » et l'explique.
 
-### API Keys
+### Connexions (anciennement API Keys)
+
+Réglages › Connexions › Fournisseurs (Slice 07 de jarvis-settings-ui-reorganization : section, plus un onglet ;
+l'ancien ID `keys` y mène) : une carte par fournisseur, avec son état (clé enregistrée, variable d'environnement,
+non configuré), sa clé active, ses clés, et ce que JARVIS en fait. Contrat : `docs/settings/connections.md`.
 
 Une clé est une entrée nommée : `<fournisseur>` — `<nom libre>` — `<valeur>`.
-Deux clés OpenAI, une perso et une du travail, coexistent ; le bouton de la
-colonne « Active » désigne celle qu'utilisent les services de ce fournisseur.
+Deux clés OpenAI, une perso et une du travail, coexistent ; le bouton radio de la
+carte désigne celle qu'utilisent les services de ce fournisseur. « Remplacer la valeur »
+change le secret d'une clé sans la renommer ; « Supprimer » demande une confirmation.
 
 L'ordre de résolution, dans `credentials.secret_for` :
 
@@ -1634,11 +1639,11 @@ An unreachable, slow or misbehaving Tencent sidecar never blocks a turn and neve
 
 #### Enabling remote embeddings
 
-Off by default: `semantic.provider = none` sends nothing anywhere. To opt in, in Mémoire & connaissances › Recherche sémantique choose the provider `openai`, enable semantic search, save the key under the `openai` provider in API Keys, then restart Core (semantic settings apply at the next start). Note text is then sent to the embedding provider to be vectorized. Notes in the `private` scope are excluded unless you also tick "Autoriser les scopes privés" (`semantic.allow_private`, default false); legacy notes without front matter are `private`, so with the default they are found by the lexical leg only. To go back, set the provider to `none`; the semantic file is derived and can be deleted.
+Off by default: `semantic.provider = none` sends nothing anywhere. To opt in, in Mémoire & connaissances › Recherche sémantique choose the provider `openai`, enable semantic search, save the key under the `openai` provider in Réglages › Connexions, then restart Core (semantic settings apply at the next start). Note text is then sent to the embedding provider to be vectorized. Notes in the `private` scope are excluded unless you also tick "Autoriser les scopes privés" (`semantic.allow_private`, default false); legacy notes without front matter are `private`, so with the default they are found by the lexical leg only. To go back, set the provider to `none`; the semantic file is derived and can be deleted.
 
 ### Tencent MemoryCore sidecar
 
-Optional and off by default (`memory.tencent.enabled`). Contract, API pin and update policy: [memory-tencent.md](memory-tencent.md). Enable: run the sidecar (default `http://127.0.0.1:8420`), set `memory.tencent.url`, save its token under the `tencent` provider in API Keys (or `JARVIS_TENCENT_TOKEN`), then set `memory.tencent.enabled`. JARVIS never probes it at startup. `/v1/memory/status` shows `tencent` as `ok`, or `degraded` with `tencent_unavailable` (the sidecar failed or its circuit breaker is open: 3 failures in a row pause calls for 60 s, then one trial call decides) or `unavailable` with `tencent_config_invalid` (the URL is refused: plain `http` is accepted on loopback only). 
+Optional and off by default (`memory.tencent.enabled`). Contract, API pin and update policy: [memory-tencent.md](memory-tencent.md). Enable: run the sidecar (default `http://127.0.0.1:8420`), set `memory.tencent.url`, save its token under the `tencent` provider in Réglages › Connexions (or `JARVIS_TENCENT_TOKEN`), then set `memory.tencent.enabled`. JARVIS never probes it at startup. `/v1/memory/status` shows `tencent` as `ok`, or `degraded` with `tencent_unavailable` (the sidecar failed or its circuit breaker is open: 3 failures in a row pause calls for 60 s, then one trial call decides) or `unavailable` with `tencent_config_invalid` (the URL is refused: plain `http` is accepted on loopback only). 
 Recall keeps working from the local legs whatever the sidecar does; canonical writes never wait for it. The mirror reports `tencent_mirror_behind` when pushes are waiting or were dropped: run `resync` (idempotent) to make the sidecar match the notes again. Everything in the sidecar is disposable: to reset it, disable the setting, wipe the sidecar's own data, delete `<memory>/.jarvis/tencent-mirror.json` and run `resync` after re-enabling. To stop using it, set `memory.tencent.enabled` to false: no migration, nothing canonical changes. The sidecar's data plane needs its instance id (`x-tdai-service-id`; `service_id` in the wiring). A sidecar-side erasure is never implied: see the known limits in memory-tencent.md. The adapter is pinned to upstream commit `0468a2a`; do not upgrade the sidecar without running `tests/integration/test_tencent_live.py` (`JARVIS_TENCENT_LIVE=1`).
 
 ## Configuration

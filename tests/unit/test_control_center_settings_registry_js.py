@@ -96,9 +96,9 @@ def injected_tab_ids() -> list[str]:
 def assembled_tabs() -> list[dict]:
     """L'ordre réel du shell : la base seule. Depuis la Slice 03, ni `voice` ni `wakeword` ne sont des onglets ; depuis
     la Slice 06, ni `appearance` ni `shortcuts`, et `experimental` (la porte de test de la scène seule) est déclaré dans
-    la base au lieu d'être injecté par Bare Hands."""
+    la base au lieu d'être injecté par Bare Hands ; depuis la Slice 07, ni `keys` (section Fournisseurs de Connexions)."""
     ids = base_tab_ids()
-    assert ids == ["prompts", "keys", "experimental"]
+    assert ids == ["prompts", "experimental"]
     assert set(injected_tab_ids()) <= set(ids)
     assert "voice" not in ids and "wakeword" not in ids
     return [{"id": i, "label": i} for i in ids]
@@ -137,11 +137,14 @@ SLICE_06_SECTIONS = (
     ("theme_scene", "interface_interactions", 10, "self", ["appearance"]), ("shortcuts", "interface_interactions", 20, "self", []),
     ("bare_hands", "interface_interactions", 30, "self", []), ("barehands_lab", "advanced_diagnostics", 60, "self", []),
 )
+#: Section enregistrée depuis la Slice 07 (`CONNECTIONS_SECTION` de la page) ; l'onglet `keys` a disparu, son ID est
+#: l'alias de la section.
+SLICE_07_SECTIONS = (("providers", "connections", 10, "self", ["keys"]),)
 REGISTER_SLICE_03 = "".join(
     f"R.page.register({{id:'{i}',category:'{c}',label:'{i}',order:{o},save:'{v}',mount:noop}});" for i, c, o, v in SLICE_03_SECTIONS
 ) + "".join(
     f"R.page.register({{id:'{i}',category:'{c}',label:'{i}',order:{o},save:'{v}',aliases:{json.dumps(a)},mount:noop}});"
-    for i, c, o, v, a in (*SLICE_04_SECTIONS, *SLICE_05_SECTIONS, *SLICE_06_SECTIONS)
+    for i, c, o, v, a in (*SLICE_04_SECTIONS, *SLICE_05_SECTIONS, *SLICE_06_SECTIONS, *SLICE_07_SECTIONS)
 )
 
 
@@ -284,9 +287,9 @@ out({{map:targets.map(t=>[String(t),R.legacyTabFor(t,T)]),nav:R.navigationFromLe
     # Voix & audio n'a plus d'onglet (Slice 03) : ses cibles sont des sections enregistrées, servies par le shell.
     # Interface & interactions n'a plus d'onglet (Slice 06) : ses sections sont enregistrées.
     assert mapped == {
-        "voice": None, "wakeword": None, "cli": None, "routing": None, "keys": "keys", "memory": None,
+        "voice": None, "wakeword": None, "cli": None, "routing": None, "keys": None, "memory": None,
         "experimental": "experimental", "voice_audio": None, "agents_models": None, "memory_knowledge": None,
-        "interface_interactions": None, "connections": "keys", "advanced_diagnostics": "prompts",
+        "interface_interactions": None, "connections": None, "advanced_diagnostics": "prompts",
         "wake_word": None, "runtime_cli": None, "labs": "experimental", "bare_hands": "experimental",
         "theme_scene": None, "diagnostics": None, "barehandsRecord": "experimental", "nope": None, "null": None,
     }
@@ -298,7 +301,7 @@ out({{map:targets.map(t=>[String(t),R.legacyTabFor(t,T)]),nav:R.navigationFromLe
         "agents_models": [],
         "memory_knowledge": [],
         "interface_interactions": [],
-        "connections": ["keys"],
+        "connections": [],
         "advanced_diagnostics": ["prompts", "experimental"],
     }
     assert out["stray"] == ["seventh"]
@@ -319,7 +322,8 @@ PLANNED_SECTIONS = {
 def test_every_planned_target_section_is_served_by_a_current_tab(tmp_path):
     """QA Slice 01 : `voice_output`, `semantic_retrieval`… rendaient `null` ; chaque section cible prévue s'ouvre :
     par un onglet hérité, ou (depuis la Slice 03) parce qu'elle est enregistrée par la page."""
-    registered = {i for i, *_ in (*SLICE_03_SECTIONS, *SLICE_04_SECTIONS, *SLICE_05_SECTIONS, *SLICE_06_SECTIONS)}
+    registered = {i for i, *_ in (*SLICE_03_SECTIONS, *SLICE_04_SECTIONS, *SLICE_05_SECTIONS, *SLICE_06_SECTIONS,
+                                  *SLICE_07_SECTIONS)}
     out = run(tmp_path, f"""
 const T={json.dumps(assembled_tabs())},P={json.dumps(PLANNED_SECTIONS)};
 out(Object.fromEntries(Object.values(P).flat().map(s=>[s,R.legacyTabFor(s,T)])));""")
@@ -331,6 +335,7 @@ out(Object.fromEntries(Object.values(P).flat().map(s=>[s,R.legacyTabFor(s,T)])))
         ("conversation", "voice_output", "microphone_sound", "turns_interruptions", "wake_word", "architecture_compat"), None)
     memory = ("recall", "semantic_retrieval", "consolidation", "knowledge_sources", "memory_center", "diagnostics")
     assert {k: out[k] for k in memory} == dict.fromkeys(memory, None)
+    assert out["providers"] is None  # Slice 07 : servie par sa section, plus par l'onglet `keys`
 
 
 def _page_routing(page: str) -> str:
@@ -356,13 +361,15 @@ const at=()=>[SET.category,SET.tab,SET.section];
   await openSettingsTab('connections');const first=at();
   const seen={{}};
   for(const target of ['memory','routing','labs','bare_hands','voice','voice_output','semantic_retrieval','barehandsCalibration',
-    'appearance','voice_audio','interface_interactions','wake_word'])
+    'appearance','voice_audio','interface_interactions','keys','wake_word'])
     {{await openSettingsTab(target);seen[target]=at()}}
   await openSettingsTab('nope');const afterUnknown=at();
   out({{first,opened,seen,afterUnknown,warn,errors,nav:settingsNavigation(),tabs:settingsTabs(),
     same:TABS.every(t=>canonicalSettingsTab(t.id)===t.id),rendered}});
 }})();""")
-    assert out["first"] == ["connections", "keys", None] and out["opened"] == 1
+    # Slice 07 : Connexions n'a plus d'onglet, sa section Fournisseurs s'ouvre ; `keys` en est l'alias.
+    assert out["first"] == ["connections", None, "providers"] and out["opened"] == 1
+    assert out["seen"]["keys"] == ["connections", None, "providers"]
     seen = out["seen"]
     assert seen["memory"] == ["memory_knowledge", None, "recall"]  # Slice 05 : l'alias de Rappel
     # Slice 04 : `routing` → Runtime & CLI ; `cli` et `subagents` ouvrent leurs sections (test suivant).
@@ -394,7 +401,7 @@ const at=()=>[SET.category,SET.tab,SET.section];
         "memory_knowledge": [("section", "recall"), ("section", "semantic_retrieval"), ("section", "consolidation"),
                              ("section", "knowledge_sources"), ("section", "memory_center")],
         "interface_interactions": [("section", "theme_scene"), ("section", "shortcuts"), ("section", "bare_hands")],
-        "connections": [("tab", "keys")],
+        "connections": [("section", "providers")],
         "advanced_diagnostics": [("section", "architecture_compat"), ("section", "runtime_cli"), ("section", "diagnostics"),
                                  ("section", "work_methods"), ("section", "barehands_lab"), ("tab", "prompts"),
                                  ("tab", "experimental")],
@@ -403,6 +410,15 @@ const at=()=>[SET.category,SET.tab,SET.section];
     # Slice 06 : `bare_hands` est enregistrée, l'onglet de la scène n'est plus proposé comme « encore dans » Interface.
     assert related["interface_interactions"] == []
     assert related["voice_audio"] == related["connections"] == related["advanced_diagnostics"] == []
+
+
+def test_page_connections_section_matches_the_registered_fixture():
+    """La fixture `SLICE_07_SECTIONS` dit ce que la page enregistre vraiment (`CONNECTIONS_SECTION`)."""
+    page = HTML.read_text(encoding="utf-8")
+    assert ("const CONNECTIONS_SECTION={id:'providers',category:'connections',order:10,save:'self',aliases:['keys'],"
+            "label:'Fournisseurs',") in page
+    assert "registerSettingsSection(CONNECTIONS_SECTION)" in page
+    assert "keys" not in base_tab_ids()
 
 
 def test_agent_legacy_ids_open_their_sections(tmp_path):
