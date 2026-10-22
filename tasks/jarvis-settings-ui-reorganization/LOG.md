@@ -808,3 +808,153 @@ d'Avancé à 1093×614, mutations Q7/Q8).
 
 Écarts de méthode QA : quatre pytest au-delà de 600 s basculés en arrière-plan par l'outil (attendus sans Monitor,
 intégration relancée en deux moitiés au premier plan) ; disque C au plus bas à 1,38 Go.
+
+## 2026-10-22 - Slice 09 (implémentation)
+
+### Décisions
+
+- **Une seule table d'alias, explicite.** `LEGACY_TAB_ALIASES` du registre est la seule source : `{id: {category,
+  section}}`, gelée, sans `also` ni `tab`. Le champ `aliases` des sections est retiré de `register` (refusé comme champ
+  inconnu, `settings_section_invalid`) ; un ID de section égal à un alias est refusé (`settings_alias_conflict`).
+  `resolve` rend `source: 'alias'` (plus de `section_alias`, `legacy_tab`, `legacy_anchor`). `DEFAULT_CATEGORY`
+  (= `voice_audio`, la première) est une donnée du registre.
+- **Alias gardé : `memory` seul** (→ `memory_knowledge` / `recall`), appelant `control_center_memory.js`
+  (`root.selectTab('memory')`, bouton Réglages du Memory Center). Le test exige l'appelant (`ALIAS_CALLERS`).
+- **Retirés** (aucun appelant du dépôt ni document durable qui s'en serve) : `voice` (la roue passe à `voice_audio`,
+  comme prévu par `navigation-registry.md` § 4), `wakeword`, `cli`, `routing` (et la redirection historique
+  `routing` → `cli`), `keys`, `appearance`, `experimental`, et les ancres `LEGACY_ANCHORS` (`barehandsSettings`,
+  `barehandsCalibration`, `barehandsRecord`, `barehandsBenchmarkSection` : `JarvisBarehands.showSettings` passe par
+  sa propre table `SECTION_ENTRY`, personne n'appelait `openSettingsTab` avec une ancre). `prompts`, `shortcuts` et
+  `subagents` ne sont pas des alias : ce sont les ID mêmes de leurs sections.
+- **Machinerie retirée** : `TABS`, `SET.tab`, branche onglet de `renderTab`, `bindTab` (et ses liaisons
+  `data-field`/`data-refresh` mortes), `canonicalSettingsTab`, `legacyTabFor`, `navigationFromLegacyTabs`,
+  `#modalSub` (+ CSS `.set-sub`), liens « encore dans » (`related`, `#settingsRelated`, `.set-related`, `.set-link`),
+  alerte `settings_tab_unassigned`, repli `TABS` de `voiceHomeLabel`. `shellNavigation(registry)` →
+  `{categories}` ; `shellTarget(cible, nav, registry)`. Les noms `renderTabs` / `renderTab` / `selectTab` restent :
+  ce sont les points d'appel du shell et de nombreux modules et tests ; ils ne concernent plus d'onglet (documenté
+  dans `settings-shell.md` § 1). Aucune persistance touchée (la position des Réglages n'a jamais été persistée).
+- **`openSettingsTab(id)`** : catégorie, section ou alias ; une cible inconnue (dont un ID retiré) est journalisée
+  (`console.warn('settings_target_unknown', {target})`) et ouvre le shell sur `DEFAULT_CATEGORY` (réglages fermés :
+  ils s'ouvrent ; ouverts : l'emplacement y passe, par `showSettingsTarget`, nouvelle fonction partagée avec
+  `selectTab`). `selectTab` et `openSettingsLink` d'une cible inconnue la journalisent et ne bougent rien (inchangé).
+- **Roue** : `settingsTabs()` = les six catégories (inchangé) ; la ligne « Réglages de la voix » ouvre
+  `VOICE_SETTINGS_TARGET = 'voice_audio'` (détail « ouvre les réglages, catégorie Voix & audio »).
+  `ui_tab_next` / `ui_tab_prev` : comportement inchangé et défini (six catégories en boucle par `cycleCategory`),
+  testé (node + `test_settings_shell_browser`) et prouvé en bac à sable.
+
+### Inventaire des ID hérités (grep code, tests, docs durables)
+
+| ID | Avant | Appelants trouvés | Décision |
+| --- | --- | --- | --- |
+| `voice` | alias de `conversation` | roue (`openSettingsAt('voice')`), `docs/control-center-shell.md` | retiré ; roue → `voice_audio`, doc mise à jour |
+| `wakeword` | alias de `wake_word` | tests seulement | retiré |
+| `prompts` | ID de section | tests | reste (ID de section) |
+| `cli` | alias de `main_agent` | tests, fixture historique `agent-cli-ui.json` | retiré (fixture : `retired_programmatic_ids`) |
+| `routing` | alias de `runtime_cli` (redirection `cli`) | tests, fixture historique | retiré |
+| `keys` | alias de `providers` | tests, `connections.md` (description de l'alias) | retiré |
+| `shortcuts` | ID de section | tests | reste (ID de section) |
+| `memory` | alias de `recall` | Memory Center › Réglages | **gardé**, testé |
+| `subagents` | ID de section | tests | reste (ID de section) |
+| `appearance` | alias de `theme_scene` | tests | retiré |
+| `experimental` | alias de `scene_gate` | tests | retiré |
+| ancres Bare Hands | `LEGACY_ANCHORS` | aucun appel `openSettingsTab` | retirées |
+
+### Textes corrigés (onglets disparus)
+
+- Montrés au cerveau : `barehands_commands.py` (erreur `barehands_disabled` : « il faut l'allumer … par
+  settings_set(barehands.enabled, true) avec l'accord de l'utilisateur, ou par l'utilisateur dans Réglages › Interface
+  & interactions › Bare Hands »), test `test_the_gate_refuses_before_waiting_rather_than_after` mis à jour ;
+  `settings_mcp.py` `EXTRA_CATEGORIES` (`hands`, `agenda`) — constante en fait non lue par `describe` (morte), libellés
+  corrigés quand même ; `app.py` (2 erreurs « onglet Mode vocal ») et `presentation_runtime.py`
+  (`LEGACY_REFUSAL_MESSAGE`, `DUPLEX_REFUSAL_MESSAGE`) → « Réglages › Avancé & diagnostic › Architecture &
+  compatibilité ».
+- Montrés à l'utilisateur : `control_center_boards.js` (refus PRESENTATION, même destination), confirmation de
+  réinitialisation Bare Hands (« Les réglages Bare Hands ne sont pas touchés »), journal de repli Bare Hands, détail de
+  la ligne voix de la roue.
+- Commentaires : `control_center_barehands*.js`, `control_center.py`, `control_center_scene_settings.js`,
+  `control_center_work.js`, page. Docs : `OPERATIONS.md` (Test Bare Hands, A1.1, A1.2, refus PRESENTATION, note des
+  ID), `SECURITY.md` (2), `ARCHITECTURE.md`, `control-center-shell.md` (roue), note de remplacement en tête de
+  `barehands-contracts.md` (l'histoire n'est pas réécrite).
+- Laissés (historiques ou hors périmètre) : mentions « Mode vocal » de `docs/HARDWARE_ACCEPTANCE.md` et
+  `docs/fixes/…`, `docs/mcp/plan-outils-interface.md`, `docs/work-methods.md:240` ; fonctions mortes de l'ancien onglet
+  Voix (`authSectionHtml`, `aecHtml`, `renderField`) non retirées (contenu, pas machinerie d'onglets) — Slice 10.
+
+### Fichiers
+
+Code : `control_center_settings_registry.js`, `control_center.html`, `control_center_jarvis_wheel.js`,
+`control_center_wake_word.js`, `control_center_work.js`, `control_center_scene_settings.js`,
+`control_center_barehands.js`, `_contracts.js`, `_hud.js`, `control_center_boards.js`, `control_center.py`,
+`barehands_commands.py`, `settings_mcp.py`, `presentation_runtime.py`, `app.py`. Docs : `docs/legacy/settings-tab-aliases.md`
+(table finale + inventaire), `docs/settings/navigation-registry.md` (§ 2, 3, 4, 5, 6), `settings-shell.md`, `INDEX.md`
+(note de remplacement des consommateurs du contrat IA), `connections.md`, `interface-interactions.md`, `memory.md`,
+`voice-audio.md`, `agents-models.md`, `OPERATIONS.md`, `SECURITY.md`, `ARCHITECTURE.md`, `control-center-shell.md`,
+`barehands-contracts.md` ; `tasks/jarvis-settings-model-catalog-ux/docs/settings-ia-contract.json`
+(`navigation_superseded_by`), fixture `agent-cli-ui.json`. Tests : registre (réécrit), shell, wheel js/navigateur,
+advanced/agents/connections/interface/memory navigateur, agent_cli, agenda, appearance, memory_settings, subagents,
+voice_settings_surface/ui, scene_settings_ui, routing_settings_screen, barehands_cards, barehands_command_channel,
+intégration `settings_redesign_migration`.
+
+### Tests (comptes exacts, depuis `setui`, `.venv` du dépôt principal, chaque commande < 600 s, sorties au scratchpad `s09/logs`)
+
+- Nouveaux / réécrits (registre, node) : `test_every_remaining_alias_is_explicit_data_with_a_caller_and_its_declared_destination`,
+  `test_no_legacy_tab_machinery_is_left_in_the_repository` (aucun `TABS.push/splice/unshift` dans `jarvis/`, ni
+  `const TABS=`, `SET.tab`, `bindTab`, `canonicalSettingsTab`, `legacyTabFor`, `LEGACY_ANCHORS`, `modalSub`…),
+  `test_an_unknown_or_retired_id_is_logged_and_opens_the_default_category[closed|open]`,
+  `test_page_routes_categories_sections_and_aliases_into_the_six_category_shell` (sous-menu = six catégories),
+  `test_no_registered_section_declares_an_alias`, `test_category_cycle_wraps_in_canonical_order` ; roue : ligne voix →
+  `voice_audio` (node) et espion `openSettingsTab` → `["voice_audio"]`, aucune cible inconnue (vrai Chrome).
+- Registre : 20 passed. Premier lot touché (14 fichiers) : 214 passed, 3 failed (attentes à mettre à jour :
+  apparence `aliases`, mémoire `aliases:['memory']`, libellé « Voix & audio » dans un commentaire) → corrigés, 23 + 15 passed.
+- Roue js + navigateur : 11 passed (62 s). Navigateur : advanced + agents_models 12 passed (329 s) ; connections +
+  memory 16 passed (434 s) ; interface 12 passed + 1 failed (ordre de ma propre tournée), puis 1 passed ;
+  settings_shell 9 passed (245 s) ; wake_word 11 + 9 passed (305 s + 247 s).
+- Lot A (18 fichiers settings/roue/scène/Bare Hands) : 344 passed, 1 failed (`test_routing_settings_screen` attendait
+  `aliases:['routing']` et la garde de l'ancien rendu d'onglet) → corrigé ; lot C (20 fichiers dont routing, registre,
+  shell, intégration, IA contract, surfaces, prompts, mémoire, routes documentées, endpoints, connexions, canal Bare
+  Hands, settings_mcp, agenda, présentation) : 548 passed.
+- Balayage sans navigateur (unit + intégration, après commit `9c509238`) : `-k "settings and not memory and not
+  browser"` 723 passed, 1 failed ; `-k "control_center and not settings and not memory and not browser"` 809 passed,
+  6 failed, 1 skipped ; `-k "(scene or prompt) and not browser and not settings and not control_center and not
+  barehands"` 2305 passed, 2 failed, 17 skipped ; `-k "(barehands or shortcut) and not browser"` 1109 passed,
+  2 failed, 1 skipped ; `-k "(subagent or work_method or routing or agent_cli or catalog or wheel or shell or registry
+  or connection or credential or theme or appearance or tool_brain or app or presentation_runtime or boards) and not
+  settings and not control_center and not browser and not scene and not prompt and not barehands"` 1763 passed,
+  1 failed, 1 skipped. Les 12 échecs sont exactement les 12 préexistants connus ; aucun intermittent observé.
+
+### Mutations (copie jetable `git worktree add --detach` de `9c509238` au scratchpad, supprimée) : 13/13 tuées
+
+M1 alias `memory` vers une autre section ; M2 alias retiré réintroduit (`voice`) ; M3 table vidée ; M4 ID inconnu sans
+catégorie par défaut ; M5 ID inconnu sans journal ; M6 catégorie par défaut = la dernière ; M7 sous-menu de la roue à
+cinq catégories ; M8 roue vers l'ancien ID `voice` ; M9 repli caché dans une condition (`keys`) ; M10 champ `aliases`
+de nouveau accepté ; M11 ID de section égal à un alias accepté ; M12 un module refait `TABS.push` ; M13 alias résolu
+sans vérifier que sa section est enregistrée.
+
+### Preuves
+
+Bac à sable `setui` (Core 127.77.0.1:27653, Control Center 127.0.0.1:27654, `JARVIS_DATA_ROOT`/`JARVIS_RUNTIME_DIR` au
+scratchpad `s09`, visualiseur coupé), vrais clics et frappes CDP (`_interaction_mode_browser.mjs`, 1440×900) :
+`evidence/s09/` — 6 PNG quantifiés (0,47 Mo) et `runtime-check.json`. Constats : roue › Paramètres = six entrées dans
+l'ordre du registre, « Avancé & diagnostic » ouvre `advanced_diagnostics` / `architecture_compat` ; roue › JARVIS ›
+Réglages de la voix → `openSettingsTab('voice_audio')` → Voix & audio / Conversation ; `memory` → `recall`
+(`source: alias`), table = `{memory}` ; `openSettingsTab('nope')` réglages fermés → Voix & audio / Conversation et
+`settings_target_unknown` ; ouverts sur Fournisseurs, `openSettingsTab('experimental')` → Voix & audio et journal ;
+les huit anciens ID testés résolvent `null` ; Ctrl+→ ×2, Ctrl+← ×2, Ctrl+← : voice_audio → agents_models →
+memory_knowledge → voice_audio → advanced_diagnostics (boucle) ; `typeof TABS` = `undefined`, aucune entrée
+`data-tab`, ni `#settingsRelated` ni `#modalSub` ; console sans erreur ni exception (seuls les deux avertissements
+attendus). PID lancés puis arrêtés un par un après vérification de la ligne de commande et du port écouté, sans `/T` :
+15072 (cerveau claude du Control Center du bac à sable, `--mcp-config` sous `scratchpad\s09` ; ses 10 MCP partis avec
+lui, vérifié), 39496 (Control Center, port 27654 ; lanceur 38876 parti avec lui), 37920 (Core, port 27653 ; lanceur
+3164 parti avec lui). Core utilisateur 17653 (PID 31824) et Control Center 17654 (PID 34676) intacts. Données du bac à
+sable laissées en place. Disque C : 58 Go libres au début et à la fin.
+
+### Écarts et reports
+
+- Noms `renderTab` / `renderTabs` / `selectTab` gardés (points d'appel, plus d'onglet derrière) : renommage = churn
+  de nombreux modules et tests sans effet ; à trancher par la QA si le contrat l'exige.
+- Fonctions mortes de l'ancien onglet Voix (`authSectionHtml`, `aecHtml`, `renderField`, `catalog` pour
+  `data-refresh`) : contenu hors machinerie d'onglets, non retirées (Slice 10).
+- `EXTRA_CATEGORIES` de `settings_mcp.py` n'est lue par aucun code : le libellé n'atteint pas le cerveau ; corrigé
+  sans le brancher.
+- Doubles de test Bare Hands (`test_barehands_tools_settings_js.py`) gardent un `global.TABS=[]` sentinelle et un
+  `modalSub` factice : sans effet (le module n'en lit aucun), laissés.
+- Ancien texte « Mode vocal » dans des documents historiques (`HARDWARE_ACCEPTANCE.md`, `docs/fixes/…`) non réécrit.

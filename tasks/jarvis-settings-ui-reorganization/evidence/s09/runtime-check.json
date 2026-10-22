@@ -1,0 +1,107 @@
+{
+  "slice": "09-legacy-routing-and-deeplink-compatibility",
+  "sandbox": {
+    "worktree": "setui",
+    "core": "127.77.0.1:27653",
+    "control_center": "http://127.0.0.1:27654/",
+    "data_root": "scratchpad/s09/data",
+    "runtime_dir": "scratchpad/s09/runtime",
+    "visualizer": "off",
+    "harness": "tests/unit/_interaction_mode_browser.mjs (vrais clics et frappes CDP, Chrome jetable, 1440x900)"
+  },
+  "wheel_parametres": {
+    "head": "Paramètres",
+    "entries": [
+      "tab:voice_audio",
+      "tab:agents_models",
+      "tab:memory_knowledge",
+      "tab:interface_interactions",
+      "tab:connections",
+      "tab:advanced_diagnostics"
+    ],
+    "count": 6,
+    "opened_category": "advanced_diagnostics",
+    "opened_section": "architecture_compat",
+    "openSettingsTab_targets": [
+      "advanced_diagnostics"
+    ],
+    "screenshots": [
+      "01-roue-parametres-six-categories.png",
+      "02-roue-avance-ouvert.png"
+    ]
+  },
+  "wheel_voice_settings": {
+    "openSettingsTab_targets": [
+      "voice_audio"
+    ],
+    "category": "voice_audio",
+    "section": "conversation",
+    "screenshot": "03-roue-reglages-de-la-voix.png"
+  },
+  "remaining_alias": {
+    "memory": {
+      "location": [
+        "memory_knowledge",
+        "recall"
+      ],
+      "resolve": {
+        "category": "memory_knowledge",
+        "section": "recall",
+        "source": "alias"
+      }
+    },
+    "table": {
+      "memory": {
+        "category": "memory_knowledge",
+        "section": "recall"
+      }
+    },
+    "screenshot": "04-alias-memory-rappel.png"
+  },
+  "unknown_id": {
+    "closed_then_nope": [
+      "voice_audio",
+      "conversation"
+    ],
+    "open_on_providers_then_experimental": [
+      "voice_audio",
+      "conversation"
+    ],
+    "warns": [
+      "settings_target_unknown {\"target\":\"nope\"}",
+      "settings_target_unknown {\"target\":\"experimental\"}"
+    ],
+    "retired_resolve": {
+      "voice": null,
+      "wakeword": null,
+      "cli": null,
+      "routing": null,
+      "keys": null,
+      "appearance": null,
+      "experimental": null,
+      "barehandsRecord": null
+    },
+    "screenshot": "05-id-inconnu-categorie-par-defaut.png"
+  },
+  "shortcuts_ui_tab": {
+    "sequence": [
+      "start voice_audio",
+      "ctrl+right agents_models",
+      "ctrl+right memory_knowledge",
+      "ctrl+left x2 voice_audio",
+      "ctrl+left advanced_diagnostics"
+    ],
+    "screenshot": "06-raccourcis-categorie-precedente.png"
+  },
+  "legacy_machinery_in_page": {
+    "typeof_TABS": "undefined",
+    "data_tab_entries": 0,
+    "settingsRelated_present": false,
+    "modalSub_present": false
+  },
+  "console": {
+    "errors_or_exceptions": [],
+    "warns": "seulement settings_target_unknown attendus (nope, experimental)"
+  },
+  "all_waits_ok": true
+}
