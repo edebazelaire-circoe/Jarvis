@@ -304,7 +304,7 @@ async def test_the_settings_page_renders_the_agenda_section_and_saves_through_th
         async with aiohttp.ClientSession() as http:
             data = await (await http.get(base + "/api/settings")).json()
             page = (Path(__file__).resolve().parents[2] / "jarvis" / "runtime" / "control_center.html").read_text(encoding="utf-8")
-            source = page[page.index("/* Rappels d'agenda"):page.index("function bindTab(revision){")]
+            source = page[page.index("/* Rappels d'agenda"):page.index("/* Couche enregistrée ou remise au défaut")]
             (tmp_path / "data.json").write_text(json.dumps({"agenda_reminders": data["agenda_reminders"]}), encoding="utf-8")
             script = tmp_path / "agenda.cjs"
             script.write_text(

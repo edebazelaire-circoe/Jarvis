@@ -1,7 +1,7 @@
 /* Réglage « Scène constellation » (handoff jarvis-constellation-scene-runtime,
    Slice 11), section `scene_gate` du groupe Labs & outils de test d'Avancé &
-   diagnostic depuis la Slice 08 de jarvis-settings-ui-reorganization (alias
-   `experimental`, l'ancien onglet).
+   diagnostic depuis la Slice 08 de jarvis-settings-ui-reorganization (ancien
+   onglet Expérimental ; son identifiant n'est plus un alias depuis la Slice 09).
 
    Deux parties, comme `control_center_barehands.js` :
    - `JarvisSceneSettings.describe(scene, status)`, logique pure : à partir du
@@ -186,7 +186,7 @@
 (function installJarvisSceneSettings(){
   if(typeof window==='undefined'||typeof document==='undefined')return;
   const Logic=window.JarvisSceneSettings;
-  /* Entrée du registre des Réglages ; l'ancien identifiant d'onglet `experimental` y mène (alias). */
+  /* Entrée du registre des Réglages (Avancé & diagnostic › Labs & outils de test). */
   const SECTION_ENTRY='scene_gate';
   const SECTION_ID='sceneSettings';
   /* `host` : l'hôte que le shell a monté pour la section, `null` dès qu'elle est quittée. */
@@ -373,7 +373,7 @@
   function installSection(){
     if(typeof registerSettingsSection!=='function'){log('error','scene.settings_shell_missing',{});return}
     registerSettingsSection({id:SECTION_ENTRY,category:'advanced_diagnostics',group:'labs',order:40,save:'self',advanced:true,
-      aliases:['experimental'],label:'Scène constellation',
+      label:'Scène constellation',
       description:'Porte de test de la scène et redémarrage du brain. Enregistré immédiatement ; chaque effet dit quand il s’applique.',
       mount,
       destroy(host){if(view.host===host)view.host=null}});

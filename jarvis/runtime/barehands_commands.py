@@ -146,8 +146,9 @@ class BarehandsCommandBroker:
                        level="warning", data={"code": COMMAND_DISABLED, "command": name})
             raise BarehandsCommandError(
                 COMMAND_DISABLED,
-                "Bare Hands est éteint : l'utilisateur doit l'allumer dans l'onglet Expérimental "
-                "du Control Center avant que la voix puisse le piloter.",
+                "Bare Hands est éteint : il faut l'allumer avant que la voix puisse le piloter, par "
+                "settings_set(barehands.enabled, true) avec l'accord de l'utilisateur, ou par l'utilisateur dans "
+                "Réglages › Interface & interactions › Bare Hands du Control Center.",
                 409,
             )
         if self._pending is not None:

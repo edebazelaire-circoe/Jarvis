@@ -52,19 +52,17 @@ def run_node(tmp_path: Path, data: object, source: str) -> object:
     return json.loads(completed.stdout)
 
 
-def test_navigation_fixture_matches_unified_agent_cli_tab_and_legacy_programmatic_id(tmp_path: Path):
+def test_navigation_fixture_matches_the_sections_and_the_retired_programmatic_ids():
     page = PAGE.read_text(encoding="utf-8")
     expected = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    registry = (PAGE.parent / "control_center_settings_registry.js").read_text(encoding="utf-8")
 
-    tabs = re.findall(r"\{id:'([^']+)',label:'([^']+)',save:(?:true|false)\}", page[page.index("const TABS=") :])
-    core_tabs = expected["tabs"]
-    assert tabs[: len(core_tabs)] == [(tab["id"], tab["label"]) for tab in core_tabs]
+    # jarvis-settings-ui-reorganization, Slice 09 : plus aucun onglet de premier niveau, plus d'injecteur.
+    assert expected["tabs"] == [] and "\nconst TABS=" not in page
     work = PAGE.with_name("control_center_work.js").read_text(encoding="utf-8")
-    # Raccourcis et Apparence (Slice 06) : sections d'Interface & interactions, plus aucun onglet injecté.
     assert "TABS.splice" not in work and "TABS.push" not in work
-    # Voix (Slice 03), Agent / CLI et Sous-agents (Slice 04), Prompts (Slice 08) réhébergés en sections
-    # (jarvis-settings-ui-reorganization) : plus des onglets, leur ancien ID est l'alias de la section qui les reçoit
-    # (ou son ID même).
+    # Voix (Slice 03), Agent / CLI et Sous-agents (Slice 04), Raccourcis et Apparence (Slice 06), API Keys (Slice 07),
+    # Prompts (Slice 08) réhébergés en sections (jarvis-settings-ui-reorganization) : chaque cible est enregistrée.
     sections = (page[page.index("const VOICE_SECTIONS=[") : page.index("function voiceSectionSpec")]
                 + page[page.index("const AGENT_SECTIONS=[") : page.index("function agentSectionSpec")]
                 + page[page.index("const SUBAGENT_SECTIONS=[") : page.index("function installAgentSettingsSections")]
@@ -72,20 +70,15 @@ def test_navigation_fixture_matches_unified_agent_cli_tab_and_legacy_programmati
                 + page[page.index("const CONNECTIONS_SECTION=") : page.index("/* --- `interface_interactions` › Raccourcis")]
                 + page[page.index("const PROMPTS_SECTION=") : page.index("/* --- onglet Agent / CLI")]
                 + work[work.index("const THEME_SCENE_SECTION=") : work.index("function installSettingsSection")])
-    for legacy_id, target in expected["rehosted_as_sections"].items():
-        assert legacy_id not in [identifier for identifier, _label in tabs]
-        line = next(row for row in sections.split("\n") if f"{{id:'{target['section']}',category:'{target['category']}'" in row)
-        assert legacy_id == target["section"] or f"aliases:['{legacy_id}']" in line
-    legacy = expected["legacy_programmatic_tab"]
-    canonical_id = expected["canonical_programmatic_tab"]
-    assert legacy not in [identifier for identifier, _label in tabs]
-    canonical = page[page.index("function canonicalSettingsTab") : page.index("function selectTab")]
-    assert run_node(
-        tmp_path,
-        expected,
-        canonical
-        + "process.stdout.write(JSON.stringify({legacy:canonicalSettingsTab(data.legacy_programmatic_tab),current:canonicalSettingsTab(data.canonical_programmatic_tab)}));",
-    ) == {"legacy": canonical_id, "current": canonical_id}
+    for _legacy_id, target in expected["rehosted_as_sections"].items():
+        assert f"{{id:'{target['section']}',category:'{target['category']}'" in sections, target
+    # Slice 09 : la redirection `routing` → `cli` et les anciens ID sans appelant sont retirés ; aucun n'est plus un
+    # alias (la table explicite `LEGACY_TAB_ALIASES` du registre ne les porte pas) ni l'ID d'une section.
+    table = registry[registry.index("const LEGACY_TAB_ALIASES=Object.freeze({") :]
+    table = table[: table.index("});")]
+    for retired in expected["retired_programmatic_ids"]:
+        assert f"{retired}:" not in table and f"{{id:'{retired}'," not in sections, retired
+    assert "function canonicalSettingsTab" not in page
     assert "Aiguillage" not in page
 
 
@@ -297,7 +290,7 @@ def test_agent_catalog_lifecycle_error_and_accessibility_contracts_are_wired():
     page = PAGE.read_text(encoding="utf-8")
     catalog_module = (ROOT / "jarvis" / "runtime" / "control_center_catalog.js").read_text(encoding="utf-8")
 
-    render = page[page.index("async function renderTab()") : page.index("function bindTab(revision)")]
+    render = page[page.index("async function renderTab()") : page.index("/* Rappels d'agenda")]
     cleanup = page[page.index("function cleanupSettingsSurface()") : page.index("function renderTabs()")]
     close = page[page.index("function closeSettings()") : page.index("async function saveDraft")]
     sections = page[page.index("const AGENT_SECTIONS=[") : page.index("function bindAgentSection(")]

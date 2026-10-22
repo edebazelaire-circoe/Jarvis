@@ -346,33 +346,23 @@ def test_voice_catalog_unknown_credentials_never_promotes_or_offers_request_acti
     assert "requestable" not in json.dumps(view).lower()
 
 
-async def test_assembled_primary_navigation_has_six_tabs_and_no_legacy_navigation(tmp_path: Path):
+async def test_assembled_primary_navigation_has_six_categories_and_no_legacy_navigation(tmp_path: Path):
     served = (await ControlCenter(runtime_root=tmp_path, project_root=tmp_path).index(None)).text
     scripts = "\n".join(re.findall(r"<script>(.*?)</script>", served, re.S))
-    # Ancré en début de ligne : le Memory Center (`control_center_memory.js`, inséré plus haut dans le même script)
-    # déclare son propre `  const TABS=` indenté, qui faisait découper ce test au mauvais endroit (SyntaxError).
-    tabs = scripts[scripts.index("\nconst TABS=") + 1 : scripts.index("\nconst SET=")]
-    rendered = run_node(tmp_path, {}, tabs + "process.stdout.write(JSON.stringify(TABS.map(({id,label})=>({id,label}))));")
-
-    # « Voix » n'est plus un onglet (jarvis-settings-ui-reorganization, Slice 03) : sections enregistrées de Voix & audio.
-    # Raccourcis et Apparence non plus (Slice 06) : sections d'Interface & interactions ; aucun module n'injecte
-    # d'onglet. Prompts et Expérimental non plus (Slice 08) : sections Prompts et Scène constellation d'Avancé.
-    assert rendered == []
+    # jarvis-settings-ui-reorganization, Slice 09 : l'ancien système d'onglets n'existe plus. La navigation est celle
+    # du registre (six catégories, sections enregistrées) ; plus de `TABS` de premier niveau ni d'injecteur. Le Memory
+    # Center garde ses onglets internes (`  const TABS=Object.freeze(` indenté, sans rapport).
+    assert "\nconst TABS=" not in scripts
     assert "TABS.push(" not in scripts and "TABS.splice(" not in scripts
-    # Le contrat de navigation de jarvis-settings-model-catalog-ux (six onglets) est figé ; les onglets ajoutés
-    # depuis par d'autres handoffs s'intercalaient sans changer l'ordre des siens. Mémoire (Slice 05) et Sous-agents
-    # (Slice 04) sont devenus des sections enregistrées : il n'en reste aucun.
-    added_since_contract: set[str] = set()  # `experimental`, ajouté depuis, est une section d'Avancé (Slice 08)
-    contract_navigation = json.loads(IA_CONTRACT.read_text(encoding="utf-8"))["navigation"]
-    # Voix (Slice 03), Agent / CLI (Slice 04), Raccourcis et Apparence (Slice 06) : sections enregistrées.
-    # API Keys (Slice 07) : section Fournisseurs de Connexions, alias `keys`. Prompts (Slice 08) : section d'Avancé.
-    rehosted_as_sections = {"voice", "agent_cli", "shortcuts", "appearance", "credentials", "prompts"}
-    assert [item["label"] for item in contract_navigation if item["id"] not in rehosted_as_sections] == [
-        item["label"] for item in rendered if item["id"] not in added_since_contract
-    ]
-    assert [item["id"] for item in contract_navigation] == [
+    # Le contrat de navigation de jarvis-settings-model-catalog-ux (six onglets) est historique : chacun de ses onglets
+    # est devenu une ou des sections enregistrées (Voix : Slice 03, Agent / CLI : 04, Raccourcis et Apparence : 06,
+    # API Keys : 07, Prompts : 08).
+    data = json.loads(IA_CONTRACT.read_text(encoding="utf-8"))
+    assert "Slice 09" in data["navigation_superseded_by"]
+    assert [item["id"] for item in data["navigation"]] == [
         "voice", "prompts", "agent_cli", "credentials", "shortcuts", "appearance",
     ]
+    for section in ("conversation", "prompts", "main_agent", "providers", "shortcuts", "theme_scene"):
+        assert re.search(r"\{id:'%s',category:'[a-z_]+'" % section, served), section
     assert "Aiguillage" not in served
-    assert "id:'routing'" not in tabs and "id:'config'" not in tabs
     assert "function tabConfig" not in served

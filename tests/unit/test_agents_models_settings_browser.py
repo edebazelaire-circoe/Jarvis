@@ -43,7 +43,8 @@ TOUR = """(async()=>{const pause=ms=>new Promise(r=>setTimeout(r,ms)),q=s=>docum
       catalog:!!q('#agentCatalog'),routing:!!q('#routingAdvanced'),roles:!!q('[data-subagent-settings-host]'),
       wm:!!q('[data-subagent-work-methods]')||(SET.subagentView&&SET.subagentView.view==='work_methods')}}
   const legacy={};
-  for(const id of ['cli','routing','subagents']){selectTab(id);await pause(200);legacy[id]=[SET.category,SET.tab,SET.section]}
+  for(const id of ['cli','routing','subagents']){selectTab('voice_audio');await pause(150);selectTab(id);await pause(200);
+    legacy[id]=[SET.category,SET.section,(window.JarvisSettingsRegistry.page.resolve(id)||{source:null}).source]}
   out.legacy=legacy;out.items=items();return out})()"""
 
 
@@ -65,8 +66,10 @@ async def test_category_sections_destinations_and_legacy_ids(served):
     assert s["work_methods"]["wm"] and not s["work_methods"]["footer"] and s["work_methods"]["category"] == "advanced_diagnostics"
     for footer in ("main_agent", "agent_behavior", "subagent_models", "runtime_cli"):
         assert s[footer]["footer"], footer
-    assert tour["legacy"] == {"cli": ["agents_models", None, "main_agent"], "routing": ["advanced_diagnostics", None, "runtime_cli"],
-                              "subagents": ["agents_models", None, "subagents"]}
+    # Slice 09 : `cli` et `routing` ne sont plus des alias (aucun appelant) : rien ne bouge ; `subagents` est l'ID de
+    # la section des rôles.
+    assert tour["legacy"] == {"cli": ["voice_audio", "conversation", None], "routing": ["voice_audio", "conversation", None],
+                              "subagents": ["agents_models", "subagents", "section"]}
     assert out["console"] == [], out["console"]
 
 

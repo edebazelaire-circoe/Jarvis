@@ -28,8 +28,9 @@
      `agent.model` en détail ;
    - **Sous-agents** (action) : `subagents.active` ; ouvre le panneau Agents
      (`#agentsButton`, la même route que le lanceur) ;
-   - **Réglages de la voix** (action) : les réglages, catégorie Voix & audio,
-     onglet Voix (micro, modèle, pile vocale), la même surface que `#openSettings`.
+   - **Réglages de la voix** (action) : les réglages sur la catégorie Voix &
+     audio (`VOICE_SETTINGS_TARGET`, jarvis-settings-ui-reorganization Slice 09 ;
+     micro, modèle, pile vocale), la même surface que `#openSettings`.
 
    **Paramètres** : une ligne par catégorie des réglages (`settingsTabs()` de la
    page : les six catégories du registre, jarvis-settings-ui-reorganization
@@ -146,7 +147,7 @@
       {id:'subagents',kind:'action',icon:'subagents',label:'Sous-agents',note:subNote,
         detail:`${subNote} ; ouvre le panneau Agents`,tone:n===null?'unknown':undefined},
       {id:'voice_settings',kind:'action',icon:'settings',label:'Réglages de la voix',note:'micro, modèle, pile vocale',
-        detail:'ouvre les réglages, onglet Voix'},
+        detail:'ouvre les réglages, catégorie Voix & audio'},
     ];
   }
 
@@ -163,6 +164,10 @@
     const n=f.subagents;
     return {tone:null,text:n?`${voice} · ${n} sous-agent${n>1?'s':''}`:voice};
   }
+
+  /* La ligne « Réglages de la voix » ouvre la catégorie Voix & audio du registre des Réglages (ID canonique : l'ancien
+     identifiant d'onglet `'voice'` n'est plus un alias depuis la Slice 09 de jarvis-settings-ui-reorganization). */
+  const VOICE_SETTINGS_TARGET='voice_audio';
 
   /* ------------------------------------------------- Paramètres
 
@@ -181,7 +186,7 @@
       note:TAB_NOTES[t.id]||String(t.description||'')||'catégorie des réglages',detail:`ouvre les réglages, catégorie ${String(t.label||t.id)}`}));
   }
 
-  const api=Object.freeze({VOICE_STATES,AGENT_STATES,factsOf,wakeHintOf,jarvisItemsOf,categoryStatusOf,settingsItemsOf});
+  const api=Object.freeze({VOICE_STATES,AGENT_STATES,VOICE_SETTINGS_TARGET,factsOf,wakeHintOf,jarvisItemsOf,categoryStatusOf,settingsItemsOf});
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(typeof window==='undefined'||typeof document==='undefined')return;
 
@@ -230,7 +235,7 @@
     function items(){
       return jarvisItemsOf(facts).map(spec=>{
         if(spec.id==='subagents')return {...spec,onActivate:ctx=>openAgents(ctx&&ctx.source)};
-        if(spec.id==='voice_settings')return {...spec,onActivate:ctx=>openSettingsAt('voice',ctx&&ctx.source)};
+        if(spec.id==='voice_settings')return {...spec,onActivate:ctx=>openSettingsAt(VOICE_SETTINGS_TARGET,ctx&&ctx.source)};
         return spec;
       });
     }

@@ -397,7 +397,7 @@ def test_served_page_hides_the_empty_footer_scrolls_the_active_tab_and_links_mod
     served = asyncio.run(ControlCenter(runtime_root=tmp_path, project_root=tmp_path).index(None)).text
     # Shell à six catégories (Slice 02 de jarvis-settings-ui-reorganization) : même pied caché pour Sous-agents,
     # même défilement de l'entrée active dans les deux barres.
-    assert "footer.hidden=entry?entry.save!=='footer':!SET.tab" in served
+    assert "footer.hidden=!entry||entry.save!=='footer'" in served
     assert "on.scrollIntoView({block:'nearest',inline:'nearest'})" in served
     # Slice 06 : les renvois passent par `openSettingsLink` (focus sur l'entrée ouverte, jamais sur `body`).
     assert "openTab:target=>openSettingsLink(target)" in served and "subagent_settings_mount_failed" in served

@@ -5655,8 +5655,8 @@ try{
        calibration — l'une change les réglages, l'autre les mesure. */
     benchmark:'barehandsBenchmarkSection',
   });
-  /* L'entrée des Réglages qui dessine chaque section publiée (Slice 06). Le registre des Réglages connaît les mêmes
-     ancres (`LEGACY_ANCHORS`) pour les appelants qui passent par `openSettingsTab` ; un test lie les deux tables. */
+  /* L'entrée des Réglages qui dessine chaque section publiée (Slice 06). Seule table des ancres : le registre des
+     Réglages ne les connaît plus (ancres `LEGACY_ANCHORS` retirées à la Slice 09, aucun appelant de `openSettingsTab`). */
   const SECTION_ENTRY=Object.freeze({[SECTION.settings]:SETTINGS_ENTRY.ordinary,[SECTION.calibration]:SETTINGS_ENTRY.ordinary,
     [SECTION.record]:SETTINGS_ENTRY.lab,[SECTION.benchmark]:SETTINGS_ENTRY.lab});
   /* Ce qu'un jeton « survole » : l'élément cliquable le plus proche. */
@@ -8137,7 +8137,7 @@ try{
     const ok=typeof confirmDialog==='function'?await confirmDialog({
       title:'Réinitialiser le profil de calibration ?',
       lines:['Bare Hands reviendra à ses seuils d’usine pour toutes les mains.',
-        'Les réglages de l’onglet ne sont pas touchés.'],
+        'Les réglages Bare Hands ne sont pas touchés.'],
       confirmLabel:'Réinitialiser'}):true;
     if(!ok)return null;
     try{
@@ -8752,8 +8752,9 @@ try{
      - la **coque**, quand un parcours est ouvert : elle recouvre les toasts
        (z-index 2147482000 contre 70), donc c'est la seule qu'on regarde ;
      - un **toast**, panneau fermé — le cas ordinaire d'une commande vocale ;
-     - une **ligne du panneau Expérimental**, qui survit au toast et porte
-       l'heure, le nom, l'issue et le code du refus. */
+     - une **ligne de la partie Bare Hands d'Avancé › Diagnostics** (l'ancien
+       panneau Expérimental), qui survit au toast et porte l'heure, le nom,
+       l'issue et le code du refus. */
   const VOICE_OUTCOME=Object.freeze({applied:'appliquée',duplicate:'déjà dans cet état',refused:'refusée'});
   /* Combien de temps le reçu d'une commande vocale est **tenu** dans la coque
      (`note(..., holdMs)`, Slice 10). Les mêmes durées que les toasts de
@@ -9626,7 +9627,7 @@ try{
        fonctionnalité par l'autre porte, et non un succès inventé. Le détour
        est journalisé, sans quoi « la carte a servi » et « la carte manquait »
        s'écriraient pareil. */
-    console.warn('[barehands] carte de diagnostic absente, repli sur l’onglet');
+    console.warn('[barehands] carte de diagnostic absente, repli sur les Réglages (Avancé › Labs)');
     return showSettingsTab(SECTION.record);
   }
 
@@ -9808,7 +9809,7 @@ try{
     /* **Les entrées rapides de la Slice 02** (décisions 8, 14 et 16). Ce sont
        les portes que le menu contextuel du bouton de cycle de vie Bare Hands appelle,
        et elles sont ici plutôt que dans le contrôle parce que c'est ce module
-       qui possède l'onglet : un menu qui bricolerait `SET.tab` lui-même serait
+       qui possède ses sections de Réglages : un menu qui bricolerait `SET.section` lui-même serait
        une seconde implantation de « montrer les réglages ».
        `SECTION` est publiée avec elles pour que l'appelant désigne une section
        par sa clé et non par un identifiant HTML recopié. */

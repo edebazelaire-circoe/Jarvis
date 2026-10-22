@@ -73,11 +73,12 @@ TOUR = """(async()=>{const pause=ms=>new Promise(r=>setTimeout(r,ms)),q=s=>docum
     all.push(...[...document.querySelectorAll('#modalTabs [role=tab]')].map(b=>b.textContent))}
   selectTab('connections');await pause(250);
   const out={labels:[...document.querySelectorAll('#modalTabs [role=tab]')].map(b=>b.textContent),all,
-    at:[SET.category,SET.tab,SET.section],footer:!document.querySelector('.set-foot').hidden,
+    at:[SET.category,SET.section],footer:!document.querySelector('.set-foot').hidden,
     cards:[...document.querySelectorAll('#modalContent .conn-card')].map(c=>c.dataset.connProvider),
     served:(await (await fetch('/api/credentials')).json()).providers.map(p=>p.id),
-    anthropic:q('#connection_anthropic').textContent.replace(/\\s+/g,' '),tabs:TABS.map(t=>t.id)};
-  selectTab('voice_audio');await pause(200);selectTab('keys');await pause(250);out.alias=[SET.category,SET.tab,SET.section];
+    anthropic:q('#connection_anthropic').textContent.replace(/\\s+/g,' '),tabs:typeof TABS};
+  selectTab('voice_audio');await pause(200);selectTab('keys');await pause(250);
+  out.alias=[SET.category,SET.section,window.JarvisSettingsRegistry.page.resolve('keys')];
   return out})()"""
 
 
@@ -101,11 +102,12 @@ async def test_category_cards_alias_environment_fallback_and_links(served, clean
     step = out["steps"][0]
     tour = got(step, "tour")
     assert tour["labels"] == ["Fournisseurs"] and "API Keys" not in tour["all"]
-    assert tour["tabs"] == []  # Slice 08 : plus aucun onglet de premier niveau
-    assert tour["at"] == ["connections", None, "providers"] and tour["footer"] is False
+    assert tour["tabs"] == "undefined"  # Slice 09 : plus de système d'onglets
+    assert tour["at"] == ["connections", "providers"] and tour["footer"] is False
     assert tour["cards"] == tour["served"] == [p.id for p in creds.PROVIDERS]
     assert "Variable d’environnement" in tour["anthropic"] and "ANTHROPIC_API_KEY" in tour["anthropic"]
-    assert tour["alias"] == ["connections", None, "providers"]
+    # Slice 09 : `keys` n'est plus un alias (aucun appelant) ; la section s'ouvre par son ID `providers`.
+    assert tour["alias"] == ["voice_audio", "conversation", None]
     assert got(step, "leak") == []
     assert got(step, "agent_link") == ["connections", "providers", "connection_anthropic_title"]
     assert got(step, "memory_link")[:2] == ["connections", "providers"]

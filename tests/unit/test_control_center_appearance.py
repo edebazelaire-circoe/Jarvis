@@ -114,11 +114,11 @@ window.AudioContext=AudioContext;getUserMedia=async()=>stream;
 
 def test_theme_scene_is_a_registered_section_that_applies_in_place_and_mounts_the_scene_view(tmp_path: Path):
     """Slice 06 (jarvis-settings-ui-reorganization) : plus d'onglet `appearance` injecté dans `TABS`. La section
-    `theme_scene` (alias `appearance`) dessine le thème, monte les réglages de la scène dans son emplacement, applique un
+    `theme_scene` (l'ancien ID `appearance` n'est plus un alias depuis la Slice 09) dessine le thème, monte les réglages de la scène dans son emplacement, applique un
     choix tout de suite sans se redessiner (la carte choisie est marquée en place) et détruit la vue de la scène."""
     work = WORK.read_text(encoding="utf-8")
     block = work[work.index("  function appearanceHtml()") : work.index("  function bridgeStatusApi()")]
-    assert "TABS" not in block.replace("plus d'onglet injecté dans `TABS`", "")
+    assert "TABS" not in block
     result = run_node(
         tmp_path,
         r"""
@@ -149,14 +149,14 @@ spec.mount(host);
 const cosmos=host.inputs.find(i=>i.value==='cosmos');cosmos.checked=true;cosmos.fire('change');
 spec.destroy(host);
 process.stdout.write(JSON.stringify({count:registered.length,id:spec.id,category:spec.category,save:spec.save,
-  aliases:spec.aliases,order:spec.order,writes:host.writes,activated,mounts:view.mounts,destroys:view.destroys,
+  aliases:'aliases' in spec,order:spec.order,writes:host.writes,activated,mounts:view.mounts,destroys:view.destroys,
   selected:host.inputs.map(i=>[i.value,i.card.on])}));
 """,
     )
 
     assert result["count"] == 1
     assert (result["id"], result["category"], result["save"], result["aliases"], result["order"]) == (
-        "theme_scene", "interface_interactions", "self", ["appearance"], 10)
+        "theme_scene", "interface_interactions", "self", False, 10)  # Slice 09 : plus d'alias de section
     assert result["activated"] == ["cosmos"]
     assert result["writes"] == 1, "un choix de thème s'applique sans redessiner la section"
     assert result["selected"] == [["circuit-board", False], ["cosmos", True]]

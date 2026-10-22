@@ -129,7 +129,7 @@
   const SLEEP_TIMEOUT_MS=30000;
   const WAKE_HOLD_MS=1000;
   /* Cadence du guetteur de SLEEP. Promise « 5 images par seconde » dans le
-     contrat lisible *et* à l'écran, dans l'onglet Expérimental : elle vit donc
+     contrat lisible *et* à l'écran, dans les Réglages Bare Hands : elle vit donc
      ici, au même titre que les deux durées ci-dessus, plutôt que dans les seuls
      défauts du moteur où muter 200 → 500 ne faisait rien tomber. */
   const WAKE_INTERVAL_MS=200;

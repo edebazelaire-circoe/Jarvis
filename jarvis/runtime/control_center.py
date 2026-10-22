@@ -737,9 +737,10 @@ SCENE_CAPTURE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_CAPTURE_JS__*/"
 #: le bloc navigateur du rendu, qui le lit : inséré avant lui.
 SCENE_VIEW_SCRIPT_FILE = "control_center_scene_view.js"
 SCENE_VIEW_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_VIEW_JS__*/"
-#: Réglage `scene.enabled` à l'écran (Slice 11) : section de l'onglet
-#: Expérimental (logique pure `window.JarvisSceneSettings` testée par node, puis
-#: son branchement), insérée après Barehands, qui crée cet onglet.
+#: Réglage `scene.enabled` à l'écran (Slice 11) : section `scene_gate` d'Avancé &
+#: diagnostic › Labs depuis jarvis-settings-ui-reorganization (ancien onglet
+#: Expérimental ; logique pure `window.JarvisSceneSettings` testée par node, puis
+#: son branchement), insérée après Barehands.
 SCENE_SETTINGS_SCRIPT_FILE = "control_center_scene_settings.js"
 SCENE_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/"
 # Onglet « Mot d'éveil » des Réglages (jarvis-wake-word, Slice 07) : logique pure + bloc navigateur.

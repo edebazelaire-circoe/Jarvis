@@ -12,7 +12,8 @@ Handoff `jarvis-board-ui-wheel-dossier-refactor`, Slice 04 (`docs/06-ui-visual-s
   d'un battement réussi précédent ;
 - la touche d'éveil dit ce qu'elle fait maintenant (l'ancien `#wakeHint`, mêmes
   phrases) ;
-- Paramètres : une ligne par onglet réel des réglages, aucune inventée ;
+- Paramètres : une ligne par catégorie des réglages (les six du registre), aucune inventée ; « Réglages de la
+  voix » ouvre la catégorie `voice_audio` (ID canonique, Slice 09 de jarvis-settings-ui-reorganization) ;
 - le module est inséré dans la page servie, après la roue, et `refreshStatus` le
   nourrit (`gate` / `statusLost`) sans second sondage.
 
@@ -74,6 +75,7 @@ def test_online_rows_are_facts_with_their_source_and_two_existing_routes(tmp_pat
     assert by["agent"]["detail"] == "état du brain : actif, modèle opus"
     assert by["subagents"]["note"] == "2 en cours" and "status" not in by["subagents"]
     assert by["voice_settings"]["kind"] == "action" and "status" not in by["voice_settings"]
+    assert by["voice_settings"]["detail"] == "ouvre les réglages, catégorie Voix & audio"
     # Les lignes d'état n'agissent pas ; le module pur ne branche aucune action.
     assert all("onActivate" not in r for r in rows)
 
@@ -180,4 +182,7 @@ def test_inserted_after_the_wheel_and_fed_by_the_one_status_beat():
     assert "fetch(" not in source and "setInterval" not in source and "setTimeout" not in source, "aucun second sondage"
     # Les deux portes sont les routes existantes : le bouton Agents et le modal des réglages.
     assert "getElementById('agentsButton')" in source and "root.openSettingsTab(" in source
+    # « Réglages de la voix » : l'ID de catégorie, plus l'ancien ID d'onglet `'voice'` (alias retiré à la Slice 09).
+    assert "const VOICE_SETTINGS_TARGET='voice_audio';" in source
+    assert "openSettingsAt(VOICE_SETTINGS_TARGET," in source and "openSettingsAt('voice'" not in source
     assert re.search(r"function openSettingsTab\(tab,options\)\{", html) and re.search(r"function settingsTabs\(\)\{", html)

@@ -391,20 +391,19 @@ def test_a_stopped_brain_another_cli_or_an_unread_status_never_offer_a_restart()
 
 async def test_the_section_is_registered_in_labs_without_any_tab(tmp_path):
     """Slice 08 de jarvis-settings-ui-reorganization : la porte de test est la section `scene_gate` du groupe Labs &
-    outils de test d'Avancé (alias `experimental`, l'ancien onglet). Le module ne dépend plus d'aucun onglet : il
+    outils de test d'Avancé (l'ancien onglet Expérimental ; plus d'alias depuis la Slice 09). Le module ne dépend plus d'aucun onglet : il
     n'enveloppe plus `renderTab`, ne lit ni `TABS` ni `SET.tab` ni `#modalContent`, et dessine dans l'hôte monté."""
     html = PAGE_HTML.read_text(encoding="utf-8")
     assert html.index(BAREHANDS_SCRIPT_MARKER) < html.index(SCENE_PAGE_SCRIPT_MARKER) < html.index(SCENE_SETTINGS_SCRIPT_MARKER) < html.index(TIMELINE_SCRIPT_MARKER)
     served = (await ControlCenter(runtime_root=tmp_path, project_root=tmp_path).index(None)).text
     source = SETTINGS_JS.read_text(encoding="utf-8")
     assert SCENE_SETTINGS_SCRIPT_MARKER not in served and source in served
-    tabs = html[html.index("\nconst TABS=[") : html.index("\nconst SET=")]
-    assert "experimental" not in tabs.split("const TABS=")[1]
+    assert "\nconst TABS=" not in html
     code = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
     for forbidden in ("TAB_ID", "renderTab", "TABS", "SET.tab", "modalContent", "modalSub"):
         assert forbidden not in code, forbidden
     assert ("registerSettingsSection({id:SECTION_ENTRY,category:'advanced_diagnostics',group:'labs',order:40,save:'self',"
-            "advanced:true,\n      aliases:['experimental'],") in source
+            "advanced:true,\n      label:'Scène constellation',") in source and "aliases" not in source
     assert "const SECTION_ENTRY='scene_gate';" in source
 
 

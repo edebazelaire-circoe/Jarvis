@@ -305,7 +305,8 @@ coordinates — the display prompt says so.
 
 Gate timing (Slice 11). The gate is read when the brain CLI starts: a brain
 started with it on keeps its write tools after it is switched off, until it
-restarts (only `scene_capture` re-checks the gate). The Expérimental settings tab
+restarts (only `scene_capture` re-checks the gate). The Scène constellation section
+(Settings › Advanced & diagnostics › Labs & test tools, formerly the Expérimental tab)
 shows this through `agent.display_tools` / `agent.display_prompt` and offers a
 confirmed restart on a new conversation. `POST /api/settings` can flip the gate
 for any local process that sends no `Origin` header: same trust model as the rest
@@ -343,7 +344,8 @@ Four surfaces that belong to the native subsystem and to nothing else. It runs
 network egress of its own.
 
 **The camera is opened by the page, and only after an explicit switch.** The
-`Activer Bare Hands` switch in the Expérimental tab is **off by default** and
+`Activer Bare Hands` switch in Settings › Interface & interactions › Bare Hands (formerly the
+Expérimental tab) is **off by default** and
 the browser's own camera permission prompt still gates it — Jarvis cannot grant
 it. Turning it on leads to `sleep`, never straight to interaction: the camera is
 open but feeds only a 5 fps watcher, and no pointer, hover or click exists until

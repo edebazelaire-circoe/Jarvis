@@ -7,7 +7,7 @@
 `jarvis/runtime/credentials.py` (inchangé).
 
 La catégorie `connections` gère les identifiants des fournisseurs, une carte par fournisseur. Elle remplace l'onglet
-« API Keys » : `keys` n'est plus dans `TABS`, son ID est l'alias de la section.
+« API Keys » ; son ancien ID `keys` n'est plus un alias depuis la Slice 09 (aucun appelant) : on ouvre `providers`.
 
 ## 1. Section
 
@@ -80,7 +80,6 @@ du serveur avec son message réel (par exemple doublon de nom), attente dépass�
 | --- | --- | --- |
 | `agents_models` › Agent principal (aide du modèle principal) | « Connexions › <fournisseur> » (`data-settings-open="providers"`, `data-settings-focus`) | section Fournisseurs, focus sur le titre de la carte du fournisseur du modèle |
 | `memory_knowledge` › Recherche sémantique, Sources de connaissances (ligne du secret) | « Connexions » (`data-mem-open="providers"`) | section Fournisseurs |
-| Tout appel `openSettingsTab('keys')` / `selectTab('keys')` (ancien onglet) | alias `keys` | section Fournisseurs |
 
 Les messages du serveur qui demandent une clé (pile vocale sans clé, catalogue sans clé, mémoire) disent
 « Réglages › Connexions ».
@@ -90,9 +89,9 @@ Les messages du serveur qui demandent une clé (pile vocale sans clé, catalogue
 - `tests/unit/test_control_center_connections_settings_js.py` (node, vrai `credentials_state`) : une carte par
   fournisseur servi dans l'ordre du serveur, note = `hint`, états, clé active, retombée, aucun secret, champs valeur
   `password` vides, régions vivantes, confirmation, aucun fournisseur ni variable copiés dans le module.
-- `tests/unit/test_connections_settings_browser.py` (vrai Chrome, vrai Control Center isolé) : navigation, alias, liens
+- `tests/unit/test_connections_settings_browser.py` (vrai Chrome, vrai Control Center isolé) : navigation, ancien ID `keys` retiré, liens
   entrants, charges des quatre écritures figées clé par clé, fichier du runtime, aucune valeur dans le DOM, les champs
   ni les lectures, refus, réponse tardive (section quittée, fermeture), attente bornée et minuteur arrêté par `destroy`,
   débordement à 1920×1080, 1366×768, 100 % et 125 %.
-- `tests/unit/test_control_center_settings_registry_js.py` (`SLICE_07_SECTIONS`, alias `keys`),
-  `tests/integration/test_settings_redesign_migration.py` (`TABS` = `prompts`, `experimental`).
+- `tests/unit/test_control_center_settings_registry_js.py` (`SLICE_07_SECTIONS`, ID retirés),
+  `tests/integration/test_settings_redesign_migration.py` (plus de `TABS`).

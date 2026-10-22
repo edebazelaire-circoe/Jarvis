@@ -425,19 +425,13 @@ async def test_voice_categories_round_trip_without_losing_inactive_stack_audio_o
 def test_top_navigation_has_no_config_and_wake_shortcut_has_one_editor_in_shortcuts():
     page = PAGE.read_text(encoding="utf-8")
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    tabs = page[page.index("const TABS=") : page.index("const SET=")]
     shortcuts = page[page.index("function tabShortcuts()") : page.index("/* --- rendu et liaisons")]
     work = PAGE.with_name("control_center_work.js").read_text(encoding="utf-8")
 
-    assert f"id:'{fixture['removed_top_tab']}'" not in tabs
-    # « Voix » (Slice 03) et « Agent / CLI » (Slice 04) de jarvis-settings-ui-reorganization ne sont plus des
-    # onglets : sections enregistrées de `voice_audio` et de `agents_models`.
-    # Raccourcis et Apparence (Slice 06) : sections d'Interface & interactions. API Keys (Slice 07) : section
-    # Fournisseurs de Connexions. Prompts (Slice 08) : section d'Avancé ; plus aucun onglet de premier niveau.
-    assert all(f"label:'{label}'" in tabs for label in fixture["top_tabs"]
-               if label not in {"Apparence", "Voix", "Agent / CLI", "Raccourcis", "API Keys", "Prompts"})
-    assert "id:'voice'" not in tabs and "id:'cli'" not in tabs and "id:'shortcuts'" not in tabs and "id:'keys'" not in tabs
-    assert "const TABS=[];" in tabs
+    # « Voix » (Slice 03), « Agent / CLI » (Slice 04), Raccourcis et Apparence (Slice 06), API Keys (Slice 07), Prompts
+    # (Slice 08) de jarvis-settings-ui-reorganization sont des sections ; la Slice 09 a retiré le système d'onglets.
+    assert "\nconst TABS=" not in page and f"id:'{fixture['removed_top_tab']}'" not in page
+    assert len(fixture["top_tabs"]) == 6  # le contrat historique des six onglets, remplacé par les six catégories
     assert "const THEME_SCENE_SECTION={id:'theme_scene'" in work and "TABS.splice" not in work
     # Un seul éditeur de `wake_toggle` : les Raccourcis (plus de filtre, plus de renvoi vers Voix).
     assert "wake_toggle'" not in shortcuts.replace("`wake_toggle` compris", "")

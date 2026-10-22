@@ -851,7 +851,7 @@
     if(typeof registerSettingsSection!=='function'){log('error','wake_word.settings_shell_missing');return}
     ensureStyle();
     registerSettingsSection({id:'wake_word',category:'voice_audio',label:'Mot d’éveil',order:50,save:'self',
-      applies:'next_voice_start',aliases:['wakeword'],
+      applies:'next_voice_start',
       description:'Réveiller JARVIS à la voix : moteur, phrase, sensibilité, pause après un réveil.',
       mount(host,context){
         mounted.form={host,isCurrent:context.isCurrent,open:context.open};

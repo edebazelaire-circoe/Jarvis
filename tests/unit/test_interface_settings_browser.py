@@ -39,16 +39,16 @@ OPEN = [
 
 TOUR = """(async()=>{const pause=ms=>new Promise(r=>setTimeout(r,ms)),q=s=>document.querySelector(s);
   const out={labels:[...document.querySelectorAll('#modalTabs [role=tab]')].map(b=>b.textContent),
-    related:document.getElementById('settingsRelated').hidden,tabs:[],editors:{},voiceKeys:0};
+    related:!!document.getElementById('settingsRelated'),tabs:[],editors:{},voiceKeys:0};
   const R=window.JarvisSettingsRegistry;
   for(const c of R.CATEGORY_IDS){q(`#settingsCategories [data-category=${c}]`).click();await pause(150);
     const entries=[...document.querySelectorAll('#modalTabs [role=tab]')].map(b=>({tab:b.dataset.tab||null,section:b.dataset.section||null}));
     for(const e of entries){if(e.tab)out.tabs.push([c,e.tab]);selectTab(e.section||e.tab);await pause(e.section==='turns_interruptions'?900:250);
       const n=document.querySelectorAll('#modalContent [data-shortcut="wake_toggle"]').length;if(n)out.editors[e.section||e.tab]=n;
       out.voiceKeys+=document.querySelectorAll('#modalContent [data-voice-context="wake_toggle"] kbd').length}}
-  out.alias={};for(const id of ['appearance','shortcuts','barehandsSettings','barehandsCalibration','barehandsRecord',
-    'barehandsBenchmarkSection','experimental','interface_interactions']){selectTab(id);await pause(200);
-    out.alias[id]=[SET.category,SET.tab,SET.section]}
+  out.alias={};for(const id of ['theme_scene','appearance','barehandsSettings','barehandsCalibration','barehandsRecord',
+    'barehandsBenchmarkSection','experimental','shortcuts','interface_interactions']){selectTab(id);await pause(200);
+    out.alias[id]=[SET.category,SET.section,(R.page.resolve(id)||{source:null}).source]}
   selectTab('bare_hands');await pause(300);
   out.ordinary={diag:!!q('#modalContent [data-barehands-check=diagnostics]'),preview:!!q('#modalContent [data-barehands-check=targetPreview]'),
     calibrate:!!q('#barehandsCalibrate'),wipe:!!q('#barehandsProfileReset'),bench:!!q('#barehandsBenchmark'),record:!!q('#barehandsRecordStart'),
@@ -59,7 +59,7 @@ TOUR = """(async()=>{const pause=ms=>new Promise(r=>setTimeout(r,ms)),q=s=>docum
   selectTab('diagnostics');await pause(600);
   out.diag={part:!!q('#diagnostic_barehands'),assets:(q('#diagnostic_barehands #barehandsAssets')||{}).textContent||'',
     voice:!!q('#diagnostic_barehands #barehandsVoice')};
-  selectTab('experimental');await pause(400);out.experimental={scene:!!q('#sceneSettings'),bh:!!q('#modalContent .bh-section')};
+  selectTab('scene_gate');await pause(400);out.experimental={scene:!!q('#sceneSettings'),bh:!!q('#modalContent .bh-section')};
   return out})()"""
 
 
@@ -67,7 +67,7 @@ async def test_sections_aliases_single_wake_editor_and_barehands_split(served):
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [*OPEN, eval_(TOUR, "tour")]}])
     tour = got(out["steps"][0], "tour")
     assert tour["labels"] == ["Thème & scène visuelle", "Raccourcis", "Bare Hands"]
-    assert tour["related"] is True, "plus aucun « encore dans » pour Interface"
+    assert tour["related"] is False, "plus de zone « encore dans » (Slice 09)"
     # Plus aucun onglet hérité : `keys` (Slice 07, Fournisseurs de Connexions), `prompts` et `experimental` (Slice 08,
     # sections Prompts et Scène constellation d'Avancé) non plus.
     assert tour["tabs"] == []
@@ -75,12 +75,14 @@ async def test_sections_aliases_single_wake_editor_and_barehands_split(served):
     assert tour["editors"] == {"shortcuts": 1}
     assert tour["voiceKeys"] == 1
     alias = tour["alias"]
-    assert alias["appearance"] == ["interface_interactions", None, "theme_scene"]
-    assert alias["shortcuts"] == ["interface_interactions", None, "shortcuts"]
-    assert alias["barehandsSettings"] == alias["barehandsCalibration"] == ["interface_interactions", None, "bare_hands"]
-    assert alias["barehandsRecord"] == alias["barehandsBenchmarkSection"] == ["advanced_diagnostics", None, "barehands_lab"]
-    assert alias["experimental"] == ["advanced_diagnostics", None, "scene_gate"]
-    assert alias["interface_interactions"] == ["interface_interactions", None, "bare_hands"]  # dernière entrée ouverte
+    # Slice 09 : `appearance`, `experimental` et les ancres Bare Hands ne sont plus des alias (aucun appelant) : un
+    # `selectTab` vers eux ne bouge rien ; `shortcuts` est l'ID de la section.
+    assert alias["theme_scene"] == ["interface_interactions", "theme_scene", "section"]
+    for retired in ("appearance", "barehandsSettings", "barehandsCalibration", "barehandsRecord", "barehandsBenchmarkSection",
+                    "experimental"):
+        assert alias[retired] == ["interface_interactions", "theme_scene", None], retired
+    assert alias["shortcuts"] == ["interface_interactions", "shortcuts", "section"]
+    assert alias["interface_interactions"] == ["interface_interactions", "shortcuts", "category"]  # dernière entrée ouverte
     assert tour["ordinary"] == {"diag": False, "preview": True, "calibrate": True, "wipe": True, "bench": False,
                                 "record": False, "assets": False, "footer": False}
     assert tour["lab"] == {"diag": True, "preview": False, "bench": True, "record": True, "category": "advanced_diagnostics"}

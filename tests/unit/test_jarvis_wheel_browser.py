@@ -55,12 +55,18 @@ SUB = r"""(()=>{const host=document.getElementById('toolWheel');const ae=documen
     facts:window.JarvisRuntimeWheel?window.JarvisRuntimeWheel.facts().read:null,
     reads:performance.getEntriesByType('resource').length}})()"""
 OVERLAY = r"""(()=>({open:document.getElementById('overlay').classList.contains('open'),
-  tab:(document.querySelector('#modalTabs button.active')||{}).dataset?.tab||null,
+  tab:document.querySelectorAll('#modalTabs [data-tab]').length||null,
   section:(document.querySelector('#modalTabs button.active')||{}).dataset?.section||null,
   category:(document.querySelector('#settingsCategories [aria-selected=true]')||{}).dataset?.category||null,
   panel:document.getElementById('panel').classList.contains('open')?document.getElementById('panelTitle').textContent:null,
   wheel:window.JarvisToolWheel.isOpen()}))()"""
 STATUS_READS = "window.__statusReads||0"
+#: Ce que la roue demande aux Réglages (`openSettingsTab`, lu par la roue sur `window` à chaque appel) et les cibles
+#: inconnues dites par la page (`console.warn('settings_target_unknown', …)`).
+SPY_SETTINGS = ("(()=>{const spy=window.__settingsSpy={targets:[],unknown:[]};const open=window.openSettingsTab;"
+                "window.openSettingsTab=function(t){spy.targets.push(t);return open.apply(this,arguments)};"
+                "const warn=console.warn;console.warn=function(c,x){if(c==='settings_target_unknown')spy.unknown.push(x);"
+                "return warn.apply(this,arguments)};return 1})()")
 #: Compte les lectures de `/api/status` (le double est installé avant ; on l'enveloppe).
 COUNT = ("(()=>{const f=window.fetch;window.__statusReads=0;window.fetch=(u,i)=>{if(String(u)==='/api/status')"
          "window.__statusReads+=1;return f(u,i)};return 1})()")
@@ -170,8 +176,9 @@ def test_the_two_jarvis_routes_and_every_settings_row_open_existing_surfaces(tmp
             *_open("jarvis"), ["click", "subagents", "#toolWheel .tw-item[data-tw-item=subagents]", 900],
             ["eval", "agents", OVERLAY, 50]]},
         {"width": 1280, "height": 720, "seed": ONLINE, "actions": [
-            *_open("jarvis"), ["click", "voiceSettings", "#toolWheel .tw-item[data-tw-item=voice_settings]", 900],
-            ["eval", "voice", OVERLAY, 50]]},
+            *_open("jarvis"), ["eval", "spy", SPY_SETTINGS, 0],
+            ["click", "voiceSettings", "#toolWheel .tw-item[data-tw-item=voice_settings]", 900],
+            ["eval", "voice", OVERLAY, 50], ["eval", "opened", "window.__settingsSpy", 0]]},
         {"width": 1280, "height": 720, "seed": ONLINE, "actions": [
             *_open("settings"), ["eval", "sub", SUB, 50], *_shot("settings-submenu-1280x720"),
             ["click", "shortcuts", "#toolWheel .tw-item[data-tw-item='tab:interface_interactions']", 900],
@@ -181,6 +188,8 @@ def test_the_two_jarvis_routes_and_every_settings_row_open_existing_surfaces(tmp
     voice = out[1]["results"]["voice"]
     assert voice["open"] is True and voice["section"] == "conversation" and voice["wheel"] is False
     assert voice["category"] == "voice_audio"  # « Réglages de la voix » atterrit sur Voix & audio (section Conversation, Slice 03)
+    # Slice 09 : la ligne passe l'ID de catégorie (`voice_audio`), plus l'ancien ID d'onglet `'voice'` ; rien d'inconnu.
+    assert out[1]["results"]["opened"] == {"targets": ["voice_audio"], "unknown": []}
     sub = out[2]["results"]["sub"]
     assert sub["head"] == "Paramètres"
     ids = [i["id"] for i in sub["items"]]

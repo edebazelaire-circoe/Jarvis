@@ -7,6 +7,14 @@ dans `docs/ARCHITECTURE.md`, « Two subsystems, one word ». Les identifiants
 (`barehands_test_mode`, `/api/barehands`, `JarvisBarehands`) ne la suivent pas
 et ne le peuvent pas : la règle porte sur la prose.
 
+> **Note de remplacement (jarvis-settings-ui-reorganization, Slices 06 à 09).** L'onglet Expérimental des Réglages
+> n'existe plus. Les préférences ordinaires de Bare Hands sont dans **Réglages › Interface & interactions › Bare Hands**
+> (section `bare_hands`), le test, l'enregistrement et la lecture de diagnostic à l'écran dans **Avancé & diagnostic ›
+> Labs & outils de test › Bare Hands · essais** (`barehands_lab`), l'état en lecture seule dans **Avancé & diagnostic ›
+> Diagnostics**, la porte de test de la scène dans **Avancé & diagnostic › Scène constellation** (`scene_gate`).
+> L'identifiant `experimental` n'est plus un alias depuis la Slice 09 (`docs/legacy/settings-tab-aliases.md`). Les
+> mentions de « l'onglet Expérimental » ci-dessous sont historiques : elles désignent ces entrées.
+
 Contrat de référence des interfaces Bare Hands V1. Implémentation canonique :
 `jarvis/runtime/control_center_barehands_contracts.js`
 (`window.JarvisBarehandsContracts`), logique pure, sans DOM ni réseau ni

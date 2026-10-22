@@ -159,12 +159,12 @@ UNSPECIFIED_REFUSAL_REASON = "precondition"
 LEGACY_REFUSAL_MESSAGE = (
     "PRESENTATION demande une session vocale continue : sur « un tour par appui » "
     "(voice_arch=legacy) aucun tour adressé ne peut s'ouvrir. Choisissez une "
-    "architecture continue dans l'onglet Mode vocal, puis relancez Voice."
+    "architecture continue dans Réglages › Avancé & diagnostic › Architecture & compatibilité, puis relancez Voice."
 )
 DUPLEX_REFUSAL_MESSAGE = (
     "PRESENTATION n'est pas disponible en Duplex (GPT-Live) : ce modèle répond de "
     "lui-même à tout ce qu'il entend, et répondrait à la salle. Choisissez SIMPLE, "
-    "FRONT_BRAIN ou continuous_brain dans l'onglet Mode vocal, puis relancez Voice."
+    "FRONT_BRAIN ou continuous_brain dans Réglages › Avancé & diagnostic › Architecture & compatibilité, puis relancez Voice."
 )
 
 

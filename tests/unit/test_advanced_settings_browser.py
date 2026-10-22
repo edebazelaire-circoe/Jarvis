@@ -6,9 +6,9 @@ le harnais CDP de ce fichier-là envoie de vraies frappes et de vrais clics. Ce 
 
 - la catégorie montre ses cinq groupes déclarés, dans l'ordre, chaque entrée sous son groupe, et l'avis d'outils
   d'opérateur ; chaque section d'Avancé de la page vivante porte un groupe déclaré ; plus aucun onglet de premier niveau
-  (`TABS` vide, aucune entrée `data-tab` dans aucune catégorie) ;
+  (plus de `TABS` depuis la Slice 09, aucune entrée `data-tab` dans aucune catégorie) ;
 - chaque section d'Avancé se monte sans erreur ; les diagnostics Voix, Mot d'éveil, Mémoire et Bare Hands sont
-  atteignables ; les anciens identifiants `prompts`, `experimental` et `routing` mènent à leur section ;
+  atteignables ; `prompts` (ID de la section) y mène, `experimental` et `routing` ne sont plus des alias (Slice 09) ;
 - Prompts : enregistrer puis revenir au défaut d'une couche envoient les charges d'avant (route `/api/prompts/<id>`,
   `edit` avec les deux révisions, `reset` seul), relues par le serveur ; le focus reste sur la couche ;
 - Scène constellation (porte de test) : la case envoie `{scene:{enabled}}` et l'écrit ; le redémarrage du brain
@@ -54,7 +54,7 @@ TOUR = """(async()=>{const pause=ms=>new Promise(r=>setTimeout(r,ms)),q=s=>docum
     notice:(q('#settingsCategoryNotice')||{}).textContent||'',
     live:R.page.sections('advanced_diagnostics').map(s=>[s.id,s.group]),declared:R.groups('advanced_diagnostics').map(g=>g.id),
     owned:[...document.querySelectorAll('#modalTabs > *')].every(e=>e.getAttribute('role')==='none'),
-    tabs:TABS.length,dataTabs:0,mounted:{},failed:[]};
+    tabs:typeof TABS,dataTabs:0,mounted:{},failed:[]};
   for(const c of R.CATEGORY_IDS){q(`#settingsCategories [data-category=${c}]`).click();await pause(120);
     out.dataTabs+=document.querySelectorAll('#modalTabs [data-tab]').length;
     if(c!=='advanced_diagnostics'&&q('#settingsCategoryNotice'))out.failed.push('notice:'+c)}
@@ -63,10 +63,10 @@ TOUR = """(async()=>{const pause=ms=>new Promise(r=>setTimeout(r,ms)),q=s=>docum
     if(/settings_section_mount_failed/.test(q('#modalContent').textContent))out.failed.push(id)}
   selectTab('diagnostics');await pause(1500);
   out.parts=['voice','wake_word','memory','barehands'].map(p=>[p,!!q('#diagnostic_'+p)&&!!q(`[data-diagnostic-part="${p}"]`)&&q(`[data-diagnostic-part="${p}"]`).textContent.trim().length>0]);
-  out.alias={};for(const id of ['prompts','experimental','routing','advanced_diagnostics']){selectTab('voice_audio');await pause(100);selectTab(id);await pause(250);
-    out.alias[id]=[SET.category,SET.tab,SET.section]}
-  out.sources=['prompts','experimental','routing'].map(t=>R.page.resolve(t).source);
-  selectTab('experimental');await pause(400);out.scene=!!q('#modalContent #sceneSettings [data-scene-toggle]');
+  out.alias={};for(const id of ['prompts','runtime_cli','advanced_diagnostics']){selectTab('voice_audio');await pause(100);selectTab(id);await pause(250);
+    out.alias[id]=[SET.category,SET.section]}
+  out.sources=['prompts','experimental','routing'].map(t=>(R.page.resolve(t)||{source:null}).source);
+  selectTab('scene_gate');await pause(400);out.scene=!!q('#modalContent #sceneSettings [data-scene-toggle]');
   return out})()""" % json.dumps(ENTRIES)
 
 
@@ -82,18 +82,17 @@ async def test_five_declared_groups_notice_every_section_and_diagnostic_reachabl
     # Page vivante : chaque section d'Avancé porte un groupe déclaré ; même ordre que la liste.
     assert tour["declared"] == [g for g, _ in GROUPS]
     assert tour["live"] == [list(e) for e in ENTRIES]
-    assert tour["tabs"] == 0 and tour["dataTabs"] == 0  # plus aucun onglet de premier niveau
+    assert tour["tabs"] == "undefined" and tour["dataTabs"] == 0  # plus aucun onglet de premier niveau (Slice 09)
     assert tour["failed"] == []
     assert tour["mounted"] == {i: ["advanced_diagnostics", i, True] for i, _ in ENTRIES}
     assert tour["parts"] == [["voice", True], ["wake_word", True], ["memory", True], ["barehands", True]]
     assert tour["alias"] == {
-        "prompts": ["advanced_diagnostics", None, "prompts"],
-        "experimental": ["advanced_diagnostics", None, "scene_gate"],
-        "routing": ["advanced_diagnostics", None, "runtime_cli"],
-        "advanced_diagnostics": ["advanced_diagnostics", None, "runtime_cli"],  # dernière entrée ouverte (`routing`)
+        "prompts": ["advanced_diagnostics", "prompts"],
+        "runtime_cli": ["advanced_diagnostics", "runtime_cli"],
+        "advanced_diagnostics": ["advanced_diagnostics", "runtime_cli"],  # dernière entrée ouverte
     }
-    # `prompts` est l'ID de la section ; `experimental` et `routing` sont des alias déclarés par leur section.
-    assert tour["sources"] == ["section", "section_alias", "section_alias"]
+    # `prompts` est l'ID de la section ; `experimental` et `routing` ne résolvent plus rien (alias retirés, Slice 09).
+    assert tour["sources"] == ["section", None, None]
     assert tour["scene"] is True
     assert out["console"] == [], out["console"]
 
@@ -152,7 +151,7 @@ STUB = """(()=>{window.__restart=[];const real=window.fetch;
 
 async def test_scene_gate_toggle_and_brain_restart_are_unchanged(served):
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
-        eval_(STUB), *OPEN, eval_("selectTab('experimental');true"),
+        eval_(STUB), *OPEN, eval_("selectTab('scene_gate');true"),
         wait("!!document.querySelector('#modalContent [data-scene-toggle]')"),
         eval_("[document.querySelector('[data-scene-toggle]').checked,SET.section]", "before"),
         eval_("document.querySelector('[data-scene-toggle]').focus();true"), key(" "),

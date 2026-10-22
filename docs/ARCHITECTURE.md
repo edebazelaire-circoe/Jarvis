@@ -2658,7 +2658,7 @@ Apparence tab was theme-only and the switch also changes the brain). Since
 `jarvis-settings-ui-reorganization` Slice 06 Bare Hands lives in Settings › Interface &
 interactions › Bare Hands and Advanced › Bare Hands · essais
 (`docs/settings/interface-interactions.md`); since Slice 08 the gate is the registered section
-`scene_gate` (group `labs`, alias `experimental`) of Settings › Advanced & diagnostics, mounted by
+`scene_gate` (group `labs`; the old `experimental` ID is no longer an alias since Slice 09) of Settings › Advanced & diagnostics, mounted by
 the shell into its own host (`registerSettingsSection`; no `renderTab` wrapper, no tab). Pure part `JarvisSceneSettings.describe(scene, status)` (node
 tests `tests/unit/test_scene_settings_ui.py`): the checkbox reflects
 `scene.enabled`, is read-only with an explanation when `source = env`, and an

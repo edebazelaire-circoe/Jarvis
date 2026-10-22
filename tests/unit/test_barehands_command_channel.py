@@ -465,7 +465,11 @@ async def test_the_gate_refuses_before_waiting_rather_than_after(tmp_path):
     with pytest.raises(BarehandsCommandError) as caught:
         await broker.request("activate")
     assert caught.value.code == vocab.COMMAND_DISABLED and caught.value.status == 409
-    assert "Expérimental" in str(caught.value)
+    # Slice 09 de jarvis-settings-ui-reorganization : l'onglet Expérimental n'existe plus ; le cerveau lit l'outil et
+    # l'emplacement réel de l'interrupteur.
+    assert "Expérimental" not in str(caught.value)
+    assert "settings_set(barehands.enabled, true)" in str(caught.value)
+    assert "Réglages › Interface & interactions › Bare Hands" in str(caught.value)
     assert asyncio.get_running_loop().time() - started < 1.0, "refus immédiat, pas après l'échéance"
     # Un refus de transport n'est pas un refus de la page : trois causes
     # distinctes portaient le même `kind`, si bien que filtrer la trace dessus

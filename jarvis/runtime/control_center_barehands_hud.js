@@ -109,7 +109,7 @@
        Bare Hands (couture de cycle de vie). */
     paletteSeam:'palette',
     /* L'attribut que chaque pastille du sélecteur porte, sur le modèle de
-       `data-barehands-tool` de l'onglet Expérimental. */
+       `data-barehands-tool` de l'ancien onglet Expérimental. */
     modeAttribute:'data-barehands-mode',
     toneAttribute:'data-bh-tone',
     /* Le nom sous lequel ce module s'inscrit à la couture. Il est lisible par
@@ -351,7 +351,7 @@
   /* ============================================ l'aide, dérivée du contrat
 
      Décision 15 : l'aide devient une carte visuelle aérée, et non le bloc de
-     texte dense qui vivait dans l'onglet Expérimental.
+     texte dense qui vivait dans l'ancien onglet Expérimental.
 
      **La contrainte dure est ailleurs que dans la mise en page.** Une aide qui
      énumère des gestes devient, le jour où elle se trompe, un *second* contrat
@@ -2034,13 +2034,13 @@ body:has(#toolWheel:not([hidden])) #${DOM.paletteId}{display:none}`;
      **Ce que ce module ne fait pas** : il n'enregistre rien, il ne décide de
      rien de ce qui est retenu, et il ne touche à aucune rétention. Il appelle
      `record.start()`, `record.stop()` et `record.state()` — les mêmes portes
-     que les deux boutons de l'onglet Expérimental, qui restent en place. Ce
+     que les deux boutons d'Avancé › Labs › Bare Hands (ancien onglet Expérimental), qui restent en place. Ce
      qui change est la découvrabilité, et strictement elle. */
 
   const CARD=Object.freeze({HELP:'help',DIAGNOSTICS:'diagnostics'});
 
   /* La phrase de confidentialité, reprise **mot pour mot** de la surface
-     d'enregistrement de l'onglet Expérimental. Elle n'est pas réécrite : c'est
+     d'enregistrement d'Avancé › Labs (ancien onglet Expérimental). Elle n'est pas réécrite : c'est
      la promesse faite à l'utilisateur, et deux formulations de la même
      promesse finissent par ne plus promettre la même chose. */
   const RECORD_PRIVACY='Un enregistrement retient des <strong>mesures dérivées</strong> — '

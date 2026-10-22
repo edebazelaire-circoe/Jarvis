@@ -204,7 +204,8 @@ porte la partie **Memoire** de la section `diagnostics` (`registerSettingsDiagno
   le lien « Voir le diagnostic mémoire » (ouvre Avance › Diagnostics, focus sur la partie Memoire). Le
   detail (chaque etage, raison et code, comment reparer, combinaisons coupees a la lecture, valeurs imposees
   par l environnement) vit dans la partie Memoire des diagnostics, en lecture seule.
-- **Alias.** `memory` (ancien onglet ; Memory Center › Reglages) ouvre `recall`
+- **Alias.** `memory` (ancien onglet ; Memory Center › Reglages) ouvre `recall` : seul alias encore servi depuis la
+  Slice 09, garde par cet appelant
   ([`../legacy/settings-tab-aliases.md`](../legacy/settings-tab-aliases.md)).
 
 | Champ | Section |

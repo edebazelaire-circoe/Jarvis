@@ -318,12 +318,14 @@ def test_leaving_a_memory_section_destroys_its_view_and_ignores_the_late_respons
 
 def test_the_page_registers_memory_sections_and_has_no_memory_tab():
     html = HTML.read_text(encoding="utf-8")
-    tabs = html[html.index("\nconst TABS=[") : html.index("\nconst SET=")]
-    assert "id:'memory'" not in tabs and "SET.tab==='memory'" not in html
+    # Slice 09 : plus aucun onglet de premier niveau ; `memory` est l'alias explicite de Rappel (registre).
+    assert "\nconst TABS=" not in html and "SET.tab" not in html
     block = html[html.index("const MEMORY_SECTIONS=[") : html.index("function memorySettingsStore()")]
     for section in (*SURFACE_SECTIONS, "memory_center"):
         assert f"{{id:'{section}',category:'memory_knowledge'" in block, section
-    assert "aliases:['memory']" in block
+    assert "aliases" not in block
+    registry = (HTML.parent / "control_center_settings_registry.js").read_text(encoding="utf-8")
+    assert "memory:Object.freeze({category:'memory_knowledge',section:'recall'})" in registry
     assert "if(typeof window!=='undefined'&&typeof installMemorySettingsSections==='function')installMemorySettingsSections();" in html
     assert "registerSettingsDiagnostic(MEMORY_DIAGNOSTIC);" in html
 

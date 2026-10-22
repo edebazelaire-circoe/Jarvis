@@ -1,6 +1,6 @@
 {
-  "legacy_programmatic_tab": "routing",
-  "canonical_programmatic_tab": "cli",
+  "programmatic_ids_superseded_by": "docs/legacy/settings-tab-aliases.md (jarvis-settings-ui-reorganization Slice 09): the 'routing' -> 'cli' redirect and the old tab IDs below are retired; only the explicit LEGACY_TAB_ALIASES table remains",
+  "retired_programmatic_ids": ["routing", "cli", "voice", "keys", "appearance"],
   "tabs": [],
   "agent_section_order": [
     "Agent principal",

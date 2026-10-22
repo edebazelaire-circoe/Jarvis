@@ -33,8 +33,9 @@
   enregistrement qui l'exige, ou quand Voice applique encore d'anciens réglages, la notice « Redémarrez Voice pour
   appliquer ».
 - `wake_word` est `save: 'self'` : la route `/api/wake-word` est inchangée (cinq champs ensemble, dernier écrit
-  gagne, refus traduits, saisie gardée). La saisie survit à un changement de section. L'ancien ID `wakeword` y mène.
-- L'alias `voice` (ligne « Réglages de la voix » de la roue Jarvis) ouvre `voice_audio` › `conversation`.
+  gagne, refus traduits, saisie gardée). La saisie survit à un changement de section.
+- La ligne « Réglages de la voix » de la roue Jarvis ouvre la catégorie `voice_audio` (Conversation à la première
+  ouverture). Les anciens ID `voice` et `wakeword` ne sont plus des alias depuis la Slice 09 (aucun appelant).
 
 ## 2. Ce qui part dans Avancé & diagnostic
 

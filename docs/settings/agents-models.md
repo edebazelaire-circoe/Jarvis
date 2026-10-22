@@ -37,7 +37,7 @@
   voie canonique des prompts (`subagent_role.<id>`, `base_revision` + `expected_effective_revision`, conflit
   `prompt_override_concurrent` / `prompt_override_stale` : texte gardé, révisions relues). Brouillons dans
   `SET.subagentDrafts`, d'une section à l'autre.
-- L'ancien ID `cli` ouvre Agent principal ; `subagents` est l'ID même de la section des rôles.
+- `subagents` est l'ID même de la section des rôles ; l'ancien ID `cli` n'est plus un alias depuis la Slice 09.
 
 ## 2. Ce qui part dans Avancé & diagnostic
 
@@ -48,7 +48,7 @@
 
 - La configuration avancée n'est demandée au serveur (`/api/routing/candidates`) qu'à l'ouverture de sa divulgation ;
   elle reste ouverte quand la section est remontée (enregistrement), se referme quand on quitte Runtime & CLI.
-- L'ancien ID `routing` ouvre Runtime & CLI.
+- L'ancien ID `routing` (et sa redirection historique vers `cli`) n'est plus un alias depuis la Slice 09.
 - **Pourquoi la promotion va dans Avancé.** [`../subagent-roles.md`](../subagent-roles.md) § 1bis et § 8 : « capacités et
   méthode par défaut suivent le code » ; la seule écriture d'un rôle est ses instructions, la promotion est une « autre
   écriture », « explicite » ; [`../work-methods.md`](../work-methods.md) : « la promotion est un acte explicite, jamais un

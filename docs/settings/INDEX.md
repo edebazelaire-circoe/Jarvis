@@ -1,7 +1,7 @@
 # Agent / CLI settings backend
 
 > **Settings navigation (canonical):** the six top-level categories, the section
-> registration contract and the legacy tab aliases live in
+> registration contract and the remaining legacy tab alias (`memory`, Slice 09) live in
 > [`navigation-registry.md`](navigation-registry.md)
 > (`jarvis/runtime/control_center_settings_registry.js`,
 > `window.JarvisSettingsRegistry`). New Settings features register a section
@@ -19,12 +19,12 @@
 | `jarvis/runtime/memory_settings.py` | Memory settings (`memory` key): tolerant read, strict whole-request write, server-described schema with one settings destination per field (`surface`), `has_secret` only; see [`memory.md`](memory.md) | `read_memory_settings`, `validate_memory_settings_write`, `describe_memory_settings`, `read_loadout_policy` (`memory.loadouts`, Slice 09), `SURFACE_SECTIONS` |
 | `jarvis/runtime/control_center_memory_settings.js` + `control_center.html` (`MEMORY_SECTIONS`, `MEMORY_DIAGNOSTIC`) | Mémoire & connaissances: Rappel, Recherche sémantique, Consolidation, Sources de connaissances (Tencent sidecar, read-only per-agent loadouts), Centre mémoire; the Memory part of Advanced › Diagnostics; fields placed by their server `surface`, own save button, unchanged memory patch, draft shared by the memory sections for one opening; see [`memory.md`](memory.md) | `JarvisMemorySettings.create(host, {section\|mode, store})`, `createStore`, `memorySectionSpec`, `installMemorySettingsSections` |
 | `jarvis/runtime/control_center_subagents_settings.js` | Sub-agent settings, two views: `roles` (section `agents_models` › `subagents`: role catalogue, role sheet, read-only Work Methods, order of the appended brief, running instances; writes role instructions through `POST /api/prompts/subagent_role.<id>`) and `work_methods` (section `advanced_diagnostics` › `work_methods`: observed approaches and explicit promotion); see [`../subagent-roles.md`](../subagent-roles.md) § 8 | `JarvisSubagentSettings.create(host, {view})`, `show` |
-| `jarvis/runtime/control_center_settings_registry.js` | Canonical Settings navigation: six frozen categories, section registration with deterministic refusals, legacy tab aliases, the legacy-tab adapter and the shell navigation model; see [`navigation-registry.md`](navigation-registry.md) | `JarvisSettingsRegistry.page.register`, `resolve`, `legacyTabFor`, `shellNavigation`, `shellTarget` |
+| `jarvis/runtime/control_center_settings_registry.js` | Canonical Settings navigation: six frozen categories, section registration with deterministic refusals, the explicit legacy alias table (`LEGACY_TAB_ALIASES`; the legacy-tab adapter is removed since Slice 09) and the shell navigation model; see [`navigation-registry.md`](navigation-registry.md) | `JarvisSettingsRegistry.page.register`, `resolve`, `shellNavigation`, `shellTarget`, `DEFAULT_CATEGORY` |
 | `jarvis/runtime/control_center.html` (Settings shell) | Full-screen six-category Settings shell: category rail, category entries, focus/keyboard/Escape, section mount and cleanup, footer save policy; see [`settings-shell.md`](settings-shell.md) | `registerSettingsSection`, `selectTab`, `openSettingsTab`, `settingsTabs`, `mountRegisteredSection` |
 | `jarvis/runtime/voice_settings_schema.py` (`surface`) + `control_center.html` (`VOICE_SECTIONS`, section `diagnostics`) + `control_center_wake_word.js` | Voix & audio : cinq sections orientées tâche, Architecture & compatibilité et Diagnostics sous Avancé, une destination par option décrite par le serveur; see [`voice-audio.md`](voice-audio.md) | `voiceSectionSpec`, `registerSettingsDiagnostic`, `voiceOptions(section)` |
 | `jarvis/runtime/control_center.html` (`AGENT_SECTIONS`, `SUBAGENT_SECTIONS`) | Agents & modèles: four task sections (Agent principal, Comportement, Modèles des sous-agents, Rôles des sous-agents), Runtime & CLI and Work Methods apprises under Advanced; one destination per Agent/CLI setting, unchanged save payload; see [`agents-models.md`](agents-models.md) | `agentSectionSpec`, `subagentSectionSpec`, `installAgentSettingsSections` |
 | `control_center_work.js` (`THEME_SCENE_SECTION`), `control_center_scene_page.js` (`JarvisSceneViewSettings`), `control_center.html` (`SHORTCUTS_SECTION`), `control_center_barehands.js` (`installSettingsSections`) | Interface & interactions: Thème & scène visuelle (theme + scene view prefs, browser `localStorage`, immediate), Raccourcis (canonical and only editor of every registered shortcut, `wake_toggle` included), Bare Hands ordinary preferences; Advanced › Bare Hands · essais (`barehands_lab`) and the Bare Hands part of Diagnostics; see [`interface-interactions.md`](interface-interactions.md) | `registerSettingsSection`, `startCapture`, `JarvisBarehands.showSettings`, `openSettingsLink` |
-| `jarvis/runtime/control_center_connections_settings.js` + `control_center.html` (`CONNECTIONS_SECTION`) | Connexions: section Fournisseurs (`providers`, alias `keys`), one card per provider served by the credential store (identity, configured state, active key, add/replace/delete, environment fallback by variable name, server `hint` as usage note); unchanged credential routes and payloads, never a value; see [`connections.md`](connections.md) | `JarvisConnectionsSettings.create(host, {request, state, isCurrent, onState})`, `html`, `CONNECTIONS_SECTION` |
+| `jarvis/runtime/control_center_connections_settings.js` + `control_center.html` (`CONNECTIONS_SECTION`) | Connexions: section Fournisseurs (`providers`; the old `keys` ID is retired since Slice 09), one card per provider served by the credential store (identity, configured state, active key, add/replace/delete, environment fallback by variable name, server `hint` as usage note); unchanged credential routes and payloads, never a value; see [`connections.md`](connections.md) | `JarvisConnectionsSettings.create(host, {request, state, isCurrent, onState})`, `html`, `CONNECTIONS_SECTION` |
 | `control_center_settings_registry.js` (`CATEGORY_GROUPS`) + `control_center.html` (`PROMPTS_SECTION`) + `control_center_scene_settings.js` (`scene_gate`) | Avancé & diagnostic : cinq groupes déclarés, avis d'outils d'opérateur, section Prompts (atelier, routes et charges inchangées) et section Scène constellation (porte de test + redémarrage du brain) ; voir § « Avancé & diagnostic » ci-dessous | `R.groups`, `CATEGORY_GROUPS`, `PROMPTS_SECTION`, `promptWorkbenchHtml`, `JarvisSceneSettings` |
 | `jarvis/runtime/control_center_settings_ui.js` | Pure Settings visual primitives (intro, section, field, badge, notice, advanced disclosure, action row); see [`settings-shell.md`](settings-shell.md) § 5 | `JarvisSettingsUI.section`, `field`, `notice` |
 | `jarvis/runtime/control_center.py` | `/api/settings` projection/save, alias conflict rejection, active-agent refresh | `_settings_payload`, `save_settings`, `_apply_cli`, `agent_ask` |
@@ -41,16 +41,22 @@ groupe (monospace : le style technique est réservé à cette catégorie, avec l
 | Groupe | Ce qui y va | Sections (ordre) |
 | --- | --- | --- |
 | Architecture & compatibilité (`architecture_compat`) | architecture vocale, piles et modes historiques, invariants (délégation, orchestration du cerveau), réglage fin VAD/tampon/vérificateur | `architecture_compat` ([`voice-audio.md`](voice-audio.md)) |
-| Prompts & instructions (`prompts`) | atelier des prompts : chaque couche contrôlée par JARVIS (enregistrer / revenir au défaut, `POST /api/prompts/<id>`, charges `edit` et `reset` inchangées), prompt effectif par canal ; les instructions des rôles de sous-agent restent dans Agents & modèles › Rôles des sous-agents (aucune couche `subagent_role.*` dans l'atelier) | `prompts` (alias = ancien ID d'onglet) |
-| Runtime & CLI (`runtime_cli`) | commande et chemin du CLI, re-détection, permission, profils et ordre des candidats, source des listes | `runtime_cli` (alias `routing`, [`agents-models.md`](agents-models.md)) |
+| Prompts & instructions (`prompts`) | atelier des prompts : chaque couche contrôlée par JARVIS (enregistrer / revenir au défaut, `POST /api/prompts/<id>`, charges `edit` et `reset` inchangées), prompt effectif par canal ; les instructions des rôles de sous-agent restent dans Agents & modèles › Rôles des sous-agents (aucune couche `subagent_role.*` dans l'atelier) | `prompts` (ID de section = ancien ID d'onglet) |
+| Runtime & CLI (`runtime_cli`) | commande et chemin du CLI, re-détection, permission, profils et ordre des candidats, source des listes | `runtime_cli` ([`agents-models.md`](agents-models.md)) |
 | Diagnostics (`diagnostics`) | état constaté, en lecture seule, fait de parties (`registerSettingsDiagnostic`) : Voix, Mot d'éveil, Mémoire, Bare Hands | `diagnostics` |
-| Labs & outils de test (`labs`) | porte de test de la scène et redémarrage du brain, promotion des Work Methods, essais Bare Hands (lecture à l'écran, test, enregistrement), futurs outils expérimentaux qui ne sont pas des préférences | `scene_gate` (alias `experimental`), `work_methods`, `barehands_lab` ([`interface-interactions.md`](interface-interactions.md)) |
+| Labs & outils de test (`labs`) | porte de test de la scène et redémarrage du brain, promotion des Work Methods, essais Bare Hands (lecture à l'écran, test, enregistrement), futurs outils expérimentaux qui ne sont pas des préférences | `scene_gate`, `work_methods`, `barehands_lab` ([`interface-interactions.md`](interface-interactions.md)) |
 
 Aucune de ces sections ne double un contrôle éditable d'une autre catégorie : la porte `scene.enabled` n'existe
 qu'ici (Thème & scène visuelle ne règle que l'apparence locale de la scène), les champs Voix et Agent/CLI ont une
 seule destination servie ou figée par test, la promotion des Work Methods n'est offerte qu'ici. Plus aucun onglet de
-premier niveau (`TABS` vide) ; les anciens ID `prompts` et `experimental` ouvrent leurs sections
-([`../legacy/settings-tab-aliases.md`](../legacy/settings-tab-aliases.md)).
+premier niveau : le système d'onglets est retiré depuis la Slice 09 ; `prompts` est l'ID de sa section, `experimental`
+et `routing` ne sont plus des alias ([`../legacy/settings-tab-aliases.md`](../legacy/settings-tab-aliases.md)).
+
+> **Note de remplacement (Slice 09).** Les consommateurs de
+> `tasks/jarvis-settings-model-catalog-ux/docs/settings-ia-contract.json` (navigation à six onglets, redirection
+> programmatique `routing` → `cli` de la fixture `agent-cli-ui.json`) lisent désormais
+> [`navigation-registry.md`](navigation-registry.md) : six catégories, sections enregistrées, et la seule table
+> `LEGACY_TAB_ALIASES` (`memory` → `recall`). Les métadonnées d'options de ce contrat restent valides.
 Régression : `tests/unit/test_advanced_settings_browser.py` (vrai Chrome),
 `tests/unit/test_control_center_settings_registry_js.py`, `tests/unit/test_scene_settings_ui.py`,
 `tests/unit/test_control_center_prompts.py`.
@@ -99,7 +105,7 @@ its own local retryable error.
 The catalog controller is created by the Modèles des sous-agents section and
 destroyed by its `destroy` (section or category switch, modal close), so
 requests and delegated handlers cannot outlive their surface. The old IDs
-`cli` and `routing` open `main_agent` and `runtime_cli` (aliases).
+`cli` and `routing` are no longer aliases (retired in Slice 09): callers use `main_agent` and `runtime_cli`.
 
 Behavior is persisted only under `agent_behavior.response_verbosity` and
 `agent_behavior.politeness_formality`. Invalid stored values read as `inherit`

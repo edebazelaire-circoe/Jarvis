@@ -6,8 +6,8 @@
 [`settings-shell.md`](settings-shell.md) (montage, `destroy`, liens internes).
 
 La catégorie `interface_interactions` réunit ce qui règle l'écran et la main : le thème et la scène, toutes les
-touches, les préférences ordinaires de Bare Hands. Plus aucun onglet hérité ne la sert : `appearance` et `shortcuts`
-ne sont plus dans `TABS`, et aucun module n'ajoute d'onglet (`TABS.push`/`splice` : aucun appelant).
+touches, les préférences ordinaires de Bare Hands. Plus aucun onglet hérité ne la sert (système d'onglets retiré à la
+Slice 09) ; `shortcuts` est l'ID de sa section, `appearance` n'est plus un alias (aucun appelant).
 
 ## 1. Sections
 
@@ -25,8 +25,8 @@ Sous `advanced_diagnostics` (pour la Slice 08) :
 | partie `barehands` de `diagnostics` (order 40, `registerSettingsDiagnostic`) | Bare Hands | `control_center_barehands.js` | état des fichiers du modèle MediaPipe (pas relu / présent / absent + commande d'installation), dernière commande vocale reçue par la page |
 
 La porte de test de la scène et le redémarrage du cerveau (`control_center_scene_settings.js`) sont, depuis la
-Slice 08, la section `scene_gate` (Scène constellation) du groupe Labs & outils de test d'Avancé ; l'onglet
-`experimental` a disparu de `TABS`, son ID est l'alias de cette section ([`INDEX.md`](INDEX.md) § Avancé).
+Slice 08, la section `scene_gate` (Scène constellation) du groupe Labs & outils de test d'Avancé ; l'ancien ID
+`experimental` n'est plus un alias depuis la Slice 09 ([`INDEX.md`](INDEX.md) § Avancé).
 
 ## 2. Propriétaires des réglages (rien ne change de stockage)
 
@@ -56,8 +56,8 @@ reste le seul endroit. « Réinitialiser les réglages » reporte `enabled` tel 
 
 Le lien de Voix pose le focus sur l'éditeur `[data-shortcut="wake_toggle"]` (`openSettingsLink`,
 [`settings-shell.md`](settings-shell.md) § 3). `JarvisBarehands.showSettings(clé)` ouvre l'entrée qui porte la
-section demandée (`SECTION_ENTRY` du module, mêmes destinations que `LEGACY_ANCHORS` du registre : un test lie les
-deux) et la fait défiler en vue ; une entrée déjà ouverte n'est pas redessinée.
+section demandée (`SECTION_ENTRY` du module, seule table des ancres depuis que la Slice 09 a retiré `LEGACY_ANCHORS`
+du registre) et la fait défiler en vue ; une entrée déjà ouverte n'est pas redessinée.
 
 ## 5. Tests
 

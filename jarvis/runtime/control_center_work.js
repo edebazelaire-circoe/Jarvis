@@ -683,10 +683,10 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
   }
 
   /* `interface_interactions` › Thème & scène visuelle (jarvis-settings-ui-reorganization, Slice 06) : section
-     enregistrée au registre des Réglages, plus d'onglet injecté dans `TABS`. Le thème est rendu ici ; les réglages
+     enregistrée au registre des Réglages. Le thème est rendu ici ; les réglages
      d'affichage de la scène (`control_center_scene_page.js`, `window.JarvisSceneViewSettings`) s'ajoutent à la suite
-     et sont détruits avec la section. Ancien identifiant `appearance` : alias de la section. */
-  const THEME_SCENE_SECTION={id:'theme_scene',category:'interface_interactions',aliases:['appearance'],order:10,save:'self',
+     et sont détruits avec la section. */
+  const THEME_SCENE_SECTION={id:'theme_scene',category:'interface_interactions',order:10,save:'self',
     label:'Thème & scène visuelle',
     description:'Le thème et l’affichage de la scène s’appliquent immédiatement, dans ce navigateur seulement.',
     mount(host){

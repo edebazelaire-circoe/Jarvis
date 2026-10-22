@@ -83,11 +83,10 @@ def test_every_destination_is_served_by_the_page(metadata):
     assert "registerSettingsSection(DIAGNOSTICS_SECTION);" in page
     assert "registerSettingsSection(SHORTCUTS_SECTION);" in page
     registered |= set(re.findall(r"registerSettingsSection\(\{id:'([a-z_]+)'", WAKE.read_text(encoding="utf-8")))
-    tabs = set(re.findall(r"\{id:'(\w+)'", page[page.index("\nconst TABS=[") : page.index("\nconst SET=")]))
-    assert "shortcuts" not in tabs
+    assert "\nconst TABS=" not in page  # Slice 09 : plus aucun onglet de premier niveau
     for record in metadata:
         section = record["surface"]["section"]
-        assert section in registered or section in tabs, (record["id"], section)
+        assert section in registered, (record["id"], section)
         for shown in record["surface"].get("context", []):
             assert shown in registered, (record["id"], shown)
     assert {"conversation", "voice_output", "microphone_sound", "turns_interruptions", "wake_word",

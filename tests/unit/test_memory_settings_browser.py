@@ -41,7 +41,7 @@ TOUR = """(async()=>{const pause=ms=>new Promise(r=>setTimeout(r,ms)),q=s=>docum
       fields:[...document.querySelectorAll('#modalContent [data-mem]')].map(e=>e.dataset.mem),
       link:!!q('#modalContent [data-mem-diagnostics]'),center:!!q('#modalContent [data-mem-center]'),
       legs:!!q('#modalContent .mem-legs[aria-label]')}}
-  selectTab('memory');await pause(300);out.alias=[SET.category,SET.tab,SET.section];
+  selectTab('memory');await pause(300);out.alias=[SET.category,SET.section,window.JarvisSettingsRegistry.page.resolve('memory').source];
   const served=(await (await fetch('/api/settings')).json()).memory.schema.sections.flatMap(s=>s.fields.map(f=>[f.path,f.surface.section]));
   out.served=served;return out})()""" % json.dumps(SECTIONS)
 
@@ -77,7 +77,7 @@ async def test_sections_destinations_alias_and_links(served):
         assert sections[section]["category"] == "memory_knowledge" and not sections[section]["footer"], section
         assert sections[section]["link"] and not sections[section]["legs"], section
     assert sections["memory_center"]["center"] and sections["memory_center"]["fields"] == []
-    assert tour["alias"] == ["memory_knowledge", None, "recall"]
+    assert tour["alias"] == ["memory_knowledge", "recall", "alias"]  # le seul alias restant (Memory Center › Réglages)
     assert got(step, "diag") == ["advanced_diagnostics", "diagnostics", "diagnostic_memory"]
     assert got(step, "in_view") is True
     assert got(step, "center") == [False, True]

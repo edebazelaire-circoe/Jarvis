@@ -1,9 +1,42 @@
-# Réglages — alias des anciens onglets et onglets hérités montés dans le shell
+# Réglages — alias des anciens onglets
 
-**Introduit :** tâche `jarvis-settings-ui-reorganization`, Slice 01.
-**Contrat :** [`../settings/navigation-registry.md`](../settings/navigation-registry.md) § 3 et § 5.
+**Introduit :** tâche `jarvis-settings-ui-reorganization`, Slice 01. **État final :** Slice 09.
+**Contrat :** [`../settings/navigation-registry.md`](../settings/navigation-registry.md) § 3.
 
-## Ce qui est temporaire
+## Table finale (Slice 09)
+
+L'ancien système d'onglets de premier niveau n'existe plus (`TABS`, `SET.tab`, `bindTab`, `canonicalSettingsTab`,
+`legacyTabFor`, `navigationFromLegacyTabs`, `LEGACY_ANCHORS`, `#modalSub`, liens « encore dans » : retirés). La seule
+compatibilité restante est la table explicite `LEGACY_TAB_ALIASES` de
+`jarvis/runtime/control_center_settings_registry.js` ; aucune section ne déclare d'alias (le champ `aliases` de
+`register` est refusé).
+
+| Alias | Destination | Appelant du dépôt | Test |
+| --- | --- | --- | --- |
+| `memory` | `memory_knowledge` / `recall` | Memory Center › Réglages (`control_center_memory.js` : `root.selectTab('memory')`) | `test_every_remaining_alias_is_explicit_data_with_a_caller_and_its_declared_destination`, `test_memory_alias_opens_recall_and_every_memory_section` (node), `test_sections_destinations_alias_and_links` (vrai Chrome) |
+
+Inventaire de la Slice 09 (grep du code, des tests et des documents durables) :
+
+| Ancien ID | Avant la Slice 09 | Appelants trouvés | Décision |
+| --- | --- | --- | --- |
+| `voice` | alias de `conversation` | roue Jarvis, ligne « Réglages de la voix » (`openSettingsAt('voice')`) ; `docs/control-center-shell.md` | **retiré** : la roue ouvre `voice_audio` (`VOICE_SETTINGS_TARGET`), la doc suit |
+| `wakeword` | alias de `wake_word` | aucun (tests seulement) | **retiré** |
+| `prompts` | ID de la section `prompts` | tests | ce n'est pas un alias : l'ID de section reste |
+| `cli` | alias de `main_agent` | aucun (tests ; fixture historique `agent-cli-ui.json`) | **retiré** |
+| `routing` | alias de `runtime_cli` (ancienne redirection vers `cli`) | aucun (fixture historique) | **retiré** |
+| `keys` | alias de `providers` | aucun (`docs/settings/connections.md` le décrivait seulement) | **retiré** |
+| `shortcuts` | ID de la section `shortcuts` | tests | ce n'est pas un alias : l'ID de section reste |
+| `memory` | alias de `recall` | Memory Center › Réglages | **gardé** |
+| `subagents` | ID de la section `subagents` | tests | ce n'est pas un alias : l'ID de section reste |
+| `appearance` | alias de `theme_scene` | aucun | **retiré** |
+| `experimental` | alias de `scene_gate` | aucun (textes « onglet Expérimental » corrigés, voir LOG S09) | **retiré** |
+| ancres `barehandsSettings`, `barehandsCalibration`, `barehandsRecord`, `barehandsBenchmarkSection` | `LEGACY_ANCHORS` → `bare_hands` / `barehands_lab` | aucun appel de `openSettingsTab` ; `JarvisBarehands.showSettings` passe par `SECTION_ENTRY` | **retirées** du registre |
+
+Une cible inconnue (dont un ID retiré) se dit `settings_target_unknown` ; `openSettingsTab` ouvre alors la catégorie
+par défaut (`DEFAULT_CATEGORY`, Voix & audio). Retirer `memory` : quand le Memory Center ouvre `recall` (ou
+`memory_knowledge`) directement, supprimer la ligne de la table et l'entrée `ALIAS_CALLERS` du test.
+
+## Historique (Slices 01-08)
 
 - `LEGACY_TAB_ALIASES` et `LEGACY_ANCHORS` dans
   `jarvis/runtime/control_center_settings_registry.js` : les anciens ID d'onglets
@@ -61,12 +94,11 @@
   l'adaptateur. Testé : `test_page_routes_categories_sections_and_legacy_ids_into_the_six_category_shell` (registre),
   `test_five_declared_groups_notice_every_section_and_diagnostic_reachable` (vrai Chrome).
 
-## Conditions de retrait
+- Slice 09 : retrait de l'ancien système d'onglets et des alias sans appelant ; table finale ci-dessus.
 
-- Adaptateur, entrées `{kind:'tab'}` et liens `related` : quand toutes les catégories sont
-  servies par des sections enregistrées (fin des Slices 03-08) ; `settingsNavigation()` et
-  `shellNavigation` restent, sans onglets hérités.
-- Injecteurs : à la Slice 09, quand chaque module enregistre ses sections.
-- Alias : quand plus aucun appelant du dépôt (roue Jarvis `'voice'`, Bare Hands
-  `showSettings`, Memory Center `selectTab('memory')`) ni
-  document durable ne cite un ancien ID (Slice 09).
+## Conditions de retrait (remplies à la Slice 09)
+
+- Adaptateur, entrées `{kind:'tab'}` et liens `related` : retirés (toutes les catégories sont servies par des
+  sections enregistrées depuis la Slice 08).
+- Injecteurs : aucun (`test_no_legacy_tab_machinery_is_left_in_the_repository`).
+- Alias : seul `memory` reste, tant que le Memory Center l'appelle.

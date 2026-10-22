@@ -1098,7 +1098,7 @@ async def _run_voice_v2() -> int:
         switch_bus.mark_pending_restart_failed(code="replacement_configuration_invalid")
         raise RuntimeError(
             f"Architecture vocale inconnue ou configuration invalide dans les réglages du Control Center : « {arch_override} ». "
-            "Choisissez-la de nouveau dans l'onglet Mode vocal, puis relancez Voice."
+            "Choisissez-la de nouveau dans Réglages › Avancé & diagnostic › Architecture & compatibilité, puis relancez Voice."
         ) from exc
     arch_source = "settings" if arch_override else ("env" if os.getenv("JARVIS_VOICE_ARCH", "").strip() else "default")
     if not settings.token_file.exists():
@@ -1164,7 +1164,7 @@ async def _run_voice_v2() -> int:
             raise RuntimeError(
                 "La pile Gemini Live ne prend pas en charge l'architecture continuous_brain. "
                 "Choisissez la pile OpenAI Realtime dans les réglages, ou repassez l'architecture "
-                "sur « Un tour par appui » (onglet Mode vocal, ou JARVIS_VOICE_ARCH=legacy)."
+                "sur « Un tour par appui » (Réglages › Avancé & diagnostic › Architecture & compatibilité, ou JARVIS_VOICE_ARCH=legacy)."
             )
         if not realtime_model:
             raise RuntimeError(

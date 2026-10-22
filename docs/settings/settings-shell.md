@@ -9,7 +9,7 @@
   `mountRegisteredSection`, `registerSettingsSection`).
 - Navigation : `shellNavigation` / `shellTarget` de `control_center_settings_registry.js`.
 - Primitives : `jarvis/runtime/control_center_settings_ui.js` (`window.JarvisSettingsUI`), inséré par
-  `control_center.py` (`SETTINGS_UI_SCRIPT_FILE`/`_MARKER`) juste après le registre, avant `TABS`.
+  `control_center.py` (`SETTINGS_UI_SCRIPT_FILE`/`_MARKER`) juste après le registre, avant l'état des Réglages (`SET`).
 - Tests : `tests/unit/test_control_center_settings_shell_js.py` (node : primitives, cycle de vie d'une section,
   navigation lue au registre), `tests/unit/test_control_center_settings_registry_js.py` (routage des cibles),
   `tests/unit/test_settings_shell_browser.py` (vrai Chrome : clavier, focus, Échap, débordement à 100 % et 125 %,
@@ -31,33 +31,36 @@ validation. Aucune valeur de réglage n'est écrite par le shell.
    └─ main#settingsMain role=tabpanel
       ├─ .set-head : #settingsIntro (pictogramme + JarvisSettingsUI.intro + avis `notice` de la catégorie,
       │              p#settingsCategoryNotice) · #closeModal « Fermer · Échap »
-      ├─ nav#modalTabs role=tablist : entrées de la catégorie, button.set-item [data-section] ou [data-tab] ;
+      ├─ nav#modalTabs role=tablist : sections de la catégorie, button.set-item [data-section] ;
       │     catégorie à groupes (Avancé, Slice 08) : div.set-group role=none [data-settings-group] par groupe non
       │     vide, intitulé span.set-group-label (aria-hidden, monospace) qui décrit ses onglets (aria-describedby)
-      ├─ #settingsRelated : liens vers les onglets d'autres catégories qui en portent encore une partie
-      ├─ #modalSub : la phrase de l'onglet hérité (vide pour une section enregistrée)
       ├─ #modalContent.set-body.content : le contenu, SEUL à défiler
       └─ footer.set-foot : #modalStatus (role=status, aria-live=polite) · #modalSave « Enregistrer »
 ```
 
-Les identifiants historiques (`overlay`, `modalTitle`, `modalTabs`, `modalContent`, `modalSub`, `modalStatus`,
-`modalSave`, `closeModal`) sont conservés : les modules hérités et leurs tests les lisent.
+Les identifiants historiques (`overlay`, `modalTitle`, `modalTabs`, `modalContent`, `modalStatus`, `modalSave`,
+`closeModal`) sont conservés : les modules et leurs tests les lisent. `#settingsRelated` (liens « encore dans ») et
+`#modalSub` (phrase d'onglet hérité) sont retirés avec le système d'onglets (Slice 09). Les noms de fonctions
+`renderTabs` (navigation), `renderTab` (monte la section active) et `selectTab` (ouvre une cible) restent : ce sont
+les points d'appel du shell et des modules, ils ne concernent plus d'onglet.
 
 ## 2. Emplacement et routage
 
-L'emplacement est `SET.category`, puis **soit** `SET.section` (section enregistrée), **soit** `SET.tab` (onglet
-hérité monté comme section temporaire), jamais les deux. `SET.lastItem[catégorie]` retient la dernière entrée
-ouverte dans chaque catégorie pendant la session.
+L'emplacement est `SET.category`, puis `SET.section` (une section enregistrée de cette catégorie, ou rien si la
+catégorie est vide). `SET.lastItem[catégorie]` retient la dernière section ouverte dans chaque catégorie pendant la
+session. Il n'y a plus d'onglet hérité (`SET.tab` et `TABS` retirés à la Slice 09).
 
-- `selectTab(cible)` et `openSettingsTab(cible)` acceptent une catégorie, une section, un alias de section, un
-  ancien ID d'onglet, une ancre Bare Hands ou une section cible encore servie par un onglet
-  (`settingsTarget` → `shellTarget`). Une cible inconnue est signalée (`settings_target_unknown`) et ne change rien.
-- Catégorie seule : dernière entrée ouverte dans la catégorie, sinon la première.
-- Un onglet hérité encore présent s'ouvre lui-même ; il ne cède sa place qu'à la section qui le déclare en alias.
-- Un module hérité qui pose `SET.tab` directement reste servi : `ensureSettingsLocation` ramène la catégorie sur
-  l'onglet posé (Bare Hands ne le fait plus depuis la Slice 06 : il passe par `openSettingsTab`).
+- `selectTab(cible)` et `openSettingsTab(cible)` acceptent une catégorie, une section ou un alias hérité de la table
+  `LEGACY_TAB_ALIASES` du registre (`settingsTarget` → `shellTarget`) ;
+  [`../legacy/settings-tab-aliases.md`](../legacy/settings-tab-aliases.md) dit lesquels restent.
+- Cible inconnue (y compris un ancien ID retiré) : toujours signalée (`console.warn('settings_target_unknown',
+  {target})`). `openSettingsTab` ouvre alors le shell sur sa catégorie par défaut (`DEFAULT_CATEGORY` du registre,
+  Voix & audio ; si les réglages sont déjà ouverts, l'emplacement y passe) ; `selectTab` et les liens internes
+  (`openSettingsLink`) ne changent rien.
+- Catégorie seule : dernière section ouverte dans la catégorie, sinon la première.
 - `settingsTabs()` rend les six catégories (`{id, label, description}`) : le sous-menu Paramètres de la roue
-  Jarvis en fait une ligne par catégorie ; la ligne « Réglages de la voix » ouvre `'voice'` → Voix & audio.
+  Jarvis en fait une ligne par catégorie ; la ligne « Réglages de la voix » ouvre `'voice_audio'`
+  (`VOICE_SETTINGS_TARGET` du module de la roue).
 - `ui_tab_next` / `ui_tab_prev` (Ctrl+→ / Ctrl+← par défaut) parcourent les six catégories par
   `cycleCategory`, en boucle.
 
@@ -107,7 +110,6 @@ ouverte dans chaque catégorie pendant la session.
 registerSettingsSection({               // porte de la page : R.page.register derrière un filet
   id: 'wake_word', category: 'voice_audio', label: 'Mot d’éveil', order: 50,
   save: 'self',                         // 'footer' | 'self' | 'readonly' (navigation-registry.md § 2)
-  aliases: ['wakeword'],                // l'onglet hérité `wakeword` disparaît de la navigation
   mount(host, context) { … },           // dessine dans `host` (un <div class="set-mount"> neuf)
   destroy(host) { … },                  // arrête minuteurs, requêtes, écouteurs
 });
@@ -116,8 +118,7 @@ registerSettingsSection({               // porte de la page : R.page.register de
 - **Où :** le module s'enregistre à son chargement par `registerSettingsSection(spec)`. Un refus est journalisé
   (`settings_section_rejected`, avec `code`) et affiché en notice dans la catégorie visée (Avancé & diagnostic si
   la catégorie est inconnue) ; la fonction rend `null`, jamais une exception.
-- **Ordre des entrées :** sections enregistrées (ordre du registre : groupe déclaré, puis `order`), puis onglets
-  hérités restants (aucun depuis la Slice 08). Dans une catégorie à groupes, les flèches parcourent les onglets
+- **Ordre des entrées :** sections enregistrées, dans l'ordre du registre (groupe déclaré, puis `order`). Dans une catégorie à groupes, les flèches parcourent les onglets
   seuls, jamais les intitulés ; la liste passe à la ligne au lieu de défiler (en dessous de 900 px, elle défile).
 - **`mount(host, context)`** reçoit un hôte neuf à chaque montage. `context` :
   `revision`, `section`, `ui` (`JarvisSettingsUI`), `say(texte, 'ok'|'error'|'')` (pied d'état),
@@ -131,8 +132,7 @@ registerSettingsSection({               // porte de la page : R.page.register de
   message réel et le code `settings_section_mount_failed`, et la journalise.
 - **Pied Enregistrer :** `save: 'footer'` montre le pied et le bouton ; la section écrit dans `context.draft()`,
   appelle `context.markDirty()`, et « Enregistrer » envoie `/api/settings` comme aujourd'hui (`saveDraft`).
-  `self` et `readonly` cachent le pied : la section porte ses propres notices. Pour les onglets hérités, le
-  comportement d'avant est conservé (`TABS[].save`).
+  `self` et `readonly` cachent le pied : la section porte ses propres notices ; une catégorie vide aussi.
 - Les brouillons ne sont pas gardés par le shell au changement de section : chaque module garde son contrat actuel
   (par exemple `SET.subagentDrafts` des rôles de sous-agents, le brouillon partagé `SET.draft` des sections Voix et
   Agents & modèles, l'état du module Mot d'éveil).

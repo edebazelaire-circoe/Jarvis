@@ -100,7 +100,7 @@ globalThis.window=globalThis;window.JarvisSettingsRegistry=R;window.JarvisSettin
 const errors=[];console.error=(c,x)=>errors.push([c,x]);
 const el=()=>({{className:'',dataset:{{}},innerHTML:''}});
 globalThis.document={{createElement:el}};
-const modalContent={{innerHTML:'',children:[],replaceChildren(...k){{this.children=k}}}},modalSave={{style:{{}}}},modalSub={{textContent:'x'}};
+const modalContent={{innerHTML:'',children:[],replaceChildren(...k){{this.children=k}}}},modalSave={{style:{{}}}};
 const esc=s=>String(s),said=[];const say=(t,k)=>said.push([t,k]);
 const SET={{open:true,section:null,renderRevision:1,sectionView:null,subagentView:null,data:{{v:1}},draft:{{d:1}},dirty:false}};
 const destroyAgentCatalog=noop,destroyVoiceCatalog=noop,selectTab=noop,renderTabs=noop;
@@ -123,7 +123,7 @@ const refused=registerSettingsSection({{id:'seventh',category:'nowhere',label:'7
   const lateHtml=modalContent.children[0].innerHTML;
   SET.section=null;mountRegisteredSection(++SET.renderRevision);
   out({{registered:!!a,refused,footer,selfFooter,first,afterLeave,data,draft,dirty:SET.dirty,said,log,brokenHtml,lateHtml,
-    empty:modalContent.innerHTML,rejected:SETTINGS_REJECTED,errors,sub:modalSub.textContent}});
+    empty:modalContent.innerHTML,rejected:SETTINGS_REJECTED,errors}});
 }})();""")
     assert out["registered"] is True and out["refused"] is None
     assert out["log"]["mounts"] == [["alpha", "alpha", True]]
@@ -135,7 +135,6 @@ const refused=registerSettingsSection({{id:'seventh',category:'nowhere',label:'7
     for html, text in ((out["brokenHtml"], "plus de micro"), (out["lateHtml"], "réseau")):
         assert 'role="alert"' in html and text in html and "<code>settings_section_mount_failed</code>" in html
     assert out["empty"] == '<div class="set-empty">Rien à régler ici pour le moment.</div>'
-    assert out["sub"] == ""
     assert [r["code"] for r in out["rejected"]] == ["settings_category_unknown"]
     assert out["rejected"][0]["category"] == "advanced_diagnostics"  # montré dans Avancé, jamais perdu
     codes = [e[0] for e in out["errors"]]
@@ -161,6 +160,6 @@ async def test_served_page_inlines_the_primitives_after_the_registry(tmp_path: P
     assert page.count(SETTINGS_UI_SCRIPT_MARKER) == 1
     served = (await ControlCenter(runtime_root=tmp_path, project_root=tmp_path).index(None)).text
     assert SETTINGS_UI_SCRIPT_MARKER not in served
-    assert served.index("root.JarvisSettingsRegistry=api") < served.index("root.JarvisSettingsUI=api") < served.index("\nconst TABS=[")
+    assert served.index("root.JarvisSettingsRegistry=api") < served.index("root.JarvisSettingsUI=api") < served.index("\nconst SET={")
     for forbidden in ("fetch(", "localStorage", "sessionStorage", "XMLHttpRequest", "document.", "indexedDB"):
         assert forbidden not in UI.read_text(encoding="utf-8"), forbidden

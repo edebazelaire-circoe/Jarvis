@@ -163,7 +163,8 @@ Prompts et › Scène constellation) sont devenus des sections (`docs/settings/v
 `docs/settings/agents-models.md`, `docs/settings/memory.md`, `docs/settings/INDEX.md`). Avancé & diagnostic
 range ses outils d'opérateur en cinq groupes : Architecture & compatibilité, Prompts & instructions,
 Runtime & CLI, Diagnostics, Labs & outils de test. Ce guide écrit encore parfois « Réglages → onglet »
-(ancien nom de la section ; l'ancien identifiant y mène toujours).
+(ancien nom de la section). Depuis la Slice 09, les anciens identifiants d'onglet ne sont plus des alias (sauf
+`memory`, Memory Center › Réglages) : `docs/legacy/settings-tab-aliases.md`.
 
 Un principe la traverse : **la page ne connaît aucun réglage**. Le serveur
 décrit ce qui existe — les piles vocales, leurs champs, les CLI, leurs modes,
@@ -1157,7 +1158,8 @@ principal de la page.
 
 #### Tester : vérifier qu'une calibration a aidé (calibration adaptative, Slices 08 et 09)
 
-**Lancer.** Onglet Expérimental (roue › Paramètres) → section **Test** →
+**Lancer.** Réglages › Avancé & diagnostic › Bare Hands · essais (groupe Labs & outils de test ; roue › Paramètres ›
+Avancé & diagnostic ; l'ancien onglet Expérimental) → section **Test** →
 **Tester…** (le clic droit sur le bouton à icône de main → **Tester…** ne sert que
 roue masquée : ce bouton est caché tant que la roue est là), ou à la
 voix (« teste mes mains », outil `barehands_test`, Slice 10 : ouvre l'écran
@@ -1354,13 +1356,13 @@ compare à rien.
 
 ##### A1 — caméra, cycle de vie, pannes
 
-- **A1.1** Réglages → Expérimental → cocher l'interrupteur. Attendu : invite caméra,
+- **A1.1** Réglages → Interface & interactions → Bare Hands (l'ancien onglet Expérimental) → cocher l'interrupteur. Attendu : invite caméra,
   le bandeau passe par « Démarrage… » avec son compteur de secondes, puis toast
   **« Barehands en veille »** et pastille **`MAINS · VEILLE`** en bas à gauche.
   Le bandeau lit « Cycle de vie : **En veille** », bouton « Activer
   l'interaction ». **Aucun jeton ne doit apparaître**, même en agitant les
   mains : la veille guette, elle ne pointe pas.
-- **A1.2** **Veille par le bouton, et retour.** Réglages → Expérimental → « Mettre en
+- **A1.2** **Veille par le bouton, et retour.** Réglages → Interface & interactions → Bare Hands → « Mettre en
   veille » : jetons retirés, pastille `MAINS · VEILLE`, **le voyant caméra
   reste allumé** (c'est SLEEP, pas OFF). « Activer l'interaction » : les jetons
   reviennent sans nouvelle invite caméra. Même chose depuis la console avec
@@ -1940,7 +1942,8 @@ suspendre une capture.
   « Écoute la salle », « Sourd à la salle », « Séance inactive », ou, en rouge,
   « Refusé par la voix » / « Entrée échouée » (le code exact apparaît au survol
   de la ligne). « Refusé par la voix » veut dire que l'architecture vocale
-  choisie ne porte pas la présentation : changez-la dans l'onglet Mode vocal.
+  choisie ne porte pas la présentation : changez-la dans Réglages › Avancé & diagnostic ›
+  Architecture & compatibilité.
 
 - **Lire la liste** : chaque ligne donne le titre, le type (Assistant,
   Présentation, Réunion) et la dernière ouverture (« ouvert il y a 3 h »,

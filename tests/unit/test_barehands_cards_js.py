@@ -369,7 +369,7 @@ def test_opening_the_diagnostics_card_records_nothing(tmp_path):
 
     result = run_node(tmp_path, browser() + r"""
       /* Le modal fermé, sur un autre onglet : l'état d'où le clic droit part. */
-      SET.open=false;SET.tab='voice';
+      SET.open=false;SET.section='conversation';
       const before=BAREHANDS.record.state();
       const writes=server.calls.filter(c=>c.body).length;
       const outcome=await BAREHANDS.showDiagnostics();
