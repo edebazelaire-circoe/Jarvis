@@ -65,6 +65,7 @@ TOUR = """(async()=>{const pause=ms=>new Promise(r=>setTimeout(r,ms)),q=s=>docum
   out.parts=['voice','wake_word','memory','barehands'].map(p=>[p,!!q('#diagnostic_'+p)&&!!q(`[data-diagnostic-part="${p}"]`)&&q(`[data-diagnostic-part="${p}"]`).textContent.trim().length>0]);
   out.alias={};for(const id of ['prompts','experimental','routing','advanced_diagnostics']){selectTab('voice_audio');await pause(100);selectTab(id);await pause(250);
     out.alias[id]=[SET.category,SET.tab,SET.section]}
+  out.sources=['prompts','experimental','routing'].map(t=>R.page.resolve(t).source);
   selectTab('experimental');await pause(400);out.scene=!!q('#modalContent #sceneSettings [data-scene-toggle]');
   return out})()""" % json.dumps(ENTRIES)
 
@@ -91,6 +92,8 @@ async def test_five_declared_groups_notice_every_section_and_diagnostic_reachabl
         "routing": ["advanced_diagnostics", None, "runtime_cli"],
         "advanced_diagnostics": ["advanced_diagnostics", None, "runtime_cli"],  # dernière entrée ouverte (`routing`)
     }
+    # `prompts` est l'ID de la section ; `experimental` et `routing` sont des alias déclarés par leur section.
+    assert tour["sources"] == ["section", "section_alias", "section_alias"]
     assert tour["scene"] is True
     assert out["console"] == [], out["console"]
 

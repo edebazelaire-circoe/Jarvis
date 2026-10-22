@@ -488,6 +488,17 @@ def test_advanced_groups_are_declared_once_and_every_page_registration_names_one
             "save:'self',") in page and "registerSettingsSection(PROMPTS_SECTION)" in page
 
 
+def test_advanced_sections_are_ordered_by_declared_group_before_their_order(tmp_path):
+    """Le groupe l'emporte sur `order` : une section de Labs d'ordre 1 reste après une section d'Architecture d'ordre
+    99 ; dans un groupe, `order` puis l'ordre d'enregistrement."""
+    out = run(tmp_path, """
+const reg=R.createRegistry(),add=(id,group,order)=>reg.register({id,category:'advanced_diagnostics',group,order,label:id,mount:noop,save:'self'});
+add('lab_b','labs',5);add('lab_a','labs',1);add('diag','diagnostics',0);add('arch','architecture_compat',99);add('lab_c','labs',5);
+add('prompt','prompts',-3);add('cli','runtime_cli',7);
+out(reg.sections('advanced_diagnostics').map(s=>s.id));""")
+    assert out == ["arch", "prompt", "cli", "diag", "lab_a", "lab_b", "lab_c"]
+
+
 def test_page_connections_section_matches_the_registered_fixture():
     """La fixture `SLICE_07_SECTIONS` dit ce que la page enregistre vraiment (`CONNECTIONS_SECTION`)."""
     page = HTML.read_text(encoding="utf-8")
