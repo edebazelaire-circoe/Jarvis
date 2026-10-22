@@ -74,7 +74,8 @@ session. Il n'y a plus d'onglet hérité (`SET.tab` et `TABS` retirés à la Sli
   Une catégorie charge des données : la parcourir au clavier ne doit pas déclencher six chargements.
 - Après chaque rendu de la navigation, le focus revient sur l'entrée active de la liste qui l'avait. Changer de
   section ou de catégorie alors que le focus est dans le contenu (un bouton de la section, puis Ctrl+→) le porte à
-  l'entrée ouverte : le contenu est remplacé, il ne tombe jamais sur `body` (passe de finitions avant la Slice 10).
+  l'entrée ouverte, arrivée marquée (`landFocus`, contour visible) : le contenu est remplacé, il ne tombe jamais sur
+  `body` (passe de finitions avant la Slice 10).
 - Tab et Maj+Tab bouclent dans le shell ; depuis `body`, ils y entrent.
 - Quelle que soit la route d'ouverture (bouton, raccourci `s`, roue › Paramètres, `openSettingsTab`), le focus
   finit sur la catégorie active : la roue ne reprend pas un focus qu'une action a porté hors d'elle, et le retour

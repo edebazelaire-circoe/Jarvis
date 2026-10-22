@@ -5805,7 +5805,9 @@ function showSettingsTarget(hit){
   renderTabs();renderTab();
   if(inContent&&SET.open&&!overlay.contains(document.activeElement)){
     const entry=document.querySelector('#modalTabs [aria-selected=true]')||document.querySelector('#settingsCategories [aria-selected=true]');
-    if(entry)entry.focus({preventScroll:true});
+    /* Un saut que l'utilisateur n'a pas choisi : l'arrivée est marquée, son contour se voit. */
+    const UI=window.JarvisSettingsUI;
+    if(entry){if(UI&&UI.landFocus)UI.landFocus(entry);else entry.focus({preventScroll:true})}
   }
 }
 /* Lien interne d'une section vers une autre cible (Slice 06, `docs/settings/settings-shell.md` § 3) : « Modifier dans

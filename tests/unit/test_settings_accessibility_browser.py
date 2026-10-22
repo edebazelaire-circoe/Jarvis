@@ -133,6 +133,7 @@ async def test_changing_category_from_the_content_keeps_the_focus_in_the_shell(s
     assert got(step, "in_content") is True
     after = got(step, "after")
     assert after["inShell"] and after["tag"] == "BUTTON" and after["section"] == "providers", after
+    assert after["landed"] and after["outline"], after  # un saut non choisi : son arrivée se voit
     assert out["console"] == [], out["console"]
 
 
