@@ -829,6 +829,15 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-item:hover{color:var(--set-ink)}
 .set-item.active{color:var(--set-ink)}
 .set-item.active::after{content:'';position:absolute;left:10px;right:10px;bottom:0;height:2px;border-radius:2px;background:var(--set-hue)}
+/* `advanced_diagnostics` (Slice 08) : entrées rangées sous leurs groupes déclarés, avis d'outils d'opérateur. Style
+   technique (monospace) réservé à cette catégorie : intitulés de groupe et éditeurs de prompt. */
+.set-items-grouped{flex-wrap:wrap;gap:8px 0;align-items:flex-end}
+.set-group{display:flex;flex-direction:column;flex:none;min-width:0}
+.set-group+.set-group{margin-left:6px;padding-left:6px;border-left:1px solid var(--set-hair)}
+.set-group-label{padding:0 14px 1px;font:600 10.5px/1.4 var(--set-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--set-ink-3);white-space:nowrap}
+.set-group-items{display:flex;gap:2px}
+.set-intro-notice{margin:10px 0 0;max-width:68ch;padding:7px 12px;border-left:2px solid var(--set-hue);border-radius:0 8px 8px 0;background:color-mix(in srgb,var(--set-hue) 7%,transparent);font-size:13px;color:var(--set-ink-2)}
+.settings-shell[data-category=advanced_diagnostics] [data-prompt-text]{font:12.5px/1.55 var(--set-mono)}
 .set-related{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:12px var(--set-pad) 0;font-size:13px;color:var(--set-ink-3)}
 .set-related[hidden]{display:none}
 .set-link{padding:2px 10px;border:1px solid var(--set-hair-2);border-radius:999px;background:none;color:var(--set-ink-2);font-size:12.5px;cursor:pointer}
@@ -902,6 +911,7 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
   .set-cat-icon{grid-row:auto;width:28px;height:28px;border-radius:8px}
   .set-cat-icon svg{width:16px;height:16px}
   .set-cat-label{font-size:13.5px;white-space:nowrap}.set-cat-desc{display:none}
+  .set-items-grouped{flex-wrap:nowrap}
   .set-head{padding-top:18px;gap:12px}.set-intro-icon{display:none}.set-intro-title{font-size:21px}
   .set-close span{display:none}
 }
@@ -3165,7 +3175,9 @@ const STATUS={
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_CORE_JS__*/
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_WIDGETS_JS__*/
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_JS__*/
-/* Réglage de la scène dans l'onglet Expérimental (Slice 11), après Barehands qui crée l'onglet : `control_center_scene_settings.js`. */
+/* Porte de test de la scène (Slice 11) : section `scene_gate` d'Avancé › Labs & outils de test depuis la Slice 08 de
+   jarvis-settings-ui-reorganization (`registerSettingsSection`, déclaration remontée de ce `<script>`) :
+   `control_center_scene_settings.js`. */
 /*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/
 /* Onglet « Mot d'éveil » des Réglages (jarvis-wake-word, Slice 07), inséré après « Voix » : `control_center_wake_word.js`.
    Il utilise `api`, `toast`, `renderTab`, `TABS`, `SET`, `say`, déclarations remontées de ce même `<script>`. */
@@ -4478,13 +4490,11 @@ function bindSend(after){
    `subagents` y mènent (`docs/legacy/settings-tab-aliases.md`). Ni `memory` (Slice 05) : `memory_knowledge` monte ses
    sections, l'alias `memory` mène à Rappel. Ni `shortcuts` ni `appearance` (Slice 06) : `interface_interactions` monte
    Thème & scène visuelle (`control_center_work.js`), Raccourcis (ici) et Bare Hands (`control_center_barehands.js`).
-   `experimental` n'est plus injecté par Bare Hands : il ne porte plus que la porte de test de la scène
-   (`control_center_scene_settings.js`), déclaré ici jusqu'à son déménagement dans Labs (Slice 08). Ni `keys`
-   (Slice 07) : `connections` monte la section Fournisseurs, l'alias `keys` y mène. */
-const TABS=[
-  {id:'prompts',label:'Prompts',save:false},
-  {id:'experimental',label:'Expérimental',save:false},
-];
+   Ni `keys` (Slice 07) : `connections` monte la section Fournisseurs, l'alias `keys` y mène. Ni `prompts` ni
+   `experimental` (Slice 08) : `advanced_diagnostics` monte la section Prompts (groupe Prompts & instructions) et la section
+   Scène constellation (`control_center_scene_settings.js`, groupe Labs & outils de test), les alias y mènent.
+   Plus aucun onglet de premier niveau : la liste reste vide jusqu'au retrait de la machinerie d'onglets (Slice 09). */
+const TABS=[];
 const SET={open:false,tab:null,category:null,section:null,lastItem:{},opener:null,sectionView:null,voiceTab:null,voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:'',subagentView:null,subagentDrafts:{},agentSection:null};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
 
@@ -4871,9 +4881,10 @@ function voiceRestartHtml(){
   return `<div class="notice" data-voice-restart><strong>Redémarrez Voice pour appliquer</strong> : ces réglages sont lus au démarrage de Voice${running?' — elle applique encore les précédents':''}.</div>`;
 }
 
-/* --- onglet Prompts -----------------------------------------------------
-   Le serveur choisit les programmes actifs et compose leur aperçu. La page
-   n'invente aucun prompt fournisseur et n'envoie que la couche éditée. */
+/* --- `advanced_diagnostics` › Prompts (groupe Prompts & instructions, Slice 08) ----------------------------------
+   L'atelier des prompts, ancien onglet `prompts` (ID = ancien ID d'onglet). Le serveur choisit les programmes actifs
+   et compose leur aperçu. La page n'invente aucun prompt fournisseur et n'envoie que la couche éditée : route
+   `/api/prompts/<id>`, charges `edit` et `reset` inchangées. */
 function promptLayerHtml(layer, resolved){
   const conflict=layer.conflict?`<span class="tag bad">${esc(layer.conflict)}</span>`:'';
   const mode=layer.editable?'<span class="tag ok">modifiable</span>':'<span class="tag">lecture seule</span>';
@@ -4890,7 +4901,7 @@ function promptLayerHtml(layer, resolved){
     ${editor}</details>`;
 }
 
-async function tabPrompts(){
+async function promptWorkbenchHtml(){
   if(!SET.prompts)SET.prompts=await api('/api/prompts').catch(e=>({error:e.message,programs:[],layers:[]}));
   const state=SET.prompts;
   if(state.error)return `<section><div class="notice bad">${esc(state.error)}</div></section>`;
@@ -4913,6 +4924,32 @@ async function tabPrompts(){
     ${programs||'<div class="empty">Aucun programme de prompt applicable.</div>'}
   </section>`;
 }
+/* La section s'enregistre elle-même (`save: 'self'`) : chaque couche a son bouton ; l'issue se dit dans sa région
+   d'état (le pied du shell est caché). Une réponse arrivée après le départ de la section garde l'état reçu
+   (`SET.prompts`) et ne dessine rien. */
+async function renderPromptWorkbench(host,context){
+  const slot=host.querySelector('[data-prompt-workbench]');
+  if(!slot)return;
+  let html;
+  try{html=await promptWorkbenchHtml()}
+  catch(e){html=`<div class="notice bad">${esc(e&&e.message||String(e))}</div>`}
+  if(!context.isCurrent())return;
+  slot.innerHTML=html;
+  slot.querySelectorAll('[data-prompt-save]').forEach(el=>el.addEventListener('click',()=>savePromptLayer(el,host,context)));
+  slot.querySelectorAll('[data-prompt-reset]').forEach(el=>el.addEventListener('click',()=>resetPromptLayer(el,host,context)));
+}
+function promptStatus(host,text,kind){
+  const el=host.querySelector('[data-prompt-status]');
+  if(el){el.className='status'+(kind?' '+kind:'');el.textContent=text||''}
+}
+const PROMPTS_SECTION={id:'prompts',category:'advanced_diagnostics',group:'prompts',order:10,advanced:true,save:'self',
+  label:'Prompts',description:'Les couches de prompt contrôlées par JARVIS, chacune enregistrée avec son propre bouton, et le prompt effectif de chaque canal.',
+  mount(host,context){
+    host.innerHTML=context.ui.section({id:'promptsSection',title:'Prompts',advanced:true,description:PROMPTS_SECTION.description,
+      body:'<p class="status" data-prompt-status role="status" aria-live="polite"></p><div data-prompt-workbench><div class="empty">Chargement…</div></div>'});
+    return renderPromptWorkbench(host,context);
+  },
+};
 
 /* --- onglet Agent / CLI ------------------------------------------------- */
 function metadataOptions(field,value){
@@ -5656,6 +5693,8 @@ if(typeof window!=='undefined'&&typeof installMemorySettingsSections==='function
 if(typeof window!=='undefined'&&typeof SHORTCUTS_SECTION!=='undefined')registerSettingsSection(SHORTCUTS_SECTION);
 /* Connexions (Slice 07) : même garde. */
 if(typeof window!=='undefined'&&typeof CONNECTIONS_SECTION!=='undefined')registerSettingsSection(CONNECTIONS_SECTION);
+/* Avancé › Prompts (Slice 08) : même garde. La Scène constellation s'enregistre depuis son module. */
+if(typeof window!=='undefined'&&typeof PROMPTS_SECTION!=='undefined')registerSettingsSection(PROMPTS_SECTION);
 
 /* Où en est le shell : catégorie, puis section enregistrée OU onglet hérité. Un module hérité peut encore poser
    `SET.tab` lui-même (plus Bare Hands depuis la Slice 06) : un onglet posé l'emporte et la catégorie suit. */
@@ -5681,12 +5720,27 @@ function renderTabs(){
     return `<button type="button" role="tab" class="set-cat" id="settingsCat-${c.id}" data-category="${c.id}" aria-selected="${on}" aria-controls="settingsMain" tabindex="${on?0:-1}" style="--set-hue:${SETTINGS_HUE[c.id]||'var(--accent)'}">`
       +`<span class="set-cat-icon">${settingsIcon(c.id)}</span><span class="set-cat-label">${esc(c.label)}</span><span class="set-cat-desc">${esc(c.description)}</span></button>`}).join('');
   shell.style.setProperty('--set-hue',SETTINGS_HUE[cat.id]||'var(--accent)');
+  shell.dataset.category=cat.id;
   $('#settingsMain').setAttribute('aria-labelledby',`settingsCat-${cat.id}`);
   $('#settingsIntro').innerHTML=`<span class="set-intro-icon" aria-hidden="true">${settingsIcon(cat.id)}</span>`+UI.intro({id:'settingsCategoryTitle',title:cat.label,description:cat.description,level:3});
+  /* Avis de catégorie déclaré par le registre (Avancé : outils d'opérateur). */
+  if(cat.notice)$('#settingsIntro .set-intro').insertAdjacentHTML('beforeend',`<p class="set-intro-notice" id="settingsCategoryNotice">${esc(cat.notice)}</p>`);
   const activeKey=SET.section?`section:${SET.section}`:SET.tab?`tab:${SET.tab}`:'';
   /* `data-tab` / `data-section` : l'identifiant de l'entrée ; `.active` et `aria-selected` : l'entrée montrée. */
-  items.innerHTML=cat.items.map(i=>{const on=`${i.kind}:${i.id}`===activeKey;
-    return `<button type="button" role="tab" class="set-item${on?' active':''}" ${i.kind==='tab'?'data-tab':'data-section'}="${esc(i.id)}" aria-selected="${on}" aria-controls="modalContent" tabindex="${on?0:-1}">${esc(i.label)}</button>`}).join('');
+  const itemHtml=(i,group)=>{const on=`${i.kind}:${i.id}`===activeKey;
+    return `<button type="button" role="tab" class="set-item${on?' active':''}" ${i.kind==='tab'?'data-tab':'data-section'}="${esc(i.id)}"${group?` data-group="${esc(group)}" aria-describedby="settingsGroup-${esc(group)}"`:''} aria-selected="${on}" aria-controls="modalContent" tabindex="${on?0:-1}">${esc(i.label)}</button>`};
+  /* Catégorie à groupes déclarés (Avancé, Slice 08) : les entrées sous l'intitulé de leur groupe, dans l'ordre du
+     registre ; un groupe sans section n'est pas dessiné. Les conteneurs sont `role=none` : la liste ne possède que
+     des onglets ; l'intitulé (caché aux lecteurs d'écran, il y serait lu en double) décrit chaque onglet du groupe. */
+  const groups=cat.groups||[],grouped=groups.length>0;
+  items.classList.toggle('set-items-grouped',grouped);
+  items.innerHTML=grouped
+    ?[...groups.map(g=>({group:g,list:cat.items.filter(i=>i.group===g.id)})),
+      {group:null,list:cat.items.filter(i=>!groups.some(g=>g.id===i.group))}].filter(b=>b.list.length).map(b=>b.group
+      ?`<div class="set-group" role="none" data-settings-group="${esc(b.group.id)}"><span class="set-group-label" id="settingsGroup-${esc(b.group.id)}" aria-hidden="true">${esc(b.group.label)}</span>`
+        +`<div class="set-group-items" role="none">${b.list.map(i=>itemHtml(i,b.group.id)).join('')}</div></div>`
+      :`<div class="set-group" role="none"><div class="set-group-items" role="none">${b.list.map(i=>itemHtml(i,null)).join('')}</div></div>`).join('')
+    :cat.items.map(i=>itemHtml(i,null)).join('');
   /* Tant qu'un onglet d'une autre catégorie porte encore une partie de celle-ci : un lien, pas un second éditeur. */
   const related=$('#settingsRelated');
   related.hidden=!cat.related.length;
@@ -5758,21 +5812,17 @@ async function renderTab(){
   if(modalContent.classList){modalContent.classList.remove('set-enter');void modalContent.offsetWidth;modalContent.classList.add('set-enter')}
   modalContent.innerHTML='<div class="empty">Chargement…</div>';
   const tab=TABS.find(t=>t.id===SET.tab);
-  modalSave.style.display=tab.save?'':'none';
-  modalSub.textContent={
-    prompts:'Chaque couche est enregistrée avec son propre bouton.',
-    experimental:'Fonctions en test, enregistrées immédiatement ; chaque section dit quand elle prend effet.',
-  }[SET.tab]||'';
+  modalSave.style.display=tab&&tab.save?'':'none';
+  modalSub.textContent='';
   try{
-    let content;
-    if(SET.tab==='prompts')content=await tabPrompts();
-    /* `experimental` : vide ici, la porte de test de la scène s'y ajoute (`control_center_scene_settings.js`). */
-    else content='';
+    /* Plus aucun onglet hérité ne porte de contenu depuis la Slice 08 (`TABS` vide) ; la machinerie d'onglets est
+       retirée par la Slice 09. */
+    const content='';
     if(revision!==SET.renderRevision||SET.open===false)return;
     modalContent.innerHTML=content;
   }catch(e){if(revision===SET.renderRevision&&SET.open!==false)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
   bindTab(revision);
-  if(SET.dirty&&tab.save)say('Modifications non enregistrées.','');
+  if(SET.dirty&&tab&&tab.save)say('Modifications non enregistrées.','');
 }
 
 /* Rappels d'agenda : le serveur décrit les champs (libellé, aide, type, bornes, défaut), la page les rend. */
@@ -5810,29 +5860,41 @@ function bindTab(revision){
   modalContent.querySelectorAll('[data-refresh]').forEach(el=>el.addEventListener('click',async()=>{
     const [provider,role]=el.dataset.refresh.split(':');el.textContent='…';
     await catalog(provider,role,true);renderTab()}));
-
-  modalContent.querySelectorAll('[data-prompt-save]').forEach(el=>el.addEventListener('click',()=>savePromptLayer(el)));
-  modalContent.querySelectorAll('[data-prompt-reset]').forEach(el=>el.addEventListener('click',()=>resetPromptLayer(el)));
 }
 
-async function savePromptLayer(button){
-  const id=button.dataset.promptSave,area=modalContent.querySelector(`[data-prompt-text="${CSS.escape(id)}"]`);
+/* Couche enregistrée ou remise au défaut : route et charges inchangées depuis l'ancien onglet. Le focus revient sur le
+   bouton de la couche après le rendu (il serait sinon perdu sur `body`). */
+async function savePromptLayer(button,host,context){
+  const id=button.dataset.promptSave,area=host.querySelector(`[data-prompt-text="${CSS.escape(id)}"]`);
   if(!area)return;
-  button.disabled=true;say('Enregistrement de la couche…','');
+  button.disabled=true;promptStatus(host,'Enregistrement de la couche…','');
   try{
     const result=await api(`/api/prompts/${encodeURIComponent(id)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       action:'edit',text:area.value,base_revision:button.dataset.baseRevision,expected_effective_revision:button.dataset.effectiveRevision})});
-    SET.prompts=result.prompts;SET.restartNotice=true;say('Couche enregistrée. Application au prochain démarrage ou envoi concerné.','ok');await renderTab();
-  }catch(e){say(e.message,'error');button.disabled=false}
+    SET.prompts=result.prompts;SET.restartNotice=true;
+    if(!context.isCurrent())return;
+    promptStatus(host,'Couche enregistrée. Application au prochain démarrage ou envoi concerné.','ok');
+    await renderPromptWorkbench(host,context);focusPromptLayer(host,id,'save');
+  }catch(e){if(context.isCurrent()){promptStatus(host,e.message,'error');button.disabled=false}}
 }
 
-async function resetPromptLayer(button){
+async function resetPromptLayer(button,host,context){
   const id=button.dataset.promptReset;
-  button.disabled=true;say('Réinitialisation de la couche…','');
+  button.disabled=true;promptStatus(host,'Réinitialisation de la couche…','');
   try{
     const result=await api(`/api/prompts/${encodeURIComponent(id)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'reset'})});
-    SET.prompts=result.prompts;SET.restartNotice=true;say('Couche revenue au défaut.','ok');await renderTab();
-  }catch(e){say(e.message,'error');button.disabled=false}
+    SET.prompts=result.prompts;SET.restartNotice=true;
+    if(!context.isCurrent())return;
+    promptStatus(host,'Couche revenue au défaut.','ok');
+    await renderPromptWorkbench(host,context);focusPromptLayer(host,id,'reset');
+  }catch(e){if(context.isCurrent()){promptStatus(host,e.message,'error');button.disabled=false}}
+}
+function focusPromptLayer(host,id,action){
+  if(!host.isConnected)return;
+  const button=host.querySelector(`[data-prompt-${action}="${CSS.escape(id)}"]`);
+  if(!button)return;
+  const details=button.closest('details');if(details)details.open=true;
+  button.focus({preventScroll:false});
 }
 
 /* Texte brut : vide = revenir au défaut, et c'est le serveur qui valide. */

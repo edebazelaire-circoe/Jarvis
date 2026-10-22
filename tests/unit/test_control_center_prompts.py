@@ -102,14 +102,14 @@ async def test_the_claude_system_preview_shows_the_gateway_guidance_when_a_targe
     assert "backend.conversation.tools" in {item["prompt_id"] for item in prompts["layers"]}
 
 
-def test_prompt_tab_renders_server_projection_and_editability_without_inventing_layers(tmp_path):
+def test_prompt_workbench_renders_server_projection_and_editability_without_inventing_layers(tmp_path):
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node required to execute prompt renderer")
     control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
     fixture = control._prompt_payload(control._settings())
     page = Path("jarvis/runtime/control_center.html").read_text(encoding="utf-8")
-    functions = page[page.index("function promptLayerHtml"):page.index("/* --- onglet Agent / CLI")]
+    functions = page[page.index("function promptLayerHtml"):page.index("const PROMPTS_SECTION=")]
     script = r'''
 const assert=require('node:assert/strict');
 const fixture=JSON.parse(require('node:fs').readFileSync(process.argv[2],'utf8'));
@@ -118,7 +118,7 @@ const api=async()=>{throw new Error('unexpected API call')};
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 ''' + functions + r'''
 (async()=>{
- const html=await tabPrompts();
+ const html=await promptWorkbenchHtml();
  assert.ok(html.includes('prompts internes du fournisseur'));
  assert.ok(html.includes('Prompt effectif'));
  assert.ok(html.includes('voice.persona'));

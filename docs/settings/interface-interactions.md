@@ -24,9 +24,9 @@ Sous `advanced_diagnostics` (pour la Slice 08) :
 | section `barehands_lab` (groupe `labs`, order 60, `save:'self'`, `advanced`) | Bare Hands · essais | `control_center_barehands.js` | lecture de diagnostic à l'écran (`diagnostics`), test (`SECTION.benchmark`), enregistrement de séance (`SECTION.record`) ; ancres `barehandsRecord`, `barehandsBenchmarkSection` |
 | partie `barehands` de `diagnostics` (order 40, `registerSettingsDiagnostic`) | Bare Hands | `control_center_barehands.js` | état des fichiers du modèle MediaPipe (pas relu / présent / absent + commande d'installation), dernière commande vocale reçue par la page |
 
-L'onglet `experimental` reste dans `TABS` (déclaré par la page, rangé dans Avancé) : il ne porte plus que la porte de
-test de la scène et le redémarrage du cerveau (`control_center_scene_settings.js`), qui déménagent dans Labs à la
-Slice 08 ; l'ID disparaîtra alors.
+La porte de test de la scène et le redémarrage du cerveau (`control_center_scene_settings.js`) sont, depuis la
+Slice 08, la section `scene_gate` (Scène constellation) du groupe Labs & outils de test d'Avancé ; l'onglet
+`experimental` a disparu de `TABS`, son ID est l'alias de cette section ([`INDEX.md`](INDEX.md) § Avancé).
 
 ## 2. Propriétaires des réglages (rien ne change de stockage)
 

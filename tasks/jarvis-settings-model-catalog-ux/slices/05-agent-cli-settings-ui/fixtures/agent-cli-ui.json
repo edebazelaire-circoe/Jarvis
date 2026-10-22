@@ -1,12 +1,7 @@
 {
   "legacy_programmatic_tab": "routing",
   "canonical_programmatic_tab": "cli",
-  "tabs": [
-    {
-      "id": "prompts",
-      "label": "Prompts"
-    }
-  ],
+  "tabs": [],
   "agent_section_order": [
     "Agent principal",
     "Comportement",
@@ -61,6 +56,11 @@
       "category": "connections",
       "section": "providers",
       "since": "jarvis-settings-ui-reorganization Slice 07"
+    },
+    "prompts": {
+      "category": "advanced_diagnostics",
+      "section": "prompts",
+      "since": "jarvis-settings-ui-reorganization Slice 08"
     }
   }
 }

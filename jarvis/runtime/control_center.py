@@ -3916,7 +3916,7 @@ class ControlCenter:
             "agenda_reminders": agenda_reminders.describe(settings),
             # Scène constellation (Slice 06, écran Slice 11) : rendu immédiat,
             # outils d'affichage du cerveau à son prochain démarrage ; `stored`
-            # et `env` disent ce que l'onglet Expérimental doit expliquer.
+            # et `env` disent ce que la section Scène constellation (Avancé) doit expliquer.
             "scene": describe_scene_gate(settings),
             "audio": {
                 "input_device": settings.get("audio_input_device", ""),

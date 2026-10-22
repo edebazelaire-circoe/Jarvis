@@ -29,8 +29,11 @@ validation. Aucune valeur de réglage n'est écrite par le shell.
    │  └─ nav#settingsCategories role=tablist (vertical ; horizontal sous 900 px)
    │       six button.set-cat role=tab [data-category] : pictogramme, libellé, description (registre)
    └─ main#settingsMain role=tabpanel
-      ├─ .set-head : #settingsIntro (pictogramme + JarvisSettingsUI.intro) · #closeModal « Fermer · Échap »
-      ├─ nav#modalTabs role=tablist : entrées de la catégorie, button.set-item [data-section] ou [data-tab]
+      ├─ .set-head : #settingsIntro (pictogramme + JarvisSettingsUI.intro + avis `notice` de la catégorie,
+      │              p#settingsCategoryNotice) · #closeModal « Fermer · Échap »
+      ├─ nav#modalTabs role=tablist : entrées de la catégorie, button.set-item [data-section] ou [data-tab] ;
+      │     catégorie à groupes (Avancé, Slice 08) : div.set-group role=none [data-settings-group] par groupe non
+      │     vide, intitulé span.set-group-label (aria-hidden, monospace) qui décrit ses onglets (aria-describedby)
       ├─ #settingsRelated : liens vers les onglets d'autres catégories qui en portent encore une partie
       ├─ #modalSub : la phrase de l'onglet hérité (vide pour une section enregistrée)
       ├─ #modalContent.set-body.content : le contenu, SEUL à défiler
@@ -113,7 +116,9 @@ registerSettingsSection({               // porte de la page : R.page.register de
 - **Où :** le module s'enregistre à son chargement par `registerSettingsSection(spec)`. Un refus est journalisé
   (`settings_section_rejected`, avec `code`) et affiché en notice dans la catégorie visée (Avancé & diagnostic si
   la catégorie est inconnue) ; la fonction rend `null`, jamais une exception.
-- **Ordre des entrées :** sections enregistrées (ordre du registre), puis onglets hérités restants.
+- **Ordre des entrées :** sections enregistrées (ordre du registre : groupe déclaré, puis `order`), puis onglets
+  hérités restants (aucun depuis la Slice 08). Dans une catégorie à groupes, les flèches parcourent les onglets
+  seuls, jamais les intitulés ; la liste passe à la ligne au lieu de défiler (en dessous de 900 px, elle défile).
 - **`mount(host, context)`** reçoit un hôte neuf à chaque montage. `context` :
   `revision`, `section`, `ui` (`JarvisSettingsUI`), `say(texte, 'ok'|'error'|'')` (pied d'état),
   `open(cible)` (ouvrir une autre cible), `isCurrent()` (faux dès que la section est quittée, la catégorie changée

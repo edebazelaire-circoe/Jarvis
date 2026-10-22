@@ -101,7 +101,7 @@ async def test_category_cards_alias_environment_fallback_and_links(served, clean
     step = out["steps"][0]
     tour = got(step, "tour")
     assert tour["labels"] == ["Fournisseurs"] and "API Keys" not in tour["all"]
-    assert tour["tabs"] == ["prompts", "experimental"]
+    assert tour["tabs"] == []  # Slice 08 : plus aucun onglet de premier niveau
     assert tour["at"] == ["connections", None, "providers"] and tour["footer"] is False
     assert tour["cards"] == tour["served"] == [p.id for p in creds.PROVIDERS]
     assert "Variable d’environnement" in tour["anthropic"] and "ANTHROPIC_API_KEY" in tour["anthropic"]

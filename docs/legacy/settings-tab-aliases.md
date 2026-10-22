@@ -52,6 +52,15 @@
   `test_page_routes_categories_sections_and_legacy_ids_into_the_six_category_shell` (registre),
   `test_category_cards_alias_environment_fallback_and_links` (vrai Chrome).
 
+- Slice 08 : les onglets `prompts` et `experimental` n'existent plus ; **`TABS` est vide**, plus aucun onglet de
+  premier niveau. `prompts` est l'ID de la section Prompts d'Avancé (groupe `prompts`) ; `experimental` est l'alias de
+  la section `scene_gate` (Scène constellation, groupe `labs`, déclaré par `control_center_scene_settings.js` :
+  `aliases:['experimental']`, cible de `LEGACY_TAB_ALIASES.experimental`). Le module de la scène n'enveloppe plus
+  `renderTab`. Restent pour la Slice 09 : `TABS` (vide), la branche onglet de `renderTab`, `bindTab` (plus appelé
+  qu'avec un onglet), `canonicalSettingsTab`, `routing.tab:'cli'`, `legacyTabFor` et l'ancre → `experimental` de
+  l'adaptateur. Testé : `test_page_routes_categories_sections_and_legacy_ids_into_the_six_category_shell` (registre),
+  `test_five_declared_groups_notice_every_section_and_diagnostic_reachable` (vrai Chrome).
+
 ## Conditions de retrait
 
 - Adaptateur, entrées `{kind:'tab'}` et liens `related` : quand toutes les catégories sont

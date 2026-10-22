@@ -122,28 +122,36 @@ assert.equal(JSON.stringify(data.voice.architecture.selection.config),original);
 
 
 def test_async_browser_render_does_not_restore_a_previous_panel(tmp_path):
+    # Slice 08 de jarvis-settings-ui-reorganization : l'atelier des prompts n'est plus un onglet rendu par `renderTab`,
+    # c'est la section `prompts` d'Avancé. Même garantie : une lecture des prompts arrivée après le départ de la section
+    # ne dessine pas l'ancien panneau (l'état reçu est gardé) ; arrivée pendant que la section est montrée, il s'affiche.
     node = shutil.which('node')
     if node is None:
         pytest.skip('Node required to execute browser rendering')
     page = Path('jarvis/runtime/control_center.html').read_text(encoding='utf-8')
-    render = page[page.index('async function renderTab()'):page.index('function bindTab(revision)')]
+    block = page[page.index('function promptLayerHtml'):page.index('/* --- onglet Agent / CLI')]
     script = r'''
 const assert=require('node:assert/strict');
-const SET={tab:'prompts',data:{},draft:{}},TABS=[{id:'prompts',save:false},{id:'experimental',save:false}];
-const modalContent={querySelectorAll:()=>[]},modalSub={},modalSave={style:{}};
-const esc=String,say=()=>{},bindTab=()=>{},bindVoiceSurface=()=>{},destroyAgentCatalog=()=>{},destroyVoiceCatalog=()=>{},cleanupSettingsSurface=()=>{destroyAgentCatalog();destroyVoiceCatalog()},mountAgentCatalog=()=>{},hydrateCliAgents=()=>{};
-let finish;
-const tabPrompts=()=>new Promise(resolve=>{finish=resolve});
-''' + render + r'''
+const SET={prompts:null};
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let finish;const api=()=>new Promise(resolve=>{finish=resolve});
+const LOADING='<div class="empty">Chargement…</div>';
+const fake=()=>{const slot={innerHTML:LOADING,querySelectorAll:()=>[]};
+  return {slot,host:{innerHTML:'',querySelector:s=>s==='[data-prompt-workbench]'?slot:null}}};
+const OLD={programs:[{program_id:'old.program',label:'old prompts panel',static_fingerprint:'f',layers:[],channels:[]}],layers:[]};
+''' + block + r'''
 (async()=>{
-const first=renderTab();
-// Slice 07 : plus d'onglet `keys` ; `experimental` rend un contenu vide (sa porte s'y ajoute).
-SET.tab='experimental';
-await renderTab();
-finish('<old prompts panel>');
-await first;
-assert.equal(modalContent.innerHTML,'');
-assert.ok(!modalContent.innerHTML.includes('old prompts panel'));
+let current=true;
+const a=fake(),context={ui:{section:o=>o.body},isCurrent:()=>current};
+const first=PROMPTS_SECTION.mount(a.host,context);
+current=false;               // section quittée avant la réponse
+finish(OLD);await first;
+assert.equal(a.slot.innerHTML,LOADING);
+assert.ok(!a.slot.innerHTML.includes('old prompts panel'));
+assert.equal(SET.prompts,OLD);  // l'état reçu est gardé
+const b=fake();await PROMPTS_SECTION.mount(b.host,{ui:{section:o=>o.body},isCurrent:()=>true});
+assert.ok(b.slot.innerHTML.includes('old prompts panel'));
+assert.equal(PROMPTS_SECTION.save,'self');assert.equal(PROMPTS_SECTION.group,'prompts');
 })().catch(error=>{console.error(error);process.exitCode=1});
 '''
     path = tmp_path / 'settings-render.cjs'

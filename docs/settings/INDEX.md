@@ -25,9 +25,35 @@
 | `jarvis/runtime/control_center.html` (`AGENT_SECTIONS`, `SUBAGENT_SECTIONS`) | Agents & modèles: four task sections (Agent principal, Comportement, Modèles des sous-agents, Rôles des sous-agents), Runtime & CLI and Work Methods apprises under Advanced; one destination per Agent/CLI setting, unchanged save payload; see [`agents-models.md`](agents-models.md) | `agentSectionSpec`, `subagentSectionSpec`, `installAgentSettingsSections` |
 | `control_center_work.js` (`THEME_SCENE_SECTION`), `control_center_scene_page.js` (`JarvisSceneViewSettings`), `control_center.html` (`SHORTCUTS_SECTION`), `control_center_barehands.js` (`installSettingsSections`) | Interface & interactions: Thème & scène visuelle (theme + scene view prefs, browser `localStorage`, immediate), Raccourcis (canonical and only editor of every registered shortcut, `wake_toggle` included), Bare Hands ordinary preferences; Advanced › Bare Hands · essais (`barehands_lab`) and the Bare Hands part of Diagnostics; see [`interface-interactions.md`](interface-interactions.md) | `registerSettingsSection`, `startCapture`, `JarvisBarehands.showSettings`, `openSettingsLink` |
 | `jarvis/runtime/control_center_connections_settings.js` + `control_center.html` (`CONNECTIONS_SECTION`) | Connexions: section Fournisseurs (`providers`, alias `keys`), one card per provider served by the credential store (identity, configured state, active key, add/replace/delete, environment fallback by variable name, server `hint` as usage note); unchanged credential routes and payloads, never a value; see [`connections.md`](connections.md) | `JarvisConnectionsSettings.create(host, {request, state, isCurrent, onState})`, `html`, `CONNECTIONS_SECTION` |
+| `control_center_settings_registry.js` (`CATEGORY_GROUPS`) + `control_center.html` (`PROMPTS_SECTION`) + `control_center_scene_settings.js` (`scene_gate`) | Avancé & diagnostic : cinq groupes déclarés, avis d'outils d'opérateur, section Prompts (atelier, routes et charges inchangées) et section Scène constellation (porte de test + redémarrage du brain) ; voir § « Avancé & diagnostic » ci-dessous | `R.groups`, `CATEGORY_GROUPS`, `PROMPTS_SECTION`, `promptWorkbenchHtml`, `JarvisSceneSettings` |
 | `jarvis/runtime/control_center_settings_ui.js` | Pure Settings visual primitives (intro, section, field, badge, notice, advanced disclosure, action row); see [`settings-shell.md`](settings-shell.md) § 5 | `JarvisSettingsUI.section`, `field`, `notice` |
 | `jarvis/runtime/control_center.py` | `/api/settings` projection/save, alias conflict rejection, active-agent refresh | `_settings_payload`, `save_settings`, `_apply_cli`, `agent_ask` |
 | `jarvis/runtime/agent_settings.py` + `back_brain_worker.py` | Carry and consume behavior choice for owned background agent executions | `resolve_agent_execution`, `execute_with_progress` |
+
+## Avancé & diagnostic (Slice 08)
+
+Outils d'opérateur, pas réglages du quotidien : l'avis de la catégorie le dit (`notice` du registre). La catégorie
+déclare cinq groupes (`CATEGORY_GROUPS.advanced_diagnostics`, figés dans
+[`navigation-registry.md`](navigation-registry.md) § 1) ; chaque section y porte un `group` explicite, refusé s'il
+manque ou n'est pas déclaré (`settings_section_group`). La liste des entrées les montre sous l'intitulé de leur
+groupe (monospace : le style technique est réservé à cette catégorie, avec les éditeurs de prompt).
+
+| Groupe | Ce qui y va | Sections (ordre) |
+| --- | --- | --- |
+| Architecture & compatibilité (`architecture_compat`) | architecture vocale, piles et modes historiques, invariants (délégation, orchestration du cerveau), réglage fin VAD/tampon/vérificateur | `architecture_compat` ([`voice-audio.md`](voice-audio.md)) |
+| Prompts & instructions (`prompts`) | atelier des prompts : chaque couche contrôlée par JARVIS (enregistrer / revenir au défaut, `POST /api/prompts/<id>`, charges `edit` et `reset` inchangées), prompt effectif par canal ; les instructions des rôles de sous-agent restent dans Agents & modèles › Rôles des sous-agents (aucune couche `subagent_role.*` dans l'atelier) | `prompts` (alias = ancien ID d'onglet) |
+| Runtime & CLI (`runtime_cli`) | commande et chemin du CLI, re-détection, permission, profils et ordre des candidats, source des listes | `runtime_cli` (alias `routing`, [`agents-models.md`](agents-models.md)) |
+| Diagnostics (`diagnostics`) | état constaté, en lecture seule, fait de parties (`registerSettingsDiagnostic`) : Voix, Mot d'éveil, Mémoire, Bare Hands | `diagnostics` |
+| Labs & outils de test (`labs`) | porte de test de la scène et redémarrage du brain, promotion des Work Methods, essais Bare Hands (lecture à l'écran, test, enregistrement), futurs outils expérimentaux qui ne sont pas des préférences | `scene_gate` (alias `experimental`), `work_methods`, `barehands_lab` ([`interface-interactions.md`](interface-interactions.md)) |
+
+Aucune de ces sections ne double un contrôle éditable d'une autre catégorie : la porte `scene.enabled` n'existe
+qu'ici (Thème & scène visuelle ne règle que l'apparence locale de la scène), les champs Voix et Agent/CLI ont une
+seule destination servie ou figée par test, la promotion des Work Methods n'est offerte qu'ici. Plus aucun onglet de
+premier niveau (`TABS` vide) ; les anciens ID `prompts` et `experimental` ouvrent leurs sections
+([`../legacy/settings-tab-aliases.md`](../legacy/settings-tab-aliases.md)).
+Régression : `tests/unit/test_advanced_settings_browser.py` (vrai Chrome),
+`tests/unit/test_control_center_settings_registry_js.py`, `tests/unit/test_scene_settings_ui.py`,
+`tests/unit/test_control_center_prompts.py`.
 
 Rollout and compatibility checks are documented in
 [`migration-rollout.md`](migration-rollout.md). The canonical Voice projection

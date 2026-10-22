@@ -5,7 +5,8 @@ isolé (fixture `served` de `test_wake_word_settings_browser.py`) sert la page ;
 de vraies frappes et de vrais clics. Ce que ce fichier prouve :
 
 - Interface & interactions montre trois sections (Thème & scène visuelle, Raccourcis, Bare Hands), plus aucun onglet
-  `appearance` ni `shortcuts` ; `experimental` ne porte plus que la porte de test de la scène, dans Avancé ;
+  `appearance` ni `shortcuts` ; `experimental` mène à la porte de test de la scène, section `scene_gate` d'Avancé
+  (Slice 08) ;
 - anciens identifiants et ancres Bare Hands mènent à leur section ;
 - `wake_toggle` a exactement un éditeur dans toutes les sections de toutes les catégories ;
 - capture d'un raccourci : Échap l'annule sans fermer les Réglages ; une touche l'enregistre, le focus reste sur la
@@ -67,10 +68,9 @@ async def test_sections_aliases_single_wake_editor_and_barehands_split(served):
     tour = got(out["steps"][0], "tour")
     assert tour["labels"] == ["Thème & scène visuelle", "Raccourcis", "Bare Hands"]
     assert tour["related"] is True, "plus aucun « encore dans » pour Interface"
-    # Plus aucun onglet hérité pour des préférences ordinaires : seul `experimental` (porte de la scène) dans Avancé.
-    # `keys` non plus (Slice 07 : section Fournisseurs de Connexions).
-    assert sorted(t for _c, t in tour["tabs"]) == ["experimental", "prompts"]
-    assert ["advanced_diagnostics", "experimental"] in tour["tabs"]
+    # Plus aucun onglet hérité : `keys` (Slice 07, Fournisseurs de Connexions), `prompts` et `experimental` (Slice 08,
+    # sections Prompts et Scène constellation d'Avancé) non plus.
+    assert tour["tabs"] == []
     # `wake_toggle` : un seul éditeur, dans Raccourcis ; Voix › Tours n'en montre que la touche.
     assert tour["editors"] == {"shortcuts": 1}
     assert tour["voiceKeys"] == 1
@@ -79,7 +79,7 @@ async def test_sections_aliases_single_wake_editor_and_barehands_split(served):
     assert alias["shortcuts"] == ["interface_interactions", None, "shortcuts"]
     assert alias["barehandsSettings"] == alias["barehandsCalibration"] == ["interface_interactions", None, "bare_hands"]
     assert alias["barehandsRecord"] == alias["barehandsBenchmarkSection"] == ["advanced_diagnostics", None, "barehands_lab"]
-    assert alias["experimental"] == ["advanced_diagnostics", "experimental", None]
+    assert alias["experimental"] == ["advanced_diagnostics", None, "scene_gate"]
     assert alias["interface_interactions"] == ["interface_interactions", None, "bare_hands"]  # dernière entrée ouverte
     assert tour["ordinary"] == {"diag": False, "preview": True, "calibrate": True, "wipe": True, "bench": False,
                                 "record": False, "assets": False, "footer": False}

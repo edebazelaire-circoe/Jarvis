@@ -32,6 +32,29 @@ d'implémentation). Les métadonnées d'options et de réglages de ce fichier re
   jamais la navigation de premier niveau.
 - `cycleCategory(id, step)` donne la catégorie voisine dans cet ordre, en boucle (un ID
   inconnu part de la première ou de la dernière).
+- `notice` (facultatif) : avis montré sous l'intro de la catégorie. Seule `advanced_diagnostics`
+  en porte un (outils d'opérateur, Slice 08).
+
+### Groupes déclarés (`CATEGORY_GROUPS`, Slice 08)
+
+Une catégorie peut déclarer des groupes, gelés dans le registre comme les catégories. Seule
+`advanced_diagnostics` en déclare, dans cet ordre d'affichage :
+
+| Ordre | ID de groupe | Libellé | Sections (ordre) |
+| --- | --- | --- | --- |
+| 1 | `architecture_compat` | Architecture & compatibilité | `architecture_compat` |
+| 2 | `prompts` | Prompts & instructions | `prompts` |
+| 3 | `runtime_cli` | Runtime & CLI | `runtime_cli` |
+| 4 | `diagnostics` | Diagnostics | `diagnostics` |
+| 5 | `labs` | Labs & outils de test | `scene_gate`, `work_methods`, `barehands_lab` |
+
+- Dans une catégorie qui déclare des groupes, chaque section **doit** porter un `group` parmi eux ;
+  dans une autre, `group` est refusé (`settings_section_group`). L'appartenance est une donnée
+  explicite de l'enregistrement, jamais déduite.
+- `sections(id)` les ordonne par groupe (ordre de `CATEGORY_GROUPS`), puis `order`, puis ordre
+  d'enregistrement. `R.groups(id)` rend les groupes d'une catégorie (liste vide sinon) ;
+  `snapshot()` et `shellNavigation` les portent (`groups`), chaque entrée porte son `group`.
+- Ce qui va dans chaque groupe : [`INDEX.md`](INDEX.md) § « Avancé & diagnostic ».
 
 ## 2. Enregistrer une section
 
@@ -43,7 +66,7 @@ R.page.register({
   label: 'Mot d’éveil',         // requis
   description: '…',             // optionnel
   order: 50,                    // optionnel (0) ; à égalité, l'ordre d'enregistrement
-  group: 'labs',                // optionnel, ID snake_case (groupes d'Avancé & diagnostic)
+  group: 'labs',                // requis dans une catégorie à groupes (Avancé & diagnostic), refusé ailleurs
   mount(host, context) {},      // requis : dessine la section dans `host`
   destroy() {},                 // requis en pratique pour toute section à état (minuteurs, requêtes, écouteurs)
   save: 'self',                 // requis : 'footer' (bouton Enregistrer du shell) | 'self' (la section s'enregistre) | 'readonly'
@@ -71,6 +94,7 @@ même appel donne toujours le même code et le même message, et un refus n'enre
 | `settings_section_duplicate` | ID déjà enregistré, ou déjà pris comme alias |
 | `settings_section_invalid` | description non objet, champ inconnu, ID mal formé ou égal à une catégorie, libellé vide, `mount` absent, `save` hors politique, `isDirty` sur `readonly`, `applies` inconnu, `aliases` mal formé |
 | `settings_alias_conflict` | alias égal à un ID canonique, déjà porté par une autre section, ou contraire à `LEGACY_TAB_ALIASES` |
+| `settings_section_group` | `group` absent ou non déclaré dans une catégorie à groupes, ou `group` dans une catégorie sans groupes |
 
 L'appelant (le shell) attrape le refus, le journalise avec son code et l'affiche : une
 section refusée ne disparaît jamais en silence.
@@ -100,7 +124,7 @@ Destination principale de chaque ID d'onglet actuel, plus les autres destination
 | --- | --- | --- |
 | `voice` | `voice_audio` / `conversation` | `voice_audio` / `voice_output`, `microphone_sound`, `turns_interruptions` ; `advanced_diagnostics` / `architecture_compat`, `diagnostics` |
 | `wakeword` | `voice_audio` / `wake_word` | `advanced_diagnostics` / `diagnostics` |
-| `prompts` | `advanced_diagnostics` / `prompts` | — |
+| `prompts` | `advanced_diagnostics` / `prompts` (section enregistrée depuis la Slice 08, ID = ancien ID) | — |
 | `cli` | `agents_models` / `main_agent` | `agents_models` / `agent_behavior`, `subagent_models` ; `advanced_diagnostics` / `runtime_cli` |
 | `routing` (déjà redirigé vers `cli`) | `advanced_diagnostics` / `runtime_cli` | — |
 | `keys` | `connections` / `providers` (section enregistrée depuis la Slice 07, [`connections.md`](connections.md)) | — |
@@ -108,7 +132,7 @@ Destination principale de chaque ID d'onglet actuel, plus les autres destination
 | `memory` | `memory_knowledge` / `recall` | `memory_knowledge` / `semantic_retrieval`, `consolidation`, `knowledge_sources`, `memory_center` ; `advanced_diagnostics` / `diagnostics` |
 | `subagents` | `agents_models` / `subagents` | `advanced_diagnostics` / `work_methods` (promotion de Work Methods, groupe `labs`) |
 | `appearance` | `interface_interactions` / `theme_scene` | — |
-| `experimental` | `advanced_diagnostics` / `labs` | `interface_interactions` / `bare_hands` ; `advanced_diagnostics` / `barehands_lab` |
+| `experimental` | `advanced_diagnostics` / `scene_gate` (section Scène constellation depuis la Slice 08, alias déclaré) | `interface_interactions` / `bare_hands` ; `advanced_diagnostics` / `barehands_lab` |
 
 Ancres Bare Hands (`LEGACY_ANCHORS`, clés de `SECTION` dans `control_center_barehands.js`,
 utilisées par `JarvisBarehands.showSettings(section)`) : `barehandsSettings` et
@@ -124,17 +148,18 @@ Sections cibles prévues (enregistrées par les Slices 03 à 08) :
 `memory_knowledge` : `recall`, `semantic_retrieval`, `consolidation`, `knowledge_sources`, `memory_center` ·
 `interface_interactions` : `theme_scene`, `shortcuts`, `bare_hands` ·
 `connections` : `providers` ·
-`advanced_diagnostics` (un groupe par section, sauf `work_methods`, du groupe `labs`) : `architecture_compat`, `prompts`,
-`runtime_cli`, `diagnostics`, `work_methods`, `labs` ; plus `barehands_lab` (groupe `labs`, Slice 06 :
-[`interface-interactions.md`](interface-interactions.md)).
+`advanced_diagnostics` (groupes déclarés, § 1) : `architecture_compat`, `prompts`, `runtime_cli`, `diagnostics`,
+`scene_gate`, `work_methods`, `barehands_lab` (Slice 06 : [`interface-interactions.md`](interface-interactions.md)).
+Toutes sont enregistrées depuis la Slice 08 : plus aucun onglet hérité ne sert une section cible.
 
 ## 4. Cas particuliers relevés par l'audit
 
 - **`experimental` partagé.** Jusqu'à la Slice 06, Bare Hands créait l'onglet et
   `control_center_scene_settings.js` y ajoutait la porte de test de la scène. Depuis la Slice 06,
   Bare Hands enregistre `bare_hands` (Interface), `barehands_lab` (Avancé, groupe `labs`) et la
-  partie de diagnostic `barehands` ; l'onglet, déclaré par la page, ne porte plus que la scène.
-  La Slice 08 déménage la scène dans Labs, puis l'ID disparaît de `TABS`.
+  partie de diagnostic `barehands`. Depuis la Slice 08, `control_center_scene_settings.js` enregistre
+  la section `scene_gate` (groupe `labs`, alias `experimental`) et ne dépend plus d'aucun onglet ;
+  l'ID a disparu de `TABS`.
 - **`ui_tab_next` / `ui_tab_prev`.** Depuis la Slice 02, ils parcourent les six catégories par
   `cycleCategory`, jamais les sections ni les anciens onglets.
 - **Roue Jarvis** (`control_center_jarvis_wheel.js`). Elle lit `settingsTabs()` et ouvre
@@ -144,13 +169,15 @@ Sections cibles prévues (enregistrées par les Slices 03 à 08) :
   reste servie par l'alias, qui ouvre `voice_audio` / `conversation` depuis la Slice 03 (passage à
   `voice_audio` dans la roue : Slice 09).
 - **Pied de page.** `save: 'footer'` montre le bouton Enregistrer du shell ; `self` et
-  `readonly` le cachent (onglets hérités restants : `TABS[].save`).
+  `readonly` le cachent (plus aucun onglet hérité depuis la Slice 08 ; `TABS[].save` reste lu par
+  la machinerie retirée à la Slice 09).
 - **Nettoyage.** Le shell appelle `destroy` de la section quittée avant d'en monter une autre ;
   `cleanupSettingsSurface()` reste le point d'appel pendant la migration.
 
 ## 5. Adaptateur des onglets hérités (migration, Slices 01-09)
 
-Tant que des onglets de `TABS` existent :
+Depuis la Slice 08, `TABS` est vide : l'adaptateur ne sert plus aucun onglet réel ; ses règles
+restent testées sur des fixtures historiques jusqu'à son retrait (Slice 09). Il dit :
 
 - `legacyTabFor(target, TABS)` : l'onglet lui-même ; sa redirection (`routing` → `cli`) ;
   pour une catégorie, son premier onglet dans l'ordre de `TABS` ; pour une section cible,
@@ -175,11 +202,14 @@ Tant que des onglets de `TABS` existent :
   `semantic_retrieval`, `consolidation`, `knowledge_sources` (`save:'self'`), `memory_center` (`readonly`), et la partie
   Mémoire de `advanced_diagnostics` / `diagnostics`. Destinations des champs servies par le serveur (`surface`) :
   [`memory.md`](memory.md).
+- Slice 08 : ni `prompts` ni `experimental` ne sont des onglets ; `TABS` est vide. Sections enregistrées :
+  `prompts` (page, `PROMPTS_SECTION`, groupe `prompts`) et `scene_gate` (`control_center_scene_settings.js`,
+  groupe `labs`, alias `experimental`). Groupes déclarés : § 1.
 
 ## 6. Navigation du shell (Slice 02)
 
-- `shellNavigation(TABS, registry)` → `{categories:[{id, label, description, items, related}], unassigned}` :
-  `items` = sections enregistrées (ordre du registre, `{kind:'section', id, label, save, advanced}`), puis
+- `shellNavigation(TABS, registry)` → `{categories:[{id, label, description, notice, groups, items, related}], unassigned}` :
+  `items` = sections enregistrées (ordre du registre, `{kind:'section', id, label, save, advanced, group}`), puis
   onglets hérités de la catégorie (`{kind:'tab', id, label}`) qu'aucune section ne déclare en alias ;
   `related` = onglets d'autres catégories qui portent encore une partie de celle-ci (`also`), montrés comme
   liens ; un onglet sans alias (`unassigned`) est rangé dans `advanced_diagnostics` pour rester atteignable

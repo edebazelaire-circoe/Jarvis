@@ -389,19 +389,23 @@ def test_a_stopped_brain_another_cli_or_an_unread_status_never_offer_a_restart()
 # ------------------------------------------------------------------ page (statique)
 
 
-async def test_the_section_is_injected_after_barehands_into_the_experimental_tab(tmp_path):
+async def test_the_section_is_registered_in_labs_without_any_tab(tmp_path):
+    """Slice 08 de jarvis-settings-ui-reorganization : la porte de test est la section `scene_gate` du groupe Labs &
+    outils de test d'Avancé (alias `experimental`, l'ancien onglet). Le module ne dépend plus d'aucun onglet : il
+    n'enveloppe plus `renderTab`, ne lit ni `TABS` ni `SET.tab` ni `#modalContent`, et dessine dans l'hôte monté."""
     html = PAGE_HTML.read_text(encoding="utf-8")
     assert html.index(BAREHANDS_SCRIPT_MARKER) < html.index(SCENE_PAGE_SCRIPT_MARKER) < html.index(SCENE_SETTINGS_SCRIPT_MARKER) < html.index(TIMELINE_SCRIPT_MARKER)
     served = (await ControlCenter(runtime_root=tmp_path, project_root=tmp_path).index(None)).text
     source = SETTINGS_JS.read_text(encoding="utf-8")
     assert SCENE_SETTINGS_SCRIPT_MARKER not in served and source in served
-    # Depuis la Slice 06 de jarvis-settings-ui-reorganization, Bare Hands n'injecte plus l'onglet : la page le déclare
-    # (porte de test de la scène seule, jusqu'à son déménagement dans Labs à la Slice 08) et la section s'y ajoute.
-    assert served.index(BAREHANDS_JS.read_text(encoding="utf-8")) < served.index(source)
-    assert "TABS.push" not in BAREHANDS_JS.read_text(encoding="utf-8")
     tabs = html[html.index("\nconst TABS=[") : html.index("\nconst SET=")]
-    assert "{id:'experimental',label:'Expérimental',save:false}" in tabs
-    assert "const TAB_ID='experimental';" in source
+    assert "experimental" not in tabs.split("const TABS=")[1]
+    code = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    for forbidden in ("TAB_ID", "renderTab", "TABS", "SET.tab", "modalContent", "modalSub"):
+        assert forbidden not in code, forbidden
+    assert ("registerSettingsSection({id:SECTION_ENTRY,category:'advanced_diagnostics',group:'labs',order:40,save:'self',"
+            "advanced:true,\n      aliases:['experimental'],") in source
+    assert "const SECTION_ENTRY='scene_gate';" in source
 
 
 def test_the_browser_block_saves_through_settings_confirms_in_page_and_stays_accessible():

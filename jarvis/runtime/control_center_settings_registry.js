@@ -25,16 +25,33 @@
   const freezeAll=list=>Object.freeze(list.map(item=>Object.freeze(item)));
 
   /* Ordre canonique = ordre d'affichage. Les identifiants sont stables (ASCII) ;
-     les libellés ne sont que de la présentation. */
+     les libellés ne sont que de la présentation. `notice` (facultatif) : l'avis montré sous l'intro de la catégorie. */
   const CATEGORIES=freezeAll([
     {id:'voice_audio',label:'Voix & audio',description:'Conversation, voix, micro et mot d’éveil.'},
     {id:'agents_models',label:'Agents & modèles',description:'Agent principal, modèles et sous-agents.'},
     {id:'memory_knowledge',label:'Mémoire & connaissances',description:'Rappel, recherche, consolidation et sources.'},
     {id:'interface_interactions',label:'Interface & interactions',description:'Thème, scène, raccourcis et Bare Hands.'},
     {id:'connections',label:'Connexions',description:'Fournisseurs et identifiants enregistrés.'},
-    {id:'advanced_diagnostics',label:'Avancé & diagnostic',description:'Architecture, prompts, diagnostics et essais.'},
+    {id:'advanced_diagnostics',label:'Avancé & diagnostic',description:'Architecture, prompts, diagnostics et essais.',
+      notice:'Outils d’opérateur : architecture, prompts, runtime, état constaté et essais de JARVIS. Les réglages du quotidien sont dans les autres catégories.'},
   ]);
   const CATEGORY_IDS=Object.freeze(CATEGORIES.map(c=>c.id));
+
+  /* Groupes déclarés d'une catégorie (Slice 08, `docs/settings/INDEX.md` § Avancé) : ordre d'affichage, libellé et ce
+     qui y va. Une catégorie qui déclare des groupes exige de chaque section un `group` parmi eux ; une catégorie qui
+     n'en déclare pas refuse tout `group`. Seule Avancé & diagnostic en déclare : c'est une boîte à outils structurée,
+     pas un fourre-tout. */
+  const CATEGORY_GROUPS=Object.freeze({
+    advanced_diagnostics:freezeAll([
+      {id:'architecture_compat',label:'Architecture & compatibilité',description:'Architecture vocale, piles historiques, invariants et réglage fin.'},
+      {id:'prompts',label:'Prompts & instructions',description:'Atelier des prompts et aperçu du prompt effectif.'},
+      {id:'runtime_cli',label:'Runtime & CLI',description:'Commande, chemin, permissions et routage bas niveau.'},
+      {id:'diagnostics',label:'Diagnostics',description:'État constaté, en lecture seule.'},
+      {id:'labs',label:'Labs & outils de test',description:'Porte de test, essais, enregistrements et outils expérimentaux.'},
+    ]),
+  });
+  const NO_GROUPS=Object.freeze([]);
+  function groupsOf(categoryId){return Object.prototype.hasOwnProperty.call(CATEGORY_GROUPS,categoryId)?CATEGORY_GROUPS[categoryId]:NO_GROUPS}
 
   /* Destination de chaque identifiant d'onglet actuel : catégorie et section
      cible principales (`docs/07-target-settings-map.md`), plus les autres
@@ -51,6 +68,7 @@
         {category:'advanced_diagnostics',section:'architecture_compat'},{category:'advanced_diagnostics',section:'diagnostics'}])}),
     wakeword:Object.freeze({category:'voice_audio',section:'wake_word',
       also:freezeAll([{category:'advanced_diagnostics',section:'diagnostics'}])}),
+    /* Slice 08 : l'atelier des prompts est la section `prompts` (groupe Prompts & instructions) ; ID = ancien ID d'onglet. */
     prompts:Object.freeze({category:'advanced_diagnostics',section:'prompts',also:freezeAll([])}),
     /* Slice 04 : `cli` et `subagents` ne sont plus des onglets. Le mode et le catalogue des sous-agents vont dans
        `subagent_models` ; la promotion des Work Methods dans `work_methods` (groupe Labs d'Avancé). */
@@ -69,8 +87,9 @@
     appearance:Object.freeze({category:'interface_interactions',section:'theme_scene',also:freezeAll([])}),
     /* Onglet autrefois partagé par Bare Hands et `control_center_scene_settings.js`. Depuis la Slice 06, Bare Hands
        en est sorti (sections `bare_hands` d'Interface et `barehands_lab` d'Avancé, atteintes aussi par
-       `LEGACY_ANCHORS`) ; l'onglet ne porte plus que la porte de test de la scène, qui ira dans Labs (Slice 08). */
-    experimental:Object.freeze({category:'advanced_diagnostics',section:'labs',
+       `LEGACY_ANCHORS`) ; depuis la Slice 08, la porte de test de la scène est la section `scene_gate` (groupe Labs),
+       qui déclare l'alias `experimental`. */
+    experimental:Object.freeze({category:'advanced_diagnostics',section:'scene_gate',
       also:freezeAll([{category:'interface_interactions',section:'bare_hands'},{category:'advanced_diagnostics',section:'barehands_lab'}])}),
   });
 
@@ -89,6 +108,7 @@
     unknownCategory:'settings_category_unknown',
     duplicate:'settings_section_duplicate',
     alias:'settings_alias_conflict',
+    group:'settings_section_group',
   });
   const SAVE_POLICIES=Object.freeze(['footer','self','readonly']);
   const APPLIES=Object.freeze(['immediate','next_turn','next_core_start','next_voice_start']);
@@ -123,6 +143,11 @@
     if(spec.description!==undefined&&typeof spec.description!=='string')throw fail(ERROR_CODES.invalid,`Section ${spec.id} : description texte attendue.`);
     if(spec.order!==undefined&&!Number.isFinite(spec.order))throw fail(ERROR_CODES.invalid,`Section ${spec.id} : ordre numérique attendu.`);
     if(spec.group!==undefined&&(typeof spec.group!=='string'||!ID.test(spec.group)))throw fail(ERROR_CODES.invalid,`Section ${spec.id} : groupe ASCII snake_case attendu.`);
+    const groups=groupsOf(spec.category);
+    if(groups.length&&!groups.some(g=>g.id===spec.group))
+      throw fail(ERROR_CODES.group,`Section ${spec.id} : groupe attendu parmi ${groups.map(g=>g.id).join(', ')} (catégorie ${spec.category}).`);
+    if(!groups.length&&spec.group!==undefined)
+      throw fail(ERROR_CODES.group,`Section ${spec.id} : la catégorie ${spec.category} ne déclare aucun groupe.`);
     if(typeof spec.mount!=='function')throw fail(ERROR_CODES.invalid,`Section ${spec.id} : fonction mount attendue.`);
     if(spec.destroy!==undefined&&typeof spec.destroy!=='function')throw fail(ERROR_CODES.invalid,`Section ${spec.id} : destroy doit être une fonction.`);
     if(!SAVE_POLICIES.includes(spec.save))throw fail(ERROR_CODES.invalid,`Section ${spec.id} : politique d’enregistrement attendue (${SAVE_POLICIES.join(', ')}).`);
@@ -159,7 +184,9 @@
       return entry;
     }
 
-    const byOrder=(a,b)=>a.order-b.order||a.seq-b.seq;
+    /* Ordre stable : groupe déclaré (ordre de `CATEGORY_GROUPS`), puis `order`, puis ordre d'enregistrement. */
+    const groupRank=s=>{const at=groupsOf(s.category).findIndex(g=>g.id===s.group);return at<0?0:at};
+    const byOrder=(a,b)=>groupRank(a)-groupRank(b)||a.order-b.order||a.seq-b.seq;
     function sectionsOf(categoryId){
       if(!CATEGORY_IDS.includes(categoryId))throw fail(ERROR_CODES.unknownCategory,`Catégorie inconnue « ${categoryId} ».`);
       return [...sections.values()].filter(s=>s.category===categoryId).sort(byOrder);
@@ -183,7 +210,7 @@
     }
 
     function snapshot(){
-      return CATEGORIES.map(c=>({id:c.id,label:c.label,sections:sectionsOf(c.id).map(s=>({id:s.id,label:s.label,group:s.group,order:s.order,save:s.save,advanced:s.advanced}))}));
+      return CATEGORIES.map(c=>({id:c.id,label:c.label,groups:groupsOf(c.id).map(g=>g.id),sections:sectionsOf(c.id).map(s=>({id:s.id,label:s.label,group:s.group,order:s.order,save:s.save,advanced:s.advanced}))}));
     }
 
     return Object.freeze({register,section:id=>sections.get(id)||null,sections:sectionsOf,resolve,snapshot,
@@ -243,9 +270,9 @@
     }
     const unassigned=list.filter(t=>!legacyAlias(t.id)).map(t=>t.id);
     const home=t=>{const a=legacyAlias(t.id);return a?a.category:UNASSIGNED_HOME};
-    const categories=CATEGORIES.map(c=>({id:c.id,label:c.label,description:c.description,
+    const categories=CATEGORIES.map(c=>({id:c.id,label:c.label,description:c.description,notice:c.notice||'',groups:groupsOf(c.id),
       items:[
-        ...sectionsBy[c.id].map(s=>({kind:'section',id:s.id,label:s.label,save:s.save,advanced:s.advanced})),
+        ...sectionsBy[c.id].map(s=>({kind:'section',id:s.id,label:s.label,save:s.save,advanced:s.advanced,group:s.group})),
         ...list.filter(t=>!claimed.has(t.id)&&home(t)===c.id).map(t=>({kind:'tab',id:t.id,label:String(t.label||t.id)})),
       ],
       related:list.filter(t=>{const a=legacyAlias(t.id);return a&&!claimed.has(t.id)&&a.category!==c.id
@@ -274,8 +301,8 @@
     return hit?{category:hit.category,item:null}:null;
   }
 
-  const api=Object.freeze({CATEGORIES,CATEGORY_IDS,LEGACY_TAB_ALIASES,LEGACY_ANCHORS,ERROR_CODES,SAVE_POLICIES,APPLIES,
-    category,cycleCategory,legacyAlias,createRegistry,legacyTabFor,navigationFromLegacyTabs,shellNavigation,shellTarget,
+  const api=Object.freeze({CATEGORIES,CATEGORY_IDS,CATEGORY_GROUPS,LEGACY_TAB_ALIASES,LEGACY_ANCHORS,ERROR_CODES,SAVE_POLICIES,APPLIES,
+    category,groups:groupsOf,cycleCategory,legacyAlias,createRegistry,legacyTabFor,navigationFromLegacyTabs,shellNavigation,shellTarget,
     /* L'instance de la page, où les modules enregistrent leurs sections. */
     page:createRegistry()});
   root.JarvisSettingsRegistry=api;

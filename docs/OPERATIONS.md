@@ -155,12 +155,15 @@ catégorie, qui ouvre les réglages directement sur elle) ouvrent les réglages 
 écran, au-dessus du fond flouté (`docs/settings/settings-shell.md`). Ils se ferment par
 « Fermer » ou `Échap` (plus de clic à l'extérieur : il n'y en a plus). Six catégories à
 gauche — Voix & audio, Agents & modèles, Mémoire & connaissances, Interface & interactions,
-Connexions, Avancé & diagnostic — ; Ctrl+→ / Ctrl+← passent de l'une à l'autre. Pendant la
-migration, chaque catégorie montre en haut les anciens onglets qui lui reviennent (Prompts, API
-Keys, Expérimental) ; Voix et Mot d'éveil (Slice 03), Agent / CLI
-et Sous-agents (Slice 04), Mémoire (Slice 05), Raccourcis, Apparence et Bare Hands (Slice 06,
-`docs/settings/interface-interactions.md`) sont devenus des sections (`docs/settings/voice-audio.md`,
-`docs/settings/agents-models.md`, `docs/settings/memory.md`) ; ce guide écrit encore « Réglages → onglet ».
+Connexions, Avancé & diagnostic — ; Ctrl+→ / Ctrl+← passent de l'une à l'autre. Il n'y a plus
+d'onglet : Voix et Mot d'éveil (Slice 03), Agent / CLI et Sous-agents (Slice 04), Mémoire (Slice 05),
+Raccourcis, Apparence et Bare Hands (Slice 06, `docs/settings/interface-interactions.md`), API Keys
+(Slice 07, Connexions › Fournisseurs), Prompts et Expérimental (Slice 08, Avancé & diagnostic ›
+Prompts et › Scène constellation) sont devenus des sections (`docs/settings/voice-audio.md`,
+`docs/settings/agents-models.md`, `docs/settings/memory.md`, `docs/settings/INDEX.md`). Avancé & diagnostic
+range ses outils d'opérateur en cinq groupes : Architecture & compatibilité, Prompts & instructions,
+Runtime & CLI, Diagnostics, Labs & outils de test. Ce guide écrit encore parfois « Réglages → onglet »
+(ancien nom de la section ; l'ancien identifiant y mène toujours).
 
 Un principe la traverse : **la page ne connaît aucun réglage**. Le serveur
 décrit ce qui existe — les piles vocales, leurs champs, les CLI, leurs modes,
@@ -739,8 +742,9 @@ Depuis la Slice 06 de `jarvis-settings-ui-reorganization`, les préférences ord
 **Réglages › Interface & interactions › Bare Hands**, la lecture de diagnostic à l'écran, le test et
 l'enregistrement dans **Avancé & diagnostic › Bare Hands · essais**, l'état du modèle MediaPipe et la
 dernière commande vocale dans **Avancé & diagnostic › Diagnostics** (`docs/settings/interface-interactions.md`).
-L'onglet Expérimental ne porte plus que la porte de test de la scène (jusqu'à la Slice 08) ; les mentions
-historiques ci-dessous de « l'onglet Expérimental » pour Bare Hands désignent ces entrées.
+L'onglet Expérimental n'existe plus : depuis la Slice 08, la porte de test de la scène est
+**Réglages › Avancé & diagnostic › Scène constellation** (groupe Labs & outils de test) ; les mentions historiques ci-dessous de « l'onglet Expérimental » pour Bare Hands
+désignent les entrées ci-dessus.
 
 À l'origine, un onglet **Expérimental** (ajouté par `jarvis/runtime/control_center_barehands.js`
 jusqu'à la Slice 06 de `jarvis-settings-ui-reorganization`) portait un interrupteur
@@ -3057,7 +3061,7 @@ un autre onglet ou un redémarrage retrouvent la même scène. Le travail termin
 enregistré ni variable d'environnement, la scène est rendue et le cerveau reçoit
 ses outils d'affichage à son prochain démarrage. Rien à faire pour s'en servir.
 
-1. **Réglages** → onglet **Expérimental** → section « Scène constellation » : la case
+1. **Réglages › Avancé & diagnostic › Scène constellation** (groupe Labs & outils de test) (ancien onglet Expérimental) : la case
    « Afficher la scène et donner ses outils au brain » est déjà cochée. La
    décocher éteint la scène dans toutes les fenêtres ouvertes en une seconde,
    sans recharger ; la recocher la rallume aussi vite. Le choix est enregistré,
@@ -3159,7 +3163,7 @@ depuis le Slice 11, mais c'est le modèle qui tranche.
 | rien ne s'affiche, case cochée | recharger la page ; si la case est grisée, voir la variable d'environnement ci-dessus |
 | l'encadré « brain » reste orange | « Redémarrer le brain… » ; un échec s'affiche en rouge avec la cause, et dans la console `[scène] scene.brain_restart_failed` |
 | « Réglage de scène non enregistré » | lire la cause affichée ; les réglages refusés sont aussi dans `runtime/trace.jsonl` (`settings.agent.rejected`) |
-| le brain a les outils mais ne crée aucun artefact | conversation reprise avec l'ancienne consigne (`agent.start` `resumed: true`) : « Redémarrer le brain… » depuis l'onglet Expérimental, pas depuis le panneau Agents |
+| le brain a les outils mais ne crée aucun artefact | conversation reprise avec l'ancienne consigne (`agent.start` `resumed: true`) : « Redémarrer le brain… » depuis Réglages › Avancé & diagnostic › Scène constellation, pas depuis le panneau Agents |
 | « Scène figée — Core injoignable » | démarrer Core ; la page reprend seule |
 
 Tables complètes : dans chaque section « Scène constellation » ci-dessous.
@@ -3548,8 +3552,8 @@ Détail technique : `docs/ARCHITECTURE.md`, « Brain display MCP ».
 
 **Activer.** Interrupteur `scene.enabled`, **allumé par défaut** : une
 installation neuve, sans clé `scene` dans `runtime/control-center-settings.json`
-et sans variable d'environnement, est allumée. Pour l'éteindre : **Réglages →
-Expérimental → « Scène constellation »**, décocher (enregistré immédiatement),
+et sans variable d'environnement, est allumée. Pour l'éteindre : **Réglages › Avancé & diagnostic › Scène constellation** (groupe Labs & outils de test),
+décocher (enregistré immédiatement),
 ou dans `runtime/control-center-settings.json` :
 
 ```json
@@ -3577,7 +3581,7 @@ système à son lancement, et **une conversation reprise (`--resume`) garde la
 consigne enregistrée à son premier tour** — seuls les outils suivent. Constaté au
 Slice 11 sur le vrai CLI : conversation commencée scène éteinte, reprise scène
 allumée → dix outils présents, aucun artefact créé à la fin d'une recherche.
-C'est pourquoi « Redémarrer le brain… » de l'onglet Expérimental repart sur une
+C'est pourquoi « Redémarrer le brain… » de la section Scène constellation repart sur une
 **nouvelle conversation** (`POST /api/agent/restart` avec
 `{"new_conversation": true}`), alors que « Redémarrer » du panneau Agents reprend
 la conversation. L'onglet compare le réglage à `GET /api/status` → `agent` :
@@ -3609,9 +3613,9 @@ Core et le **chemin** du jeton, jamais le jeton.
 
 | Symptôme | Cause probable | Action |
 | --- | --- | --- |
-| `agent.start` dit `display_mcp: false` alors que l'interrupteur est vrai | cerveau pas redémarré, `JARVIS_SCENE_ENABLED=0`, ou brain non Claude (Codex n'a jamais ces outils) | Réglages → Expérimental → « Redémarrer le brain… » ; lire `GET /api/status` → `agent.display_tools` et `GET /api/settings` → `scene.source` |
-| le cerveau a les outils mais ne crée pas d'artefact et ne relit pas la scène (ou cherche des outils de scène alors qu'elle est éteinte) | conversation reprise (`agent.start` `resumed: true`) qui garde la consigne de son premier tour ; `GET /api/status` → `agent.display_prompt` différent du réglage | Réglages → Expérimental → « Redémarrer le brain… » (nouvelle conversation), ou redémarrer JARVIS |
-| « Réglage de scène non enregistré » dans l'onglet Expérimental, code `scene_env_override` | `JARVIS_SCENE_ENABLED` est posée pour le Control Center | la retirer et relancer le Control Center, ou garder la valeur imposée |
+| `agent.start` dit `display_mcp: false` alors que l'interrupteur est vrai | cerveau pas redémarré, `JARVIS_SCENE_ENABLED=0`, ou brain non Claude (Codex n'a jamais ces outils) | Réglages → Avancé & diagnostic → Scène constellation → « Redémarrer le brain… » ; lire `GET /api/status` → `agent.display_tools` et `GET /api/settings` → `scene.source` |
+| le cerveau a les outils mais ne crée pas d'artefact et ne relit pas la scène (ou cherche des outils de scène alors qu'elle est éteinte) | conversation reprise (`agent.start` `resumed: true`) qui garde la consigne de son premier tour ; `GET /api/status` → `agent.display_prompt` différent du réglage | Réglages → Avancé & diagnostic → Scène constellation → « Redémarrer le brain… » (nouvelle conversation), ou redémarrer JARVIS |
+| « Réglage de scène non enregistré » dans la section Scène constellation, code `scene_env_override` | `JARVIS_SCENE_ENABLED` est posée pour le Control Center | la retirer et relancer le Control Center, ou garder la valeur imposée |
 | `scene.display_mcp_unconfigured` (avertissement) | Control Center lancé sans coordonnées de Core (hors `python -m jarvis control-center`) | lancer par la commande normale |
 | `agent.display_mcp_failed` (erreur, panneau ERR) | `runtime/display-mcp.json` non inscriptible | corriger les droits du dossier runtime, redémarrer l'agent ; la voix marche sans l'écran en attendant |
 | `mcp_servers` montre `jarvis-display` en `failed` | interpréteur introuvable, paquet `mcp` absent (`pip install -e .[mcp]`), variable d'environnement invalide | lancer à la main la commande de `runtime/display-mcp.json` avec son `env` : l'erreur s'affiche |
@@ -3626,7 +3630,7 @@ Core et le **chemin** du jeton, jamais le jeton.
 | `display.tool_failed` niveau erreur `display_internal_error` | défaut du serveur | remonter le message (type et texte) |
 | erreur d'outil `scene_query (near) … reason=unplaced` | l'objet de référence n'a pas encore de géométrie enregistrée (placement automatique pas encore fait par une page) | normal : ouvrir le Control Center le place en quelques secondes ; sinon `scene_get` |
 | erreur d'outil `scene_query (explains) … reason=object_archived` | l'objet a été archivé | normal : rien à expliquer dans la scène active |
-| le cerveau répond « je ne vois que le titre » d'un artefact | cerveau lancé avec une version plus ancienne, ou conversation reprise (`agent.start` `resumed: true`) qui garde l'ancienne consigne | Réglages → Expérimental → « Redémarrer le brain… » ; la trace doit montrer `mcp__jarvis-display__scene_get` et `display.read` |
+| le cerveau répond « je ne vois que le titre » d'un artefact | cerveau lancé avec une version plus ancienne, ou conversation reprise (`agent.start` `resumed: true`) qui garde l'ancienne consigne | Réglages → Avancé & diagnostic → Scène constellation → « Redémarrer le brain… » ; la trace doit montrer `mcp__jarvis-display__scene_get` et `display.read` |
 | erreur d'outil `attach_artifact refusé … reason=object_archived` | l'utilisateur a archivé l'étoile du travail | normal : pas d'artefact pour un travail rangé, rien n'a été envoyé |
 
 Tous les appels laissent `display.tool` / `display.read` (lectures `scene_query`
@@ -4090,15 +4094,15 @@ propose jamais ; le modèle peut encore les charger par ToolSearch.
 
 ### Scène constellation : ce que l'on voit dans le Control Center
 
-Quand `scene.enabled` est vrai (case de l'onglet Expérimental, voir « outils
+Quand `scene.enabled` est vrai (case de Réglages › Avancé & diagnostic › Scène constellation, voir « outils
 d'affichage du cerveau » pour le détail), la page du Control Center dessine la scène **par-dessus le visage**
 (circuit imprimé ou Cosmos) et **sous toutes les commandes** : barre du haut,
 dock, panneaux, pastilles, réglages, notifications, menu contextuel et
 Barehands restent cliquables au-dessus. L'interrupteur est relu à chaque
 sondage de `/api/status` (chaque seconde) : l'allumer ou l'éteindre agit sur la
 page ouverte sans la recharger. Éteint, la page est exactement celle d'avant :
-aucun calque, aucune requête de scène (seul l'onglet Expérimental des réglages
-montre l'interrupteur).
+aucun calque, aucune requête de scène (seule la section Scène constellation des
+réglages montre l'interrupteur).
 
 **Ce qui est dessiné.**
 
@@ -4297,7 +4301,7 @@ alors dès trois fenêtres.
 
 | Symptôme | Cause probable | Action |
 | --- | --- | --- |
-| aucune scène alors que l'interrupteur est vrai | page servie avant la mise à jour, ou `JARVIS_SCENE_ENABLED=0` | recharger la page ; l'onglet Expérimental dit si la variable impose l'état (`GET /api/status` → `scene.source`) |
+| aucune scène alors que l'interrupteur est vrai | page servie avant la mise à jour, ou `JARVIS_SCENE_ENABLED=0` | recharger la page ; la section Scène constellation dit si la variable impose l'état (`GET /api/status` → `scene.source`) |
 | la scène reste figée après le retour de Core | la page attend son prochain essai (≤ 30 s) | attendre ; la console du navigateur montre `[scène] scene.view_restored` puis `scene.snapshot_loaded` |
 | un objet apparaît puis bouge une fois | placé localement, puis position enregistrée différente (autre navigateur ou autre profil ouvert en même temps) | sans conséquence ; la position enregistrée fait foi ensuite |
 | `scene.command set_geometry` en grand nombre dans `runtime/trace.jsonl` | première ouverture d'une scène pleine d'objets jamais placés : une commande par objet, une seule fois | normal |

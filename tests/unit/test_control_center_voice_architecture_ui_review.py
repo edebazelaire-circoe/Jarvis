@@ -190,7 +190,7 @@ def _announce_deferred_apply(tmp_path: Path) -> dict:
     html = PAGE.read_text(encoding="utf-8")
     ui = PAGE.with_name("control_center_settings_ui.js")
     sections = html[html.index("const VOICE_SECTIONS=[") : html.index("/* `advanced_diagnostics` › `diagnostics`")]
-    restart = html[html.index("function voiceRestartHtml(){") : html.index("/* --- onglet Prompts")]
+    restart = html[html.index("function voiceRestartHtml(){") : html.index("/* --- `advanced_diagnostics` › Prompts")]
     script = tmp_path / "deferred-apply.cjs"
     script.write_text(
         f"require({json.dumps(str(ui))});const UI=globalThis.JarvisSettingsUI;\n"

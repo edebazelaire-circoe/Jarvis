@@ -2552,7 +2552,7 @@ ControlCenter (scene.enabled) ─► ClaudeLocalAgent.display_mcp = DisplayMcpTa
 | Piece | File | Role |
 | --- | --- | --- |
 | Gate | `jarvis/runtime/scene_settings.py` | `scene.enabled` in `control-center-settings.json` (**default true**, `DEFAULT_ENABLED`; only a stored boolean counts, so a stored `false` wins over the default and anything unreadable falls back to it); `JARVIS_SCENE_ENABLED` overrides both; `GET/POST /api/settings` block `scene` = `describe_gate` (`enabled`, `source`, `stored` = `stored_gate(settings)` — what the switch would be without the variable, `env` = variable name when it wins); a write while the variable is set is refused 400 `scene_env_override` (Slice 11) |
-| Settings UI | `jarvis/runtime/control_center_scene_settings.js` | Slice 11: « Scène constellation » section at the top of the Expérimental tab (created by Barehands, injected after it); pure `JarvisSceneSettings.describe(scene, status)` + browser block; see *Scene settings UI* below |
+| Settings UI | `jarvis/runtime/control_center_scene_settings.js` | Slice 11: « Scène constellation » section; since `jarvis-settings-ui-reorganization` Slice 08 the registered section `scene_gate` of Settings › Advanced › Labs & test tools (alias `experimental`, the former tab); pure `JarvisSceneSettings.describe(scene, status)` + browser block; see *Scene settings UI* below |
 | Wiring | `jarvis/runtime/control_center.py`, `jarvis/app.py` | `_run_control_center_v2` builds `DisplayMcpTarget` from `V2Settings`; `_apply_agent_settings` hands it to the Claude agent only when the gate is on |
 | Spawn | `jarvis/runtime/claude_local.py` | `_display_mcp_args`: atomic write of `runtime/display-mcp.json`, `--mcp-config <file>`; prompt program `conversation_display_session` |
 | Server | `jarvis/runtime/display_mcp.py` | `build_server` (lazy `mcp` import), `SceneDisplayTools` (logic, testable against a real Core), `serve_stdio` |
@@ -2655,10 +2655,11 @@ guide: [OPERATIONS.md](OPERATIONS.md), « Sessions & Boards ».
 Scene settings UI (Slice 11). `control_center_scene_settings.js` adds a section at
 the top of the Expérimental tab (placement: experimental features live there; the
 Apparence tab was theme-only and the switch also changes the brain). Since
-`jarvis-settings-ui-reorganization` Slice 06 the tab carries only this scene gate:
-Bare Hands moved to Settings › Interface & interactions › Bare Hands and Advanced ›
-Bare Hands · essais (`docs/settings/interface-interactions.md`); the gate moves to
-Labs in Slice 08. Pure part `JarvisSceneSettings.describe(scene, status)` (node
+`jarvis-settings-ui-reorganization` Slice 06 Bare Hands lives in Settings › Interface &
+interactions › Bare Hands and Advanced › Bare Hands · essais
+(`docs/settings/interface-interactions.md`); since Slice 08 the gate is the registered section
+`scene_gate` (group `labs`, alias `experimental`) of Settings › Advanced & diagnostics, mounted by
+the shell into its own host (`registerSettingsSection`; no `renderTab` wrapper, no tab). Pure part `JarvisSceneSettings.describe(scene, status)` (node
 tests `tests/unit/test_scene_settings_ui.py`): the checkbox reflects
 `scene.enabled`, is read-only with an explanation when `source = env`, and an
 « effects » list says what changes when (display at the next `/api/status` read,
@@ -3215,7 +3216,7 @@ Contract (runtime, message protocol, events, routes): [prefabs.md](prefabs.md).
 overrides the file and the default). `refreshStatus` calls `JarvisScene.gate(s.scene, s.scene_limits)`.
 On is the default, so a fresh install draws the scene at the first status read. Off
 (a stored `false`, or `JARVIS_SCENE_ENABLED=0`): no container, no style, no scene
-request (the Expérimental settings tab
+request (Settings › Advanced › Scène constellation
 still shows the switch). Switching on creates the container and starts the loop; switching
 off aborts the long-poll, releases the lock, stops the committer and removes the
 container and its style element. A failed status read leaves the gate unchanged.

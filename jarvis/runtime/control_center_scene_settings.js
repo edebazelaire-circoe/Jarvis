@@ -1,5 +1,7 @@
-/* Réglage « Scène constellation » de l'onglet Expérimental (handoff
-   jarvis-constellation-scene-runtime, Slice 11).
+/* Réglage « Scène constellation » (handoff jarvis-constellation-scene-runtime,
+   Slice 11), section `scene_gate` du groupe Labs & outils de test d'Avancé &
+   diagnostic depuis la Slice 08 de jarvis-settings-ui-reorganization (alias
+   `experimental`, l'ancien onglet).
 
    Deux parties, comme `control_center_barehands.js` :
    - `JarvisSceneSettings.describe(scene, status)`, logique pure : à partir du
@@ -10,8 +12,8 @@
      brain en cours et redémarrage proposé quand il ne correspond pas au
      choix. Les tests l'exécutent avec node
      (`tests/unit/test_scene_settings_ui.py`) ;
-   - un bloc navigateur : la section ajoutée en tête de l'onglet Expérimental
-     (écrite par `POST /api/settings`, bloc `scene`), le redémarrage confirmé
+   - un bloc navigateur : la section enregistrée dans le registre des Réglages
+     (`registerSettingsSection`, écrite par `POST /api/settings`, bloc `scene`), le redémarrage confirmé
      du brain (`confirmDialog` en page, `POST /api/agent/restart`) et la
      relecture de l'état du brain dans les réponses de `/api/status` que la
      page lit déjà (aucune requête de plus).
@@ -178,18 +180,21 @@
 })(typeof globalThis!=='undefined'?globalThis:this);
 
 /* --------------------------------------------------------------------------
-   Bloc navigateur : section de l'onglet Expérimental. Les tests node ne
-   l'exécutent pas.
+   Bloc navigateur : section `scene_gate` des Réglages (Avancé & diagnostic ›
+   Labs & outils de test). Les tests node ne l'exécutent pas.
    -------------------------------------------------------------------------- */
 (function installJarvisSceneSettings(){
   if(typeof window==='undefined'||typeof document==='undefined')return;
   const Logic=window.JarvisSceneSettings;
-  const TAB_ID='experimental';
+  /* Entrée du registre des Réglages ; l'ancien identifiant d'onglet `experimental` y mène (alias). */
+  const SECTION_ENTRY='scene_gate';
   const SECTION_ID='sceneSettings';
-  const view={scene:null,status:null,busy:false,error:'',restart:null};
+  /* `host` : l'hôte que le shell a monté pour la section, `null` dès qu'elle est quittée. */
+  const view={scene:null,status:null,busy:false,error:'',restart:null,host:null};
 
   const log=(level,event,data)=>{try{console[level==='error'?'error':level==='warn'?'warn':'info']('[scène] '+event,data||{})}catch(_error){/* console absente */}};
-  const tabOpen=()=>typeof SET!=='undefined'&&SET.open&&SET.tab===TAB_ID;
+  /* La section est montrée : Réglages ouverts, hôte monté et toujours dans la page, réglages lus. */
+  const sectionShown=()=>typeof SET!=='undefined'&&SET.open&&!!SET.data&&!!view.host&&view.host.isConnected;
 
   function node(tag,attrs,children){
     const el=document.createElement(tag);
@@ -243,10 +248,9 @@
 
   /* Redessine la section en gardant le focus sur le contrôle qui l'avait. */
   function refresh(){
-    if(!tabOpen())return;
-    const content=document.getElementById('modalContent');
-    const previous=document.getElementById(SECTION_ID);
-    if(!content)return;
+    if(!sectionShown())return;
+    const content=view.host;
+    const previous=content.querySelector('#'+SECTION_ID);
     const focused=previous&&previous.contains(document.activeElement)?document.activeElement:null;
     const key=focused?(focused.hasAttribute('data-scene-toggle')?'[data-scene-toggle]':focused.hasAttribute('data-scene-restart')?'[data-scene-restart]':null):null;
     const next=sectionNode();
@@ -352,25 +356,27 @@
     document.head.appendChild(style);
   }
 
-  /* L'onglet Expérimental est créé par Barehands (inséré avant ce fichier) :
-     la section s'ajoute en tête de ce qu'il vient de dessiner. */
-  function installSection(){
-    if(typeof renderTab!=='function'||typeof TABS==='undefined'||!Array.isArray(TABS))return;
+  /* Section du registre des Réglages (Slice 08) : le shell la monte dans un hôte neuf et la détruit en la quittant.
+     Une écriture ou un redémarrage en vol continue ; sa fin ne redessine que si la section est de nouveau montrée. */
+  function mount(host){
     ensureStyle();
-    const baseRenderTab=renderTab;
-    renderTab=async function(){
-      const result=await baseRenderTab.apply(this,arguments);
-      if(tabOpen()){
-        view.scene=typeof SET!=='undefined'&&SET.data?SET.data.scene||null:null;
-        // Onglet redessiné : une erreur d'un essai précédent ne s'affiche plus comme actuelle.
-        if(!view.busy)view.error='';
-        // Le sous-titre de Barehands dit « appliquées immédiatement » : faux pour les outils du brain.
-        const sub=document.getElementById('modalSub');
-        if(sub)sub.textContent='Fonctions en test, enregistrées immédiatement ; chaque section dit quand elle prend effet.';
-        refresh();
-      }
-      return result;
-    };
+    view.host=host;
+    host.replaceChildren();
+    if(typeof SET==='undefined'||!SET.data){
+      // `openSettings` remonte la section à l'arrivée des réglages.
+      host.append(node('div',{className:'empty',text:'Chargement…'}));return}
+    view.scene=SET.data.scene||null;
+    // Section remontée : une erreur d'un essai précédent ne s'affiche plus comme actuelle.
+    if(!view.busy)view.error='';
+    refresh();
+  }
+  function installSection(){
+    if(typeof registerSettingsSection!=='function'){log('error','scene.settings_shell_missing',{});return}
+    registerSettingsSection({id:SECTION_ENTRY,category:'advanced_diagnostics',group:'labs',order:40,save:'self',advanced:true,
+      aliases:['experimental'],label:'Scène constellation',
+      description:'Porte de test de la scène et redémarrage du brain. Enregistré immédiatement ; chaque effet dit quand il s’applique.',
+      mount,
+      destroy(host){if(view.host===host)view.host=null}});
   }
 
   /* Le statut que la page lit déjà chaque seconde nourrit l'état du brain. */
@@ -396,7 +402,7 @@
           if(typeof SET!=='undefined'&&SET.data)SET.data.scene=view.scene;
           gated=true;
         }
-        if(tabOpen()&&!view.restart
+        if(sectionShown()&&!view.restart
           &&(gated||JSON.stringify(Logic.describe(view.scene,view.status).brain)!==before))refresh();
       }
       return value;

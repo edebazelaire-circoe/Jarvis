@@ -54,7 +54,20 @@ ALIASES = {
     "memory": ("memory_knowledge", "recall"),
     "subagents": ("agents_models", "subagents"),
     "appearance": ("interface_interactions", "theme_scene"),
-    "experimental": ("advanced_diagnostics", "labs"),
+    "experimental": ("advanced_diagnostics", "scene_gate"),
+}
+#: Les cinq groupes déclarés d'Avancé & diagnostic (Slice 08), dans l'ordre d'affichage.
+ADVANCED_GROUPS = [
+    ("architecture_compat", "Architecture & compatibilité"),
+    ("prompts", "Prompts & instructions"),
+    ("runtime_cli", "Runtime & CLI"),
+    ("diagnostics", "Diagnostics"),
+    ("labs", "Labs & outils de test"),
+]
+#: Groupe déclaré de chaque section d'Avancé enregistrée par la page servie (Slices 03-08).
+ADVANCED_SECTION_GROUP = {
+    "architecture_compat": "architecture_compat", "prompts": "prompts", "runtime_cli": "runtime_cli",
+    "diagnostics": "diagnostics", "scene_gate": "labs", "work_methods": "labs", "barehands_lab": "labs",
 }
 #: Modules qui injectent encore un onglet de premier niveau (`TABS.push/splice`). `control_center_wake_word.js` en est
 #: sorti à la Slice 03, `control_center_work.js` (Apparence) et `control_center_barehands.js` (Expérimental) à la
@@ -95,18 +108,23 @@ def injected_tab_ids() -> list[str]:
 
 def assembled_tabs() -> list[dict]:
     """L'ordre réel du shell : la base seule. Depuis la Slice 03, ni `voice` ni `wakeword` ne sont des onglets ; depuis
-    la Slice 06, ni `appearance` ni `shortcuts`, et `experimental` (la porte de test de la scène seule) est déclaré dans
-    la base au lieu d'être injecté par Bare Hands ; depuis la Slice 07, ni `keys` (section Fournisseurs de Connexions)."""
+    la Slice 06, ni `appearance` ni `shortcuts` ; depuis la Slice 07, ni `keys` ; depuis la Slice 08, ni `prompts` ni
+    `experimental` (sections Prompts et Scène constellation d'Avancé) : plus aucun onglet de premier niveau."""
     ids = base_tab_ids()
-    assert ids == ["prompts", "experimental"]
-    assert set(injected_tab_ids()) <= set(ids)
-    assert "voice" not in ids and "wakeword" not in ids
+    assert ids == []
+    assert injected_tab_ids() == []
     return [{"id": i, "label": i} for i in ids]
+
+
+def historical_tabs() -> list[dict]:
+    """Fixture historique de l'adaptateur (Slice 07, avant la Slice 08) : `prompts` et `experimental` encore onglets.
+    L'adaptateur des onglets hérités reste en place jusqu'à la Slice 09 : ses règles sont testées sur ce cas."""
+    return [{"id": "prompts", "label": "prompts"}, {"id": "experimental", "label": "experimental"}]
 
 
 def legacy_voice_tabs() -> list[dict]:
     """Fixture historique de l'adaptateur (avant la Slice 03) : `voice` et `wakeword` encore onglets. L'adaptateur reste
-    en place pour les onglets que les Slices 04 à 08 n'ont pas encore rehébergés : sa règle est testée sur ce cas."""
+    en place jusqu'à la Slice 09 : sa règle est testée sur ce cas."""
     return [{"id": "voice", "label": "voice"}, {"id": "wakeword", "label": "wakeword"}, *assembled_tabs()]
 
 
@@ -140,11 +158,24 @@ SLICE_06_SECTIONS = (
 #: Section enregistrée depuis la Slice 07 (`CONNECTIONS_SECTION` de la page) ; l'onglet `keys` a disparu, son ID est
 #: l'alias de la section.
 SLICE_07_SECTIONS = (("providers", "connections", 10, "self", ["keys"]),)
+#: Sections enregistrées depuis la Slice 08 : `prompts` (`PROMPTS_SECTION` de la page, ID = ancien ID d'onglet) et
+#: `scene_gate` (`control_center_scene_settings.js`, alias `experimental`). Les onglets `prompts` et `experimental` ont
+#: disparu.
+SLICE_08_SECTIONS = (
+    ("prompts", "advanced_diagnostics", 10, "self", []), ("scene_gate", "advanced_diagnostics", 40, "self", ["experimental"]),
+)
+
+
+def _group(section_id: str) -> str:
+    return f"group:'{ADVANCED_SECTION_GROUP[section_id]}'," if section_id in ADVANCED_SECTION_GROUP else ""
+
+
 REGISTER_SLICE_03 = "".join(
-    f"R.page.register({{id:'{i}',category:'{c}',label:'{i}',order:{o},save:'{v}',mount:noop}});" for i, c, o, v in SLICE_03_SECTIONS
+    f"R.page.register({{id:'{i}',category:'{c}',{_group(i)}label:'{i}',order:{o},save:'{v}',mount:noop}});"
+    for i, c, o, v in SLICE_03_SECTIONS
 ) + "".join(
-    f"R.page.register({{id:'{i}',category:'{c}',label:'{i}',order:{o},save:'{v}',aliases:{json.dumps(a)},mount:noop}});"
-    for i, c, o, v, a in (*SLICE_04_SECTIONS, *SLICE_05_SECTIONS, *SLICE_06_SECTIONS, *SLICE_07_SECTIONS)
+    f"R.page.register({{id:'{i}',category:'{c}',{_group(i)}label:'{i}',order:{o},save:'{v}',aliases:{json.dumps(a)},mount:noop}});"
+    for i, c, o, v, a in (*SLICE_04_SECTIONS, *SLICE_05_SECTIONS, *SLICE_06_SECTIONS, *SLICE_07_SECTIONS, *SLICE_08_SECTIONS)
 )
 
 
@@ -173,21 +204,23 @@ def test_sections_register_into_a_category_and_keep_their_order(tmp_path):
 const reg=R.createRegistry();
 reg.register({id:'wake_word',category:'voice_audio',label:'Mot d’éveil',order:50,mount:noop,destroy:noop,save:'self',applies:'next_voice_start',aliases:['wakeword']});
 reg.register({id:'conversation',category:'voice_audio',label:'Conversation',order:10,mount:noop,save:'footer',isDirty:()=>false});
-reg.register({id:'labs',category:'advanced_diagnostics',label:'Labs',group:'labs',advanced:true,mount:noop,save:'readonly'});
+reg.register({id:'scene_gate',category:'advanced_diagnostics',label:'Scène',group:'labs',advanced:true,mount:noop,save:'readonly'});
 out({voice:reg.sections('voice_audio').map(s=>s.id),snap:reg.snapshot(),
   frozen:Object.isFrozen(reg.section('wake_word')),
   resolve:['voice_audio','conversation','wakeword','voice','labs','experimental','barehandsSettings','nope',42].map(t=>[t,reg.resolve(t)]),
   unknownCat:codeOf(()=>reg.sections('seventh'))});""")
     assert out["voice"] == ["conversation", "wake_word"]
     assert [c["id"] for c in out["snap"]] == [c[0] for c in CATEGORIES]
-    assert out["snap"][5]["sections"] == [{"id": "labs", "label": "Labs", "group": "labs", "order": 0, "save": "readonly", "advanced": True}]
+    assert out["snap"][5]["sections"] == [{"id": "scene_gate", "label": "Scène", "group": "labs", "order": 0, "save": "readonly", "advanced": True}]
+    assert out["snap"][5]["groups"] == [g for g, _ in ADVANCED_GROUPS] and out["snap"][0]["groups"] == []
     assert out["frozen"] is True
     resolved = dict((t if isinstance(t, str) else str(t), r) for t, r in out["resolve"])
     assert resolved["voice_audio"] == {"category": "voice_audio", "section": None, "source": "category"}
     assert resolved["conversation"] == {"category": "voice_audio", "section": "conversation", "source": "section"}
     assert resolved["wakeword"] == {"category": "voice_audio", "section": "wake_word", "source": "section_alias"}
     assert resolved["voice"] == {"category": "voice_audio", "section": "conversation", "source": "legacy_tab"}
-    assert resolved["experimental"] == {"category": "advanced_diagnostics", "section": "labs", "source": "legacy_tab"}
+    assert resolved["experimental"] == {"category": "advanced_diagnostics", "section": "scene_gate", "source": "legacy_tab"}
+    assert resolved["labs"] is None  # un groupe n'est pas une cible
     # Section cible pas encore enregistrée : la catégorie seule, jamais une section devinée.
     assert resolved["barehandsSettings"] == {"category": "interface_interactions", "section": None, "source": "legacy_anchor"}
     assert resolved["nope"] is None and resolved["42"] is None
@@ -214,6 +247,9 @@ const cases={
   alias_twice:[{...ok,aliases:['old']},{id:'other',category:'interface_interactions',label:'O',mount:noop,save:'self',aliases:['old']}],
   legacy_alias_elsewhere:[{...ok,aliases:['keys']}],
   id_is_alias:[{...ok,aliases:['other']},{id:'other',category:'interface_interactions',label:'O',mount:noop,save:'self'}],
+  advanced_without_group:[{...ok,id:'probe',category:'advanced_diagnostics'}],
+  advanced_unknown_group:[{...ok,id:'probe',category:'advanced_diagnostics',group:'misc'}],
+  group_in_ungrouped_category:[{...ok,group:'labs'}],
 };
 const result={};
 for(const [name,specs] of Object.entries(cases)){
@@ -238,6 +274,9 @@ out(result);""")
         "alias_twice": "settings_alias_conflict",
         "legacy_alias_elsewhere": "settings_alias_conflict",
         "id_is_alias": "settings_section_duplicate",
+        "advanced_without_group": "settings_section_group",
+        "advanced_unknown_group": "settings_section_group",
+        "group_in_ungrouped_category": "settings_section_group",
     }
     for name, code in expected.items():
         first, second = out[name]["first"], out[name]["second"]
@@ -272,11 +311,12 @@ def test_no_module_injects_a_new_top_level_tab():
 
 
 def test_migration_adapter_maps_targets_to_current_tabs(tmp_path):
-    tabs = assembled_tabs()
+    assert assembled_tabs() == []  # plus aucun onglet (Slice 08) : les règles de l'adaptateur sur la fixture historique
+    tabs = historical_tabs()
     out = run(tmp_path, f"""
 const T={json.dumps(tabs)};
 const targets=['voice','wakeword','cli','routing','keys','memory','experimental','voice_audio','agents_models','memory_knowledge',
-  'interface_interactions','connections','advanced_diagnostics','wake_word','runtime_cli','labs','bare_hands','theme_scene','diagnostics',
+  'interface_interactions','connections','advanced_diagnostics','wake_word','runtime_cli','scene_gate','bare_hands','theme_scene','diagnostics',
   'barehandsRecord','nope',null];
 out({{map:targets.map(t=>[String(t),R.legacyTabFor(t,T)]),nav:R.navigationFromLegacyTabs(T),
   stray:R.navigationFromLegacyTabs([...T,{{id:'seventh',label:'7'}}]).unassigned,
@@ -290,7 +330,7 @@ out({{map:targets.map(t=>[String(t),R.legacyTabFor(t,T)]),nav:R.navigationFromLe
         "voice": None, "wakeword": None, "cli": None, "routing": None, "keys": None, "memory": None,
         "experimental": "experimental", "voice_audio": None, "agents_models": None, "memory_knowledge": None,
         "interface_interactions": None, "connections": None, "advanced_diagnostics": "prompts",
-        "wake_word": None, "runtime_cli": None, "labs": "experimental", "bare_hands": "experimental",
+        "wake_word": None, "runtime_cli": None, "scene_gate": "experimental", "bare_hands": "experimental",
         "theme_scene": None, "diagnostics": None, "barehandsRecord": "experimental", "nope": None, "null": None,
     }
     nav = out["nav"]
@@ -315,7 +355,8 @@ PLANNED_SECTIONS = {
     "memory_knowledge": ["recall", "semantic_retrieval", "consolidation", "knowledge_sources", "memory_center"],
     "interface_interactions": ["theme_scene", "shortcuts", "bare_hands"],
     "connections": ["providers"],
-    "advanced_diagnostics": ["architecture_compat", "prompts", "runtime_cli", "diagnostics", "work_methods", "labs"],
+    "advanced_diagnostics": ["architecture_compat", "prompts", "runtime_cli", "diagnostics", "scene_gate", "work_methods",
+                             "barehands_lab"],
 }
 
 
@@ -323,12 +364,12 @@ def test_every_planned_target_section_is_served_by_a_current_tab(tmp_path):
     """QA Slice 01 : `voice_output`, `semantic_retrieval`… rendaient `null` ; chaque section cible prévue s'ouvre :
     par un onglet hérité, ou (depuis la Slice 03) parce qu'elle est enregistrée par la page."""
     registered = {i for i, *_ in (*SLICE_03_SECTIONS, *SLICE_04_SECTIONS, *SLICE_05_SECTIONS, *SLICE_06_SECTIONS,
-                                  *SLICE_07_SECTIONS)}
+                                  *SLICE_07_SECTIONS, *SLICE_08_SECTIONS)}
     out = run(tmp_path, f"""
 const T={json.dumps(assembled_tabs())},P={json.dumps(PLANNED_SECTIONS)};
 out(Object.fromEntries(Object.values(P).flat().map(s=>[s,R.legacyTabFor(s,T)])));""")
     assert all(v for k, v in out.items() if k not in registered), {k: v for k, v in out.items() if not v}
-    assert registered - {"barehands_lab"} <= {s for sections in PLANNED_SECTIONS.values() for s in sections}
+    assert registered == {s for sections in PLANNED_SECTIONS.values() for s in sections}  # Slice 08 : tout est enregistré
     # Les sections Voix et Mémoire ne sont plus servies par un onglet (Slices 03 et 05).
     assert {k: out[k] for k in ("conversation", "voice_output", "microphone_sound", "turns_interruptions", "wake_word",
                                 "architecture_compat")} == dict.fromkeys(
@@ -360,7 +401,7 @@ const at=()=>[SET.category,SET.tab,SET.section];
 (async()=>{{
   await openSettingsTab('connections');const first=at();
   const seen={{}};
-  for(const target of ['memory','routing','labs','bare_hands','voice','voice_output','semantic_retrieval','barehandsCalibration',
+  for(const target of ['memory','routing','experimental','prompts','bare_hands','voice','voice_output','semantic_retrieval','barehandsCalibration',
     'appearance','voice_audio','interface_interactions','keys','wake_word'])
     {{await openSettingsTab(target);seen[target]=at()}}
   await openSettingsTab('nope');const afterUnknown=at();
@@ -374,8 +415,9 @@ const at=()=>[SET.category,SET.tab,SET.section];
     assert seen["memory"] == ["memory_knowledge", None, "recall"]  # Slice 05 : l'alias de Rappel
     # Slice 04 : `routing` → Runtime & CLI ; `cli` et `subagents` ouvrent leurs sections (test suivant).
     assert seen["routing"] == ["advanced_diagnostics", None, "runtime_cli"]
-    # Slice 06 : les préférences Bare Hands sont une section d'Interface ; `labs` reste servi par l'onglet de la scène.
-    assert seen["labs"] == ["advanced_diagnostics", "experimental", None]
+    # Slice 08 : `experimental` et `prompts` ne sont plus des onglets ; leurs sections s'ouvrent.
+    assert seen["experimental"] == ["advanced_diagnostics", None, "scene_gate"]
+    assert seen["prompts"] == ["advanced_diagnostics", None, "prompts"]
     assert seen["bare_hands"] == seen["barehandsCalibration"] == ["interface_interactions", None, "bare_hands"]
     assert seen["appearance"] == ["interface_interactions", None, "theme_scene"]
     # La ligne « Réglages de la voix » de la roue (`'voice'`) atterrit sur Voix & audio, section Conversation.
@@ -402,14 +444,48 @@ const at=()=>[SET.category,SET.tab,SET.section];
                              ("section", "knowledge_sources"), ("section", "memory_center")],
         "interface_interactions": [("section", "theme_scene"), ("section", "shortcuts"), ("section", "bare_hands")],
         "connections": [("section", "providers")],
-        "advanced_diagnostics": [("section", "architecture_compat"), ("section", "runtime_cli"), ("section", "diagnostics"),
-                                 ("section", "work_methods"), ("section", "barehands_lab"), ("tab", "prompts"),
-                                 ("tab", "experimental")],
+        # Slice 08 : rangées par groupe déclaré (ordre de `CATEGORY_GROUPS`), puis `order` dans le groupe.
+        "advanced_diagnostics": [("section", "architecture_compat"), ("section", "prompts"), ("section", "runtime_cli"),
+                                 ("section", "diagnostics"), ("section", "scene_gate"), ("section", "work_methods"),
+                                 ("section", "barehands_lab")],
     }
+    advanced = next(c for c in nav["categories"] if c["id"] == "advanced_diagnostics")
+    assert [(g["id"], g["label"]) for g in advanced["groups"]] == ADVANCED_GROUPS
+    assert {i["id"]: i["group"] for i in advanced["items"]} == ADVANCED_SECTION_GROUP
+    assert advanced["notice"].startswith("Outils d’opérateur")
+    assert all(c["groups"] == [] and c["notice"] == "" for c in nav["categories"] if c["id"] != "advanced_diagnostics")
     related = {c["id"]: [r["id"] for r in c["related"]] for c in nav["categories"]}
     # Slice 06 : `bare_hands` est enregistrée, l'onglet de la scène n'est plus proposé comme « encore dans » Interface.
     assert related["interface_interactions"] == []
     assert related["voice_audio"] == related["connections"] == related["advanced_diagnostics"] == []
+
+
+def test_advanced_groups_are_declared_once_and_every_page_registration_names_one(tmp_path):
+    """Slice 08 : cinq groupes déclarés (donnée du registre, figée) ; chaque enregistrement d'Avancé dans le code servi
+    porte un groupe déclaré, explicitement (aucune déduction) ; la fixture dit ce que la page enregistre vraiment."""
+    out = run(tmp_path, """out({groups:R.CATEGORY_GROUPS,frozen:Object.isFrozen(R.CATEGORY_GROUPS)&&Object.isFrozen(R.CATEGORY_GROUPS.advanced_diagnostics)
+      &&R.CATEGORY_GROUPS.advanced_diagnostics.every(Object.isFrozen),fn:R.groups('advanced_diagnostics').map(g=>g.id),none:R.groups('voice_audio')});""")
+    assert list(out["groups"]) == ["advanced_diagnostics"]
+    assert [(g["id"], g["label"]) for g in out["groups"]["advanced_diagnostics"]] == ADVANCED_GROUPS
+    assert all(g["description"] for g in out["groups"]["advanced_diagnostics"])
+    assert out["frozen"] is True and out["fn"] == [g for g, _ in ADVANCED_GROUPS] and out["none"] == []
+    declared = {g for g, _ in ADVANCED_GROUPS}
+    found = {}
+    for path in [HTML, *RUNTIME.glob("control_center*.js")]:
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"\{id:([\w.']+),category:'advanced_diagnostics',(group:'(\w+)',)?", text):
+            assert match.group(3) in declared, (path.name, match.group(0))
+            found[match.group(1).strip("'")] = match.group(3)
+    # Bare Hands nomme ses entrées par `SETTINGS_ENTRY.lab`, la scène par `SECTION_ENTRY` ; les autres par leur ID.
+    assert found == {"runtime_cli": "runtime_cli", "work_methods": "labs", "architecture_compat": "architecture_compat",
+                     "diagnostics": "diagnostics", "prompts": "prompts", "SETTINGS_ENTRY.lab": "labs",
+                     "SECTION_ENTRY": "labs"}
+    scene = (RUNTIME / "control_center_scene_settings.js").read_text(encoding="utf-8")
+    assert "const SECTION_ENTRY='scene_gate';" in scene and "aliases:['experimental']" in scene
+    assert "registerSettingsSection({id:SECTION_ENTRY,category:'advanced_diagnostics',group:'labs',order:40,save:'self'" in scene
+    page = HTML.read_text(encoding="utf-8")
+    assert ("const PROMPTS_SECTION={id:'prompts',category:'advanced_diagnostics',group:'prompts',order:10,advanced:true,"
+            "save:'self',") in page and "registerSettingsSection(PROMPTS_SECTION)" in page
 
 
 def test_page_connections_section_matches_the_registered_fixture():
