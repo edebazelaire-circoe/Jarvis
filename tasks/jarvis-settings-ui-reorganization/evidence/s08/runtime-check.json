@@ -1,0 +1,81 @@
+{
+  "slice": "08-advanced-diagnostics-labs",
+  "date": "2026-10-22",
+  "commit": "dfc45f35",
+  "sandbox": {
+    "worktree": "C:/Projects/jarvis/setui",
+    "core": "127.77.0.1:27653",
+    "control_center": "127.0.0.1:27654",
+    "data_root": "scratchpad/s08/data",
+    "runtime_dir": "scratchpad/s08/runtime",
+    "visualizer": "désactivé (JARVIS_VISUALIZER_ENABLED=0)",
+    "settings_file": "scratchpad/s08/runtime/control-center-settings.json (créé par le bac à sable ; fichier de l'utilisateur non lu)",
+    "driver": "tests/unit/_wake_word_settings_browser.mjs (Chrome sans tête jetable, CDP)"
+  },
+  "advanced_category": {
+    "groups_in_list": [
+      ["architecture_compat", "Architecture & compatibilité", ["architecture_compat"]],
+      ["prompts", "Prompts & instructions", ["prompts"]],
+      ["runtime_cli", "Runtime & CLI", ["runtime_cli"]],
+      ["diagnostics", "Diagnostics", ["diagnostics"]],
+      ["labs", "Labs & outils de test", ["scene_gate", "work_methods", "barehands_lab"]]
+    ],
+    "live_registry_section_groups": "chaque section d'Avancé porte un groupe déclaré ; même ordre que la liste",
+    "notice": "Outils d’opérateur : architecture, prompts, runtime, état constaté et essais de JARVIS. Les réglages du quotidien sont dans les autres catégories.",
+    "TABS_length": 0,
+    "data_tab_entries_in_all_categories": 0,
+    "every_section_mounted_without_error": true,
+    "screens": ["01-avance-groupes-1920.png", "03-avance-groupes-1366.png"]
+  },
+  "diagnostics_reachable": {
+    "voice": "Pile effective : openai_realtime …",
+    "wake_word": "Bloc lu · Désactivé …",
+    "memory": "Recherche par mots · Actif …",
+    "barehands": "Modèle MediaPipe absent · Fichiers manquants …",
+    "screen": "02-diagnostics-1920.png"
+  },
+  "aliases": {
+    "prompts": ["advanced_diagnostics", null, "prompts", "section"],
+    "experimental": ["advanced_diagnostics", null, "scene_gate", "section_alias"],
+    "routing": ["advanced_diagnostics", null, "runtime_cli", "section_alias"]
+  },
+  "prompt_workbench": {
+    "layer": "voice.persona",
+    "save_post": {"path": "/api/prompts/voice.persona", "keys": ["action", "text", "base_revision", "expected_effective_revision"], "action": "edit"},
+    "saved_read_back_by_server": true,
+    "status_after_save": "Couche enregistrée. Application au prochain démarrage ou envoi concerné.",
+    "focus_after_save": "bouton « Enregistrer cette couche » de voice.persona",
+    "reset_post": {"path": "/api/prompts/voice.persona", "body": {"action": "reset"}},
+    "after_reset": "texte par défaut relu ; plus de clé prompt_overrides dans le fichier du bac à sable",
+    "focus_after_reset": "bouton « Revenir au défaut » de voice.persona",
+    "keyboard": "Entrée sur le bouton focalisé (vraies frappes CDP)",
+    "screens": ["04-prompt-enregistre.png", "05-prompt-defaut.png"]
+  },
+  "scene_gate": {
+    "opened_by": "selectTab('experimental') → section scene_gate",
+    "initial": true,
+    "posts": [["/api/settings", {"scene": {"enabled": false}}], ["/api/settings", {"scene": {"enabled": true}}]],
+    "keyboard": "Espace sur la case, focus gardé",
+    "file_after": {"scene": {"enabled": true}},
+    "restart": {
+      "method": "statut et route de redémarrage simulés dans la page (fetch remplacé) : bouton proposé, confirmation « Redémarrer le brain ? », corps envoyé {\"new_conversation\":true} ; aucun processus relancé",
+      "body": {"new_conversation": true}
+    },
+    "screens": ["06-scene-eteinte.png", "07-scene-allumee-redemarrage-propose.png", "08-confirmation-redemarrage.png"]
+  },
+  "keyboard_only": {
+    "path": "rail : Fin + Entrée → Avancé ; liste : Début puis flèche droite ×4 = architecture_compat, prompts, runtime_cli, diagnostics, scene_gate (jamais un intitulé de groupe) ; Entrée ouvre scene_gate ; Tab → #f_scene, contour visible (solid)",
+    "screen": "09-clavier-scene.png"
+  },
+  "overflow": {
+    "1920x1080": "page 0, contenu 0, colonne 0, liste des entrées 0, aucun élément hors du contenu, pour les 7 sections (détails ouverts)",
+    "1366x768": "idem, 0 partout (les groupes passent à la ligne au lieu de défiler)",
+    "1093x614": "idem, 0 partout (1366×768 à 125 %)"
+  },
+  "console": {"exceptions": [], "console_error_warn": []},
+  "processes": {
+    "launched": {"core_launcher": 33464, "core": 17800, "control_center_launcher": 27992, "control_center": 9584, "sandbox_brain_claude": 7572},
+    "user_core_untouched": "127.77.0.1:17653 PID 31824",
+    "user_control_center_untouched": "127.0.0.1:17654 PID 34676"
+  }
+}

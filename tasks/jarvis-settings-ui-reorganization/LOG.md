@@ -638,3 +638,146 @@ serveur réaffiché tel quel), N6 (contour de la carte focalisée), N7 (« API K
 
 Écarts de méthode QA : un lot pytest > 600 s basculé en arrière-plan par l'outil puis relancé en petits lots ; disque C
 entre 3,4 et 4,9 Go libres pendant la QA (jamais sous 500 Mo).
+
+## 2026-10-22 - Slice 08 (implémentation)
+
+### Décisions
+
+- Groupes déclarés dans le registre (`CATEGORY_GROUPS`, gelé comme `CATEGORIES`) : seule `advanced_diagnostics` en
+  déclare cinq, dans cet ordre : `architecture_compat` (Architecture & compatibilité), `prompts` (Prompts &
+  instructions), `runtime_cli` (Runtime & CLI), `diagnostics` (Diagnostics), `labs` (Labs & outils de test). Dans une
+  catégorie à groupes, `group` est requis et doit être déclaré ; ailleurs il est refusé (nouveau code
+  `settings_section_group`). `sections()` trie par rang du groupe, puis `order`, puis ordre d'enregistrement ;
+  `R.groups(id)`, `snapshot().groups`, `shellNavigation` → `{notice, groups, items[].group}`.
+- Avis de catégorie (`notice` du registre, Avancé seulement) : « Outils d’opérateur : architecture, prompts, runtime,
+  état constaté et essais de JARVIS. Les réglages du quotidien sont dans les autres catégories. » Description de la
+  catégorie inchangée (une version plus longue était tronquée à 1093×614, test du shell).
+- Liste des entrées : un `div.set-group role=none` par groupe non vide, intitulé `span.set-group-label` (monospace,
+  `aria-hidden`) qui décrit ses onglets (`aria-describedby`) ; les flèches ne parcourent que les onglets. En largeur
+  ≥ 900 px la liste passe à la ligne au lieu de défiler (Labs en seconde ligne à 1366 et 1440) ; en dessous elle défile.
+  Monospace réservé à Avancé : intitulés de groupe et éditeurs de prompt (`[data-category=advanced_diagnostics]`).
+- Prompts : section `prompts` (ID = ancien ID d'onglet, groupe `prompts`, order 10, `save:'self'`, `PROMPTS_SECTION`).
+  `tabPrompts` → `promptWorkbenchHtml` (contenu identique) ; `savePromptLayer`/`resetPromptLayer` : même route, mêmes
+  charges, `SET.prompts` et `SET.restartNotice` comme avant ; l'issue se dit dans une région d'état propre
+  (`[data-prompt-status]`, le pied est caché pour `self`) ; réponse arrivée section quittée : état gardé, rien dessiné ;
+  focus rendu au bouton de la couche après le rendu.
+- Scène : section `scene_gate` (« Scène constellation », groupe `labs`, order 40, alias `experimental`, `save:'self'`)
+  enregistrée par `control_center_scene_settings.js` dans son `setTimeout` d'installation ; dessin dans l'hôte monté
+  (`view.host`), plus d'enveloppe de `renderTab`, plus de `TABS`, `SET.tab`, `#modalContent` ni `#modalSub`. Sémantique
+  de la porte, du battement `/api/status`, de la confirmation et du redémarrage inchangée.
+  `LEGACY_TAB_ALIASES.experimental` → `scene_gate`.
+- `TABS = []` ; branches `prompts`/`experimental` de `renderTab` et `modalSub` retirées. Laissés pour la Slice 09 :
+  `TABS` vide, branche onglet de `renderTab`, `bindTab` (plus jamais appelé avec contenu), `canonicalSettingsTab`,
+  `routing.tab:'cli'`, `legacyTabFor` (dont l'ancre → `experimental`), `navigationFromLegacyTabs`.
+- Doublons : aucun. L'atelier ne projette aucune couche `subagent_role.*` (programmes Voix/backend seulement,
+  `_prompt_payload`), donc pas de second éditeur des instructions de rôle ; `scene.enabled` n'a d'éditeur qu'ici (Thème
+  & scène ne règle que l'apparence locale) ; champs Voix/Agent déjà uniques (Slices 03-04).
+
+### Inventaire et affectation (sections `advanced_diagnostics`, grep sur `control_center*.js` + page)
+
+| Section | Enregistrée par | Groupe | order |
+| --- | --- | --- | --- |
+| `architecture_compat` | page (`VOICE_SECTIONS`) | `architecture_compat` | 10 |
+| `prompts` | page (`PROMPTS_SECTION`, Slice 08) | `prompts` | 10 |
+| `runtime_cli` (alias `routing`) | page (`AGENT_SECTIONS`) | `runtime_cli` | 30 |
+| `diagnostics` (parties Voix 10, Mot d'éveil, Mémoire 30, Bare Hands 40) | page + `control_center_wake_word.js`, `control_center_barehands.js` | `diagnostics` | 40 |
+| `scene_gate` (alias `experimental`) | `control_center_scene_settings.js` (Slice 08) | `labs` | 40 |
+| `work_methods` | page (`SUBAGENT_SECTIONS`) | `labs` | 50 |
+| `barehands_lab` | `control_center_barehands.js` | `labs` | 60 |
+
+Aucune autre : `test_advanced_groups_are_declared_once_and_every_page_registration_names_one` relève tout
+`{id:…,category:'advanced_diagnostics'` du code servi et exige un groupe déclaré.
+
+### Fichiers
+
+`jarvis/runtime/control_center_settings_registry.js`, `control_center.html`, `control_center_scene_settings.js`,
+`control_center.py` (commentaire) ; docs `docs/settings/INDEX.md` (§ Avancé & diagnostic), `navigation-registry.md`,
+`settings-shell.md`, `interface-interactions.md`, `docs/legacy/settings-tab-aliases.md`, `OPERATIONS.md`,
+`ARCHITECTURE.md` ; fixture `tasks/jarvis-settings-model-catalog-ux/.../agent-cli-ui.json` (`tabs: []`, `prompts` →
+`rehosted_as_sections`) ; tests `test_advanced_settings_browser.py` (nouveau), `test_control_center_settings_registry_js.py`,
+`test_scene_settings_ui.py`, `test_control_center_prompts.py`, `test_control_center_voice_architecture.py` (rendu tardif
+de l'atelier), `test_control_center_voice_architecture_ui_review.py`, `test_voice_settings_ui.py`,
+`test_agent_cli_settings_ui.py`, `test_settings_shell_browser.py`, `test_interface_settings_browser.py`,
+`test_connections_settings_browser.py`, `tests/integration/test_settings_redesign_migration.py`.
+
+### Report S07 (commit séparé `7eb74cc1`, `S7: fix`)
+
+- N1 : la branche succès de `write()` vide `view.error`. N2 : `write()` rend `undefined` pour une réponse ignorée,
+  `add()` n'y touche pas (ni nom remis, ni focus). N4 : capture de `console.log/info/warn/error/debug` dans le parcours
+  complet (5 journaux `connections_credential_written` vus, aucune valeur factice) ; remplacement à valeur vide refusé
+  sur place sans requête ; `test_a_late_success_clears_the_deadline_error_and_an_ignored_reply_touches_nothing`.
+- Mutations (copie jetable de `7eb74cc1`, supprimée) : 4/4 tuées — N1 (`view.error` non vidé), N2 (`next===undefined`
+  retiré), E (valeur dans `log.info`), F (garde du remplacement vide retirée).
+
+### Tests (comptes exacts, depuis `setui`, `.venv` du dépôt principal, chaque commande < 600 s)
+
+- Connexions après S7 fix : connections_settings_browser + connections_settings_js 14 passed + 1 failed (échéance trop
+  courte du nouveau test, réglée), puis le test seul 1 passed ; connections_settings_browser complet 10 passed (après S8).
+- Lot A (mvp, quality, voice_architecture, voice_settings_ui, wake_word_settings_ui, agent_cli_settings_ui,
+  routing_settings_screen, catalog_ui, voice_architecture_ui_review) : 209 passed.
+- Lot B (memory_settings_js, subagents_settings_js, appearance, scene_settings_ui, scene_view_prefs,
+  barehands_tools_settings_js, barehands_cards_js, jarvis_wheel_js, mcp_inspector_js, control_center_memory_js) : 179 passed.
+- Lot C (registry_js, shell_js, intégration settings_redesign_migration, settings_ia_contract, voice_settings_surface,
+  voice_settings_schema, shell_layers, variants_css_orphans, control_center_prompts, memory_settings_surface,
+  memory_settings, memory_settings_endpoints) : 275 passed (registry_js : 19 après l'ajout du test d'ordre).
+- Lot D (documented_routes, delivery_quality, wake_word_docs, remotion_no_fallback_privacy, settings_endpoints,
+  settings_workbench, environment, connections_settings_js, credential_vault) : 232 passed. Après docs et commentaires :
+  12 fichiers touchés, 169 passed.
+- Navigateur : advanced_settings_browser 5 + 1 failed (attente fausse dans le test, corrigée) puis passé ; seconde passe
+  advanced + jarvis_wheel_browser 10 passed ; interface_settings_browser 13 ; settings_shell_browser +
+  jarvis_wheel_browser 11 passed + 2 failed (`test_categories_keyboard_shortcuts_escape_and_focus_return` : liste
+  attendue d'avant ; `test_no_category_overflows…[1093-614]` : description d'Avancé allongée tronquée — description
+  rendue à l'originale), puis settings_shell_browser 9 passed ; agents_models + memory_settings_browser 12 ;
+  wake_word_settings_browser 11 + 9. Aucun échec intermittent observé.
+- Balayage large sans navigateur (unit + intégration) : `-k "settings and not memory and not browser"` 722 passed,
+  1 failed ; `-k "control_center and not settings and not memory and not browser"` 809 passed, 6 failed, 1 skipped ;
+  `-k "(scene or prompt) and not browser and not settings and not control_center and not barehands"` 2305 passed,
+  2 failed, 17 skipped ; `-k "(barehands or shortcut) and not browser"` 1110 passed, 2 failed, 1 skipped ;
+  `-k "(subagent or work_method or routing or agent_cli or catalog or wheel or shell or registry or connection or
+  credential or theme or appearance or tool_brain) and not settings and not control_center and not browser and not
+  scene and not prompt and not barehands"` 1322 passed, 1 failed, 1 skipped. Les 12 échecs sont exactement les 12
+  préexistants connus (test_app tools_gateway, 6 × mcp_api, 2 × barehands practice_frame, scene_group_drag,
+  brain_capability_parity, tool_brain_choices). `test_memory_context` n'a pas échoué.
+
+### Mutations S8 (copie jetable `git worktree add --detach` de `d22870ed`, supprimée) : 12/12 tuées
+
+M1 groupe non exigé ; M2 tri sans rang de groupe (survivante au premier passage : les `order` de la page donnaient le
+même ordre → `test_advanced_sections_are_ordered_by_declared_group_before_their_order`, puis tuée) ; M3 `edit` sans
+`expected_effective_revision` ; M4 `reset` avec texte ; M5 rendu tardif de l'atelier sans garde `isCurrent` ; M6 charge
+de la porte changée ; M7 corps du redémarrage vide ; M8 porte rangée dans Diagnostics ; M9 liste sans groupes ;
+M10 avis absent ; M11 alias `experimental` retiré de la section (survivante : la table héritée résolvait encore → la
+source `section_alias` est vérifiée en vrai Chrome, puis tuée) ; M12 redémarrage sans confirmation.
+
+### Preuves
+
+Bac à sable `setui` (Core 127.77.0.1:27653, Control Center 127.0.0.1:27654, `JARVIS_DATA_ROOT`/`JARVIS_RUNTIME_DIR`
+au scratchpad `s08`, visualiseur coupé), pilotage `_wake_word_settings_browser.mjs` : `evidence/s08/` — 9 PNG
+quantifiés (0,87 Mo) et `runtime-check.json`. Constats : cinq groupes dans l'ordre, sections sous leur groupe, avis
+d'opérateur, `TABS` vide et aucune entrée `data-tab` dans les six catégories ; les 7 sections se montent sans erreur ;
+diagnostics Voix, Mot d'éveil, Mémoire, Bare Hands remplis ; alias `prompts` (section), `experimental` et `routing`
+(`section_alias`) ; Prompts : `voice.persona` enregistrée au clavier (POST `edit` avec les deux révisions), relue par
+`/api/prompts`, puis remise au défaut (POST `{action:'reset'}`), focus sur la couche, fichier du bac à sable sans
+`prompt_overrides` après ; porte : Espace → `{scene:{enabled:false}}` puis `true`, fichier `{"scene":{"enabled":true}}` ;
+redémarrage : statut et route simulés dans la page (aucun processus relancé), confirmation « Redémarrer le brain ? »,
+corps `{"new_conversation":true}` ; clavier seul (rail Fin + Entrée, liste Début + flèches sur les seuls onglets,
+Entrée, Tab vers `#f_scene` avec contour) ; débordement 0 partout (page, colonne, contenu, liste) à 1920×1080,
+1366×768 et 1093×614, détails ouverts ; console sans exception ni `console.error/warn`.
+PID lancés et arrêtés un par un après vérification de la ligne de commande (et du port écouté), sans `/T` : 7572
+(cerveau claude, `--mcp-config` sous `scratchpad\s08` ; ses 10 MCP partis avec lui), 9584 (Control Center), 17800
+(Core) ; lanceurs 27992 et 33464 et leurs conhost partis avec leur enfant. Core utilisateur 17653 (PID 31824) et Control
+Center 17654 (PID 34676) intacts. Données du bac à sable laissées en place. Disque C : 3,6 Go libres au début, 3,5 Go
+à la fin.
+
+### Écarts et reports
+
+- Labs passe en seconde ligne dès 1440 px ; l'intitulé du groupe garde son filet gauche en début de ligne (nuance
+  visuelle, Slice 10).
+- La Scène garde son propre titre (`h3` du module) au lieu de `JarvisSettingsUI.section` : relocation pure, pas de
+  réécriture du rendu.
+- Mentions « onglet Expérimental » hors de cette Slice (Bare Hands, Slice 06) : `barehands_commands.py:149` (message
+  au cerveau), `settings_mcp.py:158` (libellé), commentaires de `control_center_barehands_*.js`,
+  `docs/barehands-contracts.md` (historique). Non modifiées (périmètre Bare Hands ; tests de parité déjà rouges) :
+  Slice 09/10.
+- `bindTab` n'a plus d'appelant avec contenu ; ses liaisons `data-field`/`data-refresh` sont mortes depuis la
+  Slice 03 : retrait avec la machinerie (Slice 09).
+- Le redémarrage du cerveau a été vérifié par requête simulée dans la page, pas par un vrai redémarrage.
