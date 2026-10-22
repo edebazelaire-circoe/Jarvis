@@ -68,7 +68,8 @@ async def test_sections_aliases_single_wake_editor_and_barehands_split(served):
     assert tour["labels"] == ["Thème & scène visuelle", "Raccourcis", "Bare Hands"]
     assert tour["related"] is True, "plus aucun « encore dans » pour Interface"
     # Plus aucun onglet hérité pour des préférences ordinaires : seul `experimental` (porte de la scène) dans Avancé.
-    assert sorted(t for _c, t in tour["tabs"]) == ["experimental", "keys", "prompts"]
+    # `keys` non plus (Slice 07 : section Fournisseurs de Connexions).
+    assert sorted(t for _c, t in tour["tabs"]) == ["experimental", "prompts"]
     assert ["advanced_diagnostics", "experimental"] in tour["tabs"]
     # `wake_toggle` : un seul éditeur, dans Raccourcis ; Voix › Tours n'en montre que la touche.
     assert tour["editors"] == {"shortcuts": 1}
