@@ -827,7 +827,7 @@ Slice 05: Core wiring and Brain injection (*Injection into the Brain context*, *
 
 ## Rollout note and known limits
 
-Staged adoption: the defaults are the safe local configuration (recall on, semantic off, consolidation `manual`, Tencent off), so a plain upgrade changes only what the Brain is shown (a bounded memory block) and adds the Memory tab and the Memory Center. Everything else is opt-in. No migration is involved: canonical memory is Markdown, every other store is derived and disposable. Rollback: set `recall.enabled` to false (turns go back to a context without the memory block) and leave the Markdown files where they are. Operator recipes (rebuild, backup and restore, sidecar outage, remote embeddings): *Memory* in [OPERATIONS.md](OPERATIONS.md).
+Staged adoption: the defaults are the safe local configuration (recall on, semantic off, consolidation `manual`, Tencent off), so a plain upgrade changes only what the Brain is shown (a bounded memory block) and adds the Memory settings (Settings › Memory & knowledge since `jarvis-settings-ui-reorganization`) and the Memory Center. Everything else is opt-in. No migration is involved: canonical memory is Markdown, every other store is derived and disposable. Rollback: set `recall.enabled` to false (turns go back to a context without the memory block) and leave the Markdown files where they are. Operator recipes (rebuild, backup and restore, sidecar outage, remote embeddings): *Memory* in [OPERATIONS.md](OPERATIONS.md).
 
 Known limits at this release:
 

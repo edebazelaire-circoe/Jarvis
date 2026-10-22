@@ -381,18 +381,23 @@ globalThis.clearTimeout=id=>{timers.delete(id)};
 globalThis.ResizeObserver=class{constructor(cb){this.cb=cb;this.on=false;observer=this}observe(){this.on=true}disconnect(){this.on=false}};
 const part={isConnected:true,parentElement:{},setAttribute(){},matches:()=>false,focus(){},scrollIntoView(){pins++}};
 const document={getElementById:id=>id==='diagnostic_memory'?part:null,activeElement:part};
+/* Comme le DOM : une écoute est identifiée par (type, fonction, capture) ; un retrait sans la même `capture` ne retire
+   rien (mutation M4 de la QA S05, survivante tant que ce double ignorait l'option). */
+const capture=o=>typeof o==='boolean'?o:!!(o&&o.capture);
 const modalContent={querySelector:sel=>sel==='#diagnostic_memory'?part:null,
-  addEventListener(t,fn){(listeners[t]=listeners[t]||new Set()).add(fn)},removeEventListener(t,fn){listeners[t]&&listeners[t].delete(fn)}};
+  addEventListener(t,fn,o){const list=listeners[t]=listeners[t]||[];if(!list.some(l=>l.fn===fn&&l.capture===capture(o)))list.push({fn,capture:capture(o)})},
+  removeEventListener(t,fn,o){const list=listeners[t]||[],i=list.findIndex(l=>l.fn===fn&&l.capture===capture(o));if(i>=0)list.splice(i,1)}};
 /* Le lien du shell (Slice 06) : `context.open` = `openSettingsLink`, réduit ici à la pose du focus et au maintien. */
 const context={open:(target,options)=>{stopSettingsPin();focusSettingsLanding(options&&options.focus)}};
 """ + "{PAGE_SOURCE}" + r"""
-const live=()=>Object.values(listeners).reduce((n,s)=>n+s.size,0);
+const live=()=>Object.values(listeners).reduce((n,s)=>n+s.length,0);
 const grow=()=>{if(observer.on)observer.cb()};
 const out={};
 openMemoryDiagnostics(context);grow();
-out.start={pins,timers:[...timers.values()].map(t=>t.ms),types:Object.keys(listeners).sort(),live:live()};
+out.start={pins,timers:[...timers.values()].map(t=>t.ms),types:Object.keys(listeners).sort(),live:live(),
+  capture:Object.values(listeners).flat().every(l=>l.capture)};
 for(const type of ['wheel','keydown','pointerdown','touchstart']){
-  openMemoryDiagnostics(context);const before=pins;[...listeners[type]][0]();grow();
+  openMemoryDiagnostics(context);const before=pins;listeners[type][0].fn();grow();
   out[type]={pinned:pins-before,observing:observer.on,timers:timers.size,live:live()};
 }
 openMemoryDiagnostics(context);const before=pins;[...timers.values()][0].fn();grow();
@@ -417,7 +422,8 @@ def test_the_diagnostic_pin_yields_to_any_user_scroll_and_is_cleaned_up(tmp_path
     done = subprocess.run([node, str(script)], capture_output=True, text=True, encoding="utf-8", timeout=60, check=False)
     assert done.returncode == 0, done.stderr
     out = json.loads(done.stdout)
-    assert out["start"] == {"pins": 2, "timers": [4000], "types": ["keydown", "pointerdown", "touchstart", "wheel"], "live": 4}
+    assert out["start"] == {"pins": 2, "timers": [4000], "types": ["keydown", "pointerdown", "touchstart", "wheel"], "live": 4,
+                            "capture": True}
     released = {"pinned": 0, "observing": False, "timers": 0, "live": 0}  # plus aucun replacement après le geste
     for case in ("wheel", "keydown", "pointerdown", "touchstart", "timeout"):
         assert out[case] == released, (case, out[case])

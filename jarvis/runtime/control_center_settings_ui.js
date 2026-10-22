@@ -15,7 +15,16 @@
    - `badge`    : un état court, toujours avec un mot (jamais la couleur seule) ;
    - `notice`   : un message (info, ok, warn, bad), région vivante au besoin ;
    - `advanced` : une divulgation « avancé » (`<details>` natif) ;
-   - `actions`  : une rangée de boutons, alignée sur la colonne des contrôles. */
+   - `actions`  : une rangée de boutons, alignée sur la colonne des contrôles.
+
+   Deux aides de focus (passe de finitions avant la Slice 10), les seules qui touchent au DOM, et seulement aux
+   éléments qu'on leur donne :
+   - `keepFocus(host, draw)` : `draw()` remplace le contenu de `host` ; l'élément qui avait le focus dans `host` est
+     retrouvé dans le nouveau rendu (même `id`, sinon même premier attribut `data-*` et même valeur) et le reprend,
+     sinon le focus tomberait sur `body`. Un élément retrouvé mais désactivé ne le reprend pas ;
+   - `landFocus(el)` : porte le focus sur `el` après un saut (lien interne, élément créé par une action) et marque
+     l'arrivée (`data-settings-landed`, retiré quand le focus repart) : le contour se voit aussi quand le saut a été
+     cliqué à la souris, où `:focus-visible` ne s'applique pas. */
 (function(root){
   'use strict';
 
@@ -81,7 +90,34 @@
 
   function actions(items=''){return `<div class="set-actions">${items}</div>`}
 
-  const api=Object.freeze({esc,APPLIES_LABELS,BADGE_KINDS,NOTICE_KINDS,intro,section,field,badge,appliesBadge,notice,advanced,actions});
+  /* Sélecteur qui retrouve l'élément focalisé dans un rendu neuf de `host`, ou `null` (focus ailleurs, rien de
+     stable pour le reconnaître). Les valeurs passent par `JSON.stringify` : une chaîne CSS valide, guillemets
+     et barres obliques échappés. */
+  function focusKey(host){
+    const doc=host&&host.ownerDocument,active=doc&&doc.activeElement;
+    if(!active||active===host||typeof host.contains!=='function'||!host.contains(active))return null;
+    if(active.id)return `[id=${JSON.stringify(active.id)}]`;
+    const attr=[...(active.attributes||[])].find(a=>a.name.startsWith('data-'));
+    return attr?`[${attr.name}${attr.value?`=${JSON.stringify(attr.value)}`:''}]`:null;
+  }
+  function keepFocus(host,draw){
+    const key=focusKey(host);
+    const result=draw();
+    if(key){
+      const again=host.querySelector(key),doc=host.ownerDocument;
+      if(again&&again!==doc.activeElement&&!again.disabled&&typeof again.focus==='function')again.focus({preventScroll:true});
+    }
+    return result;
+  }
+  function landFocus(el,options){
+    if(!el||typeof el.focus!=='function')return false;
+    el.setAttribute('data-settings-landed','');
+    el.addEventListener('blur',()=>el.removeAttribute('data-settings-landed'),{once:true});
+    el.focus({preventScroll:!(options&&options.scroll)});
+    return true;
+  }
+
+  const api=Object.freeze({esc,APPLIES_LABELS,BADGE_KINDS,NOTICE_KINDS,intro,section,field,badge,appliesBadge,notice,advanced,actions,keepFocus,landFocus});
   root.JarvisSettingsUI=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof window!=='undefined'?window:globalThis);

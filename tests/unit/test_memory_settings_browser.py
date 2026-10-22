@@ -84,8 +84,9 @@ async def test_sections_destinations_alias_and_links(served):
     assert out["console"] == [], out["console"]
 
 
+#: « Enregistrer la mémoire » est `aria-disabled` (pas `disabled`, qui ferait perdre le focus) tant qu'il ne sert à rien.
 EDIT = """(()=>{const i=document.getElementById('mem_recall_max_items');i.value='3';i.dispatchEvent(new Event('change',{bubbles:true}));
-  return document.querySelector('[data-mem-save]').disabled})()"""
+  return document.querySelector('[data-mem-save]').getAttribute('aria-disabled')==='true'})()"""
 
 
 async def test_saving_posts_only_the_memory_patch_and_reads_back(served):
@@ -130,3 +131,34 @@ async def test_no_memory_section_overflows(served, width, height):
     assert [row["id"] for row in layout] == [*SECTIONS, "diagnostics"]
     for row in layout:
         assert row["page"] <= 0 and row["content"] <= 1 and row["main"] <= 0 and row["wide"] == [], row
+
+
+#: Le Memory Center sans Core (fixture isolée) n'affiche pas Santé des index : son état est répondu dans la page, et
+#: les avertissements de la console sont retenus pour vérifier qu'aucune action n'est perdue en route.
+MC_STUB = """(()=>{window.__warn=[];const w=console.warn.bind(console);console.warn=(...a)=>{window.__warn.push(a.map(String).join(' '));w(...a)};
+  const real=window.fetch;window.fetch=(u,o)=>String(u).split('?')[0]==='/api/memory/status'
+    ?Promise.resolve(new Response(JSON.stringify({available:false,reason_code:'memory_disabled'}),{status:200,headers:{'Content-Type':'application/json'}}))
+    :real(u,o);return true})()"""
+
+
+async def test_the_memory_center_settings_button_opens_recall(served):
+    """QA Slice 09 (N1, mutation Q1) et QA Slice 05 : le bouton « Ouvrir les réglages mémoire » du Memory Center est le
+    seul appelant de l'alias `memory`. Vrai clic : les Réglages s'ouvrent sur Mémoire & connaissances › Rappel, et le
+    gestionnaire Sessions & Boards, qui héberge le Memory Center, ne journalise plus `workspace.unknown_action`."""
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        eval_(MC_STUB), *OPEN,
+        click("#modalTabs [data-section=memory_center]"),
+        wait("!!document.querySelector('[data-mem-center]:not([disabled])')"),
+        click("[data-mem-center]"),
+        wait("document.getElementById('workspaceManager').classList.contains('mc-on')&&!!document.getElementById('mc-tab-health')"),
+        click("#mc-tab-health"),
+        wait("!!document.querySelector('#memoryCenterMount [data-act=settings]')", 8000),
+        click("#memoryCenterMount [data-act=settings]"),
+        wait("SET.open&&SET.section==='recall'&&!!document.querySelector('#memSection_recall [data-mem]')", 8000),
+        eval_("[SET.category,SET.section,document.getElementById('workspaceManager').hidden,"
+              "window.__warn.filter(l=>/unknown_action/.test(l))]", "opened"),
+    ]}])
+    category, section, hidden, unknown = got(out["steps"][0], "opened")
+    assert [category, section, hidden] == ["memory_knowledge", "recall", True]
+    assert unknown == []
+    assert out["console"] == [], out["console"]

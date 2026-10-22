@@ -142,8 +142,10 @@
       if(!st.message)return '';
       return ui.notice({kind:st.message.tone,live:st.message.tone==='bad'?'assertive':'polite',text:st.message.text});
     }
+    /* `aria-disabled` plutôt que `disabled` : un bouton désactivé perd le focus, qui tomberait sur `body` pendant et
+       après l'enregistrement (finitions avant la Slice 10). Les écoutes refusent le clic tant qu'il ne sert à rien. */
     function actionsHtml(){
-      const off=dirty()&&!st.busy?'':' disabled';
+      const off=dirty()&&!st.busy?'':' aria-disabled="true"';
       return ui.actions(`<button type="button" class="action primary" data-mem-save${off}>${st.busy?'Enregistrement…':'Enregistrer la mémoire'}</button>`
         +`<button type="button" class="action" data-mem-reset${off}>Annuler les changements</button>`);
     }
@@ -186,11 +188,12 @@
         <p class="hint">État déduit des réglages, sans appel réseau. L’état en direct (sidecar injoignable, index en synchronisation) est dans le Memory Center, onglet Santé des index. La mémoire canonique (notes Markdown) reste utilisable même si tous les étages optionnels sont coupés.</p>`;
     }
 
+    /* Chaque rendu remplace la vue : le contrôle qui avait le focus le reprend (`keepFocus` du shell). */
     function render(){
       if(dead)return;
       if(!st.memory){host.innerHTML='<div class="empty">Chargement…</div>';return}
-      host.innerHTML=`<div class="mem-settings">${mode==='center'?centerHtml():mode==='diagnostics'?diagnosticsHtml():fieldsHtml()}</div>`;
-      bind();
+      const draw=()=>{host.innerHTML=`<div class="mem-settings">${mode==='center'?centerHtml():mode==='diagnostics'?diagnosticsHtml():fieldsHtml()}</div>`;bind()};
+      if(typeof ui.keepFocus==='function')ui.keepFocus(host,draw);else draw();
     }
     function coerce(el,f){
       if(f.type==='bool')return el.checked;
@@ -206,11 +209,11 @@
         if(current('semantic.provider')==='none'&&current('semantic.enabled'))set('semantic.enabled',false);
         if(!current('semantic.enabled')&&current('consolidation.mode')==='auto')set('consolidation.mode','manual');
         if(!String(current('tencent.url')||'').trim()&&current('tencent.enabled'))set('tencent.enabled',false);
-        const id=el.id;render();const again=id&&host.querySelector('#'+id);if(again&&again.focus)again.focus();
+        const id=el.id;render();const again=id&&host.querySelector('#'+id);if(again&&again.focus&&!(again.ownerDocument&&again===again.ownerDocument.activeElement))again.focus();
       }));
       const on=(sel,fn)=>host.querySelectorAll(sel).forEach(el=>el.addEventListener('click',()=>fn(el)));
       on('[data-mem-save]',()=>submit());
-      on('[data-mem-reset]',()=>{st.draft={};st.message=null;render()});
+      on('[data-mem-reset]',()=>{if(!dirty()||st.busy)return;st.draft={};st.message=null;render()});
       on('[data-mem-center]',()=>{if(root.JarvisMemoryCenter&&root.JarvisMemoryCenter.open)root.JarvisMemoryCenter.open()});
       on('[data-mem-diagnostics]',()=>{if(opts.openDiagnostics)opts.openDiagnostics()});
       on('[data-mem-open]',el=>{if(opts.open)opts.open(el.dataset.memOpen)});

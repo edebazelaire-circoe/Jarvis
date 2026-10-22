@@ -182,7 +182,7 @@ textarea{width:100%;min-height:80px;background:#071015;border:1px solid var(--li
 .mem-number input[type=number]{max-width:160px}
 .mem-number .tag{flex:none;white-space:nowrap}
 .mem-secret,.mem-elsewhere{margin:0}
-.mem-settings button:disabled{opacity:.5;cursor:not-allowed}
+.mem-settings button:disabled,.mem-settings button[aria-disabled=true]{opacity:.7;cursor:not-allowed}
 .mem-settings :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 /* Accents des rôles de sous-agent : `subagent_roles.ROLE_ACCENTS` (jetons) -> variables du thème. Seule table de
    correspondance, partagée par Réglages > Sous-agents et le graphe des tâches. Toujours doublées d'une icône et d'un badge. */
@@ -5756,10 +5756,17 @@ function selectTab(id){
 /* Montre une cible déjà résolue (`settingsTarget`) dans le shell ouvert. */
 function showSettingsTarget(hit){
   const leaving=SET.section;
+  /* Focus dans le contenu (un bouton de la section, puis Ctrl+→ ou un lien) : le contenu est remplacé, le focus
+     tomberait sur `body`. Il va à l'entrée ouverte ; un lien interne le porte ensuite plus loin (`openSettingsLink`). */
+  const inContent=typeof document!=='undefined'&&!!modalContent&&typeof modalContent.contains==='function'&&modalContent.contains(document.activeElement);
   applySettingsTarget(hit);
   /* Quitter Runtime & CLI referme sa configuration avancée ; la remonter (enregistrement, réglages relus) la garde. */
   if(leaving==='runtime_cli'&&SET.section!=='runtime_cli'){SET.routingAdvancedOpen=false;++SET.routingGeneration}
   renderTabs();renderTab();
+  if(inContent&&SET.open&&!overlay.contains(document.activeElement)){
+    const entry=document.querySelector('#modalTabs [aria-selected=true]')||document.querySelector('#settingsCategories [aria-selected=true]');
+    if(entry)entry.focus({preventScroll:true});
+  }
 }
 /* Lien interne d'une section vers une autre cible (Slice 06, `docs/settings/settings-shell.md` § 3) : « Modifier dans
    … › Raccourcis », « Régler la commande », « Voir le diagnostic », renvois des sous-agents. Le bouton cliqué disparaît
