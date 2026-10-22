@@ -743,7 +743,8 @@ SCENE_VIEW_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_VIEW_JS__*/"
 #: son branchement), insérée après Barehands.
 SCENE_SETTINGS_SCRIPT_FILE = "control_center_scene_settings.js"
 SCENE_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/"
-# Onglet « Mot d'éveil » des Réglages (jarvis-wake-word, Slice 07) : logique pure + bloc navigateur.
+# Section « Mot d'éveil » des Réglages (jarvis-wake-word, Slice 07 ; Voix & audio depuis la Slice 03 de
+# jarvis-settings-ui-reorganization) : logique pure + bloc navigateur.
 WAKE_WORD_SCRIPT_FILE = "control_center_wake_word.js"
 WAKE_WORD_SCRIPT_MARKER = "/*__CONTROL_CENTER_WAKE_WORD_JS__*/"
 #: Chronologie de conversation plein écran (Slice 05) : logique pure testée par
@@ -834,7 +835,8 @@ BOARD_DROP_SCRIPT_MARKER = "/*__CONTROL_CENTER_BOARD_DROP_JS__*/"
 SCREENSHOT_PREVIEW_SCRIPT_FILE = "control_center_screenshot_preview.js"
 SCREENSHOT_PREVIEW_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCREENSHOT_PREVIEW_JS__*/"
 
-#: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
+#: Architectures vocales proposées dans Réglages › Avancé & diagnostic › Architecture &
+#: compatibilité (l'ancien onglet « Mode vocal »). Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
 #: par la touche de réveil courante.
 _VOICE_ARCH_CHOICES: tuple[tuple[VoiceArchitecture, str, str], ...] = (

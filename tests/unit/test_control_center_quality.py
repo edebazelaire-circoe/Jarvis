@@ -958,30 +958,27 @@ def test_voice_going_offline_clears_its_capture_report(tmp_path):
 
 
 def test_the_page_renders_the_solo_owner_and_aec_status_from_the_api():
+    """Le verdict Solo Owner et l'état de l'annulation d'écho sont lus tels que le serveur les décrit, dans Avancé ›
+    Diagnostics (`voiceDiagnosticValue`). Passe de finitions avant la Slice 10 de jarvis-settings-ui-reorganization :
+    l'ancien rendu de l'onglet Voix (`authSectionHtml`, `aecHtml`, `renderField` et leurs aides), déjà sans appelant
+    sur main, est retiré ; il ne doit pas revenir à côté des diagnostics."""
     html = CONTROL_CENTER_HTML.read_text(encoding="utf-8")
 
     for needle in (
-        "async function authSectionHtml()",
-        "function aecHtml()",
         "function authFieldChanged(el,revision)",
         "function voiceDiagnosticHtml(records)",
         "'owner_profile_path':((a.verifier_settings||{}).effective||{}).owner_profile_path",
+        "'authorization.status':a.status",
+        "'echo_cancellation.status':voice.echo_cancellation",
         "verification_modes_by_mode",
-        "a.status_source==='voice'",
-        "Solo Owner configuré mais NON appliqué",
-        "Solo Owner appliqué",
-        "vérification en ombre",
         "Redémarrez Voice pour appliquer",
-        "Réglages avancés — R&amp;D",
-        "a.verifier_remedy",
         "lecture seule",
-        "Mode dégradé",
         "authorization:{}",
     ):
         assert needle in html, needle
-    diagnostic = html[html.index("function voiceDiagnosticHtml(records)") : html.index("function voiceCatalogHtml()")]
-    assert "authVerdictHtml" not in diagnostic and "verifierHtml" not in diagnostic
-    assert "authEffectiveHtml" not in diagnostic and "aecHtml" not in diagnostic
+    for dead in ("authSectionHtml", "aecHtml", "renderField", "authVerdictHtml", "authEffectiveHtml", "verifierHtml",
+                 "async function catalog(", "data-refresh="):
+        assert dead not in html, dead
     # Aucune empreinte n'est lue ni affichée par la page.
     assert not re.search(r"embedding|voiceprint", html, re.I)
 

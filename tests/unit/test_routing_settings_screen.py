@@ -192,7 +192,7 @@ def test_the_advanced_agent_section_never_writes_a_model_or_profile_of_its_own()
 
     page = PAGE.read_text(encoding="utf-8")
     start = page.index("function routingAdvancedBody()")
-    body = page[start : page.index("/* --- onglet Config", start)]
+    body = page[start : page.index("/* --- Micro & son : périphériques audio", start)]
 
     for invented in ("opus", "sonnet", "haiku", "gpt-", "astra", "luna", "claude-"):
         assert invented not in body.lower(), invented

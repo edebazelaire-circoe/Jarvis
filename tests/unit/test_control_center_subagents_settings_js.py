@@ -601,7 +601,7 @@ def test_leaving_roles_then_work_methods_destroys_each_view(tmp_path):
         pytest.skip("node absent")
     page = HTML.read_text(encoding="utf-8")
     source = (page[page.index("function destroySubagentSettings()") : page.index("/* --- shell à six catégories")]
-              + page[page.index("const SUBAGENT_SECTIONS=[") : page.index("/* --- onglet Config")])
+              + page[page.index("const SUBAGENT_SECTIONS=[") : page.index("/* --- Micro & son : périphériques audio")])
     data = tmp_path / "roles.json"
     data.write_text(json.dumps({"roles": roles_payload(tmp_path)}), encoding="utf-8")
     script = tmp_path / "lifecycle.cjs"

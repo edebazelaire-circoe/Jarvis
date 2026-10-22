@@ -51,7 +51,7 @@ def control(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ControlCenter:
 
 
 def voice_renderer_source(page: str) -> str:
-    return page[page.index("function voiceArchitectureConfig()") : page.index("/* --- onglet Agent / CLI")]
+    return page[page.index("function voiceArchitectureConfig()") : page.index("/* --- Agent principal et Runtime & CLI")]
 
 
 VOICE_PAGE_SECTIONS = ("conversation", "voice_output", "microphone_sound", "turns_interruptions", "architecture_compat", "diagnostics")
@@ -208,7 +208,7 @@ async def test_provider_model_select_hydrates_locally_retries_ignores_stale_and_
     data = json.loads((await control.get_settings(None)).text)
     meta = next(item for item in data["voice"]["option_metadata"] if item["id"] == "openai.model")
     page = PAGE.read_text(encoding="utf-8")
-    request = page[page.index("async function requestCatalog") : page.index("async function catalog")]
+    request = page[page.index("async function requestCatalog") : page.index("function catalogNote(")]
     hydration = page[page.index("function voiceChanged") : page.index("function bindVoicePanel")]
     result = run_node(
         tmp_path,
@@ -259,7 +259,7 @@ async def test_models_panel_hydrates_only_the_three_provider_catalog_selects(
 ):
     data = json.loads((await control.get_settings(None)).text)
     page = PAGE.read_text(encoding="utf-8")
-    request = page[page.index("async function requestCatalog") : page.index("async function catalog")]
+    request = page[page.index("async function requestCatalog") : page.index("function catalogNote(")]
     model_binding = page[page.index("function bindVoiceModelField") : page.index("async function hydrateAudioDevices")]
     result = run_node(
         tmp_path,

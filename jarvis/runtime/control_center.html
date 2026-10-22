@@ -4497,13 +4497,6 @@ async function requestCatalog(provider,role,refresh){
   return value;
 }
 
-async function catalog(provider,role,refresh){
-  const key=provider+':'+role;
-  if(SET.catalog[key]&&!refresh)return SET.catalog[key];
-  const value=await requestCatalog(provider,role,refresh);
-  SET.catalog[key]=value;return value;
-}
-
 function catalogNote(result,provider){
   const name=providerLabel(provider);
   if(result.ok&&result.source==='live')return `<span class="note">${result.models.length} modèle(s) · liste demandée à l'API ${esc(name)} à l'instant</span>`;
@@ -4518,34 +4511,6 @@ function selectOptions(values,selected,placeholder){
     ? `<option value="${esc(chosen)}" selected>${esc(chosen)} (absent du catalogue)</option>` : '';
   const head=placeholder?`<option value="" ${chosen===''?'selected':''}>${esc(placeholder)}</option>`:'';
   return missing+head+values.map(v=>`<option value="${esc(v.value)}" ${chosen===String(v.value)?'selected':''}>${esc(v.label)}</option>`).join('');
-}
-
-/* --- champs décrits par le serveur ------------------------------------- */
-async function renderField(field,values,scope){
-  if(field.depends_on&&!(field.depends_values||[]).includes(String(values[field.depends_on])))return '';
-  const id=`f_${scope}_${field.key}`,value=values[field.key];
-  const hint=field.hint?`<div class="hint">${esc(field.hint)}</div>`:'';
-  if(field.kind==='toggle'){
-    return `<div class="field inline"><input type="checkbox" id="${id}" data-field="${esc(field.key)}" data-scope="${esc(scope)}" ${value?'checked':''}><div><label for="${id}">${esc(field.label)}</label>${hint}</div></div>`;
-  }
-  if(field.kind==='number'){
-    const attrs=['min','max','step','placeholder'].filter(k=>field[k]!==undefined).map(k=>`${k}="${esc(field[k])}"`).join(' ');
-    return `<div class="field"><label for="${id}">${esc(field.label)}</label><input type="number" id="${id}" data-field="${esc(field.key)}" data-scope="${esc(scope)}" value="${esc(value)}" ${attrs}>${hint}</div>`;
-  }
-  if(field.source){
-    const [provider,role]=field.source.split(':');
-    const result=await catalog(provider,role);
-    const options=(result.models||[]).map(m=>({value:m.id,label:m.label&&m.label!==m.id?`${m.id} — ${m.label}`:m.id}));
-    return `<div class="field"><label for="${id}">${esc(field.label)}</label>`+
-      `<select id="${id}" data-field="${esc(field.key)}" data-scope="${esc(scope)}">${selectOptions(options,value,'Valeur par défaut du service')}</select>`+
-      `<div class="source">${catalogNote(result,provider)} <button class="linkish" data-refresh="${esc(field.source)}">rafraîchir</button></div>${hint}</div>`;
-  }
-  if(field.kind==='text'){
-    return `<div class="field"><label for="${id}">${esc(field.label)}</label><input id="${id}" data-field="${esc(field.key)}" data-scope="${esc(scope)}" value="${esc(value)}">${hint}</div>`;
-  }
-  const labels=field.option_labels||[];
-  const options=(field.options||[]).map((o,i)=>({value:o,label:labels[i]||o}));
-  return `<div class="field"><label for="${id}">${esc(field.label)}</label><select id="${id}" data-field="${esc(field.key)}" data-scope="${esc(scope)}">${selectOptions(options,value,field.placeholder||'')}</select>${hint}</div>`;
 }
 
 /* Carte d'un fournisseur dans Connexions (Slice 07) : cible des liens « Connexions › <fournisseur> ». */
@@ -4567,102 +4532,12 @@ function keyStateFor(provider){
   return `<span class="tag bad">aucune clé</span>`;
 }
 
-/* --- Qui peut parler à JARVIS (Solo Owner, tâche 08) --------------------
-   La page projette un état, elle ne décide rien : le verdict (prêt, dégradé,
-   refusé) vient du serveur, qui l'évalue avec la fonction même dont Voice se
-   sert, et ce que Voice a réellement appliqué l'emporte. Aucune empreinte
-   vocale n'arrive jusqu'ici, seulement des métadonnées. Les champs sont
-   décrits par le serveur ; seules les clés touchées partent à l'enregistrement. */
-const AUTH_SCOPE='authorization';
-const AUTH_STATUS={ready:{cls:'ok',label:'prêt'},degraded:{cls:'warn',label:'dégradé'},refused:{cls:'bad',label:'refusé'},invalid:{cls:'bad',label:'réglage invalide'}};
-const AEC_STATUS={ready:{cls:'ok',label:'active'},degraded:{cls:'',label:'dégradée'},off:{cls:'',label:'désactivée'},not_applicable:{cls:'info',label:'sans objet'}};
+/* Valeurs d'autorisation (Solo Owner, tâche 08) vues par les options Voix : enregistrées, puis réglage fin du
+   vérificateur, puis brouillon. Le verdict lui-même (prêt, dégradé, refusé) est décrit par le serveur et lu tel quel
+   dans Avancé › Diagnostics (`voiceDiagnosticValue`). */
 function authValues(a){return {...(a.stored||{}),...((a.verifier_settings||{}).stored||{}),...SET.draft.voice.authorization}}
-function whenOf(ts){if(!ts)return '';const d=new Date(ts*1000);return isNaN(d)?'':d.toLocaleTimeString('fr-FR')}
-function voiceSeen(block,what){const r=block.runtime||{};return `Constaté par Voice${r.phase?` (${esc(r.phase)}${r.ts?`, ${esc(whenOf(r.ts))}`:''})`:''}`+(what?` — ${what}`:'')}
-function codeTag(code){return code?` <span class="tag">${esc(code)}</span>`:''}
-function authVerdictHtml(a){
-  const st=AUTH_STATUS[a.status]||{cls:'bad',label:a.status};
-  const eff=a.effective,r=a.runtime||{};
-  const src=a.status_source==='voice'?voiceSeen(a,'ce que seule Voice pouvait voir')
-    :eff&&r.status==='ready'&&r.conversation_mode===eff.conversation_mode?voiceSeen(a,'appliqué à sa dernière activation')
-    :"D'après la sonde des réglages (le modèle n'est pas chargé ici)";
-  const why=a.problem?` ${esc(a.problem)}${codeTag(a.code)}`:'';
-  if(!eff)return `<div class="notice bad"><strong>Réglage invalide</strong> : Voice refuse d'écouter tant qu'il n'est pas corrigé.${why}</div>`;
-  const tag=`<span class="tag ${st.cls}">${esc(st.label)}</span> `;
-  if(eff.conversation_mode==='solo_owner'){
-    if(a.status==='ready')return `<div class="notice ok">${tag}<strong>Solo Owner appliqué</strong> : seule votre voix reconnue coupe JARVIS et devient un tour (vérification enforce).<div class="hint">${src}.</div></div>`;
-    return `<div class="notice bad">${tag}<strong>Solo Owner configuré mais NON appliqué</strong> : JARVIS ne peut pas vérifier votre identité, donc Voice refuse d'écouter dans ce mode — aucun repli silencieux sur la salle ouverte.${why}<div class="hint">${src}.</div></div>`;
-  }
-  if(eff.speaker_verification==='shadow'){
-    const legacy=SET.data.voice.architecture.compatibility_runtime&&SET.data.voice.arch_effective!=='continuous_brain'?" L'observation ne tourne qu'en conversation continue : sous « Un tour par appui », rien n'est mesuré.":'';
-    if(a.status==='ready')return `<div class="notice info">${tag}<strong>Salle ouverte, vérification en ombre</strong> : les scores sont mesurés et journalisés (voice.owner.*), rien n'est filtré — toute voix peut couper JARVIS.${esc(legacy)}<div class="hint">${src}.</div></div>`;
-    return `<div class="notice">${tag}<strong>Salle ouverte, observation dégradée</strong> : rien n'est mesuré ; la conversation reste ouverte à toutes les voix.${why}<div class="hint">${src}.</div></div>`;
-  }
-  return `<div class="notice info">${tag}<strong>Salle ouverte</strong> : toute voix captée peut couper JARVIS et devenir un tour (comportement historique). Aucune vérification d'identité.</div>`;
-}
-function authEffectiveHtml(a){
-  const vs=a.verifier_settings||{},eff={...(a.effective||{}),...(vs.effective||{})},origin={...(a.origin||{}),...(vs.origin||{})};
-  const fields=[...(a.fields||[]),...(a.advanced_fields||[])];
-  const rows=fields.map(f=>{
-    let v=eff[f.key];
-    if(f.key==='speaker_verification'&&origin[f.key]==='default'&&v)v=`${v} (selon le mode)`;
-    if(f.key==='owner_short_evidence_ms'&&v===0)v='0 (règle brève désactivée)';
-    const tag=origin[f.key]==='stored'?'<span class="tag">réglage</span>':'<span class="tag">défaut</span>';
-    return `<dt>${esc(f.label)}</dt><dd>${v===undefined||v===null?'—':esc(v)} ${tag}</dd>`}).join('');
-  const path=eff.owner_profile_path?`<dt>Fichier du profil vocal</dt><dd><code>${esc(eff.owner_profile_path)}</code> <span class="tag">${origin.owner_profile_path==='stored'?'réglage':'défaut'}</span> <span class="tag">lecture seule</span></dd>`:'';
-  const invalid=vs.status==='invalid'?`<div class="notice bad"><strong>Réglage fin du vérificateur invalide</strong> (écrit à la main ?) : ${esc(vs.problem||'')}${codeTag(vs.code)}</div>`:'';
-  return `${invalid}<dl class="kv">${rows}${path}</dl>`;
-}
-function verifierHtml(a){
-  const d=a.verifier_detail||{},p=d.profile,av=d.availability||a.verifier||'';
-  const cls=av==='ready'?'ok':av==='failed'?'bad':'warn';
-  const rows=[
-    ['Disponibilité',`<span class="tag ${cls}">${esc(av||'inconnue')}</span> ${esc(d.message||'')}${d.code&&d.code!=='ready'?codeTag(d.code):''}`],
-    ['Moteur',esc(d.engine||'non installé')],
-    ['Modèle',`${esc(d.model_id||'—')}${d.model_license?` · ${esc(d.model_license)}`:''} · ${d.model_present?'présent':'absent'}`],
-    ['Profil vocal',p?`${esc(p.profile_id)} · enrôlé le ${esc(p.created_at||'?')} · ${esc(p.enrollment_ms!=null?(p.enrollment_ms/1000).toFixed(1).replace('.',',')+' s':'?')} de parole${p.consistency!=null?` · cohérence ${esc(p.consistency)}`:''}`:'aucun'],
-  ];
-  if(a.worker!==undefined){
-    const w=a.worker;
-    rows.push(['Fil de vérification (Voice)',w?`<span class="tag ${w.availability==='ready'?'ok':'bad'}">${esc(w.availability||'inconnu')}</span> · ${esc(w.dropped_ms??'?')} ms de fenêtres perdues (file saturée) · ${esc(w.phase||'')} ${esc(whenOf(w.ts))}`:'aucun vérificateur branché dans la capture']);
-  }
-  const remedy=a.verifier_remedy?`<div class="notice">Pour lever cette indisponibilité, lancez dans le dossier du projet :<div><code>${esc(a.verifier_remedy)}</code></div><div class="hint">Enrôlement au micro : arrêtez Voice d'abord (le micro doit être libre), parlez 30 s à votre place habituelle. Détails : docs/OPERATIONS.md, « Local speaker verifier ».</div></div>`:'';
-  return `<dl class="kv">${rows.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${v}</dd>`).join('')}</dl>${remedy}`;
-}
-async function authSectionHtml(){
-  const a=SET.data.voice.authorization;if(!a)return '';
-  const values=authValues(a),mode=values.conversation_mode||'open_room';
-  const fields=[];
-  for(const f of a.fields||[]){
-    let field=f;
-    if(f.key==='speaker_verification'){
-      // Seules les vérifications compatibles avec le mode choisi sont proposées.
-      const allowed=(a.verification_modes_by_mode||{})[mode]||f.options||[];
-      field={...f,options:allowed,option_labels:allowed.map(o=>(f.option_labels||[])[(f.options||[]).indexOf(o)]||o)};
-    }
-    fields.push(await renderField(field,values,AUTH_SCOPE));
-  }
-  const advanced=[];
-  for(const f of a.advanced_fields||[])advanced.push(await renderField(f,values,AUTH_SCOPE));
-  const e=SET.data.voice.echo_cancellation||{};
-  const restart=SET.restartNotice||a.restart_required||e.restart_required;
-  const restartHtml=restart?`<div class="notice"><strong>Redémarrez Voice pour appliquer</strong> : ces réglages sont lus au démarrage de Voice${a.restart_required||e.restart_required?' — elle applique encore les précédents':''}.</div>`:'';
-  return `<h3>Qui peut parler à JARVIS</h3><div class="source" style="margin-bottom:10px">État lu à l'ouverture de cette fenêtre. <button class="linkish" id="authRefresh">relire l'état</button></div>${restartHtml}${authVerdictHtml(a)}${fields.join('')}
-    <details class="rd" id="authAdvanced"${SET.rdOpen?' open':''}><summary>Réglages avancés — R&amp;D (mesures sur poste, tâches 09 et 14)</summary>
-      <div class="hint" style="margin-bottom:14px">Points de départ des mesures, pas des valeurs réglées : ne les changez qu'après mesure (docs/SPEAKER_BENCHMARK.md). Vide = défaut.</div>${advanced.join('')}</details>
-    <h3>Vérificateur de locuteur</h3>${verifierHtml(a)}
-    <h3>Valeurs effectives</h3>${authEffectiveHtml(a)}`;
-}
-function aecHtml(){
-  const e=SET.data.voice.echo_cancellation;if(!e)return '';
-  const st=AEC_STATUS[e.status]||{cls:'bad',label:e.status};
-  const src=e.status_source==='voice'?voiceSeen(e,''):"D'après les réglages et l'installation de LiveKit (bibliothèque non chargée ici)";
-  const detail=e.problem?` ${esc(e.problem)}${codeTag(e.code)}`:" Voice retire la voix de JARVIS du micro (WebRTC AEC3).";
-  const title=e.status==='degraded'?'<strong>Mode dégradé</strong> :':'';
-  return `<h3>Annulation d'écho</h3><div class="notice ${st.cls}"><span class="tag ${st.cls==='info'?'':st.cls||'warn'}">${esc(st.label)}</span> ${title}${detail}<div class="hint">${src}.</div></div>`;
-}
 
-/* --- onglet Mode vocal -------------------------------------------------- */
+/* --- Architecture vocale (Avancé › Architecture & compatibilité) ---------- */
 function voiceArchitectureConfig(){
   return SET.draft.voice.architecture||((SET.data.voice.architecture.selection||{}).config)||{};
 }
@@ -4759,7 +4634,7 @@ function voiceOptionHtml(meta){
   }
   if(meta.readonly)return `<div class="field" data-voice-option="${esc(meta.id)}"><span class="voice-field-label">${esc(meta.label)}</span><output>${value===undefined||value===null?'—':esc(value)}</output><div class="hint">${esc(meta.help)}</div></div>`;
   const attrs=`data-voice-persistence="${esc(meta.persistence)}" data-voice-meta="${esc(meta.id)}"`,style=hidden?' hidden':'';let input='';
-  /* Case à cocher : sur la ligne de son libellé (`.field.inline`, comme `renderField`). */
+  /* Case à cocher : sur la ligne de son libellé (`.field.inline`). */
   if(meta.kind==='toggle')return `<div class="field inline" id="${id}_field" data-voice-option="${esc(meta.id)}"${style}><input id="${id}" type="checkbox" ${attrs} ${value?'checked':''}><div><label for="${id}">${esc(meta.label)}${voiceStackTag(meta)}</label><div class="hint">${esc(meta.help)}</div></div></div>`;
   if(meta.kind==='number'||meta.kind==='number-or-empty')input=`<input id="${id}" type="number" ${attrs} value="${esc(value??'')}" ${meta.minimum!==undefined?`min="${esc(meta.minimum)}"`:''} ${meta.maximum!==undefined&&meta.maximum!==null?`max="${esc(meta.maximum)}"`:''} ${meta.step!==undefined?`step="${esc(meta.step)}"`:''}>`;
   else if(meta.kind==='text')input=`<input id="${id}" ${attrs} value="${esc(value??'')}">`;
@@ -4938,7 +4813,7 @@ const PROMPTS_SECTION={id:'prompts',category:'advanced_diagnostics',group:'promp
   },
 };
 
-/* --- onglet Agent / CLI ------------------------------------------------- */
+/* --- Agent principal et Runtime & CLI --------------------------------------- */
 function metadataOptions(field,value){
   return (field.options||[]).map(option=>`<option value="${esc(option.id)}" ${option.id===value?'selected':''}>${esc(option.label)}</option>`).join('');
 }
@@ -5412,7 +5287,7 @@ function subagentSectionSpec(spec){
   };
 }
 
-/* --- onglet Config ------------------------------------------------------ */
+/* --- Micro & son : périphériques audio ----------------------------------- */
 function deviceOptions(items,selected,defaultId){
   const chosen=String(selected??''),def=items.find(x=>String(x.id)===String(defaultId));
   const missing=chosen!==''&&!items.some(x=>String(x.id)===chosen)?`<option value="${esc(chosen)}" selected>Périphérique indisponible (#${esc(chosen)})</option>`:'';

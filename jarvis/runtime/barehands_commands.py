@@ -146,9 +146,12 @@ class BarehandsCommandBroker:
                        level="warning", data={"code": COMMAND_DISABLED, "command": name})
             raise BarehandsCommandError(
                 COMMAND_DISABLED,
-                "Bare Hands est éteint : il faut l'allumer avant que la voix puisse le piloter, par "
-                "settings_set(barehands.enabled, true) avec l'accord de l'utilisateur, ou par l'utilisateur dans "
-                "Réglages › Interface & interactions › Bare Hands du Control Center.",
+                # Lu par le cerveau comme erreur d'outil : même politique que ses consignes de réglages
+                # (`BRAIN_SETTINGS_PROMPT`, `BRAIN_BAREHANDS_PROMPT` de `claude_local.py`) — une demande de
+                # l'utilisateur se fait tout de suite, sans lui redemander de confirmer ni le renvoyer à l'interface.
+                "Bare Hands est éteint (interrupteur maître) : ses commandes sont refusées tant qu'il l'est. "
+                "Si l'utilisateur vient de demander de l'allumer ou de s'en servir, allume-le tout de suite par "
+                "settings_set(barehands.enabled, true), sans lui redemander de confirmer, puis relance la commande.",
                 409,
             )
         if self._pending is not None:

@@ -52,7 +52,7 @@ from jarvis.runtime.barehands_mcp import (
     build_server,
     mcp_config,
 )
-from jarvis.runtime.claude_local import BRAIN_BAREHANDS_PROMPT, BRAIN_SYSTEM_PROMPT, ClaudeLocalAgent
+from jarvis.runtime.claude_local import BRAIN_BAREHANDS_PROMPT, BRAIN_SETTINGS_PROMPT, BRAIN_SYSTEM_PROMPT, ClaudeLocalAgent
 from jarvis.runtime.control_center import (
     BAREHANDS_COMMANDS_ROUTE_PREFIX,
     BAREHANDS_COMMANDS_SCRIPT_MARKER,
@@ -455,7 +455,7 @@ async def test_a_receipt_that_races_the_deadline_is_refused_by_its_own_code(tmp_
 async def test_the_gate_refuses_before_waiting_rather_than_after(tmp_path):
     """Éteint, la page ne poste aucun long-poll : attendre trois secondes pour
     conclure « personne » mentirait sur la cause. Le refus est immédiat et dit
-    ce que l'utilisateur doit faire."""
+    au cerveau ce qu'il peut faire lui-même."""
 
     from jarvis.runtime.journal import RuntimeJournal
 
@@ -465,11 +465,14 @@ async def test_the_gate_refuses_before_waiting_rather_than_after(tmp_path):
     with pytest.raises(BarehandsCommandError) as caught:
         await broker.request("activate")
     assert caught.value.code == vocab.COMMAND_DISABLED and caught.value.status == 409
-    # Slice 09 de jarvis-settings-ui-reorganization : l'onglet Expérimental n'existe plus ; le cerveau lit l'outil et
-    # l'emplacement réel de l'interrupteur.
-    assert "Expérimental" not in str(caught.value)
-    assert "settings_set(barehands.enabled, true)" in str(caught.value)
-    assert "Réglages › Interface & interactions › Bare Hands" in str(caught.value)
+    # Slice 09 de jarvis-settings-ui-reorganization : l'onglet Expérimental n'existe plus. Passe de finitions avant la
+    # Slice 10 : le message suit la politique des consignes de réglages du cerveau (`BRAIN_SETTINGS_PROMPT`) — une
+    # demande de l'utilisateur se fait tout de suite, sans redemander de confirmation ni renvoyer à l'interface.
+    message = str(caught.value)
+    assert "Expérimental" not in message
+    assert "settings_set(barehands.enabled, true)" in message and "sans lui redemander de confirmer" in message
+    assert "accord de l'utilisateur" not in message and "Control Center" not in message and "Réglages ›" not in message
+    assert "Ne lui redemande pas de confirmer" in BRAIN_SETTINGS_PROMPT  # la politique que le message suit
     assert asyncio.get_running_loop().time() - started < 1.0, "refus immédiat, pas après l'échéance"
     # Un refus de transport n'est pas un refus de la page : trois causes
     # distinctes portaient le même `kind`, si bien que filtrer la trace dessus

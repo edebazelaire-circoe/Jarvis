@@ -68,7 +68,7 @@ def test_navigation_fixture_matches_the_sections_and_the_retired_programmatic_id
                 + page[page.index("const SUBAGENT_SECTIONS=[") : page.index("function installAgentSettingsSections")]
                 + page[page.index("const SHORTCUTS_SECTION=") : page.index("function renderShortcutsSection")]
                 + page[page.index("const CONNECTIONS_SECTION=") : page.index("/* --- `interface_interactions` › Raccourcis")]
-                + page[page.index("const PROMPTS_SECTION=") : page.index("/* --- onglet Agent / CLI")]
+                + page[page.index("const PROMPTS_SECTION=") : page.index("/* --- Agent principal et Runtime & CLI")]
                 + work[work.index("const THEME_SCENE_SECTION=") : work.index("function installSettingsSection")])
     for _legacy_id, target in expected["rehosted_as_sections"].items():
         assert f"{{id:'{target['section']}',category:'{target['category']}'" in sections, target
@@ -90,7 +90,7 @@ def test_agent_cli_sections_are_in_locked_order_and_advanced_policy_is_disclosed
     labels = re.findall(r"category:'agents_models',order:(\d+),label:'([^']+)'", registered)
     assert [label for _order, label in sorted(labels, key=lambda item: int(item[0]))] == expected["agent_section_order"]
     assert "{id:'runtime_cli',category:'advanced_diagnostics',group:'runtime_cli',order:30,advanced:true,label:'Runtime & CLI'" in registered
-    body = page[page.index("function routingRow(") : page.index("/* --- onglet Config")]
+    body = page[page.index("function routingRow(") : page.index("/* --- Micro & son : périphériques audio")]
     assert '<details class="rd" id="routingAdvanced"' in body
     assert "Configuration avancée des sous-agents" in body
     # Le choix se fait en deux temps — un harness, puis un de ses modèles — donc

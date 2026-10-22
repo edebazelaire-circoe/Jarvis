@@ -9,7 +9,8 @@
      `/api/wake-word` (Slice 03) et la lecture du dernier événement du détecteur
      dans le journal. Les tests l'exécutent avec node
      (`tests/unit/test_wake_word_settings_ui.py`) ;
-   - un bloc navigateur : la section enregistrée (`registerSettingsSection`, alias `wakeword`),
+   - un bloc navigateur : la section enregistrée (`registerSettingsSection`, ID `wake_word` ; l'alias `wakeword` est
+     retiré depuis la Slice 09 de jarvis-settings-ui-reorganization),
      ses contrôles, l'appel de la route, et sa partie de diagnostic (`registerSettingsDiagnostic`).
 
    Ce que cet écran sait, et ce qu'il ne sait pas.
@@ -844,7 +845,7 @@
     document.head.appendChild(style);
   }
 
-  /* La section s'enregistre dans Voix & audio (alias `wakeword` : l'ancien onglet y mène) et sa
+  /* La section s'enregistre dans Voix & audio (ID `wake_word`, sans alias depuis la Slice 09) et sa
      partie de diagnostic dans Avancé & diagnostic. Différé : ce module est inséré avant le script
      des Réglages, dont les fonctions et l'état ne sont prêts qu'à la fin du chargement. */
   function install(){
