@@ -999,6 +999,9 @@ details.rd[open]>summary{margin-bottom:14px}
 .catalog-toolbar input,.catalog-toolbar select{width:100%;background:#071015;border:1px solid var(--line);color:var(--text);padding:9px;border-radius:5px;font:inherit}
 .catalog-toolbar input:focus-visible,.catalog-toolbar select:focus-visible,.catalog-filter input:focus-visible,.catalog-table button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .catalog-filters{display:flex;gap:8px;overflow-x:auto;padding:1px 1px 5px}
+/* Dans les Réglages, les filtres passent à la ligne au lieu de défiler sous la colonne : à 1366×768 la moitié d'entre
+   eux était coupée hors de vue (finitions avant la Slice 10). */
+.settings-shell .catalog-filters{flex-wrap:wrap;overflow-x:visible}
 .catalog-filter{display:flex;gap:8px;align-items:center;min-width:max-content;margin:0;padding:7px 9px;border:1px solid var(--line);border-radius:6px}
 .catalog-filter legend{padding:0 4px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .catalog-filter label{font-size:11px;color:var(--text);white-space:nowrap}.catalog-filter input{accent-color:var(--accent)}
@@ -5279,10 +5282,19 @@ function installAgentSettingsSections(){
   AGENT_SECTIONS.forEach(spec=>registerSettingsSection(agentSectionSpec(spec)));
   SUBAGENT_SECTIONS.forEach(spec=>registerSettingsSection(subagentSectionSpec(spec)));
 }
+/* Work Methods apprises porte la tête de section du shell (titre, badge « Avancé », description), comme les autres
+   sections d'Avancé (finitions avant la Slice 10). Rôles des sous-agents garde sa mise en page maître-détail à
+   hauteur fixe : son titre est l'entrée de la liste. */
 function subagentSectionSpec(spec){
   const {view,...entry}=spec;
   return {...entry,save:'self',
-    mount(host,context){host.innerHTML='<div id="subagentSettingsMount"></div>';mountSubagentSettings(host.firstElementChild,context.revision,view)},
+    mount(host,context){
+      const slot='<div id="subagentSettingsMount"></div>';
+      host.innerHTML=view==='work_methods'
+        ?context.ui.section({id:`subagentSection_${spec.id}`,title:spec.label,description:spec.description,advanced:!!spec.advanced,body:slot})
+        :slot;
+      mountSubagentSettings(host.querySelector('#subagentSettingsMount'),context.revision,view);
+    },
     destroy(){destroySubagentSettings()},
   };
 }

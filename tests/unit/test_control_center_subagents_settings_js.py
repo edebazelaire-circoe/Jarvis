@@ -21,6 +21,7 @@ from jarvis.runtime.control_center import ControlCenter
 ROOT = Path(__file__).resolve().parents[2]
 MODULE = ROOT / "jarvis" / "runtime" / "control_center_subagents_settings.js"
 HTML = ROOT / "jarvis" / "runtime" / "control_center.html"
+UI_MODULE = ROOT / "jarvis" / "runtime" / "control_center_settings_ui.js"
 
 
 def roles_payload(tmp_path: Path, settings: dict | None = None) -> dict:
@@ -257,7 +258,7 @@ def test_served_page_carries_the_sections_and_the_module(tmp_path):
     assert "{id:'work_methods',category:'advanced_diagnostics',group:'labs',order:50,advanced:true,label:'Work Methods apprises',view:'work_methods'," in served
     assert "root.JarvisSubagentSettings=Object.freeze" in served
     assert "/*__CONTROL_CENTER_SUBAGENTS_SETTINGS_JS__*/" not in served
-    assert """host.innerHTML='<div id="subagentSettingsMount"></div>';mountSubagentSettings(host.firstElementChild,context.revision,view)""" in served
+    assert """mountSubagentSettings(host.querySelector('#subagentSettingsMount'),context.revision,view)""" in served
     assert "{...entry,save:'self'," in served and "destroy(){destroySubagentSettings()}" in served
 
 
@@ -566,10 +567,11 @@ const pending=[];
 globalThis.fetch=(path)=>new Promise(resolve=>pending.push({path,resolve}));
 const errors=[];console.error=(c,e)=>errors.push(String(c));console.info=()=>{};
 require(MODULE);
+const UI=require(UI_MODULE);
 const SET={open:true,renderRevision:1,subagentView:null,subagentDrafts:{}};
 const selectTab=()=>{},esc=String;
 function fakeHost(){const inner={innerHTML:'',setAttribute(){},querySelectorAll(){return[]},querySelector(){return null}};
-  return {inner,_h:'',set innerHTML(v){this._h=v},get innerHTML(){return this._h},get firstElementChild(){return inner}}}
+  return {inner,_h:'',set innerHTML(v){this._h=v},get innerHTML(){return this._h},querySelector(sel){return sel==='#subagentSettingsMount'?inner:null}}}
 """ + "{PAGE_SOURCE}" + r"""
 const reply=body=>({ok:true,status:200,headers:{get:()=>null},text:async()=>JSON.stringify(body)});
 (async()=>{
@@ -577,14 +579,15 @@ const reply=body=>({ok:true,status:200,headers:{get:()=>null},text:async()=>JSON
   for(const spec of SUBAGENT_SECTIONS){
     const entry=subagentSectionSpec(spec),host=fakeHost();
     pending.length=0;
-    entry.mount(host,{revision:SET.renderRevision});
+    entry.mount(host,{revision:SET.renderRevision,ui:UI});
+    const head=/<section class="set-section"/.test(host.innerHTML)&&/Work Methods apprises|Rôles des sous-agents/.test(host.innerHTML);
     const view=SET.subagentView,ticking=timers.size;
     const before=host.inner.innerHTML;
     entry.destroy(host);                       // le shell quitte la section (`destroyRegisteredSection`)
     const afterDestroy={held:SET.subagentView,destroyed:view.state.destroyed,timers:timers.size};
     for(const p of pending)p.resolve(reply(DATA.roles));       // réponse tardive au registre des rôles
     await new Promise(r=>setTimeout(r,20));
-    out[spec.id]={view:view.view,ticking,afterDestroy,stillLoading:host.inner.innerHTML===before,
+    out[spec.id]={head,view:view.view,ticking,afterDestroy,stillLoading:host.inner.innerHTML===before,
       phase:view.state.phase,paths:pending.map(p=>p.path)};
     SET.renderRevision++;
   }
@@ -606,7 +609,7 @@ def test_leaving_roles_then_work_methods_destroys_each_view(tmp_path):
     data.write_text(json.dumps({"roles": roles_payload(tmp_path)}), encoding="utf-8")
     script = tmp_path / "lifecycle.cjs"
     script.write_text(
-        f"const MODULE={json.dumps(str(MODULE))};"
+        f"const MODULE={json.dumps(str(MODULE))};const UI_MODULE={json.dumps(str(UI_MODULE))};"
         f"const DATA=JSON.parse(require('node:fs').readFileSync({json.dumps(str(data))},'utf8'));"
         + SECTION_LIFECYCLE.replace("{PAGE_SOURCE}", source),
         encoding="utf-8",
@@ -618,6 +621,8 @@ def test_leaving_roles_then_work_methods_destroys_each_view(tmp_path):
     assert list(out) == ["subagents", "work_methods"]
     for section_id, seen in out.items():
         assert seen["view"] == ("roles" if section_id == "subagents" else "work_methods")
+        # Work Methods porte la tête de section du shell ; Rôles garde sa mise en page maître-détail (finitions S10).
+        assert seen["head"] is (section_id == "work_methods"), seen
         assert seen["ticking"] == 1, seen  # le compteur d'attente tournait pendant le chargement
         assert seen["afterDestroy"] == {"held": None, "destroyed": True, "timers": 0}, seen
         assert seen["stillLoading"] is True and seen["phase"] == "loading", seen  # la réponse tardive n'a rien publié
