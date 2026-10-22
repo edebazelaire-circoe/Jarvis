@@ -495,3 +495,120 @@ sable laissées en place.
 - Écart de méthode : la re-QA a laissé une partie de ses tests en arrière-plan.
 - Pour la Slice 08 : `experimental` reste dans `TABS` et ne porte plus que la porte de scène ; entrées Avancé créées : section `barehands_lab` (groupe labs), partie de diagnostic `barehands`.
 - Reporté Slice 10 : Tab enregistré pendant une capture de raccourci (préexistant) ; pas de contour après lien à la souris ; `outline:none` sur les contrôles Bare Hands (préexistant) ; libellé « Barehands éteint » ; lien des modèles remplacé pendant le chargement des sous-agents (focus sur BODY) ; liste d'Avancé qui défile à 1093 px ; test B1 navigateur ne prouve pas la croissance de Voix (observateur couvert seulement en unitaire) ; retrait des écoutes avec `capture` non testé ; `block:'start'` au lieu de `nearest` pour les petites cibles ; profil Chrome non suivi `.tmp-cosmos/` à la racine de `setui` (à ne pas committer, à nettoyer en fin de tâche).
+
+## 2026-10-22 - Slice 07 (implémentation)
+
+### Décisions
+
+- `connections` › `providers` · Fournisseurs (order 10, `save:'self'`, alias `keys`, `CONNECTIONS_SECTION` de la page),
+  rendue par un module pur nouveau `control_center_connections_settings.js` (`window.JarvisConnectionsSettings`,
+  `html`, `create`, inséré par `control_center.py`). `TABS` = `prompts`, `experimental` (Slice 08). `tabKeys`,
+  `addCredential`/`deleteCredential`/`bindCredential`, la branche `keys` de `renderTab`/`modalSub`/`bindTab` et le CSS
+  `table.keys`/`.keyform` retirés.
+- Une carte par fournisseur de `credentials_state` (ordre du serveur) : libellé, état (« Clé enregistrée » ok,
+  « Variable d'environnement » avertissement, « Non configuré » neutre), clé active (radio + badge « Active »), clés
+  (nom + indice), « Remplacer la valeur », « Supprimer » (confirmation sur place), retombée sur l'environnement (noms des
+  variables seulement), « Ajouter une clé » (divulgation). Note d'usage = `providers[].hint` du serveur, omise s'il n'y
+  en a pas ; aucune liste de fournisseurs, variables ni libellés dans le JS (test statique).
+- Charges inchangées : ajout `{provider,name,value}`, liaison `{provider,id}`, suppression `{id}`. Remplacer = même
+  route d'enregistrement avec `{id,provider,name,value}` (mise à jour par `id` déjà offerte par le magasin ; aucune
+  route ni stockage changé).
+- Secrets : la valeur est lue puis effacée du champ avant l'envoi ; journaux `connections_credential_*` sans valeur
+  (action, fournisseur, code, statut). Régions vivantes `#connectionsStatus` (status) et `#connectionsError` (alert,
+  message réel du serveur). Pendant l'écriture : commandes désactivées, attente dite ; au-delà de 15 s (`WAIT_MS`)
+  l'erreur le dit et la section rend la main ; `destroy` arrête le minuteur et rend la vue muette. L'état reçu remplace
+  `SET.data.credentials` et vide `SET.catalog` même section quittée ; rien n'est redessiné (`dead` + `isCurrent`).
+- Focus : nouvelle clé / clé remplacée ou liée / titre de la carte (suppression, `tabindex=-1`) ; bouton de
+  confirmation à l'ouverture, « Supprimer » d'origine après « Annuler ». Formulaire de remplacement ouvert : sous la
+  ligne, « Supprimer » reste en tête (`order:2`).
+- Liens entrants : Agent principal (aide du modèle) « Connexions › <fournisseur> » (`data-settings-open="providers"` +
+  nouveau `data-settings-focus` lu par le délégué de la section → `context.open(cible,{focus})`) ; Mémoire (ligne du
+  secret) `data-mem-open="providers"` libellé « Connexions ». Messages serveur et textes de page « onglet API Keys » →
+  « Réglages › Connexions » (`app.py`, `model_catalog.py`, `memory_relay.py`, `memory_settings.py`,
+  `control_center_catalog.js`, `control_center_wake_word.js`).
+
+### Fichiers
+
+`jarvis/runtime/control_center_connections_settings.js` (nouveau), `control_center.html`, `control_center.py`,
+`control_center_memory_settings.js`, `control_center_catalog.js`, `control_center_wake_word.js`, `credentials.py`
+(commentaire), `memory_relay.py`, `memory_settings.py`, `model_catalog.py`, `jarvis/app.py` ; docs
+`docs/settings/connections.md` (nouveau), `settings/INDEX.md`, `settings/navigation-registry.md`,
+`legacy/settings-tab-aliases.md`, `OPERATIONS.md`, `memory-tencent.md` ; fixture
+`tasks/jarvis-settings-model-catalog-ux/.../agent-cli-ui.json` (`keys` → `rehosted_as_sections`) ; tests
+`test_control_center_connections_settings_js.py` et `test_connections_settings_browser.py` (nouveaux),
+`test_control_center_settings_registry_js.py` (`SLICE_07_SECTIONS`), `test_agent_cli_settings_ui.py`,
+`test_control_center_memory_settings_js.py`, `test_control_center_mvp.py`, `test_control_center_voice_architecture.py`,
+`test_voice_settings_ui.py`, `test_environment.py`, `test_settings_workbench.py`, `test_interface_settings_browser.py`,
+`tests/integration/test_settings_redesign_migration.py`.
+
+### Tests (comptes exacts, depuis `setui` @ `b6786c09` (+ CSS `order:2`), `.venv` du dépôt principal ; sorties complètes au scratchpad `s07/logs`)
+
+- mvp + quality + voice_architecture + voice_settings_ui + wake_word_settings_ui + agent_cli_settings_ui +
+  routing_settings_screen + catalog_ui + voice_architecture_ui_review : 209 passed.
+- memory_settings_js + subagents_settings_js + appearance + scene_settings_ui + scene_view_prefs +
+  barehands_tools_settings_js + barehands_cards_js + jarvis_wheel_js + mcp_inspector_js + control_center_memory_js :
+  179 passed.
+- settings_registry_js + settings_shell_js + intégration settings_redesign_migration + settings_ia_contract +
+  voice_settings_surface + voice_settings_schema + shell_layers + variants_css_orphans + control_center_prompts +
+  memory_settings_surface + memory_settings + memory_settings_endpoints : 274 passed.
+- documented_routes + delivery_quality + wake_word_docs + remotion_no_fallback_privacy + settings_endpoints (API des
+  clés) + settings_workbench (magasin de clés, catalogue) + environment + connections_settings_js (5) + credential_vault :
+  232 passed.
+- Navigateur (chaque commande < 600 s) : connections_settings_browser 9 passed (deux passes, avant et après le
+  correctif CSS) ; settings_shell_browser + jarvis_wheel_browser 13 passed ; agents_models_settings_browser +
+  memory_settings_browser 12 passed ; interface_settings_browser 12 passed + 1 failed à la 1re passe
+  (`test_sections_aliases_single_wake_editor_and_barehands_split` attendait encore `keys` dans `TABS` : test mis à
+  jour, `b6786c09`), puis 13 passed ; wake_word_settings_browser 10 + 10 passed.
+- Balayage large sans navigateur (unit + intégration) : `-k "settings and not memory and not browser"` 720 passed,
+  1 failed ; `-k "control_center and not settings and not memory and not browser"` 809 passed, 6 failed, 1 skipped ;
+  `-k "memory and not browser"` 1311 passed, 4 skipped, 1 failed ; `-k "(subagent or work_method or routing or
+  agent_cli or catalog or knowledge or loadout or wheel or shell or registry or credential or keys or connection or
+  environment or model_catalog) and not settings and not memory and not control_center and not browser"` 1417 passed,
+  3 skipped ; `-k "(scene or theme or appearance or cosmos or wake or voice_settings) and not settings and not memory
+  and not control_center and not barehands and not browser and not subagent and not routing and not wheel and not shell
+  and not registry"` 2621 passed, 19 skipped, 1 failed ; `-k "(barehands or shortcut) and not browser"` 1111 passed,
+  1 skipped, 2 failed. Échecs : les 10 préexistants connus (test_app tools_gateway, 6 × test_control_center_mcp_api,
+  2 × barehands practice_frame, scene_group_drag) et `test_memory_context::test_recall_over_2000_notes_…_stays_in_budget`
+  (TimeoutError de la synchronisation d'index de 2000 notes sous charge ; relancé seul : `test_memory_context.py`
+  38 passed ; non prouvé sur `20292e5c` ; ce chemin ne touche aucun fichier de la Slice hors deux libellés de message).
+
+### Mutations (copie jetable `git worktree add --detach` de `b6786c09` au scratchpad, supprimée ensuite) : 15/16 tuées
+
+M1 charge d'ajout + `label` ; M3 garde de réponse tardive retirée (`alive` toujours vrai + `dead` ignoré, tuée par le
+cas « fermeture ») ; M4 `destroy` sans arrêt du minuteur ; M5 pas d'échéance ; M6 note serveur absente ; M7 ligne
+d'environnement absente ; M8 alias `keys` retiré ; M9 charge de liaison réordonnée ; M10 suppression sans
+confirmation ; M11 remplacement sans `name` ; M12 état ignoré après départ ; M13 `data-settings-focus` ignoré ;
+M14 valeur dans un journal ; M15 champ valeur en `type=text` ; M16 focus non posé après ajout. Survivante,
+équivalente : M2 (ne plus vider le champ avant l'envoi) — `write()` redessine la section (champs neufs et vides) dans
+le même tour, avant la requête ; l'effacement est une seconde barrière, non observable tant que ce rendu a lieu.
+
+### Preuves
+
+Bac à sable `setui` (Core 127.77.0.1:27653, Control Center 127.0.0.1:27654, `JARVIS_DATA_ROOT`/`JARVIS_RUNTIME_DIR` au
+scratchpad `s07`, visualiseur coupé, `DEEPGRAM_API_KEY` factice dans les seuls processus du bac à sable). Isolement du
+magasin vérifié AVANT tout ajout : `settings_path` = `JARVIS_RUNTIME_DIR/control-center-settings.json`, lecture des clés
+= 0 clé et la seule variable factice ; aucun `.env` dans `setui`, aucune variable de fournisseur dans le shell. Clés
+factices `sk-test-FAKE-sandbox-…` seulement. Pilotage `_wake_word_settings_browser.mjs` : `evidence/s07/` — 17 PNG
+quantifiés (1,36 Mo) : parcours (état initial, ajout au clavier, refus de doublon, liaison, remplacement ouvert,
+confirmation de suppression, après suppression, lien d'Agent principal), focus clavier, Fournisseurs à 1920×1080 et
+1366×768, 100 % et 125 % (largeur CSS /1,25), divulgations fermées et ouvertes ; `runtime-check.json`. Constats :
+débordement 0 partout ; six POST aux charges attendues (ajout ×3 dont le doublon refusé « Une clé OpenAI porte déjà le
+nom « Perso » », liaison, remplacement, suppression) ; aucune valeur factice dans le DOM, les champs ni les lectures des
+clés et des réglages ; valeur vidée après refus, nom gardé ; Deepgram « Variable d'environnement » (nom seul) ; alias
+`keys` → `connections/providers` ; lien d'Agent principal → focus `connection_anthropic_title` ; lien Mémoire →
+Fournisseurs ; clavier seul : rail (Début + 4 × flèche + Entrée) → Connexions, Tab jusqu'à « Supprimer » avec contour ;
+console vide. Fichier du bac à sable : une clé `Travail` factice liée ; fichier de l'utilisateur non lu (date 16/10
+inchangée). PID arrêtés un par un après vérification de la ligne de commande, sans `/T` : 9128 (cerveau claude,
+`--mcp-config` sous `scratchpad\s07`, ses 10 MCP partis avec lui), 31572 (Control Center), 6744 (Core) ; lanceurs
+18544 et 35512 partis avec leur enfant. Core utilisateur 17653 (PID 31824) et Control Center 17654 (PID 34676) intacts.
+Données du bac à sable laissées en place.
+
+### Écarts et reports
+
+- Disque C tombé à 0 octet libre pendant la Slice (ENOSPC à la première capture ; cause hors de cette Slice). Libéré :
+  92 rendus `.mp4` d'un vieux temp Claude (`C--Projects-remotion-test\8b0e1fcd…`, 298 Mo, aucune base touchée). À
+  surveiller : `pytest-of-Clarice\pytest-8122` (3,1 Go, 05:44) et le temp Claude `7314dd51…` (1,9 Go) contiennent des
+  bases de test, laissés en place.
+- « Remplacer la valeur » garde le nom ; renommer une clé n'est pas offert (hors périmètre, le magasin le permet).
+- La région d'état garde le dernier message jusqu'à l'action suivante (comme avant).
+- « API Keys » subsiste dans `docs/mcp/plan-outils-interface.md` (note historique d'une autre tâche).

@@ -1,0 +1,294 @@
+{
+  "sandbox": {
+    "core": "127.77.0.1:27653",
+    "control_center": "127.0.0.1:27654",
+    "data_root": "scratchpad/s07/data",
+    "runtime_dir": "scratchpad/s07/runtime",
+    "visualizer": false,
+    "credential_store": "scratchpad/s07/runtime/control-center-settings.json (JARVIS_RUNTIME_DIR, vérifié avant tout ajout : 0 clé, seule la variable factice DEEPGRAM_API_KEY du bac à sable)",
+    "fake_environment": "DEEPGRAM_API_KEY=FAKE-env-deepgram-7777 (processus du bac à sable seulement)",
+    "zoom_125": "largeur CSS /1,25 (1536×864, 1093×614), deviceScaleFactor 1"
+  },
+  "values": {
+    "initial": {
+      "at": [
+        "connections",
+        null,
+        "providers"
+      ],
+      "status": "",
+      "error": "",
+      "focus": "settingsCat-connections",
+      "openai": "OpenAI Non configuré Voix Realtime (ChatGPT Live), transcription, TTS, modèles Codex. Aucune clé enregistrée ni variable d’environnement détectée. Ajouter une clé",
+      "deepgram": "Deepgram Variable d’environnement Non branché sur la boucle vocale pour l'instant. Utilise la variable d’environnement DEEPGRAM_API_KEY tant qu’aucune clé n’est enregistrée ici. Ajouter une clé"
+    },
+    "entries": [
+      "Fournisseurs"
+    ],
+    "badges": [
+      [
+        "openai",
+        "Non configuré"
+      ],
+      [
+        "anthropic",
+        "Non configuré"
+      ],
+      [
+        "google",
+        "Non configuré"
+      ],
+      [
+        "porcupine",
+        "Non configuré"
+      ],
+      [
+        "elevenlabs",
+        "Non configuré"
+      ],
+      [
+        "deepgram",
+        "Variable d’environnement"
+      ],
+      [
+        "tencent",
+        "Non configuré"
+      ],
+      [
+        "custom",
+        "Non configuré"
+      ]
+    ],
+    "added": {
+      "at": [
+        "connections",
+        null,
+        "providers"
+      ],
+      "status": "Clé « Perso » ajoutée pour OpenAI.",
+      "error": "",
+      "focus": "conn_bind_cred_7b6f9726",
+      "openai": "OpenAI Clé enregistrée Voix Realtime (ChatGPT Live), transcription, TTS, modèles Codex. Clé enregistrée Perso …1111 Active Remplacer la valeur Supprimer Ajouter une autre clé",
+      "deepgram": "Deepgram Variable d’environnement Non branché sur la boucle vocale pour l'instant. Utilise la variable d’environnement DEEPGRAM_API_KEY tant qu’aucune clé n’est enregistrée ici. Ajouter une clé"
+    },
+    "leak_added": [],
+    "refused": {
+      "at": [
+        "connections",
+        null,
+        "providers"
+      ],
+      "status": "",
+      "error": "Clé OpenAI non enregistrée : Une clé OpenAI porte déjà le nom « Perso ».",
+      "focus": "conn_openai_name",
+      "openai": "OpenAI Clé enregistrée Voix Realtime (ChatGPT Live), transcription, TTS, modèles Codex. Clé enregistrée Perso …1111 Active Remplacer la valeur Supprimer Ajouter une autre clé Nom Valeur Ajouter",
+      "deepgram": "Deepgram Variable d’environnement Non branché sur la boucle vocale pour l'instant. Utilise la variable d’environnement DEEPGRAM_API_KEY tant qu’aucune clé n’est enregistrée ici. Ajouter une clé"
+    },
+    "value_cleared": true,
+    "bound": {
+      "at": [
+        "connections",
+        null,
+        "providers"
+      ],
+      "status": "« Travail » est maintenant la clé OpenAI utilisée par JARVIS.",
+      "error": "",
+      "focus": "conn_bind_cred_93e4cc70",
+      "openai": "OpenAI Clé enregistrée Voix Realtime (ChatGPT Live), transcription, TTS, modèles Codex. Clé utilisée par JARVIS — choisissez-en une Perso …1111 Remplacer la valeur Supprimer Travail …2222 Active Remplacer la valeur Suppr",
+      "deepgram": "Deepgram Variable d’environnement Non branché sur la boucle vocale pour l'instant. Utilise la variable d’environnement DEEPGRAM_API_KEY tant qu’aucune clé n’est enregistrée ici. Ajouter une clé"
+    },
+    "replaced": {
+      "at": [
+        "connections",
+        null,
+        "providers"
+      ],
+      "status": "Valeur de « Perso » remplacée pour OpenAI.",
+      "error": "",
+      "focus": "conn_bind_cred_7b6f9726",
+      "openai": "OpenAI Clé enregistrée Voix Realtime (ChatGPT Live), transcription, TTS, modèles Codex. Clé utilisée par JARVIS — choisissez-en une Perso …3333 Remplacer la valeur Supprimer Travail …2222 Active Remplacer la valeur Suppr",
+      "deepgram": "Deepgram Variable d’environnement Non branché sur la boucle vocale pour l'instant. Utilise la variable d’environnement DEEPGRAM_API_KEY tant qu’aucune clé n’est enregistrée ici. Ajouter une clé"
+    },
+    "deleted": {
+      "at": [
+        "connections",
+        null,
+        "providers"
+      ],
+      "status": "Clé « Perso » supprimée.",
+      "error": "",
+      "focus": "connection_openai_title",
+      "openai": "OpenAI Clé enregistrée Voix Realtime (ChatGPT Live), transcription, TTS, modèles Codex. Clé enregistrée Travail …2222 Active Remplacer la valeur Supprimer Ajouter une autre clé",
+      "deepgram": "Deepgram Variable d’environnement Non branché sur la boucle vocale pour l'instant. Utilise la variable d’environnement DEEPGRAM_API_KEY tant qu’aucune clé n’est enregistrée ici. Ajouter une clé"
+    },
+    "leak_all": [],
+    "alias_keys": [
+      "connections",
+      null,
+      "providers"
+    ],
+    "agent_link_label": "Connexions › Anthropic",
+    "agent_link": {
+      "at": [
+        "connections",
+        null,
+        "providers"
+      ],
+      "status": "",
+      "error": "",
+      "focus": "connection_anthropic_title",
+      "openai": "OpenAI Clé enregistrée Voix Realtime (ChatGPT Live), transcription, TTS, modèles Codex. Clé enregistrée Travail …2222 Active Remplacer la valeur Supprimer Ajouter une autre clé",
+      "deepgram": "Deepgram Variable d’environnement Non branché sur la boucle vocale pour l'instant. Utilise la variable d’environnement DEEPGRAM_API_KEY tant qu’aucune clé n’est enregistrée ici. Ajouter une clé"
+    },
+    "memory_link": {
+      "at": [
+        "connections",
+        null,
+        "providers"
+      ],
+      "status": "",
+      "error": "",
+      "focus": "BUTTON",
+      "openai": "OpenAI Clé enregistrée Voix Realtime (ChatGPT Live), transcription, TTS, modèles Codex. Clé enregistrée Travail …2222 Active Remplacer la valeur Supprimer Ajouter une autre clé",
+      "deepgram": "Deepgram Variable d’environnement Non branché sur la boucle vocale pour l'instant. Utilise la variable d’environnement DEEPGRAM_API_KEY tant qu’aucune clé n’est enregistrée ici. Ajouter une clé"
+    },
+    "kb_category": {
+      "at": [
+        "connections",
+        null,
+        "providers"
+      ],
+      "status": "",
+      "error": "",
+      "focus": "settingsCat-connections",
+      "openai": "OpenAI Clé enregistrée Voix Realtime (ChatGPT Live), transcription, TTS, modèles Codex. Clé enregistrée Travail …2222 Active Remplacer la valeur Supprimer Ajouter une autre clé",
+      "deepgram": "Deepgram Variable d’environnement Non branché sur la boucle vocale pour l'instant. Utilise la variable d’environnement DEEPGRAM_API_KEY tant qu’aucune clé n’est enregistrée ici. Ajouter une clé"
+    },
+    "kb_tabbed": {
+      "at": [
+        "connections",
+        null,
+        "providers"
+      ],
+      "status": "",
+      "error": "",
+      "focus": "BUTTON",
+      "openai": "OpenAI Clé enregistrée Voix Realtime (ChatGPT Live), transcription, TTS, modèles Codex. Clé enregistrée Travail …2222 Active Remplacer la valeur Supprimer Ajouter une autre clé",
+      "deepgram": "Deepgram Variable d’environnement Non branché sur la boucle vocale pour l'instant. Utilise la variable d’environnement DEEPGRAM_API_KEY tant qu’aucune clé n’est enregistrée ici. Ajouter une clé"
+    },
+    "overflow-1920x1080-100": {
+      "page": 0,
+      "content": 0,
+      "main": 0,
+      "wide": []
+    },
+    "overflow-1920x1080-100-open": {
+      "page": 0,
+      "content": 0,
+      "main": 0,
+      "wide": []
+    },
+    "overflow-1366x768-100": {
+      "page": 0,
+      "content": 0,
+      "main": 0,
+      "wide": []
+    },
+    "overflow-1366x768-100-open": {
+      "page": 0,
+      "content": 0,
+      "main": 0,
+      "wide": []
+    },
+    "overflow-1920x1080-125": {
+      "page": 0,
+      "content": 0,
+      "main": 0,
+      "wide": []
+    },
+    "overflow-1920x1080-125-open": {
+      "page": 0,
+      "content": 0,
+      "main": 0,
+      "wide": []
+    },
+    "overflow-1366x768-125": {
+      "page": 0,
+      "content": 0,
+      "main": 0,
+      "wide": []
+    },
+    "overflow-1366x768-125-open": {
+      "page": 0,
+      "content": 0,
+      "main": 0,
+      "wide": []
+    }
+  },
+  "posts": [
+    {
+      "path": "/api/credentials",
+      "keys": [
+        "provider",
+        "name",
+        "value"
+      ],
+      "value_is_fake": true
+    },
+    {
+      "path": "/api/credentials",
+      "keys": [
+        "provider",
+        "name",
+        "value"
+      ],
+      "value_is_fake": true
+    },
+    {
+      "path": "/api/credentials",
+      "keys": [
+        "provider",
+        "name",
+        "value"
+      ],
+      "value_is_fake": true
+    },
+    {
+      "path": "/api/credentials/bind",
+      "keys": [
+        "provider",
+        "id"
+      ],
+      "value_is_fake": null
+    },
+    {
+      "path": "/api/credentials",
+      "keys": [
+        "id",
+        "provider",
+        "name",
+        "value"
+      ],
+      "value_is_fake": true
+    },
+    {
+      "path": "/api/credentials/delete",
+      "keys": [
+        "id"
+      ],
+      "value_is_fake": null
+    }
+  ],
+  "console_errors": [],
+  "pids_stopped": {
+    "claude_brain (--mcp-config sous scratchpad\\s07, ses 10 MCP partis avec lui)": 9128,
+    "control_center": 31572,
+    "core": 6744,
+    "lanceurs partis avec leur enfant": [
+      18544,
+      35512
+    ]
+  },
+  "user_core_untouched": "127.77.0.1:17653 PID 31824, 127.0.0.1:17654 PID 34676 toujours à l'écoute",
+  "user_settings_file_mtime": "2026-10-16 09:28 (inchangé, lu en métadonnées seulement)"
+}
