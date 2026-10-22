@@ -781,3 +781,30 @@ Center 17654 (PID 34676) intacts. Données du bac à sable laissées en place. D
 - `bindTab` n'a plus d'appelant avec contenu ; ses liaisons `data-field`/`data-refresh` sont mortes depuis la
   Slice 03 : retrait avec la machinerie (Slice 09).
 - Le redémarrage du cerveau a été vérifié par requête simulée dans la page, pas par un vrai redémarrage.
+
+## S08 — décision QA (agent 0), 2026-10-22
+
+QA indépendante : **approuvable, aucun finding bloquant**, correctif S7 (`7eb74cc1`) compris. Les 7 sections d'Avancé
+portent chacune un groupe déclaré (relevé par grep sur tout le code servi, refus à l'exécution `settings_section_group`) ;
+`TABS.length=0`, `#modalSub` vide en vrai Chrome. Charges identiques à `cb6f011c` : prompts edit/reset, porte
+`{scene:{enabled:…}}`, redémarrage `{"new_conversation":true}` — ce dernier cliqué pour de vrai en bac à sable après
+preuve que le cerveau était l'enfant du Control Center du bac à sable. Cycle de vie et focus corrects ; N1, N2, N4 de S07
+corrigés et probants. Débordement nul pour les 7 sections à 1366×768 et 1093×614 ; clavier seul OK. Tests : ciblés tous
+verts ; balayage 22 919 passed / 14 failed / 93 skipped = les 12 préexistants + l'intermittent connu
+`test_memory_context::…2000_notes…` + `test_device_playback_completion::test_runtime_provider_can_close_while_device_pending_but_cannot_reopen`
+(vert 4/4 en relance, `wait_for` 0,2-0,3 s sous charge concurrente, aucun fichier importé dans le diff : intermittent,
+non imputé). Mutations QA 7/10 tuées ; survivantes Q7 (effacement de `view.error` au remontage, hérité), Q8
+(`SET.data.scene` corrigé par le battement), Q10 (presque équivalente). Slice 08 approuvée.
+
+Confiés à la Slice 09 : textes qui citent encore l'« onglet Expérimental » alors qu'il n'existe plus —
+`barehands_commands.py:149` (renvoyé au cerveau comme erreur d'outil), `settings_mcp.py:158` (libellé montré au
+cerveau), `docs/OPERATIONS.md:1160`, commentaires `control_center_barehands_*.js`, `docs/barehands-contracts.md` ; Bare
+Hands est dans Interface › Bare Hands.
+
+Reportés à la Slice 10 : filet gauche de Labs en début de ligne ; Scène sans `JarvisSettingsUI.section` (h3 propre, pas
+de badge) ; atelier de prompts qui perd un texte en cours d'une autre couche à l'enregistrement (préexistant) ;
+minuteur du redémarrage non arrêté par `destroy` ; tests manquants (garde de réponse tardive de la scène, débordement
+d'Avancé à 1093×614, mutations Q7/Q8).
+
+Écarts de méthode QA : quatre pytest au-delà de 600 s basculés en arrière-plan par l'outil (attendus sans Monitor,
+intégration relancée en deux moitiés au premier plan) ; disque C au plus bas à 1,38 Go.
