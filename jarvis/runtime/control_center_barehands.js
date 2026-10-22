@@ -4112,13 +4112,13 @@ const JarvisBarehandsCore=(function(){
   }
 
   const MESSAGES=Object.freeze({
-    off:{title:'Barehands éteint',detail:'Le mode test est désactivé.'},
-    starting:{title:'Barehands démarre…',detail:'Chargement du suivi des mains et ouverture de la caméra.'},
-    sleep:{title:'Barehands en veille',detail:'La caméra guette. Montrez votre posture de réveil (par défaut, un C du pouce et de l’index) et tenez une seconde pour activer.'},
-    active:{title:'Barehands actif',detail:'Montrez une main à la caméra ; pincez pouce et index pour cliquer.'},
-    woken:{title:'Barehands activé',detail:'Posture de réveil reconnue : l’interaction à mains nues est active.'},
+    off:{title:'Bare Hands éteint',detail:'Le mode test est désactivé.'},
+    starting:{title:'Bare Hands démarre…',detail:'Chargement du suivi des mains et ouverture de la caméra.'},
+    sleep:{title:'Bare Hands en veille',detail:'La caméra guette. Montrez votre posture de réveil (par défaut, un C du pouce et de l’index) et tenez une seconde pour activer.'},
+    active:{title:'Bare Hands actif',detail:'Montrez une main à la caméra ; pincez pouce et index pour cliquer.'},
+    woken:{title:'Bare Hands activé',detail:'Posture de réveil reconnue : l’interaction à mains nues est active.'},
     idle_sleep:{title:'Retour en veille',detail:'Aucune main vue depuis 30 secondes : interaction suspendue, caméra gardée pour le guetteur.'},
-    disabled:{title:'Barehands arrêté',detail:'Mode test désactivé : caméra libérée, jetons retirés.'},
+    disabled:{title:'Bare Hands arrêté',detail:'Mode test désactivé : caméra libérée, jetons retirés.'},
     camera_denied:{title:'Caméra refusée',detail:'Autorisez la caméra pour cette page dans le navigateur, puis réactivez l’interrupteur.'},
     camera_missing:{title:'Aucune caméra',detail:'Aucune webcam utilisable n’a été trouvée.'},
     camera_busy:{title:'Caméra indisponible',detail:'La webcam est occupée par une autre application ou ne répond pas.'},
@@ -4761,7 +4761,7 @@ const JarvisBarehandsCore=(function(){
       return state;
     }
     function disable(){
-      /* « Barehands arrêté — caméra libérée » ne vaut que si quelque chose
+      /* « Bare Hands arrêté — caméra libérée » ne vaut que si quelque chose
          était tenu. Depuis ERROR, ce toast écrasait « Caméra refusée » par une
          phrase fausse, et la cause réelle disparaissait de l'écran — c'est ce
          qu'`isEngagedState` exclut, et c'était tout l'objet du correctif.
@@ -8905,7 +8905,7 @@ try{
      `starting` fait exception, et c'est voulu des deux côtés : le contrat le
      range sous `off` parce que rien n'interagit et que rien n'est tenu pour de
      bon — mais l'afficher « Éteint » sous un bouton « Allumer et activer »,
-     pendant que le statut juste en dessous dit « Barehands démarre… », donnait
+     pendant que le statut juste en dessous dit « Bare Hands démarre… », donnait
      un écran qui se contredit et un bouton qui ne fait rien (`enable()` rend
      `starting` sans attendre le démarrage en vol : le contrôleur se posait en
      veille, jamais en interaction, et l'utilisateur devait recliquer sans
@@ -9009,7 +9009,7 @@ try{
   /* Les phrases d'arrêt **voulues pour une raison nommée** (Slice 03 de la
      roue orbitale, D5). Seule la phrase change : un `disable` reste un
      `disable`. `mouse_takeover` : la souris a repris la main pendant que Bare
-     Hands pilotait — le toast générique « Barehands arrêté » laisserait
+     Hands pilotait — le toast générique « Bare Hands arrêté » laisserait
      croire à une panne ou à un geste de l'utilisateur sur l'interrupteur. */
   const DISABLE_NOTICE=Object.freeze({
     mouse_takeover:Object.freeze({title:'Souris reprise — Bare Hands éteint',
@@ -9020,7 +9020,7 @@ try{
   let disableNotice=null;
   async function setEnabled(enabled,options){
     /* **Éteindre éteint, quel que soit l'état de départ.** La garde qui
-       protège « Caméra refusée » d'être écrasée par « Barehands arrêté —
+       protège « Caméra refusée » d'être écrasée par « Bare Hands arrêté —
        caméra libérée » ne vit pas ici : elle vit dans `controller.disable()`
        (`wasOn=isEngagedState(state)`), qui depuis `ERROR` émet `off` et non
        `disabled` — et `off` n'est pas notifié par `onStatus`. Aucun toast ne

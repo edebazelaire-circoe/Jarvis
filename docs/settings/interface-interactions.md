@@ -51,6 +51,14 @@ reste le seul endroit. « Réinitialiser les réglages » reporte `enabled` tel 
   Réglages restent ouverts) ; une touche valide est envoyée, la section est redessinée et le focus revient sur la même
   touche. Quitter la section (ou fermer) annule la capture en cours (`destroy`) ; une réponse arrivée après le départ ne
   redessine rien (`isCurrent`).
+- **Tab pendant une capture (voulu, vérifié avant la Slice 10).** La capture est modale : elle prend la touche suivante,
+  quelle qu'elle soit, avant le shell (écoute en capture sur `window`). Tab et Maj+Tab sont donc capturés, comme toute
+  touche : `shortcuts.py` accepte `Tab` dans un raccourci d'interface (`UI_NAMED_KEYS`), et un raccourci système JARVIS
+  le refuse avec son message (« une touche seule… »). Ce n'est pas un piège clavier : « appuyez… » et `#shortcutHint`
+  (« Échap pour annuler. », `role=status`) disent comment sortir, Échap annule sans fermer les Réglages, quitter la
+  section l'annule aussi. Rien n'est changé.
+- Une rangée de boutons d'une section Bare Hands (`.field.inline`) garde la largeur de ses boutons (« Arrêter » de
+  l'enregistrement ne s'étire plus) ; les états du cycle de vie se disent « Bare Hands … » (« Bare Hands éteint »).
 
 ## 4. Liens vers ces sections
 

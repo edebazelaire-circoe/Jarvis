@@ -292,6 +292,36 @@ async def test_wake_word_diagnostic_link_keeps_its_part_in_view_after_voice_fill
     assert out["console"] == [], out["console"]
 
 
+#: La partie Voix grandit APRÈS le lien (QA Slice 06 : le test précédent ne prouvait pas que la croissance survenait
+#: une fois la cible focalisée) : 1 600 px ajoutés au-dessus de la partie Mot d'éveil, 300 ms après le lien.
+GROW = """(()=>{setTimeout(()=>{const v=document.querySelector('[data-diagnostic-part=voice]');
+  const tall=document.createElement('div');tall.id='testGrowth';tall.style.height='1600px';v.append(tall)},300);return true})()"""
+
+
+async def test_the_diagnostic_target_stays_in_view_when_voice_grows_after_the_link(served):
+    served.settings_file.write_text(json.dumps({"wake_word": {"schema_version": 7, "enabled": True, "futur": 1}}),
+                                    encoding="utf-8")
+    out = await drive(served.url, [{"width": 1366, "height": 768, "actions": [
+        wait("!!document.getElementById('openSettings')"), click("#dockMore"), click("#openSettings"),
+        wait("!!document.getElementById('voiceSection_conversation')", 10000),
+        click("#modalTabs [data-section=wake_word]"),
+        wait("!!document.querySelector('[data-ww-open-diagnostics]')", 10000),
+        click("[data-ww-open-diagnostics]"),
+        wait("document.activeElement&&document.activeElement.id==='diagnostic_wake_word'", 8000),
+        eval_("new Promise(r=>setTimeout(r,1500))"),  # parties remplies : la mesure suivante part d'un état stable
+        eval_(WAKE_DIAG, "before"), eval_(GROW),
+        eval_("new Promise(r=>setTimeout(r,900))"),
+        eval_(WAKE_DIAG, "after"),
+        eval_("document.getElementById('testGrowth').getBoundingClientRect().height", "grown"),
+    ]}])
+    step = out["steps"][0]
+    before, after = got(step, "before"), got(step, "after")
+    assert got(step, "grown") == 1600
+    assert after["focus"] == "diagnostic_wake_word" and after["visible"] is True, (before, after)
+    assert after["scroll"] >= before["scroll"] + 1500, (before, after)  # ramenée en vue : le contenu a suivi la croissance
+    assert out["console"] == [], out["console"]
+
+
 HOLD_POST = """(()=>{const base=api;window.__held=null;
   api=(path,opts)=>path==='/api/shortcuts'&&opts&&opts.method==='POST'
     ?new Promise((ok,ko)=>{window.__held=()=>base(path,opts).then(ok,ko)}):base(path,opts);return true})()"""

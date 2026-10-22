@@ -72,7 +72,9 @@ session. Il n'y a plus d'onglet hérité (`SET.tab` et `TABS` retirés à la Sli
 - Les deux listes (`#settingsCategories`, `#modalTabs`) sont des onglets ARIA à **activation manuelle** :
   flèches (les deux axes), Début, Fin déplacent le focus sans rien charger ; Entrée, Espace ou un clic ouvre.
   Une catégorie charge des données : la parcourir au clavier ne doit pas déclencher six chargements.
-- Après chaque rendu de la navigation, le focus revient sur l'entrée active de la liste qui l'avait.
+- Après chaque rendu de la navigation, le focus revient sur l'entrée active de la liste qui l'avait. Changer de
+  section ou de catégorie alors que le focus est dans le contenu (un bouton de la section, puis Ctrl+→) le porte à
+  l'entrée ouverte : le contenu est remplacé, il ne tombe jamais sur `body` (passe de finitions avant la Slice 10).
 - Tab et Maj+Tab bouclent dans le shell ; depuis `body`, ils y entrent.
 - Quelle que soit la route d'ouverture (bouton, raccourci `s`, roue › Paramètres, `openSettingsTab`), le focus
   finit sur la catégorie active : la roue ne reprend pas un focus qu'une action a porté hors d'elle, et le retour
@@ -85,9 +87,12 @@ session. Il n'y a plus d'onglet hérité (`SET.tab` et `TABS` retirés à la Sli
   `#modalTabs` (journal `settings_link_focus_fallback` quand un sélecteur n'a rien trouvé). Cas : « Modifier dans
   Interface & interactions › Raccourcis » → la touche `wake_toggle` ; « Voir le diagnostic » du Mot d'éveil →
   `#diagnostic_wake_word` ; « Régler la commande », renvois des sous-agents → l'entrée ouverte ; « Voir le
-  diagnostic mémoire » passe aussi par là (`#diagnostic_memory`). **Maintien en vue** (`pinSettingsTarget`, retravail QA
-  de la Slice 06, repris de la partie Mémoire de la Slice 05) : la cible trouvée est ramenée en haut à chaque changement
-  de taille de son conteneur (les parties Voix et Mot d'éveil des Diagnostics grandissent en se remplissant) tant
+  diagnostic mémoire » passe aussi par là (`#diagnostic_memory`). L'arrivée passe par `JarvisSettingsUI.landFocus` : elle
+  est marquée `data-settings-landed` (retiré quand le focus repart) et son contour se voit même quand le lien a été
+  cliqué à la souris, où `:focus-visible` ne s'applique pas. **Maintien en vue** (`pinSettingsTarget`, retravail QA
+  de la Slice 06, repris de la partie Mémoire de la Slice 05) : la cible trouvée est ramenée en vue à chaque changement
+  de taille de son conteneur (une partie ou une section en haut, `block:'start'` ; une petite cible, touche ou bouton,
+  juste assez pour être vue, `block:'nearest'`, sans cacher le libellé qui la précède ; les parties Voix et Mot d'éveil des Diagnostics grandissent en se remplissant) tant
   qu'elle a le focus, 4 s au plus ; molette, touche, pointeur ou toucher dans le contenu rendent la main aussitôt ; le
   lien suivant, un changement de section ou de catégorie et la fermeture (`cleanupSettingsSurface` → `stopSettingsPin`)
   arrêtent observateur, écoutes et minuteur. Testé : `test_interface_settings_browser.py` (partie Mot d'éveil visible
@@ -100,9 +105,20 @@ session. Il n'y a plus d'onglet hérité (`SET.tab` et `TABS` retirés à la Sli
   par-dessus garde son Échap). Le bouton « Fermer » et `ui_close` ferment aussi.
 - **Pas de fermeture au clic extérieur.** Le shell couvre toute la fenêtre : il n'y a plus d'extérieur, et un clic
   dans un vide du shell fermerait par accident une page en cours de réglage.
-- Focus visible : `outline` 2 px accent sur tout élément du shell en `:focus-visible` ; en couleurs forcées,
-  l'entrée active est soulignée par `Highlight`.
-- `prefers-reduced-motion` : ni fondu d'ouverture, ni entrée du contenu, ni transitions du rail.
+- Focus visible : `outline` 2 px accent sur tout élément du shell en `:focus-visible`, champs hérités compris
+  (`.field input:focus{outline:none}` ne l'efface plus dans le shell), et sur toute arrivée marquée
+  `data-settings-landed`. Un rendu qui remplace une vue rend le focus au contrôle qui l'avait
+  (`JarvisSettingsUI.keepFocus`) : sections mémoire, rôles et Work Methods, cartes de Connexions. « Enregistrer la
+  mémoire » et « Annuler les changements » sont `aria-disabled` (pas `disabled`) quand ils ne servent à rien : le
+  focus y reste pendant et après l'envoi.
+- États désactivés et lecture seule : opacité 0,7 dans le shell (au lieu de 0,38 à 0,5), mesurés à 4,5:1 au moins
+  sur le fond du shell (`test_settings_accessibility_browser.py`) ; un bloc déjà grisé (profil de routage éteint) ne
+  grise pas une seconde fois ses commandes.
+- Couleurs forcées (`forced-colors: active`) : l'entrée active est soulignée par `Highlight`, le contour de focus
+  et les arrivées prennent `Highlight`, un contrôle désactivé passe en `GrayText` à pleine opacité, badges, notices et
+  cartes gardent un trait `CanvasText`.
+- `prefers-reduced-motion` : ni fondu d'ouverture, ni entrée du contenu, ni transitions du rail ; dans tout le shell,
+  modules compris, animations et transitions réduites à 0,01 ms et une seule itération, défilement non animé.
 
 ## 4. Monter une section (Slices 03 à 08)
 
@@ -147,7 +163,8 @@ registerSettingsSection({               // porte de la page : R.page.register de
 ## 5. Primitives (`window.JarvisSettingsUI`)
 
 Fragments HTML purs aux classes `.set-*` (styles dans `control_center.html`). Tout paramètre texte est échappé ;
-`body`, `control` et `items` sont du HTML déjà construit par l'appelant.
+`body`, `control` et `items` sont du HTML déjà construit par l'appelant. Deux aides de focus (`keepFocus`,
+`landFocus`) sont les seules à toucher au DOM, et seulement aux éléments qu'on leur donne.
 
 | Primitive | Usage | Accessibilité |
 | --- | --- | --- |
@@ -159,6 +176,8 @@ Fragments HTML purs aux classes `.set-*` (styles dans `control_center.html`). To
 | `notice({kind, title, text, body, live})` | message `info`/`ok`/`warn`/`bad` | `live: 'polite'` → `role=status`, `'assertive'` → `role=alert` |
 | `advanced({id, summary, body, open})` | divulgation « avancé » | `<details>` natif |
 | `actions(items)` | rangée de boutons | — |
+| `keepFocus(host, draw)` | redessiner `host` (`draw()`) sans perdre le focus | le contrôle focalisé (même `id`, sinon même premier attribut `data-*`) le reprend, s'il n'est pas désactivé |
+| `landFocus(el, {scroll})` | porter le focus après un saut | marque `data-settings-landed` : contour visible même après un clic |
 
 ## 6. Langage visuel
 

@@ -8,7 +8,7 @@
    Aucun micro n'est ouvert : la page n'en demande jamais un ici.
 
    Usage : node _wake_word_settings_browser.mjs <url> <chrome.exe> <planJSON>
-   Plan : une liste d'etapes `{width,height,reducedMotion,actions:[...]}`.
+   Plan : une liste d'etapes `{width,height,reducedMotion,forcedColors,actions:[...]}`.
    Chaque action peut porter un `id` repris dans sa reponse.
    Sortie : `{"steps":[{"actions":[...]}],"requests":[...],"console":[...]}`.
 
@@ -16,7 +16,7 @@
      {"a":"eval","expr":"..."}                          -> {value}
      {"a":"wait","expr":"...","timeoutMs":4000}         -> {ok,ms}
      {"a":"click","selector":"..."}                     (vrai clic souris, au centre)
-     {"a":"key","key":"Tab","shift":false}              (vraie frappe clavier) -> {focused}
+     {"a":"key","key":"Tab","shift":false,"ctrl":false} (vraie frappe clavier) -> {focused}
      {"a":"type","selector":"...","text":"1.5"}         (selectionne puis insere le texte)
      {"a":"shot","path":"...png"}
      {"a":"theme","id":"cosmos"}                        (API de theme de la page, sans persister) */
@@ -78,8 +78,9 @@ try{
 
   const steps=[];
   for(const step of plan){
-    await send('Emulation.setEmulatedMedia',{features:step.reducedMotion
-      ?[{name:'prefers-reduced-motion',value:'reduce'}]:[]});
+    await send('Emulation.setEmulatedMedia',{features:[
+      ...(step.reducedMotion?[{name:'prefers-reduced-motion',value:'reduce'}]:[]),
+      ...(step.forcedColors?[{name:'forced-colors',value:'active'}]:[])]});
     await send('Emulation.setDeviceMetricsOverride',
       {width:step.width||1440,height:step.height||900,deviceScaleFactor:1,mobile:false});
     await send('Page.navigate',{url:URL_});
@@ -118,7 +119,7 @@ try{
       case 'key':{
         const codes={ArrowDown:40,ArrowUp:38,ArrowRight:39,ArrowLeft:37,Escape:27,Enter:13,Tab:9,Home:36,End:35,Delete:46,' ':32,F10:121,F11:122};
         const base={key:action.key,code:action.key===' '?'Space':action.key,
-          windowsVirtualKeyCode:codes[action.key]||0,modifiers:action.shift?8:0};
+          windowsVirtualKeyCode:codes[action.key]||0,modifiers:(action.shift?8:0)|(action.ctrl?2:0)};
         await send('Input.dispatchKeyEvent',{type:'keyDown',...base,
           ...(action.key==='Enter'?{text:'\r'}:action.key===' '?{text:' '}:{})});
         await send('Input.dispatchKeyEvent',{type:'keyUp',...base});

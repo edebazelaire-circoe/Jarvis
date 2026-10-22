@@ -124,8 +124,8 @@ def click(selector: str) -> dict:
     return {"a": "click", "selector": selector}
 
 
-def key(name: str, shift: bool = False) -> dict:
-    return {"a": "key", "key": name, "shift": shift}
+def key(name: str, shift: bool = False, ctrl: bool = False) -> dict:
+    return {"a": "key", "key": name, "shift": shift, "ctrl": ctrl}
 
 
 def type_in(selector: str, text: str) -> dict:

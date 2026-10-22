@@ -910,7 +910,7 @@ par la décision 6 ; **la voix emprunte le même depuis la Slice 12** (voir
 `JarvisBarehands.state()` pour le détail.
 
 Arrêt **voulu** : interrupteur coupé, `pagehide`. L'état devient `off` et le
-toast dit « Barehands arrêté ». Arrêt **subi** : caméra refusée, absente,
+toast dit « Bare Hands arrêté ». Arrêt **subi** : caméra refusée, absente,
 occupée ou débranchée, modèle absent, erreur du suivi. L'état devient `error`,
 le toast reste à l'écran 9 s et porte la cause réelle. Dans les deux cas, un
 seul chemin (`teardown`) arrête les pistes caméra, ferme le modèle, retire la
@@ -1358,7 +1358,7 @@ compare à rien.
 
 - **A1.1** Réglages → Interface & interactions → Bare Hands (l'ancien onglet Expérimental) → cocher l'interrupteur. Attendu : invite caméra,
   le bandeau passe par « Démarrage… » avec son compteur de secondes, puis toast
-  **« Barehands en veille »** et pastille **`MAINS · VEILLE`** en bas à gauche.
+  **« Bare Hands en veille »** et pastille **`MAINS · VEILLE`** en bas à gauche.
   Le bandeau lit « Cycle de vie : **En veille** », bouton « Activer
   l'interaction ». **Aucun jeton ne doit apparaître**, même en agitant les
   mains : la veille guette, elle ne pointe pas.
@@ -1373,7 +1373,7 @@ compare à rien.
   allumé. Refaire ensuite avec « Retour en veille » réglé à 5 s : c'est le délai
   **réel** qui doit être suivi, pas la constante d'usine.
 - **A1.4** Couper l'interrupteur au pincement : jetons retirés, voyant caméra
-  éteint, toast « Barehands arrêté », bandeau « Éteint ». Recharger la page :
+  éteint, toast « Bare Hands arrêté », bandeau « Éteint ». Recharger la page :
   toujours éteint, et la page repart en veille, pas en interaction.
 - **A1.5** Réactiver, recharger : le mode test repart seul **en veille**.
   Refuser la caméra dans Chrome (icône de l'adresse) puis recharger : toast
@@ -1414,7 +1414,7 @@ compare à rien.
   pastille passe à `MAINS · VEILLE 20 %`, `40 %`… et un anneau de progression
   se remplit autour de la main en une seconde environ. Relâcher à mi-course :
   la progression retombe, rien ne s'active. Retenir la posture jusqu'au bout :
-  toast « Barehands activé », pastille `MAINS · ACTIF`, bandeau « Actif ».
+  toast « Bare Hands activé », pastille `MAINS · ACTIF`, bandeau « Actif ».
 - **A2.3** **Le temps non observé ne compte pas (R1).** Reformer le C et, à
   mi-anneau, masquer la main une bonne seconde, ou passer l'onglet en
   arrière-plan, ou rabattre l'écran une minute. Au retour : l'anneau **repart

@@ -369,7 +369,14 @@
       return `${schema}${dropped}<p class="sar-summary">${all.length} rôles · ${active} actifs · ${brain} proposés au cerveau${mod?` · ${mod} aux instructions modifiées`:''}</p>`;
     }
 
+    /* Chaque rendu remplace l'hôte (lecture des instances, compteur, enregistrement) : le contrôle qui avait le focus
+       le reprend (`keepFocus` du shell), sinon il tomberait sur `body` — par exemple le lien vers Modèles des
+       sous-agents, redessiné quand les instances arrivent (finitions avant la Slice 10). */
     function render(){
+      const UI=root.JarvisSettingsUI;
+      if(UI&&typeof UI.keepFocus==='function'&&host.ownerDocument)UI.keepFocus(host,draw);else draw();
+    }
+    function draw(){
       if(st.destroyed)return;
       if(st.phase==='loading'){host.innerHTML=`<div class="sar-state">${waitingHtml('Lecture du registre des rôles…',st.startedAt)}</div>`;tick();return}
       if(st.phase==='error'){

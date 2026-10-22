@@ -796,6 +796,10 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .settings-shell :is(code,kbd,samp,pre){font-family:var(--set-mono)}
 .settings-shell :is(button,input,select,textarea){font-family:inherit}
 .settings-shell :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* Un champ hérité (`.field input:focus{outline:none}`, plus spécifique) garde le contour du shell ; une arrivée de
+   focus après un saut (`JarvisSettingsUI.landFocus` : lien interne, élément créé par une action) se voit aussi quand
+   le saut a été cliqué à la souris, où `:focus-visible` ne s'applique pas. */
+.settings-shell .field :is(input,select,textarea):focus-visible,.settings-shell [data-settings-landed]:focus{outline:2px solid var(--accent);outline-offset:2px}
 .settings-shell .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 /* Rail des catégories */
 .set-rail{display:flex;flex-direction:column;min-height:0;padding:30px 14px 18px 18px;border-right:1px solid var(--set-hair);background:rgba(3,8,12,.42);overflow:auto}
@@ -941,6 +945,10 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
    le montrer — ce sont les attributs `disabled` posés sur chaque commande qui
    l'imposent, au clavier comme à la souris. */
 .routing-off{opacity:.5}
+/* Rangée de boutons d'une section Bare Hands (`.field.inline`, deux colonnes) : un bouton garde sa largeur au lieu de
+   s'étirer sur la seconde colonne (« Arrêter » de l'enregistrement). Ici et non dans la feuille du module, qui n'est
+   injectée que lorsque Bare Hands est allumé. */
+.settings-shell .bh-section .field.inline>button{justify-self:start}
 /* Connexions › Fournisseurs (Slice 07, `control_center_connections_settings.js`) : une carte par fournisseur. */
 .conn{display:grid;gap:14px;max-width:860px}
 .conn-lead{margin:0;max-width:68ch;font-size:13.5px;color:var(--set-ink-2)}
@@ -5803,7 +5811,10 @@ let settingsPin=null;
 function stopSettingsPin(){if(settingsPin){const stop=settingsPin;settingsPin=null;stop()}}
 function pinSettingsTarget(target){
   stopSettingsPin();
-  const pin=()=>target.scrollIntoView({block:'start'});pin();
+  /* Une partie ou une section vient en haut (son titre et ce qui suit se lisent) ; une petite cible (une touche, un
+     bouton) défile juste assez pour être vue, sans cacher le libellé qui la précède. */
+  const block=target.matches('section,[role=region],h1,h2,h3,h4')?'start':'nearest';
+  const pin=()=>target.scrollIntoView({block});pin();
   if(typeof ResizeObserver!=='function'||!target.parentElement)return;
   const watch=new ResizeObserver(()=>{if(target.isConnected&&document.activeElement===target)pin();else stopSettingsPin()});
   const release=()=>stopSettingsPin();
@@ -5813,18 +5824,21 @@ function pinSettingsTarget(target){
   settingsPin=()=>{watch.disconnect();clearTimeout(timer);
     SETTINGS_PIN_RELEASE.forEach(type=>modalContent.removeEventListener(type,release,{capture:true}))};
 }
+/* L'arrivée est marquée (`JarvisSettingsUI.landFocus`) : son contour se voit même quand le lien a été cliqué. */
 function focusSettingsLanding(selector){
   if(typeof document==='undefined')return;
+  const UI=typeof window!=='undefined'?window.JarvisSettingsUI:null;
+  const land=el=>UI&&UI.landFocus?UI.landFocus(el):el.focus({preventScroll:true});
   const found=selector?modalContent.querySelector(selector):null;
   if(found){
     if(!found.matches('button,a[href],input,select,textarea,summary,[tabindex]'))found.setAttribute('tabindex','-1');
-    found.focus({preventScroll:true});
+    land(found);
     pinSettingsTarget(found);
     return;
   }
   if(selector)console.info('settings_link_focus_fallback',{selector});
   const entry=document.querySelector('#modalTabs [aria-selected=true]')||document.querySelector('#settingsCategories [aria-selected=true]');
-  if(entry)entry.focus({preventScroll:true});
+  if(entry)land(entry);
 }
 
 function destroyAgentCatalog(){
