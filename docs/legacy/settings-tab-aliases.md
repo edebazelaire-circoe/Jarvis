@@ -16,9 +16,9 @@
   entrées `{kind:'tab'}` de `shellNavigation`, rendues par `renderTab` et les modules
   injectés), et les liens `related` vers les onglets d'autres catégories
   ([`../settings/settings-shell.md`](../settings/settings-shell.md)).
-- Les injecteurs `TABS.push/splice` de `control_center_work.js` et
-  `control_center_barehands.js` (liste figée par `test_no_module_injects_a_new_top_level_tab`).
-  `control_center_wake_word.js` en est sorti à la Slice 03 : il enregistre la section `wake_word`.
+- Plus aucun injecteur `TABS.push/splice` (liste vide figée par `test_no_module_injects_a_new_top_level_tab`) :
+  `control_center_wake_word.js` en est sorti à la Slice 03, `control_center_work.js` et
+  `control_center_barehands.js` à la Slice 06.
 - Slice 03 : les onglets `voice` et `wakeword` n'existent plus ; leurs ID restent des alias
   (`voice` → `voice_audio` / `conversation`, déclaré par la section ; `wakeword` → `wake_word`).
   Le renvoi de l'onglet Raccourcis vers Voix pour `wake_toggle` est supprimé : Raccourcis en est
@@ -35,6 +35,15 @@
   (`selectTab('memory')`). Le détail des étages va dans la partie Mémoire de `advanced_diagnostics` / `diagnostics`
   ([`../settings/memory.md`](../settings/memory.md)). Testé : `test_memory_legacy_id_opens_recall_and_every_memory_section`
   (registre), `test_sections_destinations_alias_and_links` (vrai Chrome).
+
+- Slice 06 : les onglets `appearance` et `shortcuts` n'existent plus ; `appearance` est l'alias de la section
+  `theme_scene` (déclaré par la section), `shortcuts` est l'ID de la section des raccourcis. Bare Hands n'injecte plus
+  `experimental` : ses ancres (`barehandsSettings`, `barehandsCalibration` → `bare_hands` ; `barehandsRecord`,
+  `barehandsBenchmarkSection` → `barehands_lab`) ouvrent ses sections. L'onglet `experimental` reste, déclaré par la
+  page, pour la seule porte de test de la scène, jusqu'à la Slice 08 ; son alias (→ Labs) reste.
+  ([`../settings/interface-interactions.md`](../settings/interface-interactions.md)). Testé :
+  `test_sections_aliases_single_wake_editor_and_barehands_split` (vrai Chrome),
+  `test_page_routes_categories_sections_and_legacy_ids_into_the_six_category_shell` (registre).
 
 ## Conditions de retrait
 

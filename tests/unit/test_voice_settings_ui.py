@@ -432,9 +432,11 @@ def test_top_navigation_has_no_config_and_wake_shortcut_has_one_editor_in_shortc
     assert f"id:'{fixture['removed_top_tab']}'" not in tabs
     # « Voix » (Slice 03) et « Agent / CLI » (Slice 04) de jarvis-settings-ui-reorganization ne sont plus des
     # onglets : sections enregistrées de `voice_audio` et de `agents_models`.
-    assert all(f"label:'{label}'" in tabs for label in fixture["top_tabs"] if label not in {"Apparence", "Voix", "Agent / CLI"})
-    assert "id:'voice'" not in tabs and "id:'cli'" not in tabs
-    assert "{id:'appearance',label:'Apparence',save:false}" in work
+    # Raccourcis et Apparence (Slice 06) : sections d'Interface & interactions.
+    assert all(f"label:'{label}'" in tabs for label in fixture["top_tabs"]
+               if label not in {"Apparence", "Voix", "Agent / CLI", "Raccourcis"})
+    assert "id:'voice'" not in tabs and "id:'cli'" not in tabs and "id:'shortcuts'" not in tabs
+    assert "const THEME_SCENE_SECTION={id:'theme_scene'" in work and "TABS.splice" not in work
     # Un seul éditeur de `wake_toggle` : les Raccourcis (plus de filtre, plus de renvoi vers Voix).
     assert "wake_toggle'" not in shortcuts.replace("`wake_toggle` compris", "")
     assert "Voix → Tours" not in shortcuts and "data-shortcut" in shortcuts

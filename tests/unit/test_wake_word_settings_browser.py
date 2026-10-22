@@ -420,8 +420,11 @@ async def test_un_bloc_d_une_version_etrangere_desactive_l_enregistrement(served
         click("[data-ww-open-diagnostics]"),
         wait("!!document.getElementById('wwDetector')"),
         snapshot("diag"),
+        eval_("document.activeElement&&document.activeElement.id", "focus"),
     ]}])
     seen = got(out["steps"][0], "seen")
+    # Slice 06 (jarvis-settings-ui-reorganization) : le lien pose le focus sur la partie Mot d'éveil, jamais sur `body`.
+    assert got(out["steps"][0], "focus") == "diagnostic_wake_word"
     assert seen["pill"] == {"kind": "foreign", "text": "Version étrangère"}
     assert seen["saveDisabled"] is True
     assert all(seen["inputsDisabled"]), "les champs sont figés aussi : rien à saisir qui ne pourrait être écrit"

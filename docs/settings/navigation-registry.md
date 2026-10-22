@@ -108,12 +108,15 @@ Destination principale de chaque ID d'onglet actuel, plus les autres destination
 | `memory` | `memory_knowledge` / `recall` | `memory_knowledge` / `semantic_retrieval`, `consolidation`, `knowledge_sources`, `memory_center` ; `advanced_diagnostics` / `diagnostics` |
 | `subagents` | `agents_models` / `subagents` | `advanced_diagnostics` / `work_methods` (promotion de Work Methods, groupe `labs`) |
 | `appearance` | `interface_interactions` / `theme_scene` | — |
-| `experimental` | `advanced_diagnostics` / `labs` | `interface_interactions` / `bare_hands` |
+| `experimental` | `advanced_diagnostics` / `labs` | `interface_interactions` / `bare_hands` ; `advanced_diagnostics` / `barehands_lab` |
 
 Ancres Bare Hands (`LEGACY_ANCHORS`, clés de `SECTION` dans `control_center_barehands.js`,
 utilisées par `JarvisBarehands.showSettings(section)`) : `barehandsSettings` et
 `barehandsCalibration` → `interface_interactions` / `bare_hands` ; `barehandsRecord` et
-`barehandsBenchmarkSection` → `advanced_diagnostics` / `labs`.
+`barehandsBenchmarkSection` → `advanced_diagnostics` / `barehands_lab` (Slice 06).
+
+Une destination `also` déjà enregistrée comme section dans une catégorie n'y fait plus apparaître de lien « encore
+dans » vers l'onglet hérité (Slice 06 : Interface ne renvoie plus vers Expérimental).
 
 Sections cibles prévues (enregistrées par les Slices 03 à 08) :
 `voice_audio` : `conversation`, `voice_output`, `microphone_sound`, `turns_interruptions`, `wake_word` ·
@@ -122,14 +125,16 @@ Sections cibles prévues (enregistrées par les Slices 03 à 08) :
 `interface_interactions` : `theme_scene`, `shortcuts`, `bare_hands` ·
 `connections` : `providers` ·
 `advanced_diagnostics` (un groupe par section, sauf `work_methods`, du groupe `labs`) : `architecture_compat`, `prompts`,
-`runtime_cli`, `diagnostics`, `work_methods`, `labs`.
+`runtime_cli`, `diagnostics`, `work_methods`, `labs` ; plus `barehands_lab` (groupe `labs`, Slice 06 :
+[`interface-interactions.md`](interface-interactions.md)).
 
 ## 4. Cas particuliers relevés par l'audit
 
-- **`experimental` partagé.** Bare Hands crée l'onglet, `control_center_scene_settings.js`
-  y ajoute la porte de test de la scène. L'ID est un alias vers Labs ; les préférences
-  ordinaires de Bare Hands sont atteintes par leurs ancres. Les Slices 06 et 08 enregistrent
-  `bare_hands` (Interface) et `labs` (Avancé), puis la Slice 09 retire l'onglet.
+- **`experimental` partagé.** Jusqu'à la Slice 06, Bare Hands créait l'onglet et
+  `control_center_scene_settings.js` y ajoutait la porte de test de la scène. Depuis la Slice 06,
+  Bare Hands enregistre `bare_hands` (Interface), `barehands_lab` (Avancé, groupe `labs`) et la
+  partie de diagnostic `barehands` ; l'onglet, déclaré par la page, ne porte plus que la scène.
+  La Slice 08 déménage la scène dans Labs, puis l'ID disparaît de `TABS`.
 - **`ui_tab_next` / `ui_tab_prev`.** Depuis la Slice 02, ils parcourent les six catégories par
   `cycleCategory`, jamais les sections ni les anciens onglets.
 - **Roue Jarvis** (`control_center_jarvis_wheel.js`). Elle lit `settingsTabs()` et ouvre

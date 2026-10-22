@@ -112,37 +112,55 @@ window.AudioContext=AudioContext;getUserMedia=async()=>stream;
     }
 
 
-def test_appearance_render_uses_shared_catalog_cleanup_exactly_once(tmp_path: Path):
-    page = PAGE.read_text(encoding="utf-8")
+def test_theme_scene_is_a_registered_section_that_applies_in_place_and_mounts_the_scene_view(tmp_path: Path):
+    """Slice 06 (jarvis-settings-ui-reorganization) : plus d'onglet `appearance` injecté dans `TABS`. La section
+    `theme_scene` (alias `appearance`) dessine le thème, monte les réglages de la scène dans son emplacement, applique un
+    choix tout de suite sans se redessiner (la carte choisie est marquée en place) et détruit la vue de la scène."""
     work = WORK.read_text(encoding="utf-8")
-    destroy_agent = page[page.index("function destroyAgentCatalog()") : page.index("function mountAgentCatalog")]
-    destroy_voice = page[page.index("function destroyVoiceCatalog()") : page.index("function mountVoiceCatalog")]
-    cleanup = page[page.index("function cleanupSettingsSurface()") : page.index("function renderTabs()")]
-    install = work[work.index("  function installSettingsTab()") : work.index("  function bridgeStatusApi()")]
+    block = work[work.index("  function appearanceHtml()") : work.index("  function bridgeStatusApi()")]
+    assert "TABS" not in block.replace("plus d'onglet injecté dans `TABS`", "")
     result = run_node(
         tmp_path,
         r"""
-let agentDestroys=0,voiceDestroys=0,baseCalls=0;
-const SET={tab:'appearance',renderRevision:0,agentCatalog:{destroy(){agentDestroys+=1}},voiceCatalog:null,voiceCatalogStates:{},voiceCatalogMountedRole:null};
-const TABS=[{id:'voice',label:'Voix',save:true},{id:'cli',label:'Agent / CLI',save:true}];
-const modalSave={style:{}},modalSub={textContent:''},modalContent={innerHTML:''};
-const appearanceHtml=()=>'<section>appearance</section>',bindAppearance=()=>{},say=()=>{};
-let renderTab=async()=>{baseCalls+=1;cleanupSettingsSurface()};
+const esc=v=>String(v);const registered=[],activated=[],view={mounts:[],destroys:0};
+const window={JarvisSceneViewSettings:{mount(slot){view.mounts.push(slot&&slot.slot)},destroy(){view.destroys+=1}}};
+const registerSettingsSection=spec=>{registered.push(spec);return spec};
+const apiObject={current:()=>'circuit-board',activate(id){activated.push(id)},
+  list:()=>[{id:'circuit-board',name:'Circuit imprimé',status:'experimental',description:'',preview:'circuit'},
+            {id:'cosmos',name:'Cosmos',status:'experimental',description:'',preview:'cosmos'}]};
+function makeHost(){
+  const host={writes:0,inputs:[],slot:null};
+  Object.defineProperty(host,'innerHTML',{set(html){host.writes+=1;host.html=html;
+    host.inputs=[...html.matchAll(/value="([^"]+)" (checked)?/g)].map(m=>{
+      const card={on:!!m[2],classList:{toggle(name,on){if(name==='selected')card.on=on}}};
+      const listeners={};return {value:m[1],checked:!!m[2],card,closest:()=>card,
+        addEventListener(type,fn){listeners[type]=fn},fire(type){listeners[type]()}};
+    });host.slot=html.includes('data-scene-view-slot')?'slot':null},get(){return host.html}});
+  host.querySelectorAll=sel=>sel==='input[name=jarvisTheme]'?host.inputs:[];
+  host.querySelector=sel=>sel==='[data-scene-view-slot]'?{slot:host.slot}:null;
+  return host;
+}
 """
-        + destroy_agent + destroy_voice + cleanup + install
+        + block
         + r"""
-(async()=>{installSettingsTab();await renderTab();await renderTab();
-  SET.voiceCatalog={state:{envelope:null,error:'',query:'',sort:'',filters:{},selection:new Set()},destroy(){voiceDestroys+=1}};
-  SET.voiceCatalogMountedRole='realtime';await renderTab();
-  process.stdout.write(JSON.stringify({agentDestroys,voiceDestroys,baseCalls,tabs:TABS.map(tab=>tab.id)}));
-})().catch(error=>{console.error(error);process.exitCode=1});
+installSettingsSection();
+const spec=registered[0],host=makeHost();
+spec.mount(host);
+const cosmos=host.inputs.find(i=>i.value==='cosmos');cosmos.checked=true;cosmos.fire('change');
+spec.destroy(host);
+process.stdout.write(JSON.stringify({count:registered.length,id:spec.id,category:spec.category,save:spec.save,
+  aliases:spec.aliases,order:spec.order,writes:host.writes,activated,mounts:view.mounts,destroys:view.destroys,
+  selected:host.inputs.map(i=>[i.value,i.card.on])}));
 """,
     )
 
-    assert result["agentDestroys"] == 1
-    assert result["voiceDestroys"] == 1
-    assert result["baseCalls"] == 0
-    assert result["tabs"] == ["voice", "cli", "appearance"]
+    assert result["count"] == 1
+    assert (result["id"], result["category"], result["save"], result["aliases"], result["order"]) == (
+        "theme_scene", "interface_interactions", "self", ["appearance"], 10)
+    assert result["activated"] == ["cosmos"]
+    assert result["writes"] == 1, "un choix de thème s'applique sans redessiner la section"
+    assert result["selected"] == [["circuit-board", False], ["cosmos", True]]
+    assert result["mounts"] == ["slot"] and result["destroys"] == 1
 
 
 def test_cosmos_copy_states_that_capture_only_exists_while_listening():

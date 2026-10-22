@@ -671,29 +671,38 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
     </section>`;
   }
 
-  function bindAppearance(){
-    modalContent.querySelectorAll('input[name=jarvisTheme]').forEach(input=>input.addEventListener('change',()=>{
+  /* Le choix s'applique tout de suite (`activate`, clé `localStorage` inchangée) et la carte choisie est marquée en
+     place : redessiner la section arracherait le focus du bouton radio qu'on vient de cocher. */
+  function bindAppearance(host){
+    host.querySelectorAll('input[name=jarvisTheme]').forEach(input=>input.addEventListener('change',()=>{
       if(!input.checked)return;
       apiObject.activate(input.value);
-      renderTab();
+      host.querySelectorAll('input[name=jarvisTheme]').forEach(other=>{
+        const card=other.closest('.theme-choice');if(card)card.classList.toggle('selected',other===input)});
     }));
   }
 
-  function installSettingsTab(){
-    if(!Array.isArray(TABS)||TABS.some(tab=>tab.id==='appearance'))return;
-    const before=TABS.findIndex(tab=>tab.id==='config');
-    TABS.splice(before>=0?before:TABS.length,0,{id:'appearance',label:'Apparence',save:false});
-    const baseRenderTab=renderTab;
-    renderTab=async function(){
-      if(SET.tab!=='appearance')return baseRenderTab();
-      cleanupSettingsSurface();
-      SET.renderRevision=(SET.renderRevision||0)+1;
-      modalSave.style.display='none';
-      modalSub.textContent='Le thème est appliqué immédiatement et peut être changé à chaud.';
-      modalContent.innerHTML=appearanceHtml();
-      bindAppearance();
-      say('','');
-    };
+  /* `interface_interactions` › Thème & scène visuelle (jarvis-settings-ui-reorganization, Slice 06) : section
+     enregistrée au registre des Réglages, plus d'onglet injecté dans `TABS`. Le thème est rendu ici ; les réglages
+     d'affichage de la scène (`control_center_scene_page.js`, `window.JarvisSceneViewSettings`) s'ajoutent à la suite
+     et sont détruits avec la section. Ancien identifiant `appearance` : alias de la section. */
+  const THEME_SCENE_SECTION={id:'theme_scene',category:'interface_interactions',aliases:['appearance'],order:10,save:'self',
+    label:'Thème & scène visuelle',
+    description:'Le thème et l’affichage de la scène s’appliquent immédiatement, dans ce navigateur seulement.',
+    mount(host){
+      host.innerHTML=appearanceHtml()+'<div data-scene-view-slot></div>';
+      bindAppearance(host);
+      const view=window.JarvisSceneViewSettings;
+      if(view&&typeof view.mount==='function')view.mount(host.querySelector('[data-scene-view-slot]'));
+    },
+    destroy(){
+      const view=window.JarvisSceneViewSettings;
+      if(view&&typeof view.destroy==='function')view.destroy();
+    },
+  };
+  function installSettingsSection(){
+    if(typeof registerSettingsSection!=='function'){console.error('appearance_settings_shell_missing');return}
+    registerSettingsSection(THEME_SCENE_SECTION);
   }
 
   function bridgeStatusApi(){
@@ -712,7 +721,7 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
 
   setTimeout(()=>{
     ensureStyle();
-    installSettingsTab();
+    installSettingsSection();
     bridgeStatusApi();
     let initial='circuit-board';
     /* « Omega » s'appelle « Cosmos » depuis le 2026-09-20. Le choix déjà

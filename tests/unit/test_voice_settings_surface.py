@@ -73,15 +73,18 @@ def test_a_live_option_without_destination_fails_loudly(monkeypatch):
 
 def test_every_destination_is_served_by_the_page(metadata):
     """Une section décrite par le serveur est enregistrée par la page, ou servie par l'onglet hérité qui l'héberge
-    encore (Raccourcis, jusqu'à la Slice 06)."""
+    encore. Depuis la Slice 06, Raccourcis est une section enregistrée (`SHORTCUTS_SECTION`)."""
 
     page = PAGE.read_text(encoding="utf-8")
     registered = set(re.findall(r"\{id:'([a-z_]+)',category:'[a-z_]+'", page[page.index("const VOICE_SECTIONS=[") : page.index("function voiceSectionSpec")]))
     registered |= set(re.findall(r"registerSettingsSection\(\{id:'([a-z_]+)'", page))
     registered |= set(re.findall(r"const DIAGNOSTICS_SECTION=\{id:'([a-z_]+)'", page))
+    registered |= set(re.findall(r"const SHORTCUTS_SECTION=\{id:'([a-z_]+)'", page))
     assert "registerSettingsSection(DIAGNOSTICS_SECTION);" in page
+    assert "registerSettingsSection(SHORTCUTS_SECTION);" in page
     registered |= set(re.findall(r"registerSettingsSection\(\{id:'([a-z_]+)'", WAKE.read_text(encoding="utf-8")))
     tabs = set(re.findall(r"\{id:'(\w+)'", page[page.index("\nconst TABS=[") : page.index("\nconst SET=")]))
+    assert "shortcuts" not in tabs
     for record in metadata:
         section = record["surface"]["section"]
         assert section in registered or section in tabs, (record["id"], section)

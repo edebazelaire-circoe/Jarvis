@@ -10,7 +10,7 @@
    - `JarvisBarehandsCore`, logique pure (géométrie, pincement, cycle de vie
      avec dépendances injectées), exécutée telle quelle par les tests (node) ;
    - un bloc navigateur qui branche la caméra, la surimpression, les clics et
-     l'onglet « Expérimental » des réglages. Les tests node ne l'exécutent pas. */
+     les sections Bare Hands des réglages (Slice 06). Les tests node ne l'exécutent pas. */
 
 const JarvisBarehandsCore=(function(){
   /* Indices MediaPipe utiles : poignet, bout du pouce, bout de l'index, base du
@@ -5621,7 +5621,11 @@ try{
   const API='/api/barehands';
   const PROFILE_API='/api/barehands/profile';
   const ASSET_BASE='/barehands/assets';
-  const TAB_ID='experimental';
+  /* Les entrées des Réglages qui montrent Bare Hands (jarvis-settings-ui-reorganization, Slice 06) : plus d'onglet
+     `experimental` injecté. Les préférences ordinaires vont dans Interface & interactions, les outils d'opérateur
+     (lecture de diagnostic à l'écran, test, enregistrement) dans Avancé › Labs, et l'état en lecture seule (modèle
+     MediaPipe, dernière commande vocale) dans Avancé › Diagnostics. */
+  const SETTINGS_ENTRY=Object.freeze({ordinary:'bare_hands',lab:'barehands_lab',diagnostic:'barehands'});
   /* Les sections de l'onglet qu'un appelant **extérieur** peut demander à voir
      (Slice 02, décisions 8 et 16). Elles sont nommées ici et nulle part
      ailleurs : le menu contextuel du bouton de cycle de vie Bare Hands les désigne
@@ -5651,6 +5655,10 @@ try{
        calibration — l'une change les réglages, l'autre les mesure. */
     benchmark:'barehandsBenchmarkSection',
   });
+  /* L'entrée des Réglages qui dessine chaque section publiée (Slice 06). Le registre des Réglages connaît les mêmes
+     ancres (`LEGACY_ANCHORS`) pour les appelants qui passent par `openSettingsTab` ; un test lie les deux tables. */
+  const SECTION_ENTRY=Object.freeze({[SECTION.settings]:SETTINGS_ENTRY.ordinary,[SECTION.calibration]:SETTINGS_ENTRY.ordinary,
+    [SECTION.record]:SETTINGS_ENTRY.lab,[SECTION.benchmark]:SETTINGS_ENTRY.lab});
   /* Ce qu'un jeton « survole » : l'élément cliquable le plus proche. */
   const INTERACTIVE='button,a[href],input,select,textarea,label,summary,[role="button"],[role="tab"],[tabindex]:not([tabindex="-1"]),.choice,.acard,.toast';
   /* Le jeton de main suit la même règle que la colonne et la coque de
@@ -5720,7 +5728,7 @@ try{
   font:10px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.04em;white-space:pre;
   color:${ACCENT};border:1px solid color-mix(in srgb,currentColor 30%,transparent);
   background:rgba(3,8,12,.66);backdrop-filter:blur(12px)}
-/* Les sections que Barehands ajoute a l'onglet Experimental. Portee par une
+/* Les sections que Barehands dessine dans les Réglages (Interface, Avancé). Portee par une
    classe a nous, et non par "section + section", pour ne rien changer aux
    autres onglets de la meme fenetre. */
 #modalContent .bh-section{border-top:1px solid var(--line);padding-top:22px;margin-top:18px}
@@ -9291,19 +9299,35 @@ try{
         'Combien la main doit parcourir avant qu’un contact devienne un glissement plutôt qu’un clic. Plus sensible, moins de mouvement toléré dans un clic. Le défaut (1) laisse les tolérances telles quelles : d’usine, ou mesurées par la calibration.')}
       ${rangeHtml('sleepTimeoutMs','Retour en veille',
         'Sans main sûre pendant ce temps, l’interaction retourne en veille. La caméra reste ouverte pour le guetteur de réveil ; seul « Éteint » la libère.')}
-      ${checkHtml('diagnostics','Lecture de diagnostic à l’écran',
-        'Qualité, vitesse et immobilité de chaque main suivie, en bas à droite pendant l’interaction. Rien n’est enregistré : c’est une lecture, pas un enregistreur.')}
       ${checkHtml('calibrationEnabled','Proposer la calibration',
         'Garde la calibration optionnelle et explicite : Bare Hands ne mesurera jamais votre main sans que vous l’ayez lancée.')}
       <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
         <button type="button" class="action small" id="barehandsReset" ${view.busy?'disabled':''}>Réinitialiser les réglages</button>
-        <div class="hint">Rend aux six réglages ci-dessus et à l’outil leur valeur d’usine. Le cycle de vie n’y touche pas : réinitialiser n’éteint pas la caméra, et le choix Souris / Bare Hands de la roue (Sélection) reste dans l’état où il est. Le profil de calibration a son propre bouton ci-dessous : ce sont deux choses distinctes.</div>
+        <div class="hint">Rend leur valeur d’usine aux cinq réglages ci-dessus, à la lecture de diagnostic à l’écran (Avancé & diagnostic › Bare Hands · essais) et à l’outil. Le cycle de vie n’y touche pas : réinitialiser n’éteint pas la caméra, et le choix Souris / Bare Hands de la roue (Sélection) reste dans l’état où il est. Le profil de calibration a son propre bouton ci-dessous : ce sont deux choses distinctes.</div>
       </div>
       ${limitsHtml()}
     </section>
-    ${calibrationHtml()}
+    ${calibrationHtml()}`;
+  }
+  /* Outils d'opérateur (Avancé › Labs) : la lecture de diagnostic à l'écran, le test et l'enregistrement. */
+  function labHtml(){
+    return `<section class="bh-section" id="barehandsLabSettings">
+      <h3>Lecture de diagnostic</h3>
+      ${checkHtml('diagnostics','Lecture de diagnostic à l’écran',
+        'Qualité, vitesse et immobilité de chaque main suivie, en bas à droite pendant l’interaction. Rien n’est enregistré : c’est une lecture, pas un enregistreur.')}
+    </section>
     ${benchmarkHtml()}
     ${recordHtml()}`;
+  }
+  /* État des fichiers du modèle, dit dans les trois cas (Avancé › Diagnostics) : pas encore relu, présent, absent. */
+  function assetsStateHtml(){
+    if(!view.assets)return '<div class="hint">Fichiers du modèle MediaPipe pas encore relus.</div>';
+    return view.assets.installed?'<div class="notice ok"><strong>Modèle MediaPipe présent</strong><div class="hint">Les fichiers du suivi des mains sont installés dans ce Control Center.</div></div>':assetsHtml();
+  }
+  function diagnosticHtml(){
+    return `<div id="barehandsAssets">${assetsStateHtml()}</div>
+      <div class="hint" style="margin-top:14px">Dernière commande vocale reçue par cette page :</div>
+      <div id="barehandsVoice">${voiceHtml()}</div>`;
   }
 
   /* **Décision 14 : cet onglet est de la configuration, pas un tableau de
@@ -9333,14 +9357,10 @@ try{
      tolère, pour ne pas imposer une migration de schéma à trois fichiers pour
      un seul booléen (`docs/legacy/barehands-tutorial-retirement.md`). */
   function panelHtml(){
-    const missing=assetsHtml();
     return `<section>
-      <h3>Barehands · mode test</h3>
+      <h3>Bare Hands</h3>
       <div class="hint" style="margin-bottom:14px">Piloter l'interface à mains nues. La webcam suit vos mains <strong>localement</strong> (MediaPipe, aucun envoi vers un service cloud). Les réglages ci-dessous sont enregistrés immédiatement et restent actifs au prochain chargement de la page. <strong>Allumer, endormir ou activer Bare Hands</strong> se fait dans la roue, catégorie Sélection (Souris / Bare Hands, puis Bare Hands › Veille) : c'est le seul endroit où le cycle de vie se choisit.</div>
       <div id="barehandsStatus">${statusHtml()}</div>
-      <div id="barehandsAssets">${missing}</div>
-      <div class="hint" style="margin-top:14px">Dernière commande vocale reçue par cette page :</div>
-      <div id="barehandsVoice">${voiceHtml()}</div>
     </section>
     ${settingsHtml()}`;
   }
@@ -9435,11 +9455,11 @@ try{
        qu'on n'ait plus à l'ouvrir (décision 11). Déduplication identique :
        un rafraîchissement qui ne touche pas à l'outil ne réveille personne. */
     publishTools();
-    if(typeof SET==='undefined'||!SET.open||SET.tab!==TAB_ID)return;
+    if(!settingsShown())return;
     const status=document.getElementById('barehandsStatus');
     if(status)status.innerHTML=statusHtml();
     const assets=document.getElementById('barehandsAssets');
-    if(assets)assets.innerHTML=assetsHtml();
+    if(assets)assets.innerHTML=assetsStateHtml();
     const profile=document.getElementById('barehandsProfile');
     if(profile)profile.innerHTML=profileStateHtml();
     const calibrate=document.getElementById('barehandsCalibrate');
@@ -9507,25 +9527,17 @@ try{
     if(id!==null&&!Object.values(SECTION).includes(id))
       return {ok:false,code:'barehands_settings_section_unknown',
         reason:`Section de réglages inconnue : ${id}`};
-    if(typeof SET==='undefined'||typeof openSettings!=='function'
-      ||typeof selectTab!=='function'||typeof renderTab!=='function'){
+    if(typeof SET==='undefined'||typeof openSettingsTab!=='function'){
       const message='Le modal de réglages n’est pas disponible dans cette page.';
       console.warn('[barehands] réglages inatteignables (modal absent)');
       if(typeof toast==='function')
         toast({title:'Réglages Bare Hands inatteignables',sub:message,kind:'bad',ms:7000});
       return {ok:false,code:'barehands_settings_unavailable',reason:message};
     }
-    try{
-      if(!SET.open){
-        /* L'onglet est choisi **avant** l'ouverture : `openSettings` peint
-           `SET.tab` tel qu'il le trouve, et le corriger après aurait dessiné
-           l'onglet Voix puis le nôtre, en deux images visibles. */
-        SET.tab=TAB_ID;
-        await openSettings();
-      }else if(SET.tab!==TAB_ID){
-        selectTab(TAB_ID);
-      }
-    }catch(error){
+    /* Sans clé : les préférences ordinaires. Une entrée déjà ouverte n'est pas redessinée : on révèle seulement. */
+    const entry=id===null?SETTINGS_ENTRY.ordinary:SECTION_ENTRY[id];
+    try{if(!(SET.open&&SET.section===entry))await openSettingsTab(entry)}
+    catch(error){
       const message=`Réglages Bare Hands non ouverts : ${error&&error.message||error}`;
       console.warn('[barehands] ouverture des réglages',error);
       if(typeof toast==='function')
@@ -9533,8 +9545,8 @@ try{
       return {ok:false,code:'barehands_settings_refused',reason:message};
     }
     if(id!==null)revealSection(id);
-    console.info('[barehands] réglages ouverts',id||TAB_ID);
-    return {ok:true,tab:TAB_ID,section:id};
+    console.info('[barehands] réglages ouverts',id||entry);
+    return {ok:true,entry,section:id};
   }
 
   /* **Les cartes rapides du HUD**, lues au moment du clic et jamais au
@@ -9618,22 +9630,37 @@ try{
     return showSettingsTab(SECTION.record);
   }
 
-  function installSettingsTab(){
-    if(typeof TABS==='undefined'||!Array.isArray(TABS)||TABS.some(tab=>tab.id===TAB_ID))return;
-    TABS.push({id:TAB_ID,label:'Expérimental',save:false});
-    const baseRenderTab=renderTab;
-    renderTab=async function(){
-      if(SET.tab!==TAB_ID)return baseRenderTab();
-      if(typeof destroyAgentCatalog==='function')destroyAgentCatalog();
-      SET.renderRevision=(SET.renderRevision||0)+1;
-      modalSave.style.display='none';
-      modalSub.textContent='Fonctions en test : appliquées et enregistrées immédiatement.';
-      modalContent.innerHTML=panelHtml();
-      bindPanel();
-      say('','');
-      // Relire la présence des assets sans redessiner l'onglet.
-      api(API).then(state=>{applyAssets(state);refreshPanel()}).catch(()=>{});
-    };
+  /* Hôtes montés par le shell des Réglages. `refreshPanel` ne dessine que s'il y en a un : une réponse tardive
+     (relecture des assets) après le départ de la section ne touche plus rien. */
+  const settingsHosts=new Set();
+  let diagnosticHost=null;
+  function settingsShown(){return typeof SET!=='undefined'&&!!SET.open&&settingsHosts.size>0}
+  function mountSettings(host,html,bind){
+    settingsHosts.add(host);
+    host.innerHTML=html;
+    if(bind)bindPanel();
+    // Relire la présence des assets sans redessiner la section.
+    api(API).then(state=>{applyAssets(state);refreshPanel()})
+      .catch(error=>console.warn('[barehands] assets non relus',String(error&&error.message||error)));
+  }
+  /* Sections du registre des Réglages (Slice 06) à la place de l'ancien injecteur d'onglet : aucun contrôle ici
+     n'allume ni n'éteint Bare Hands (le cycle de vie reste dans la roue). */
+  function installSettingsSections(){
+    if(typeof registerSettingsSection!=='function'){
+      console.error('[barehands] barehands.settings_shell_missing');return}
+    registerSettingsSection({id:SETTINGS_ENTRY.ordinary,category:'interface_interactions',order:30,save:'self',
+      label:'Bare Hands',description:'Aperçu de cible, assistance de visée, sensibilité, mise en veille et calibration.',
+      mount(host){mountSettings(host,panelHtml(),true)},
+      destroy(host){settingsHosts.delete(host)}});
+    registerSettingsSection({id:SETTINGS_ENTRY.lab,category:'advanced_diagnostics',group:'labs',order:60,save:'self',
+      advanced:true,label:'Bare Hands · essais',
+      description:'Lecture de diagnostic à l’écran, test d’interaction et enregistrement de séance.',
+      mount(host){mountSettings(host,labHtml(),true)},
+      destroy(host){settingsHosts.delete(host)}});
+    if(typeof registerSettingsDiagnostic==='function')
+      registerSettingsDiagnostic({id:SETTINGS_ENTRY.diagnostic,label:'Bare Hands',order:40,
+        mount(host){diagnosticHost=host;mountSettings(host,diagnosticHtml(),false)},
+        destroy(){if(diagnosticHost){settingsHosts.delete(diagnosticHost);diagnosticHost=null}}});
   }
 
   window.JarvisBarehands=Object.freeze({
@@ -9930,7 +9957,7 @@ try{
   });
 
   setTimeout(()=>{
-    installSettingsTab();
+    installSettingsSections();
     api(API).then(applyServerState).catch(()=>{});
     /* Le profil est relu au démarrage, comme les réglages : sans lui, la
        première session après une calibration repartirait sur les seuils

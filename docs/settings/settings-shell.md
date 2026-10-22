@@ -51,8 +51,8 @@ ouverte dans chaque catégorie pendant la session.
   (`settingsTarget` → `shellTarget`). Une cible inconnue est signalée (`settings_target_unknown`) et ne change rien.
 - Catégorie seule : dernière entrée ouverte dans la catégorie, sinon la première.
 - Un onglet hérité encore présent s'ouvre lui-même ; il ne cède sa place qu'à la section qui le déclare en alias.
-- Un module hérité qui pose `SET.tab` directement (Bare Hands) reste servi : `ensureSettingsLocation` ramène la
-  catégorie sur l'onglet posé.
+- Un module hérité qui pose `SET.tab` directement reste servi : `ensureSettingsLocation` ramène la catégorie sur
+  l'onglet posé (Bare Hands ne le fait plus depuis la Slice 06 : il passe par `openSettingsTab`).
 - `settingsTabs()` rend les six catégories (`{id, label, description}`) : le sous-menu Paramètres de la roue
   Jarvis en fait une ligne par catégorie ; la ligne « Réglages de la voix » ouvre `'voice'` → Voix & audio.
 - `ui_tab_next` / `ui_tab_prev` (Ctrl+→ / Ctrl+← par défaut) parcourent les six catégories par
@@ -72,6 +72,15 @@ ouverte dans chaque catégorie pendant la session.
   finit sur la catégorie active : la roue ne reprend pas un focus qu'une action a porté hors d'elle, et le retour
   à la fermeture se fait sur l'ancre de la roue quand c'est elle qui a ouvert.
 - Après « Enregistrer » (bouton désactivé pendant l'envoi), le focus est rendu au bouton.
+- **Liens internes (Slice 06).** Un lien d'une section vers une autre cible passe par
+  `openSettingsLink(cible, {focus})` (c'est aussi `context.open` des sections et `openTab` du module des sous-agents) :
+  le bouton cliqué disparaît avec la section, le focus irait sur `body`. Il va à l'élément `focus` (sélecteur dans le
+  contenu) s'il est déjà dessiné — rendu focalisable par `tabindex=-1` au besoin —, sinon à l'entrée ouverte dans
+  `#modalTabs` (journal `settings_link_focus_fallback` quand un sélecteur n'a rien trouvé). Cas : « Modifier dans
+  Interface & interactions › Raccourcis » → la touche `wake_toggle` ; « Voir le diagnostic » du Mot d'éveil →
+  `#diagnostic_wake_word` ; « Régler la commande », renvois des sous-agents → l'entrée ouverte ; « Voir le
+  diagnostic mémoire » repose ensuite le focus sur sa partie. Testé : `test_interface_settings_browser.py`,
+  `test_wake_word_settings_browser.py`.
 - **Échap ferme toujours**, même si `ui_close` est réaffecté, même depuis un champ et même quand le focus est
   retombé sur `body` (écoute sur `document` tant que les réglages sont ouverts), sauf : capture d'un raccourci en
   cours (elle le prend avant), zone de texte longue ou éditable (une saisie longue ne ferme pas la page),
@@ -120,8 +129,9 @@ registerSettingsSection({               // porte de la page : R.page.register de
   l'ordre, les parties inscrites par `registerSettingsDiagnostic({id, label, order, mount(host, context), destroy()})` :
   chaque partie a son titre (`JarvisSettingsUI.section`), reçoit le même `context` que la section et est détruite avec
   elle ; un `mount` qui lève laisse une notice `role=alert` dans sa seule partie. Parties actuelles : Voix (page),
-  Mot d'éveil (`control_center_wake_word.js`), Mémoire (page, `installMemorySettingsSections`). Voir
-  [`voice-audio.md`](voice-audio.md) et [`memory.md`](memory.md).
+  Mot d'éveil (`control_center_wake_word.js`), Mémoire (page, `installMemorySettingsSections`), Bare Hands
+  (`control_center_barehands.js`, Slice 06). Voir [`voice-audio.md`](voice-audio.md), [`memory.md`](memory.md) et
+  [`interface-interactions.md`](interface-interactions.md).
 
 ## 5. Primitives (`window.JarvisSettingsUI`)
 

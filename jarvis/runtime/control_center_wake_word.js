@@ -450,7 +450,7 @@
     /* Diagnostic du bloc lu (clés ignorées, version illisible) : dans Avancé & diagnostic, un lien ici. */
     if(model.problems.length||model.ignored.length){
       const open=node('button',{type:'button',className:'linkish','data-ww-open-diagnostics':'',text:'Voir le diagnostic'});
-      open.addEventListener('click',()=>{if(mounted.form&&mounted.form.open)mounted.form.open('diagnostics')});
+      open.addEventListener('click',()=>{if(mounted.form&&mounted.form.open)mounted.form.open('diagnostics',{focus:'#diagnostic_wake_word'})});
       const count=model.problems.length+model.ignored.length;
       section.append(node('div',{className:'notice info','data-ww-diagnostic-link':''},[
         document.createTextNode(`Le réglage lu porte ${count} remarque${count>1?'s':''} (Avancé & diagnostic › Diagnostics). `),open]));

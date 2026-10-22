@@ -157,8 +157,9 @@ catégorie, qui ouvre les réglages directement sur elle) ouvrent les réglages 
 gauche — Voix & audio, Agents & modèles, Mémoire & connaissances, Interface & interactions,
 Connexions, Avancé & diagnostic — ; Ctrl+→ / Ctrl+← passent de l'une à l'autre. Pendant la
 migration, chaque catégorie montre en haut les anciens onglets qui lui reviennent (Prompts, API
-Keys, Raccourcis, Apparence, Expérimental) ; Voix et Mot d'éveil (Slice 03), Agent / CLI
-et Sous-agents (Slice 04), Mémoire (Slice 05) sont devenus des sections (`docs/settings/voice-audio.md`,
+Keys, Expérimental) ; Voix et Mot d'éveil (Slice 03), Agent / CLI
+et Sous-agents (Slice 04), Mémoire (Slice 05), Raccourcis, Apparence et Bare Hands (Slice 06,
+`docs/settings/interface-interactions.md`) sont devenus des sections (`docs/settings/voice-audio.md`,
 `docs/settings/agents-models.md`, `docs/settings/memory.md`) ; ce guide écrit encore « Réglages → onglet ».
 
 Un principe la traverse : **la page ne connaît aucun réglage**. Le serveur
@@ -308,7 +309,8 @@ clair dès qu'une clé y est saisie. Il est écrit en `0600`, hors du dépôt.
 
 ### Raccourcis
 
-Ne figure dans cet onglet que ce qui fait quelque chose. Deux portées :
+Réglages › Interface & interactions › Raccourcis (Slice 06 : section, plus un onglet), l'unique éditeur
+de chaque touche, `wake_toggle` compris. Ne figure dans cette section que ce qui fait quelque chose. Deux portées :
 
 - **système** — la touche de réveil, captée par pynput dans le processus Voice
   même sans focus. `KeyboardWakeWordBackend` ne sait résoudre qu'une **touche
@@ -727,6 +729,12 @@ son décompte d'essais.
   ouverte).
 
 ### Expérimental : Barehands en mode test (pointeur à mains nues)
+
+Depuis la Slice 06 de `jarvis-settings-ui-reorganization`, les préférences ordinaires sont dans
+**Réglages › Interface & interactions › Bare Hands**, la lecture de diagnostic à l'écran, le test et
+l'enregistrement dans **Avancé & diagnostic › Bare Hands · essais**, l'état du modèle MediaPipe et la
+dernière commande vocale dans **Avancé & diagnostic › Diagnostics** (`docs/settings/interface-interactions.md`) ;
+ce qui suit dit encore « onglet Expérimental » pour ces surfaces.
 
 L'onglet **Expérimental** (ajouté par `jarvis/runtime/control_center_barehands.js`,
 comme l'onglet Apparence l'est par la couche de thèmes) porte un interrupteur
@@ -4149,7 +4157,8 @@ redémarrage, la disposition est identique. Un objet placé par le cerveau ou pa
 vous, ou épinglé, n'est jamais déplacé par la page. Avec plusieurs onglets
 ouverts, un seul à la fois (un onglet visible) enregistre les placements.
 
-**Étoiles et orbites** (**Réglages › Apparence**, sous la version Cosmos ; avant
+**Étoiles et orbites** (**Réglages › Interface & interactions › Thème & scène visuelle** depuis la Slice 06,
+ex-**Réglages › Apparence**, sous la version Cosmos ; avant
 le 2026-09-20, un petit bouton en forme d'étoile en bas à droite de l'écran).
 Cette section règle *comment* la constellation se montre ; chaque changement se
 voit tout de suite et reste enregistré dans ce navigateur. Elle est là même quand

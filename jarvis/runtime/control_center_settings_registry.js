@@ -67,22 +67,21 @@
     subagents:Object.freeze({category:'agents_models',section:'subagents',
       also:freezeAll([{category:'advanced_diagnostics',section:'work_methods'}])}),
     appearance:Object.freeze({category:'interface_interactions',section:'theme_scene',also:freezeAll([])}),
-    /* Onglet partagé par Bare Hands et `control_center_scene_settings.js`. Son
-       nom et son contenu d'opérateur (porte de test de la scène, enregistrement,
-       banc d'essai) vont dans Labs ; les préférences ordinaires de Bare Hands
-       vont dans Interface, atteintes par `LEGACY_ANCHORS`. */
+    /* Onglet autrefois partagé par Bare Hands et `control_center_scene_settings.js`. Depuis la Slice 06, Bare Hands
+       en est sorti (sections `bare_hands` d'Interface et `barehands_lab` d'Avancé, atteintes aussi par
+       `LEGACY_ANCHORS`) ; l'onglet ne porte plus que la porte de test de la scène, qui ira dans Labs (Slice 08). */
     experimental:Object.freeze({category:'advanced_diagnostics',section:'labs',
-      also:freezeAll([{category:'interface_interactions',section:'bare_hands'}])}),
+      also:freezeAll([{category:'interface_interactions',section:'bare_hands'},{category:'advanced_diagnostics',section:'barehands_lab'}])}),
   });
 
   /* Ancres internes déjà publiées (`JarvisBarehands.showSettings(section)`,
-     clés de `SECTION` dans `control_center_barehands.js`) : où chacune doit
-     atterrir une fois l'onglet `experimental` démonté (Slices 06/08). */
+     clés de `SECTION` dans `control_center_barehands.js`) : l'entrée qui porte
+     chacune depuis la Slice 06. */
   const LEGACY_ANCHORS=Object.freeze({
     barehandsSettings:Object.freeze({category:'interface_interactions',section:'bare_hands'}),
     barehandsCalibration:Object.freeze({category:'interface_interactions',section:'bare_hands'}),
-    barehandsRecord:Object.freeze({category:'advanced_diagnostics',section:'labs'}),
-    barehandsBenchmarkSection:Object.freeze({category:'advanced_diagnostics',section:'labs'}),
+    barehandsRecord:Object.freeze({category:'advanced_diagnostics',section:'barehands_lab'}),
+    barehandsBenchmarkSection:Object.freeze({category:'advanced_diagnostics',section:'barehands_lab'}),
   });
 
   const ERROR_CODES=Object.freeze({
@@ -231,7 +230,8 @@
      Un onglet hérité disparaît de la navigation dès qu'une section enregistrée
      le déclare en alias (elle le remplace). `related` : les onglets d'autres
      catégories qui portent encore une partie de celle-ci (`also`), proposés
-     comme liens tant que leur contenu n'a pas déménagé. Un onglet sans alias
+     comme liens tant que leur contenu n'a pas déménagé : une destination déjà
+     enregistrée comme section dans cette catégorie n'en fait plus un (Slice 06). Un onglet sans alias
      (`unassigned`) est rangé dans Avancé & diagnostic pour rester atteignable. */
   const UNASSIGNED_HOME='advanced_diagnostics';
   function shellNavigation(tabs,registry){
@@ -248,7 +248,8 @@
         ...sectionsBy[c.id].map(s=>({kind:'section',id:s.id,label:s.label,save:s.save,advanced:s.advanced})),
         ...list.filter(t=>!claimed.has(t.id)&&home(t)===c.id).map(t=>({kind:'tab',id:t.id,label:String(t.label||t.id)})),
       ],
-      related:list.filter(t=>{const a=legacyAlias(t.id);return a&&!claimed.has(t.id)&&a.category!==c.id&&a.also.some(d=>d.category===c.id)})
+      related:list.filter(t=>{const a=legacyAlias(t.id);return a&&!claimed.has(t.id)&&a.category!==c.id
+        &&a.also.some(d=>d.category===c.id&&!sectionsBy[c.id].some(s=>s.id===d.section))})
         .map(t=>({id:t.id,label:String(t.label||t.id),category:legacyAlias(t.id).category}))}));
     return {categories,unassigned};
   }

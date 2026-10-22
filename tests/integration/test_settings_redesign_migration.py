@@ -352,34 +352,24 @@ async def test_assembled_primary_navigation_has_six_tabs_and_no_legacy_navigatio
     # Ancré en début de ligne : le Memory Center (`control_center_memory.js`, inséré plus haut dans le même script)
     # déclare son propre `  const TABS=` indenté, qui faisait découper ce test au mauvais endroit (SyntaxError).
     tabs = scripts[scripts.index("\nconst TABS=") + 1 : scripts.index("\nconst SET=")]
-    install = scripts[scripts.index("  function installSettingsTab()") : scripts.index("  function bridgeStatusApi()")]
-    rendered = run_node(
-        tmp_path,
-        {},
-        tabs
-        + r"""
-        const SET={tab:null},modalSave={style:{}},modalSub={textContent:''},modalContent={innerHTML:''};
-        const cleanupSettingsSurface=()=>{},appearanceHtml=()=>'',bindAppearance=()=>{},say=()=>{};
-        let renderTab=async()=>{};
-        """
-        + install
-        + "installSettingsTab();process.stdout.write(JSON.stringify(TABS.map(({id,label})=>({id,label}))));",
-    )
+    rendered = run_node(tmp_path, {}, tabs + "process.stdout.write(JSON.stringify(TABS.map(({id,label})=>({id,label}))));")
 
     # « Voix » n'est plus un onglet (jarvis-settings-ui-reorganization, Slice 03) : sections enregistrées de Voix & audio.
+    # Raccourcis et Apparence non plus (Slice 06) : sections d'Interface & interactions ; aucun module n'injecte
+    # d'onglet, et `experimental` (la porte de test de la scène seule) est déclaré dans la base jusqu'à la Slice 08.
     assert rendered == [
         {"id": "prompts", "label": "Prompts"},
         {"id": "keys", "label": "API Keys"},
-        {"id": "shortcuts", "label": "Raccourcis"},
-        {"id": "appearance", "label": "Apparence"},
+        {"id": "experimental", "label": "Expérimental"},
     ]
+    assert "TABS.push(" not in scripts and "TABS.splice(" not in scripts
     # Le contrat de navigation de jarvis-settings-model-catalog-ux (six onglets) est figé ; les onglets ajoutés
     # depuis par d'autres handoffs s'intercalaient sans changer l'ordre des siens. Mémoire (Slice 05) et Sous-agents
     # (Slice 04) sont devenus des sections enregistrées : il n'en reste aucun.
-    added_since_contract: set[str] = set()
+    added_since_contract = {"experimental"}
     contract_navigation = json.loads(IA_CONTRACT.read_text(encoding="utf-8"))["navigation"]
-    # Voix (Slice 03) puis Agent / CLI (Slice 04) : sections enregistrées, plus des onglets.
-    rehosted_as_sections = {"voice", "agent_cli"}
+    # Voix (Slice 03), Agent / CLI (Slice 04), Raccourcis et Apparence (Slice 06) : sections enregistrées.
+    rehosted_as_sections = {"voice", "agent_cli", "shortcuts", "appearance"}
     assert [item["label"] for item in contract_navigation if item["id"] not in rehosted_as_sections] == [
         item["label"] for item in rendered if item["id"] not in added_since_contract
     ]

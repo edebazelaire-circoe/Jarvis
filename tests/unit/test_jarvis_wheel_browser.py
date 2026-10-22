@@ -189,7 +189,8 @@ def test_the_two_jarvis_routes_and_every_settings_row_open_existing_surfaces(tmp
                    "tab:connections", "tab:advanced_diagnostics"], ids
     assert all(i["kind"] is None and i["disabled"] is None for i in sub["items"])
     shortcuts = out[2]["results"]["shortcutsTab"]
-    assert shortcuts["open"] is True and shortcuts["tab"] == "shortcuts", shortcuts  # première entrée d'Interface
+    # Première entrée d'Interface : la section Thème & scène visuelle (Slice 06 de jarvis-settings-ui-reorganization).
+    assert shortcuts["open"] is True and shortcuts["section"] == "theme_scene" and shortcuts["tab"] is None, shortcuts
     assert shortcuts["category"] == "interface_interactions", shortcuts
     for step in out:
         errors = [c for c in step["console"] if c["type"] in ("exception", "error")]

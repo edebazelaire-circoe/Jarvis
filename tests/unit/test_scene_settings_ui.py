@@ -395,9 +395,12 @@ async def test_the_section_is_injected_after_barehands_into_the_experimental_tab
     served = (await ControlCenter(runtime_root=tmp_path, project_root=tmp_path).index(None)).text
     source = SETTINGS_JS.read_text(encoding="utf-8")
     assert SCENE_SETTINGS_SCRIPT_MARKER not in served and source in served
-    # Barehands crée l'onglet ; la section s'y ajoute ensuite (installations dans l'ordre d'insertion).
+    # Depuis la Slice 06 de jarvis-settings-ui-reorganization, Bare Hands n'injecte plus l'onglet : la page le déclare
+    # (porte de test de la scène seule, jusqu'à son déménagement dans Labs à la Slice 08) et la section s'y ajoute.
     assert served.index(BAREHANDS_JS.read_text(encoding="utf-8")) < served.index(source)
-    assert "TABS.push({id:TAB_ID,label:'Expérimental',save:false})" in BAREHANDS_JS.read_text(encoding="utf-8")
+    assert "TABS.push" not in BAREHANDS_JS.read_text(encoding="utf-8")
+    tabs = html[html.index("\nconst TABS=[") : html.index("\nconst SET=")]
+    assert "{id:'experimental',label:'Expérimental',save:false}" in tabs
     assert "const TAB_ID='experimental';" in source
 
 

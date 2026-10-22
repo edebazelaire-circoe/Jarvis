@@ -822,9 +822,26 @@ global.toast=(t)=>{toasts.push(t&&t.kind)};
 const toasts=[];
 global.say=()=>{};
 global.confirmDialog=async()=>true;
+/* Le shell des Réglages réduit à ce que ce module utilise depuis la Slice 06 de jarvis-settings-ui-reorganization :
+   il enregistre ses entrées (`bare_hands`, `barehands_lab`, partie de diagnostic `barehands`) au lieu d'injecter un
+   onglet. `renderTab` détruit puis monte les trois dans `#modalContent`, la partie de diagnostic d'abord (elle n'arme
+   rien) : un dessin = une écriture par entrée plus le vidage. */
 global.TABS=[];
-global.renderTab=async()=>'base';
-global.SET={open:true,tab:'experimental',data:{}};
+const BH_ENTRIES=new Map();
+global.registerSettingsSection=spec=>{BH_ENTRIES.set(spec.id,spec);return spec};
+global.registerSettingsDiagnostic=part=>{BH_ENTRIES.set('diagnostic:'+part.id,part);return part};
+const BH_HOSTS=new Map();
+global.renderTab=async()=>{
+  for(const [id,host] of BH_HOSTS){const e=BH_ENTRIES.get(id);if(e.destroy)e.destroy(host)}
+  BH_HOSTS.clear();
+  modalContent.innerHTML='';
+  const order=[...BH_ENTRIES.keys()].sort((a,b)=>(b.startsWith('diagnostic:')?1:0)-(a.startsWith('diagnostic:')?1:0));
+  for(const id of order){
+    const host={set innerHTML(html){modalContent.innerHTML=(modalContent.innerHTML||'')+html},get innerHTML(){return ''}};
+    BH_HOSTS.set(id,host);BH_ENTRIES.get(id).mount(host,{});
+  }
+};
+global.SET={open:true,section:'bare_hands',data:{}};
 /* Le modal de réglages de la page, réduit à ce dont ce module dépend : ouvrir,
    et changer d'onglet. Les deux existent parce que la Slice 02 ouvre l'onglet
    **depuis l'extérieur** — le menu d'actions rapides du bouton de la barre du
@@ -833,7 +850,7 @@ global.SET={open:true,tab:'experimental',data:{}};
    exactement comme celui de la page : c'est ce décalage que `revealSection`
    doit savoir traverser. */
 global.openSettings=async()=>{SET.open=true;await renderTab()};
-global.selectTab=id=>{SET.tab=id;renderTab()};
+global.openSettingsTab=async target=>{SET.open=true;SET.section=target;(SET.opened=SET.opened||[]).push(target);await renderTab()};
 global.modalSave=fixed.modalSave;
 global.modalSub=fixed.modalSub;
 global.modalContent=modalContent;
@@ -1730,14 +1747,16 @@ def test_refreshing_the_panel_never_rewrites_the_body_of_the_tab(tmp_path):
         // Le panneau a pourtant bien été rafraîchi entre-temps.
         refreshed:document.getElementById('barehandsStatus').innerHTML.length>0});
     """, name="f5")
-    assert result["atPaint"] == 1, "le corps de l'onglet est écrit une fois, au dessin"
-    assert result["afterTool"] == 1
-    assert result["afterAll"] == 1, (
+    # Un dessin = le vidage + une écriture par entrée (Bare Hands, essais, partie de diagnostic : Slice 06).
+    paint = result["atPaint"]
+    assert paint == 4, "le corps de chaque entrée est écrit une fois, au dessin"
+    assert result["afterTool"] == paint
+    assert result["afterAll"] == paint, (
         "aucun rafraîchissement ne réécrit le corps de l'onglet : c'est ce qui "
         "laisse vivre la section Scène du module voisin (constat F5)"
     )
     assert result["refreshed"] is True
-    assert result["afterRender"] == 2, "redessiner l'onglet, en revanche, le réécrit"
+    assert result["afterRender"] == 2 * paint, "redessiner l'onglet, en revanche, le réécrit"
 
 
 # --------------------------------------------------------- page et vraie route
@@ -1964,9 +1983,10 @@ def test_the_page_serves_configuration_only_and_never_a_dead_control(tmp_path):
         assert gone not in served, gone
     assert "n’est pas encore installé" not in served
     assert "aucune image ni vidéo" in served, "la décision 32 est dite à l'utilisateur, pas seulement tenue"
-    # Le sous-titre de l'onglet reste celui que `control_center_scene_settings`
-    # remplace ensuite : l'ordre d'injection est intact (constat F5).
-    assert served.index("TABS.push({id:TAB_ID,label:'Expérimental'") < served.index("function installSection()")
+    # Slice 06 (jarvis-settings-ui-reorganization) : plus d'onglet injecté, des entrées du registre des Réglages.
+    assert "TABS.push" not in served and "TABS.splice" not in served
+    assert "registerSettingsSection({id:SETTINGS_ENTRY.ordinary,category:'interface_interactions'" in served
+    assert "registerSettingsSection({id:SETTINGS_ENTRY.lab,category:'advanced_diagnostics',group:'labs'" in served
 
 
 # ------------------------------------------- le profil atteint vraiment la main
@@ -2221,13 +2241,13 @@ def test_the_quick_entry_points_open_the_tab_and_reveal_their_section(tmp_path):
 
     result = run_node(tmp_path, BROWSER + """
       // Le modal fermé, sur un autre onglet : l'état d'où le clic droit part.
-      const shut=()=>{SET.open=false;SET.tab='voice'};
+      const shut=()=>{SET.open=false;SET.section='conversation'};
       const seen=id=>{const n=document.getElementById(id);
         return n?(n.scrolledIntoView||0):null};
       shut();
       const settings=await BAREHANDS.showSettings();
       await settle();
-      const afterSettings={open:SET.open,tab:SET.tab};
+      const afterSettings={open:SET.open,section:SET.section};
       shut();
       const help=await BAREHANDS.showHelp();
       await settle();
@@ -2235,11 +2255,14 @@ def test_the_quick_entry_points_open_the_tab_and_reveal_their_section(tmp_path):
       const diagnostics=await BAREHANDS.showDiagnostics();
       await settle();
       const record=seen(BAREHANDS.SECTION.record);
-      // Déjà ouvert sur l'onglet : la porte ne le redessine pas pour rien.
+      // Déjà ouvert sur l'entrée : la porte ne la redessine pas pour rien.
       const writes=modalContent.htmlWrites;
+      const recordAgain=await BAREHANDS.showSettings(BAREHANDS.SECTION.benchmark);
+      await settle();
+      const sameEntry=modalContent.htmlWrites-writes;
       const again=await BAREHANDS.showSettings(BAREHANDS.SECTION.calibration);
       await settle();
-      out({settings,help,diagnostics,again,afterSettings,record,
+      out({settings,help,diagnostics,again,afterSettings,record,recordAgain,sameEntry,opened:SET.opened,
         redrawn:modalContent.htmlWrites-writes,
         calibration:seen(BAREHANDS.SECTION.calibration),
         // Le vocabulaire des sections est publié, et fermé.
@@ -2251,8 +2274,9 @@ def test_the_quick_entry_points_open_the_tab_and_reveal_their_section(tmp_path):
       });
     """, name="entries")
 
-    assert result["afterSettings"] == {"open": True, "tab": "experimental"}
-    assert result["settings"] == {"ok": True, "tab": "experimental", "section": None}
+    # Slice 06 : l'entrée ordinaire (Interface › Bare Hands), plus l'onglet `experimental`.
+    assert result["afterSettings"] == {"open": True, "section": "bare_hands"}
+    assert result["settings"] == {"ok": True, "entry": "bare_hands", "section": None}
     # **Slice 04.** Le bloc de gestes de l'onglet a été supprimé et l'aide est
     # devenue une carte, dans `control_center_barehands_hud.js`. Ce monde-ci ne
     # charge pas ce module : l'aide **refuse donc par son nom** au lieu de
@@ -2268,14 +2292,17 @@ def test_the_quick_entry_points_open_the_tab_and_reveal_their_section(tmp_path):
     # l'onglet n'a pas bougé, avec ses deux boutons, ses compteurs et sa phrase
     # de confidentialité. Sans la carte, y renvoyer est la même fonctionnalité
     # par l'autre porte — pas un succès inventé.
-    assert result["diagnostics"] == {"ok": True, "tab": "experimental", "section": "barehandsRecord"}
+    assert result["diagnostics"] == {"ok": True, "entry": "barehands_lab", "section": "barehandsRecord"}
     assert result["record"] == 1
     # Ouvrir le diagnostic **n'enregistre pas** : ni séance, ni écriture.
     assert result["recording"] is False
     assert result["writes"] == 0, "aucune de ces portes n'écrit un réglage"
     # Déjà sur l'onglet : on révèle, on ne redessine pas — l'invariant de
     # rafraîchissement en place de la Slice 07 vaut aussi pour ces portes.
-    assert result["redrawn"] == 0
+    assert result["sameEntry"] == 0 and result["recordAgain"]["entry"] == "barehands_lab"
+    # Le profil de calibration vit dans l'entrée ordinaire : changer d'entrée la dessine.
+    assert result["opened"] == ["bare_hands", "barehands_lab", "bare_hands"]
+    assert result["redrawn"] > 0
     assert result["calibration"] == 1
     # `gestures` a quitté `SECTION` : plus rien ne dessine cette section, et une
     # clé publiée que rien ne peint rendrait `{ok:true}` après n'avoir rien
@@ -2365,3 +2392,37 @@ def test_a_failure_is_sent_to_the_server_error_log_with_its_real_cause(tmp_path)
     assert [f["code"] for f in result["failures"]] == ["camera_unsupported"]
     assert "getUserMedia" in result["failures"][0]["message"]
     assert result["settingsWrites"] == 0, "une panne n'est pas un réglage"
+
+
+# ------------------------------- les entrées des Réglages (Slice 06, jarvis-settings-ui-reorganization)
+
+
+def test_the_settings_entries_are_registered_and_stop_painting_once_destroyed(tmp_path):
+    """Slice 06 : Bare Hands enregistre trois entrées au registre des Réglages (plus d'onglet `experimental`) et ne
+    dessine plus rien dans une entrée détruite : quitter la section, puis une écriture ou une réponse tardive, ne touche
+    plus le DOM laissé derrière."""
+
+    result = run_node(tmp_path, BROWSER + """
+      await openTab();
+      const status=document.getElementById('barehandsStatus'),assets=document.getElementById('barehandsAssets');
+      const at=()=>[(status.htmlWrites||0),(assets.htmlWrites||0)];
+      const s0=at();
+      await BAREHANDS.tool('pan');await settle();
+      const s1=at();
+      for(const [id,host] of BH_HOSTS){const e=BH_ENTRIES.get(id);if(e.destroy)e.destroy(host)}
+      BH_HOSTS.clear();
+      await BAREHANDS.tool('select');await settle();
+      const s2=at();
+      out({shown:[s1[0]-s0[0],s1[1]-s0[1]],after:[s2[0]-s1[0],s2[1]-s1[1]],tabs:TABS.length,
+        entries:[...BH_ENTRIES.entries()].map(([id,e])=>[id,e.category||null,e.group||null,e.save||null]).sort(),
+        tool:BAREHANDS.settings().tool});
+    """, name="entries-destroyed")
+    assert result["tabs"] == 0, "aucun onglet injecté"
+    assert result["entries"] == [
+        ["bare_hands", "interface_interactions", None, "self"],
+        ["barehands_lab", "advanced_diagnostics", "labs", "self"],
+        ["diagnostic:barehands", None, None, None],
+    ]
+    assert result["shown"][0] > 0 and result["shown"][1] > 0, "montée, l'entrée est rafraîchie en place"
+    assert result["after"] == [0, 0], "détruite, plus rien n'y est dessiné"
+    assert result["tool"] == "select", "la valeur, elle, est bien enregistrée"

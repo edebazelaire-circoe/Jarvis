@@ -910,7 +910,8 @@ def test_the_served_page_puts_the_tools_on_the_palette_and_not_in_the_settings(t
     import re as _re
 
     body = served[served.index("function refreshPanel(){"):]
-    body = body[:body.index("if(typeof SET==='undefined'")]
+    # Garde-fou des entrées des Réglages depuis la Slice 06 de jarvis-settings-ui-reorganization (`settingsShown`).
+    body = body[:body.index("if(!settingsShown())return;")]
     # Les commentaires portent la moitié du raisonnement de ce module ; on les
     # retire pour lire les **instructions**, et rien qu'elles.
     statements = [line.strip() for line in _re.sub(r"/\*.*?\*/", "", body, flags=_re.S).splitlines()

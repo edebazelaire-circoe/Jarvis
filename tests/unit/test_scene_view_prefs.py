@@ -204,7 +204,7 @@ def test_the_pure_part_touches_neither_the_dom_nor_the_storage():
         assert forbidden not in code, forbidden
 
 
-def test_the_settings_live_in_the_appearance_tab_and_the_storage_can_always_fail():
+def test_the_settings_live_in_the_theme_scene_section_and_the_storage_can_always_fail():
     """Demande du 20/09/2026 : « toute cette partie-là, déplacée dans les
     settings › Apparence ».
 
@@ -218,10 +218,11 @@ def test_the_settings_live_in_the_appearance_tab_and_the_storage_can_always_fail
     for gone in ("viewBtn", "viewEl", "toggleViewPanel", "buildViewControls",
                  "sc-view-btn", "VIEW_STAR_PATH"):
         assert gone not in page, gone
-    # La section est ajoutée au rendu de l'onglet Apparence, jamais ailleurs.
-    assert "if(typeof SET!=='undefined'&&SET.open&&SET.tab==='appearance'){" in page
-    assert "const baseRenderTab=renderTab;" in page
-    assert "if(section)content.append(section);" in page
+    # Slice 06 (jarvis-settings-ui-reorganization) : la section Thème & scène visuelle (`control_center_work.js`)
+    # monte ces réglages par `JarvisSceneViewSettings.mount(slot)` ; plus aucune enveloppe de `renderTab`.
+    assert "renderTab" not in re.sub(r"/\*.*?\*/", "", page, flags=re.S)
+    assert "window.JarvisSceneViewSettings=Object.freeze({" in page
+    assert "if(section)slot.append(section);" in page
     assert "section.id='sceneViewSettings';" in page
     # Elle doit tenir sans la scène : son style lui est propre, et la scène
     # éteinte ne retire plus l'écoute qui la tient à jour.

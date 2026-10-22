@@ -290,7 +290,7 @@ Bare Hands — quatre à la Slice 02, cinq depuis la Slice 09 adaptative
 
 | Entrée | Porte appelée | Note |
 |---|---|---|
-| Réglages… | `JarvisBarehands.showSettings()` | ouvre l'onglet Expérimental |
+| Réglages… | `JarvisBarehands.showSettings()` | ouvre Réglages › Interface & interactions › Bare Hands (onglet Expérimental avant la Slice 06 de `jarvis-settings-ui-reorganization`) |
 | Calibrer… | `JarvisBarehands.calibrate()` | la porte du bouton **et** de la voix, inchangée |
 | Tester… | `JarvisBarehands.benchmark()` | le test (décisions 65 à 68) ; grisé sous `barehands_benchmark_lifecycle_off` quand Bare Hands est éteint |
 | Aide · Gestes… | `JarvisBarehands.showHelp()` | crochet stable ; la Slice 04 en remplace le corps par la carte visuelle de la décision 15 |
@@ -2178,7 +2178,8 @@ une écriture valide, ce qui est la raison d'être de cette route.
 Rappel de la Slice 00 (constat F5) : `barehands_test_mode` n'est
 délibérément **pas** dans `/api/settings`. Sa paire de routes dédiée applique le
 réglage à chaud sans dépendre de la validité du reste des réglages. Et l'onglet
-« Expérimental » reste une surface **partagée** : Bare Hands le crée
+« Expérimental » reste une surface **partagée** (jusqu'à la Slice 06 de `jarvis-settings-ui-reorganization` :
+Bare Hands y est devenu trois entrées du registre des Réglages, `docs/settings/interface-interactions.md`) : Bare Hands le crée
 (`TABS.push`) et enveloppe `renderTab` ; `control_center_scene_settings.js`,
 inséré après, enveloppe à son tour et **préfixe** sa section. La Slice 07
 n'ajoute aucun module de page et ne touche pas à cette chaîne : elle écrit deux

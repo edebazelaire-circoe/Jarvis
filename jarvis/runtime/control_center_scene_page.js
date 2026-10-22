@@ -1403,31 +1403,29 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(reset)reset.disabled=!model.custom;
   }
 
-  /* Installation dans l'onglet Apparence. `control_center_work.js` dessine cet
-     onglet en entier et est inséré **avant** ce fichier : son `setTimeout(0)`
-     passe donc avant le nôtre, et l'onglet existe déjà quand on l'enveloppe.
-     On attend son rendu, puis on ajoute la section à la suite des versions.
+  /* Installation dans Réglages › Interface & interactions › Thème & scène
+     visuelle (Slice 06 de jarvis-settings-ui-reorganization). La section est
+     enregistrée par `control_center_work.js`, qui dessine le thème puis appelle
+     `JarvisSceneViewSettings.mount(slot)` : plus d'enveloppe de `renderTab`.
+     `destroy` lâche la section quand on quitte l'entrée ; les valeurs sont
+     relues du stockage à chaque montage.
 
      L'écoute `storage` est posée ici, et non avec la scène : un autre onglet
      peut régler l'affichage alors que la scène est éteinte ici, et la section
      doit quand même montrer la bonne valeur. */
   function installViewSettings(){
-    if(!V||typeof renderTab!=='function'||typeof TABS==='undefined'||!Array.isArray(TABS))return;
+    if(!V)return;
     ensureViewSettingsStyle();
     window.addEventListener('storage',onViewStorage);
-    const baseRenderTab=renderTab;
-    renderTab=async function(){
-      const result=await baseRenderTab.apply(this,arguments);
-      if(typeof SET!=='undefined'&&SET.open&&SET.tab==='appearance'){
-        const content=document.getElementById('modalContent');
-        if(content&&!content.querySelector('#sceneViewSettings')){
-          viewPrefs=loadViewPrefs();
-          const section=buildViewSection();
-          if(section)content.append(section);
-        }
-      }
-      return result;
-    };
+    window.JarvisSceneViewSettings=Object.freeze({
+      mount(slot){
+        if(!slot)return;
+        viewPrefs=loadViewPrefs();
+        const section=buildViewSection();
+        if(section)slot.append(section);
+      },
+      destroy(){viewSection=null;viewRows=[]},
+    });
   }
 
   setTimeout(installViewSettings,0);

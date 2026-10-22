@@ -57,16 +57,19 @@ def test_navigation_fixture_matches_unified_agent_cli_tab_and_legacy_programmati
     expected = json.loads(FIXTURE.read_text(encoding="utf-8"))
 
     tabs = re.findall(r"\{id:'([^']+)',label:'([^']+)',save:(?:true|false)\}", page[page.index("const TABS=") :])
-    core_tabs = [tab for tab in expected["tabs"] if tab["id"] != "appearance"]
+    core_tabs = expected["tabs"]
     assert tabs[: len(core_tabs)] == [(tab["id"], tab["label"]) for tab in core_tabs]
     work = PAGE.with_name("control_center_work.js").read_text(encoding="utf-8")
-    assert "{id:'appearance',label:'Apparence',save:false}" in work
+    # Raccourcis et Apparence (Slice 06) : sections d'Interface & interactions, plus aucun onglet injecté.
+    assert "TABS.splice" not in work and "TABS.push" not in work
     # Voix (Slice 03), Agent / CLI et Sous-agents (Slice 04) réhébergés en sections
     # (jarvis-settings-ui-reorganization) : plus des onglets, leur ancien ID est l'alias de la section qui les reçoit
     # (ou son ID même).
     sections = (page[page.index("const VOICE_SECTIONS=[") : page.index("function voiceSectionSpec")]
                 + page[page.index("const AGENT_SECTIONS=[") : page.index("function agentSectionSpec")]
-                + page[page.index("const SUBAGENT_SECTIONS=[") : page.index("function installAgentSettingsSections")])
+                + page[page.index("const SUBAGENT_SECTIONS=[") : page.index("function installAgentSettingsSections")]
+                + page[page.index("const SHORTCUTS_SECTION=") : page.index("function renderShortcutsSection")]
+                + work[work.index("const THEME_SCENE_SECTION=") : work.index("function installSettingsSection")])
     for legacy_id, target in expected["rehosted_as_sections"].items():
         assert legacy_id not in [identifier for identifier, _label in tabs]
         line = next(row for row in sections.split("\n") if f"{{id:'{target['section']}',category:'{target['category']}'" in row)

@@ -4442,11 +4442,14 @@ function bindSend(after){
 /* `voice` n'est plus un onglet (Slice 03) : `voice_audio` monte ses sections enregistrées, l'alias `voice` y mène.
    Ni `cli` ni `subagents` (Slice 04) : `agents_models` et Avancé montent leurs sections, les alias `cli`, `routing` et
    `subagents` y mènent (`docs/legacy/settings-tab-aliases.md`). Ni `memory` (Slice 05) : `memory_knowledge` monte ses
-   sections, l'alias `memory` mène à Rappel. */
+   sections, l'alias `memory` mène à Rappel. Ni `shortcuts` ni `appearance` (Slice 06) : `interface_interactions` monte
+   Thème & scène visuelle (`control_center_work.js`), Raccourcis (ici) et Bare Hands (`control_center_barehands.js`).
+   `experimental` n'est plus injecté par Bare Hands : il ne porte plus que la porte de test de la scène
+   (`control_center_scene_settings.js`), déclaré ici jusqu'à son déménagement dans Labs (Slice 08). */
 const TABS=[
   {id:'prompts',label:'Prompts',save:false},
   {id:'keys',label:'API Keys',save:false},
-  {id:'shortcuts',label:'Raccourcis',save:false},
+  {id:'experimental',label:'Expérimental',save:false},
 ];
 const SET={open:false,tab:null,category:null,section:null,lastItem:{},opener:null,sectionView:null,voiceTab:null,voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:'',subagentView:null,subagentDrafts:{},agentSection:null};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
@@ -4745,19 +4748,24 @@ function voiceStackTag(meta){
 /* Les périphériques d'abord : c'est la première chose qu'on vient choisir dans Micro & son. Ordre serveur sinon. */
 function voiceRecordsHtml(records){return [...records.filter(item=>item.kind==='device'),...records.filter(item=>item.kind!=='device')].map(voiceOptionHtml).join('')}
 /* Lien vers l'éditeur d'une option montrée en contexte : libellé de la section si elle est enregistrée, sinon celui de
-   l'onglet hérité qui la sert encore (Raccourcis jusqu'à la Slice 06), précédé de sa catégorie. */
+   l'onglet hérité qui la sert encore, précédé de sa catégorie (Raccourcis : section enregistrée depuis la Slice 06). */
 function voiceHomeLabel(surface){
   const R=typeof window!=='undefined'?window.JarvisSettingsRegistry:null;
   const entry=R&&R.page.section(surface.section),tab=typeof TABS!=='undefined'&&TABS.find(item=>item.id===surface.section);
   const category=R&&R.category(surface.category);
   return `${category?category.label+' › ':''}${entry?entry.label:tab?tab.label:surface.section}`;
 }
+/* L'éditeur que le lien doit focaliser : la touche du raccourci (`shortcuts.<id>`), dans la section Raccourcis. */
+function voiceEditorFocus(meta){
+  const persistence=String(meta.persistence||'');
+  return persistence.startsWith('shortcuts.')?` data-voice-shortcut="${esc(persistence.slice(10))}"`:'';
+}
 function voiceContextHtml(section){
   return voiceContextOptions(section).map(meta=>{
     const value=voiceOptionValue(meta)??meta.default,home=voiceHomeLabel(meta.surface);
     return `<div class="field" data-voice-context="${esc(meta.id)}"><span class="voice-field-label">${esc(meta.label)}</span>`
       +`<div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><kbd class="voice-key" aria-label="Touche actuelle : ${esc(value)}">${esc(value)}</kbd>`
-      +`<button type="button" class="linkish" data-voice-open="${esc(meta.surface.section)}">Modifier dans ${esc(home)}</button></div>`
+      +`<button type="button" class="linkish" data-voice-open="${esc(meta.surface.section)}"${voiceEditorFocus(meta)}>Modifier dans ${esc(home)}</button></div>`
       +`<div class="hint">${esc(meta.help)} Lecture seule ici : la touche se règle dans ${esc(home)}.</div></div>`;
   }).join('');
 }
@@ -5377,7 +5385,7 @@ function tabKeys(){
   </section>`;
 }
 
-/* --- onglet Raccourcis --------------------------------------------------- */
+/* --- `interface_interactions` › Raccourcis (Slice 06) ------------------------------------------------------------------ */
 const GLOBAL_KEY_NAMES={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',PageUp:'page_up',PageDown:'page_down',Home:'home',End:'end',Insert:'insert',Delete:'delete',Pause:'pause',ScrollLock:'scroll_lock',ContextMenu:'menu',PrintScreen:'print_screen'};
 function tabShortcuts(){
   /* Tous les raccourcis, `wake_toggle` compris : ceci est leur unique éditeur ; `voice_audio` n'en montre que la touche. */
@@ -5388,7 +5396,25 @@ function tabShortcuts(){
     </div>`).join('');
   return `<section><h3>Raccourcis</h3>
     <div class="hint" style="margin-bottom:14px">Cliquez sur une touche puis appuyez sur la combinaison voulue. Les raccourcis <em>système</em> sont captés même quand JARVIS n'a pas le focus, et n'acceptent qu'une touche seule. Les raccourcis <em>interface</em> ne s'appliquent que sur cette page et ignorent la saisie dans un champ.</div>
-    ${rows}<div class="hint" id="shortcutHint" style="margin-top:14px">Enregistrement immédiat. Le raccourci système prend effet au prochain redémarrage du runtime Voice.</div></section>`;
+    ${rows}<div class="hint" id="shortcutHint" role="status" aria-live="polite" style="margin-top:14px">Enregistrement immédiat. Le raccourci système prend effet au prochain redémarrage du runtime Voice.</div></section>`;
+}
+/* Section enregistrée (Slice 06) : l'unique éditeur de chaque raccourci du registre (`shortcuts.py`), `wake_toggle`
+   compris. Chaque touche s'enregistre seule (`save:'self'`, route des raccourcis inchangée). Quitter la section
+   annule une capture en cours ; une réponse arrivée après le départ ne redessine rien (`isCurrent`). */
+const SHORTCUTS_SECTION={id:'shortcuts',category:'interface_interactions',order:20,save:'self',label:'Raccourcis',
+  description:'Toutes les touches de JARVIS, dont la touche réveil / envoi / interruption.',
+  mount(host,context){
+    if(!SET.shortcuts){
+      host.innerHTML='<div class="empty">Chargement…</div>';
+      return api('/api/shortcuts').then(value=>{SET.shortcuts=value;if(context.isCurrent())renderShortcutsSection(host,context)});
+    }
+    renderShortcutsSection(host,context);
+  },
+  destroy(){if(SET.capture)SET.capture.cancel()},
+};
+function renderShortcutsSection(host,context){
+  host.innerHTML=tabShortcuts();
+  host.querySelectorAll('[data-shortcut]').forEach(el=>el.addEventListener('click',()=>startCapture(el,context.isCurrent)));
 }
 
 /* --- rendu et liaisons --------------------------------------------------- */
@@ -5411,7 +5437,7 @@ function destroySubagentSettings(){if(SET.subagentView){SET.subagentView.destroy
 function mountSubagentSettings(host,revision,mode){
   if(!host)return;
   if(!window.JarvisSubagentSettings){host.innerHTML='<div class="notice bad" role="alert">Module des sous-agents absent de la page servie.</div>';console.error('subagent_settings_module_missing');return}
-  const view=window.JarvisSubagentSettings.create(host,{drafts:SET.subagentDrafts,openTab:selectTab,view:mode});
+  const view=window.JarvisSubagentSettings.create(host,{drafts:SET.subagentDrafts,openTab:target=>openSettingsLink(target),view:mode});
   if(revision!==SET.renderRevision){view.destroy();return}
   SET.subagentView=view;
   /* `load` ne rejette pas (il rend son état d'erreur) ; ce filet attrape tout le reste, visible et codé. */
@@ -5615,9 +5641,11 @@ function installMemorySettingsSections(){
 }
 /* Même garde que les sections Agents : les extraits node sans ce bloc n'ont pas la fonction. */
 if(typeof window!=='undefined'&&typeof installMemorySettingsSections==='function')installMemorySettingsSections();
+/* Raccourcis (Slice 06) : même garde ; Thème & scène et Bare Hands s'enregistrent depuis leurs modules. */
+if(typeof window!=='undefined'&&typeof SHORTCUTS_SECTION!=='undefined')registerSettingsSection(SHORTCUTS_SECTION);
 
 /* Où en est le shell : catégorie, puis section enregistrée OU onglet hérité. Un module hérité peut encore poser
-   `SET.tab` lui-même (Bare Hands) : un onglet posé l'emporte et la catégorie suit. */
+   `SET.tab` lui-même (plus Bare Hands depuis la Slice 06) : un onglet posé l'emporte et la catégorie suit. */
 function ensureSettingsLocation(nav){
   const cat=nav.categories.find(c=>c.id===SET.category);
   const has=(c,kind,id)=>!!c&&c.items.some(i=>i.kind===kind&&i.id===id);
@@ -5702,7 +5730,7 @@ function mountRegisteredSection(revision){
     if(SET.sectionView===view)host.innerHTML=UI.notice({kind:'bad',live:'assertive',title:`Section « ${entry.label} » indisponible.`,
       body:`<span class="set-notice-text">${esc(e&&e.message||String(e))} <code>settings_section_mount_failed</code></span>`});
   };
-  const context=Object.freeze({revision,section:entry.id,ui:UI,say,open:selectTab,
+  const context=Object.freeze({revision,section:entry.id,ui:UI,say,open:(target,options)=>openSettingsLink(target,options),
     isCurrent:()=>SET.open&&SET.sectionView===view&&revision===SET.renderRevision,
     data:()=>SET.data,draft:()=>SET.draft,markDirty:()=>{SET.dirty=true;say('Modifications non enregistrées.','')}});
   try{const result=entry.mount(host,context);if(result&&typeof result.then==='function')result.catch(failed)}
@@ -5721,13 +5749,14 @@ async function renderTab(){
   modalSub.textContent={
     prompts:'Chaque couche est enregistrée avec son propre bouton.',
     keys:'Les clés sont enregistrées immédiatement sans jamais être relues par la page.',
-    shortcuts:'Les raccourcis sont enregistrés immédiatement.',
+    experimental:'Fonctions en test, enregistrées immédiatement ; chaque section dit quand elle prend effet.',
   }[SET.tab]||'';
   try{
     let content;
     if(SET.tab==='prompts')content=await tabPrompts();
     else if(SET.tab==='keys')content=tabKeys();
-    else content=tabShortcuts();
+    /* `experimental` : vide ici, la porte de test de la scène s'y ajoute (`control_center_scene_settings.js`). */
+    else content='';
     if(revision!==SET.renderRevision||SET.open===false)return;
     modalContent.innerHTML=content;
   }catch(e){if(revision===SET.renderRevision&&SET.open!==false)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
@@ -5775,7 +5804,6 @@ function bindTab(revision){
   if(form)form.addEventListener('submit',addCredential);
   modalContent.querySelectorAll('[data-delete-key]').forEach(el=>el.addEventListener('click',()=>deleteCredential(el.dataset.deleteKey)));
   modalContent.querySelectorAll('[data-bind-provider]').forEach(el=>el.addEventListener('change',()=>bindCredential(el.dataset.bindProvider,el.dataset.bindId)));
-  modalContent.querySelectorAll('[data-shortcut]').forEach(el=>{if(!el.closest('#voicePanel'))el.addEventListener('click',()=>startCapture(el))});
   modalContent.querySelectorAll('[data-prompt-save]').forEach(el=>el.addEventListener('click',()=>savePromptLayer(el)));
   modalContent.querySelectorAll('[data-prompt-reset]').forEach(el=>el.addEventListener('click',()=>resetPromptLayer(el)));
 }
@@ -5850,6 +5878,29 @@ function selectTab(id){
   /* Quitter Runtime & CLI referme sa configuration avancée ; la remonter (enregistrement, réglages relus) la garde. */
   if(leaving==='runtime_cli'&&SET.section!=='runtime_cli'){SET.routingAdvancedOpen=false;++SET.routingGeneration}
   renderTabs();renderTab();
+}
+/* Lien interne d'une section vers une autre cible (Slice 06, `docs/settings/settings-shell.md` § 3) : « Modifier dans
+   … › Raccourcis », « Régler la commande », « Voir le diagnostic », renvois des sous-agents. Le bouton cliqué disparaît
+   avec la section : le focus irait sur `body`. Il va à l'élément visé (`options.focus`, sélecteur dans le contenu, par
+   exemple l'éditeur de `wake_toggle`) s'il est déjà dessiné, sinon à l'entrée ouverte dans la liste des sections. */
+function openSettingsLink(target,options){
+  if(!settingsTarget(target)){console.warn('settings_target_unknown',{target});return false}
+  selectTab(target);
+  focusSettingsLanding(options&&options.focus);
+  return true;
+}
+function focusSettingsLanding(selector){
+  if(typeof document==='undefined')return;
+  const found=selector?modalContent.querySelector(selector):null;
+  if(found){
+    if(!found.matches('button,a[href],input,select,textarea,summary,[tabindex]'))found.setAttribute('tabindex','-1');
+    found.focus({preventScroll:true});
+    if(found.scrollIntoView)found.scrollIntoView({block:'nearest'});
+    return;
+  }
+  if(selector)console.info('settings_link_focus_fallback',{selector});
+  const entry=document.querySelector('#modalTabs [aria-selected=true]')||document.querySelector('#settingsCategories [aria-selected=true]');
+  if(entry)entry.focus({preventScroll:true});
 }
 
 function destroyAgentCatalog(){
@@ -5953,7 +6004,8 @@ function bindVoicePanel(revision){
     const value=element.dataset.architectureKind==='model'?JSON.parse(element.value):element.type==='checkbox'?element.checked:element.type==='number'?Number(element.value):element.value;
     voiceArchitectureChanged(element.dataset.architectureField,value);renderVoicePanel(revision);
   }));
-  panel.querySelectorAll('[data-voice-open]').forEach(element=>element.addEventListener('click',()=>selectTab(element.dataset.voiceOpen)));
+  panel.querySelectorAll('[data-voice-open]').forEach(element=>element.addEventListener('click',()=>openSettingsLink(element.dataset.voiceOpen,
+    {focus:element.dataset.voiceShortcut?`[data-shortcut="${CSS.escape(element.dataset.voiceShortcut)}"]`:null})));
   const role=panel.querySelector('#voiceCatalogRole');
   if(role)role.addEventListener('change',()=>{SET.voiceCatalogRole=role.value;renderVoicePanel(revision)});
   const retry=panel.querySelector('#audioRetry');if(retry)retry.addEventListener('click',()=>hydrateAudioDevices(revision,true));
@@ -6023,7 +6075,7 @@ async function bindCredential(provider,id){
 
 /* Capture d'un raccourci : on lit la prochaine frappe au lieu de demander à
    l'utilisateur d'écrire « ctrl+ArrowRight » à la main. */
-function startCapture(button){
+function startCapture(button,isCurrent){
   if(SET.capture)SET.capture.cancel();
   const previous=button.textContent;
   button.classList.add('capturing');button.textContent='appuyez…';
@@ -6038,7 +6090,13 @@ function startCapture(button){
     hint.textContent='Enregistrement…';
     try{
       const r=await api('/api/shortcuts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({shortcuts:{[button.dataset.shortcut]:value}})});
-      SET.shortcuts=r;await renderTab();const currentHint=$('#shortcutHint');if(currentHint)currentHint.textContent='Raccourci enregistré.';
+      SET.shortcuts=r;
+      /* Section quittée pendant l'envoi : la valeur est gardée, rien n'est redessiné ailleurs. */
+      if(isCurrent&&!isCurrent())return;
+      await renderTab();const currentHint=$('#shortcutHint');if(currentHint)currentHint.textContent='Raccourci enregistré.';
+      /* Le rendu remplace la touche : le focus revient sur la nouvelle, jamais sur `body`. */
+      const again=typeof document!=='undefined'?document.querySelector(`[data-shortcut="${CSS.escape(button.dataset.shortcut)}"]`):null;
+      if(again)again.focus({preventScroll:true});
     }catch(e){button.textContent=previous;hint.textContent=e.message}
   };
   const cleanup=()=>{window.removeEventListener('keydown',onKey,true);button.classList.remove('capturing');SET.capture=null};

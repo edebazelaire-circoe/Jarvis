@@ -116,7 +116,7 @@ try{
         return {a:'click'};
       }
       case 'key':{
-        const codes={ArrowDown:40,ArrowUp:38,ArrowRight:39,ArrowLeft:37,Escape:27,Enter:13,Tab:9,Home:36,End:35,Delete:46,' ':32};
+        const codes={ArrowDown:40,ArrowUp:38,ArrowRight:39,ArrowLeft:37,Escape:27,Enter:13,Tab:9,Home:36,End:35,Delete:46,' ':32,F10:121,F11:122};
         const base={key:action.key,code:action.key===' '?'Space':action.key,
           windowsVirtualKeyCode:codes[action.key]||0,modifiers:action.shift?8:0};
         await send('Input.dispatchKeyEvent',{type:'keyDown',...base,

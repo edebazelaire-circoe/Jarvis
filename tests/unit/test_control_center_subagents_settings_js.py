@@ -399,7 +399,8 @@ def test_served_page_hides_the_empty_footer_scrolls_the_active_tab_and_links_mod
     # même défilement de l'entrée active dans les deux barres.
     assert "footer.hidden=entry?entry.save!=='footer':!SET.tab" in served
     assert "on.scrollIntoView({block:'nearest',inline:'nearest'})" in served
-    assert "openTab:selectTab" in served and "subagent_settings_mount_failed" in served
+    # Slice 06 : les renvois passent par `openSettingsLink` (focus sur l'entrée ouverte, jamais sur `body`).
+    assert "openTab:target=>openSettingsLink(target)" in served and "subagent_settings_mount_failed" in served
     payload = roles_payload(tmp_path)
     out = run_node(tmp_path, payload, """
 const opened=[];const v=M.create(host,{fetch:reply,openTab:t=>opened.push(t),...quiet});await v.load();

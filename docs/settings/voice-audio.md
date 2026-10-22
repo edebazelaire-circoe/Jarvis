@@ -48,7 +48,8 @@ La Slice 08 affine ces deux sections ; elle range ses autres diagnostics comme d
 ## 3. Un seul éditeur pour `wake_toggle`
 
 Le raccourci réveiller / envoyer / interrompre est persisté par le registre des raccourcis : son éditeur est
-l'onglet Raccourcis (`interface_interactions`, futur `shortcuts` de la Slice 06), qui ne l'exclut plus. Voix & audio
+la section Raccourcis (`interface_interactions` › `shortcuts`, Slice 06 :
+[`interface-interactions.md`](interface-interactions.md)). Le lien pose le focus sur la touche `wake_toggle`. Voix & audio
 en montre la touche effective en lecture seule et un lien « Modifier dans … » (`surface.context`).
 
 ## 4. Table de correspondance option → section

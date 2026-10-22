@@ -56,9 +56,10 @@ ALIASES = {
     "appearance": ("interface_interactions", "theme_scene"),
     "experimental": ("advanced_diagnostics", "labs"),
 }
-#: Modules qui injectent encore un onglet de premier niveau (`TABS.push/splice`), retirés par la Slice 09.
-# `control_center_wake_word.js` en est sorti (Slice 03) : il enregistre la section `wake_word`.
-LEGACY_INJECTORS = {"control_center_work.js", "control_center_barehands.js"}
+#: Modules qui injectent encore un onglet de premier niveau (`TABS.push/splice`). `control_center_wake_word.js` en est
+#: sorti à la Slice 03, `control_center_work.js` (Apparence) et `control_center_barehands.js` (Expérimental) à la
+#: Slice 06 : plus aucun.
+LEGACY_INJECTORS: set[str] = set()
 
 
 def run(tmp_path: Path, body: str):
@@ -93,11 +94,12 @@ def injected_tab_ids() -> list[str]:
 
 
 def assembled_tabs() -> list[dict]:
-    """L'ordre réel du shell : base, `appearance` en fin (pas de `config`), puis `experimental`. Depuis la Slice 03, ni
-    `voice` ni `wakeword` ne sont des onglets : Voix & audio n'a que des sections enregistrées."""
+    """L'ordre réel du shell : la base seule. Depuis la Slice 03, ni `voice` ni `wakeword` ne sont des onglets ; depuis
+    la Slice 06, ni `appearance` ni `shortcuts`, et `experimental` (la porte de test de la scène seule) est déclaré dans
+    la base au lieu d'être injecté par Bare Hands."""
     ids = base_tab_ids()
-    ids += ["appearance", "experimental"]
-    assert set(ids) == set(base_tab_ids()) | set(injected_tab_ids())
+    assert ids == ["prompts", "keys", "experimental"]
+    assert set(injected_tab_ids()) <= set(ids)
     assert "voice" not in ids and "wakeword" not in ids
     return [{"id": i, "label": i} for i in ids]
 
@@ -129,11 +131,17 @@ SLICE_05_SECTIONS = (
     ("consolidation", "memory_knowledge", 30, "self", []), ("knowledge_sources", "memory_knowledge", 40, "self", []),
     ("memory_center", "memory_knowledge", 50, "readonly", []),
 )
+#: Sections enregistrées depuis la Slice 06 : `theme_scene` (`control_center_work.js`), `shortcuts` (page),
+#: `bare_hands` et `barehands_lab` (`control_center_barehands.js`). Les onglets `appearance` et `shortcuts` ont disparu.
+SLICE_06_SECTIONS = (
+    ("theme_scene", "interface_interactions", 10, "self", ["appearance"]), ("shortcuts", "interface_interactions", 20, "self", []),
+    ("bare_hands", "interface_interactions", 30, "self", []), ("barehands_lab", "advanced_diagnostics", 60, "self", []),
+)
 REGISTER_SLICE_03 = "".join(
     f"R.page.register({{id:'{i}',category:'{c}',label:'{i}',order:{o},save:'{v}',mount:noop}});" for i, c, o, v in SLICE_03_SECTIONS
 ) + "".join(
     f"R.page.register({{id:'{i}',category:'{c}',label:'{i}',order:{o},save:'{v}',aliases:{json.dumps(a)},mount:noop}});"
-    for i, c, o, v, a in (*SLICE_04_SECTIONS, *SLICE_05_SECTIONS)
+    for i, c, o, v, a in (*SLICE_04_SECTIONS, *SLICE_05_SECTIONS, *SLICE_06_SECTIONS)
 )
 
 
@@ -245,8 +253,9 @@ def test_every_current_tab_id_has_a_declared_destination(tmp_path):
         assert all(d["category"] in out["ids"] for d in alias["also"])
     current = {t["id"] for t in assembled_tabs()}
     assert current <= set(out["aliases"]), current - set(out["aliases"])
-    # `experimental` est partagé par Bare Hands et la scène : ses deux destinations sont déclarées.
+    # `experimental` était partagé par Bare Hands et la scène : les entrées Bare Hands sont déclarées.
     assert {"category": "interface_interactions", "section": "bare_hands"} in out["aliases"]["experimental"]["also"]
+    assert {"category": "advanced_diagnostics", "section": "barehands_lab"} in out["aliases"]["experimental"]["also"]
     barehands = (RUNTIME / "control_center_barehands.js").read_text(encoding="utf-8")
     section_block = barehands[barehands.index("const SECTION=Object.freeze({") :]
     section_block = section_block[: section_block.index("});")]
@@ -273,12 +282,13 @@ out({{map:targets.map(t=>[String(t),R.legacyTabFor(t,T)]),nav:R.navigationFromLe
     for tab in tabs:  # un identifiant actuel reste exactement son onglet
         assert mapped.get(tab["id"], tab["id"]) == tab["id"]
     # Voix & audio n'a plus d'onglet (Slice 03) : ses cibles sont des sections enregistrées, servies par le shell.
+    # Interface & interactions n'a plus d'onglet (Slice 06) : ses sections sont enregistrées.
     assert mapped == {
         "voice": None, "wakeword": None, "cli": None, "routing": None, "keys": "keys", "memory": None,
         "experimental": "experimental", "voice_audio": None, "agents_models": None, "memory_knowledge": None,
-        "interface_interactions": "shortcuts", "connections": "keys", "advanced_diagnostics": "prompts",
+        "interface_interactions": None, "connections": "keys", "advanced_diagnostics": "prompts",
         "wake_word": None, "runtime_cli": None, "labs": "experimental", "bare_hands": "experimental",
-        "theme_scene": "appearance", "diagnostics": None, "barehandsRecord": "experimental", "nope": None, "null": None,
+        "theme_scene": None, "diagnostics": None, "barehandsRecord": "experimental", "nope": None, "null": None,
     }
     nav = out["nav"]
     assert nav["unassigned"] == []
@@ -287,7 +297,7 @@ out({{map:targets.map(t=>[String(t),R.legacyTabFor(t,T)]),nav:R.navigationFromLe
         "voice_audio": [],
         "agents_models": [],
         "memory_knowledge": [],
-        "interface_interactions": ["shortcuts", "appearance"],
+        "interface_interactions": [],
         "connections": ["keys"],
         "advanced_diagnostics": ["prompts", "experimental"],
     }
@@ -309,12 +319,12 @@ PLANNED_SECTIONS = {
 def test_every_planned_target_section_is_served_by_a_current_tab(tmp_path):
     """QA Slice 01 : `voice_output`, `semantic_retrieval`… rendaient `null` ; chaque section cible prévue s'ouvre :
     par un onglet hérité, ou (depuis la Slice 03) parce qu'elle est enregistrée par la page."""
-    registered = {i for i, *_ in (*SLICE_03_SECTIONS, *SLICE_04_SECTIONS, *SLICE_05_SECTIONS)}
+    registered = {i for i, *_ in (*SLICE_03_SECTIONS, *SLICE_04_SECTIONS, *SLICE_05_SECTIONS, *SLICE_06_SECTIONS)}
     out = run(tmp_path, f"""
 const T={json.dumps(assembled_tabs())},P={json.dumps(PLANNED_SECTIONS)};
 out(Object.fromEntries(Object.values(P).flat().map(s=>[s,R.legacyTabFor(s,T)])));""")
     assert all(v for k, v in out.items() if k not in registered), {k: v for k, v in out.items() if not v}
-    assert registered <= {s for sections in PLANNED_SECTIONS.values() for s in sections}
+    assert registered - {"barehands_lab"} <= {s for sections in PLANNED_SECTIONS.values() for s in sections}
     # Les sections Voix et Mémoire ne sont plus servies par un onglet (Slices 03 et 05).
     assert {k: out[k] for k in ("conversation", "voice_output", "microphone_sound", "turns_interruptions", "wake_word",
                                 "architecture_compat")} == dict.fromkeys(
@@ -357,14 +367,17 @@ const at=()=>[SET.category,SET.tab,SET.section];
     assert seen["memory"] == ["memory_knowledge", None, "recall"]  # Slice 05 : l'alias de Rappel
     # Slice 04 : `routing` → Runtime & CLI ; `cli` et `subagents` ouvrent leurs sections (test suivant).
     assert seen["routing"] == ["advanced_diagnostics", None, "runtime_cli"]
-    assert seen["labs"] == seen["bare_hands"] == seen["barehandsCalibration"] == ["advanced_diagnostics", "experimental", None]
+    # Slice 06 : les préférences Bare Hands sont une section d'Interface ; `labs` reste servi par l'onglet de la scène.
+    assert seen["labs"] == ["advanced_diagnostics", "experimental", None]
+    assert seen["bare_hands"] == seen["barehandsCalibration"] == ["interface_interactions", None, "bare_hands"]
+    assert seen["appearance"] == ["interface_interactions", None, "theme_scene"]
     # La ligne « Réglages de la voix » de la roue (`'voice'`) atterrit sur Voix & audio, section Conversation.
     assert seen["voice"] == ["voice_audio", None, "conversation"]
     assert seen["voice_output"] == ["voice_audio", None, "voice_output"]
     assert seen["semantic_retrieval"] == ["memory_knowledge", None, "semantic_retrieval"]
-    # Une catégorie seule rouvre la dernière entrée ouverte dans cette catégorie (Apparence), sinon la première.
+    # Une catégorie seule rouvre la dernière entrée ouverte dans cette catégorie (Thème & scène), sinon la première.
     assert seen["voice_audio"] == ["voice_audio", None, "voice_output"]
-    assert seen["interface_interactions"] == ["interface_interactions", "appearance", None]
+    assert seen["interface_interactions"] == ["interface_interactions", None, "theme_scene"]
     assert seen["wake_word"] == ["voice_audio", None, "wake_word"]
     assert out["afterUnknown"] == seen["wake_word"]  # une cible inconnue ne change rien…
     assert out["warn"] == [["settings_target_unknown", {"target": "nope"}]]  # … mais se dit
@@ -380,13 +393,15 @@ const at=()=>[SET.category,SET.tab,SET.section];
                           ("section", "subagents")],
         "memory_knowledge": [("section", "recall"), ("section", "semantic_retrieval"), ("section", "consolidation"),
                              ("section", "knowledge_sources"), ("section", "memory_center")],
-        "interface_interactions": [("tab", "shortcuts"), ("tab", "appearance")],
+        "interface_interactions": [("section", "theme_scene"), ("section", "shortcuts"), ("section", "bare_hands")],
         "connections": [("tab", "keys")],
         "advanced_diagnostics": [("section", "architecture_compat"), ("section", "runtime_cli"), ("section", "diagnostics"),
-                                 ("section", "work_methods"), ("tab", "prompts"), ("tab", "experimental")],
+                                 ("section", "work_methods"), ("section", "barehands_lab"), ("tab", "prompts"),
+                                 ("tab", "experimental")],
     }
     related = {c["id"]: [r["id"] for r in c["related"]] for c in nav["categories"]}
-    assert related["interface_interactions"] == ["experimental"]  # les préférences Bare Hands, encore dans Expérimental
+    # Slice 06 : `bare_hands` est enregistrée, l'onglet de la scène n'est plus proposé comme « encore dans » Interface.
+    assert related["interface_interactions"] == []
     assert related["voice_audio"] == related["connections"] == related["advanced_diagnostics"] == []
 
 
@@ -500,3 +515,30 @@ async def test_served_page_inlines_the_registry(tmp_path: Path):
     assert SETTINGS_REGISTRY_SCRIPT_MARKER not in served
     assert "root.JarvisSettingsRegistry=api" in served
     assert served.index("root.JarvisSettingsRegistry=api") < served.index("\nconst TABS=[")
+
+
+def test_page_interface_sections_match_the_registered_fixture():
+    """La fixture `SLICE_06_SECTIONS` dit ce que les modules enregistrent vraiment (Slice 06)."""
+    page = HTML.read_text(encoding="utf-8")
+    work = (RUNTIME / "control_center_work.js").read_text(encoding="utf-8")
+    barehands = (RUNTIME / "control_center_barehands.js").read_text(encoding="utf-8")
+    assert ("const THEME_SCENE_SECTION={id:'theme_scene',category:'interface_interactions',aliases:['appearance'],order:10,"
+            "save:'self',\n    label:'Thème & scène visuelle',") in work
+    assert "const SHORTCUTS_SECTION={id:'shortcuts',category:'interface_interactions',order:20,save:'self'" in page
+    assert "registerSettingsSection({id:SETTINGS_ENTRY.ordinary,category:'interface_interactions',order:30,save:'self'" in barehands
+    assert "registerSettingsSection({id:SETTINGS_ENTRY.lab,category:'advanced_diagnostics',group:'labs',order:60,save:'self'" in barehands
+    assert "const SETTINGS_ENTRY=Object.freeze({ordinary:'bare_hands',lab:'barehands_lab',diagnostic:'barehands'});" in barehands
+
+
+def test_barehands_anchors_and_section_entries_agree(tmp_path):
+    """Les ancres Bare Hands du registre (`LEGACY_ANCHORS`) et la table du module (`SECTION_ENTRY`) désignent la même
+    entrée : `showSettings(clé)` et `openSettingsTab(clé)` ouvrent le même endroit."""
+    barehands = (RUNTIME / "control_center_barehands.js").read_text(encoding="utf-8")
+    block = barehands[barehands.index("const SECTION=Object.freeze({"):]
+    block = block[: block.index("\n  });")]
+    keys = dict(re.findall(r"(\w+):'(barehands\w+)'", block))
+    entry = dict(re.findall(r"\[SECTION\.(\w+)\]:SETTINGS_ENTRY\.(\w+)", barehands))
+    names = {"ordinary": "bare_hands", "lab": "barehands_lab"}
+    out = run(tmp_path, "out(R.LEGACY_ANCHORS);")
+    assert len(entry) == 4
+    assert {keys[k]: names[v] for k, v in entry.items()} == {a: d["section"] for a, d in out.items()}

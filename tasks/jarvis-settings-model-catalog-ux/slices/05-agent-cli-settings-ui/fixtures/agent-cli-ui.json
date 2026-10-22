@@ -9,14 +9,6 @@
     {
       "id": "keys",
       "label": "API Keys"
-    },
-    {
-      "id": "shortcuts",
-      "label": "Raccourcis"
-    },
-    {
-      "id": "appearance",
-      "label": "Apparence"
     }
   ],
   "agent_section_order": [
@@ -58,6 +50,16 @@
       "category": "agents_models",
       "section": "subagents",
       "since": "jarvis-settings-ui-reorganization Slice 04"
+    },
+    "shortcuts": {
+      "category": "interface_interactions",
+      "section": "shortcuts",
+      "since": "jarvis-settings-ui-reorganization Slice 06"
+    },
+    "appearance": {
+      "category": "interface_interactions",
+      "section": "theme_scene",
+      "since": "jarvis-settings-ui-reorganization Slice 06"
     }
   }
 }
