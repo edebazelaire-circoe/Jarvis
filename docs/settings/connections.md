@@ -72,7 +72,12 @@ Focus après action : la nouvelle clé (ajout), la clé remplacée ou liée, le 
 ## 5. Régions vivantes
 
 `#connectionsStatus` (`role=status`, poli) : en cours et issue d'une action. `#connectionsError` (`role=alert`) : refus
-du serveur avec son message réel (par exemple doublon de nom), attente dépassée. Vides, elles ne prennent pas de place.
+du serveur avec son message réel (par exemple doublon de nom), attente dépassée. Vides, elles ne prennent pas de place. Les
+deux régions sont posées une fois par montage et gardent leur nœud : un rendu ne change que leur texte, et seulement
+s'il change (un lecteur d'écran n'annonce de façon sûre qu'un nœud déjà présent ; passe de finitions avant la Slice 10).
+Seules les cartes sont redessinées (`listHtml`) ; le contrôle qui avait le focus le reprend (`keepFocus`), la cible
+d'une action (nouvelle clé, titre de la carte) le reçoit avec un contour visible (`landFocus`). Une erreur reste collée
+en haut du contenu quand la liste a défilé ; le succès se voit sur la carte touchée, qui reçoit le focus.
 
 ## 6. Liens entrants
 

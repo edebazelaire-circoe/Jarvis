@@ -84,16 +84,21 @@
     </article>`;
   }
 
-  /* La section entière ; `view` : `{busy, confirm, add, replace, status, error}`. Pure (testée par node). */
+  /* Les cartes seules (redessinées à chaque changement). */
+  function listHtml(state,view){
+    const v=view||{};
+    return ((state&&state.providers)||[]).map(p=>card(state,p,v)).join('');
+  }
+  /* La section entière ; `view` : `{busy, confirm, add, replace, status, error}`. Pure (testée par node). Les deux
+     régions vivantes sont posées une fois par montage : un rendu ne change que leur texte (`create`). */
   function html(state,view){
     const v=view||{};
-    const providers=(state&&state.providers)||[];
     const status=v.status?esc(v.status):'',error=v.error?esc(v.error):'';
     return `<div class="conn">
       <p class="conn-lead">Les valeurs ne reviennent jamais à cette page : seuls les quatre derniers caractères d’une clé sont montrés. Chaque action est enregistrée tout de suite.</p>
       <div class="conn-live" id="connectionsStatus" role="status" aria-live="polite">${status}</div>
       <div class="conn-live conn-error" id="connectionsError" role="alert">${error}</div>
-      <div class="conn-list">${providers.map(p=>card(state,p,v)).join('')}</div>
+      <div class="conn-list">${listHtml(state,v)}</div>
     </div>`;
   }
 
@@ -110,12 +115,25 @@
     let dead=false,state=opts.state||null,timer=null,ticket=0;
     const view={busy:false,confirm:null,add:null,replace:null,status:'',error:''};
 
+    /* Régions vivantes stables (finitions avant la Slice 10) : posées au premier rendu, puis seul leur texte change,
+       et seulement s'il change ; un lecteur d'écran n'annonce de façon sûre qu'un nœud déjà présent. Les cartes sont
+       redessinées ; le contrôle qui avait le focus le reprend (`keepFocus`), une cible donnée (`focus`) le reçoit et
+       son arrivée se voit (`landFocus`). */
     function render(focus){
       if(!alive())return;
       if(!state){host.innerHTML='<div class="conn"><p class="conn-lead" role="status">Chargement des fournisseurs…</p></div>';return}
-      host.innerHTML=html(state,view);
-      bind();
-      if(focus){const el=host.querySelector(focus);if(el)el.focus({preventScroll:false})}
+      const UI=root.JarvisSettingsUI,doc=host.ownerDocument;
+      const draw=()=>{
+        const list=host.querySelector('.conn-list'),status=host.querySelector('#connectionsStatus'),error=host.querySelector('#connectionsError');
+        if(!list||!status||!error){host.innerHTML=html(state,view);bind();return}
+        list.innerHTML=listHtml(state,view);
+        if(status.textContent!==view.status)status.textContent=view.status;
+        if(error.textContent!==view.error)error.textContent=view.error;
+        bind();
+      };
+      if(UI&&typeof UI.keepFocus==='function'&&doc)UI.keepFocus(host,draw);else draw();
+      if(focus){const el=host.querySelector(focus);
+        if(el){if(UI&&typeof UI.landFocus==='function')UI.landFocus(el,{scroll:true});else el.focus({preventScroll:false})}}
     }
     function bind(){
       host.querySelectorAll('form[data-conn-add]').forEach(f=>f.addEventListener('submit',e=>{e.preventDefault();add(f)}));
@@ -230,7 +248,7 @@
     return api;
   }
 
-  const exported=Object.freeze({html,create,providerStatus,ROUTES,WAIT_MS,cardId});
+  const exported=Object.freeze({html,listHtml,create,providerStatus,ROUTES,WAIT_MS,cardId});
   root.JarvisConnectionsSettings=exported;
   if(typeof module!=='undefined'&&module.exports)module.exports=exported;
 })(typeof window!=='undefined'?window:globalThis);

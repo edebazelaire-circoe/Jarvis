@@ -955,6 +955,9 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .conn-live:empty{display:none}
 .conn-live{padding:9px 13px;border:1px solid color-mix(in srgb,var(--ok) 32%,transparent);border-radius:10px;background:rgba(104,224,160,.06);font-size:13px}
 .conn-error{border-color:color-mix(in srgb,var(--danger) 36%,transparent);background:rgba(255,101,119,.07)}
+/* Une erreur reste en vue quand la liste a défilé (l'action ratée peut être loin du haut) : collée en haut du contenu,
+   sur un fond opaque. Le succès, lui, se voit sur la carte touchée, qui reçoit le focus. */
+.conn-error:not(:empty){position:sticky;top:0;background:color-mix(in srgb,var(--danger) 10%,#060d12)}
 .conn-list{display:grid;gap:12px}
 .conn-card{display:grid;gap:10px;min-width:0;padding:15px 18px;border:1px solid var(--set-hair-2);border-radius:12px;background:rgba(113,144,160,.035)}
 .conn-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 12px}
