@@ -308,3 +308,9 @@ sans `/T` : 22472 (cerveau claude du bac à sable, enfant du Control Center ; se
   control_center_memory_js + registry_js + shell_js + intégration settings_redesign_migration + quality + mvp : 347 passed.
   `test_memory_settings_browser` deux passes : 6 + 6 passed ; `test_settings_shell_browser` deux passes : 9 + 9 passed.
   Aucun bac à sable lancé.
+
+## 2026-10-22 - Slice 05 — décision QA (agent 0)
+
+- QA initiale sur `5261df9d` : RETRAVAIL. Contrat tenu (16 champs, une section chacun ; `memory_settings.py` : ajout de `surface` seul, sorties serveur identiques octet pour octet entre `cb7b0082` et `5261df9d` ; POST identiques ancien/nouveau module ; champs inconnus préservés ; brouillon partagé annoncé avant envoi ; ordre des sources conforme à docs/07). Bloquant B1 : changer de section pendant un enregistrement laissait la nouvelle section figée (« Enregistrement… », champs désactivés, message perdu). Joints : N4 (messages répétés), N2 (maintien en vue sourd au clavier, minuteur non annulé, mutation survivante).
+- Retravail `c6d85fb7`, `7093b92d`. Re-QA : APPROUVÉ. B1 succès/refus et N2 (PageUp, fermeture avant 4 s, re-clic) rejoués en bac à sable ; mutations M1-M3 détectées.
+- Reporté Slice 10 : focus sur BODY après « Enregistrer la mémoire » et après changement de section ; brouillon mémoire jeté à la fermeture sans prévenir (préexistant) ; message de refus non revu après changement de section (brouillon gardé) ; test du maintien en vue aveugle aux options `capture` du retrait (mutation M4 survivante, code correct) ; `docs/ARCHITECTURE.md:102` et `docs/memory.md:830` parlent encore d'un onglet Mémoire ; « Sidecar Tencent » répété ; `workspace.unknown_action {"name":"settings"}` du bouton du Memory Center (préexistant) ; un échec ponctuel non identifié dans une passe groupée des suites navigateur (harnais commun, vert en relance).
