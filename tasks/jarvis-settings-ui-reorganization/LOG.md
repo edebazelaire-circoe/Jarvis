@@ -314,3 +314,151 @@ sans `/T` : 22472 (cerveau claude du bac à sable, enfant du Control Center ; se
 - QA initiale sur `5261df9d` : RETRAVAIL. Contrat tenu (16 champs, une section chacun ; `memory_settings.py` : ajout de `surface` seul, sorties serveur identiques octet pour octet entre `cb7b0082` et `5261df9d` ; POST identiques ancien/nouveau module ; champs inconnus préservés ; brouillon partagé annoncé avant envoi ; ordre des sources conforme à docs/07). Bloquant B1 : changer de section pendant un enregistrement laissait la nouvelle section figée (« Enregistrement… », champs désactivés, message perdu). Joints : N4 (messages répétés), N2 (maintien en vue sourd au clavier, minuteur non annulé, mutation survivante).
 - Retravail `c6d85fb7`, `7093b92d`. Re-QA : APPROUVÉ. B1 succès/refus et N2 (PageUp, fermeture avant 4 s, re-clic) rejoués en bac à sable ; mutations M1-M3 détectées.
 - Reporté Slice 10 : focus sur BODY après « Enregistrer la mémoire » et après changement de section ; brouillon mémoire jeté à la fermeture sans prévenir (préexistant) ; message de refus non revu après changement de section (brouillon gardé) ; test du maintien en vue aveugle aux options `capture` du retrait (mutation M4 survivante, code correct) ; `docs/ARCHITECTURE.md:102` et `docs/memory.md:830` parlent encore d'un onglet Mémoire ; « Sidecar Tencent » répété ; `workspace.unknown_action {"name":"settings"}` du bouton du Memory Center (préexistant) ; un échec ponctuel non identifié dans une passe groupée des suites navigateur (harnais commun, vert en relance).
+
+## 2026-10-22 - Slice 06 (implémentation)
+
+### Décisions
+
+- Plus aucun injecteur d'onglet : `control_center_work.js` et `control_center_barehands.js` enregistrent des sections
+  (`test_no_module_injects_a_new_top_level_tab` : liste vide). `TABS` = `prompts`, `keys`, `experimental`.
+- `interface_interactions` : `theme_scene` · Thème & scène visuelle (order 10, `save:'self'`, alias `appearance`,
+  `THEME_SCENE_SECTION` de `control_center_work.js` ; la scène s'y monte par `window.JarvisSceneViewSettings.mount(slot)`
+  de `control_center_scene_page.js`, plus d'enveloppe de `renderTab`) ; `shortcuts` · Raccourcis (order 20,
+  `SHORTCUTS_SECTION` de la page, ID = ancien ID d'onglet) ; `bare_hands` · Bare Hands (order 30, module Bare Hands).
+- Thème : un choix applique `activate(id)` (clé `jarvis.ui.theme` inchangée) et marque la carte en place, sans redessiner
+  (avant : `renderTab()` arrachait le focus du bouton radio). Réglages de la scène : clé `JarvisSceneView.KEY`,
+  « Réinitialiser » inchangés.
+- Raccourcis : unique éditeur de chaque raccourci, `wake_toggle` compris. Capture : `destroy` de la section l'annule
+  (changement de section, de catégorie, fermeture) ; après envoi, rien n'est redessiné si la section a été quittée
+  (`startCapture(button, isCurrent)`), sinon le focus revient sur la touche redessinée. L'Échap pendant la capture est
+  arrêté par l'écoute en capture de `window` (les Réglages restent ouverts). `#shortcutHint` devient `role=status`.
+  Voix › Tours & interruptions garde la touche en lecture seule + lien (contexte, pas un second éditeur : conservé).
+- Focus après lien interne, une fois dans le shell : `openSettingsLink(cible, {focus})` (= `context.open` des sections,
+  `openTab` des sous-agents, liens `data-voice-open`). Focus sur le sélecteur demandé s'il est dessiné (touche
+  `wake_toggle`, `#diagnostic_wake_word` pour « Voir le diagnostic » du Mot d'éveil), sinon sur l'entrée ouverte de
+  `#modalTabs` (« Régler la commande », renvois Work Methods / modèles) ; jamais `body`. « Voir le diagnostic mémoire »
+  garde son focus sur sa partie.
+- Bare Hands : préférences ordinaires (aperçu de cible, assistance, sensibilité, retour en veille, proposer la
+  calibration, Calibrer…, Effacer le profil, Réinitialiser les réglages, deux limites connues, état du cycle de vie en
+  lecture) dans `bare_hands`. La lecture de diagnostic à l'écran est traitée en outil d'opérateur (docs/07 : « if kept
+  operator-only » ; c'est une lecture de mesures) → Avancé. Le texte de « Réinitialiser » dit qu'elle touche aussi
+  cette case (comportement inchangé : `SETTINGS_DEFAULTS` + `enabled` reporté). `refreshPanel` ne dessine que si une
+  entrée est montée (`settingsShown`) ; `destroy` retire l'hôte (réponses tardives sans effet). `showSettings(clé)`
+  ouvre l'entrée qui porte la clé (`SECTION_ENTRY`, liée par test à `LEGACY_ANCHORS`) et ne redessine pas une entrée
+  déjà ouverte ; résultat `{ok, entry, section}` (l'ancien champ `tab` n'avait aucun lecteur, HUD compris).
+- Registre : ancres `barehandsRecord`/`barehandsBenchmarkSection` → `barehands_lab` ; `experimental.also` +
+  `barehands_lab` ; un lien « encore dans » n'apparaît plus vers une destination déjà enregistrée comme section dans la
+  catégorie (Interface ne renvoie plus vers Expérimental).
+
+### Table réglage → section
+
+| Réglage | Section |
+| --- | --- |
+| Thème Circuit imprimé / Cosmos (`localStorage` `jarvis.ui.theme`) | `interface_interactions` › `theme_scene` |
+| Étoiles et orbites (`localStorage` `JarvisSceneView.KEY`), « Réinitialiser » | `interface_interactions` › `theme_scene` |
+| Tous les raccourcis de `shortcuts.py` (`wake_toggle`, `ui_settings`, `ui_close`, panneaux, `ui_tab_next/prev`) | `interface_interactions` › `shortcuts` |
+| `targetPreview`, `assistance`, `sensitivity`, `sleepTimeoutMs`, `calibrationEnabled`, Calibrer…, Effacer le profil, Réinitialiser | `interface_interactions` › `bare_hands` |
+| `diagnostics` (lecture à l'écran), Test (`SECTION.benchmark`), Enregistrement (`SECTION.record`) | `advanced_diagnostics` › `barehands_lab` |
+| État des fichiers MediaPipe, dernière commande vocale | `advanced_diagnostics` › `diagnostics`, partie `barehands` |
+| Porte de test de la scène + redémarrage du cerveau | onglet `experimental` (inchangé, Slice 08) |
+
+### Pour la Slice 08 : entrées d'Avancé créées
+
+- Section `barehands_lab` (groupe `labs`, order 60, `save:'self'`, `advanced:true`, libellé « Bare Hands · essais »),
+  enregistrée par `control_center_barehands.js` (`installSettingsSections`, `SETTINGS_ENTRY.lab`).
+- Partie de diagnostic `barehands` (order 40, `registerSettingsDiagnostic`), même module.
+- État de `experimental` : **gardé** dans `TABS`, déclaré par la page (plus par Bare Hands), rangé dans Avancé ; il ne
+  porte plus que `control_center_scene_settings.js` (inchangé, il enveloppe toujours `renderTab`). `renderTab` rend un
+  contenu vide pour cet onglet, la scène s'y ajoute. Alias `experimental` → Labs inchangé. À la Slice 08 : enregistrer
+  la porte de la scène (Labs), retirer `experimental` de `TABS` et la branche `experimental` de `renderTab`/`modalSub`.
+
+### Fichiers
+
+`jarvis/runtime/control_center.html`, `control_center_work.js`, `control_center_scene_page.js`,
+`control_center_barehands.js`, `control_center_settings_registry.js`, `control_center_wake_word.js` ; docs
+`docs/settings/interface-interactions.md` (nouveau), `settings/INDEX.md`, `settings/settings-shell.md` (§ 3 liens
+internes, § 4 parties), `settings/navigation-registry.md`, `settings/voice-audio.md`, `legacy/settings-tab-aliases.md`,
+`OPERATIONS.md`, `barehands-contracts.md` ; fixture `tasks/jarvis-settings-model-catalog-ux/.../agent-cli-ui.json`
+(`shortcuts`, `appearance` → `rehosted_as_sections`) ; tests `test_interface_settings_browser.py` (nouveau),
+`test_control_center_appearance.py`, `test_scene_view_prefs.py`, `test_scene_settings_ui.py`,
+`test_barehands_tools_settings_js.py` (double du shell : entrées enregistrées), `test_barehands_palette_js.py`,
+`test_control_center_settings_registry_js.py` (`SLICE_06_SECTIONS`, ancres ↔ `SECTION_ENTRY`),
+`test_voice_settings_ui.py`, `test_voice_settings_surface.py`, `test_agent_cli_settings_ui.py`,
+`test_control_center_subagents_settings_js.py`, `test_settings_shell_browser.py`, `test_jarvis_wheel_browser.py`,
+`test_wake_word_settings_browser.py` (focus après « Voir le diagnostic »), `_wake_word_settings_browser.mjs` (F10, F11),
+`tests/integration/test_settings_redesign_migration.py`.
+
+### Tests (comptes exacts, depuis `setui` @ `2ec2a203`, `.venv` du dépôt principal)
+
+- mvp + quality + voice_architecture + voice_settings_ui + wake_word_settings_ui + agent_cli_settings_ui +
+  routing_settings_screen + catalog_ui + voice_architecture_ui_review : 209 passed.
+- memory_settings_js + subagents_settings_js + appearance + scene_settings_ui + scene_view_prefs +
+  barehands_tools_settings_js + barehands_cards_js + jarvis_wheel_js + mcp_inspector_js + control_center_memory_js :
+  179 passed.
+- settings_registry_js + settings_shell_js + intégration settings_redesign_migration + settings_ia_contract +
+  voice_settings_surface + voice_settings_schema + shell_layers + variants_css_orphans + control_center_prompts +
+  memory_settings_surface + memory_settings + memory_settings_endpoints : 273 passed.
+- documented_routes + delivery_quality + wake_word_docs + remotion_no_fallback_privacy : 105 passed.
+- `-k "shortcut and not browser"` : 16 passed. `-k "barehands and not browser"` : 1095 passed, 1 skipped, 2 failed
+  (`test_barehands_interaction_js::test_the_practice_frame_is_moved_by_one_zone_through_the_real_engine` et
+  `…_resizes_only_on_two_distinct_compatible_zones` : échouent aussi sur `f2e42635` et sur main `20292e5c`, worktree
+  jetable). `test_barehands_palette_js` (garde-fou de `refreshPanel` lu sur la source) corrigé pour `settingsShown`.
+- Navigateur (chaque commande < 600 s) : interface_settings_browser 9 passed ; settings_shell_browser + jarvis_wheel_browser
+  13 passed ; agents_models_settings_browser + memory_settings_browser 12 passed ; wake_word_settings_browser 10 + 10
+  passed ; dossier_fullscreen_browser + scene_task_graph_browser 35 passed, 3 skipped.
+- Balayage large sans navigateur (unit + intégration) : `-k "settings and not memory and not browser"` 714 passed,
+  1 failed ; `-k "control_center and not settings and not memory and not browser"` 809 passed, 6 failed, 1 skipped ;
+  `-k "memory and not browser"` 1312 passed, 4 skipped ; `-k "(subagent or work_method or routing or agent_cli or
+  catalog or knowledge or loadout or wheel or shell or registry) and not settings and not memory and not control_center
+  and not browser"` 1091 passed, 3 skipped ; `-k "(scene or theme or appearance or cosmos or wake or voice_settings) and
+  not settings and not memory and not control_center and not barehands and not browser and not subagent and not routing
+  and not wheel and not shell and not registry"` 2621 passed, 19 skipped, 1 failed. Échecs : les 7 préexistants de main
+  (`test_app::test_the_control_center_receives_a_tools_gateway_target_built_from_core_settings`, 6 ×
+  `test_control_center_mcp_api`) et `test_scene_group_drag_js::test_the_page_commits_a_group_drag_through_one_command_and_a_single_drag_unchanged`
+  (échoue aussi sur main `20292e5c`, worktree jetable ; hors du balayage des Slices précédentes).
+
+### Mutations (copie jetable `git worktree add --detach` de `2ec2a203` au scratchpad, supprimée ensuite) : 16/16 tuées
+
+M1 `wake_toggle` filtré hors des Raccourcis (navigateur) ; M2 `destroy` des Raccourcis sans annuler la capture (F10
+enregistré après départ) ; M3 focus non rendu à la touche après envoi ; M4 `openSettingsLink` sans pose du focus ;
+M5 thème : section redessinée au choix (node) ; M6 clé `localStorage` du thème changée (navigateur) ; M7 vue de la scène
+non détruite ; M8 Bare Hands dessine sans hôte monté ; M9 `destroy` Bare Hands garde l'hôte ; M10 la réinitialisation
+allume Bare Hands (navigateur, POST `enabled:true`) ; M11 lecture de diagnostic remise dans la section ordinaire ;
+M12 ancre `barehandsRecord` → `labs` ; M13 lien « encore dans » vers une section déjà enregistrée ; M14 Bare Hands
+réinjecte un onglet ; M15 la capture laisse passer Échap jusqu'au shell (Réglages fermés) ; M16 lien de Voix sans cible
+de focus.
+
+### Preuves
+
+Bac à sable `setui` (Core 127.77.0.1:27653, Control Center 127.0.0.1:27654, données/runtime au scratchpad `s06`,
+visualiseur coupé), Chrome sans tête par CDP (`_wake_word_settings_browser.mjs`) : `evidence/s06/` — 31 PNG quantifiés
+(2,5 Mo) : six vues (Thème & scène, Raccourcis, Bare Hands, Bare Hands · essais, Diagnostics, Expérimental) ×
+{1920×1080, 1366×768} × {100 %, 125 % = largeur CSS /1,25}, détails ouverts, plus capture en cours, raccourci enregistré,
+Tours en lecture seule, focus après lien, confirmation de réinitialisation Bare Hands, Cosmos, thème après rechargement ;
+`runtime-check.json`. Constats : débordement horizontal 0 partout ; Cosmos appliqué tout de suite (`jarvis.ui.theme` =
+`cosmos`, focus resté sur le bouton radio), relu après rechargement, remis à Circuit imprimé ; taille des étoiles
+écrite sous `JarvisSceneView.KEY` puis réinitialisée ; capture + Échap : Réglages ouverts, touche inchangée,
+« Capture annulée. » ; F10 → un seul POST `/api/shortcuts` `{"shortcuts":{"wake_toggle":"f10"}}`, focus sur la touche,
+un seul éditeur ; Voix › Tours montre `f10` (0 éditeur), le lien ouvre Raccourcis avec le focus sur la touche ;
+Bare Hands : aperçu décoché puis réinitialisé (deux POST `/api/barehands`, `enabled:false` les deux fois, cycle de vie
+`off` avant/après) ; alias `appearance`, `shortcuts`, `barehandsSettings`, `barehandsRecord`, `experimental` ;
+clavier seul : Début + 3 × flèche + Entrée sur le rail → Interface, Tab × 2 → entrées, Début + flèche droite + Entrée →
+Raccourcis, Tab → touche `wake_toggle`, Entrée → capture, Échap → annulée (Réglages ouverts, focus sur la touche) ;
+console vide. Le fichier de réglages du bac à sable porte `wake_toggle` = `f10` ; celui du poste de l'utilisateur
+(`C:/Projects/jarvis/jarvis/runtime/control-center-settings.json`, lu seulement) garde `manual_wake_key` = `f9`.
+PID arrêtés un par un après vérification de leur ligne de commande, sans `/T` : 26560 (cerveau claude du bac à sable,
+`--mcp-config` sous `scratchpad\s06` ; ses dix MCP partis avec lui, vérifié), 28140 (Control Center ; lanceur 35964
+parti avec lui), 37096 (Core ; lanceur 5780 parti avec lui). Core utilisateur 17653 (PID 31824) intact. Données du bac à
+sable laissées en place.
+
+### Écarts et reports
+
+- `experimental` gardé (porte de la scène, Slice 08), libellé « Expérimental » inchangé, rangé dans Avancé.
+- Non couvert par un test : la garde `isCurrent` de la réponse tardive d'un enregistrement de raccourci (code présent,
+  mutation non construite) ; le chargement de `/api/shortcuts` dans la section quand les raccourcis ne sont pas encore
+  lus (le démarrage de la page les lit toujours).
+- À 1093×614, la liste des entrées d'Avancé défile horizontalement (Prompts, Expérimental hors vue : comportement des
+  listes étroites de la Slice 02) ; « Arrêter » de l'enregistrement s'étire sur la ligne (mise en page héritée
+  `.field.inline`). Pour la Slice 10.
+- Les commentaires historiques de `control_center_barehands.js` et de `docs/barehands-contracts.md` parlent encore de
+  « l'onglet Expérimental » (notes de Slices passées ; tête de fichier et tableaux d'entrée corrigés).

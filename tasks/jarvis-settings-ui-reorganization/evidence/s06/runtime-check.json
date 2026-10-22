@@ -1,0 +1,350 @@
+{
+  "sandbox": {
+    "core": "127.77.0.1:27653",
+    "control_center": "127.0.0.1:27654",
+    "data_root": "scratchpad/s06/data",
+    "runtime_dir": "scratchpad/s06/runtime",
+    "visualizer": false
+  },
+  "values": {
+    "overflow-1920x1080-100-theme_scene": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1920x1080-100-shortcuts": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1920x1080-100-bare_hands": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1920x1080-100-barehands_lab": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1920x1080-100-diagnostics": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1920x1080-100-experimental": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1366x768-100-theme_scene": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1366x768-100-shortcuts": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1366x768-100-bare_hands": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1366x768-100-barehands_lab": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1366x768-100-diagnostics": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1366x768-100-experimental": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1920x1080-125-theme_scene": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1920x1080-125-shortcuts": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1920x1080-125-bare_hands": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1920x1080-125-barehands_lab": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1920x1080-125-diagnostics": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1920x1080-125-experimental": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1366x768-125-theme_scene": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1366x768-125-shortcuts": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1366x768-125-bare_hands": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1366x768-125-barehands_lab": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1366x768-125-diagnostics": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "overflow-1366x768-125-experimental": {
+      "page": 0,
+      "content": 0,
+      "main": 0
+    },
+    "theme-before": {
+      "theme": "circuit-board",
+      "stored": null
+    },
+    "theme-cosmos": {
+      "theme": "cosmos",
+      "stored": "cosmos",
+      "focus": {
+        "id": null,
+        "shortcut": null,
+        "section": null,
+        "category": null,
+        "name": "jarvisTheme",
+        "tag": "INPUT"
+      }
+    },
+    "scene-changed": {
+      "field": "scView_size",
+      "stored": "{\"version\":1,\"view\":{\"size\":2.4,\"halo\":1,\"breathe\":true,\"orbit\":true,\"spread\":1,\"speed\":1,\"links\":true,\"showEphemeral\":true,\"showHidden\":false}}"
+    },
+    "scene-reset": {
+      "stored": "{\"version\":1,\"view\":{\"size\":1,\"halo\":1,\"breathe\":true,\"orbit\":true,\"spread\":1,\"speed\":1,\"links\":true,\"showEphemeral\":true,\"showHidden\":false}}",
+      "resetDisabled": true
+    },
+    "wake-before": "f11",
+    "capture-cancelled": {
+      "open": true,
+      "capture": false,
+      "key": "f11",
+      "hint": "Capture annulée."
+    },
+    "capture-saved": {
+      "key": "f10",
+      "focus": {
+        "id": null,
+        "shortcut": "wake_toggle",
+        "section": null,
+        "category": null,
+        "name": null,
+        "tag": "BUTTON"
+      },
+      "editors": 1
+    },
+    "voice-turns": {
+      "kbd": "f10",
+      "editors": 0
+    },
+    "voice-link": {
+      "where": [
+        "interface_interactions",
+        "shortcuts"
+      ],
+      "focus": {
+        "id": null,
+        "shortcut": "wake_toggle",
+        "section": null,
+        "category": null,
+        "name": null,
+        "tag": "BUTTON"
+      }
+    },
+    "bh-before": {
+      "preview": true,
+      "enabled": false,
+      "lifecycle": "\"off\""
+    },
+    "bh-saved": {
+      "preview": false,
+      "enabled": false
+    },
+    "bh-reset": {
+      "preview": true,
+      "enabled": false,
+      "lifecycle": "\"off\"",
+      "open": true
+    },
+    "aliases": {
+      "appearance": [
+        "interface_interactions",
+        null,
+        "theme_scene"
+      ],
+      "shortcuts": [
+        "interface_interactions",
+        null,
+        "shortcuts"
+      ],
+      "barehandsSettings": [
+        "interface_interactions",
+        null,
+        "bare_hands"
+      ],
+      "barehandsRecord": [
+        "advanced_diagnostics",
+        null,
+        "barehands_lab"
+      ],
+      "experimental": [
+        "advanced_diagnostics",
+        "experimental",
+        null
+      ]
+    },
+    "kbd-category": {
+      "category": "interface_interactions",
+      "focus": {
+        "id": "settingsCat-interface_interactions",
+        "shortcut": null,
+        "section": null,
+        "category": "interface_interactions",
+        "name": null,
+        "tag": "BUTTON"
+      }
+    },
+    "kbd-tab2": {
+      "id": null,
+      "shortcut": null,
+      "section": "bare_hands",
+      "category": null,
+      "name": null,
+      "tag": "BUTTON"
+    },
+    "kbd-item": {
+      "section": "shortcuts",
+      "focus": {
+        "id": null,
+        "shortcut": null,
+        "section": "shortcuts",
+        "category": null,
+        "name": null,
+        "tag": "BUTTON"
+      }
+    },
+    "kbd-tab-a": {
+      "id": null,
+      "shortcut": "wake_toggle",
+      "section": null,
+      "category": null,
+      "name": null,
+      "tag": "BUTTON"
+    },
+    "kbd-tab-b": {
+      "id": null,
+      "shortcut": "ui_settings",
+      "section": null,
+      "category": null,
+      "name": null,
+      "tag": "BUTTON"
+    },
+    "kbd-tab-c": {
+      "id": null,
+      "shortcut": "ui_close",
+      "section": null,
+      "category": null,
+      "name": null,
+      "tag": "BUTTON"
+    },
+    "kbd-keycap": true,
+    "kbd-capturing": true,
+    "kbd-cancel": {
+      "open": true,
+      "capture": false,
+      "focus": {
+        "id": null,
+        "shortcut": "wake_toggle",
+        "section": null,
+        "category": null,
+        "name": null,
+        "tag": "BUTTON"
+      }
+    },
+    "kbd-closed": false,
+    "reload-theme": {
+      "theme": "cosmos",
+      "stored": "cosmos",
+      "checked": "cosmos"
+    },
+    "theme-restored": "circuit-board"
+  },
+  "posts": [
+    {
+      "path": "/api/shortcuts",
+      "body": {
+        "shortcuts": {
+          "wake_toggle": "f10"
+        }
+      }
+    },
+    {
+      "path": "/api/barehands",
+      "body": {
+        "schema_version": 2,
+        "enabled": false,
+        "target_preview": false,
+        "sleep_timeout_ms": 30000,
+        "tool": "pointer",
+        "assistance": 0.5,
+        "sensitivity": 1,
+        "tutorial_seen": false,
+        "calibration_enabled": true,
+        "diagnostics": false
+      }
+    },
+    {
+      "path": "/api/barehands",
+      "body": {
+        "schema_version": 2,
+        "enabled": false,
+        "target_preview": true,
+        "sleep_timeout_ms": 30000,
+        "tool": "pointer",
+        "assistance": 0.5,
+        "sensitivity": 1,
+        "tutorial_seen": false,
+        "calibration_enabled": true,
+        "diagnostics": false
+      }
+    }
+  ],
+  "console": []
+}
