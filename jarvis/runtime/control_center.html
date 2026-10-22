@@ -1026,8 +1026,10 @@ details.rd[open]>summary{margin-bottom:14px}
 .catalog-toolbar input:focus-visible,.catalog-toolbar select:focus-visible,.catalog-filter input:focus-visible,.catalog-table button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .catalog-filters{display:flex;gap:8px;overflow-x:auto;padding:1px 1px 5px}
 /* Dans les Réglages, les filtres passent à la ligne au lieu de défiler sous la colonne : à 1366×768 la moitié d'entre
-   eux était coupée hors de vue (finitions avant la Slice 10). */
+   eux était coupée hors de vue (finitions avant la Slice 10). Un groupe de filtres plus large que la colonne (catalogue
+   comparatif de Voix) passe lui aussi à la ligne. */
 .settings-shell .catalog-filters{flex-wrap:wrap;overflow-x:visible}
+.settings-shell .catalog-filter{min-width:0;max-width:100%;flex-wrap:wrap}
 .catalog-filter{display:flex;gap:8px;align-items:center;min-width:max-content;margin:0;padding:7px 9px;border:1px solid var(--line);border-radius:6px}
 .catalog-filter legend{padding:0 4px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .catalog-filter label{font-size:11px;color:var(--text);white-space:nowrap}.catalog-filter input{accent-color:var(--accent)}
