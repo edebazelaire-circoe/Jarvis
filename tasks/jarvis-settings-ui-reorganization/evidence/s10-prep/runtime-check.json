@@ -1,0 +1,193 @@
+{
+ "pass": "Passe de finitions avant la Slice 10 (jarvis-settings-ui-reorganization)",
+ "sandbox": {
+  "cwd": "C:/Projects/jarvis/setui",
+  "core": "127.77.0.1:27653",
+  "control_center": "127.0.0.1:27654",
+  "data_root": "scratchpad/s10p/data",
+  "runtime_dir": "scratchpad/s10p/runtime",
+  "visualizer": "off",
+  "driver": "tests/unit/_wake_word_settings_browser.mjs (vrais clics et frappes CDP, Chrome sans tête)",
+  "pids": {
+   "core": [
+    2924,
+    15048
+   ],
+   "control_center": [
+    37120,
+    11224
+   ],
+   "brain_claude": 22060
+  },
+  "user_runtime_untouched": {
+   "core_17653_pid": 31824,
+   "control_center_17654_pid": 34676
+  }
+ },
+ "screenshots": {
+  "01-lien-raccourci-souris.png": "Tours › « Modifier dans … » cliqué à la souris : touche wake_toggle focalisée, contour visible (1440×900)",
+  "02-lien-diagnostic-memoire.png": "Rappel › « Voir le diagnostic mémoire » : partie Mémoire focalisée, contour visible",
+  "03-memoire-enregistree-focus.png": "« Enregistrer la mémoire » au clavier : focus resté sur le bouton après l'envoi",
+  "04-scene-tete-de-section.png": "Scène constellation : tête de section du shell, badges Avancé et Mode test",
+  "05-memory-center-sante.png": "Memory Center › Santé des index : bouton « Ouvrir les réglages mémoire »",
+  "06-avance-labs-1366.png": "Avancé à 1366×768 : Labs en seconde ligne, sans filet à gauche",
+  "07-arreter-1366.png": "Bare Hands · essais : « Arrêter » à sa largeur",
+  "08-filtres-catalogue-1366.png": "Modèles des sous-agents : filtres du catalogue passés à la ligne, aucun coupé",
+  "09-avance-1093.png": "Avancé à 1093×614 (1366×768 à 125 %) : liste sans défilement",
+  "10-couleurs-forcees.png": "Couleurs forcées émulées : focus en Highlight, désactivé en GrayText"
+ },
+ "findings": {
+  "link_shortcut": {
+   "id": null,
+   "tag": "BUTTON",
+   "inShell": true,
+   "landed": true,
+   "outline": true,
+   "section": "shortcuts",
+   "key": "wake_toggle"
+  },
+  "link_memory_diag": {
+   "id": "diagnostic_memory",
+   "tag": "SECTION",
+   "inShell": true,
+   "landed": true,
+   "outline": true,
+   "section": "diagnostics",
+   "key": null
+  },
+  "field_cli_model": {
+   "id": "f_cli_model",
+   "tag": "SELECT",
+   "inShell": true,
+   "landed": false,
+   "outline": true,
+   "section": "main_agent",
+   "key": null
+  },
+  "ctrl_right_from_content": {
+   "id": null,
+   "tag": "BUTTON",
+   "inShell": true,
+   "landed": true,
+   "outline": true,
+   "section": "providers",
+   "key": null
+  },
+  "memory_value": "4",
+  "memory_save_focus": {
+   "id": null,
+   "tag": "BUTTON",
+   "inShell": true,
+   "landed": false,
+   "outline": true,
+   "section": "recall",
+   "key": "mem_save"
+  },
+  "scene_head": [
+   true,
+   "Scène constellation"
+  ],
+  "work_methods_head": true,
+  "memory_center_button": [
+   "memory_knowledge",
+   "recall",
+   []
+  ],
+  "layout_1366": {
+   "list": {
+    "scroll": 0,
+    "lineStarts": [
+     [
+      "architecture_compat",
+      true
+     ],
+     [
+      "labs",
+      true
+     ]
+    ],
+    "inner": [
+     [
+      "prompts",
+      true
+     ],
+     [
+      "runtime_cli",
+      true
+     ],
+     [
+      "diagnostics",
+      true
+     ]
+    ],
+    "hidden": []
+   },
+   "filters": {
+    "scroll": 0,
+    "cut": 0,
+    "count": 4
+   },
+   "stop": 56.875,
+   "content": 0
+  },
+  "layout_1093": {
+   "list": {
+    "scroll": 0,
+    "lineStarts": [
+     [
+      "architecture_compat",
+      true
+     ],
+     [
+      "labs",
+      true
+     ]
+    ],
+    "inner": [
+     [
+      "prompts",
+      true
+     ],
+     [
+      "runtime_cli",
+      true
+     ],
+     [
+      "diagnostics",
+      true
+     ]
+    ],
+    "hidden": []
+   },
+   "filters": {
+    "scroll": 0,
+    "cut": 0,
+    "count": 4
+   },
+   "stop": 56.875,
+   "content": 0
+  },
+  "reduced_motion": {
+   "cat": "1e-05s",
+   "anim": "1e-05s",
+   "iterations": "1",
+   "transition": "1e-05s"
+  },
+  "forced_colors": {
+   "focus": true,
+   "disabled": true
+  },
+  "contrast": {
+   "measured": 29,
+   "min": 4.64,
+   "below_4_5": []
+  },
+  "console_exceptions": [],
+  "posts": [
+   {
+    "path": "/api/settings",
+    "body": "{\"memory\":{\"recall\":{\"max_items\":4}}}"
+   }
+  ]
+ }
+}

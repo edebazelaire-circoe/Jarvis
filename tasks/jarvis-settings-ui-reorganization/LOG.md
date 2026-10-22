@@ -979,3 +979,137 @@ Non bloquants, confiés à la passe de finitions avant la Slice 10 :
 - N4 : `workspace.unknown_action {"name":"settings"}` au clic du Memory Center (préexistant, déjà relevé en S05).
 - N5 : le message Bare Hands « avec l'accord de l'utilisateur » contredit `BRAIN_SETTINGS_PROMPT` ; décision agent 0
   (option recommandée) : aligner le message sur la politique du prompt de réglages existant.
+
+## 2026-10-23 - Passe de finitions avant S10
+
+Seul writer de `setui`, depuis `4602d3af`. Reports non bloquants des Slices 00-09 (entrées de décision QA et lignes
+« Reporté »), dédoublonnés.
+
+### Reports et leur sort
+
+| Item | Origine | Décision |
+| --- | --- | --- |
+| Bande de pied vide sur les entrées sans Enregistrer | S02 | déjà résolu (pied caché si `save` ≠ `footer`, S02) |
+| Rangée « encore dans » encombrée dans Avancé | S02 | déjà résolu (liens retirés, S09) |
+| Contraste des états désactivés / lecture seule | S02, re-QA S02 | corrigé : opacité 0,7 dans le shell, ≥ 4,5:1 mesuré sur toutes les sections (`511f4253`) |
+| Couleurs forcées non vérifiées | re-QA S02 | corrigé : focus et arrivées en `Highlight`, désactivés en `GrayText` ; testé en émulation (`511f4253`) |
+| Mouvement réduit limité au shell | S02 | corrigé : animations et transitions des modules aussi (`511f4253`) |
+| Route clavier seule de la roue, raccourci `s`, Échap sous une confirmation | re-QA S02 | hors périmètre : vérifications de la QA S10 (aucun défaut connu) |
+| Action de roue qui cache un élément focalisé hors d'elle | re-QA S02 | hors périmètre : aucun cas dans le dépôt |
+| Focus sur BODY après « Modifier dans … › Raccourcis », « Voir le diagnostic » | S03 | déjà résolu en S06 (`openSettingsLink`) ; contour ajouté (`ff976902`) |
+| Premier Tab parti une fois sur `dockMore` | S03 | non reproduit (à revoir par la QA S10 au clavier) |
+| Lenteur du test du détecteur (attente 15 s) | S03 | hors périmètre : harnais de test, pas de défaut produit |
+| `installVoiceSettingsSections()` gardé par un test de texte (N-a) | S03 | déjà couvert : retirer l'appel fait échouer `test_settings_shell_browser` (mutation M22) |
+| Focus sur BODY après « Régler la commande », renvois Work Methods | S04 | déjà résolu en S06 ; arrivée marquée (`ff976902`) |
+| Titre / pastille de Work Methods apprises | S04 | corrigé : tête de section du shell (`9fb8fd54`) |
+| Commentaires citant des routes dans `control_center.html` | S04 | vérifié : aucune route citée en commentaire qui ne soit enregistrée par le serveur |
+| Filtres du catalogue coupés à 1366×768 | S04 | corrigé : passage à la ligne, groupe trop large compris (`9fb8fd54`, `9532eb25`) |
+| Pas de contour au focus de `#f_cli_model` | S04 | corrigé : `.field input:focus{outline:none}` n'efface plus le contour dans le shell (`ff976902`) |
+| Focus sur BODY après « Enregistrer la mémoire » | S05 | corrigé : `keepFocus`, boutons `aria-disabled` (`2e124a60`) |
+| Focus sur BODY après changement de section | S05 | corrigé : depuis le contenu (Ctrl+→), focus sur l'entrée ouverte, arrivée marquée (`2e124a60`, `b7155dac`) |
+| Brouillon mémoire jeté à la fermeture sans prévenir | S05 | hors périmètre : décision produit (ci-dessous) |
+| Message de refus non revu après changement de section | S05 | hors périmètre : le brouillon est gardé ; le message dit ce qui vient d'arriver (règle N4 de S05) |
+| Test du maintien en vue aveugle à `capture` (M4) | S05, S06 | corrigé : double DOM sensible à l'option (M17 tuée, `2e124a60`) |
+| `ARCHITECTURE.md:102`, `memory.md:830` (onglet Mémoire) | S05 | corrigé (`2e124a60`) |
+| « Sidecar Tencent » répété | S05 | corrigé : « Sidecar actif », « Recherche sémantique active » (`2e124a60`) |
+| `workspace.unknown_action {"name":"settings"}` | S05, S09 N4 | corrigé : Sessions & Boards ignore les clics et envois du Memory Center qu'il héberge (`2e124a60`) |
+| Échec ponctuel non identifié d'une passe navigateur groupée | S05 | non reproduit ; un seul échec d'infrastructure vu ici (Chrome sans port de débogage), relancé vert |
+| Garde de réponse tardive d'un raccourci | S06 | déjà résolu au retravail S06 (B2) |
+| `/api/shortcuts` lu par la section si absent | S06 | hors périmètre : chemin inatteignable (la page les lit au démarrage), non testé |
+| Liste d'Avancé qui défile à 1093 px | S06 | déjà résolu en S08 (passage à la ligne) ; test ajouté à 1093×614 (`464dc166`) |
+| « Arrêter » étiré | S06 | corrigé : règle dans la page, la feuille Bare Hands n'existant que Bare Hands allumé (`ff976902`) |
+| Mentions « onglet Expérimental » | S06, S08 | déjà résolu en S09 ; restes historiques volontaires (« ancien onglet ») |
+| Tab enregistré pendant une capture | S06 | voulu : `shortcuts.py` accepte `Tab` ; documenté (`interface-interactions.md` § 3), inchangé |
+| Pas de contour après lien suivi à la souris | S06 | corrigé : `landFocus` (`data-settings-landed`, `ff976902`) |
+| `outline:none` des contrôles Bare Hands | S06 | corrigé (même règle que `#f_cli_model`) |
+| « Barehands éteint » | S06 | corrigé : « Bare Hands … » pour tous les états, OPERATIONS.md suivi (`ff976902`) |
+| Lien des modèles remplacé pendant le chargement des sous-agents | S06 | corrigé : `keepFocus` dans la vue des rôles (`ff976902`) |
+| Croissance de Voix non prouvée en navigateur | S06 | corrigé : test qui ajoute 1 600 px APRÈS le lien (`ff976902`) |
+| Retrait des écoutes avec `capture` non testé | S06 | corrigé (voir M4 de S05) |
+| `block:'start'` pour les petites cibles | S06 | corrigé : `nearest` pour une touche ou un bouton, `start` pour une partie (`ff976902`) |
+| Profil Chrome `.tmp-cosmos/` à la racine | S06 | hors périmètre : non touché, à nettoyer en fin de tâche |
+| N3 régions vivantes recréées, statut hors de vue | S07 | corrigé : nœuds stables, erreur collée en haut, succès sur la carte focalisée (`630c8850`) |
+| N5 message serveur réaffiché tel quel | S07 | conforme : message réel du serveur (règle des erreurs), inchangé |
+| N6 contour de la carte focalisée | S07 | corrigé (`landFocus`, `630c8850`) |
+| N7 « API Keys » dans `plan-outils-interface.md:118` | S07 | hors périmètre : plan historique déclaré en tête du document |
+| Renommer une clé | S07 | décision produit (ci-dessous) |
+| Filet gauche de Labs en début de ligne | S08 | corrigé (`464dc166`) |
+| Scène sans `JarvisSettingsUI.section` | S08 | corrigé : tête du shell, badges « Avancé » et « Mode test » (`464dc166`) |
+| Texte en cours d'une autre couche perdu à l'enregistrement | S08 | décision produit (ci-dessous) |
+| Minuteur du redémarrage non arrêté par `destroy` | S08 | corrigé : compteur arrêté au départ, repris au retour ; échéance inchangée (`464dc166`) |
+| Tests : réponse tardive de la scène, débordement 1093×614, Q7, Q8 | S08 | corrigé : tests navigateur, mutations M9, M10, M23, M24 tuées (`464dc166`) |
+| N1 test Memory Center › Réglages | S09 | corrigé (`2e124a60`) |
+| N2 tests des messages corrigés (Q6-Q8) | S09 | corrigé : destinations des messages vérifiées sur le registre vivant (M19 tuée, `5e56bf85`) |
+| N3 commentaires et docs périmés | S09 | corrigé (`5e56bf85`) |
+| N5 message Bare Hands contre `BRAIN_SETTINGS_PROMPT` | S09 | corrigé : allumer sur demande sans redemander de confirmation ni renvoyer à l'interface (`5e56bf85`) |
+| Code mort `authSectionHtml`, `aecHtml`, `renderField`, `data-refresh` | S08, S09 | corrigé : retirés avec leurs aides (`authVerdictHtml`, `authEffectiveHtml`, `verifierHtml`, `catalog()`), déjà sans appelant sur main (`5e56bf85`) |
+| `EXTRA_CATEGORIES` de `settings_mcp.py` jamais lue | S09 | hors périmètre : constante du serveur MCP, pas des Réglages |
+| Doubles de test Bare Hands avec `TABS` sentinelle | S09 | hors périmètre : sans effet |
+
+### Commits
+
+`5e56bf85` S9, `2e124a60` S5, `9fb8fd54` S4, `ff976902` S6, `630c8850` S7, `464dc166` S8, `511f4253` S2, `9532eb25` S4
+(groupe de filtres trop large, trouvé par `test_open_voice_model_comparison_does_not_overflow`), `b7155dac` S5 (arrivée
+sans contour après Ctrl+→, trouvée en bac à sable). Commits séparés par indexation de hunks : seul l'état final a été
+testé, pas chaque commit isolément.
+
+### Tests (depuis `setui`, `.venv` du dépôt principal, chaque commande < 600 s, sorties au scratchpad `s10p/logs`)
+
+- Hors navigateur : lot A 209 passed ; lot B 179 passed ; lot C 276 passed + 1 failed (`z-index` non déclaré de
+  l'erreur collée, retiré) puis `test_control_center_shell_layers` 12 passed ; lot D + canal Bare Hands + palette +
+  settings_mcp 302 passed ; workspace js + presentations js + cycle de vie et contrats Bare Hands 100 passed.
+- Navigateur : memory + connections 17 ; settings_shell + wheel 11 passed + 2 failed (filtres du comparatif Voix,
+  corrigé par `9532eb25`) puis settings_shell 9 ; agents_models + wheel 10 ; interface 13 + 1 échec d'infrastructure
+  (Chrome sans port) puis ce test 4 passed ; advanced + destinations 10 ; accessibilité 9 ; wake_word 10 + 10 ;
+  memory 7 ; connections 10 ; dossier_fullscreen 19 + 3 skipped ; workspace_manager 2. Après `b7155dac` :
+  settings_shell + accessibilité 18 ; interface 14.
+- Balayage (unit + intégration) : settings 723 / 1 failed ; control_center 809 / 6 failed / 1 skipped ; scene ou prompt
+  2305 / 2 failed / 17 skipped ; barehands ou shortcut 1109 / 2 failed / 1 skipped ; agents, catalogue, workspace, app
+  2127 / 1 failed / 4 skipped ; memory 1311 / 1 failed / 4 skipped. Total 8384 passed, 13 failed : les 12 préexistants
+  de `20292e5c` et l'intermittent `test_memory_context::…2000_notes…`.
+
+### Mutations (worktree jetable `git worktree add --detach` au scratchpad, supprimé) : 24/24 tuées
+
+M1 garde Memory Center retirée ; M2 `disabled` au lieu d'`aria-disabled` ; M3 rendu mémoire sans `keepFocus` ; M4 pas
+de reprise du focus au changement de section ; M5 arrivée non marquée ; M6 contour des champs hérités retiré ; M7 rôles
+sans `keepFocus` ; M8 régions vivantes recréées ; M9 compteur gardé par `destroy` ; M10 compteur non repris ; M11 filet
+de Labs d'avant ; M12 « Arrêter » étiré ; M13 filtres qui défilent ; M14 opacité des désactivés retirée ; M15 opacité
+non forcée en couleurs forcées ; M16 mouvement réduit limité ; M17 retrait sans `capture` ; M18 message Bare Hands
+« avec l'accord » ; M19 message de `app.py` sur l'onglet Mode vocal ; M20 Work Methods sans tête ; M21 Scène sans
+primitives ; M22 `installVoiceSettingsSections()` non appelé (survivante contre le test du Memory Center, mauvais
+choix de test, tuée par `test_settings_shell_browser`) ; M23 erreur de la scène gardée au remontage (Q7) ;
+M24 `SET.data.scene` non posé par la réponse (Q8). Non testés : `block:'nearest'` (position), garde du bouton
+« Annuler les changements » sur un brouillon vide (mutation équivalente).
+
+### Preuves
+
+Bac à sable `setui` (Core 127.77.0.1:27653, Control Center 127.0.0.1:27654, données et runtime au scratchpad `s10p`,
+visualiseur coupé), vrais clics et frappes CDP : `evidence/s10-prep/` — 10 PNG quantifiés (0,72 Mo) et
+`runtime-check.json`. Constats : arrivées marquées avec contour après lien à la souris (raccourci, diagnostic mémoire)
+et après Ctrl+→ ; `#f_cli_model` avec contour ; focus sur « Enregistrer la mémoire » après l'envoi (un POST
+`{"memory":{"recall":{"max_items":4}}}`) ; Scène et Work Methods avec tête de section ; Memory Center › « Ouvrir les
+réglages mémoire » → `memory_knowledge`/`recall`, aucun `unknown_action` ; Labs sans filet en début de ligne à 1366 et
+1093, liste sans défilement, filtres tous visibles, « Arrêter » 57 px ; contraste minimal 4,64 sur 29 éléments
+désactivés ou en lecture seule ; mouvement réduit 0,01 ms ; couleurs forcées conformes ; aucune exception console.
+PID lancés puis arrêtés un par un après vérification de la ligne de commande et du port, sans `/T` : 22060 (cerveau
+claude, `--mcp-config` sous `scratchpad\s10p` ; ses 10 MCP partis avec lui, vérifié), 11224 (Control Center, 27654 ;
+lanceur 37120 parti avec lui), 15048 (Core, 27653 ; lanceur 2924 parti avec lui). Core utilisateur 17653 (PID 31824) et
+Control Center 17654 (PID 34676) intacts. Disque C : 58 à 60 Go libres.
+
+### Décisions produit laissées au Human
+
+- Prévenir à la fermeture des Réglages quand un brouillon mémoire non enregistré serait perdu.
+- Garder le texte en cours des autres couches de l'atelier de prompts quand on en enregistre une.
+- Renommer une clé de fournisseur (le magasin le permet ; non offert).
+- Verdicts en clair de Solo Owner et de l'annulation d'écho, commande de réparation du vérificateur : leur rendu lisible
+  (`authVerdictHtml`, `verifierHtml`…) n'était plus appelé sur main avant cette tâche ; Diagnostics les montre en JSON.
+  Les remettre en clair serait une nouvelle fonctionnalité.
+
+### Écarts et doutes
+
+- Le premier test choisi pour M22 ne tuait pas la mutation (une attente `wait` vaine du harnais ne fait pas échouer un
+  test à elle seule) : refait avec le bon test. Chaque nouveau test vérifie l'état par une évaluation, pas par une
+  attente.
+- La feuille de style du module Bare Hands n'est injectée que Bare Hands allumé : ses règles de section (espacements,
+  contour des boutons radio) manquent quand il est éteint. Préexistant, non changé (le contour du shell couvre le focus).
+- Commits séparés par hunks : seul l'état final et ses suites ont été testés.
