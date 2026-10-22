@@ -287,3 +287,24 @@ des nombres repliée à 125 % (corrigé, `28e055d8`). PID arrêtés un par un ap
 sans `/T` : 22472 (cerveau claude du bac à sable, enfant du Control Center ; ses dix MCP partis avec lui, vérifié),
 26960 (Control Center ; lanceur 3776 parti avec lui), 528 (Core ; lanceur 17780 parti avec lui). Core utilisateur 17653
 (PID 31824) intact. Données du bac à sable laissées en place.
+
+## 2026-10-22 - Slice 05 — retravail (QA)
+
+- B1 (`c6d85fb7`) : le store tient ses vues vivantes (`views`) ; `submit` et la lecture partagée redessinent toutes les vues à
+  leur issue (succès et refus). La section ouverte pendant un envoi n'est plus figée sur « Enregistrement… » : elle montre
+  le message réel, ses champs réactivés, l'avis et « Enregistre aussi… » selon le brouillon réel. Une vue détruite quitte
+  le store. Tests : `test_leaving_a_section_during_a_save_redraws_the_section_now_shown[succès|refus]`.
+- N4 : une vue montée après un enregistrement terminé ne reprend ni le message ni l'avis d'après-enregistrement (gardés si
+  l'envoi est en cours). Test : `test_a_section_opened_after_a_save_does_not_repeat_its_message`.
+- N2 : le maintien en vue de la partie Mémoire rend la main à molette, touche, pointeur et toucher (écoutes en capture sur
+  le contenu) ; minuteur de 4 s, écoutes et observateur arrêtés par `stopMemoryDiagnosticPin`, appelé par le `destroy` de
+  la partie (changement de section ou de catégorie, fermeture) et par un nouveau lien. Commentaire corrigé. Test node sur
+  le vrai code de la page : `test_the_diagnostic_pin_yields_to_any_user_scroll_and_is_cleaned_up`.
+- Mutations (copie jetable `git worktree add --detach`, supprimée) : 7/7 tuées — R1 `submit` ne redessine que sa vue,
+  R2 vue non inscrite au store, R3 vue détruite gardée au store, R4 message repris par une vue montée après, R5 minuteur
+  de 4 s et écoute de la molette retirés (mutation de la QA), R6 le clavier ne rend pas la main, R7 `destroy` n'arrête pas
+  le maintien.
+- Tests @ `c6d85fb7` : memory_settings_js + memory_settings_surface + memory_settings + memory_settings_endpoints +
+  control_center_memory_js + registry_js + shell_js + intégration settings_redesign_migration + quality + mvp : 347 passed.
+  `test_memory_settings_browser` deux passes : 6 + 6 passed ; `test_settings_shell_browser` deux passes : 9 + 9 passed.
+  Aucun bac à sable lancé.
