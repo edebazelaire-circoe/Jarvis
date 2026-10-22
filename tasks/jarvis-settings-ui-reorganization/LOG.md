@@ -612,3 +612,29 @@ Données du bac à sable laissées en place.
 - « Remplacer la valeur » garde le nom ; renommer une clé n'est pas offert (hors périmètre, le magasin le permet).
 - La région d'état garde le dernier message jusqu'à l'action suivante (comme avant).
 - « API Keys » subsiste dans `docs/mcp/plan-outils-interface.md` (note historique d'une autre tâche).
+
+## S07 — décision QA (agent 0), 2026-10-22
+
+QA indépendante : **approuvable, aucun finding bloquant**. Charges et routes identiques à `tabKeys` (six POST vérifiés en
+bac à sable) ; remplacement par `id` préexistant côté serveur (`credentials.py:246-256`, 9e1a7622) ; aucune valeur
+factice dans DOM, champs, `/api/credentials`, `/api/settings`, console, `trace.jsonl` ni sorties Core/CC ; alias `keys`,
+liens Agent principal et Mémoire OK ; aucun débordement à 1366×768. Tests : ciblés tous verts ; balayage large
+23 162 passed / 12 failed / 95 skipped, les 12 échecs identiques sur `20292e5c`. La liste des échecs préexistants passe
+à 12 : `test_brain_capability_parity::test_every_tool_of_a_declared_server_is_documented_in_the_brain_prompt` et
+`test_tool_brain_choices::test_ui_projection_is_consistent_in_the_single_metadata_copy` s'ajoutent aux 10 connus.
+`test_memory_context::…2000_notes…stays_in_budget` : intermittent lié au temps (limite fixe 30 s, indexation 15-20 s),
+1/9 sur `setui`, 0/22 sur `20292e5c`, aucun fichier d'index ou de magasin touché par la tâche ; non imputé à la Slice.
+Mutations QA : 6/8 tuées (E et F survivantes, voir ci-dessous). Slice 07 approuvée.
+
+Non bloquants, confiés en commit `S7: fix` à l'agent de la Slice 08 :
+- N1 : succès tardif après l'échéance affiche à la fois « Clé ajoutée » et l'erreur d'échéance (`view.error` non vidé,
+  `control_center_connections_settings.js:156-158`).
+- N2 : réponse d'un ajout dépassé traitée comme échec par `add()` (remet l'ancien nom pendant un second envoi).
+- N4 : tests manquants — valeur dans un `console.*` (mutation E), garde du remplacement vide (mutation F).
+
+Reportés à la Slice 10 : N3 (régions vivantes recréées à chaque rendu, statut hors de vue après défilement), N5 (message
+serveur réaffiché tel quel), N6 (contour de la carte focalisée), N7 (« API Keys » dans
+`docs/mcp/plan-outils-interface.md:118`).
+
+Écarts de méthode QA : un lot pytest > 600 s basculé en arrière-plan par l'outil puis relancé en petits lots ; disque C
+entre 3,4 et 4,9 Go libres pendant la QA (jamais sous 500 Mo).

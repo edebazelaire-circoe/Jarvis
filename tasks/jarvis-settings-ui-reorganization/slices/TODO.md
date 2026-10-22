@@ -7,7 +7,7 @@
 5. [x] `04-agents-models-reorganization` - Agents and models reorganization. Approved 2026-10-21 (fc5f2ff8 + 56c17532; S3 test fix 3e47b4c3).
 6. [x] `05-memory-knowledge-reorganization` - Memory and knowledge reorganization. Approved 2026-10-22 (d1fd5690 + 36085b29 + 28e055d8 + c6d85fb7).
 7. [x] `06-interface-interactions-reorganization` - Interface and interactions reorganization. Approved 2026-10-22 (2ec2a203 + 83387ef1).
-8. `07-connections-reorganization` - Connections reorganization.
+8. [x] `07-connections-reorganization` - Connections reorganization. Approved after independent QA (3f0a6cd7, b6786c09, 4394bacd).
 9. `08-advanced-diagnostics-labs` - Advanced diagnostics and labs.
 10. `09-legacy-routing-and-deeplink-compatibility` - Legacy tab cleanup and compatibility aliases.
 11. `10-integration-accessibility-release-qa` - Integrated accessibility and release QA.
