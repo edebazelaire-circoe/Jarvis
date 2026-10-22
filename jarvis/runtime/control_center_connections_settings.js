@@ -136,7 +136,9 @@
     }
     function labelOf(provider){const p=((state&&state.providers)||[]).find(x=>x.id===provider);return p?p.label:provider}
 
-    /* Une écriture : la carte se fige, l'attente se dit, l'issue se dit ; jamais la valeur. */
+    /* Une écriture : la carte se fige, l'attente se dit, l'issue se dit ; jamais la valeur. Rend l'état reçu (succès),
+       `null` (échec dit à l'écran) ou `undefined` (réponse ignorée : vue détruite ou écriture plus récente partie
+       entre-temps ; l'appelant ne touche alors à rien). Un succès arrivé après l'échéance efface l'erreur d'attente. */
     async function write(action,path,payload,messages){
       const mine=++ticket;
       view.busy=true;view.error='';view.status=messages.pending;render();
@@ -155,7 +157,7 @@
         log.info('connections_credential_written',{action,provider:payload.provider||null});
         if(dead||mine!==ticket)return;
         clearTimeout(timer);timer=null;
-        state=next;view.busy=false;view.confirm=null;view.status=messages.done(next);
+        state=next;view.busy=false;view.confirm=null;view.error='';view.status=messages.done(next);
         return next;
       }catch(e){
         log.error('connections_credential_failed',{action,code:e&&e.code||'',status:e&&e.status||0});
@@ -175,6 +177,7 @@
       const label=labelOf(provider);
       const next=await write('add',ROUTES.save,{provider,name,value},{pending:`Enregistrement de la clé ${label}…`,
         done:()=>`Clé « ${name.trim()} » ajoutée pour ${label}.`,failed:`Clé ${label} non enregistrée :`});
+      if(next===undefined)return;
       if(!next){const again=host.querySelector(`form[data-conn-add="${CSS.escape(provider)}"] [name=name]`);if(again&&alive()){again.value=name;again.focus()}return}
       if(!alive())return;
       view.add=null;

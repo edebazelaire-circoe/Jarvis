@@ -50,6 +50,16 @@ def leak(*secrets: str) -> str:
     return LEAK % json.dumps(list(secrets))
 
 
+#: Chaque appel à `console.log/info/warn/error/debug` de la page, arguments sérialisés (S07 N4, mutation E : une valeur de
+#: clé passée à un journal). Posé avant toute saisie ; `CONSOLE_LEAK` dit quelles valeurs y sont passées.
+CONSOLE = """(()=>{window.__consoleCalls=[];for(const level of ['log','info','warn','error','debug']){const real=console[level].bind(console);
+  console[level]=(...args)=>{let text;try{text=JSON.stringify(args)}catch(_e){text=args.map(String).join(' ')}
+    window.__consoleCalls.push(level+' '+text);return real(...args)}}return true})()"""
+CONSOLE_LEAK = """(()=>{const s=%s,calls=window.__consoleCalls||[];
+  return {calls:calls.length,written:calls.filter(c=>c.includes('connections_credential_written')).length,
+    leaked:s.filter(x=>calls.some(c=>c.includes(x)))}})()"""
+
+
 @pytest.fixture
 def clean_env(monkeypatch):
     for spec in creds.PROVIDERS:
@@ -109,7 +119,7 @@ STATE = "(()=>({status:document.getElementById('connectionsStatus').textContent,
 
 async def test_add_bind_replace_delete_post_frozen_payloads_and_never_show_a_value(served, clean_env):
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
-        *OPEN,
+        *OPEN, eval_(CONSOLE),
         # Ajout d'une première clé OpenAI, au clavier : divulgation, nom, valeur, Entrée.
         eval_("document.querySelector('#connection_openai .conn-add>summary').focus()"),
         key("Enter"), key("Tab"),
@@ -134,8 +144,11 @@ async def test_add_bind_replace_delete_post_frozen_payloads_and_never_show_a_val
         click("#connection_openai li:last-child input[type=radio]"),
         wait("/maintenant la clé OpenAI/.test(document.getElementById('connectionsStatus').textContent)"),
         eval_("[...document.querySelectorAll('#connection_openai [data-bind-id]')].map(r=>r.checked)", "bound"),
-        # Remplacement de la valeur de « Perso ».
+        # Remplacement de la valeur de « Perso ». Valeur vide d'abord : refusé sur place, rien n'est envoyé (S07 N4, F).
         click("#connection_openai li:first-child .conn-replace>summary"),
+        click("#connection_openai li:first-child form[data-conn-replace] button[type=submit]"),
+        wait("/Collez la nouvelle valeur/.test(document.getElementById('connectionsError').textContent)"),
+        eval_(STATE, "empty_replace"),
         type_in("#connection_openai li:first-child input[name=value]", SECRET_3),
         click("#connection_openai li:first-child form[data-conn-replace] button[type=submit]"),
         wait("/remplacée/.test(document.getElementById('connectionsStatus').textContent)"),
@@ -151,6 +164,7 @@ async def test_add_bind_replace_delete_post_frozen_payloads_and_never_show_a_val
         click("[data-conn-delete-confirm]"),
         wait("document.querySelectorAll('#connection_openai [data-bind-id]').length===1"),
         eval_(STATE, "deleted"),
+        eval_(CONSOLE_LEAK % json.dumps([SECRET, SECRET_2, SECRET_3]), "console_leak"),
     ]}])
     step = out["steps"][0]
     posts = [(r["path"], json.loads(r["body"])) for r in out["requests"] if r["method"] == "POST"]
@@ -165,7 +179,11 @@ async def test_add_bind_replace_delete_post_frozen_payloads_and_never_show_a_val
     assert posts[4][0] == "/api/credentials" and list(posts[4][1]) == ["id", "provider", "name", "value"]
     assert posts[4][1]["name"] == "Perso" and posts[4][1]["value"] == SECRET_3
     assert posts[5][0] == "/api/credentials/delete" and posts[5][1] == {"id": posts[4][1]["id"]}
-    assert len(posts) == 6  # « Annuler » n'a rien envoyé
+    assert len(posts) == 6  # « Annuler » et le remplacement à valeur vide n'ont rien envoyé
+    empty = got(step, "empty_replace")
+    assert "remplacée" not in empty["status"] and empty["error"] == "Collez la nouvelle valeur avant de remplacer."
+    console = got(step, "console_leak")
+    assert console["written"] == 5 and console["leaked"] == [], console  # journaux vus, sans aucune valeur
     added = got(step, "added")
     assert added["status"] == "Clé « Perso » ajoutée pour OpenAI." and added["error"] == ""
     assert added["focus"].startswith("conn_bind_cred_")  # le bouton radio de la nouvelle clé
@@ -247,6 +265,48 @@ async def test_waiting_has_a_deadline_and_a_destroyed_view_stops_its_timer(serve
     assert result["slow"]["error"].startswith("Pas de réponse du Control Center après 0 s")
     assert result["dead"] == {"same": True, "destroyed": True}
     assert result["logs"] == [["warn", "connections_credential_slow"]]  # une fois : la vue détruite s'est tue
+    assert out["console"] == [], out["console"]
+
+
+#: S07 N1 et N2 : le module seul, avec des requêtes dont la page décide la réponse et une échéance courte.
+#: N1 : un succès arrivé après l'échéance dit le succès et efface l'erreur d'attente.
+#: N2 : la réponse d'un ajout dépassé, arrivée pendant un second envoi, est ignorée : elle ne remet pas l'ancien nom
+#: dans le champ, ne déplace pas le focus et ne dit rien ; le second envoi conclut normalement.
+LATE = """(async()=>{const M=window.JarvisConnectionsSettings,pause=ms=>new Promise(r=>setTimeout(r,ms));
+  const state=await (await fetch('/api/credentials')).json(),log={info(){},warn(){},error(){}};
+  const reply=name=>({...state,credentials:[{id:'cred_'+name,provider:'openai',name,hint:'…FAKE',bound:false}]});
+  const make=()=>{const held=[],host=document.createElement('div');document.body.appendChild(host);
+    const view=M.create(host,{request:()=>new Promise(r=>held.push(r)),state,waitMs:400,log});view.load();return {host,view,held}};
+  const submit=(host,name)=>{host.querySelector('#conn_openai_name').value=name;host.querySelector('#conn_openai_value').value='sk-test-FAKE-7777';
+    host.querySelector('form[data-conn-add]').requestSubmit()};
+  const read=host=>({status:host.querySelector('#connectionsStatus').textContent,error:host.querySelector('#connectionsError').textContent});
+  const a=make();submit(a.host,'Tard');await pause(600);
+  const timedOut=read(a.host);
+  a.held[0](reply('Tard'));await pause(100);
+  const n1={timedOut,after:read(a.host)};
+  const b=make();submit(b.host,'Premier');await pause(600);
+  b.host.querySelector('#connection_openai .conn-add').open=true;submit(b.host,'Second');await pause(30);
+  const field=()=>b.host.querySelector('#conn_openai_name');
+  const marker=document.activeElement;
+  b.held[0](reply('Premier'));await pause(60);
+  const during={name:field().value,focusMoved:document.activeElement!==marker,error:read(b.host).error,status:read(b.host).status,
+    busy:field().disabled};
+  b.held[1](reply('Second'));await pause(100);
+  const n2={during,after:read(b.host)};
+  a.view.destroy();b.view.destroy();a.host.remove();b.host.remove();
+  return {n1,n2}})()"""
+
+
+async def test_a_late_success_clears_the_deadline_error_and_an_ignored_reply_touches_nothing(served, clean_env):
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [*OPEN, eval_(LATE, "late")]}])
+    result = got(out["steps"][0], "late")
+    n1, n2 = result["n1"], result["n2"]
+    assert n1["timedOut"]["error"].startswith("Pas de réponse du Control Center")
+    assert n1["after"] == {"status": "Clé « Tard » ajoutée pour OpenAI.", "error": ""}
+    during = n2["during"]
+    assert during["name"] != "Premier" and during["focusMoved"] is False and during["busy"] is True, during
+    assert during["error"] == "" and during["status"] == "Enregistrement de la clé OpenAI…", during
+    assert n2["after"] == {"status": "Clé « Second » ajoutée pour OpenAI.", "error": ""}
     assert out["console"] == [], out["console"]
 
 
