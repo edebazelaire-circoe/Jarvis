@@ -733,11 +733,12 @@ son décompte d'essais.
 Depuis la Slice 06 de `jarvis-settings-ui-reorganization`, les préférences ordinaires sont dans
 **Réglages › Interface & interactions › Bare Hands**, la lecture de diagnostic à l'écran, le test et
 l'enregistrement dans **Avancé & diagnostic › Bare Hands · essais**, l'état du modèle MediaPipe et la
-dernière commande vocale dans **Avancé & diagnostic › Diagnostics** (`docs/settings/interface-interactions.md`) ;
-ce qui suit dit encore « onglet Expérimental » pour ces surfaces.
+dernière commande vocale dans **Avancé & diagnostic › Diagnostics** (`docs/settings/interface-interactions.md`).
+L'onglet Expérimental ne porte plus que la porte de test de la scène (jusqu'à la Slice 08) ; les mentions
+historiques ci-dessous de « l'onglet Expérimental » pour Bare Hands désignent ces entrées.
 
-L'onglet **Expérimental** (ajouté par `jarvis/runtime/control_center_barehands.js`,
-comme l'onglet Apparence l'est par la couche de thèmes) porte un interrupteur
+À l'origine, un onglet **Expérimental** (ajouté par `jarvis/runtime/control_center_barehands.js`
+jusqu'à la Slice 06 de `jarvis-settings-ui-reorganization`) portait un interrupteur
 **Activer Barehands (mode test)**, éteint par défaut. Il s'applique et
 s'enregistre immédiatement, sans bouton Enregistrer, sous
 `barehands_test_mode` dans `runtime/control-center-settings.json` ; il reste

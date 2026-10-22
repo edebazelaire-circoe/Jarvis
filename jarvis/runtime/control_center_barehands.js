@@ -4215,7 +4215,7 @@ const JarvisBarehandsCore=(function(){
 
      Allumer mène à SLEEP, jamais directement à ACTIVE : rien n'interagit tant
      que l'utilisateur n'a pas réveillé, d'un C tenu une seconde ou du bouton
-     de l'onglet Expérimental. */
+     des entrées Bare Hands des Réglages. */
   const pickKeys=(o,keys)=>Object.freeze(Object.fromEntries(keys.map(key=>[key,o[key]])));
   const POINTING_READ_KEYS=Object.freeze(['pointingEnterScore','pointingExitScore','pointingEnterMs',
     'pointingExitMs','pointingMotionFloor']);
@@ -6983,7 +6983,7 @@ try{
      appellent les mêmes portes), le réveil en C dans la boucle d'images, le
      retour en veille après 30 s sans main, la panne et la reprise, l'arrêt au
      déchargement. Jusqu'ici elles n'atteignaient l'écran que par
-     `refreshPanel()`, qui ne peint **que l'onglet Expérimental ouvert** : un
+     `refreshPanel()`, qui ne peint **qu'une entrée Bare Hands des Réglages ouverte** : un
      contrôle vivant hors du modal n'avait rien à quoi se lier, et « l'état a
      changé » et « personne ne regardait » s'écrivaient pareil.
 
@@ -7247,11 +7247,11 @@ try{
     if(view.busy)return null;
     /* Et rien à faire quand les deux disent la même chose : c'est le cas de
        presque tous les battements, et repeindre à chaque seconde volerait le
-       focus des contrôles de l'onglet Expérimental. */
+       focus des contrôles des entrées Bare Hands des Réglages. */
     if(enabled===!!view.enabled)return null;
     console.info('[barehands] barehands.switch_reconciled '+JSON.stringify({enabled,was:!!view.enabled}));
     applyEnabled(enabled);
-    /* Le réglage suit l'interrupteur : la case de l'onglet Expérimental lit
+    /* Le réglage suit l'interrupteur : la case des entrées Bare Hands des Réglages lit
        `view.settings.enabled`, et la laisser en arrière ferait dire deux
        choses différentes au même booléen selon la surface qui le peint. Les
        huit autres réglages ne sont **pas** dans le statut et ne sont donc pas
@@ -9441,7 +9441,7 @@ try{
        de vie finit ici — `onStatus`, `setAwake`, `setEnabled`, `saveSettings`,
        `applyServerState`, l'horloge de démarrage —, mais la ligne suivante ne
        parle que du panneau : publier après elle n'aurait atteint personne tant
-       que l'onglet Expérimental est fermé, c'est-à-dire presque toujours.
+       que les entrées Bare Hands des Réglages sont fermées, c'est-à-dire presque toujours.
        Un instantané inchangé ne repart pas (`publishLifecycle` déduplique),
        donc les chemins qui repeignent sans changer d'état — un curseur qu'on
        tire — ne réveillent aucun abonné. */
@@ -9450,8 +9450,8 @@ try{
        `saveSettings` (l'écran, la palette, la console) et par
        `applyServerState` (le chargement, la réponse du serveur) ; les deux
        finissent ici, et ici seulement. Publier après le garde-fou n'aurait
-       atteint la palette de gauche que lorsque l'onglet Expérimental est
-       ouvert, c'est-à-dire précisément jamais — et la palette existe pour
+       atteint la palette de gauche que lorsque les entrées Bare Hands des Réglages sont
+       ouvertes, c'est-à-dire précisément jamais — et la palette existe pour
        qu'on n'ait plus à l'ouvrir (décision 11). Déduplication identique :
        un rafraîchissement qui ne touche pas à l'outil ne réveille personne. */
     publishTools();
@@ -9566,7 +9566,7 @@ try{
 
   /* **L'aide** (décision 8, entrée « Aide / Gestes » ; décision 15).
 
-     Le bloc de gestes de l'onglet Expérimental a été **supprimé** par cette
+     Le bloc de gestes des entrées Bare Hands des Réglages a été **supprimé** par cette
      Slice : il était dense, il n'avait aucun schéma, et deux de ses phrases
      étaient devenues fausses — il rangeait le pincement pouce-majeur parmi les
      « reconnus, pas encore agissants » alors qu'il ouvre un vrai menu
@@ -9620,7 +9620,7 @@ try{
       return {ok:true,card:'diagnostics'};
     }
     /* **Le repli est réel, pas plausible.** Contrairement à l'aide, la surface
-       d'enregistrement de l'onglet Expérimental n'a pas été supprimée : elle
+       d'enregistrement des entrées Bare Hands des Réglages n'a pas été supprimée : elle
        porte toujours ses deux boutons, ses compteurs et sa phrase de
        confidentialité. Sans la carte, y renvoyer est donc la même
        fonctionnalité par l'autre porte, et non un succès inventé. Le détour
@@ -9775,7 +9775,7 @@ try{
     /* **La couture de diffusion de l'outil** (Slice 03, décision 11). La
        palette de gauche s'y abonne au lieu de sonder : elle doit refléter un
        outil changé depuis la console, depuis un rechargement ou par la réponse
-       du serveur, sans que l'onglet Expérimental soit ouvert. Elle est
+       du serveur, sans que les entrées Bare Hands des Réglages soient ouvertes. Elle est
        **distincte** de la couture de cycle de vie parce que les deux faits le
        sont (contrainte d'architecture de la Slice 03) ; un abonné qui a besoin
        des deux ouvre les deux. `toolSeam()` dit **qui** écoute, pour la même

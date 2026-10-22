@@ -2653,9 +2653,12 @@ only `/api/workspace*`, `/api/boards`, `/api/sessions/current` and
 guide: [OPERATIONS.md](OPERATIONS.md), « Sessions & Boards ».
 
 Scene settings UI (Slice 11). `control_center_scene_settings.js` adds a section at
-the top of the Expérimental tab (placement: experimental features live there,
-next to Barehands test mode; the Apparence tab is theme-only and the switch also
-changes the brain). Pure part `JarvisSceneSettings.describe(scene, status)` (node
+the top of the Expérimental tab (placement: experimental features live there; the
+Apparence tab was theme-only and the switch also changes the brain). Since
+`jarvis-settings-ui-reorganization` Slice 06 the tab carries only this scene gate:
+Bare Hands moved to Settings › Interface & interactions › Bare Hands and Advanced ›
+Bare Hands · essais (`docs/settings/interface-interactions.md`); the gate moves to
+Labs in Slice 08. Pure part `JarvisSceneSettings.describe(scene, status)` (node
 tests `tests/unit/test_scene_settings_ui.py`): the checkbox reflects
 `scene.enabled`, is read-only with an explanation when `source = env`, and an
 « effects » list says what changes when (display at the next `/api/status` read,

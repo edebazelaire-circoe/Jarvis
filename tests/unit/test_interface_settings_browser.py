@@ -168,6 +168,8 @@ async def test_theme_applies_in_place_persists_and_scene_view_resets(served):
     assert cosmos["theme"] == "cosmos" and cosmos["stored"] == "cosmos" and cosmos["selected"] == ["cosmos"]
     assert cosmos["focus"] == "jarvisTheme"
     slid = got(first, "slid_state")
+    # Clé de la scène figée (QA Slice 06, N4) : la même que la scène lit au chargement.
+    assert initial["key"] == "jarvis.scene.view"
     assert slid["view"] is not None and slid["reset"] is False and slid["key"] == initial["key"]
     reset = got(first, "reset")
     assert reset["reset"] is True and reset["view"] != slid["view"]
@@ -252,4 +254,72 @@ async def test_internal_links_never_drop_focus_on_body(served):
     assert got(step, "wake") == {"section": "diagnostics", "focus": "diagnostic_wake_word", "entry": False}
     assert got(step, "generic") == {"section": "runtime_cli", "focus": "runtime_cli", "entry": True}
     assert got(step, "subagents") == {"section": "subagent_models", "focus": "subagent_models", "entry": True}
+    assert out["console"] == [], out["console"]
+
+
+WAKE_DIAG = """(()=>{const p=document.getElementById('diagnostic_wake_word'),b=document.getElementById('modalContent');
+  const t=p.getBoundingClientRect(),r=b.getBoundingClientRect(),v=document.getElementById('diagnostic_voice');
+  return {focus:document.activeElement&&document.activeElement.id,top:Math.round(t.top-r.top),height:Math.round(r.height),
+    visible:t.top>=r.top-1&&t.top<r.bottom-20,scroll:Math.round(b.scrollTop),voice:v?Math.round(v.getBoundingClientRect().height):0}})()"""
+
+
+@pytest.mark.parametrize(("width", "height"), [(1440, 900), (1366, 768)])
+async def test_wake_word_diagnostic_link_keeps_its_part_in_view_after_voice_fills(served, width, height):
+    """QA Slice 06 (B1) : « Voir le diagnostic » du Mot d'éveil focalise sa partie ET la garde visible pendant que la
+    partie Voix, au-dessus, grandit en se remplissant (maintien en vue du shell, `pinSettingsTarget`)."""
+    served.settings_file.write_text(json.dumps({"wake_word": {"schema_version": 7, "enabled": True, "futur": 1}}),
+                                    encoding="utf-8")
+    out = await drive(served.url, [{"width": width, "height": height, "actions": [
+        wait("!!document.getElementById('openSettings')"), click("#dockMore"), click("#openSettings"),
+        wait("!!document.getElementById('voiceSection_conversation')", 10000),
+        click("#modalTabs [data-section=wake_word]"),
+        wait("!!document.querySelector('[data-ww-open-diagnostics]')", 10000),
+        click("[data-ww-open-diagnostics]"),
+        eval_(WAKE_DIAG, "early"),
+        eval_("new Promise(r=>setTimeout(r,2500))"),
+        eval_(WAKE_DIAG, "late"),
+    ]}])
+    step = out["steps"][0]
+    early, late = got(step, "early"), got(step, "late")
+    # Voix remplie, plus haute que la zone visible : sans maintien en vue, la partie Mot d'éveil serait hors écran.
+    assert late["voice"] > late["height"], (early, late)
+    assert early["focus"] == "diagnostic_wake_word"
+    assert late["focus"] == "diagnostic_wake_word"
+    assert late["visible"] is True and late["scroll"] > 0, late
+    assert out["console"] == [], out["console"]
+
+
+HOLD_POST = """(()=>{const base=api;window.__held=null;
+  api=(path,opts)=>path==='/api/shortcuts'&&opts&&opts.method==='POST'
+    ?new Promise((ok,ko)=>{window.__held=()=>base(path,opts).then(ok,ko)}):base(path,opts);return true})()"""
+RELEASE = """(async()=>{const before={focus:document.activeElement,mount:document.querySelector('#modalContent .set-mount')};
+  window.__renders=0;const rt=renderTab;renderTab=function(){window.__renders++;return rt.apply(this,arguments)};
+  window.__held();await new Promise(r=>setTimeout(r,600));
+  const value=(await (await fetch('/api/shortcuts')).json()).values.wake_toggle;
+  return {renders:window.__renders,sameFocus:document.activeElement===before.focus,
+    sameMount:document.querySelector('#modalContent .set-mount')===before.mount,open:SET.open,section:SET.section,
+    kept:SET.shortcuts.values.wake_toggle,served:value}})()"""
+
+
+@pytest.mark.parametrize("leave", ["section", "close"])
+async def test_a_late_shortcut_save_redraws_nothing_once_the_section_is_left(served, leave):
+    """QA Slice 06 (B2) : l'envoi d'une touche répond après le départ de la section (autre section, ou Réglages
+    fermés) : aucun remontage, focus inchangé, valeur gardée (`startCapture(button, isCurrent)`)."""
+    away = ([click("#modalTabs [data-section=theme_scene]"), wait("!!document.querySelector('#modalContent .theme-choice')")]
+            if leave == "section" else [key("Escape"), wait("!SET.open")])
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        *OPEN,
+        click("#modalTabs [data-section=shortcuts]"), wait(f"!!document.querySelector('{KEYCAP}')"),
+        eval_(HOLD_POST),
+        click(KEYCAP), key("F10"), wait("!!window.__held"),
+        *away,
+        eval_(RELEASE, "late"),
+    ]}])
+    late = got(out["steps"][0], "late")
+    assert late["renders"] == 0, late
+    assert late["sameFocus"] is True and late["kept"] == "f10" and late["served"] == "f10", late
+    if leave == "section":
+        assert late["section"] == "theme_scene" and late["sameMount"] is True and late["open"] is True
+    else:
+        assert late["open"] is False
     assert out["console"] == [], out["console"]

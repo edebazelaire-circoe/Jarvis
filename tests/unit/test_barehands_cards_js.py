@@ -83,7 +83,7 @@ const sandbox=options=>{
   const surface={
     SECTION:Object.freeze({settings:'barehandsSettings',record:'barehandsRecord'}),
     showSettings(section){calls.push(['showSettings',section]);
-      return Promise.resolve({ok:true,tab:'experimental',section})},
+      return Promise.resolve({ok:true,entry:'barehands_lab',section})},
     record:{
       state:()=>Object.assign({},state),
       start(){calls.push(['start']);

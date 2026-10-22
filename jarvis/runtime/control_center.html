@@ -5418,7 +5418,7 @@ function renderShortcutsSection(host,context){
 }
 
 /* --- rendu et liaisons --------------------------------------------------- */
-function cleanupSettingsSurface(){destroyAgentCatalog();destroyVoiceCatalog();destroySubagentSettings();destroyRegisteredSection()}
+function cleanupSettingsSurface(){if(typeof stopSettingsPin==='function')stopSettingsPin();destroyAgentCatalog();destroyVoiceCatalog();destroySubagentSettings();destroyRegisteredSection()}
 /* Section enregistrée au registre (Slice 02, `docs/settings/settings-shell.md`) : le shell appelle son `destroy`
    avant d'en monter une autre, de changer de catégorie ou de fermer. Un `destroy` qui lève est journalisé, jamais
    bloquant : la section suivante se monte quand même. */
@@ -5580,30 +5580,9 @@ function memorySettingsStore(){
     SET.memoryStore=window.JarvisMemorySettings.createStore();SET.memoryStoreOpening=SET.openGeneration}
   return SET.memoryStore;
 }
-/* « Voir le diagnostic mémoire » : ouvre Avancé › Diagnostics (montage synchrone) et porte le focus sur la partie Mémoire.
-   Les parties au-dessus (Voix, Mot d'éveil) grandissent quand leur lecture arrive : la partie Mémoire est gardée en vue
-   tant qu'elle a le focus, 4 s au plus. Tout geste de l'utilisateur dans le contenu (molette, touche, pointeur, toucher)
-   rend la main aussitôt ; quitter la partie (section, catégorie, fermeture) arrête observateur, écoutes et minuteur. */
-const MEMORY_PIN_MS=4000;
-const MEMORY_PIN_RELEASE=['wheel','keydown','pointerdown','touchstart'];
-let memoryDiagnosticPin=null;
-function stopMemoryDiagnosticPin(){if(memoryDiagnosticPin){const stop=memoryDiagnosticPin;memoryDiagnosticPin=null;stop()}}
-function openMemoryDiagnostics(context){
-  stopMemoryDiagnosticPin();
-  context.open('diagnostics');
-  const part=document.getElementById('diagnostic_memory');
-  if(!part)return;
-  part.setAttribute('tabindex','-1');part.focus({preventScroll:true});
-  const pin=()=>part.scrollIntoView({block:'start'});pin();
-  if(typeof ResizeObserver!=='function')return;
-  const watch=new ResizeObserver(()=>{if(part.isConnected&&document.activeElement===part)pin();else stopMemoryDiagnosticPin()});
-  const release=()=>stopMemoryDiagnosticPin();
-  const timer=setTimeout(release,MEMORY_PIN_MS);
-  watch.observe(part.parentElement);
-  MEMORY_PIN_RELEASE.forEach(type=>modalContent.addEventListener(type,release,{capture:true,passive:true}));
-  memoryDiagnosticPin=()=>{watch.disconnect();clearTimeout(timer);
-    MEMORY_PIN_RELEASE.forEach(type=>modalContent.removeEventListener(type,release,{capture:true}))};
-}
+/* « Voir le diagnostic mémoire » : ouvre Avancé › Diagnostics et porte le focus sur la partie Mémoire, gardée en vue
+   par le shell pendant que les parties au-dessus se remplissent (`openSettingsLink`, `pinSettingsTarget`). */
+function openMemoryDiagnostics(context){context.open('diagnostics',{focus:'#diagnostic_memory'})}
 /* Une vue du module dans `host` ; la lecture part tout de suite, un refus s'affiche avec son message réel. */
 function mountMemorySettings(host,context,options){
   const M=window.JarvisMemorySettings;
@@ -5633,7 +5612,7 @@ function memorySectionSpec(spec){
 let memoryDiagnosticView=null;
 const MEMORY_DIAGNOSTIC={id:'memory',label:'Mémoire',order:30,
   mount(host,context){memoryDiagnosticView=mountMemorySettings(host,context,{mode:'diagnostics'})},
-  destroy(){stopMemoryDiagnosticPin();if(memoryDiagnosticView){memoryDiagnosticView.destroy();memoryDiagnosticView=null}},
+  destroy(){if(typeof stopSettingsPin==='function')stopSettingsPin();if(memoryDiagnosticView){memoryDiagnosticView.destroy();memoryDiagnosticView=null}},
 };
 function installMemorySettingsSections(){
   MEMORY_SECTIONS.forEach(spec=>registerSettingsSection(memorySectionSpec(spec)));
@@ -5885,9 +5864,32 @@ function selectTab(id){
    exemple l'éditeur de `wake_toggle`) s'il est déjà dessiné, sinon à l'entrée ouverte dans la liste des sections. */
 function openSettingsLink(target,options){
   if(!settingsTarget(target)){console.warn('settings_target_unknown',{target});return false}
+  stopSettingsPin();
   selectTab(target);
   focusSettingsLanding(options&&options.focus);
   return true;
+}
+/* Maintien en vue de la cible d'un lien (QA Slice 06, repris de la partie Mémoire de la Slice 05) : ce qui est
+   au-dessus d'elle peut grandir quand sa lecture arrive (parties Voix et Mot d'éveil des Diagnostics) et la pousser
+   hors de l'écran. Tant qu'elle a le focus, elle est ramenée en haut à chaque changement de taille de son conteneur,
+   4 s au plus. Tout geste de l'utilisateur dans le contenu (molette, touche, pointeur, toucher) rend la main aussitôt ;
+   le lien suivant, un changement de section ou de catégorie et la fermeture (`cleanupSettingsSurface`) arrêtent
+   observateur, écoutes et minuteur. */
+const SETTINGS_PIN_MS=4000;
+const SETTINGS_PIN_RELEASE=['wheel','keydown','pointerdown','touchstart'];
+let settingsPin=null;
+function stopSettingsPin(){if(settingsPin){const stop=settingsPin;settingsPin=null;stop()}}
+function pinSettingsTarget(target){
+  stopSettingsPin();
+  const pin=()=>target.scrollIntoView({block:'start'});pin();
+  if(typeof ResizeObserver!=='function'||!target.parentElement)return;
+  const watch=new ResizeObserver(()=>{if(target.isConnected&&document.activeElement===target)pin();else stopSettingsPin()});
+  const release=()=>stopSettingsPin();
+  const timer=setTimeout(release,SETTINGS_PIN_MS);
+  watch.observe(target.parentElement);
+  SETTINGS_PIN_RELEASE.forEach(type=>modalContent.addEventListener(type,release,{capture:true,passive:true}));
+  settingsPin=()=>{watch.disconnect();clearTimeout(timer);
+    SETTINGS_PIN_RELEASE.forEach(type=>modalContent.removeEventListener(type,release,{capture:true}))};
 }
 function focusSettingsLanding(selector){
   if(typeof document==='undefined')return;
@@ -5895,7 +5897,7 @@ function focusSettingsLanding(selector){
   if(found){
     if(!found.matches('button,a[href],input,select,textarea,summary,[tabindex]'))found.setAttribute('tabindex','-1');
     found.focus({preventScroll:true});
-    if(found.scrollIntoView)found.scrollIntoView({block:'nearest'});
+    pinSettingsTarget(found);
     return;
   }
   if(selector)console.info('settings_link_focus_fallback',{selector});

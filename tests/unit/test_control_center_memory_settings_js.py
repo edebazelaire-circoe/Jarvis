@@ -375,10 +375,12 @@ const listeners={},timers=new Map();let nextTimer=1,pins=0,observer=null;
 globalThis.setTimeout=(fn,ms)=>{const id=nextTimer++;timers.set(id,{fn,ms});return id};
 globalThis.clearTimeout=id=>{timers.delete(id)};
 globalThis.ResizeObserver=class{constructor(cb){this.cb=cb;this.on=false;observer=this}observe(){this.on=true}disconnect(){this.on=false}};
-const part={isConnected:true,parentElement:{},setAttribute(){},focus(){},scrollIntoView(){pins++}};
+const part={isConnected:true,parentElement:{},setAttribute(){},matches:()=>false,focus(){},scrollIntoView(){pins++}};
 const document={getElementById:id=>id==='diagnostic_memory'?part:null,activeElement:part};
-const modalContent={addEventListener(t,fn){(listeners[t]=listeners[t]||new Set()).add(fn)},removeEventListener(t,fn){listeners[t]&&listeners[t].delete(fn)}};
-const context={open(){}};
+const modalContent={querySelector:sel=>sel==='#diagnostic_memory'?part:null,
+  addEventListener(t,fn){(listeners[t]=listeners[t]||new Set()).add(fn)},removeEventListener(t,fn){listeners[t]&&listeners[t].delete(fn)}};
+/* Le lien du shell (Slice 06) : `context.open` = `openSettingsLink`, réduit ici à la pose du focus et au maintien. */
+const context={open:(target,options)=>{stopSettingsPin();focusSettingsLanding(options&&options.focus)}};
 """ + "{PAGE_SOURCE}" + r"""
 const live=()=>Object.values(listeners).reduce((n,s)=>n+s.size,0);
 const grow=()=>{if(observer.on)observer.cb()};
@@ -402,7 +404,9 @@ def test_the_diagnostic_pin_yields_to_any_user_scroll_and_is_cleaned_up(tmp_path
     if node is None:
         pytest.skip("node absent")
     page = HTML.read_text(encoding="utf-8")
-    source = (page[page.index("const MEMORY_PIN_MS=") : page.index("/* Une vue du module dans `host`")]
+    # Le maintien en vue est celui du shell depuis le retravail de la Slice 06 (`pinSettingsTarget`), réutilisé par Mémoire.
+    source = (page[page.index("const SETTINGS_PIN_MS=") : page.index("function destroyAgentCatalog()")]
+              + page[page.index("function openMemoryDiagnostics(context)") : page.index("/* Une vue du module dans `host`")]
               + page[page.index("let memoryDiagnosticView=null;") : page.index("function installMemorySettingsSections()")])
     script = tmp_path / "pin.cjs"
     script.write_text(PIN.replace("{PAGE_SOURCE}", source), encoding="utf-8")

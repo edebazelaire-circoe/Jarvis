@@ -79,8 +79,14 @@ ouverte dans chaque catégorie pendant la session.
   `#modalTabs` (journal `settings_link_focus_fallback` quand un sélecteur n'a rien trouvé). Cas : « Modifier dans
   Interface & interactions › Raccourcis » → la touche `wake_toggle` ; « Voir le diagnostic » du Mot d'éveil →
   `#diagnostic_wake_word` ; « Régler la commande », renvois des sous-agents → l'entrée ouverte ; « Voir le
-  diagnostic mémoire » repose ensuite le focus sur sa partie. Testé : `test_interface_settings_browser.py`,
-  `test_wake_word_settings_browser.py`.
+  diagnostic mémoire » passe aussi par là (`#diagnostic_memory`). **Maintien en vue** (`pinSettingsTarget`, retravail QA
+  de la Slice 06, repris de la partie Mémoire de la Slice 05) : la cible trouvée est ramenée en haut à chaque changement
+  de taille de son conteneur (les parties Voix et Mot d'éveil des Diagnostics grandissent en se remplissant) tant
+  qu'elle a le focus, 4 s au plus ; molette, touche, pointeur ou toucher dans le contenu rendent la main aussitôt ; le
+  lien suivant, un changement de section ou de catégorie et la fermeture (`cleanupSettingsSurface` → `stopSettingsPin`)
+  arrêtent observateur, écoutes et minuteur. Testé : `test_interface_settings_browser.py` (partie Mot d'éveil visible
+  après le remplissage de Voix), `test_wake_word_settings_browser.py`, `test_control_center_memory_settings_js.py`
+  (gestes, minuteur, `destroy`), `test_memory_settings_browser.py`.
 - **Échap ferme toujours**, même si `ui_close` est réaffecté, même depuis un champ et même quand le focus est
   retombé sur `body` (écoute sur `document` tant que les réglages sont ouverts), sauf : capture d'un raccourci en
   cours (elle le prend avant), zone de texte longue ou éditable (une saisie longue ne ferme pas la page),
