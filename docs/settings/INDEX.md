@@ -46,6 +46,12 @@ groupe (monospace : le style technique est réservé à cette catégorie, avec l
 | Diagnostics (`diagnostics`) | état constaté, en lecture seule, fait de parties (`registerSettingsDiagnostic`) : Voix, Mot d'éveil, Mémoire, Bare Hands | `diagnostics` |
 | Labs & outils de test (`labs`) | porte de test de la scène et redémarrage du brain, promotion des Work Methods, essais Bare Hands (lecture à l'écran, test, enregistrement), futurs outils expérimentaux qui ne sont pas des préférences | `scene_gate`, `work_methods`, `barehands_lab` ([`interface-interactions.md`](interface-interactions.md)) |
 
+Têtes de section : comme les autres sections, Work Methods apprises et Scène constellation portent la tête du shell
+(`JarvisSettingsUI.section` : titre, badge « Avancé » ; « Mode test » pour la scène) depuis la passe de finitions avant
+la Slice 10. Le compteur du redémarrage du brain s'arrête quand on quitte la section et reprend au retour ; l'échéance de
+la requête continue. La liste des entrées passe à la ligne dès 900 px : la ligne qui commence par Labs ne porte plus de
+filet à gauche.
+
 Aucune de ces sections ne double un contrôle éditable d'une autre catégorie : la porte `scene.enabled` n'existe
 qu'ici (Thème & scène visuelle ne règle que l'apparence locale de la scène), les champs Voix et Agent/CLI ont une
 seule destination servie ou figée par test, la promotion des Work Methods n'est offerte qu'ici. Plus aucun onglet de

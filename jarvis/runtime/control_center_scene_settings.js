@@ -208,13 +208,27 @@
     return el;
   }
 
+  /* Tête de section des Réglages (`JarvisSettingsUI.section`, comme les autres sections : titre, badges « Avancé » et
+     « Mode test », description). Le gabarit du shell échappe ses textes ; le corps est ensuite fait de nœuds. Sans les
+     primitives (page partielle), une tête simple. */
+  function sectionShell(){
+    const UI=window.JarvisSettingsUI;
+    const description='Une carte persistante du travail de JARVIS derrière l\'interface : un sous-agent devient une étoile, ses résultats des artefacts reliés, et le brain peut y montrer ce qui compte. Vous déplacez, épinglez, masquez et archivez ; le brain n\'archive jamais.';
+    if(UI&&typeof UI.section==='function'){
+      const fragment=document.createRange().createContextualFragment(UI.section({id:SECTION_ID,title:'Scène constellation',
+        description,advanced:true,badges:UI.badge('warn','Mode test')}));
+      const section=fragment.firstElementChild;
+      section.setAttribute('data-scene-settings','');
+      return {section,body:section.querySelector('.set-section-body')};
+    }
+    const section=node('section',{id:SECTION_ID,'aria-labelledby':`${SECTION_ID}-title`,'data-scene-settings':''},
+      [node('h3',{id:`${SECTION_ID}-title`,text:'Scène constellation · mode test'}),node('div',{className:'hint',text:description})]);
+    return {section,body:section};
+  }
+
   function sectionNode(){
     const model=Logic.describe(view.scene,view.status);
-    const section=node('section',{id:SECTION_ID,'aria-labelledby':'sceneSettingsTitle','data-scene-settings':''});
-    section.append(
-      node('h3',{id:'sceneSettingsTitle',text:'Scène constellation · mode test'}),
-      node('div',{className:'hint',style:'margin-bottom:14px',text:'Une carte persistante du travail de JARVIS derrière l\'interface : un sous-agent devient une étoile, ses résultats des artefacts reliés, et le brain peut y montrer ce qui compte. Vous déplacez, épinglez, masquez et archivez ; le brain n\'archive jamais.'}),
-    );
+    const {section:shell,body:section}=sectionShell();
     const describedBy=['sceneEffects',model.source?'sceneSourceNote':null].filter(Boolean).join(' ');
     /* Occupé : `aria-disabled` plutôt que `disabled`, qui ferait perdre le focus clavier pendant l'écriture. */
     const input=node('input',{type:'checkbox',id:'f_scene','data-scene-toggle':'','aria-describedby':describedBy,
@@ -243,7 +257,7 @@
     }
     section.append(brain);
     input.addEventListener('change',()=>setEnabled(input.checked));
-    return section;
+    return shell;
   }
 
   /* Redessine la section en gardant le focus sur le contrôle qui l'avait. */
@@ -368,15 +382,23 @@
     view.scene=SET.data.scene||null;
     // Section remontée : une erreur d'un essai précédent ne s'affiche plus comme actuelle.
     if(!view.busy)view.error='';
+    // Redémarrage encore en vol : son compteur reprend (`destroy` l'a arrêté en quittant la section).
+    if(view.restart&&view.restart.ticker==null)view.restart.ticker=setInterval(refresh,1000);
     refresh();
+  }
+  /* Section quittée : plus d'hôte, et le compteur du redémarrage s'arrête (il ne redessinait plus rien). L'échéance
+     du redémarrage, elle, continue : la requête doit finir ou être abandonnée même section quittée. */
+  function destroy(host){
+    if(view.host!==host)return;
+    view.host=null;
+    if(view.restart&&view.restart.ticker!=null){clearInterval(view.restart.ticker);view.restart.ticker=null}
   }
   function installSection(){
     if(typeof registerSettingsSection!=='function'){log('error','scene.settings_shell_missing',{});return}
     registerSettingsSection({id:SECTION_ENTRY,category:'advanced_diagnostics',group:'labs',order:40,save:'self',advanced:true,
       label:'Scène constellation',
       description:'Porte de test de la scène et redémarrage du brain. Enregistré immédiatement ; chaque effet dit quand il s’applique.',
-      mount,
-      destroy(host){if(view.host===host)view.host=null}});
+      mount,destroy});
   }
 
   /* Le statut que la page lit déjà chaque seconde nourrit l'état du brain. */

@@ -179,6 +179,77 @@ async def test_scene_gate_toggle_and_brain_restart_are_unchanged(served):
     assert out["console"] == [], out["console"]
 
 
+#: Passe de finitions avant la Slice 10 (QA S08) : réponses retenues dans la page. `/api/status` dit un brain sans
+#: outils d'affichage mais ne porte plus `scene` (le battement ne peut pas corriger `SET.data.scene` à la place de la
+#: réponse du POST : mutation Q8) ; le premier POST de la scène est refusé (erreur affichée : mutation Q7) ; les suivants
+#: et le redémarrage attendent `window.__release()`. Les minuteurs d'une seconde créés pendant `window.__watch` sont
+#: suivis (compteur du redémarrage).
+HOLD = """(()=>{window.__held=[];window.__intervals=new Set();window.__watch=false;const real=window.fetch;
+  const json=(v,status)=>new Response(JSON.stringify(v),{status:status||200,headers:{'Content-Type':'application/json'}});
+  window.fetch=(u,o)=>{const path=String(u).split('?')[0];
+    if(path==='/api/status')return real(u,o).then(r=>r.json()).then(v=>{const out={...v,agent_cli:'claude',
+      agent:{name:'claude',state:'running',display_tools:false,display_prompt:false},subagents:{active:0}};delete out.scene;return json(out)});
+    if(path==='/api/agent/restart')return new Promise(r=>window.__held.push(()=>r(json({ok:true}))));
+    if(path==='/api/settings'&&o&&o.method==='POST'&&/"scene"/.test(o.body)){
+      if(!window.__refused){window.__refused=true;return Promise.resolve(json({error:'Refus de test.'},500))}
+      return new Promise(r=>window.__held.push(()=>r(real(u,o))))}
+    return real(u,o)};
+  window.__release=()=>{const h=window.__held.splice(0);h.forEach(f=>f());return h.length};
+  const si=window.setInterval.bind(window),ci=window.clearInterval.bind(window);
+  window.setInterval=(f,ms)=>{const id=si(f,ms);if(window.__watch&&ms===1000)window.__intervals.add(id);return id};
+  window.clearInterval=id=>{window.__intervals.delete(id);return ci(id)};return true})()"""
+SCENE = "document.querySelector('#modalContent [data-scene-toggle]')"
+
+
+async def test_scene_gate_late_replies_errors_and_restart_counter_follow_the_section(served):
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        eval_(HOLD), *OPEN, eval_("selectTab('scene_gate');true"),
+        wait(f"!!{SCENE}"),
+        eval_("[!!document.querySelector('#sceneSettings.set-section .set-section-head .set-badge-advanced'),"
+              "document.getElementById('sceneSettings-title').textContent]", "head"),
+        # Q7 : un refus s'affiche ; la section remontée ne le montre plus comme actuel.
+        click("[data-scene-toggle]"),
+        wait("/Réglage non enregistré/.test(document.getElementById('sceneSettings').textContent)"),
+        eval_("selectTab('prompts');selectTab('scene_gate');/Réglage non enregistré/.test(document.getElementById('sceneSettings').textContent)", "stale_error"),
+        # Réponse tardive : envoi retenu, section quittée, réponse rendue ; rien n'est dessiné ailleurs, l'état suit la réponse.
+        wait(f"!!{SCENE}&&{SCENE}.checked===true"),
+        click("[data-scene-toggle]"),
+        wait("window.__held.length===1"),
+        eval_("selectTab('prompts');window.__release()"),
+        wait("SET.data.scene.enabled===false"),
+        eval_("new Promise(r=>setTimeout(()=>r([!!document.getElementById('sceneSettings'),SET.section,SET.data.scene.enabled]),400))", "late"),
+        eval_("selectTab('scene_gate');true"),
+        wait(f"!!{SCENE}&&{SCENE}.checked===false"),
+        # Rallumée, sans outils d'affichage chez le brain : le redémarrage est proposé. Son compteur s'arrête quand on
+        # quitte la section et reprend au retour ; l'échéance de la requête, elle, continue.
+        click("[data-scene-toggle]"),
+        wait("window.__held.length===1"), eval_("window.__release()"),
+        wait("SET.data.scene.enabled===true&&!!document.querySelector('[data-scene-restart]')", 5000),
+        click("[data-scene-restart]"),
+        wait("!document.getElementById('confirmBack').hidden"),
+        eval_("window.__watch=true"), click("#confirmGo"),
+        wait("window.__held.length===1"), eval_("window.__watch=false;window.__intervals.size", "ticking"),
+        eval_("selectTab('prompts');window.__intervals.size", "left"),
+        eval_("window.__watch=true;selectTab('scene_gate');window.__watch=false;"
+              "[window.__intervals.size,!!document.querySelector('[data-scene-restart][aria-busy=true]')]", "back"),
+        eval_("window.__release()"),
+        wait("!document.querySelector('[data-scene-restart][aria-busy=true]')"),
+        eval_("window.__intervals.size", "done"),
+    ]}])
+    step = out["steps"][0]
+    assert got(step, "head") == [True, "Scène constellation"]  # tête de section du shell, badge « Avancé »
+    assert got(step, "stale_error") is False
+    assert got(step, "late") == [False, "prompts", False]
+    assert got(step, "ticking") == 1 and got(step, "left") == 0
+    assert got(step, "back") == [1, True]
+    assert got(step, "done") == 0
+    posts = [(r["path"], json.loads(r["body"])) for r in out["requests"] if r["method"] == "POST"]
+    # Le refus de test est répondu dans la page (aucune requête) ; les deux envois retenus partent à leur libération.
+    assert [b for p, b in posts if p == "/api/settings"] == [{"scene": {"enabled": False}}, {"scene": {"enabled": True}}]
+    assert served.stored()["scene"] == {"enabled": True}
+    assert out["console"] == [], out["console"]
+
+
 KEYBOARD = [
     wait("!!document.getElementById('openSettings')"),
     click("#dockMore"), click("#openSettings"),
@@ -216,8 +287,9 @@ LAYOUT = """(async()=>{const pause=ms=>new Promise(r=>setTimeout(r,ms)),out={};
   return out})()""" % json.dumps(ENTRIES)
 
 
-@pytest.mark.parametrize(("width", "height"), [(1920, 1080), (1366, 768)])
+@pytest.mark.parametrize(("width", "height"), [(1920, 1080), (1366, 768), (1093, 614)])
 async def test_no_advanced_section_overflows(served, width, height):
+    """1093×614 : 1366×768 à 125 % de zoom (QA S08 : la liste y passe à la ligne au lieu de défiler)."""
     out = await drive(served.url, [{"width": width, "height": height, "actions": [*OPEN, eval_(LAYOUT, "layout")]}])
     layout = got(out["steps"][0], "layout")
     for section, measure in layout.items():

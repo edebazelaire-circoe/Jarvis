@@ -837,7 +837,10 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
    technique (monospace) réservé à cette catégorie : intitulés de groupe et éditeurs de prompt. */
 .set-items-grouped{flex-wrap:wrap;gap:8px 0;align-items:flex-end}
 .set-group{display:flex;flex-direction:column;flex:none;min-width:0}
-.set-group+.set-group{margin-left:6px;padding-left:6px;border-left:1px solid var(--set-hair)}
+/* Filet entre deux groupes : chaque groupe porte le sien à gauche, décalé d'un pixel hors de sa boîte ; la liste
+   (`overflow` du défilement) coupe celui du groupe qui ouvre une ligne. Une ligne ne commence plus par un filet quand
+   Labs passe à la ligne (finitions avant la Slice 10). */
+.set-items-grouped .set-group{margin-left:-1px;margin-right:7px;padding-left:6px;border-left:1px solid var(--set-hair)}
 .set-group-label{padding:0 14px 1px;font:600 10.5px/1.4 var(--set-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--set-ink-3);white-space:nowrap}
 .set-group-items{display:flex;gap:2px}
 .set-intro-notice{margin:10px 0 0;max-width:68ch;padding:7px 12px;border-left:2px solid var(--set-hue);border-radius:0 8px 8px 0;background:color-mix(in srgb,var(--set-hue) 7%,transparent);font-size:13px;color:var(--set-ink-2)}
