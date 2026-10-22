@@ -9,7 +9,7 @@
 7. [x] `06-interface-interactions-reorganization` - Interface and interactions reorganization. Approved 2026-10-22 (2ec2a203 + 83387ef1).
 8. [x] `07-connections-reorganization` - Connections reorganization. Approved after independent QA (3f0a6cd7, b6786c09, 4394bacd).
 9. [x] `08-advanced-diagnostics-labs` - Advanced diagnostics and labs. Approved after independent QA (d22870ed, dfc45f35, 7ce0209f; S7 fix 7eb74cc1).
-10. `09-legacy-routing-and-deeplink-compatibility` - Legacy tab cleanup and compatibility aliases.
+10. [x] `09-legacy-routing-and-deeplink-compatibility` - Legacy tab cleanup and compatibility aliases. Approved after independent QA (9c509238, 6efd5041).
 11. `10-integration-accessibility-release-qa` - Integrated accessibility and release QA.
 
 Dependencies in each Slice are authoritative. Slice 00 may split, reorder, supersede, or add Slices after its blind audit, but it must record why.

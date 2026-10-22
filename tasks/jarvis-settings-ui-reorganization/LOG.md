@@ -958,3 +958,24 @@ sable laissées en place. Disque C : 58 Go libres au début et à la fin.
 - Doubles de test Bare Hands (`test_barehands_tools_settings_js.py`) gardent un `global.TABS=[]` sentinelle et un
   `modalSub` factice : sans effet (le module n'en lit aucun), laissés.
 - Ancien texte « Mode vocal » dans des documents historiques (`HARDWARE_ACCEPTANCE.md`, `docs/fixes/…`) non réécrit.
+
+## S09 — décision QA (agent 0), 2026-10-22
+
+QA indépendante : **approuvable, aucun finding bloquant**. Aucun appelant oublié d'un ID retiré : code JS, serveur,
+MCP, `ui_intent`, prompts du cerveau, valeurs persistées (aucune), liens profonds (aucun) et `C:/DevTools/skills-lib`
+(aucune mention). Seul alias `memory` (appelant : bouton du Memory Center, clic réel en bac à sable → Rappel). Aucun
+`TABS.*` ; `LEGACY_TAB_ALIASES = {memory}` seule table ; ID retiré → `settings_target_unknown` + Voix & audio. Les
+destinations citées par les textes corrigés existent. Six catégories : mémoire de la dernière section, Échap puis
+réouverture, Ctrl+→/← en boucle — comme avant. Garder les noms `renderTab`/`renderTabs`/`selectTab` est accepté. Tests :
+74 navigateur verts, balayage 8 527 passed, échecs = les 12 préexistants + l'intermittent `test_memory_context`.
+Mutations QA 8/12 tuées. Slice 09 approuvée.
+
+Non bloquants, confiés à la passe de finitions avant la Slice 10 :
+- N1 : test navigateur du bouton Réglages du Memory Center → Rappel (mutation Q1 survivante).
+- N2 : tests des messages corrigés `app.py:1101/1167`, `presentation_runtime.py:159-167`, `control_center_boards.js:410`
+  (Q6-Q8 survivantes).
+- N3 : commentaires/docs périmés (`docs/ARCHITECTURE.md:2554`, `control_center_wake_word.js:12/847`,
+  `control_center.html:4466`, `control_center.py:837`).
+- N4 : `workspace.unknown_action {"name":"settings"}` au clic du Memory Center (préexistant, déjà relevé en S05).
+- N5 : le message Bare Hands « avec l'accord de l'utilisateur » contredit `BRAIN_SETTINGS_PROMPT` ; décision agent 0
+  (option recommandée) : aligner le message sur la politique du prompt de réglages existant.
