@@ -462,3 +462,28 @@ sable laissées en place.
   `.field.inline`). Pour la Slice 10.
 - Les commentaires historiques de `control_center_barehands.js` et de `docs/barehands-contracts.md` parlent encore de
   « l'onglet Expérimental » (notes de Slices passées ; tête de fichier et tableaux d'entrée corrigés).
+
+## 2026-10-22 - Slice 06 — retravail (QA)
+
+- B1 (`83387ef1`) : maintien en vue généralisé dans le shell (`pinSettingsTarget` / `stopSettingsPin`, 4 s, rend la
+  main à molette, touche, pointeur, toucher ; arrêté au lien suivant, au changement de section ou de catégorie et à la
+  fermeture par `cleanupSettingsSurface`). Toute cible trouvée par `openSettingsLink` en profite ; « Voir le diagnostic
+  mémoire » passe désormais par `context.open('diagnostics', {focus:'#diagnostic_memory'})` (plus de mécanisme à part).
+  Test : `test_wake_word_diagnostic_link_keeps_its_part_in_view_after_voice_fills[1440x900|1366x768]` (partie Voix
+  remplie plus haute que la zone visible, partie Mot d'éveil visible et focalisée 2,5 s après le lien). Le test node de
+  la Slice 05 sur le maintien teste désormais le mécanisme du shell via la partie Mémoire.
+- B2 : `test_a_late_shortcut_save_redraws_nothing_once_the_section_is_left[section|close]` (POST des raccourcis
+  retenu, départ vers Thème & scène ou fermeture, puis réponse : 0 rendu, focus et hôte inchangés, valeur `f10` gardée
+  et servie).
+- N4 : clé `jarvis.scene.view` figée dans `test_theme_applies_in_place_persists_and_scene_view_resets`. N5 : commentaires
+  de `control_center_barehands.js` (l. 4218, 6986, 7250, 7254, 9444, 9453, 9569, 9623, 9778), `OPERATIONS.md`,
+  `ARCHITECTURE.md` et le double de `test_barehands_cards_js` mis à jour ; `settings-shell.md` § 3 décrit le maintien.
+- Mutations (copie jetable `git worktree add --detach` de `83387ef1`, supprimée) : 5/5 tuées — R1 cible du lien sans
+  maintien, R2a/R2b garde `isCurrent` de `startCapture` retirée (section / fermeture), R3 maintien sourd aux gestes,
+  R4 clé de la scène changée.
+- Tests : memory_settings_js + settings_shell_js + registry_js + scene_view_prefs + barehands_cards_js + appearance +
+  quality + mvp 159 passed ; `-k "shortcut and not browser"` 16 passed. Navigateur : interface_settings_browser
+  13 / 12 + 1 échec / 13 / 13 (quatre passes ; l'échec unique de la 2e passe n'a pas été identifié — sortie non
+  conservée — et ne s'est pas reproduit en deux passes de plus) ; memory_settings_browser 6 + 6 ;
+  settings_shell_browser 9 + 9 ; wake_word_settings_browser 10 + 10 et 10 + 10 (deux passes de chaque moitié).
+  Aucun bac à sable lancé.
