@@ -38,6 +38,7 @@ from jarvis.domain import (
     agent_markers, agent_orchestration, delivery_quality, relation_runtime, role_routing, routing,
 )
 from jarvis.domain.agent_charter import sign_brief
+from jarvis.domain.brain_config import DelegationTendency
 from jarvis.domain.loadout_view import MANIFEST_MARK
 from jarvis.domain.agent_relations import QA_REVIEWER_ROLE_IDS
 from jarvis.domain.mission_history import MissionHistoryError, fact_from_hook_event
@@ -57,7 +58,8 @@ from jarvis.domain.routing import (
     RoutingPolicy,
 )
 from jarvis.runtime import (
-    agent_declarations, agent_handoffs, hook_failsafe, agent_routing, cli_catalog, credentials, loadout_snapshot,
+    agent_declarations, agent_handoffs, brain_config_store, hook_failsafe, agent_routing, cli_catalog, credentials,
+    loadout_snapshot,
     subagent_role_routing, subagent_roles_snapshot, work_methods_snapshot,
 )
 from jarvis.runtime.catalog_view import ProviderCatalogSnapshot
@@ -531,7 +533,8 @@ def run(event: Mapping[str, Any], runtime_root: Path, *, spawn_guard: bool = Fal
         orchestration = orchestration_of(event) if str(event.get("tool_name") or "") in AGENT_TOOLS else None
     except Exception:  # noqa: BLE001 - une lecture qui lève ne vaut pas un outil perdu ; rien n'est déclaré
         orchestration = None
-    guard = _spawn_guard(event, runtime_root, journal, orchestration, enforce=spawn_guard)
+    guard = _delegation_guard(event, runtime_root, journal) or _spawn_guard(
+        event, runtime_root, journal, orchestration, enforce=spawn_guard)
     if guard.deny:
         _log_declared(journal, event, orchestration, guard, written=False)
         return _output("deny", guard.reason)
@@ -666,6 +669,39 @@ def _route(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJournal
         return _allow()
     _log(journal, event, output, decision, charter=charter)
     return output
+
+
+#: Code consigné (`agent.spawn_refused`) quand la tendance de délégation du cerveau Core vaut `never`.
+DELEGATION_NEVER_CODE = "brain_delegation_never"
+DELEGATION_NEVER_REASON = (
+    "Délégation désactivée : la tendance de délégation du cerveau Core vaut « Jamais » (Réglages › Architecture & "
+    "Agents › fenêtre du cerveau Core). Faites-le dans ce tour ou dites à l'utilisateur ce qui demanderait un "
+    "sous-agent."
+)
+
+
+def _delegation_guard(event: Mapping[str, Any], runtime_root: Path,
+                      journal: RuntimeJournal) -> agent_orchestration.SpawnGuard | None:
+    """Refus d'un appel `Agent` **du cerveau** quand sa tendance vaut `never` (docs/brain-config.md).
+
+    Défense en profondeur : `claude_local` retire déjà l'outil au lancement du CLI ; ce refus couvre un CLI lancé
+    avant le réglage (il garde l'outil jusqu'à sa relance) et s'applique dès l'appel suivant, le fichier étant relu
+    à chaque appel. Seul l'appel du cerveau est visé (`agent_id` absent) : un sous-agent déjà lancé avant le
+    réglage finit sa mission avec ses propres outils. Un fichier illisible se lit `standard` (le défaut), dit au
+    journal : le hook ne refuse jamais sur une panne.
+    """
+    if str(event.get("tool_name") or "") not in AGENT_TOOLS:
+        return None
+    caller = event.get("agent_id")
+    if isinstance(caller, str) and caller:
+        return None
+    loaded = brain_config_store.load(runtime_root)
+    if loaded.error_code:
+        _emit(journal, "agent.delegation.unreadable", "Configuration des cerveaux illisible : tendance standard.",
+              level="warning", data={"code": loaded.error_code})
+    if loaded.document.delegation_for("core") is not DelegationTendency.NEVER:
+        return None
+    return agent_orchestration.SpawnGuard(deny=True, code=DELEGATION_NEVER_CODE, reason=DELEGATION_NEVER_REASON)
 
 
 def _spawn_guard(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJournal,

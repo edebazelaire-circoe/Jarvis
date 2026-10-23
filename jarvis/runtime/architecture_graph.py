@@ -7,7 +7,7 @@ Le graphe n'a pas d'état propre. Il **projette** les réglages qui portent rée
 | Surface Live -> Core (Duplex) | `voice_architecture.config.brain_orchestration` | au démarrage de Voice |
 | Surface -> Core (Simple, Front Brain) | `voice_surface.back_brain_delegation` | au démarrage de Voice |
 | Core -> Tool Brain | `tool_brain.mode` (`JARVIS_TOOL_BRAIN` prioritaire) | au démarrage de Core |
-| Core -> Sous-agents | gouvernée par la config du cerveau Core (`delegation`) | lecture seule ici |
+| Core -> Sous-agents | gouvernée par la config du cerveau Core (`brain-config.json`, `delegation`) | lecture seule ici |
 
 et **observe** ce qui tourne (battement `.voice_runtime` de Voice, publication `tool-brain-ownership.json` du Tool
 Brain, jeton de Core) pour dire honnêtement ce qui est déjà appliqué (`pending`).
@@ -41,6 +41,7 @@ from jarvis.domain.architecture_graph import (
     Node, NodeKind, NodeState, Pending, Port, PortDirection, PortRef, VoiceArchitectureRef, connection_id,
     port_incompatibility, topology_revision, validate_snapshot,
 )
+from jarvis.domain.brain_config import DEFAULT_DELEGATION, DelegationTendency
 from jarvis.domain.errors import ConfigurationError
 from jarvis.domain.voice_architecture import DuplexVoiceConfig, FrontBrainVoiceConfig, VoiceConfigError
 from jarvis.runtime.back_brain_delegation import (
@@ -49,7 +50,10 @@ from jarvis.runtime.back_brain_delegation import (
 from jarvis.runtime.tool_brain_ownership import (
     NO_PUBLICATION, SHUTDOWN, STALE_PUBLICATION, UNREADABLE_PUBLICATION, OwnershipView, read_ownership,
 )
-from jarvis.runtime.tool_brain_wiring import TOOL_BRAIN_MODE_ENV, TOOL_BRAIN_SETTING, resolve_mode, settings_mode
+from jarvis.runtime import brain_config_store
+from jarvis.runtime.tool_brain_wiring import (
+    TOOL_BRAIN_MODE_ENV, TOOL_BRAIN_MODES, TOOL_BRAIN_SETTING, resolve_mode, settings_mode,
+)
 from jarvis.runtime.voice_architecture_config import (
     VOICE_ARCHITECTURE_SETTING, decode_voice_architecture, load_voice_architecture, store_voice_architecture,
 )
@@ -67,6 +71,7 @@ BINDING_VOICE_DELEGATION = f"{VOICE_SURFACE_SETTING}.{BACK_BRAIN_DELEGATION_FIEL
 BINDING_TOOL_BRAIN = f"{TOOL_BRAIN_SETTING}.mode"
 BINDING_SUBAGENTS = "brain_config.core.delegation"
 BINDING_VOICE_ARCH = "voice_architecture"
+TOOL_BRAIN_CONNECTION = "core.events->tool_brain.wake"
 
 ARCHITECTURE_LABELS = {
     "simple": "Simple", "front_brain": "Front Brain", "duplex": "Duplex",
@@ -264,8 +269,13 @@ IN, OUT = PortDirection.IN, PortDirection.OUT
 
 
 def project_architecture(settings: Mapping[str, Any], *, environ: Mapping[str, str] | None = None,
-                         observations: RuntimeObservations) -> ArchitectureSnapshot:
-    """Snapshot de l'architecture **effective** : seulement les nœuds réels de l'architecture vocale courante."""
+                         observations: RuntimeObservations,
+                         delegation: DelegationTendency = DEFAULT_DELEGATION) -> ArchitectureSnapshot:
+    """Snapshot de l'architecture **effective** : seulement les nœuds réels de l'architecture vocale courante.
+
+    `delegation` : tendance du cerveau Core (`brain-config.json`, Slice 02), qui gouverne la liaison vers les
+    sous-agents. Le service la lit ; le défaut `standard` est le comportement d'avant ce réglage.
+    """
 
     env = os.environ if environ is None else environ
     voice = _voice_view(settings, env)
@@ -424,23 +434,30 @@ def project_architecture(settings: Mapping[str, Any], *, environ: Mapping[str, s
         Mutability.REQUIRED_LOCKED if tool_source == "env" else Mutability.TOGGLEABLE,
         BINDING_TOOL_BRAIN, Applies.CORE_RESTART, locked_reason=env_locked_reason, pending=tool_pending,
         impact_when_disabled="Le Tool Brain ne se réveille plus ; Jarvis garde seul la main sur l'écran."))
+    # `never` coupe réellement la liaison : outil `Agent` retiré au lancement du CLI cerveau et appel refusé par le
+    # hook dès l'appel suivant (docs/brain-config.md). Les autres niveaux ne changent que la consigne.
     connections.append(Connection(
         ref("core", "agents"), ref("subagents", "spawn"), Channel.TOOL_CALL,
-        "Lancement de sous-agents (outil Agent) pour les rôles du registre", True, Mutability.GOVERNED,
+        "Lancement de sous-agents (outil Agent) pour les rôles du registre",
+        delegation is not DelegationTendency.NEVER, Mutability.GOVERNED,
         BINDING_SUBAGENTS, None, governed_by=GovernedBy("brain_config", "core", "delegation"),
         impact_when_disabled="Gouvernée par la tendance de délégation du cerveau Core (fenêtre du cerveau)."))
 
     snapshot = ArchitectureSnapshot(
-        topology_revision(_revision_inputs(settings, env)),
+        topology_revision(_revision_inputs(settings, env, delegation)),
         VoiceArchitectureRef(arch, ARCHITECTURE_LABELS.get(arch, arch), source=voice.source),
         tuple(nodes), tuple(connections))
     validate_snapshot(snapshot)
     return snapshot
 
 
-def _revision_inputs(settings: Mapping[str, Any], env: Mapping[str, str]) -> dict[str, object]:
+def _revision_inputs(settings: Mapping[str, Any], env: Mapping[str, str],
+                     delegation: DelegationTendency = DEFAULT_DELEGATION) -> dict[str, object]:
     keys = (VOICE_ARCHITECTURE_SETTING, "voice_arch", "voice_stack", VOICE_SURFACE_SETTING, TOOL_BRAIN_SETTING)
-    return {"settings": {key: settings.get(key) for key in keys},
+    # La tendance n'entre dans l'empreinte que hors du défaut : un graphe sans réglage garde la révision d'avant.
+    governed = {} if delegation is DEFAULT_DELEGATION else {"governed": {BINDING_SUBAGENTS: delegation.value}}
+    return {**governed,
+            "settings": {key: settings.get(key) for key in keys},
             "env": {name: str(env.get(name, "") or "").strip()
                     for name in (TOOL_BRAIN_MODE_ENV, "JARVIS_VOICE_ARCH", "JARVIS_VOICE_STACK")}}
 
@@ -514,8 +531,53 @@ class ArchitectureGraphService:
     def environ(self) -> Mapping[str, str]:
         return os.environ if self._environ is None else self._environ
 
+    @property
+    def write_lock(self) -> threading.Lock:
+        """Verrou des écritures de `control-center-settings.json` faites par ce processus hors de `/api/settings` :
+        la configuration des cerveaux (Slice 02) le prend pour ses propres écritures du même fichier. Non réentrant :
+        ne pas appeler une méthode d'écriture de ce service en le tenant."""
+        return self._lock
+
+    def delegation(self) -> DelegationTendency:
+        return brain_config_store.delegation_for(self.runtime_root, "core")
+
     def snapshot(self) -> ArchitectureSnapshot:
-        return project_architecture(self.store.read(), environ=self.environ, observations=self._observe())
+        return project_architecture(self.store.read(), environ=self.environ, observations=self._observe(),
+                                    delegation=self.delegation())
+
+    def set_tool_brain_mode(self, mode: object, *, base_revision: object) -> MutationResult:
+        """Choisir `off | shadow | active` (réglage du nœud Tool Brain, Slice 02). Même transaction que la liaison
+        `core.events->tool_brain.wake`, dont c'est le seul autre écrivain : révision vérifiée, variable
+        d'environnement prioritaire refusée, écriture atomique du bloc `tool_brain`, effet au démarrage de Core."""
+
+        if not isinstance(mode, str) or mode not in TOOL_BRAIN_MODES:
+            raise ArchitectureGraphError(REQUEST_INVALID, "Mode du Tool Brain inconnu : attendu off, shadow ou active.")
+        with self._lock:
+            settings = self.store.read()
+            current = project_architecture(settings, environ=self.environ, observations=self._observe(),
+                                           delegation=self.delegation())
+            self._check_revision(current, base_revision)
+            conn = current.connection(TOOL_BRAIN_CONNECTION)
+            if conn is not None and conn.mutability is Mutability.REQUIRED_LOCKED:
+                raise ArchitectureGraphError(CONNECTION_LOCKED, conn.locked_reason)
+            if settings_mode(settings) is not None and settings_mode(settings).value == mode:  # type: ignore[union-attr]
+                self._emit("architecture.tool_brain.unchanged", "Mode du Tool Brain déjà enregistré", {"mode": mode})
+                return MutationResult(current, False)
+            updated = deepcopy(dict(settings))
+            block = updated.get(TOOL_BRAIN_SETTING)
+            block = dict(block) if isinstance(block, dict) else {}
+            block["mode"] = mode
+            updated[TOOL_BRAIN_SETTING] = block
+            context = {"binding": BINDING_TOOL_BRAIN, "mode": mode}
+            try:
+                self.store.write(updated)
+            except OSError as exc:
+                self._emit("architecture.tool_brain.write_failed", "Écriture du mode du Tool Brain impossible",
+                           {**context, "error_class": type(exc).__name__}, level="error")
+                raise ArchitectureGraphError(APPLY_FAILED, f"Réglages non enregistrés : {type(exc).__name__}: {exc}") from exc
+            self._emit("architecture.tool_brain.updated", "Mode du Tool Brain modifié",
+                       {**context, "applies": Applies.CORE_RESTART.value})
+        return MutationResult(self.snapshot(), True)
 
     def set_connection_enabled(self, conn_id: str, *, base_revision: object, enabled: object) -> MutationResult:
         if type(enabled) is not bool:
@@ -523,7 +585,8 @@ class ArchitectureGraphService:
         with self._lock:
             settings = self.store.read()
             observations = self._observe()
-            current = project_architecture(settings, environ=self.environ, observations=observations)
+            current = project_architecture(settings, environ=self.environ, observations=observations,
+                                           delegation=self.delegation())
             conn = self._writable(current, conn_id, base_revision)
             if _persisted_value(settings, conn.binding, self.environ) == enabled:
                 self._emit("architecture.connection.unchanged", "Liaison déjà dans l'état demandé",
@@ -592,13 +655,31 @@ class ArchitectureGraphService:
             updated = _flip_settings(settings, conn.binding, enabled)
             # Validation complète avant toute écriture : projection cohérente, et pour une liaison vocale,
             # composition cible démarrable (sinon Voice refuserait de démarrer sur ces réglages).
-            project_architecture(updated, environ=self.environ, observations=observations)
+            project_architecture(updated, environ=self.environ, observations=observations, delegation=self.delegation())
             if conn.binding in _VOICE_BINDINGS:
                 resolve_voice_composition(updated, environ=self.environ)
         except (VoiceConfigError, ConfigurationError, ValueError) as exc:
             self._emit("architecture.connection.rejected", "Configuration cible refusée, rien d'écrit",
                        {**context, "code": getattr(exc, "code", type(exc).__name__)}, level="warning")
             raise ArchitectureGraphError(APPLY_FAILED, f"Configuration refusée, rien n'a été écrit : {exc}") from exc
+        switch = self.write_settings(settings, updated, voice=conn.binding in _VOICE_BINDINGS,
+                                     observations=observations, context=context)
+        self._emit("architecture.connection.updated", "Liaison du graphe modifiée",
+                   {**context, "applies": conn.applies.value if conn.applies else None,
+                    "voice_switch_request_id": switch.get("request_id") if switch else None})
+        return MutationResult(self.snapshot(), True, switch)
+
+    def write_settings(self, previous: dict[str, Any], updated: dict[str, Any], *, voice: bool,
+                       observations: RuntimeObservations | None = None,
+                       context: Mapping[str, object] | None = None) -> Mapping[str, object] | None:
+        """Écrire `updated` (déjà validé par l'appelant) puis, pour un réglage relu par Voice, demander sa relance ;
+        si la demande échoue, `previous` est réécrit. Rend la demande de bascule émise (ou `None`).
+
+        L'appelant tient `write_lock` (la liaison du graphe, ou la configuration des cerveaux de la Slice 02, qui
+        réutilise ici la même discipline au lieu d'en recopier une). Lève `ArchitectureGraphError(APPLY_FAILED)`.
+        """
+
+        context = dict(context or {})
         try:
             self.store.write(updated)
         except OSError as exc:
@@ -606,20 +687,17 @@ class ArchitectureGraphService:
                        {**context, "error_class": type(exc).__name__}, level="error")
             raise ArchitectureGraphError(APPLY_FAILED, f"Réglages non enregistrés : {type(exc).__name__}: {exc}") from exc
         switch = None
-        if conn.binding in _VOICE_BINDINGS:
+        if voice:
             requester = self._voice_switch or request_voice_switch(self.runtime_root, self.environ)
             try:
-                switch = requester(settings, updated, observations)
+                switch = requester(previous, updated, observations or self._observe())
             except (OSError, ValueError, VoiceConfigError, ConfigurationError) as exc:
-                self._rollback(settings, context, exc)
+                self._rollback(previous, context, exc)
                 raise ArchitectureGraphError(APPLY_FAILED, "La voix n'a pas pu être relancée sur la nouvelle "
                                              f"configuration ; réglage précédent rétabli ({type(exc).__name__}).") from exc
-        self._emit("architecture.connection.updated", "Liaison du graphe modifiée",
-                   {**context, "applies": conn.applies.value if conn.applies else None,
-                    "voice_switch_request_id": switch.get("request_id") if switch else None})
         if switch:
             self._emit("voice.switch.requested", "Voice architecture switch requested", dict(switch))
-        return MutationResult(self.snapshot(), True, switch)
+        return switch
 
     def _rollback(self, previous: dict[str, Any], context: Mapping[str, object], cause: Exception) -> None:
         try:
