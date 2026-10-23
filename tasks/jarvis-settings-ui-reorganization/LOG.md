@@ -1336,3 +1336,19 @@ reste comme garde pour un moteur sans `checkVisibility`.
   Control Center 17654 (PID 34676) intacts. Données du bac à sable laissées en place. Disque C : 58 Go libres.
 
 Verdict de la reprise : B1 et N1 à N4 corrigés ; validation machine à rejouer par une re-QA.
+
+## S10 — décision re-QA (agent 0), 2026-10-23
+
+Re-QA indépendante de `81a7565f` : **livrable au Human, aucun finding bloquant**. B1 rejoué au vrai clavier sur les 25
+sections (0 sortie du shell ; aucune capture à tort avec confirmations Bare Hands / redémarrage, select natif, clic hors
+contrôle, après fermeture). N1 (`composedPath`) sans action de workspace ignorée ; N2 ≥ 7:1 ; N3 catalogue atteignable.
+Intermittent du fichier d'accessibilité non reproduit (51/51) : harnais/chronométrage, cause probable corrigée par
+`1c4bc3d6`. Tests : navigateur 155 passed / 4 skipped / 0 échec ; balayage 918 fichiers 23 230 passed / 13 failed /
+95 skipped = les 12 préexistants de `20292e5c` + l'intermittent `test_memory_context`. Mutations 5/8 tuées (MA
+équivalente ; MD/MH = R1). `HUMAN-CHECKS.md` complet et exact. **Validation machine épuisée** ; restent HV-SETTINGS-001
+à 008, les décisions produit, le merge et le redémarrage de JARVIS (Human).
+
+Non bloquants (à reprendre hors de cette tâche) : R1 sens de frappe et exemption `aria-modal` du dernier recours non
+testés ; R2 liste simulée ; R3 nom « Catalogue de modèles subagents » ; R4 tables du Test Lab sans `tabindex`
+(préexistant) ; R5 fichiers navigateur à 480-540 s, à lancer en moitiés. Nettoyage à faire après acceptation et merge :
+worktree `setui`, profil Chrome non suivi `.tmp-cosmos/`, données des bacs à sable au scratchpad (après copie des bases).
