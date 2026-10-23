@@ -258,6 +258,39 @@ async def test_disabled_and_read_only_states_stay_readable(served):
     assert low == [], low
 
 
+#: Un profil de routage éteint (Avancé › Runtime & CLI › Configuration avancée), absent du banc d'essai au repos : ses
+#: aides, ses commandes désactivées et son bloc, mesurés avec toutes les opacités des ancêtres (QA Slice 10, N2/Q8).
+ROUTING_OFF = """(async()=>{%s
+  const pause=ms=>new Promise(r=>setTimeout(r,ms));
+  const block=document.querySelector('#modalContent .routing-off');
+  const els=[...block.querySelectorAll('.hint, :disabled, label, h3')].filter(e=>e.getClientRects().length&&(e.textContent.trim()||e.tagName==='INPUT'||e.tagName==='SELECT'||e.tagName==='BUTTON'));
+  return {count:els.length,block:Number(getComputedStyle(block).opacity),
+    rows:els.map(e=>({tag:e.tagName,cls:e.className,text:(e.textContent||e.type||'').trim().slice(0,30),opacity:Math.round(opacityOf(e)*100)/100,
+      ratio:Math.round(measure(e)*100)/100}))}})()""" % CONTRAST_JS
+
+
+async def test_a_disabled_routing_profile_stays_readable_and_greyed_once(served):
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        *OPEN,
+        eval_("selectTab('runtime_cli');true"),
+        wait("!!document.querySelector('#routingAdvanced summary')", 8000),
+        click("#routingAdvanced summary"),
+        wait("!!document.querySelector('#modalContent [data-routing-profile-enabled]:checked')", 10000),
+        click("#modalContent [data-routing-profile-enabled]:checked"),
+        wait("!!document.querySelector('#modalContent .routing-off')", 5000),
+        eval_(ROUTING_OFF, "off"),
+    ]}])
+    off = got(out["steps"][0], "off")
+    hints = [r for r in off["rows"] if "hint" in r["cls"]]
+    assert off["count"] >= 2 and hints, off
+    low = [r for r in off["rows"] if r["ratio"] < 4.5]
+    assert low == [], low
+    # Grisé une seule fois : rien sous 0,7 d'opacité cumulée, les aides à pleine opacité.
+    assert all(r["opacity"] >= 0.7 for r in off["rows"]), off["rows"]
+    assert all(r["opacity"] == 1 for r in hints), hints
+    assert out["console"] == [], out["console"]
+
+
 MOTION = """(()=>{const cat=getComputedStyle(document.querySelector('.set-cat'));
   const probe=document.createElement('div');probe.style.cssText='animation:set-enter 2s infinite;transition:opacity 3s';
   document.getElementById('modalContent').append(probe);const p=getComputedStyle(probe);
@@ -286,33 +319,167 @@ async def test_reduced_motion_and_forced_colors(served):
     assert forced == {"focus": True, "disabled": True}, forced
 
 
-#: Le dernier contrôle réellement atteignable au clavier : un descendant d'un `<details>` fermé ne l'est pas (son résumé
-#: l'est). Chrome donne pourtant des boîtes à ces descendants (`getClientRects`), que le piège de Tab du shell compte.
-REAL_LAST = """(()=>{const ov=document.getElementById('overlay');
+#: Les deux bouts réellement atteignables au clavier du shell, calculés ici indépendamment du produit : un descendant
+#: d'un `<details>` fermé ne l'est pas (son résumé l'est), alors que Chrome lui donne des boîtes (`getClientRects`), ce
+#: que le piège de Tab comptait (QA Slice 10, B1). Chaque bout est marqué pour être reconnu après la frappe.
+ENDS = """((which)=>{const ov=document.getElementById('overlay');
   const shut=el=>{for(let d=el.closest('details');d;d=d.parentElement&&d.parentElement.closest('details'))
     if(!d.open&&!(el.tagName==='SUMMARY'&&el.parentElement===d))return true;return false};
   const all=[...ov.querySelectorAll('button,a[href],input,select,textarea,summary,[tabindex]')]
     .filter(el=>!el.disabled&&el.tabIndex>=0&&el.getClientRects().length>0&&!shut(el));
-  const last=all[all.length-1];last.focus();return last.tagName})()"""
+  all.forEach(el=>{delete el.__end});all[0].__end='first';all[all.length-1].__end='last';
+  const hidden=[...ov.querySelectorAll('details:not([open]) button')].filter(el=>el.getClientRects().length>0).length;
+  const el=which==='first'?all[0]:all[all.length-1];el.focus();
+  return {tag:el.tagName,hidden,focused:document.activeElement===el}})"""
+WHERE = """(()=>{const e=document.activeElement;
+  return {end:e&&e.__end||null,tag:e&&e.tagName,inShell:!!e&&document.getElementById('settingsShell').contains(e)}})()"""
+
+#: Sections dont le dernier contrôle visible précède un `<details>` fermé qui cache des boutons : Connexions ›
+#: Fournisseurs (« Ajouter une clé ») et Agents & modèles › Rôles des sous-agents (« Afficher et modifier les
+#: instructions » ; rôles chargés).
+TRAP_SECTIONS = [("providers", "!!document.querySelector('#modalContent summary')"),
+                 ("subagents", "!!document.querySelector('#modalContent details summary')")]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Finding QA S10 (bloquant, Slice 02) : le piège de Tab du shell (`control_center.html`, écoute `keydown` des "
-    "Réglages) prend pour dernier focusable un contrôle d'un `<details>` fermé ; Tab depuis le vrai dernier contrôle "
-    "sort du shell (`body`, puis les boutons de la page derrière)."))
-async def test_tab_from_the_last_reachable_control_stays_in_the_shell(served):
-    """QA Slice 10 : Connexions › Fournisseurs finit par le résumé « Ajouter une clé » d'un `<details>` fermé (vu aussi
-    en bac à sable sur Agents & modèles › Rôles des sous-agents, rôles chargés). Vraie frappe Tab depuis ce dernier
-    contrôle : le focus doit revenir au début du shell."""
-    section = "providers"
+@pytest.mark.parametrize(("section", "ready"), TRAP_SECTIONS)
+async def test_tab_from_the_last_reachable_control_stays_in_the_shell(served, section, ready):
+    """QA Slice 10, B1 : vraie frappe Tab depuis le vrai dernier contrôle → le premier du shell ; vraie frappe Maj+Tab
+    depuis le premier → le vrai dernier, jamais un bouton caché d'un `<details>` fermé ni la page derrière."""
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         *OPEN,
         eval_(f"selectTab('{section}');true"),
-        wait("!!document.querySelector('#modalContent summary')", 10000),
-        eval_(REAL_LAST, "last"),
+        wait(ready, 10000),
+        eval_(f"({ENDS})('last')", "last"),
         key("Tab"),
-        eval_(FOCUS, "focus"),
+        eval_(WHERE, "after_tab"),
+        eval_(f"({ENDS})('first')", "first"),
+        key("Tab", shift=True),
+        eval_(WHERE, "after_shift_tab"),
     ]}])
     step = out["steps"][0]
-    assert got(step, "last") == "SUMMARY"
-    assert got(step, "focus")["inShell"] is True, got(step, "focus")
+    last = got(step, "last")
+    assert last["focused"] and last["hidden"] > 0, last  # le piège existait bien : des boutons cachés suivent
+    assert got(step, "after_tab") == {"end": "first", "tag": got(step, "first")["tag"], "inShell": True}, got(step, "after_tab")
+    assert got(step, "after_shift_tab") == {"end": "last", "tag": last["tag"], "inShell": True}, got(step, "after_shift_tab")
+    assert out["console"] == [], out["console"]
+
+
+#: Une liste de focusables qui se tromperait encore (un bouton caché d'un `<details>` fermé pris pour le dernier,
+#: l'erreur d'origine) : le dernier recours du piège ramène quand même le focus dans le shell.
+WRONG_LIST = """(()=>{const real=settingsReachable;const ghost=document.querySelector('#overlay details:not([open]) button');
+  window.settingsReachable=root=>{const all=real(root);return ghost?[...all,ghost]:all};return !!ghost})()"""
+
+
+async def test_the_trap_keeps_the_focus_in_the_shell_when_its_list_is_wrong(served):
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        *OPEN,
+        eval_("selectTab('providers');true"),
+        wait("!!document.querySelector('#modalContent summary')", 10000),
+        eval_(WRONG_LIST, "ghost"),
+        eval_("(" + ENDS + ")('last')", "last"),
+        key("Tab"),
+        wait("document.getElementById('settingsShell').contains(document.activeElement)", 2000),
+        eval_(WHERE, "after"),
+    ]}])
+    step = out["steps"][0]
+    assert got(step, "ghost") is True
+    assert got(step, "after")["inShell"] is True and got(step, "after")["end"] == "first", got(step, "after")
+
+
+#: Le conteneur du catalogue comparatif défile horizontalement quand sa table est plus large que la colonne (QA Slice
+#: 10, N3) : il est atteignable au clavier (Tab depuis le contrôle qui le précède), nommé, et son contour se voit.
+CATALOG_WRAP = """(()=>{const w=document.querySelector('#modalContent .catalog-table-wrap'),ends=settingsReachable(document.getElementById('overlay'));
+  const i=ends.indexOf(w);if(i>0)ends[i-1].focus();
+  return {index:i,role:w.getAttribute('role'),name:w.getAttribute('aria-label'),tabindex:w.getAttribute('tabindex'),
+    scroll:w.scrollWidth-w.clientWidth}})()"""
+FOCUSED_WRAP = """(()=>{const e=document.activeElement,cs=getComputedStyle(e);const before=e.scrollLeft;e.scrollLeft+=60;
+  return {wrap:e.classList.contains('catalog-table-wrap'),outline:cs.outlineStyle!=='none'&&parseFloat(cs.outlineWidth)>=2,
+    moved:e.scrollWidth>e.clientWidth?e.scrollLeft>before:null}})()"""
+
+
+async def test_the_scrolling_catalog_table_is_reachable_and_named(served):
+    out = await drive(served.url, [{"width": 1093, "height": 614, "actions": [
+        *OPEN,
+        eval_("selectTab('subagent_models');true"),
+        wait("!!document.querySelector('#modalContent .catalog-table-wrap')", 15000),
+        eval_(CATALOG_WRAP, "wrap"),
+        key("Tab"),
+        eval_(FOCUSED_WRAP, "focused"),
+    ]}])
+    step = out["steps"][0]
+    wrap = got(step, "wrap")
+    assert wrap["index"] > 0 and wrap["role"] == "region" and wrap["tabindex"] == "0", wrap
+    assert wrap["name"] and wrap["name"].startswith("Catalogue de modèles"), wrap
+    focused = got(step, "focused")
+    assert focused["wrap"] and focused["outline"], focused
+    assert focused["moved"] in (True, None), focused
+
+
+#: Marque d'arrivée (`data-settings-landed`) retirée quand le focus repart (mutation Q3) : sinon un ancien saut garderait
+#: son contour forcé au prochain focus, même à la souris.
+LANDED = """(()=>{const t=document.activeElement;window.__landed=t;return t.hasAttribute('data-settings-landed')})()"""
+
+
+async def test_the_landing_mark_is_removed_when_the_focus_leaves(served):
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        *OPEN,
+        click("#modalTabs [data-section=turns_interruptions]"),
+        wait("!!document.querySelector('#modalContent [data-voice-open]')", 8000),
+        click("#modalContent [data-voice-open]"),
+        wait("SET.section==='shortcuts'&&document.activeElement!==document.body"),
+        eval_(LANDED, "landed"),
+        key("Tab"),
+        eval_("({left:document.activeElement!==window.__landed,mark:window.__landed.hasAttribute('data-settings-landed')})", "after"),
+    ]}])
+    step = out["steps"][0]
+    assert got(step, "landed") is True
+    assert got(step, "after") == {"left": True, "mark": False}, got(step, "after")
+
+
+#: Position d'arrivée (mutation Q6) : une partie (section, région, titre) vient en HAUT de la zone qui défile ; une
+#: petite cible défile juste assez (`block:'nearest'`).
+ARRIVAL = """(()=>{const t=document.activeElement,c=document.getElementById('modalContent'),box=c.getBoundingClientRect(),r=t.getBoundingClientRect();
+  return {id:t.id,top:Math.round(r.top-box.top),height:Math.round(r.height),view:Math.round(box.height),scrolled:c.scrollTop}})()"""
+
+
+async def test_a_part_reached_by_a_link_comes_to_the_top_of_the_content(served):
+    out = await drive(served.url, [{"width": 1366, "height": 768, "actions": [
+        *OPEN,
+        eval_("selectTab('recall');true"),
+        wait("!!document.querySelector('#modalContent [data-mem-diagnostics]')", 8000),
+        click("#modalContent [data-mem-diagnostics]"),
+        wait("document.activeElement&&document.activeElement.id==='diagnostic_memory'", 8000),
+        eval_(ARRIVAL, "memory"),
+    ]}])
+    memory = got(out["steps"][0], "memory")
+    assert memory["scrolled"] > 0, memory
+    assert 0 <= memory["top"] <= 40, memory
+
+
+#: Erreur de Connexions collée en haut de la zone qui défile (mutation Q7) : un refus reste lu quand la liste est
+#: longue et que l'on a défilé plus bas.
+REFUSE_POST = """(()=>{const real=window.fetch;window.fetch=(u,o)=>o&&o.method&&o.method!=='GET'
+  ?Promise.resolve(new Response(JSON.stringify({error:'Refus du banc d essai.',detail:'Refus du banc d essai.'}),{status:400,headers:{'Content-Type':'application/json'}}))
+  :real(u,o);return true})()"""
+STUCK = """(async()=>{const c=document.getElementById('modalContent');c.scrollTop=c.scrollHeight;await new Promise(r=>setTimeout(r,200));
+  const e=document.getElementById('connectionsError'),box=c.getBoundingClientRect(),r=e.getBoundingClientRect();
+  return {text:e.textContent,scrolled:c.scrollTop,top:Math.round(r.top-box.top),bottom:Math.round(box.bottom-r.bottom),
+    position:getComputedStyle(e).position}})()"""
+
+
+async def test_a_connections_error_stays_at_the_top_while_scrolling(served):
+    out = await drive(served.url, [{"width": 1366, "height": 768, "actions": [
+        *OPEN,
+        click("#settingsCategories [data-category=connections]"),
+        wait("!!document.querySelector('form[data-conn-add=openai]')", 8000),
+        eval_(REFUSE_POST),
+        eval_("document.querySelector('#connection_openai details.conn-add').open=true;true"),
+        type_in("#conn_openai_name", "Essai"),
+        type_in("#conn_openai_value", "sk-test-FAKE-finitions-0000"),
+        click("form[data-conn-add=openai] button[type=submit]"),
+        wait("!!document.getElementById('connectionsError').textContent.trim()", 8000),
+        eval_(STUCK, "stuck"),
+    ]}])
+    stuck = got(out["steps"][0], "stuck")
+    assert stuck["text"] and stuck["scrolled"] > 0, stuck
+    assert stuck["position"] == "sticky" and -1 <= stuck["top"] <= 40 and stuck["bottom"] > 0, stuck

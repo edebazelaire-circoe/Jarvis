@@ -265,7 +265,8 @@
       const content=cellHtml(column,item,view.selection,limit);
       return column==='model'?`<th scope="row" ${attributes}>${content}</th>`:`<td ${attributes}>${content}</td>`;
     }).join('')}</tr>`).join('');
-    return `<div class="catalog-table-wrap"><table class="catalog-table"><caption>Catalogue de modèles ${escapeHtml(text(envelope&&envelope.surface))}</caption><thead><tr>${columns.map(column=>`<th scope="col">${escapeHtml(COLUMN_LABELS[column])}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
+    const name=`Catalogue de modèles ${text(envelope&&envelope.surface)}`.trim();
+    return `<div class="catalog-table-wrap" tabindex="0" role="region" aria-label="${escapeHtml(name)}"><table class="catalog-table"><caption>${escapeHtml(name)}</caption><thead><tr>${columns.map(column=>`<th scope="col">${escapeHtml(COLUMN_LABELS[column])}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
   }
   function renderCatalog(envelope,options={}){
     const view=projectCatalog(envelope,options),columns=normalizeColumns(options.columns),limit=options.compareLimit||3;
