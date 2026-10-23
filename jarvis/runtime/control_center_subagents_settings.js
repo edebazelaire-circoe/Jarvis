@@ -432,7 +432,7 @@
       let sel=st.routeAdd[id]||null;
       if(!sel||!harnesses.some(h=>h.id===sel.agent)){const h=harnesses.find(x=>pickFor(x))||harnesses[0],m=pickFor(h);sel={agent:h.id,model:m?m.model:null}}
       const h=harnesses.find(x=>x.id===sel.agent);
-      if(sel.model!=null&&!h.models.some(m=>m.model===sel.model&&m.available&&!inList({agent:h.id,model:m.model}))){const m=pickFor(h);sel={agent:h.id,model:m?m.model:null}}
+      if(sel.model==null||!h.models.some(m=>m.model===sel.model&&m.available&&!inList({agent:h.id,model:m.model}))){const m=pickFor(h);sel={agent:h.id,model:m?m.model:null}}
       st.routeAdd[id]=sel;
       const hOpts=harnesses.map(x=>`<option value="${esc(x.id)}"${x.id===sel.agent?' selected':''}>${esc(x.label)}${x.available?'':' (indisponible)'}</option>`).join('');
       const mOpts=h.models.map(m=>{const dup=inList({agent:h.id,model:m.model}),dis=!m.available||dup;
@@ -441,9 +441,19 @@
       const none=sel.model==null;
       return `<div class="sar-add" data-sar-add-row="${esc(id)}">
         <label class="sar-field"><span>Harness</span><select data-sar-add-agent="${esc(id)}"${writable?'':' disabled'}>${hOpts}</select></label>
-        <label class="sar-field"><span>Modèle</span><select data-sar-add-model="${esc(id)}"${writable&&!none?'':' disabled'}>${none?'<option value="" selected disabled>Aucun modèle disponible à ajouter</option>':''}${mOpts}</select></label>
+        <label class="sar-field"><span>Modèle</span><select data-sar-add-model="${esc(id)}"${writable&&!none?'':' disabled'}>${none?'<option value="__none__" selected disabled>Aucun modèle disponible à ajouter</option>':''}${mOpts}</select></label>
         <button type="button" class="action sar-add-btn" data-sar-add="${esc(id)}"${writable&&!none?'':' disabled'}>${op('add')}Ajouter en dernier</button>
         ${!h.available?`<p class="hint sar-add-why">${esc(h.label)} est indisponible : ${esc(h.unavailable_reason||'raison non donnée')}</p>`:''}</div>`;
+    }
+    /* Une erreur de rendu de la section Modèles reste dans la section : la fiche et l'éditeur d'instructions restent. */
+    function safeModelsHtml(role){
+      try{return modelsHtml(role)}
+      catch(e){
+        logError('subagent_settings_routing_render_failed',e,{role_id:role.id});
+        return `<section class="sar-block sar-route" aria-labelledby="sar-models-${esc(role.id)}"><h4 id="sar-models-${esc(role.id)}" tabindex="-1">${op('route','sar-h-g')}Modèles du rôle</h4>
+          <div class="notice bad" role="alert">Cette section n’a pas pu afficher la politique servie : ${esc(e&&e.message||e)}<div class="hint">Le reste de la fiche et les instructions restent utilisables. Relisez la politique ; si l’erreur revient, signalez-la avec le code ci-dessous.</div>${codeLine('subagent_settings_routing_render_failed')}</div>
+          <div class="sar-actions"><button type="button" class="action" data-sar-route-retry>Relire la politique</button></div></section>`;
+      }
     }
     function modelsHtml(role){
       const id=role.id,head=`<h4 id="sar-models-${esc(id)}" tabindex="-1">${op('route','sar-h-g')}Modèles du rôle`;
@@ -539,7 +549,7 @@
         <section class="sar-block" aria-labelledby="sar-mission"><h4 id="sar-mission">Mission</h4><p class="sar-prose">${esc(role.mission||'')}</p>
           ${role.when_relevant?`<p class="hint"><strong>Quand l'employer :</strong> ${esc(role.when_relevant)}</p>`:''}
           ${facts([['Marqueur',`<code>${esc(marker)}</code>`],['Alias',aliases],['Identifiant',`<code>${esc(role.id)}</code>`]])}</section>
-        ${modelsHtml(role)}
+        ${safeModelsHtml(role)}
         <section class="sar-block" aria-labelledby="sar-caps"><h4 id="sar-caps">Capacités ${chip('lecture seule')}</h4>
           ${facts([
             ['Lance des agents',yesNo(role.can_spawn,'Oui','Non')],
@@ -652,7 +662,7 @@
         if(title&&title.focus)title.focus({preventScroll:true});
         return;
       }
-      if(focus){const b=host.querySelector(`[data-sar-role="${id}"]`);if(b&&b.focus)b.focus()}
+      if(focus){const b=host.querySelector(`[data-sar-role="${cssId(id)}"]`);if(b&&b.focus)b.focus()}
     }
     /* Région live courte, hors du rendu : seules les notices y sont annoncées, jamais la fiche entière. */
     const live=(()=>{
@@ -713,12 +723,14 @@
 
 
     /* --- Modèles du rôle : liaisons ------------------------------------------------------------------------ */
+    /* Un id de rôle vient du serveur : échappé avant d'entrer dans un sélecteur. */
+    const cssId=v=>root.CSS&&typeof root.CSS.escape==='function'?root.CSS.escape(String(v)):String(v).replace(/[^a-zA-Z0-9_-]/g,c=>'\\'+c);
     function focusSel(sel){const el=host.querySelector&&host.querySelector(sel);if(el&&el.focus){el.focus();return true}return false}
     /* Après un déplacement, le focus suit le candidat déplacé (même commande, sinon une autre de sa ligne). */
     function focusCandidate(id,i,prefer){
-      const at=k=>`[data-sar-cand-role="${id}"][data-sar-cand-i="${i}"][data-sar-cand-op="${k}"]:not(:disabled)`;
+      const at=k=>`[data-sar-cand-role="${cssId(id)}"][data-sar-cand-i="${i}"][data-sar-cand-op="${k}"]:not(:disabled)`;
       for(const k of [prefer,'up','down','remove'])if(k&&focusSel(at(k)))return;
-      focusSel(`[data-sar-add-agent="${id}"]`);
+      focusSel(`[data-sar-add-agent="${cssId(id)}"]`);
     }
     function bindRouting(){
       if(!host.querySelectorAll)return;
@@ -733,22 +745,22 @@
         ev.preventDefault();moveCandidate(b.dataset.sarCandRole,Number(b.dataset.sarCandI),ev.key==='ArrowUp'?-1:1,true);
       }));
       host.querySelectorAll('[data-sar-add-agent]').forEach(el=>el.addEventListener('change',()=>{
-        const id=el.dataset.sarAddAgent;st.routeAdd[id]={agent:el.value,model:null};render();focusSel(`[data-sar-add-agent="${id}"]`);
+        const id=el.dataset.sarAddAgent;st.routeAdd[id]={agent:el.value,model:null};render();focusSel(`[data-sar-add-agent="${cssId(id)}"]`);
       }));
       host.querySelectorAll('[data-sar-add-model]').forEach(el=>el.addEventListener('change',()=>{
-        const id=el.dataset.sarAddModel;st.routeAdd[id]={...(st.routeAdd[id]||{}),model:el.value};
+        const id=el.dataset.sarAddModel;if(el.value==='__none__')return;st.routeAdd[id]={...(st.routeAdd[id]||{}),model:el.value};
       }));
       host.querySelectorAll('[data-sar-add]').forEach(b=>b.addEventListener('click',()=>addCandidate(b.dataset.sarAdd,null,true)));
       host.querySelectorAll('[data-sar-fallback]').forEach(el=>el.addEventListener('change',()=>{
-        const id=el.dataset.sarFallback;setFallback(id,el.checked);focusSel(`[data-sar-fallback="${id}"]`);
+        const id=el.dataset.sarFallback;setFallback(id,el.checked);focusSel(`[data-sar-fallback="${cssId(id)}"]`);
       }));
       host.querySelectorAll('[data-sar-route-save]').forEach(b=>b.addEventListener('click',()=>saveRoute(b.dataset.sarRouteSave)));
       host.querySelectorAll('[data-sar-route-discard]').forEach(b=>b.addEventListener('click',()=>{
-        const id=b.dataset.sarRouteDiscard;discardRoute(id);focusSel(`#sar-models-${id}`);
+        const id=b.dataset.sarRouteDiscard;discardRoute(id);focusSel(`#sar-models-${cssId(id)}`);
       }));
       host.querySelectorAll('[data-sar-route-restore]').forEach(b=>b.addEventListener('click',()=>{
         const id=b.dataset.sarRouteRestore;
-        if(st.routeConfirmRestore!==id){st.routeConfirmRestore=id;render();focusSel(`[data-sar-route-restore="${id}"]`);return}
+        if(st.routeConfirmRestore!==id){st.routeConfirmRestore=id;render();focusSel(`[data-sar-route-restore="${cssId(id)}"]`);return}
         restoreRoute(id);
       }));
       host.querySelectorAll('[data-sar-route-reread]').forEach(b=>b.addEventListener('click',()=>rereadRouting(b.dataset.sarRouteReread==='*'?st.selected:b.dataset.sarRouteReread)));
@@ -756,7 +768,7 @@
       const ov=host.querySelector('[data-sar-overview]');if(ov)ov.addEventListener('click',()=>showOverview(!st.overview,true));
       host.querySelectorAll('[data-sar-route-goto]').forEach(b=>b.addEventListener('click',()=>{
         const id=b.dataset.sarRouteGoto;select(id);
-        const h=host.querySelector(`#sar-models-${id}`);if(h){if(h.scrollIntoView)h.scrollIntoView({block:'start'});if(h.focus)h.focus({preventScroll:true})}
+        const h=host.querySelector(`#sar-models-${cssId(id)}`);if(h){if(h.scrollIntoView)h.scrollIntoView({block:'start'});if(h.focus)h.focus({preventScroll:true})}
       }));
       host.querySelectorAll('[data-settings-open]').forEach(b=>b.addEventListener('click',()=>{if(opts.openTab)opts.openTab(b.dataset.settingsOpen)}));
     }
@@ -937,7 +949,7 @@
       const ok=editRoute(id,d=>{if(i<0||i>=d.candidates.length)return false;name=refLabel(d.candidates.splice(i,1)[0])});
       if(!ok)return false;
       const n=routeEffective(id).candidates.length;announce(`${name} retiré de la liste${n?'':' : la liste est vide'}.`);
-      if(focus){if(n)focusCandidate(id,Math.min(i,n-1),'remove');else focusSel(`[data-sar-add-agent="${id}"]`)}
+      if(focus){if(n)focusCandidate(id,Math.min(i,n-1),'remove');else focusSel(`[data-sar-add-agent="${cssId(id)}"]`)}
       return true;
     }
     function addCandidate(id,ref,focus){
@@ -948,7 +960,7 @@
       if(!ok)return false;
       delete st.routeAdd[id];render();
       const n=routeEffective(id).candidates.length;announce(`${refLabel(r)} ajouté en position ${n} sur ${n}.`);
-      if(focus)focusSel(`[data-sar-add="${id}"]:not(:disabled)`)||focusCandidate(id,n-1,'up');
+      if(focus)focusSel(`[data-sar-add="${cssId(id)}"]:not(:disabled)`)||focusCandidate(id,n-1,'up');
       return true;
     }
     function setFallback(id,on){return editRoute(id,d=>{d.allow_general_fallback=!!on})}
@@ -1143,7 +1155,7 @@
 .sar-op{display:grid;place-items:center;width:32px;height:32px;padding:0;border-radius:8px;border:1px solid var(--sar-hair);background:transparent;color:var(--sar-ink-2);cursor:pointer;transition:color .15s,border-color .15s,background-color .15s}
 .sar-op:hover:not(:disabled){color:var(--sar-ink);border-color:color-mix(in srgb,var(--accent) 55%,transparent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
 .sar-op[data-sar-cand-op="remove"]:hover:not(:disabled){color:var(--danger);border-color:color-mix(in srgb,var(--danger) 55%,transparent);background:color-mix(in srgb,var(--danger) 8%,transparent)}
-.sar-op:disabled{opacity:.32}
+.sar .sar-op:disabled{opacity:1;cursor:not-allowed;color:color-mix(in srgb,var(--sar-ink-2) 55%,transparent);border-style:dashed;border-color:color-mix(in srgb,var(--sar-hair) 80%,transparent);background:transparent}
 .sar-cand-help{margin:8px 0 0}
 .sar-add{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr) auto;align-items:end;gap:10px;margin-top:12px;padding-top:12px;border-top:1px dashed var(--sar-hair)}
 .sar-field{display:grid;gap:4px;min-width:0;font-size:11.5px;color:var(--sar-ink-2)}

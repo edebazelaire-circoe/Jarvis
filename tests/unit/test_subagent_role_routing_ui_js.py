@@ -313,3 +313,31 @@ const v=M.create(host,{fetch:reply,openTab:()=>{},...quiet});await v.load();
 process.stdout.write(JSON.stringify({html:host.innerHTML,phase:v.state.route.phase}));""")
     assert out["phase"] == "off" and "data-sar-open-models" in out["html"]
     assert "Modèles du rôle" not in out["html"] and "data-sar-overview" not in out["html"]
+
+
+def test_changing_harness_then_adding_picks_the_first_available_model(tmp_path):
+    """QA S06 (B1) : changer de harness pose `{agent, model:null}` ; l'ajout doit rester possible."""
+    out = run(tmp_path, """
+const v=await open(R.createFixtureAdapter(DATA.routing));v.select('coder');
+v.state.routeAdd.coder={agent:'codex',model:null};v.render();const codex=host.innerHTML;
+v.state.routeAdd.coder={agent:'claude',model:null};v.render();const html=host.innerHTML,sel={...v.state.routeAdd.coder};
+const added=v.addCandidate('coder',null);
+process.stdout.write(JSON.stringify({codex,html,sel,added,draft:v.state.routeDrafts.coder,errors}));""")
+    assert out["sel"] == {"agent": "claude", "model": ""}  # « Modèle par défaut du CLI », premier disponible
+    assert 'data-sar-add-model="coder" disabled' not in out["html"] and 'data-sar-add="coder" disabled' not in out["html"]
+    assert out["added"] is True and out["draft"]["candidates"] == [{"agent": "claude", "model": "petit"}, {"agent": "claude", "model": ""}]
+    # Harness sans modèle disponible : l'option fictive ne collisionne pas avec la valeur "" du défaut du CLI.
+    assert '<option value="__none__" selected disabled>Aucun modèle disponible à ajouter</option>' in out["codex"]
+    assert out["codex"].count('<option value=""') == 1 and out["errors"] == []
+
+
+def test_a_models_section_render_error_stays_local_to_the_section(tmp_path):
+    out = run(tmp_path, """
+const v=await open(R.createFixtureAdapter(DATA.routing));
+Object.defineProperty(v.state.route.snap.roles.find(r=>r.role_id==='coder'),'fallback',{get(){throw new Error('piège')}});
+v.select('coder');
+process.stdout.write(JSON.stringify({phase:v.state.phase,html:host.innerHTML,errors}));""")
+    assert out["phase"] == "ready"
+    assert "Cette section n’a pas pu afficher la politique servie : piège" in out["html"]
+    assert 'data-sar-text="coder"' in out["html"]  # l'éditeur d'instructions reste
+    assert "subagent_settings_routing_render_failed" in [e[0] for e in out["errors"]]

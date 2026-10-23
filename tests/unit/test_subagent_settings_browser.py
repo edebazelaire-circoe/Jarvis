@@ -192,3 +192,30 @@ def test_narrow_width_has_no_horizontal_scroll_and_reduced_motion_stops_transiti
     assert out[1] == [True, []], out[1]
     assert re.fullmatch(r"0s(, 0s)*", out[4]), out[4]
     assert out[6] == [True, []], out[6]
+
+
+def test_changing_harness_then_adding_works_in_the_browser(tmp_path):
+    """QA S06 (B1) : choisir un autre harness, revenir, puis ajouter au clavier."""
+    page = build_page(tmp_path, selected="coder")
+    shots = shots_dir(tmp_path)
+    change = ("(v=>{const s=document.querySelector('[data-sar-add-agent=\"coder\"]');s.focus();s.value=v;"
+              "s.dispatchEvent(new Event('change',{bubbles:true}));const m=document.querySelector('[data-sar-add-model=\"coder\"]');"
+              "return [m.disabled,m.value,document.querySelector('[data-sar-add=\"coder\"]').disabled]})")
+    disabled = ("(()=>{const b=document.querySelector('.sar-op:disabled');const s=getComputedStyle(b);"
+                "return [s.opacity,s.borderTopStyle,s.cursor]})()")
+    steps = [
+        {"eval": "window.__ready.then(()=>1)"},
+        {"eval": change + "('codex')"},
+        {"eval": change + "('claude')"},
+        {"eval": "document.querySelector('[data-sar-add=\"coder\"]').focus();1"},
+        {"key": "Enter"},
+        {"eval": "window.__view.state.routeDrafts.coder.candidates.map(c=>c.agent+':'+c.model)"},
+        {"eval": disabled},
+        {"eval": "document.querySelector('.sar-route').scrollIntoView();1"},
+        {"shot": str(shots / "s06-fix-harness-add.png")},
+    ]
+    out = run_plan(tmp_path, page, steps)
+    assert out[1] == [True, "__none__", True]  # Codex indisponible : rien à ajouter, dit tel quel
+    assert out[2] == [False, "", False]       # retour sur Claude : « Modèle par défaut du CLI » choisi
+    assert out[5] == ["claude:petit", "claude:"]
+    assert out[6] == ["1", "dashed", "not-allowed"]
