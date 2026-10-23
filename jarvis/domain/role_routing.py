@@ -39,6 +39,9 @@ from jarvis.domain.subagent_roles import ROLES, RoleStatus, SubagentRole, resolv
 #: Provenance d'une liste de rôle : choisie pour ce rôle, ou héritée d'un profil.
 PROVENANCE_EXPLICIT = "explicit"
 PROVENANCE_INHERITED_PREFIX = "inherited:"
+#: Rôle explicite sans aucun candidat utilisable, en mode Dupliqué : le hook laisse passer (le CLI garde
+#: son modèle, comportement d'avant) au lieu de refuser, et le journalise sous ce motif.
+REASON_ROLE_PASSTHROUGH = "role_passthrough"
 
 
 def inherited(profile: str) -> str:
@@ -217,6 +220,16 @@ def resolve_for_role(
                     fallback_from=explicit.candidates[0], fallback_code=verdicts[0].code if verdicts else "",
                     source=source, role_id=role.id, provenance=PROVENANCE_EXPLICIT,
                 )
+    if not profiles.enabled:
+        # Dupliqué : un catalogue périmé (tous les candidats Claude dits indisponibles) ne doit pas
+        # bloquer les lancements de ce rôle. Le CLI garde la main, comme avant la couche par rôle ; la
+        # décision porte les verdicts pour la trace. En Auto, le refus des profils est conservé.
+        return RoutingDecision(
+            profile=profile, agent="", model=routing.DEFAULT_MODEL, reason=REASON_ROLE_PASSTHROUGH,
+            considered=tuple(all_verdicts), fallback_from=explicit.candidates[0],
+            fallback_code=verdicts[0].code if verdicts else "", source=source,
+            role_id=role.id, provenance=PROVENANCE_EXPLICIT,
+        )
     raise NoEligibleCandidateError(
         f"Aucun candidat autorisé n'est utilisable pour le rôle « {role.name} ».", tuple(all_verdicts),
     )

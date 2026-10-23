@@ -657,7 +657,9 @@ n'est jamais un champ de la configuration d'un cerveau.
 **Politique d'un rôle.** Clé = id canonique du registre, alias résolus (`reviewer` -> `qa`). Une liste ordonnée
 de `CandidateRef(agent, model)` (l'ordre est la préférence, aucun poids) et `allow_general_fallback` : liste
 épuisée, la liste du profil `general` est tentée, même sémantique que pour un profil. Une liste explicite vide
-est refusée (`role_routing_empty_candidates`) : revenir à l'héritage, c'est **restaurer** le rôle. Les
+est refusée (`role_routing_empty_candidates`) : revenir à l'héritage, c'est **restaurer** le rôle. Une liste
+sans aucun candidat Claude (seul hôte de l'outil `Agent`) est refusée aussi (`role_routing_no_host_candidate`) :
+le hook ne pourrait jamais servir ce rôle et refuserait chacun de ses lancements. Les
 instructions, Work Methods, loadout, outils et compétences restent dans le registre ; rien n'est copié ici.
 
 **Migration non destructive.** Aucun rôle n'a de politique explicite au départ : chacun **hérite** de la liste
@@ -669,13 +671,21 @@ n'écrit que son entrée (provenance `explicit`) ; aucun autre rôle ne change. 
 de ses clés : `POST /api/settings` réécrit ce fichier entier sans révision, une clé intérieure serait écrasée
 par tout enregistrement concurrent de la page Réglages. Le fichier dédié a un seul écrivain
 (`RoleRoutingStore`, verrou + écriture atomique `replace_with_retry`) et une révision entière, exposée
-`rr-<n>`. Fichier absent = tout hérite (révision `rr-0`). Fichier illisible : la lecture le dit
-(`store.status = unreadable`), le hook hérite de tout, et aucune écriture ne l'écrase
-(`role_routing_store_unreadable`). L'entrée d'un rôle retiré du registre est conservée, ni lue ni effacée.
+`rr-<n>`. Fichier absent = tout hérite (révision `rr-0`). Le contenu est lu **strictement** : JSON
+invalide, mais aussi `revision` qui n'est pas un entier (`"7"`), `roles` qui n'est pas un objet, entrée de rôle
+mal formée (pas un objet, candidats invalides ou vides) ou `allow_general_fallback` non booléen (`"false"`)
+rendent le fichier **illisible** — rien n'est coercé (la révision ne recule jamais, le repli ne s'inverse
+jamais). Illisible : la lecture le dit (`store.status = unreadable`), le hook hérite de tout, et aucune
+écriture ne l'écrase (`role_routing_store_unreadable`). L'entrée d'un rôle retiré du registre est conservée,
+ni lue ni effacée, pourvu qu'elle soit un objet.
 
 **Résolution dans le hook** (hors réseau, déterministe). Si la description annonce un rôle actif :
 
-1. politique explicite du rôle : ses candidats, puis le repli `general` si permis ; sinon refus explicite ;
+1. politique explicite du rôle : ses candidats, puis le repli `general` si permis ; sinon, en **Auto**, refus
+   explicite (comme pour un profil) ; en **Dupliqué**, le hook laisse passer (le CLI garde son modèle,
+   comportement d'avant) et journalise `agent.routing.decided` au niveau `warning`, `reason` =
+   `role_passthrough`, avec les verdicts — le cas typique est un cache de catalogue périmé qui rend tous les
+   candidats Claude indisponibles ;
 2. sinon héritage : exactement le routage par profil d'avant, avec le profil **annoncé** (`[code] [qa]` reste
    routé par `code`, comme `PROFILE_RULE` l'enseigne), à défaut le `default_profile` du rôle (`[coder]` seul ->
    `code`, auparavant `general`).
@@ -707,6 +717,11 @@ dans l'ordre du registre : `role_id`, `marker`, `name`, `aliases`, `default_prof
 "allow_general_fallback"}` ; `DELETE /api/subagent-role-routing/{role_id}?base_revision=…` (restauration).
 Succès `200 {"ok": true, "applies", "snapshot"}` ; refus `{"ok": false, "code", "reason", "snapshot"}` :
 `409 role_routing_revision_stale` | `role_routing_not_explicit`, `404 role_routing_unknown_role`,
-`400 role_routing_bad_payload`, `422 role_routing_empty_candidates` | `routing_bad_candidate` |
-`routing_unknown_agent` | `routing_duplicate_candidate`, `500 role_routing_store_unreadable` |
-`role_routing_write_failed` (rien n'a changé). Journal : `subagent_role_routing.saved|restored|rejected|read|catalog_failed`.
+`400 role_routing_bad_payload`, `422 role_routing_empty_candidates` | `role_routing_no_host_candidate` |
+`routing_bad_candidates` (pas une liste) | `routing_bad_candidate` | `routing_unknown_agent` |
+`routing_duplicate_candidate`, `500 role_routing_store_unreadable` | `role_routing_write_failed` (rien n'a
+changé). L'instantané ne fait jamais échouer une écriture réussie : si la relecture échoue, la réponse reste
+`ok: true` et `snapshot.degraded = {"code": "role_routing_snapshot_failed", "reason"}` (`null` sinon) ; un
+`GET` dont la lecture échoue rend `500 role_routing_snapshot_failed`. Journal :
+`subagent_role_routing.saved|restored|rejected|read|catalog_failed|snapshot_failed`, avec `role_id` canonique
+(alias résolu, `null` si inconnu) et `role_marker` (le mot reçu, borné).

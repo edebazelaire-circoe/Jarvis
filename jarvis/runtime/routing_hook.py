@@ -982,10 +982,14 @@ def _log(
     )
     if decision is not None and decision.role_id:
         message += f", rôle {decision.role_id} ({decision.provenance})"
+    if decision is not None and decision.reason == role_routing.REASON_ROLE_PASSTHROUGH:
+        message += ", aucun candidat du rôle utilisable : le CLI garde la main (Dupliqué)"
     if decision is not None and decision.model:
         message += f", modèle {decision.model}"
     try:
-        journal.emit("agent.routing.decided", message, level="warning" if applied == "deny" else "info", data=data)
+        passthrough = decision is not None and decision.reason == role_routing.REASON_ROLE_PASSTHROUGH
+        level = "warning" if applied == "deny" or passthrough else "info"
+        journal.emit("agent.routing.decided", message, level=level, data=data)
     except OSError:
         pass
 

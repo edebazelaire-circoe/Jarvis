@@ -65,6 +65,7 @@ EMPTY_CODE = "role_routing_empty_candidates"
 UNREADABLE_CODE = "role_routing_store_unreadable"
 WRITE_FAILED_CODE = "role_routing_write_failed"
 NOT_EXPLICIT_CODE = "role_routing_not_explicit"
+NO_HOST_CODE = "role_routing_no_host_candidate"
 
 
 class RoleRoutingStaleError(RoutingError):
@@ -92,26 +93,44 @@ class LoadedDocument:
     error_reason: str = ""
 
 
+class _Unreadable(ValueError):
+    """Le fichier est du JSON valide mais pas un document de politique : il est dit illisible."""
+
+
 def _parse(raw: Mapping[str, Any]) -> RoleRoutingDocument:
+    """Lecture **stricte** du contenu : rien n'est coercé ni ignoré en silence.
+
+    Une révision qui ne serait pas un entier (`"7"`) ferait reculer la révision ; un repli `"false"`
+    lu `bool("false")` s'inverserait. Tout écart rend le fichier illisible : le hook hérite alors de
+    tout et aucune écriture ne l'écrase (`role_routing_store_unreadable`). Seule exception : l'entrée
+    d'un rôle retiré du registre, conservée telle quelle pourvu qu'elle soit un objet.
+    """
     revision = raw.get("revision")
-    revision = revision if isinstance(revision, int) and revision >= 0 else 0
-    roles_raw = raw.get("roles")
-    roles_raw = roles_raw if isinstance(roles_raw, Mapping) else {}
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+        raise _Unreadable("« revision » doit être un entier positif")
+    roles_raw = raw.get("roles", {})
+    if not isinstance(roles_raw, Mapping):
+        raise _Unreadable("« roles » doit être un objet")
     roles: dict[str, RolePolicy] = {}
     for key, entry in roles_raw.items():
         if not isinstance(entry, Mapping):
-            continue
+            raise _Unreadable(f"l'entrée « {str(key)[:24]} » doit être un objet")
         try:
             role = role_routing.canonical_role(key)
+        except RoutingError:
+            # Rôle retiré du registre : l'entrée reste dans le fichier (voir `_write`), ni lue ni effacée.
+            continue
+        fallback = entry.get("allow_general_fallback", True)
+        if not isinstance(fallback, bool):
+            raise _Unreadable(f"« allow_general_fallback » du rôle « {role.id} » doit être vrai ou faux")
+        try:
             policy = RolePolicy(
                 role_id=role.id,
-                candidates=agent_routing.read_candidates(entry.get("candidates")),
-                allow_general_fallback=bool(entry.get("allow_general_fallback", True)),
+                candidates=agent_routing.parse_candidates(entry.get("candidates"), role.id, owner="le rôle"),
+                allow_general_fallback=fallback,
             )
-        except RoutingError:
-            # Rôle inconnu ou liste vidée par la lecture tolérante : le rôle hérite. L'entrée reste
-            # dans le fichier (voir `_write`), rien n'est effacé.
-            continue
+        except RoutingError as exc:
+            raise _Unreadable(f"rôle « {role.id} » : {exc}") from exc
         # La clé canonique l'emporte sur un alias écrit à la main (`reviewer` et `qa` ensemble).
         if role.id in roles and key != role.id:
             continue
@@ -138,7 +157,11 @@ def load(runtime_root: Path) -> LoadedDocument:
     if not isinstance(raw, dict):
         return LoadedDocument(role_routing.EMPTY_DOCUMENT, {}, UNREADABLE_CODE,
                               f"{STORE_UNREADABLE_REASON} (objet attendu)")
-    return LoadedDocument(_parse(raw), raw)
+    try:
+        document = _parse(raw)
+    except _Unreadable as exc:
+        return LoadedDocument(role_routing.EMPTY_DOCUMENT, {}, UNREADABLE_CODE, f"{STORE_UNREADABLE_REASON} ({exc})")
+    return LoadedDocument(document, raw)
 
 
 def load_document(runtime_root: Path) -> RoleRoutingDocument:
@@ -171,6 +194,14 @@ class RoleRoutingStore:
         if not isinstance(fallback, bool):
             raise RoutingError(BAD_PAYLOAD_CODE, "« allow_general_fallback » doit être vrai ou faux.")
         candidates = agent_routing.parse_candidates(payload["candidates"], role.id, owner="le rôle")
+        if candidates and not any(ref.agent == HOST_AGENT for ref in candidates):
+            # Sans candidat sur le CLI hôte, le hook ne pourrait jamais servir ce rôle : chaque lancement
+            # serait refusé, même en Dupliqué. Refusé à l'écriture plutôt qu'au premier appel.
+            raise RoutingError(
+                NO_HOST_CODE,
+                f"Le rôle « {role.name} » doit compter au moins un candidat Claude : seul le CLI Claude hôte "
+                "lance des sous-agents.",
+            )
         policy = RolePolicy(role_id=role.id, candidates=candidates, allow_general_fallback=fallback)
         with self._lock:
             loaded = self._writable(base_revision)
@@ -197,8 +228,10 @@ class RoleRoutingStore:
         return loaded
 
     def _write(self, loaded: LoadedDocument, role: SubagentRole, entry: dict[str, Any] | None) -> RoleRoutingDocument:
+        # `loaded.raw` est un document lu strictement (`_writable` refuse un fichier illisible) : `roles`
+        # est un objet ou absent, jamais remplacé en silence.
         raw = dict(loaded.raw)
-        roles = dict(raw.get("roles") if isinstance(raw.get("roles"), Mapping) else {})
+        roles = dict(raw.get("roles") or {})
         # Un alias écrit à la main pour ce rôle disparaît avec l'écriture canonique : une seule entrée par rôle.
         for alias, target in ROLE_ALIASES.items():
             if target == role.id:
@@ -330,6 +363,8 @@ def describe(
                 "un rôle qui hérite suit la politique par profil, active seulement en Auto."
             ),
         },
+        #: `null` normalement ; `{code, reason}` quand la lecture complète a échoué (`subagent_role_routing_http`).
+        "degraded": None,
         "roles": [describe_role(role, document, profiles, candidates) for role in ROLES if role.enabled],
         "harnesses": agent_routing.group_by_harness(candidates),
     }

@@ -6,9 +6,12 @@ Routes prévues (contrat : `docs/subagent-roles.md` § 10) :
 - `PUT    /api/subagent-role-routing/{role_id}` : `{"base_revision", "candidates", "allow_general_fallback"}` ;
 - `DELETE /api/subagent-role-routing/{role_id}?base_revision=…` : restauration à l'héritage.
 
-Réponse d'une écriture : `200 {"ok": true, "snapshot": {…}}` (lecture complète faisant foi) ; refus :
-`{"ok": false, "code", "reason", "snapshot"}` — `409` révision périmée, `404` rôle inconnu, `422`
-liste invalide, `400` corps illisible, `500` fichier illisible ou écriture impossible (rien n'a changé).
+Réponse d'une écriture : `200 {"ok": true, "snapshot": {…}}` (lecture complète faisant foi ; dégradée
+avec `snapshot.degraded` si la relecture échoue, jamais un 500) ; refus :
+`{"ok": false, "code", "reason", "snapshot"}` — `409` révision périmée ou rôle déjà hérité, `404` rôle
+inconnu, `422` liste invalide (`role_routing_empty_candidates`, `role_routing_no_host_candidate`,
+`routing_bad_candidates`, `routing_bad_candidate`, `routing_unknown_agent`, `routing_duplicate_candidate`),
+`400` corps illisible, `500` fichier illisible ou écriture impossible (rien n'a changé).
 
 Les dépendances sont injectées : `settings()` rend le dict de `control-center-settings.json` (pour la
 politique par profil héritée et l'interrupteur Auto/Dupliqué) ; `candidates()` rend les candidats
@@ -22,12 +25,14 @@ from typing import Any, Awaitable, Callable, Mapping, Sequence
 
 from aiohttp import web
 
+from jarvis.domain import role_routing
 from jarvis.domain.routing import ModelCandidate, RoutingError
 from jarvis.runtime import agent_routing, subagent_role_routing as store_module
 from jarvis.runtime.subagent_role_routing import RoleRoutingStore
 
 ROUTE = "/api/subagent-role-routing"
 ROLE_ROUTE = ROUTE + "/{role_id}"
+SNAPSHOT_FAILED_CODE = "role_routing_snapshot_failed"
 
 CandidatesProvider = Callable[[], Awaitable[tuple[Sequence[ModelCandidate], Mapping[str, str]]]]
 
@@ -36,6 +41,7 @@ _STATUS = {
     store_module.UNKNOWN_ROLE_CODE: 404,
     store_module.BAD_PAYLOAD_CODE: 400,
     store_module.NOT_EXPLICIT_CODE: 409,
+    store_module.NO_HOST_CODE: 422,
     store_module.UNREADABLE_CODE: 500,
     store_module.WRITE_FAILED_CODE: 500,
 }
@@ -55,7 +61,22 @@ class SubagentRoleRoutingApi:
         return [web.get(ROUTE, self.get), web.put(ROLE_ROUTE, self.put), web.delete(ROLE_ROUTE, self.delete)]
 
     async def snapshot(self) -> dict[str, Any]:
-        """La lecture complète. Ne lève pas : un catalogue en panne laisse les rôles lisibles."""
+        """La lecture complète. Ne lève jamais : à défaut, un instantané dégradé qui dit pourquoi.
+
+        Après une écriture réussie, une lecture qui échoue ne doit pas transformer le succès en 500 :
+        la réponse reste `ok: true`, avec `snapshot.degraded = {code, reason}`.
+        """
+        try:
+            return await self._snapshot()
+        except Exception as exc:  # noqa: BLE001 - capture : l'instantané dégradé porte la raison
+            reason = f"Lecture de la politique des rôles impossible ({type(exc).__name__}) ; relisez la page."
+            self._emit("subagent_role_routing.snapshot_failed", reason, level="error",
+                       data={"code": SNAPSHOT_FAILED_CODE, "exception_type": type(exc).__name__})
+            return {"ok": True, "schema_version": store_module.SCHEMA_VERSION, "revision": None,
+                    "applies": store_module.APPLIES, "degraded": {"code": SNAPSHOT_FAILED_CODE, "reason": reason},
+                    "roles": [], "harnesses": []}
+
+    async def _snapshot(self) -> dict[str, Any]:
         loaded = self.store.load()
         profiles = agent_routing.load_policy(self._settings())
         catalog_error = ""
@@ -77,6 +98,9 @@ class SubagentRoleRoutingApi:
     async def get(self, request: web.Request) -> web.Response:
         del request
         payload = await self.snapshot()
+        if payload.get("degraded"):
+            # Une lecture seule qui échoue est un échec : 500 codé, la raison déjà journalisée.
+            return web.json_response({"ok": False, **payload["degraded"], "snapshot": payload}, status=500)
         self._emit("subagent_role_routing.read", "Politique des rôles lue.",
                    data={"code": "role_routing_read", "revision": payload["revision"],
                          "explicit_roles": [role["role_id"] for role in payload["roles"] if role["explicit"]]})
@@ -106,7 +130,7 @@ class SubagentRoleRoutingApi:
 
     async def _saved(self, kind: str, role_id: str, revision: int, action: str) -> web.Response:
         self._emit(kind, f"Politique du rôle « {role_id} » : {action} accepté.",
-                   data={"code": f"role_routing_{action}", "role_id": role_id,
+                   data={"code": f"role_routing_{action}", **_role_ids(role_id),
                          "revision": store_module.format_revision(revision)})
         return web.json_response({"ok": True, "applies": store_module.APPLIES, "snapshot": await self.snapshot()})
 
@@ -114,7 +138,7 @@ class SubagentRoleRoutingApi:
         status = _STATUS.get(exc.code, _UNPROCESSABLE)
         level = "error" if status >= 500 else "warning"
         self._emit("subagent_role_routing.rejected", f"Politique du rôle « {role_id} » refusée : {exc}", level=level,
-                   data={"code": exc.code, "role_id": role_id[:24], "action": action, "status": status})
+                   data={"code": exc.code, **_role_ids(role_id), "action": action, "status": status})
         return web.json_response(
             {"ok": False, "code": exc.code, "reason": str(exc), "snapshot": await self.snapshot()}, status=status,
         )
@@ -125,6 +149,15 @@ class SubagentRoleRoutingApi:
         except OSError:
             # intentionnel : une trace impossible à écrire ne doit pas faire échouer la réponse servie.
             pass
+
+
+def _role_ids(raw: str) -> dict[str, str | None]:
+    """L'id canonique (alias résolu) et le mot reçu, borné ; `None` pour un rôle inconnu."""
+    try:
+        canonical = role_routing.canonical_role(raw).id
+    except RoutingError:
+        canonical = None
+    return {"role_id": canonical, "role_marker": str(raw)[:24]}
 
 
 class _ReasonsForAll(dict):

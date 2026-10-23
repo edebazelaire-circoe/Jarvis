@@ -17,6 +17,7 @@
     "profiles_enabled": false,
     "note": "Une politique explicite de rôle s'applique quel que soit Auto/Dupliqué ; un rôle qui hérite suit la politique par profil, active seulement en Auto."
   },
+  "degraded": null,
   "roles": [
     {
       "role_id": "interviewer",

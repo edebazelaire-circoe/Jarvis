@@ -335,3 +335,134 @@ async def test_http_read_survives_a_failing_catalog(tmp_path):
     assert qa["candidates"][0]["available"] is False
     assert "Catalogue des candidats indisponible" in qa["candidates"][0]["unavailable_reason"]
     assert any(level == "error" for _k, level, _d in journal.events)
+
+
+# ---------------------------------------------------------------- reprise QA
+
+
+@pytest.mark.parametrize("content", [
+    {"schema_version": 1, "revision": 2, "roles": ["qa"]},
+    {"schema_version": 1, "revision": 2, "roles": {"qa": "claude:petit"}},
+    {"schema_version": 1, "revision": 2, "roles": {"qa": {"candidates": "petit"}}},
+    {"schema_version": 1, "revision": 2, "roles": {"qa": {"candidates": [{"model": "petit"}]}}},
+    {"schema_version": 1, "revision": "7", "roles": {}},
+    {"schema_version": 1, "roles": {}},
+    {"schema_version": 1, "revision": 2, "roles": {"qa": {"candidates": [ref("petit")], "allow_general_fallback": "false"}}},
+])
+def test_valid_json_that_is_not_a_policy_is_unreadable_never_coerced_or_overwritten(tmp_path, content):
+    text = json.dumps(content)
+    (tmp_path / store_module.STORE_FILE).write_text(text, encoding="utf-8")
+    loaded = store_module.load(tmp_path)
+    assert loaded.error_code == "role_routing_store_unreadable" and loaded.document.roles == {}
+    assert store_module.load_document(tmp_path).roles == {}  # le hook hérite de tout
+    for revision in ("rr-0", "rr-2", "rr-7"):
+        with pytest.raises(routing.RoutingError) as caught:
+            RoleRoutingStore(tmp_path).put("qa", {"candidates": [ref("petit")]}, revision)
+        assert caught.value.code == "role_routing_store_unreadable"
+    assert (tmp_path / store_module.STORE_FILE).read_text(encoding="utf-8") == text
+
+
+def test_a_role_list_without_any_host_candidate_is_refused_at_write(tmp_path):
+    with pytest.raises(routing.RoutingError) as caught:
+        RoleRoutingStore(tmp_path).put("qa", {"candidates": [ref("gpt-o", agent="codex")]}, "rr-0")
+    assert caught.value.code == "role_routing_no_host_candidate" and "Claude" in str(caught.value)
+    assert not (tmp_path / store_module.STORE_FILE).exists()
+
+
+def test_an_explicit_role_with_nothing_usable_passes_through_in_duplicate_and_is_refused_in_auto():
+    document = role_routing.RoleRoutingDocument(1, {"qa": role_routing.RolePolicy(
+        "qa", (CandidateRef("claude", "disparu"),), False)})
+    output, decision = routing_hook.decide(call("[general] [qa] Relire", model="grand"),
+                                           profiles(enabled=False), pool(), role_policies=document)
+    assert decision_of(output) != "deny" and routed(output) == ""  # rien d'imposé : le CLI garde la main
+    assert decision.reason == role_routing.REASON_ROLE_PASSTHROUGH and decision.considered[0].code == routing.REJECT_UNKNOWN
+
+    output, decision = routing_hook.decide(call("[general] [qa] Relire", model="grand"),
+                                           profiles(enabled=True), pool(), role_policies=document)
+    assert decision_of(output) == "deny" and decision is None
+
+
+def _hook_root(tmp_path, monkeypatch, *, enabled: bool, **lists) -> Path:
+    monkeypatch.setattr(routing_hook, "local_agents", lambda: [CLAUDE])
+    monkeypatch.setattr(routing_hook, "offline_candidates",
+                        lambda root, policy, settings=None, extra_refs=(): agent_routing.with_saved(pool(), policy, extra_refs=extra_refs))
+    settings: dict = {}
+    agent_routing.apply(settings, {"enabled": enabled, "profiles": {k: {"candidates": v} for k, v in lists.items()}})
+    (tmp_path / "control-center-settings.json").write_text(json.dumps(settings), encoding="utf-8")
+    return tmp_path
+
+
+def _routing_events(root: Path) -> list[dict]:
+    return [e for e in read_jsonl_tail(root / "trace.jsonl") if e["kind"].startswith("agent.routing")]
+
+
+def test_route_passthrough_in_duplicate_is_journalled_as_a_warning(tmp_path, monkeypatch):
+    root = _hook_root(tmp_path, monkeypatch, enabled=False)
+    (root / store_module.STORE_FILE).write_text(json.dumps(
+        {"schema_version": 1, "revision": 1, "roles": {"qa": {"candidates": [ref("disparu")], "allow_general_fallback": False}}}),
+        encoding="utf-8")
+    output = routing_hook.run(call("[general] [qa] Relire"), root)
+    assert decision_of(output) != "deny"
+    [event] = [e for e in _routing_events(root) if e["kind"] == "agent.routing.decided"]
+    assert event["level"] == "warning" and event["data"]["reason"] == "role_passthrough"
+    assert "le CLI garde la main" in event["message"]
+
+
+def test_route_with_a_corrupt_role_file_in_auto_keeps_profile_routing(tmp_path, monkeypatch):
+    root = _hook_root(tmp_path, monkeypatch, enabled=True, general=[ref("grand")])
+    (root / store_module.STORE_FILE).write_text("{abîmé", encoding="utf-8")
+    assert routed(routing_hook.run(call("[general] [qa] Relire"), root)) == "grand"
+    [event] = [e for e in _routing_events(root) if e["kind"] == "agent.routing.decided"]
+    assert event["data"]["provenance"] == "inherited:general"
+
+
+def test_route_explicit_role_in_duplicate_leaves_role_less_calls_untouched(tmp_path, monkeypatch):
+    root = _hook_root(tmp_path, monkeypatch, enabled=False, general=[ref("grand")])
+    RoleRoutingStore(root).put("qa", {"candidates": [ref("petit")]}, "rr-0")
+    output = routing_hook.run(call("[general] Résumer"), root)
+    assert routed(output) == "" and not [e for e in _routing_events(root) if e["kind"] == "agent.routing.decided"]
+
+
+def test_route_a_policy_that_raises_never_blocks_the_call(tmp_path, monkeypatch):
+    root = _hook_root(tmp_path, monkeypatch, enabled=True)
+
+    def broken(_root):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(store_module, "load_document", broken)
+    output = routing_hook.run(call("[general] [qa] Relire"), root)
+    assert decision_of(output) != "deny"
+    assert any(e["kind"] == "agent.routing.failed" and e["data"]["code"] == "routing_hook_failed" for e in _routing_events(root))
+
+
+def test_route_coder_alone_in_auto_uses_its_default_code_profile(tmp_path, monkeypatch):
+    root = _hook_root(tmp_path, monkeypatch, enabled=True, code=[ref("petit")], general=[ref("grand")])
+    assert routed(routing_hook.run(call("[coder] Écrire le module"), root)) == "petit"
+    [event] = [e for e in _routing_events(root) if e["kind"] == "agent.routing.decided"]
+    assert (event["data"]["profile"], event["data"]["role_id"], event["data"]["provenance"]) == ("code", "coder", "inherited:code")
+
+
+async def test_http_a_successful_write_whose_reread_fails_stays_ok_with_a_degraded_snapshot(tmp_path):
+    journal = _Journal()
+
+    def settings():
+        # Seule la relecture lit les réglages : l'écriture réussit, l'instantané qui suit échoue.
+        raise OSError("disque")
+
+    async def candidates():
+        return pool(), {}
+
+    api = SubagentRoleRoutingApi(RoleRoutingStore(tmp_path), settings=settings, candidates=candidates, journal=journal)
+    app = web.Application()
+    app.add_routes(api.routes())
+    async with TestClient(TestServer(app)) as client:
+        response = await client.put(f"{ROUTE}/reviewer", json={"base_revision": "rr-0", "candidates": [ref("petit")]})
+        body = await response.json()
+        read = await client.get(ROUTE)
+        read_body = await read.json()
+    assert response.status == 200 and body["ok"] is True
+    assert body["snapshot"]["degraded"]["code"] == "role_routing_snapshot_failed"
+    assert RoleRoutingStore(tmp_path).load().document.for_role("qa") is not None
+    assert read.status == 500 and read_body["code"] == "role_routing_snapshot_failed"
+    saved = next(data for kind, _l, data in journal.events if kind == "subagent_role_routing.saved")
+    assert (saved["role_id"], saved["role_marker"]) == ("qa", "reviewer")
