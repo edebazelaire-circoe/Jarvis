@@ -111,7 +111,7 @@ Résultat attendu :
   exacte affichée dans la liste. Dites si cela vous convient.
 - [ ] Les autres rôles n'ont pas changé ; « Restaurer » remet l'héritage.
 
-Où regarder : le détail du sous-agent dans le Centre d'état ; `trace.jsonl` (`agent.routing.decided` : `model`,
+Où regarder : le détail du sous-agent dans le Centre d'état ; `runtime/trace.jsonl` du dépôt principal (`agent.routing.decided` : `model`,
 `agent_model`) si vous voulez la preuve.
 
 ## HV-ARCH-008 — Essai réel : couper la délégation de la voix (votre JARVIS)

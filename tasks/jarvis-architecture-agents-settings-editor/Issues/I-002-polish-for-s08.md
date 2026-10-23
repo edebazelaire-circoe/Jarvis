@@ -34,3 +34,13 @@ Source : QA indépendante de la Slice 07 (HEAD `05c9202b`), verdict REWORK lége
 Défauts nouveaux trouvés par la campagne finale et corrigés (détail : `slices/08-final-integration-e2e-qa/EVIDENCE.md` § 3) :
 famille de modèle dans l'outil `Agent` (S03), Échap du menu d'un nœud qui fermait les Réglages (S07), CLI détecté
 refusé dans la fenêtre du cerveau Core (S02).
+
+## Points non bloquants de la QA indépendante S08 (agent 0, 2026-10-24) — suivi après la tâche
+
+- `ui_close` respecte désormais `defaultPrevented` hors des Réglages aussi (menu contextuel des agents, roue de
+  capture, HUD Bare Hands, plein écran) : une Échap consommée ne ferme plus le panneau en plus. Plutôt une
+  amélioration ; la doc ne le dit que pour les Réglages.
+- Fenêtre du cerveau : PATCH réussi sans `config` + relecture ratée → `notify('saved')` avec l'ancienne
+  `st.config` (`control_center_brain_config_panel.js` ~530-534). Cas rare.
+- `onSaved` : condition `saved.field==='provider'` jamais vraie (l'étape s'appelle `model`). Sans effet.
+- Famille vs version exacte du modèle d'un rôle : décision produit (HV-ARCH-007).
