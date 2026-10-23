@@ -270,11 +270,14 @@ IN, OUT = PortDirection.IN, PortDirection.OUT
 
 def project_architecture(settings: Mapping[str, Any], *, environ: Mapping[str, str] | None = None,
                          observations: RuntimeObservations,
-                         delegation: DelegationTendency = DEFAULT_DELEGATION) -> ArchitectureSnapshot:
+                         delegation: DelegationTendency = DEFAULT_DELEGATION,
+                         launched_delegation: DelegationTendency | None = None) -> ArchitectureSnapshot:
     """Snapshot de l'architecture **effective** : seulement les nœuds réels de l'architecture vocale courante.
 
     `delegation` : tendance du cerveau Core (`brain-config.json`, Slice 02), qui gouverne la liaison vers les
     sous-agents. Le service la lit ; le défaut `standard` est le comportement d'avant ce réglage.
+    `launched_delegation` : celle qu'a reçue le dernier CLI cerveau lancé (`brain-delegation-launched.json`),
+    `None` si aucun lancement n'est connu.
     """
 
     env = os.environ if environ is None else environ
@@ -436,11 +439,12 @@ def project_architecture(settings: Mapping[str, Any], *, environ: Mapping[str, s
         impact_when_disabled="Le Tool Brain ne se réveille plus ; Jarvis garde seul la main sur l'écran."))
     # `never` coupe réellement la liaison : outil `Agent` retiré au lancement du CLI cerveau et appel refusé par le
     # hook dès l'appel suivant (docs/brain-config.md). Les autres niveaux ne changent que la consigne.
+    agents_enabled, agents_pending = _subagents_link_state(delegation, launched_delegation)
     connections.append(Connection(
         ref("core", "agents"), ref("subagents", "spawn"), Channel.TOOL_CALL,
         "Lancement de sous-agents (outil Agent) pour les rôles du registre",
-        delegation is not DelegationTendency.NEVER, Mutability.GOVERNED,
-        BINDING_SUBAGENTS, None, governed_by=GovernedBy("brain_config", "core", "delegation"),
+        agents_enabled, Mutability.GOVERNED,
+        BINDING_SUBAGENTS, None, governed_by=GovernedBy("brain_config", "core", "delegation"), pending=agents_pending,
         impact_when_disabled="Gouvernée par la tendance de délégation du cerveau Core (fenêtre du cerveau)."))
 
     snapshot = ArchitectureSnapshot(
@@ -449,6 +453,23 @@ def project_architecture(settings: Mapping[str, Any], *, environ: Mapping[str, s
         tuple(nodes), tuple(connections))
     validate_snapshot(snapshot)
     return snapshot
+
+
+def _subagents_link_state(persisted: DelegationTendency,
+                          launched: DelegationTendency | None) -> tuple[bool, Pending | None]:
+    """État vivant de la liaison Core → Sous-agents et ce qui attend la relance du CLI cerveau.
+
+    - vers `never` : le hook refuse dès l'appel suivant, la coupure est effective sans relance ;
+    - depuis `never` : le CLI vivant n'a toujours pas l'outil `Agent` ; `enabled` reste faux et `pending` dit
+      qu'il revient au prochain lancement du CLI (`core_restart`) ;
+    - aucun lancement connu : la valeur enregistrée, sans `pending`.
+    """
+
+    if persisted is DelegationTendency.NEVER:
+        return False, None
+    if launched is DelegationTendency.NEVER:
+        return False, Pending(True, Applies.CORE_RESTART)
+    return True, None
 
 
 def _revision_inputs(settings: Mapping[str, Any], env: Mapping[str, str],
@@ -541,9 +562,13 @@ class ArchitectureGraphService:
     def delegation(self) -> DelegationTendency:
         return brain_config_store.delegation_for(self.runtime_root, "core")
 
+    def launched_delegation(self) -> DelegationTendency | None:
+        return brain_config_store.launched_delegation(self.runtime_root)
+
     def snapshot(self) -> ArchitectureSnapshot:
         return project_architecture(self.store.read(), environ=self.environ, observations=self._observe(),
-                                    delegation=self.delegation())
+                                    delegation=self.delegation(),
+                                    launched_delegation=self.launched_delegation())
 
     def set_tool_brain_mode(self, mode: object, *, base_revision: object) -> MutationResult:
         """Choisir `off | shadow | active` (réglage du nœud Tool Brain, Slice 02). Même transaction que la liaison
@@ -555,7 +580,7 @@ class ArchitectureGraphService:
         with self._lock:
             settings = self.store.read()
             current = project_architecture(settings, environ=self.environ, observations=self._observe(),
-                                           delegation=self.delegation())
+                                           delegation=self.delegation(), launched_delegation=self.launched_delegation())
             self._check_revision(current, base_revision)
             conn = current.connection(TOOL_BRAIN_CONNECTION)
             if conn is not None and conn.mutability is Mutability.REQUIRED_LOCKED:
@@ -586,7 +611,7 @@ class ArchitectureGraphService:
             settings = self.store.read()
             observations = self._observe()
             current = project_architecture(settings, environ=self.environ, observations=observations,
-                                           delegation=self.delegation())
+                                           delegation=self.delegation(), launched_delegation=self.launched_delegation())
             conn = self._writable(current, conn_id, base_revision)
             if _persisted_value(settings, conn.binding, self.environ) == enabled:
                 self._emit("architecture.connection.unchanged", "Liaison déjà dans l'état demandé",

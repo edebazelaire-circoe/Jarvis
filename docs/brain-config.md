@@ -89,13 +89,32 @@ variable `brain_delegation` posée par `ClaudeLocalAgent.start`). Sans variable,
 rendu est `standard`. `apply_delegation_rule` refuse un prompt où la phrase ne figure pas exactement une fois : une
 réécriture du prompt qui la perdrait casse le test au lieu de perdre la tendance en silence.
 
-Graphe : la liaison gouvernée `core.agents->subagents.spawn` vaut `enabled = delegation != never`, et la tendance
-entre dans la révision de topologie seulement hors du défaut (un graphe sans réglage garde sa révision).
+Ce passage du descripteur en dynamique a changé **une fois** le `static_fingerprint` des programmes
+`backend.claude.conversation.*` (la `default_revision` du descripteur inclut le drapeau `dynamic`). Le texte rendu,
+lui, n'a pas changé : `render_fingerprint` est identique en `standard`. Une preuve de prompt antérieure à la
+Slice 02 ne se compare donc pas par `static_fingerprint`, seulement par le rendu.
+
+Graphe : la liaison gouvernée `core.agents->subagents.spawn` dit l'état du CLI **vivant**. `ClaudeLocalAgent.start`
+(profil `conversation`) publie ce que le CLI cerveau a reçu dans `<runtime>/brain-delegation-launched.json`
+(`{delegation, pid, launched_at}`, écriture atomique ; un échec est journalisé `agent.delegation.publish_failed`).
+
+| Enregistré | Dernier lancement | `enabled` | `pending` |
+| --- | --- | --- | --- |
+| `never` | quelconque | `false` (le hook refuse dès l'appel suivant) | `null` |
+| autre | `never` | `false` (le CLI vivant n'a pas l'outil) | `{"enabled": true, "applies": "core_restart"}` |
+| autre | autre, ou inconnu | `true` | `null` |
+
+Le descripteur du cerveau Core ajoute `launched` et `pending_relaunch` au champ `delegation` (la consigne et l'outil
+attendent la relance). Limite : c'est le **dernier** lancement d'un CLI cerveau du poste ; avec plusieurs Boards,
+un autre CLI encore vivant peut avoir reçu une valeur plus ancienne. Une publication illisible ou absente : valeur
+enregistrée, sans `pending`. La tendance entre dans la révision de topologie seulement hors du défaut ; le dernier
+lancement n'y entre pas (état vivant).
 
 Trace : un refus est journalisé `agent.spawn_refused`, `code: "brain_delegation_never"`, avec le `tool_use_id`
 (aucun texte de consigne) ; le lancement du CLI journalise `agent.start` avec `delegation` et
-`spawn_tools_removed`. Un fichier illisible se lit `standard` et se dit `agent.delegation.unreadable` : le hook ne
-refuse jamais sur une panne.
+`spawn_tools_removed`. Un fichier illisible (JSON invalide, UTF-16 écrit par `Out-File` de PowerShell 5.1,
+octets abîmés) se lit `standard` et se dit `agent.delegation.unreadable`, côté hook comme au lancement du CLI : ni
+le hook, ni le lancement, ni le graphe ne lèvent sur une panne. Même règle pour `subagent-role-routing.json`.
 
 ### Pourquoi un fichier dédié
 

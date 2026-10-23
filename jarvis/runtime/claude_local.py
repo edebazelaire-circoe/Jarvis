@@ -1149,8 +1149,16 @@ class ClaudeLocalAgent:
             # cerveau comme pour un job Back Brain. `never` retire l'outil qui lance les sous-agents (le hook refuse
             # aussi, en défense en profondeur) ; les autres niveaux ne changent que la consigne de conversation, et
             # `standard` la laisse identique octet pour octet. Un profil restreint n'a déjà aucun outil de lancement.
-            delegation = (brain_config_store.delegation_for(self.runtime_root, "core")
-                          if self.execution_profile not in RESTRICTED_PROFILES else DEFAULT_DELEGATION)
+            delegation = DEFAULT_DELEGATION
+            if self.execution_profile not in RESTRICTED_PROFILES:
+                loaded_config = brain_config_store.load(self.runtime_root)
+                delegation = loaded_config.document.delegation_for("core")
+                if loaded_config.error_code:
+                    self.journal.emit(
+                        "agent.delegation.unreadable",
+                        "Configuration des cerveaux illisible : le CLI démarre avec la tendance standard.",
+                        level="warning", data={"code": loaded_config.error_code,
+                                               "execution_profile": self.execution_profile})
             spawn_args = (["--disallowedTools", *agent_orchestration.SPAWN_TOOLS]
                           if delegation is DelegationTendency.NEVER else [])
             if self.execution_profile == "conversation":
@@ -1290,6 +1298,16 @@ class ClaudeLocalAgent:
             self._workspace_tools_active = bool(workspace_args)
             self._tools_gateway_active = bool(tools_args)
             self.launched_delegation = delegation.value
+            if self.execution_profile == "conversation":
+                # Publication du dernier lancement du CLI cerveau : le graphe y lit ce que le CLI vivant a reçu
+                # (outil retiré ou non, consigne), pour afficher `pending` jusqu'à sa relance (docs/brain-config.md).
+                try:
+                    brain_config_store.publish_launch(self.runtime_root, delegation, pid=self.process.pid)
+                except OSError as exc:
+                    self.journal.emit("agent.delegation.publish_failed",
+                                      "Lancement du cerveau non publié : le graphe montrera la valeur enregistrée.",
+                                      level="warning", data={"code": "brain_launch_publish_failed",
+                                                             "error_class": type(exc).__name__})
             if not resume_args:
                 self._display_prompt_active = bool(display_args)
             self.subtasks.process_started()

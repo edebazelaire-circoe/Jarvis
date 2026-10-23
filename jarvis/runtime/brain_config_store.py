@@ -115,7 +115,9 @@ def load(runtime_root: Path | str) -> LoadedBrainConfig:
         text = path.read_text(encoding="utf-8-sig")
     except FileNotFoundError:
         return LoadedBrainConfig(BrainConfigDocument(), {})  # normal au premier démarrage : le défaut s'applique
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
+        # `UnicodeDecodeError` : fichier réenregistré en UTF-16 (`Out-File` de PowerShell 5.1) ou octets abîmés.
+        # Illisible comme le reste : le défaut s'applique, aucun lecteur (hook, CLI, graphe) ne lève.
         return LoadedBrainConfig(BrainConfigDocument(), {}, STORE_UNREADABLE,
                                  f"{UNREADABLE_REASON} ({type(exc).__name__})")
     try:
@@ -130,6 +132,41 @@ def load(runtime_root: Path | str) -> LoadedBrainConfig:
     except _Unreadable as exc:
         return LoadedBrainConfig(BrainConfigDocument(), {}, STORE_UNREADABLE, f"{UNREADABLE_REASON} ({exc})")
     return LoadedBrainConfig(document, raw)
+
+
+#: Dernier lancement connu du CLI cerveau (profil `conversation`) : la tendance qu'il a reçue. Publié par
+#: `ClaudeLocalAgent.start`, lu par le graphe pour dire honnêtement ce qui attend la relance du CLI.
+LAUNCH_FILE = "brain-delegation-launched.json"
+
+
+def publish_launch(runtime_root: Path | str, level: DelegationTendency, *, pid: int | None) -> None:
+    """Écriture atomique ; lève `OSError` (l'appelant la journalise, le lancement continue)."""
+
+    root = Path(runtime_root)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / LAUNCH_FILE
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    payload = {"schema_version": 1, "brain_id": "core", "delegation": level.value, "pid": pid,
+               "launched_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    try:
+        tmp.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
+        replace_with_retry(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass  # argued: the replace failure re-raised below is what the caller journals
+        raise
+
+
+def launched_delegation(runtime_root: Path | str) -> DelegationTendency | None:
+    """Tendance reçue par le dernier CLI cerveau lancé, ou `None` (aucun lancement connu, publication illisible)."""
+
+    try:
+        raw = json.loads((Path(runtime_root) / LAUNCH_FILE).read_text(encoding="utf-8-sig"))
+        return DelegationTendency(raw["delegation"])
+    except (OSError, UnicodeDecodeError, ValueError, KeyError, TypeError):
+        return None  # argued: without a trustworthy publication the graph shows the persisted value, no pending
 
 
 def delegation_for(runtime_root: Path | str, brain_id: str = "core") -> DelegationTendency:

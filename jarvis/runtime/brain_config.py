@@ -51,7 +51,9 @@ from jarvis.domain.voice_architecture import (
 from jarvis.runtime import cli_catalog
 from jarvis.runtime.agent_settings import resolve_agent_settings
 from jarvis.runtime.architecture_graph import ArchitectureGraphService
-from jarvis.runtime.brain_config_store import DELEGATING_BRAINS, BrainConfigStore, LoadedBrainConfig
+from jarvis.runtime.brain_config_store import (
+    DELEGATING_BRAINS, BrainConfigStore, LoadedBrainConfig, launched_delegation,
+)
 from jarvis.runtime.prompt_overrides import PromptOverrideStore
 from jarvis.runtime.tool_brain_decider import (
     DEFAULT_TOOL_BRAIN_MODEL, TOOL_BRAIN_MODEL_ENV, TOOL_BRAIN_MODEL_FIELD, tool_brain_model_source,
@@ -227,6 +229,7 @@ class BrainConfigService:
             choices=_model_choices(items, model, catalog, agent_id=agent_cli, default_label=CLI_DEFAULT_LABEL))
         fields["instructions"] = self._instructions("backend.system.addition", _PROMPT_APPLIES["core"])
         level = loaded.document.delegation_for("core")
+        launched = launched_delegation(self.runtime_root)
         stored_invalid = loaded.document.invalid.get("core")
         if loaded.error_code:
             reason, editable = loaded.error_reason, False
@@ -241,7 +244,11 @@ class BrainConfigService:
         fields["delegation"] = _field(
             level.value, editable=editable, reason=reason, applies=Applies.CORE_RESTART,
             owner="brain_config.core.delegation", choices=delegation_choices(), stored_invalid=stored_invalid,
-            store_revision=loaded.revision_token, enforcement=_DELEGATION_ENFORCEMENT)
+            store_revision=loaded.revision_token, enforcement=_DELEGATION_ENFORCEMENT,
+            # Ce qu'a reçu le dernier CLI cerveau lancé (`None` : aucun lancement connu) ; `pending_relaunch` : la
+            # valeur enregistrée attend sa relance (outil et consigne), même si le hook applique déjà `never`.
+            launched=launched.value if launched is not None else None,
+            pending_relaunch=launched is not None and launched is not level)
 
     async def _voice_fields(self, fields: dict, settings: Mapping[str, Any], loaded: LoadedBrainConfig,
                             catalog: "_CatalogReader", snapshot: ArchitectureSnapshot) -> None:

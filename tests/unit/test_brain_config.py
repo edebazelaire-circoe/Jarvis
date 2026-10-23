@@ -427,3 +427,14 @@ async def test_ui_fixtures_are_the_service_output(tmp_path, name, brain, setting
     if os.environ.get("JARVIS_WRITE_BRAIN_CONFIG_FIXTURES") == "1":
         path.write_text(produced, encoding="utf-8")
     assert path.read_text(encoding="utf-8") == produced, f"{name} est périmée : régénérez-la (voir le docstring)"
+
+
+async def test_the_delegation_field_says_what_the_live_brain_cli_received(tmp_path):
+    from jarvis.runtime.brain_config_store import publish_launch
+
+    service, *_ = _service(tmp_path, DUPLEX)
+    field = (await service.describe("core"))["fields"]["delegation"]
+    assert field["launched"] is None and field["pending_relaunch"] is False  # aucun lancement connu
+    publish_launch(tmp_path, DelegationTendency.NEVER, pid=7)
+    field = (await service.describe("core"))["fields"]["delegation"]
+    assert field["launched"] == "never" and field["pending_relaunch"] is True

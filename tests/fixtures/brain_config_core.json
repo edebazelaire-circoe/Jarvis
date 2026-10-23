@@ -120,7 +120,9 @@
           "mechanism": "brain_prompt"
         }
       ],
+      "launched": null,
       "owner": "brain_config.core.delegation",
+      "pending_relaunch": false,
       "reason": "",
       "store_revision": "bc-0",
       "stored_invalid": null,

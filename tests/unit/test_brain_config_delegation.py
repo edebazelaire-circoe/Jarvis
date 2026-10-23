@@ -256,3 +256,99 @@ def test_offline_hook_process_denies_a_realistic_pretooluse_event(tmp_path):
     trace = [e for e in read_jsonl_tail(tmp_path / "trace.jsonl", limit=50) if e["kind"] == "agent.spawn_refused"]
     assert trace and trace[-1]["data"]["code"] == "brain_delegation_never"
     assert trace[-1]["data"]["tool_use_id"] == "toolu_01"
+
+
+# ------------------------------------------------------------------ fichiers abîmés (retouche QA B1)
+
+from jarvis.runtime import subagent_role_routing  # noqa: E402
+from jarvis.runtime.architecture_graph import ArchitectureGraphService, FileSettingsStore, RuntimeObservations  # noqa: E402
+from jarvis.runtime.brain_config_store import LAUNCH_FILE, launched_delegation, publish_launch  # noqa: E402
+from jarvis.runtime.tool_brain_ownership import JARVIS_DEFAULT  # noqa: E402
+
+UTF16 = json.dumps({"schema_version": 1, "revision": 1, "brains": {"core": {"delegation": "never"}}}).encode("utf-16")
+BAD_BYTES = b'{"schema_version": 1, "revision": 1, "brains": {"core": {"delegation": "\xff\xfe\xc3"}}}'
+
+
+@pytest.mark.parametrize("content", [UTF16, BAD_BYTES], ids=["utf16", "bad_bytes"])
+def test_a_non_utf8_brain_config_is_unreadable_never_an_exception(tmp_path, content):
+    (tmp_path / STORE_FILE).write_bytes(content)
+    loaded = load(tmp_path)
+    assert loaded.error_code == "brain_config_store_unreadable" and "UnicodeDecodeError" in loaded.error_reason
+    assert delegation_for(tmp_path) is DelegationTendency.STANDARD
+    output = routing_hook.run(agent_call(), tmp_path)  # ne lève pas, ne refuse pas
+    assert _section(output).get("permissionDecision") != "deny"
+    assert "agent.delegation.unreadable" in [e["kind"] for e in read_jsonl_tail(tmp_path / "trace.jsonl", limit=50)]
+    store = FileSettingsStore(tmp_path)
+    graph = ArchitectureGraphService(tmp_path, store=store, environ={},
+                                     observe=lambda: RuntimeObservations(None, JARVIS_DEFAULT, True))
+    assert graph.snapshot().connection("core.agents->subagents.spawn").enabled is True
+
+
+@pytest.mark.parametrize("content", [UTF16, BAD_BYTES], ids=["utf16", "bad_bytes"])
+async def test_a_non_utf8_brain_config_still_launches_the_brain_with_standard(monkeypatch, tmp_path, content):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    (runtime / STORE_FILE).write_bytes(content)
+    argv = await _launch(monkeypatch, ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path))
+    assert "--disallowedTools" not in argv
+    kinds = {e["kind"]: e for e in read_jsonl_tail(runtime / "trace.jsonl", limit=30)}
+    assert kinds["agent.delegation.unreadable"]["data"]["code"] == "brain_config_store_unreadable"
+    assert kinds["agent.start"]["data"]["delegation"] == "standard"
+
+
+@pytest.mark.parametrize("content", [UTF16, BAD_BYTES], ids=["utf16", "bad_bytes"])
+def test_a_non_utf8_role_routing_file_is_unreadable_and_the_hook_still_routes(tmp_path, content):
+    (tmp_path / subagent_role_routing.STORE_FILE).write_bytes(content)
+    loaded = subagent_role_routing.load(tmp_path)
+    assert loaded.error_code == subagent_role_routing.UNREADABLE_CODE and "UnicodeDecodeError" in loaded.error_reason
+    output = routing_hook.run(agent_call(), tmp_path)  # passe par `_route` : aucune exception
+    assert isinstance(output, dict)
+    assert "agent.routing.failed" not in [e["kind"] for e in read_jsonl_tail(tmp_path / "trace.jsonl", limit=50)]
+
+
+async def test_absent_standard_and_invalid_json_give_the_same_command(monkeypatch, tmp_path):
+    runtime = tmp_path / "runtime"
+    absent = await _launch(monkeypatch, ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path))
+    _set(runtime, "standard")
+    standard = await _launch(monkeypatch, ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path))
+    (runtime / STORE_FILE).write_text("{pas du json", encoding="utf-8")
+    invalid = await _launch(monkeypatch, ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path))
+    assert absent == standard == invalid
+
+
+# ------------------------------------------------------------------ CLI vivant et graphe (retouche QA N1)
+
+
+def _graph(root: Path) -> ArchitectureGraphService:
+    return ArchitectureGraphService(root, store=FileSettingsStore(root), environ={},
+                                    observe=lambda: RuntimeObservations(None, JARVIS_DEFAULT, True))
+
+
+async def test_the_brain_launch_is_published_for_the_graph(monkeypatch, tmp_path):
+    runtime = tmp_path / "runtime"
+    _set(runtime, "never")
+    await _launch(monkeypatch, ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path))
+    assert launched_delegation(runtime) is DelegationTendency.NEVER
+    job_root = tmp_path / "job"
+    await _launch(monkeypatch, ClaudeLocalAgent(runtime_root=job_root, cwd=tmp_path, execution_profile="job_result"))
+    assert not (job_root / LAUNCH_FILE).exists()  # un job relit le store à chaque job : rien à attendre
+
+
+def test_leaving_never_stays_pending_until_the_brain_cli_relaunches(tmp_path):
+    publish_launch(tmp_path, DelegationTendency.NEVER, pid=1)
+    _set(tmp_path, "standard")
+    link = _graph(tmp_path).snapshot().connection("core.agents->subagents.spawn")
+    assert link.enabled is False and link.pending is not None
+    assert link.to_dict()["pending"] == {"enabled": True, "applies": "core_restart"}
+    publish_launch(tmp_path, DelegationTendency.STANDARD, pid=2)  # le CLI a été relancé
+    link = _graph(tmp_path).snapshot().connection("core.agents->subagents.spawn")
+    assert link.enabled is True and link.pending is None
+
+
+def test_entering_never_is_effective_at_once_because_the_hook_refuses(tmp_path):
+    publish_launch(tmp_path, DelegationTendency.STANDARD, pid=1)
+    _set(tmp_path, "never")
+    link = _graph(tmp_path).snapshot().connection("core.agents->subagents.spawn")
+    assert link.enabled is False and link.pending is None
+    (tmp_path / LAUNCH_FILE).write_bytes(UTF16)  # publication illisible : valeur enregistrée, sans pending
+    assert launched_delegation(tmp_path) is None
