@@ -159,7 +159,7 @@ EXTRA_CATEGORIES: tuple[tuple[str, str], ...] = (
     ("scene", "Scène constellation"),
     ("agent", "Agent / CLI"),
     ("self_development", "Auto-développement"),
-    ("agenda", "Rappels de rendez-vous (Réglages › Agents & modèles › Comportement)"),
+    ("agenda", "Rappels de rendez-vous (Réglages › Personnalisation › Comportement)"),
 )
 
 
@@ -567,7 +567,7 @@ class ConsoleSettingsTools:
                 "_persistence": f"self_development.{key}", "_family": "self_dev",
             })
 
-        # Rappels d'agenda : même table que Agents & modèles › Comportement (`agenda_reminders.FIELDS`),
+        # Rappels d'agenda : même table que Personnalisation › Comportement (`agenda_reminders.FIELDS`),
         # lus par Core à chaud — aucun redémarrage.
         agenda = settings.get("agenda_reminders") or {}
         for field in agenda.get("fields") or []:

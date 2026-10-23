@@ -1,4 +1,4 @@
-"""Routes HTTP du graphe d'architecture, **non montées** : la Slice 07 les ajoute au Control Center.
+"""Routes HTTP du graphe d'architecture, montées par le Control Center (`_install_architecture_services`, Slice 07).
 
 | Route | Effet |
 | --- | --- |

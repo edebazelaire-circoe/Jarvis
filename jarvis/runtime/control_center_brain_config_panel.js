@@ -442,8 +442,18 @@
       /* Contre le bord droit de l'hôte, sur la colonne de l'inspecteur du canevas plutôt que sur les nœuds, à la
          hauteur de l'ancre : le graphe reste lisible (la fenêtre se déplace ensuite au gré de l'utilisateur). */
       const v=viewport(),w=Math.min(WIN_W,v.w-2*EDGE),a=rectOf(opts.anchor),h=rectOf(host);
-      const right=Math.min(h&&h.width?h.right:v.w,v.w)-w-16;
-      const x=right,y=a?a.top-24:(h&&h.width?Math.max(h.top,0)+16:24);
+      const hostRight=Math.min(h&&h.width?h.right:v.w,v.w);
+      const right=hostRight-w-16,left=EDGE+8;
+      /* Slice 07 : dans le shell des Réglages, le canevas est plus étroit que la page de démonstration et le nœud peut
+         tomber sous la colonne de droite. La fenêtre ne doit pas couvrir le cerveau qu'elle configure : bord droit de
+         l'hôte si le nœud reste libre, sinon bord gauche de l'écran (sur le rail des catégories, le graphe reste
+         visible), sinon le côté qui a le plus de place, collé au nœud. */
+      let x=right;
+      if(a&&a.width&&a.right>right){
+        if(left+w<=a.left)x=left;
+        else x=a.left>(v.w-a.right)?Math.max(left,a.left-w-16):a.right+16;
+      }
+      const y=a?a.top-24:(h&&h.width?Math.max(h.top,0)+16:24);
       return clampPos({x,y});
     }
     function clampPos(p){

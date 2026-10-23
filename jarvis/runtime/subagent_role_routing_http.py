@@ -1,4 +1,4 @@
-"""Handlers aiohttp de la politique par rôle — **non montés** : la Slice 07 les enregistre.
+"""Handlers aiohttp de la politique par rôle, montés par le Control Center (`_install_architecture_services`, Slice 07).
 
 Routes prévues (contrat : `docs/subagent-roles.md` § 10) :
 
