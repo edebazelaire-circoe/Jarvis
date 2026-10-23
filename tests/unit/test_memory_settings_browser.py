@@ -21,7 +21,7 @@ import json
 
 import pytest
 
-from tests.unit.test_wake_word_settings_browser import click, drive, eval_, got, served, wait  # noqa: F401
+from tests.unit.test_wake_word_settings_browser import click, drive, eval_, got, key, served, type_in, wait  # noqa: F401
 
 SECTIONS = ["recall", "semantic_retrieval", "consolidation", "knowledge_sources", "memory_center"]
 OPEN = [
@@ -162,3 +162,29 @@ async def test_the_memory_center_settings_button_opens_recall(served):
     assert [category, section, hidden] == ["memory_knowledge", "recall", True]
     assert unknown == []
     assert out["console"] == [], out["console"]
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "Finding QA S10 (non bloquant, Slice 05) : le Memory Center redessine son hôte dans sa propre écoute `submit` "
+    "(`runRecall` -> `render()`), le formulaire est détaché avant que l'événement n'atteigne Sessions & Boards, "
+    "`foreign(form)` rend faux et `workspace.unknown_action {\"name\":\"recall\"}` est encore journalisé."))
+async def test_a_memory_center_form_sent_with_enter_is_not_a_workspace_action(served):
+    """QA Slice 10 (mutation Q1 de la passe de finitions) : Sessions & Boards ignore aussi les ENVOIS de formulaire du
+    Memory Center qu'il héberge (`foreign(form)` de l'écoute `submit`, `control_center_workspace.js`), pas seulement
+    ses clics. Vraie frappe Entrée dans « Test de rappel » : le Memory Center lance son rappel (`/api/memory/recall-explain`)
+    et rien n'est journalisé comme `workspace.unknown_action`."""
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        eval_(MC_STUB), *OPEN,
+        click("#modalTabs [data-section=memory_center]"),
+        wait("!!document.querySelector('[data-mem-center]:not([disabled])')"),
+        click("[data-mem-center]"),
+        wait("document.getElementById('workspaceManager').classList.contains('mc-on')&&!!document.getElementById('mc-tab-recall')"),
+        click("#mc-tab-recall"),
+        wait("!!document.getElementById('mcRecallQ')", 8000),
+        type_in("#mcRecallQ", "rendez-vous de demain"),
+        key("Enter"),
+        wait("!document.querySelector('#memoryCenterMount form[data-form=recall] button[disabled]')", 8000),
+        eval_("window.__warn.filter(l=>/unknown_action/.test(l))", "unknown"),
+    ]}])
+    assert got(out["steps"][0], "unknown") == []
+    assert any(r["path"] == "/api/memory/recall-explain" for r in out["requests"]), out["requests"]

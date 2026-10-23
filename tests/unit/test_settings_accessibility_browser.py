@@ -284,3 +284,35 @@ async def test_reduced_motion_and_forced_colors(served):
     assert motion["iterations"] == "1", motion
     forced = got(out["steps"][1], "forced")
     assert forced == {"focus": True, "disabled": True}, forced
+
+
+#: Le dernier contrôle réellement atteignable au clavier : un descendant d'un `<details>` fermé ne l'est pas (son résumé
+#: l'est). Chrome donne pourtant des boîtes à ces descendants (`getClientRects`), que le piège de Tab du shell compte.
+REAL_LAST = """(()=>{const ov=document.getElementById('overlay');
+  const shut=el=>{for(let d=el.closest('details');d;d=d.parentElement&&d.parentElement.closest('details'))
+    if(!d.open&&!(el.tagName==='SUMMARY'&&el.parentElement===d))return true;return false};
+  const all=[...ov.querySelectorAll('button,a[href],input,select,textarea,summary,[tabindex]')]
+    .filter(el=>!el.disabled&&el.tabIndex>=0&&el.getClientRects().length>0&&!shut(el));
+  const last=all[all.length-1];last.focus();return last.tagName})()"""
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "Finding QA S10 (bloquant, Slice 02) : le piège de Tab du shell (`control_center.html`, écoute `keydown` des "
+    "Réglages) prend pour dernier focusable un contrôle d'un `<details>` fermé ; Tab depuis le vrai dernier contrôle "
+    "sort du shell (`body`, puis les boutons de la page derrière)."))
+async def test_tab_from_the_last_reachable_control_stays_in_the_shell(served):
+    """QA Slice 10 : Connexions › Fournisseurs finit par le résumé « Ajouter une clé » d'un `<details>` fermé (vu aussi
+    en bac à sable sur Agents & modèles › Rôles des sous-agents, rôles chargés). Vraie frappe Tab depuis ce dernier
+    contrôle : le focus doit revenir au début du shell."""
+    section = "providers"
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        *OPEN,
+        eval_(f"selectTab('{section}');true"),
+        wait("!!document.querySelector('#modalContent summary')", 10000),
+        eval_(REAL_LAST, "last"),
+        key("Tab"),
+        eval_(FOCUS, "focus"),
+    ]}])
+    step = out["steps"][0]
+    assert got(step, "last") == "SUMMARY"
+    assert got(step, "focus")["inShell"] is True, got(step, "focus")

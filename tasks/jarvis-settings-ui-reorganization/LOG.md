@@ -1113,3 +1113,155 @@ Control Center 17654 (PID 34676) intacts. Disque C : 58 à 60 Go libres.
 - La feuille de style du module Bare Hands n'est injectée que Bare Hands allumé : ses règles de section (espacements,
   contour des boutons radio) manquent quand il est éteint. Préexistant, non changé (le contour du shell couvre le focus).
 - Commits séparés par hunks : seul l'état final et ses suites ont été testés.
+
+## 2026-10-23 - Slice 10 (QA de livraison, accessibilité intégrée)
+
+Seul writer de `setui` @ `c88a319a`. `git fetch` : `origin/main` = `20292e5c`, aucune dérive, aucun merge nécessaire.
+Aucune correction de produit dans cette Slice (contrat : les findings retournent à leur Slice) ; ajoutés : deux tests
+en échec attendu strict (findings), preuves, `HUMAN-CHECKS.md`, revue de `docs/settings/INDEX.md`.
+
+### QA indépendante de la passe de finitions (`4602d3af..c88a319a`)
+
+Verdict : **approuvée**, chaque correction tient, sauf le correctif S5 du Memory Center, incomplet (N1 ci-dessous).
+
+- Aucun changement de route, de charge ni de persistance : aucune ligne du diff ne touche un `fetch`, une route
+  `/api/*`, un corps de requête ni une clé `localStorage` ; `memory_settings.py` ne change que deux libellés,
+  `barehands_commands.py` qu'un message ; aucune fonctionnalité nouvelle.
+- `keepFocus` / `landFocus` (`control_center_settings_ui.js`) : sélecteur par `id` (échappé par `JSON.stringify`,
+  forme CSS valide), sinon premier attribut `data-*` avec sa valeur ; un élément désactivé ne reprend pas le focus ;
+  `landFocus` marque l'arrivée et la retire au `blur` (`once`). Utilisés par la mémoire (boutons en `aria-disabled`,
+  `submit` et « Annuler » gardés par `dirty()`/`busy`), les rôles des sous-agents, Connexions (régions vivantes
+  stables), `showSettingsTarget` et `focusSettingsLanding`. Corrects.
+- Code mort de l'ancien onglet Voix : sur `4602d3af`, `authSectionHtml` et `aecHtml` n'avaient aucun appelant ;
+  `renderField`, `catalog()`, `authVerdictHtml`, `authEffectiveHtml`, `verifierHtml`, `voiceSeen`, `whenOf`,
+  `codeTag`, `AUTH_*`, `AEC_STATUS` n'étaient appelés que depuis ce groupe (grep sur `jarvis/`). Restent : les doubles
+  de test qui les définissent (sans effet) et `#authRefresh`, bouton vivant de la partie Voix de Diagnostics.
+- Sessions & Boards : `foreign()` ne vise que `[data-memory-center]`, posé par le Memory Center sur son seul hôte
+  `#memoryCenterMount` ; les actions de la vue (dont `memory-delete-confirm` et `#wspConfirmRecursive`, dans l'arbre
+  de la mémoire du Board, hors de cet hôte) passent toujours. Le Memory Center fait lui-même son `preventDefault` à
+  l'envoi. `test_workspace_manager_browser` vert ; mutation Q2 (garde élargie à `.wsp`) tuée. Mais l'envoi de ses
+  formulaires journalise encore `workspace.unknown_action` : N1.
+
+### Tests (depuis `setui`, `.venv` du dépôt principal, au premier plan, chaque commande < 600 s ; sorties au scratchpad `s10/logs`)
+
+- Suites Réglages hors navigateur (liste Slice 00 et ajouts des Slices) : lot A 209 passed ; lot B 179 passed ;
+  lot C 277 passed ; lot D (+ canal Bare Hands, palette, settings_mcp) 302 passed.
+- Navigateur, un ou deux fichiers par commande : settings_shell + jarvis_wheel 13 ; accessibilité + destinations
+  des messages 11 ; advanced + agents_models 14 ; connections 10 ; memory 7 ; interface 14 ; wake_word 10 + 10 ;
+  dossier_fullscreen 19 + 3 skipped ; tool_wheel + capture_wheel 35 + 1 skipped ; workspace_manager +
+  dossier_navigation 3. Total 146 passed, 4 skipped, aucun échec ni intermittent. Après ajout des tests de findings :
+  accessibilité 9 passed + 1 xfailed, memory 7 passed + 1 xfailed ; documents lus par des tests 92 + 36 passed.
+- Balayage complet du dépôt (918 fichiers de `tests/` hors navigateur, 21 lots) : **23 230 passed, 13 failed,
+  95 skipped**. Échecs : exactement les 12 préexistants de `20292e5c` (test_app tools_gateway, 6 ×
+  test_control_center_mcp_api, 2 × barehands practice_frame, scene_group_drag, brain_capability_parity,
+  tool_brain_choices) et l'intermittent `test_memory_context::…2000_notes…` (rejoué : un échec isolé de plus, puis
+  5/5 ; sur un worktree jetable de `20292e5c`, 4/4 en 28-44 s contre 29-32 s sur `setui`, pour une borne de 30 s :
+  lié au temps, non imputé).
+
+### Mutations (worktree jetable `git worktree add --detach` de `c88a319a` au scratchpad, supprimé) : 2/8 tuées
+
+Q2 garde du Memory Center élargie à toute la vue (tuée, workspace_manager) ; Q4 `keepFocus` sans effet (tuée,
+accessibilité). Survivantes : Q1 garde `foreign(form)` de l'écoute `submit` retirée (a révélé N1 : le test ajouté
+échoue sur le vrai code, d'où l'échec attendu) ; Q3 `data-settings-landed` jamais retiré (effet minime : la règle
+exige `:focus`) ; Q5 `id` non échappé (équivalente pour les `id` du produit) ; Q6 `block:'nearest'` partout
+(position non testée, cible toujours en vue) ; Q7 erreur de Connexions non collée en haut (rendu non testé) ; Q8
+double gris d'un profil de routage éteint (aucun profil éteint dans le banc d'essai : voir N2).
+
+### Bac à sable réel
+
+`setui`, Core 127.77.0.1:27653, Control Center 127.0.0.1:27654, `JARVIS_DATA_ROOT`/`JARVIS_RUNTIME_DIR` au
+scratchpad `s10`, visualiseur coupé, magasin de clés vide sous ce runtime (vérifié avant tout pilotage ; aucune clé
+ajoutée, aucun POST pendant les parcours). Pilote CDP dérivé du harnais des tests (`evidence/s10/harness/`) : vrais
+clics et frappes, zoom réel (largeur CSS = largeur / 1,25 et `deviceScaleFactor` 1,25), instrumentation injectée avant
+la page. `evidence/s10/` : 29 PNG quantifiés (2,9 Mo) et `runtime-check.json`.
+
+- Les 25 sections des six catégories, détails ouverts, à 1366×768, 1440×900 et 1920×1080, à 100 % et 125 % : page,
+  colonne, contenu et liste des entrées sans débordement (0 px partout), aucune entrée coupée, aucun échec de
+  montage. Seule la table du catalogue comparatif défile dans son propre conteneur (`.catalog-table-wrap`) à 1366 et
+  1440 à 125 %.
+- Clavier seul : depuis le début de la page, 1 Tab jusqu'à l'ancre de la roue, flèche droite, 4 flèches jusqu'à
+  « Paramètres », flèche droite (six catégories dans l'ordre), flèches, Entrée → Connexions, focus sur la catégorie
+  dans le rail, toujours là 900 ms après ; Échap → focus rendu à l'ancre ; JARVIS › « Réglages de la voix » au
+  clavier → Voix & audio. Raccourci `s` depuis `body` → Réglages ouverts, focus sur Voix & audio ; Début + 3 flèches
+  ne charge rien, Entrée ouvre Interface ; Tab → entrées, Fin + Entrée → Bare Hands ; « Réinitialiser les réglages »
+  + Entrée → confirmation par-dessus les Réglages, focus sur « Annuler », Tab y reste ; Échap ferme la confirmation
+  seule (Réglages ouverts, focus rendu au bouton), deux fois. Pied : Tab jusqu'à « Enregistrer », puis retour au
+  rail ; « Fermer » → focus sur « Plus d'outils ». Le premier Tab parti sur `dockMore` (S03) n'est pas reproduit.
+- Traversée Tab de chaque section depuis son entrée : contour visible sur chaque élément atteint, contrôles tous
+  nommés (libellé, `aria-label` ou texte), sauf la sortie du shell de B1 dans 2 sections sur 25.
+- Régions vivantes : `#modalStatus` (status, polite) partout ; régions propres de Connexions (`status` + `alert`),
+  Raccourcis (`#shortcutHint`), catalogue, mémoire (avis), thème.
+- Mouvement réduit : aucun élément animé ou en transition dans le shell (113 puis 343 nœuds), contre l'animation
+  `set-fade` 0,18 s et les transitions du rail sans la préférence. Couleurs forcées : focus en `Highlight`, boutons
+  désactivés de la mémoire en `GrayText` à opacité 1.
+- Cycle de vie : `setInterval`, `setTimeout` ≥ 1 s, `addEventListener` sur `window` et `document`, `fetch`
+  instrumentés ; trois tournées complètes des 25 sections puis fermeture : 6 intervalles (ceux de la page au repos,
+  mêmes origines), même table d'écoutes globales qu'au repos, mêmes 3 longues requêtes en vol (commandes plein écran,
+  explorateur du studio, patchs de la scène) ; aucune croissance d'une tournée à l'autre. Aucune fuite.
+- Console : aucune exception ; seuls les 424 attendus de `/api/models` (pas de clé de fournisseur) et le 404 de
+  `/favicon.ico`.
+- PID lancés puis arrêtés un par un après vérification de la ligne de commande, sans `/T` : 38236 (cerveau claude,
+  `--mcp-config` sous `scratchpad\s10\runtime` ; ses 10 MCP partis avec lui, vérifié), 23756 (Control Center, port
+  27654 ; lanceur 3708 parti avec lui), 12644 (Core, port 27653 ; lanceur 15520 parti avec lui). Core utilisateur
+  17653 (PID 31824) et Control Center 17654 (PID 34676) intacts. Données du bac à sable laissées en place. Disque C :
+  60 Go libres au début, 56,8 Go avant le bac à sable.
+
+### Findings
+
+Bloquant :
+
+- **B1 (Slice 02, piège de Tab du shell)** — `jarvis/runtime/control_center.html:6007-6008` : la liste des
+  focusables du piège garde les contrôles d'un `<details>` fermé (`getClientRects().length>0` est vrai pour eux dans
+  Chrome) ; le « dernier » est alors le bouton « Ajouter » caché de la dernière carte, pas le vrai dernier contrôle.
+  Scénario : Réglages › Connexions › Fournisseurs, focus sur le dernier « Ajouter une clé », Tab → `body`, puis les
+  Tab suivants parcourent la page derrière le shell `aria-modal` (ancre de la roue, `#boardsButton`,
+  `#openTimeline`, `#agentsButton`, ERR, `#dockMore`, `#chatTab`) avant de revenir au rail. Vu aussi en bac à sable
+  sur Agents & modèles › Rôles des sous-agents (rôles chargés : dernier contrôle = résumé « Afficher et modifier les
+  instructions »). Contrat rompu : « Tab et Maj+Tab bouclent dans le shell … le focus ne part jamais derrière lui »
+  (commentaire de l'écoute, même fichier) et docs/04 « No focus trap regressions ». Test :
+  `tests/unit/test_settings_accessibility_browser.py::test_tab_from_the_last_reachable_control_stays_in_the_shell`
+  (échec attendu strict, à retirer par la reprise).
+
+Non bloquants :
+
+- **N1 (Slice 05, correctif `2e124a60` incomplet)** — `control_center_workspace.js:1769-1770` : l'écoute `submit` de
+  Sessions & Boards ignore les formulaires du Memory Center par `foreign(form)`, mais le Memory Center redessine son
+  hôte dans sa propre écoute `submit` (`control_center_memory.js:361-366` → `runRecall` → `render()`, l. 128) : le
+  formulaire est détaché quand l'événement arrive, `closest('[data-memory-center]')` rend `null`, et
+  `workspace.unknown_action {"name":"recall"}` (de même `notes`) est encore journalisé. Aucun effet visible
+  (avertissement au journal). Test :
+  `tests/unit/test_memory_settings_browser.py::test_a_memory_center_form_sent_with_enter_is_not_a_workspace_action`
+  (échec attendu strict).
+- **N2 (Slice 02, contraste)** — `control_center.html:765` (`.settings-shell .routing-off{opacity:.7}`) : dans
+  Avancé › Runtime & CLI › Configuration avancée, un profil désactivé grise ses aides (`.hint`) à 4,24:1, sous le
+  4,5:1 visé par la passe de finitions (WCAG exempte les composants inactifs, pas ce texte d'explication). Le test de
+  contraste n'a aucun profil éteint (mutation Q8 survivante).
+- **N3 (préexistant, catalogue des tâches précédentes)** — `.catalog-table-wrap` (`control_center.html:997`) défile
+  horizontalement à 1366 et 1440 à 125 % sans `tabindex`, rôle ni nom ; au clavier, seul le focus des boutons de la
+  table la fait défiler.
+- **N4 (tests)** — mutations survivantes Q3, Q6, Q7, Q8 ci-dessus (Q5 équivalente).
+
+### Documentation
+
+`docs/settings/INDEX.md` revu : liens tous valides (vérifiés), chaque document de `docs/settings/` indexé ; titre
+historique « Agent / CLI settings backend » remplacé par un titre d'index, table « Documents des Réglages », liste des
+suites navigateur, aides de focus `keepFocus`/`landFocus` ajoutées à la ligne des primitives. Contenu Agent / CLI
+inchangé.
+
+### Recette humaine
+
+`HUMAN-CHECKS.md` : HV-SETTINGS-001 à 008 rédigés pour le Human, décisions produit à trancher (brouillon mémoire,
+texte des autres couches de prompts, renommage de clé, verdicts Solo Owner / annulation d'écho et commande de
+réparation du vérificateur), ligne de redémarrage.
+
+### Redémarrage
+
+Aucun schéma ni aucune persistance changés par la tâche (`git diff 20292e5c..HEAD` : rien sous `jarvis/adapters/` ni
+`tests/schema/`, aucune `_MIGRATIONS`) : aucune migration. Le code servi change (page et onze modules Python de Core
+et du Control Center) : redémarrage de JARVIS par le Human après le merge.
+
+### Verdict de livraison
+
+Validation machine **non épuisée** : B1 doit retourner à la Slice 02 ; après la reprise, rejouer
+`test_settings_accessibility_browser.py` (l'échec attendu doit devenir un succès et être retiré) et la traversée Tab
+du bac à sable. N1 à N4 peuvent partir avec la reprise ou en `Issues/`.

@@ -1,4 +1,28 @@
-# Agent / CLI settings backend
+# Réglages — index (et backend Agent / CLI)
+
+> Revu à la Slice 10 de `jarvis-settings-ui-reorganization` (2026-10-23) : le titre historique « Agent / CLI settings
+> backend » ne disait plus ce que ce fichier indexe. Le contenu Agent / CLI ci-dessous est inchangé.
+
+## Documents des Réglages
+
+| Document | Contenu |
+| --- | --- |
+| [`navigation-registry.md`](navigation-registry.md) | six catégories figées, registre des sections, groupes d'Avancé, seule table d'alias (`memory`) |
+| [`settings-shell.md`](settings-shell.md) | shell plein écran : rail, entrées, focus, Échap, piège de Tab, montage et destruction des sections, liens internes, primitives et aides de focus (`keepFocus`, `landFocus`) |
+| [`voice-audio.md`](voice-audio.md) | Voix & audio : sections, destination de chaque option (`surface` servie) |
+| [`agents-models.md`](agents-models.md) | Agents & modèles, Runtime & CLI et Work Methods apprises sous Avancé |
+| [`memory.md`](memory.md) | Mémoire & connaissances : schéma, précédence env/fichier/défaut, destination de chaque champ |
+| [`interface-interactions.md`](interface-interactions.md) | Thème & scène, Raccourcis (seul éditeur), Bare Hands ; Bare Hands · essais sous Avancé |
+| [`connections.md`](connections.md) | Connexions › Fournisseurs : cartes, routes et charges des clés, jamais une valeur |
+| [`migration-rollout.md`](migration-rollout.md) | migration et déploiement de la refonte des réglages (tâche du catalogue de modèles) |
+| [`../legacy/settings-tab-aliases.md`](../legacy/settings-tab-aliases.md) | inventaire des anciens ID d'onglet et leur sort (Slice 09) |
+
+Régression navigateur des Réglages (vrai Chrome, `tests/unit/`) : `test_settings_shell_browser.py`,
+`test_settings_accessibility_browser.py`, `test_settings_message_destinations_browser.py`,
+`test_agents_models_settings_browser.py`, `test_memory_settings_browser.py`, `test_interface_settings_browser.py`,
+`test_connections_settings_browser.py`, `test_advanced_settings_browser.py`, `test_wake_word_settings_browser.py`,
+`test_jarvis_wheel_browser.py`. Recette humaine : `tasks/jarvis-settings-ui-reorganization/HUMAN-CHECKS.md`.
+
 
 > **Settings navigation (canonical):** the six top-level categories, the section
 > registration contract and the remaining legacy tab alias (`memory`, Slice 09) live in
@@ -26,7 +50,7 @@
 | `control_center_work.js` (`THEME_SCENE_SECTION`), `control_center_scene_page.js` (`JarvisSceneViewSettings`), `control_center.html` (`SHORTCUTS_SECTION`), `control_center_barehands.js` (`installSettingsSections`) | Interface & interactions: Thème & scène visuelle (theme + scene view prefs, browser `localStorage`, immediate), Raccourcis (canonical and only editor of every registered shortcut, `wake_toggle` included), Bare Hands ordinary preferences; Advanced › Bare Hands · essais (`barehands_lab`) and the Bare Hands part of Diagnostics; see [`interface-interactions.md`](interface-interactions.md) | `registerSettingsSection`, `startCapture`, `JarvisBarehands.showSettings`, `openSettingsLink` |
 | `jarvis/runtime/control_center_connections_settings.js` + `control_center.html` (`CONNECTIONS_SECTION`) | Connexions: section Fournisseurs (`providers`; the old `keys` ID is retired since Slice 09), one card per provider served by the credential store (identity, configured state, active key, add/replace/delete, environment fallback by variable name, server `hint` as usage note); unchanged credential routes and payloads, never a value; see [`connections.md`](connections.md) | `JarvisConnectionsSettings.create(host, {request, state, isCurrent, onState})`, `html`, `CONNECTIONS_SECTION` |
 | `control_center_settings_registry.js` (`CATEGORY_GROUPS`) + `control_center.html` (`PROMPTS_SECTION`) + `control_center_scene_settings.js` (`scene_gate`) | Avancé & diagnostic : cinq groupes déclarés, avis d'outils d'opérateur, section Prompts (atelier, routes et charges inchangées) et section Scène constellation (porte de test + redémarrage du brain) ; voir § « Avancé & diagnostic » ci-dessous | `R.groups`, `CATEGORY_GROUPS`, `PROMPTS_SECTION`, `promptWorkbenchHtml`, `JarvisSceneSettings` |
-| `jarvis/runtime/control_center_settings_ui.js` | Pure Settings visual primitives (intro, section, field, badge, notice, advanced disclosure, action row); see [`settings-shell.md`](settings-shell.md) § 5 | `JarvisSettingsUI.section`, `field`, `notice` |
+| `jarvis/runtime/control_center_settings_ui.js` | Pure Settings visual primitives (intro, section, field, badge, notice, advanced disclosure, action row) and the two focus helpers that touch only the elements they are given (`keepFocus`: a re-render keeps the focused control; `landFocus`: a jump marks its landing so the outline shows after a mouse click); see [`settings-shell.md`](settings-shell.md) § 5 | `JarvisSettingsUI.section`, `field`, `notice`, `keepFocus`, `landFocus` |
 | `jarvis/runtime/control_center.py` | `/api/settings` projection/save, alias conflict rejection, active-agent refresh | `_settings_payload`, `save_settings`, `_apply_cli`, `agent_ask` |
 | `jarvis/runtime/agent_settings.py` + `back_brain_worker.py` | Carry and consume behavior choice for owned background agent executions | `resolve_agent_execution`, `execute_with_progress` |
 

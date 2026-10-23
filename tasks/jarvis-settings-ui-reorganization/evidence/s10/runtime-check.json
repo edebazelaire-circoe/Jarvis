@@ -1,0 +1,1570 @@
+{
+ "pass": "Slice 10 - QA de livraison (jarvis-settings-ui-reorganization), branche @ c88a319a",
+ "sandbox": {
+  "cwd": "C:/Projects/jarvis/setui",
+  "core": "127.77.0.1:27653",
+  "control_center": "127.0.0.1:27654",
+  "data_root": "scratchpad/s10/data",
+  "runtime_dir": "scratchpad/s10/runtime",
+  "visualizer": "off",
+  "driver": "evidence/s10/harness/s10_driver.mjs (dérivé de tests/unit/_wake_word_settings_browser.mjs : vrais clics et frappes CDP, zoom réel par deviceScaleFactor, script d'instrumentation injecté avant la page)",
+  "pids": {
+   "core": [
+    15520,
+    12644
+   ],
+   "control_center": [
+    3708,
+    23756
+   ],
+   "brain_claude": 38236
+  },
+  "user_runtime_untouched": {
+   "core_17653_pid": 31824,
+   "control_center_17654_pid": 34676
+  },
+  "credential_store": "vide, sous le runtime du bac à sable ; aucune clé ajoutée pendant cette QA"
+ },
+ "overflow_25_sections_by_size": {
+  "1366x768-100": {
+   "sections": 25,
+   "page_max": 0,
+   "content_max": 0,
+   "main_max": 0,
+   "entry_list_max": 0,
+   "entries_cut": [],
+   "mount_failed": [],
+   "not_shown": [],
+   "inner_scroll_regions": [
+    "voice_output"
+   ]
+  },
+  "1440x900-100": {
+   "sections": 25,
+   "page_max": 0,
+   "content_max": 0,
+   "main_max": 0,
+   "entry_list_max": 0,
+   "entries_cut": [],
+   "mount_failed": [],
+   "not_shown": [],
+   "inner_scroll_regions": []
+  },
+  "1920x1080-100": {
+   "sections": 25,
+   "page_max": 0,
+   "content_max": 0,
+   "main_max": 0,
+   "entry_list_max": 0,
+   "entries_cut": [],
+   "mount_failed": [],
+   "not_shown": [],
+   "inner_scroll_regions": []
+  },
+  "1366x768-125": {
+   "sections": 25,
+   "page_max": 0,
+   "content_max": 0,
+   "main_max": 0,
+   "entry_list_max": 0,
+   "entries_cut": [],
+   "mount_failed": [],
+   "not_shown": [],
+   "inner_scroll_regions": [
+    "subagent_models",
+    "voice_output"
+   ]
+  },
+  "1440x900-125": {
+   "sections": 25,
+   "page_max": 0,
+   "content_max": 0,
+   "main_max": 0,
+   "entry_list_max": 0,
+   "entries_cut": [],
+   "mount_failed": [],
+   "not_shown": [],
+   "inner_scroll_regions": [
+    "subagent_models",
+    "voice_output"
+   ]
+  },
+  "1920x1080-125": {
+   "sections": 25,
+   "page_max": 0,
+   "content_max": 0,
+   "main_max": 0,
+   "entry_list_max": 0,
+   "entries_cut": [],
+   "mount_failed": [],
+   "not_shown": [],
+   "inner_scroll_regions": []
+  }
+ },
+ "overflow_note": "inner_scroll_regions : la table du catalogue comparatif (Voix › Voix & transcription, Agents › Modèles des sous-agents) défile dans son propre conteneur `.catalog-table-wrap` (overflow-x:auto) à 1366 et 1440 à 125 % ; ni la page, ni la colonne, ni le contenu ne débordent.",
+ "keyboard": {
+  "wheel_route": {
+   "tabs_to_anchor": 1,
+   "wedges_to_parametres": 4,
+   "submenu": [
+    "tab:voice_audio",
+    "tab:agents_models",
+    "tab:memory_knowledge",
+    "tab:interface_interactions",
+    "tab:connections",
+    "tab:advanced_diagnostics"
+   ],
+   "after_enter": {
+    "id": "settingsCat-connections",
+    "tag": "BUTTON",
+    "text": "ConnexionsFournisseurs et identifiants e",
+    "slot": null,
+    "item": null,
+    "anchor": false,
+    "inShell": true,
+    "outline": true,
+    "open": true,
+    "category": "connections",
+    "section": "providers",
+    "confirm": false
+   },
+   "after_900ms": {
+    "id": "settingsCat-connections",
+    "tag": "BUTTON",
+    "text": "ConnexionsFournisseurs et identifiants e",
+    "slot": null,
+    "item": null,
+    "anchor": false,
+    "inShell": true,
+    "outline": true,
+    "open": true,
+    "category": "connections",
+    "section": "providers",
+    "confirm": false
+   },
+   "escape": {
+    "id": null,
+    "tag": "BUTTON",
+    "text": "",
+    "slot": null,
+    "item": null,
+    "anchor": true,
+    "inShell": false,
+    "outline": true,
+    "open": false,
+    "category": "connections",
+    "section": "providers",
+    "confirm": false
+   },
+   "voice_row": {
+    "id": "settingsCat-voice_audio",
+    "tag": "BUTTON",
+    "text": "Voix & audioConversation, voix, micro et",
+    "slot": null,
+    "item": null,
+    "anchor": false,
+    "inShell": true,
+    "outline": true,
+    "open": true,
+    "category": "voice_audio",
+    "section": "conversation",
+    "confirm": false
+   },
+   "escape_voice_row": {
+    "id": null,
+    "tag": "BUTTON",
+    "text": "",
+    "slot": null,
+    "item": null,
+    "anchor": true,
+    "inShell": false,
+    "outline": true,
+    "open": false,
+    "category": "voice_audio",
+    "section": "conversation",
+    "confirm": false
+   }
+  },
+  "s_shortcut": {
+   "before": {
+    "id": null,
+    "tag": "BODY",
+    "text": "ÉTEINTBare HandsÉTEINTVEILLEACTIFCaméra ",
+    "slot": null,
+    "item": null,
+    "anchor": false,
+    "inShell": false,
+    "outline": false,
+    "open": false,
+    "category": null,
+    "section": null,
+    "confirm": false
+   },
+   "after_s": {
+    "id": "settingsCat-voice_audio",
+    "tag": "BUTTON",
+    "text": "Voix & audioConversation, voix, micro et",
+    "slot": null,
+    "item": null,
+    "anchor": false,
+    "inShell": true,
+    "outline": true,
+    "open": true,
+    "category": "voice_audio",
+    "section": "conversation",
+    "confirm": false
+   },
+   "rail_browse_no_load": {
+    "id": "settingsCat-interface_interactions",
+    "tag": "BUTTON",
+    "text": "Interface & interactionsThème, scène, ra",
+    "slot": null,
+    "item": null,
+    "anchor": false,
+    "inShell": true,
+    "outline": true,
+    "open": true,
+    "category": "voice_audio",
+    "section": "conversation",
+    "confirm": false
+   },
+   "rail_enter": {
+    "id": "settingsCat-interface_interactions",
+    "tag": "BUTTON",
+    "text": "Interface & interactionsThème, scène, ra",
+    "slot": null,
+    "item": null,
+    "anchor": false,
+    "inShell": true,
+    "outline": true,
+    "open": true,
+    "category": "interface_interactions",
+    "section": "theme_scene",
+    "confirm": false
+   }
+  },
+  "confirm_over_settings": {
+   "reset_button": {
+    "id": "barehandsReset",
+    "tag": "BUTTON",
+    "text": "Réinitialiser les réglages",
+    "slot": null,
+    "item": null,
+    "anchor": false,
+    "inShell": true,
+    "outline": true,
+    "open": true,
+    "category": "interface_interactions",
+    "section": "bare_hands",
+    "confirm": false
+   },
+   "confirm_open": {
+    "id": "confirmCancel",
+    "tag": "BUTTON",
+    "text": "Annuler",
+    "slot": null,
+    "item": null,
+    "anchor": false,
+    "inShell": false,
+    "outline": true,
+    "open": true,
+    "category": "interface_interactions",
+    "section": "bare_hands",
+    "confirm": true
+   },
+   "after_escape": {
+    "id": "barehandsReset",
+    "tag": "BUTTON",
+    "text": "Réinitialiser les réglages",
+    "slot": null,
+    "item": null,
+    "anchor": false,
+    "inShell": true,
+    "outline": true,
+    "open": true,
+    "category": "interface_interactions",
+    "section": "bare_hands",
+    "confirm": false
+   },
+   "tab_inside_confirm": [
+    "confirmGo",
+    "confirmCancel",
+    "confirmGo",
+    "confirmCancel"
+   ],
+   "after_escape_2": {
+    "id": "barehandsReset",
+    "tag": "BUTTON",
+    "text": "Réinitialiser les réglages",
+    "slot": null,
+    "item": null,
+    "anchor": false,
+    "inShell": true,
+    "outline": true,
+    "open": true,
+    "category": "interface_interactions",
+    "section": "bare_hands",
+    "confirm": false
+   }
+  },
+  "footer_and_close": {
+   "save": {
+    "id": "modalSave",
+    "tag": "BUTTON",
+    "text": "Enregistrer",
+    "slot": null,
+    "item": null,
+    "anchor": false,
+    "inShell": true,
+    "outline": true,
+    "open": true,
+    "category": "voice_audio",
+    "section": "conversation",
+    "confirm": false
+   },
+   "tab_after_save": {
+    "id": "settingsCat-voice_audio",
+    "tag": "BUTTON",
+    "text": "Voix & audioConversation, voix, micro et",
+    "slot": null,
+    "item": null,
+    "anchor": false,
+    "inShell": true,
+    "outline": true,
+    "open": true,
+    "category": "voice_audio",
+    "section": "conversation",
+    "confirm": false
+   },
+   "after_close": {
+    "id": "dockMore",
+    "tag": "BUTTON",
+    "text": "",
+    "slot": null,
+    "item": null,
+    "anchor": false,
+    "inShell": false,
+    "outline": true,
+    "open": false,
+    "category": "voice_audio",
+    "section": "conversation",
+    "confirm": false
+   }
+  },
+  "wheel_opened_connections_tab_trail": [
+   [
+    "BUTTON",
+    "closeModal",
+    true
+   ],
+   [
+    "BUTTON",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "BODY",
+    null,
+    false
+   ],
+   [
+    "BUTTON",
+    "settingsCat-connections",
+    true
+   ],
+   [
+    "BUTTON",
+    "closeModal",
+    true
+   ],
+   [
+    "BUTTON",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "BUTTON",
+    null,
+    false
+   ],
+   [
+    "BUTTON",
+    "boardsButton",
+    false
+   ],
+   [
+    "BUTTON",
+    "openTimeline",
+    false
+   ],
+   [
+    "BUTTON",
+    "agentsButton",
+    false
+   ],
+   [
+    "BUTTON",
+    null,
+    false
+   ],
+   [
+    "BUTTON",
+    "dockMore",
+    false
+   ],
+   [
+    "BUTTON",
+    "chatTab",
+    false
+   ],
+   [
+    "BUTTON",
+    "settingsCat-connections",
+    true
+   ],
+   [
+    "BUTTON",
+    "closeModal",
+    true
+   ],
+   [
+    "BUTTON",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ],
+   [
+    "BODY",
+    null,
+    false
+   ],
+   [
+    "BUTTON",
+    "settingsCat-connections",
+    true
+   ],
+   [
+    "BUTTON",
+    "closeModal",
+    true
+   ],
+   [
+    "BUTTON",
+    null,
+    true
+   ],
+   [
+    "SUMMARY",
+    null,
+    true
+   ]
+  ]
+ },
+ "tab_trap_per_section": {
+  "conversation": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "voice_output": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "",
+     "role": "status",
+     "live": null,
+     "text": "Clé fournisseur absente. Ajoutez-la dans"
+    },
+    {
+     "id": "",
+     "role": null,
+     "live": "polite",
+     "text": "3 / 3 modèle(s) · 0 / 3 à comparer"
+    },
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "microphone_sound": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "turns_interruptions": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "wake_word": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "ww_save",
+    "text": "Enregistrer"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "ww_save",
+    "text": "Enregistrer"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "main_agent": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "agent_behavior": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "subagent_models": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "",
+     "role": "status",
+     "live": null,
+     "text": "Clé fournisseur absente. Ajoutez-la dans"
+    },
+    {
+     "id": "",
+     "role": null,
+     "live": "polite",
+     "text": "2 / 2 modèle(s) · 0 / 3 à comparer"
+    },
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "subagents": {
+   "mismatch": true,
+   "trap_last": {
+    "tag": "TEXTAREA",
+    "id": "textarea-interviewer",
+    "text": "VOTRE MISSION : CADRER LA DEMA"
+   },
+   "real_last": {
+    "tag": "SUMMARY",
+    "id": "",
+    "text": "Afficher et modifier les instr"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "",
+     "role": null,
+     "live": "polite",
+     "text": ""
+    },
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "recall": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Annuler les changements"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Annuler les changements"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "semantic_retrieval": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Annuler les changements"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Annuler les changements"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "consolidation": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Annuler les changements"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Annuler les changements"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "knowledge_sources": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Annuler les changements"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Annuler les changements"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "memory_center": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Ouvrir le Memory Center"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Ouvrir le Memory Center"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "theme_scene": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Réinitialiser"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Réinitialiser"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    },
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "shortcuts": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "ctrl+ArrowLeft"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "ctrl+ArrowLeft"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "shortcutHint",
+     "role": "status",
+     "live": "polite",
+     "text": "Enregistrement immédiat. Le raccourci sy"
+    },
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "bare_hands": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "barehandsCalibrate",
+    "text": "Calibrer…"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "barehandsCalibrate",
+    "text": "Calibrer…"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "providers": {
+   "mismatch": true,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Ajouter"
+   },
+   "real_last": {
+    "tag": "SUMMARY",
+    "id": "",
+    "text": "Ajouter une clé"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "connectionsStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    },
+    {
+     "id": "connectionsError",
+     "role": "alert",
+     "live": null,
+     "text": ""
+    },
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "architecture_compat": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "prompts": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "SUMMARY",
+    "id": "",
+    "text": "Prompt effectif · stdin.user_m"
+   },
+   "real_last": {
+    "tag": "SUMMARY",
+    "id": "",
+    "text": "Prompt effectif · stdin.user_m"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    },
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "runtime_cli": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "diagnostics": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "ww_detector_read",
+    "text": "Actualiser"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "ww_detector_read",
+    "text": "Actualiser"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "scene_gate": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "INPUT",
+    "id": "f_scene",
+    "text": ""
+   },
+   "real_last": {
+    "tag": "INPUT",
+    "id": "f_scene",
+    "text": ""
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "work_methods": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Work Methods apprises"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Work Methods apprises"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "",
+     "role": null,
+     "live": "polite",
+     "text": ""
+    },
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  },
+  "barehands_lab": {
+   "mismatch": false,
+   "trap_last": {
+    "tag": "BUTTON",
+    "id": "barehandsRecordStart",
+    "text": "Enregistrer une séance…"
+   },
+   "real_last": {
+    "tag": "BUTTON",
+    "id": "barehandsRecordStart",
+    "text": "Enregistrer une séance…"
+   },
+   "unnamed_controls": [],
+   "live_regions": [
+    {
+     "id": "modalStatus",
+     "role": "status",
+     "live": "polite",
+     "text": ""
+    }
+   ]
+  }
+ },
+ "tab_traversal_per_section": {
+  "conversation": {
+   "presses": 7,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "voice_output": {
+   "presses": 15,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "microphone_sound": {
+   "presses": 7,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "turns_interruptions": {
+   "presses": 6,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "wake_word": {
+   "presses": 15,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "main_agent": {
+   "presses": 7,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "agent_behavior": {
+   "presses": 10,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "subagent_models": {
+   "presses": 20,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "subagents": {
+   "presses": 5,
+   "without_outline": [
+    [
+     "BODY",
+     null
+    ]
+   ],
+   "outside_shell": [
+    [
+     "BODY",
+     null
+    ]
+   ]
+  },
+  "recall": {
+   "presses": 7,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "semantic_retrieval": {
+   "presses": 7,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "consolidation": {
+   "presses": 7,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "knowledge_sources": {
+   "presses": 11,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "memory_center": {
+   "presses": 3,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "theme_scene": {
+   "presses": 11,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "shortcuts": {
+   "presses": 9,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "bare_hands": {
+   "presses": 8,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "providers": {
+   "presses": 9,
+   "without_outline": [
+    [
+     "BODY",
+     null
+    ]
+   ],
+   "outside_shell": [
+    [
+     "BODY",
+     null
+    ]
+   ]
+  },
+  "architecture_compat": {
+   "presses": 18,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "prompts": {
+   "presses": 30,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "runtime_cli": {
+   "presses": 7,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "diagnostics": {
+   "presses": 4,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "scene_gate": {
+   "presses": 2,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "work_methods": {
+   "presses": 1,
+   "without_outline": [],
+   "outside_shell": []
+  },
+  "barehands_lab": {
+   "presses": 3,
+   "without_outline": [],
+   "outside_shell": []
+  }
+ },
+ "lifecycle_three_full_tours": {
+  "s0": {
+   "intervals": 6,
+   "long_timeouts": 6,
+   "global_listeners": 76,
+   "inflight": [
+    "/api/fullscreen/commands",
+    "/api/presentation-studio/explorer/commands",
+    "/api/scene/patches"
+   ]
+  },
+  "c1": {
+   "intervals": 6,
+   "long_timeouts": 6,
+   "global_listeners": 76,
+   "inflight": [
+    "/api/fullscreen/commands",
+    "/api/presentation-studio/explorer/commands",
+    "/api/scene/patches"
+   ]
+  },
+  "c2": {
+   "intervals": 6,
+   "long_timeouts": 6,
+   "global_listeners": 76,
+   "inflight": [
+    "/api/fullscreen/commands",
+    "/api/presentation-studio/explorer/commands",
+    "/api/scene/patches"
+   ]
+  },
+  "c3": {
+   "intervals": 6,
+   "long_timeouts": 6,
+   "global_listeners": 76,
+   "inflight": [
+    "/api/fullscreen/commands",
+    "/api/presentation-studio/explorer/commands",
+    "/api/scene/patches"
+   ]
+  },
+  "s9": {
+   "intervals": 6,
+   "long_timeouts": 6,
+   "global_listeners": 76,
+   "inflight": [
+    "/api/fullscreen/commands",
+    "/api/presentation-studio/explorer/commands",
+    "/api/scene/patches"
+   ]
+  },
+  "identical_global_listener_table": true,
+  "identical_intervals": true
+ },
+ "contrast_routing_profile_off": {
+  "off": 1,
+  "rows": [
+   {
+    "tag": "DIV",
+    "cls": "routing-profile routing-off",
+    "text": "Profil désactivé : ces candida",
+    "ratio": 8.26,
+    "op": "0.7"
+   },
+   {
+    "tag": "DIV",
+    "cls": "hint",
+    "text": "Profil désactivé : ces candida",
+    "ratio": 4.24,
+    "op": "1"
+   },
+   {
+    "tag": "DIV",
+    "cls": "hint",
+    "text": "Aucun candidat autorisé : ce p",
+    "ratio": 4.24,
+    "op": "1"
+   },
+   {
+    "tag": "LABEL",
+    "cls": "",
+    "text": "Harness",
+    "ratio": 5.63,
+    "op": "1"
+   },
+   {
+    "tag": "SELECT",
+    "cls": "",
+    "text": "Choisir un harness…Claude Code",
+    "ratio": 8.2,
+    "op": "1"
+   },
+   {
+    "tag": "LABEL",
+    "cls": "",
+    "text": "Modèle",
+    "ratio": 5.63,
+    "op": "1"
+   },
+   {
+    "tag": "SELECT",
+    "cls": "",
+    "text": "Choisir d'abord un harness",
+    "ratio": 8.2,
+    "op": "1"
+   },
+   {
+    "tag": "BUTTON",
+    "cls": "linkish",
+    "text": "ajouter à ce profil",
+    "ratio": 7.03,
+    "op": "1"
+   },
+   {
+    "tag": "INPUT",
+    "cls": "",
+    "text": "checkbox",
+    "ratio": 7.96,
+    "op": "1"
+   },
+   {
+    "tag": "LABEL",
+    "cls": "",
+    "text": "Se rabattre sur le profil Géné",
+    "ratio": 8.26,
+    "op": "1"
+   },
+   {
+    "tag": "DIV",
+    "cls": "hint",
+    "text": "Quand aucun candidat de ce pro",
+    "ratio": 4.24,
+    "op": "1"
+   }
+  ]
+ },
+ "reduced_motion": {
+  "reduce": {
+   "overlay": {
+    "anim": "none 0s",
+    "tr": "0s",
+    "sb": "auto"
+   },
+   "cat": {
+    "anim": "none 1e-05s",
+    "tr": "1e-05s",
+    "sb": "auto"
+   },
+   "body": {
+    "anim": "none 1e-05s",
+    "tr": "1e-05s",
+    "sb": "auto"
+   },
+   "moving": [],
+   "count": 113
+  },
+  "reduce_voice_output": {
+   "overlay": {
+    "anim": "none 0s",
+    "tr": "0s",
+    "sb": "auto"
+   },
+   "cat": {
+    "anim": "none 1e-05s",
+    "tr": "1e-05s",
+    "sb": "auto"
+   },
+   "body": {
+    "anim": "none 1e-05s",
+    "tr": "1e-05s",
+    "sb": "auto"
+   },
+   "moving": [],
+   "count": 343
+  },
+  "no_preference": {
+   "overlay": {
+    "anim": "set-fade 0.18s",
+    "tr": "0s",
+    "sb": "auto"
+   },
+   "cat": {
+    "anim": "none 0s",
+    "tr": "0.12s, 0.12s",
+    "sb": "auto"
+   },
+   "body": {
+    "anim": "none 0s",
+    "tr": "0s",
+    "sb": "auto"
+   },
+   "moving": [
+    "BUTTON.set-cat",
+    "BUTTON.set-cat",
+    "BUTTON.set-cat",
+    "BUTTON.set-cat",
+    "BUTTON.set-cat",
+    "BUTTON.set-cat"
+   ],
+   "count": 113
+  }
+ },
+ "forced_colors": {
+  "focusHighlight": true,
+  "disabled": [
+   {
+    "t": "Enregistrer la mémoire",
+    "gray": true,
+    "op": "1"
+   },
+   {
+    "t": "Annuler les changements",
+    "gray": true,
+    "op": "1"
+   }
+  ]
+ },
+ "console": {
+  "exceptions": 0,
+  "errors_other_than_expected": [],
+  "expected": "424 de /api/models (aucune clé de fournisseur dans le bac à sable) et 404 de /favicon.ico"
+ },
+ "posts": []
+}
