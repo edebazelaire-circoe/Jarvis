@@ -339,6 +339,12 @@ WHERE = """(()=>{const e=document.activeElement;
   return {end:e&&e.__end||null,tag:e&&e.tagName,inShell:!!e&&document.getElementById('settingsShell').contains(e),
     escapes:window.__escapes||[]}})()"""
 
+#: Contenu au repos : aucun nœud ajouté ni retiré pendant 600 ms (une lecture tardive, comme les instances des
+#: sous-agents, redessinerait la liste après le marquage des bouts).
+QUIET = """new Promise(r=>{let t;const o=new MutationObserver(()=>{clearTimeout(t);t=setTimeout(done,600)});
+  const done=()=>{o.disconnect();r(true)};o.observe(document.getElementById('modalContent'),{subtree:true,childList:true});
+  t=setTimeout(done,600)})"""
+
 #: Sections dont le dernier contrôle visible précède un `<details>` fermé qui cache des boutons : Connexions ›
 #: Fournisseurs (« Ajouter une clé ») et Agents & modèles › Rôles des sous-agents (« Afficher et modifier les
 #: instructions » ; rôles chargés).
@@ -355,6 +361,7 @@ async def test_tab_from_the_last_reachable_control_stays_in_the_shell(served, se
         *OPEN,
         eval_(f"selectTab('{section}');true"),
         wait(ready, 10000),
+        eval_(QUIET),
         eval_(f"({ENDS})('last')", "last"),
         key("Tab"),
         eval_(WHERE, "after_tab"),
@@ -382,6 +389,7 @@ async def test_the_trap_keeps_the_focus_in_the_shell_when_its_list_is_wrong(serv
         *OPEN,
         eval_("selectTab('providers');true"),
         wait("!!document.querySelector('#modalContent summary')", 10000),
+        eval_(QUIET),
         eval_(WRONG_LIST, "ghost"),
         eval_("(" + ENDS + ")('last')", "last"),
         key("Tab"),
