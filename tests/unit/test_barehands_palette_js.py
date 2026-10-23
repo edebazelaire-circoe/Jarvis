@@ -40,7 +40,7 @@ from jarvis.runtime.control_center import ControlCenter
 # espace de noms SVG, un focus qui se déplace vraiment, `removeAttribute`, une
 # horloge qu'on avance, et les deux emplacements que `control_center.html`
 # déclare.
-from test_barehands_tools_settings_js import BROWSER_HEAD, TIMERS  # noqa: E402
+from test_barehands_tools_settings_js import BROWSER_HEAD, TIMERS, served_outside_the_brain_panel  # noqa: E402
 from test_barehands_hud_js import DOM_PATCH, HAND_ART, PATCH  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -885,7 +885,7 @@ def test_the_served_page_puts_the_tools_on_the_palette_and_not_in_the_settings(t
     for gone in ('id="barehandsTools"', 'role="radiogroup"', "data-barehands-tool=",
                  "function toolsHtml", "function refreshTools", "function moveTool",
                  'aria-label="Outil Bare Hands"'):
-        assert gone not in served, gone
+        assert gone not in served_outside_the_brain_panel(served), gone
     # 2. Mais l'outil reste un **réglage persisté** : sa porte et son
     #    enregistrement n'ont pas bougé de place.
     assert "tool:value=>value===undefined?view.settings.tool:saveSettings({tool:value})" in served

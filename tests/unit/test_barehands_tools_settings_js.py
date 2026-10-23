@@ -70,6 +70,17 @@ CALIBRATION_AGENT = RUNTIME / "control_center_barehands_calibration_agent.js"
 SCENE_INTERACT = RUNTIME / "control_center_scene_interact.js"
 
 
+def served_outside_the_brain_panel(served: str) -> str:
+    """La page servie sans le module de la fenêtre du cerveau (Architecture & Agents, Slice 05).
+
+    Ce module dessine ses propres `role="radiogroup"` (activation, délégation) : ils ne sont
+    pas un retour des outils Bare Hands dans les Réglages, que ces absences surveillent."""
+
+    panel = (RUNTIME / "control_center_brain_config_panel.js").read_text(encoding="utf-8")
+    assert panel in served, "le module de la fenêtre du cerveau n'est plus inséré tel quel"
+    return served.replace(panel, "")
+
+
 def run_node(tmp_path: Path, source: str, name: str = "tools") -> object:
     node = shutil.which("node")
     if node is None:
@@ -1954,7 +1965,7 @@ def test_the_page_serves_configuration_only_and_never_a_dead_control(tmp_path):
     for gone in ('id="barehandsTools"', 'role="radiogroup"', "data-barehands-tool=",
                  'id="barehandsTutorial"', "barehandsTutorialStart",
                  'id="f_barehands"', 'id="barehandsLifecycle"', "barehandsWake"):
-        assert gone not in served, gone
+        assert gone not in served_outside_the_brain_panel(served), gone
     # Mais **rien n'est sorti du stockage** : les réglages persistants restent
     # dessinés et écrits — sauf `tutorialSeen`, qui a perdu sa case à la Slice
     # 07B et survit comme champ de compatibilité que plus personne n'écrit
