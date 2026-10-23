@@ -568,6 +568,58 @@ enregistré (fermer la page, si). Le chemin normal est journalisé en console à
 `prompt.override.*` et `subagent_roles.snapshot_*`. Le Control Center n'a pas de route d'écriture des erreurs
 du navigateur : les échecs du navigateur restent en console et à l'écran.
 
+**Destination et politique par rôle (jarvis-architecture-agents-settings-editor, Slice 06).** Le même module
+devient le second onglet, **Sous-agents**, de la page Réglages › Architecture & Agents (pas d'onglet Brains ;
+le montage dans le shell et le retrait de « Modèles des sous-agents » sont faits par la Slice 07). Montage :
+
+```js
+JarvisSubagentSettings.create(host, {
+  drafts, routeDrafts,                       // brouillons partagés avec la page (instructions, routage)
+  openTab: target => openSettingsLink(target),
+  routing: JarvisSubagentSettings.createRoutingHttpAdapter(),   // § 10 ; omis = vue d'avant, sans Modèles
+}).load();
+```
+
+Le transport vit dans `jarvis/runtime/control_center_subagent_routing.js` (`window.JarvisSubagentRouting`) :
+`createHttpAdapter` (`load` = `GET /api/subagent-role-routing`, `put` = `PUT …/{role_id}`, `restore` =
+`DELETE …/{role_id}?base_revision=`) et `createFixtureAdapter` (démonstration et tests, jamais en production).
+Un refus du serveur est un résultat `{ok:false,status,code,reason,snapshot}` ; seul un échec de transport lève
+(`subagent_routing_timeout`, `subagent_routing_unreachable`). Le style propre à l'onglet est injecté une fois
+(`#jarvisSubagentSettingsStyle`, jetons du thème seulement) ; la page devra servir les deux fichiers (Slice 07).
+
+- **Modèles du rôle**, dans la fiche, juste après la mission : provenance (« Hérité du profil « code » » en
+  trait pointillé, « Réglé pour ce rôle » avec une épingle) et `binding_reason` ; la liste **ordonnée** des
+  candidats harness + modèle (position, libellé servi, « Disponible » ou « Indisponible : raison », « Non
+  lançable comme sous-agent : `selectable_reason` » quand le serveur dit `selectable: false`) ; Monter,
+  Descendre, Retirer, et Alt + flèches haut/bas sur une ligne ; l'ajout choisit un harness puis un modèle
+  parmi `harnesses` (indisponibles et doublons visibles mais désactivés, avec la raison) ; l'interrupteur
+  **Repli automatique sur la liste générale** (`allow_general_fallback`, seule commande globale réelle, la
+  liste `general` est citée) ; l'aperçu servi (`preview` : candidat retenu et raison, candidats écartés,
+  `cli_default`, `refused`) ; Enregistrer pour ce rôle, Annuler mes changements, Restaurer l'héritage
+  (confirmé en deux temps, actif seulement si `restorable`). Une liste vide n'est pas envoyable : l'écran
+  dit de restaurer. La note `compatibility.note` est la seule trace d'Auto/Dupliqué, avec un renvoi vers
+  Avancé & diagnostic › Runtime & CLI (`data-settings-open="runtime_cli"`) ; aucun sélecteur ici.
+- **Liste des rôles** : chaque ligne projette le premier candidat (ou « liste vide »), le nombre d'autres et
+  « hérité » / « réglé » ; étiquette « routage non enregistré » pour un brouillon.
+- **Vue d'ensemble du routage** (bouton au-dessus de la liste) : projection en **lecture seule** du même
+  instantané, rôle par rôle (candidats dans l'ordre, repli, provenance), « Régler » ouvre la fiche sur sa
+  section Modèles. Aucun second éditeur.
+
+Écritures : un PUT ou un DELETE ne vise que le rôle édité, avec `base_revision` = révision de l'instantané
+affiché ; le brouillon d'un autre rôle n'est jamais touché. Succès : l'instantané renvoyé remplace l'écran.
+`409 role_routing_revision_stale` : l'instantané du refus (sinon une relecture) remplace l'écran, la liste de
+l'utilisateur reste, un second enregistrement voulu passe. `422` / `404` / `500` : « Enregistrement refusé.
+Refus du serveur : « … ». Rien n'a été écrit. », code affiché, liste gardée. `snapshot.degraded` après un
+succès : « Enregistré, mais la relecture de la politique a échoué », l'écran garde l'instantané précédent,
+les écritures sont bloquées jusqu'à « Relire la politique ». Sans réponse : « Résultat inconnu », relecture
+forcée, puis ce qu'elle montre (brouillon retiré si l'écriture a eu lieu). Lecture en échec : alerte locale
+avec Réessayer ; la fiche et les instructions restent utilisables. Console : `subagent_settings.routing_loaded`,
+`subagent_settings.routing_saved|restored` (info) ; `subagent_settings_routing_failed`,
+`subagent_settings_routing_save_failed|restore_failed|refresh_failed|degraded` (erreur). Work Methods
+candidates et promotion restent dans Avancé (lien seulement). Tests :
+`tests/unit/test_subagent_role_routing_ui_js.py` (node, vraie charge utile v2 et instantané figé du § 10),
+`tests/unit/test_subagent_settings_browser.py` (vrai Chrome : clavier, 390 px, mouvement réduit).
+
 **Accessibilité et largeur.** La fiche n'est pas une région live : une région courte, hors du rendu, annonce
 seulement les notices. En couleurs forcées, la sélection est marquée par une bordure épaisse `Highlight` et
 un soulignement, pas par la couleur. Sous 900 px, une seule colonne : choisir un rôle amène la fiche à l'écran,
