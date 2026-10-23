@@ -54,7 +54,10 @@ de sous-agent (onglet Sous-agents), `voice.persona`.
   `voice`, rôle `duplex` ou `realtime`, même fournisseur que l'architecture. Luna : `voice`/`analysis`. Tool Brain :
   `subagents`/`text`, CLI Claude. Chaque choix dit `available` et sa raison ; un élément indisponible reste visible.
   Une valeur enregistrée absente du catalogue est montrée `available: false`, `state: "unlisted"`, et reste
-  appliquée. Le choix « défaut » (valeur vide) est toujours légal.
+  appliquée. Le choix « défaut » (valeur vide) est toujours légal. Un CLI détecté dont le catalogue ne vérifie ni
+  le modèle par défaut ni l'authentification (`state: "configured_unverified"`, jamais `selectable` dans le
+  catalogue) est un choix légal pour le CLI de Core et pour « défaut du CLI » (`available: true`, raison « se
+  vérifient qu'à l'usage ») : sans cela, Codex installé ne pouvait pas être choisi (constat de la Slice 08).
 - **Modèle vocal** : validé par le registre vocal **et** la composition (`resolve_voice_composition`) avant
   écriture ; un modèle listé par le fournisseur sans adaptateur prêt est refusé sans rien écrire. L'écriture
   réutilise la transaction du graphe (`ArchitectureGraphService.write_settings`) : écriture atomique, demande de
