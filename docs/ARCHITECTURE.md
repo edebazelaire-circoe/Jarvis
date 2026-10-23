@@ -298,6 +298,12 @@ The default is not hard-coded. `default_voice_arch()` returns `legacy` while
 only consumer, so unsetting the environment variable returns to `legacy`
 mechanically.
 
+The runtime topology (microphone, voice surface, Luna, Core, Tool Brain,
+sub-agents, speakers) is projected per effective voice architecture as an
+editable graph whose toggleable links are real runtime settings
+(`brain_orchestration`, `voice_surface.back_brain_delegation`,
+`tool_brain.mode`): [architecture-graph.md](architecture-graph.md).
+
 Continuous mode fails loudly instead of degrading: it refuses manual turn mode,
 and it refuses any voice stack that does not implement the semantic output
 controls (Gemini Live today).
