@@ -674,9 +674,9 @@ def _route(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJournal
 #: Code consigné (`agent.spawn_refused`) quand la tendance de délégation du cerveau Core vaut `never`.
 DELEGATION_NEVER_CODE = "brain_delegation_never"
 DELEGATION_NEVER_REASON = (
-    "Délégation désactivée : la tendance de délégation du cerveau Core vaut « Jamais » (Réglages › Architecture & "
-    "Agents › fenêtre du cerveau Core). Faites-le dans ce tour ou dites à l'utilisateur ce qui demanderait un "
-    "sous-agent."
+    "Délégation désactivée : la tendance de délégation du cerveau Core vaut « Jamais » "
+    "(Réglages › Architecture & Agents › Architecture, fenêtre du cerveau Core). Faites-le dans ce tour ou dites à "
+    "l'utilisateur ce qui demanderait un sous-agent."
 )
 
 
