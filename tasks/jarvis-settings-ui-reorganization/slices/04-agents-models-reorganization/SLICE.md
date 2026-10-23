@@ -1,5 +1,11 @@
 # Slice 04 - Agents and models reorganization
 
+> **Remplacée** (2026-10-23) par la Slice 07 de `jarvis-architecture-agents-settings-editor` : la catégorie
+> `agents_models` s'appelle « Architecture & Agents » et n'a plus que deux onglets, Architecture et Sous-agents
+> (contrat : `docs/settings/architecture-agents.md`). « Agent principal », « Modèles des sous-agents » et
+> « Rôles des sous-agents » n'existent plus ; leurs anciens ID `main_agent` et `subagent_models` sont des alias.
+> Ce document reste l'historique de la Slice livrée (`b0b53b51`), pas le contrat courant.
+
 ## Goal
 
 Merge the user-facing parts of `Agent / CLI` and the newly landed `Sous-agents` surface into one coherent `Agents & modeles` category.
