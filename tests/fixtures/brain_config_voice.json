@@ -1,0 +1,153 @@
+{
+  "brain_id": "voice",
+  "brain_type": "voice_surface",
+  "catalog": {
+    "reason": "",
+    "status": "ok"
+  },
+  "connections": {
+    "edit_on": "graph",
+    "graph_revision": "t-2dad261d3cf2ae34",
+    "incoming": [
+      {
+        "applies": "voice_restart",
+        "channel": "audio",
+        "enabled": true,
+        "governed_by": null,
+        "id": "mic.audio_out->voice.audio_in",
+        "locked_reason": "La surface vocale ne fonctionne pas sans micro.",
+        "mutability": "required_locked",
+        "peer": "mic",
+        "pending": null,
+        "purpose": "Audio du micro vers la surface vocale"
+      },
+      {
+        "applies": "live",
+        "channel": "speech",
+        "enabled": true,
+        "governed_by": null,
+        "id": "core.speech->voice.speech_in",
+        "locked_reason": "La parole de Core passe toujours par la surface vocale.",
+        "mutability": "required_locked",
+        "peer": "core",
+        "pending": null,
+        "purpose": "Parole demandée par Core (rappels, résultats de travail)"
+      }
+    ],
+    "outgoing": [
+      {
+        "applies": "voice_restart",
+        "channel": "audio",
+        "enabled": true,
+        "governed_by": null,
+        "id": "voice.audio_out->speakers.audio_in",
+        "locked_reason": "La surface vocale dit les réponses ; il n'y a pas de synthèse séparée.",
+        "mutability": "required_locked",
+        "peer": "speakers",
+        "pending": null,
+        "purpose": "Voix de JARVIS vers les haut-parleurs"
+      },
+      {
+        "applies": "voice_restart",
+        "channel": "request",
+        "enabled": true,
+        "governed_by": null,
+        "id": "voice.delegate->core.request",
+        "locked_reason": "",
+        "mutability": "toggleable",
+        "peer": "core",
+        "pending": null,
+        "purpose": "Tours cerveau : la voix confie la demande à Core (outils, sous-agents)"
+      }
+    ]
+  },
+  "fields": {
+    "activation": {
+      "applies": null,
+      "editable": false,
+      "owner": null,
+      "reason": "La surface vocale porte l'audio.",
+      "value": "inactive"
+    },
+    "delegation": {
+      "applies": null,
+      "editable": false,
+      "owner": null,
+      "reason": "La voix ne lance pas de sous-agents : elle confie le travail au cerveau Core (liaison du graphe).",
+      "value": "not_applicable"
+    },
+    "instructions": {
+      "applies": "voice_restart",
+      "default_revision": "<default_revision>",
+      "editable": true,
+      "effective_revision": "<effective_revision>",
+      "max_length": 8192,
+      "owner": "prompt_overrides.live.duplex.addition",
+      "prompt_id": "live.duplex.addition",
+      "reason": "",
+      "value": ""
+    },
+    "mission": {
+      "applies": null,
+      "editable": false,
+      "owner": "code:brain_config.BRAIN_MISSIONS",
+      "reason": "Responsabilités décrites par le code ; aucune mission de cerveau n'est enregistrée aujourd'hui.",
+      "value": "Porte la conversation audio en direct : écoute le micro, répond à voix haute, garde la parole courte, et confie au cerveau Core ce qui demande des outils, du travail ou de la mémoire."
+    },
+    "model": {
+      "applies": "voice_restart",
+      "choices": [
+        {
+          "agent_id": null,
+          "available": true,
+          "label": "openai · gpt-live-1",
+          "provider_id": "openai",
+          "reason": "",
+          "reason_code": "",
+          "state": "usable",
+          "value": "gpt-live-1"
+        },
+        {
+          "agent_id": null,
+          "available": true,
+          "label": "openai · gpt-live-2",
+          "provider_id": "openai",
+          "reason": "",
+          "reason_code": "",
+          "state": "usable",
+          "value": "gpt-live-2"
+        }
+      ],
+      "editable": true,
+      "owner": "voice_architecture.config.conversation_model",
+      "provider": "openai",
+      "reason": "Le fournisseur suit l'architecture vocale ; changer de modèle relance la voix.",
+      "value": "gpt-live-1"
+    }
+  },
+  "label": "Voice Brain",
+  "out_of_scope": {
+    "cli_technical": "Commande, chemin et autorisations du CLI : Avancé › CLI.",
+    "personality": "Ton, politesse, longueur et humour : page Personnalisation, pas la fenêtre du cerveau.",
+    "subagent_models": "Le modèle de chaque rôle de sous-agent se règle dans l'onglet Sous-agents."
+  },
+  "process": "voice",
+  "revision": "c-cc27667f7ab392d5",
+  "schema_version": 1,
+  "state": {
+    "reason": "Voice ne tourne pas (aucun battement récent).",
+    "state": "inactive"
+  },
+  "store": {
+    "code": "",
+    "reason": "",
+    "status": "ok"
+  },
+  "system": true,
+  "voice_architecture": {
+    "id": "duplex",
+    "label": "Duplex",
+    "settings_target": "architecture_compat",
+    "source": "settings"
+  }
+}
