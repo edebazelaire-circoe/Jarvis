@@ -164,15 +164,12 @@ async def test_the_memory_center_settings_button_opens_recall(served):
     assert out["console"] == [], out["console"]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Finding QA S10 (non bloquant, Slice 05) : le Memory Center redessine son hôte dans sa propre écoute `submit` "
-    "(`runRecall` -> `render()`), le formulaire est détaché avant que l'événement n'atteigne Sessions & Boards, "
-    "`foreign(form)` rend faux et `workspace.unknown_action {\"name\":\"recall\"}` est encore journalisé."))
 async def test_a_memory_center_form_sent_with_enter_is_not_a_workspace_action(served):
-    """QA Slice 10 (mutation Q1 de la passe de finitions) : Sessions & Boards ignore aussi les ENVOIS de formulaire du
-    Memory Center qu'il héberge (`foreign(form)` de l'écoute `submit`, `control_center_workspace.js`), pas seulement
-    ses clics. Vraie frappe Entrée dans « Test de rappel » : le Memory Center lance son rappel (`/api/memory/recall-explain`)
-    et rien n'est journalisé comme `workspace.unknown_action`."""
+    """QA Slice 10 (N1, mutation Q1 de la passe de finitions) : Sessions & Boards ignore aussi les ENVOIS de formulaire
+    du Memory Center qu'il héberge (`foreign(event)` de l'écoute `submit`, `control_center_workspace.js`), pas seulement
+    ses clics, alors même que le Memory Center redessine son hôte (formulaire détaché) avant que l'événement n'y
+    arrive. Vraie frappe Entrée dans « Test de rappel » puis dans la recherche des Notes : le Memory Center lance son
+    rappel et sa recherche, et rien n'est journalisé comme `workspace.unknown_action`."""
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         eval_(MC_STUB), *OPEN,
         click("#modalTabs [data-section=memory_center]"),
@@ -185,6 +182,15 @@ async def test_a_memory_center_form_sent_with_enter_is_not_a_workspace_action(se
         key("Enter"),
         wait("!document.querySelector('#memoryCenterMount form[data-form=recall] button[disabled]')", 8000),
         eval_("window.__warn.filter(l=>/unknown_action/.test(l))", "unknown"),
+        # Notes : même chose pour la recherche (`data-form=notes`).
+        click("#mc-tab-notes"),
+        wait("!!document.getElementById('mcQuery')", 8000),
+        type_in("#mcQuery", "rendez-vous"),
+        key("Enter"),
+        wait("!!document.getElementById('mcQuery')&&!/Chargement/.test(document.getElementById('memoryCenterMount').textContent)", 8000),
+        eval_("window.__warn.filter(l=>/unknown_action/.test(l))", "unknown_notes"),
     ]}])
     assert got(out["steps"][0], "unknown") == []
+    assert got(out["steps"][0], "unknown_notes") == []
     assert any(r["path"] == "/api/memory/recall-explain" for r in out["requests"]), out["requests"]
+    assert any(r["path"] == "/api/memory/search" for r in out["requests"]), out["requests"]
