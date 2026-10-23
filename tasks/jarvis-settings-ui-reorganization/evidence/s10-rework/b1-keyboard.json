@@ -1,0 +1,716 @@
+{
+ "sections": 25,
+ "sectionsAllGood": 25,
+ "bad": [],
+ "withHiddenControlsInClosedDetails": [
+  "voice_output",
+  "subagents",
+  "providers",
+  "prompts"
+ ],
+ "exceptions": [],
+ "consoleOther": [],
+ "posts": [],
+ "rows": [
+  {
+   "section": "conversation",
+   "reachable": 9,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 7,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "voice_output",
+   "reachable": 17,
+   "hiddenInClosedDetails": 25,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 15,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "microphone_sound",
+   "reachable": 9,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 7,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "turns_interruptions",
+   "reachable": 8,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 6,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "wake_word",
+   "reachable": 17,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "ww_save",
+    "text": "Enregistrer"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 15,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "main_agent",
+   "reachable": 10,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 7,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "agent_behavior",
+   "reachable": 12,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 10,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "subagent_models",
+   "reachable": 23,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 21,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "subagents",
+   "reachable": 7,
+   "hiddenInClosedDetails": 5,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "SUMMARY",
+    "id": "",
+    "text": "Afficher et modifier les instr"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 5,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "recall",
+   "reachable": 9,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Annuler les changements"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 7,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "semantic_retrieval",
+   "reachable": 9,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Annuler les changements"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 7,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "consolidation",
+   "reachable": 9,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Annuler les changements"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 7,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "knowledge_sources",
+   "reachable": 13,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Annuler les changements"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 11,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "memory_center",
+   "reachable": 5,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Ouvrir le Memory Center"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 3,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "theme_scene",
+   "reachable": 14,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Réinitialiser"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 11,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "shortcuts",
+   "reachable": 11,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "ctrl+ArrowLeft"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 9,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "bare_hands",
+   "reachable": 10,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "barehandsCalibrate",
+    "text": "Calibrer…"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 8,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "providers",
+   "reachable": 11,
+   "hiddenInClosedDetails": 24,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "SUMMARY",
+    "id": "",
+    "text": "Ajouter une clé"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 9,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "architecture_compat",
+   "reachable": 20,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 18,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "prompts",
+   "reachable": 32,
+   "hiddenInClosedDetails": 12,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "SUMMARY",
+    "id": "",
+    "text": "Prompt effectif · stdin.user_m"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 30,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "runtime_cli",
+   "reachable": 9,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "modalSave",
+    "text": "Enregistrer"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 7,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "diagnostics",
+   "reachable": 6,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "ww_detector_read",
+    "text": "Actualiser"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 5,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "scene_gate",
+   "reachable": 4,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "INPUT",
+    "id": "f_scene",
+    "text": ""
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 2,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "work_methods",
+   "reachable": 3,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "",
+    "text": "Work Methods apprises"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 1,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  },
+  {
+   "section": "barehands_lab",
+   "reachable": 5,
+   "hiddenInClosedDetails": 0,
+   "trapEndsMatchReal": true,
+   "realLast": {
+    "tag": "BUTTON",
+    "id": "barehandsRecordStart",
+    "text": "Enregistrer une séance…"
+   },
+   "tabFromLast": {
+    "end": "first",
+    "inShell": true,
+    "escapes": []
+   },
+   "shiftTabFromFirst": {
+    "end": "last",
+    "inShell": true,
+    "escapes": []
+   },
+   "traversal": {
+    "backToRail": true,
+    "presses": 3,
+    "outOfShell": [],
+    "noOutline": [],
+    "escapes": []
+   }
+  }
+ ]
+}

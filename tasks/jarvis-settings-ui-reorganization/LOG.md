@@ -1265,3 +1265,74 @@ et du Control Center) : redémarrage de JARVIS par le Human après le merge.
 Validation machine **non épuisée** : B1 doit retourner à la Slice 02 ; après la reprise, rejouer
 `test_settings_accessibility_browser.py` (l'échec attendu doit devenir un succès et être retiré) et la traversée Tab
 du bac à sable. N1 à N4 peuvent partir avec la reprise ou en `Issues/`.
+
+### Rework après QA de livraison (2026-10-23)
+
+Commits : `a89dcf93` S2 (B1, N2, N3 et tests Q3/Q6/Q7/Q8), `0b297049` S5 (N1), `74392243` et `1c4bc3d6` S2 (tests du
+piège de Tab durcis), puis ce commit S10 (preuves, `HUMAN-CHECKS.md`, LOG). Aucune route, charge, persistance ni
+fonctionnalité nouvelle ; aucun schéma touché.
+
+- **B1** — cause : le piège de Tab (`control_center.html`) prenait pour focusables tous les contrôles ayant des boîtes ;
+  Chrome en donne au contenu d'un `<details>` fermé, d'où un « dernier » caché, un Tab non intercepté et la sortie du
+  shell. Correctif : `settingsReachable(root)` ne garde que les contrôles réellement focusables et rendus (ni
+  `:disabled`, ni `tabindex<0`, ni `type=hidden`, ni sous `[hidden]`/`[inert]`, ni dans le contenu d'un `<details>`
+  fermé hors de son résumé direct, `checkVisibility` et `visibility`) ; dernier recours : un Tab laissé au navigateur
+  qui finirait sur `body` ou derrière le shell (hors d'une autre boîte `aria-modal`) revient au bout du shell dans le
+  sens de la frappe. Tests : `test_tab_from_the_last_reachable_control_stays_in_the_shell[providers|subagents]` (Tab
+  depuis le vrai dernier → premier, Maj+Tab depuis le premier → vrai dernier, aucun `focusout` hors du shell même un
+  instant ; échec attendu retiré), `test_the_trap_keeps_the_focus_in_the_shell_when_its_list_is_wrong`.
+- **N1** — cause : le Memory Center redessine son hôte dans sa propre écoute `submit`/`click` ; quand l'événement
+  arrive à Sessions & Boards la cible est détachée et `closest('[data-memory-center]')` rend `null`. Correctif :
+  `foreign(event)` lit `event.composedPath()`, figé à l'envoi (clic et envoi). Test : Entrée dans Test de rappel puis
+  dans la recherche des Notes, `/api/memory/recall-explain` et `/api/memory/search` appelés, aucun
+  `workspace.unknown_action` (échec attendu retiré) ; `test_workspace_manager_browser` vert.
+- **N2** — `.settings-shell .routing-off{opacity:1}` : le bloc d'un profil éteint n'est plus grisé (ni `.routing-off`
+  hérité à 0,5, ni `[aria-disabled]` à 0,7) ; ses aides restent à pleine opacité, ses commandes désactivées sont grisées
+  une seule fois (0,7). Test : `test_a_disabled_routing_profile_stays_readable_and_greyed_once` (profil éteint dans le
+  brouillon, rien d'enregistré ; tout ≥ 4,5:1, opacité cumulée ≥ 0,7, aides à 1).
+- **N3** — `.catalog-table-wrap` du catalogue (`control_center_catalog.js`) : `tabindex="0"`, `role="region"`,
+  `aria-label` (le nom de la légende), contour `:focus-visible`. Les tables du Test Lab (même classe, hors Réglages)
+  gardent leur balisage. Test : `test_the_scrolling_catalog_table_is_reachable_and_named` (1093×614, Tab depuis le
+  contrôle précédent, contour, défilement).
+- **N4** — Q3 : `test_the_landing_mark_is_removed_when_the_focus_leaves` ; Q6 :
+  `test_a_part_reached_by_a_link_comes_to_the_top_of_the_content` ; Q7 :
+  `test_a_connections_error_stays_at_the_top_while_scrolling` (refus simulé dans la page) ; Q8 : test N2 ; Q1 : test N1.
+
+#### Mutations (worktree jetable `git worktree add --detach` de `74392243` au scratchpad, supprimé) : 11/12 tuées
+
+Tuées : M1b liste sans `closedAround` ni `checkVisibility` (2 tests), M2 dernier recours retiré, M3/Q1 garde `submit`
+retirée, M3b ancienne garde `closest`, M4/Q8 bloc éteint regrisé à 0,7, M5 ancienne règle (aides à 4,24:1), M6
+`tabindex` du catalogue retiré, M7 contour du catalogue retiré, Q3 marque d'arrivée jamais retirée, Q6
+`block:'nearest'` partout, Q7 erreur non collée. Survivante M1a (`closedAround` seul retiré) : équivalente dans Chrome,
+où `checkVisibility` exclut déjà le contenu d'un `<details>` fermé (`content-visibility:hidden`) ; `closedAround`
+reste comme garde pour un moteur sans `checkVisibility`.
+
+#### Tests (depuis `setui`, `.venv` du dépôt principal, au premier plan, chaque commande < 600 s)
+
+- Hors navigateur : lot A 209 passed ; lot B 179 passed ; lot C 277 passed ; lot D + settings_mcp + palette +
+  workspace_manager_js + workspace_presentations_js 315 passed ; canal Bare Hands 35 passed.
+- Navigateur : accessibilité 17 passed (fichier entier deux fois : 1 échec non identifié au premier passage, 17/17 au
+  second ; moitiés 8 + 9 vertes ; le test des Rôles des sous-agents avait échoué une fois quand la lecture tardive des
+  instances redessinait la liste après le marquage, corrigé par `1c4bc3d6`, puis 3 × 3 passes vertes) ; settings_shell +
+  jarvis_wheel 13 ; advanced + agents_models 14 ; connections + destinations des messages 12 ; interface 14 ;
+  wake_word 20 ; dossier_fullscreen 19 + 3 skipped ; tool_wheel + capture_wheel 35 + 1 skipped ; workspace_manager +
+  dossier_navigation 3 ; memory 8. Aucun échec à la passe finale.
+
+#### Bac à sable réel (B1 au clavier, N2, N3)
+
+`setui`, Core 127.77.0.1:27653 (PID 7852 → 18412), Control Center 127.0.0.1:27654 (PID 6952 → 36616, cerveau claude
+8516 dont `--mcp-config` sous `scratchpad\s10rw\runtime`), `JARVIS_DATA_ROOT`/`JARVIS_RUNTIME_DIR` au scratchpad
+`s10rw`, visualiseur coupé ; pilote CDP `evidence/s10/harness/s10_driver.mjs`, plans `evidence/s10-rework/harness/`.
+- 25 sections sur 25 : les bouts de `settingsReachable` sont ceux d'un calcul indépendant ; Tab depuis le vrai dernier →
+  premier, Maj+Tab depuis le premier → vrai dernier, traversée complète jusqu'au rail, aucun `focusout` hors du shell.
+  Quatre sections ont des contrôles cachés dans un `<details>` fermé (Voix › Sortie vocale 25, Rôles des sous-agents 5,
+  Fournisseurs 24, Prompts 12) : toutes tiennent. `evidence/s10-rework/b1-keyboard.json`, captures
+  `b1-providers-…`, `b1-subagents-…` (focus revenu sur la catégorie du rail).
+- Profil éteint (brouillon seul) : bloc à 1, aides à 1, commandes désactivées à 0,7 ; catalogue à 1366×768 et 125 % :
+  défile de 150 px, `role=region`, nommé, atteint par Tab, contour 2 px. `n2-n3-visual.json`, `n2-…png`, `n3-…png`.
+- Aucune exception, aucun POST, console sans autre message que les 424 attendus de `/api/models` et le 404 du favicon.
+- Arrêtés un par un après vérification de la ligne de commande, sans `/T` : 8516 (cerveau), 36616 (Control Center ; son
+  lanceur 6952 parti avec lui), 18412 (Core ; lanceur 7852 parti avec lui). Core utilisateur 17653 (PID 31824) et
+  Control Center 17654 (PID 34676) intacts. Données du bac à sable laissées en place. Disque C : 58 Go libres.
+
+Verdict de la reprise : B1 et N1 à N4 corrigés ; validation machine à rejouer par une re-QA.

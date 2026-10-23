@@ -1,0 +1,44 @@
+{
+ "steps": [
+  {
+   "name": "routing-off",
+   "results": {
+    "off": {
+     "block": 1,
+     "hints": [
+      1,
+      1,
+      1
+     ],
+     "disabled": [
+      0.7,
+      0.7,
+      0.7,
+      0.7,
+      0.7,
+      0.7,
+      0.7,
+      0.7
+     ]
+    }
+   }
+  },
+  {
+   "name": "catalog",
+   "results": {
+    "wrap": {
+     "scroll": 150,
+     "role": "region",
+     "name": "Catalogue de modèles subagents"
+    },
+    "focus": {
+     "wrap": true,
+     "outline": "solid 2px"
+    }
+   }
+  }
+ ],
+ "exceptions": [],
+ "posts": [],
+ "consoleOther": []
+}

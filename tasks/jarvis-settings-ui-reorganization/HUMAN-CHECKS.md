@@ -13,10 +13,6 @@ regarder. Cochez la case quand le résultat est celui attendu ; sinon notez ce q
   `memory_settings.py`, `voice_settings_schema.py`, `shortcuts.py`, `barehands_commands.py`, `settings_mcp.py`,
   `presentation_runtime.py`, `model_catalog.py`, `memory_relay.py`, `credentials.py`) : redémarrez JARVIS (Core et
   Control Center) vous-même une fois la branche fusionnée, puis rechargez la page. Aucun agent ne le fera à votre place.
-- [ ] **Finding bloquant à reprendre avant cette recette** (voir `LOG.md`, entrée Slice 10) : au clavier, dans
-  Connexions › Fournisseurs (et Agents & modèles › Rôles des sous-agents), Tab depuis le dernier « Ajouter une clé »
-  sort des Réglages au lieu de revenir en haut. Si la reprise n'a pas encore eu lieu, vous le verrez au check
-  HV-SETTINGS-006 ; ne le comptez pas comme une découverte.
 - Ouvrez les Réglages par le bouton « Plus d'outils » (⋯) › Réglages, ou par la touche `s` quand le focus n'est pas
   dans un champ. Échap ou « Fermer » les referme.
 
@@ -109,8 +105,9 @@ Résultat attendu :
 - [ ] Chaque carte dit si le fournisseur est configuré (« Clé enregistrée », « Variable d'environnement » ou « Non
   configuré ») et laquelle des clés est active (badge « Active »).
 - [ ] Aucune valeur de clé n'apparaît jamais : seuls les quatre derniers caractères, même juste après l'ajout.
-- [ ] Après le dernier « Ajouter une clé », Tab revient en haut des Réglages (rail) et non sur la page derrière.
-  **Tant que le finding bloquant de la Slice 10 n'est pas repris, ce point échoue** (voir « Avant de commencer »).
+- [ ] Après le dernier « Ajouter une clé », Tab revient en haut des Réglages (rail) et non sur la page derrière ;
+  Maj+Tab depuis le haut revient sur ce dernier « Ajouter une clé ». (Repris après la QA de livraison : machine
+  vérifiée sur les 25 sections, `evidence/s10-rework/b1-keyboard.json`.)
 
 Où regarder : les badges en tête de chaque carte ; le contour de focus après le dernier Tab.
 
@@ -169,4 +166,6 @@ Balayage complet du dépôt, suites des Réglages et suites navigateur vertes ho
 bac à sable réel, 25 sections à 1366×768, 1440×900, 1920×1080, à 100 % et 125 % sans débordement ; clavier seul (rail,
 entrées, contenu, pied, fermeture, roue, `s`, Échap sous une confirmation) ; régions vivantes ; mouvement réduit ;
 couleurs forcées ; aucun minuteur, écoute globale ni requête qui fuit après trois tournées complètes. Détail et
-findings : `LOG.md`, entrée Slice 10 ; preuves : `evidence/s10/`.
+findings : `LOG.md`, entrée Slice 10 ; preuves : `evidence/s10/`. Reprise après la QA de livraison (piège de Tab,
+envois du Memory Center, profil de routage éteint lisible, catalogue défilant au clavier) : `LOG.md`, « Rework après
+QA de livraison » ; preuves : `evidence/s10-rework/`.
