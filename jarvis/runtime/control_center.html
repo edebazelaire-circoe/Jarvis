@@ -6502,6 +6502,9 @@ window.addEventListener('keydown',event=>{
   /* Hub des Réglages ouvert : modal, seuls ses propres raccourcis passent. */
   if(settingsHubOpen()&&id!=='ui_settings'&&id!=='ui_close')return;
   if(id==='ui_settings'){event.preventDefault();if(!SET.open&&!settingsHubOpen())openSettingsHub({source:'shortcut'});return}
+  /* Une Échap déjà consommée par un module des Réglages (menu d'un nœud du canevas d'Architecture, création d'une
+     liaison, sélection) ne ferme pas la page : même règle que l'écoute Échap du shell (`defaultPrevented`). */
+  if(id==='ui_close'&&event.defaultPrevented)return;
   if(id==='ui_close'){event.preventDefault();if(SET.open)closeSettings();else if(settingsHubOpen())closeSettingsHub();else closePanel();return}
   if(id==='ui_tab_next'||id==='ui_tab_prev'){
     if(!SET.open)return;

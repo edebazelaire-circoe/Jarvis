@@ -205,6 +205,36 @@ async def test_saving_from_behavior_posts_the_unchanged_payload_and_reads_back(s
     assert out["console"] == [], out["console"]
 
 
+#: L'élément actif : son nœud de canevas, son entrée de menu ou son id, et l'état ouvert des Réglages.
+ACTIVE = ("(()=>{const e=document.activeElement;return [SET.open,e&&(e.getAttribute('data-arch-node')||"
+          "e.getAttribute('data-arch-menu')||e.id||e.tagName)]})()")
+
+
+async def test_escape_in_a_node_menu_opened_by_keyboard_closes_the_menu_not_the_settings(served):
+    """Constat de la Slice 08 en bac à sable : Maj+F10 sur Core ouvre son menu, Échap le fermait ET fermait les
+    Réglages — le raccourci global `ui_close` (écoute de `window`) ignorait l'Échap déjà consommée par le canevas.
+    Attendu : Échap ferme le menu, le focus revient au nœud, les Réglages restent ; une Échap libre les ferme."""
+
+    focus_core = eval_("(()=>{const n=document.querySelector('[data-architecture-page] [data-arch-node=core]');"
+                       "n.focus();return document.activeElement===n})()", "focused")
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        *OPEN, wait("new Promise(r=>setTimeout(()=>r(true),1500))", 4000), focus_core,
+        key("F10", shift=True), wait("!!document.querySelector('[data-arch-menu=configure]')", 4000),
+        eval_(ACTIVE, "menu_open"),
+        key("Escape"), wait("!document.querySelector('[data-arch-menu=configure]')", 4000),
+        eval_(ACTIVE, "after_first_escape"),
+        key("Escape"), wait("SET.open===false", 4000),
+        eval_("SET.open", "after_second_escape"),
+    ]}])
+    step = out["steps"][0]
+    assert_waits(step)
+    assert got(step, "focused") is True
+    assert got(step, "menu_open") == [True, "configure"]
+    assert got(step, "after_first_escape") == [True, "core"]
+    assert got(step, "after_second_escape") is False
+    assert out["console"] == [], out["console"]
+
+
 #: Le modèle de Core choisi dans sa fenêtre, appliqué, puis le brouillon `/api/settings` que la page garde.
 PICK_MODEL = """(()=>{const s=document.querySelector('.bcp-win [data-bcp-input=model]');s.value='claude-haiku-5';
   s.dispatchEvent(new Event('change',{bubbles:true}));return s.value})()"""
