@@ -39,3 +39,14 @@ Soft requirements between these Slices are documented in each `SLICE.md`; they a
 ## External coordination
 
 Before dispatch, PM must ensure the related task `jarvis-settings-ui-reorganization` will not concurrently run its obsolete Slice 04 (`agents-models-reorganization`). The broader Settings shell work remains a soft integration input.
+
+## Avancement (agent 0)
+
+- [x] 01 - approuvée après QA (d18593e9, c4079a9c), fusion 446bf901.
+- [x] 02 - approuvée après QA + rework (05432ab5, c3d23595, ead55dca, fix bf9bd806), fusion 644a3788.
+- [x] 03 - approuvée après QA + rework (9d98fadb, 6ab60200, fix 3fca3d08), fusion 25b4a2d8.
+- [x] 04 - approuvée après QA + rework (191cf17d, fix f9019300), fusion 0e70613e.
+- [x] 05 - approuvée après QA (00c923ee, 7df94c51, fix a296998f), fusion a353bed7.
+- [x] 06 - approuvée après QA + rework (4dd2b4d6, fix 2340748b), fusion de la branche s06.
+- [ ] 07 - en cours (worktree arch-s07).
+- [ ] 08 - après 07.
