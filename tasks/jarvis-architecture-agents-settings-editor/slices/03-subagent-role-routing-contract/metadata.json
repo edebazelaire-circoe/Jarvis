@@ -1,0 +1,29 @@
+{
+  "slice_id": "03-subagent-role-routing-contract",
+  "title": "03 - Sub-agent role routing contract",
+  "task_type": "waived-by-agent-0",
+  "task_type_blocker": null,
+  "dependencies": [],
+  "requires": [
+    {
+      "slice_id": "02-brain-config-runtime-contract",
+      "need": "role request/delegation event shape",
+      "fallback": "canonical role_id plus optional capabilities",
+      "integration_required_before": "07-settings-integration-and-legacy-migration",
+      "mismatch_policy": "adapt resolver input, not model ownership"
+    }
+  ],
+  "frontend": false,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation",
+    "agent-trace-analysis"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline"
+  ],
+  "agent_routing": "Claude Work Agent (Agent tool), worktree dédié"
+}

@@ -1,0 +1,29 @@
+{
+  "slice_id": "01-architecture-graph-runtime-contract",
+  "title": "01 - Architecture graph runtime contract",
+  "task_type": "waived-by-agent-0",
+  "task_type_blocker": null,
+  "dependencies": [],
+  "requires": [
+    {
+      "slice_id": "02-brain-config-runtime-contract",
+      "need": "brain config capability/activation descriptors",
+      "fallback": "minimal node metadata with stable brain_id",
+      "integration_required_before": "07-settings-integration-and-legacy-migration",
+      "mismatch_policy": "adopt one brain registry/id contract"
+    }
+  ],
+  "frontend": false,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation",
+    "agent-trace-analysis"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline"
+  ],
+  "agent_routing": "Claude Work Agent (Agent tool), worktree dédié"
+}

@@ -1,0 +1,23 @@
+{
+  "slice_id": "08-final-integration-e2e-qa",
+  "title": "08 - Final integration / E2E / QA convergence",
+  "task_type": "waived-by-agent-0",
+  "task_type_blocker": null,
+  "dependencies": [
+    "07-settings-integration-and-legacy-migration"
+  ],
+  "requires": [],
+  "frontend": false,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation",
+    "agent-trace-analysis"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline"
+  ],
+  "agent_routing": "Claude Work Agent (Agent tool), worktree dédié"
+}

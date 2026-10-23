@@ -1,0 +1,36 @@
+{
+  "slice_id": "02-brain-config-runtime-contract",
+  "title": "02 - Brain config runtime contract",
+  "task_type": "waived-by-agent-0",
+  "task_type_blocker": null,
+  "dependencies": [],
+  "requires": [
+    {
+      "slice_id": "01-architecture-graph-runtime-contract",
+      "need": "brain ids, activation/connection mutability, connection summary",
+      "fallback": "stable audited ids plus unavailable graph fields",
+      "integration_required_before": "07-settings-integration-and-legacy-migration",
+      "mismatch_policy": "adopt graph canonical ids"
+    },
+    {
+      "slice_id": "03-subagent-role-routing-contract",
+      "need": "role request boundary",
+      "fallback": "role_id/capability delegation interface from handoff",
+      "integration_required_before": "07-settings-integration-and-legacy-migration",
+      "mismatch_policy": "adapt boundary, keep five-level UX"
+    }
+  ],
+  "frontend": false,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation",
+    "agent-trace-analysis"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline"
+  ],
+  "agent_routing": "Claude Work Agent (Agent tool), worktree dédié"
+}

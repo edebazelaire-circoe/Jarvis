@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "id": "HV-ARCH-004",
+      "description": "After all machine validation passes, compare Architecture tab to architecture-ui-reference.png: real graph dominates, neon/glass style is coherent, popup integrates cleanly and no decorative fake topology appears."
+    },
+    {
+      "id": "HV-ARCH-005",
+      "description": "After all machine validation passes, compare Sous-agents tab to subagents-ui-reference.png: dense role configuration remains readable, all live roles are data-driven, and no Brains tab/personality controls are present."
+    }
+  ]
+}

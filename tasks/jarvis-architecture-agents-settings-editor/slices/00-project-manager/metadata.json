@@ -1,0 +1,15 @@
+{
+  "slice_id": "00-project-manager",
+  "title": "00 - Project Manager readiness gate",
+  "task_type": "waived-by-agent-0",
+  "task_type_blocker": null,
+  "dependencies": [],
+  "requires": [],
+  "frontend": false,
+  "code": false,
+  "required_qa": [
+    "qa-verification"
+  ],
+  "required_skills": [],
+  "agent_routing": null
+}

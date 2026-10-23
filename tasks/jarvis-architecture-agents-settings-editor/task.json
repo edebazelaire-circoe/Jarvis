@@ -1,0 +1,36 @@
+{
+  "project_name": "Jarvis",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "handoff_slug": "jarvis-architecture-agents-settings-editor",
+  "source_branch": "main",
+  "created_on": "2026-10-23",
+  "drive_destination": "Jarvis/task/to-do/jarvis-architecture-agents-settings-editor/",
+  "refines_task": "jarvis-settings-ui-reorganization",
+  "supersedes_slice": "04-agents-models-reorganization",
+  "locked_tabs": [
+    "architecture",
+    "subagents"
+  ],
+  "initial_ready_set": [
+    "01-architecture-graph-runtime-contract",
+    "02-brain-config-runtime-contract",
+    "03-subagent-role-routing-contract",
+    "04-architecture-canvas-ui",
+    "05-brain-config-popup-ui",
+    "06-subagents-tab-ui"
+  ],
+  "final_convergence": "08-final-integration-e2e-qa",
+  "slices": [
+    "00-project-manager",
+    "01-architecture-graph-runtime-contract",
+    "02-brain-config-runtime-contract",
+    "03-subagent-role-routing-contract",
+    "04-architecture-canvas-ui",
+    "05-brain-config-popup-ui",
+    "06-subagents-tab-ui",
+    "07-settings-integration-and-legacy-migration",
+    "08-final-integration-e2e-qa"
+  ],
+  "planning_blockers": [],
+  "readiness": "READY (2026-10-23, docs/10-slice00-audit.md)"
+}

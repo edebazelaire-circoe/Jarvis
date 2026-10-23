@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-ARCH-003",
+      "description": "After machine QA, verify all live roles are understandable and role candidate/fallback configuration is discoverable without exposing personality or raw CLI internals."
+    }
+  ]
+}

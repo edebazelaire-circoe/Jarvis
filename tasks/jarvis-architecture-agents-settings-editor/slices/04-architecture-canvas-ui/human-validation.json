@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-ARCH-001",
+      "description": "After machine QA, verify the graph is readable as a real architecture: direction, lock/edit/disabled states and audio ingress/egress are understandable without explanation."
+    }
+  ]
+}

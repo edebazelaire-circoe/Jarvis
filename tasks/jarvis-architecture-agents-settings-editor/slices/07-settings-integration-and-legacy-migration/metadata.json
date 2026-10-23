@@ -1,0 +1,37 @@
+{
+  "slice_id": "07-settings-integration-and-legacy-migration",
+  "title": "07 - Settings integration and legacy migration",
+  "task_type": "waived-by-agent-0",
+  "task_type_blocker": null,
+  "dependencies": [
+    "01-architecture-graph-runtime-contract",
+    "02-brain-config-runtime-contract",
+    "03-subagent-role-routing-contract",
+    "04-architecture-canvas-ui",
+    "05-brain-config-popup-ui",
+    "06-subagents-tab-ui"
+  ],
+  "requires": [
+    {
+      "slice_id": "external:jarvis-settings-ui-reorganization",
+      "need": "current global Settings shell/navigation convention",
+      "fallback": "mount through current registry while preserving page module isolation",
+      "integration_required_before": "slice acceptance",
+      "mismatch_policy": "adapt page registration; never fork another Settings shell"
+    }
+  ],
+  "frontend": true,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation",
+    "agent-trace-analysis"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ],
+  "agent_routing": "Claude Work Agent (Agent tool), worktree dédié"
+}

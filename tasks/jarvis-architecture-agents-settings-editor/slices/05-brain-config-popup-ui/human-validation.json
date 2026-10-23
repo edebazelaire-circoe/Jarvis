@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-ARCH-002",
+      "description": "After machine QA, open brain config from the graph and verify the floating panel feels contextual, movable/usable, and does not require a separate Brains tab."
+    }
+  ]
+}
