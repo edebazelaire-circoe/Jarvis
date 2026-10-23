@@ -362,3 +362,41 @@ out({before,after,back:html(w)});""", cfgs)
     assert "data-bcp-pending-relaunch" in after
     assert "« Proactive » est enregistré : effectif à la relance de Core Brain. Le cerveau en cours d’exécution a reçu « Standard »." in after
     assert "data-bcp-pending-relaunch" not in back
+
+
+def test_a_failed_reread_keeps_the_original_refusal_or_unknown_outcome(tmp_path):
+    out = run_node(tmp_path, OPEN % "core" + """
+const gone=new Error('Control Center injoignable : ECONNREFUSED');gone.code='brain_config_unreachable';
+a.script({result:{ok:false,status:500,code:'brain_config_write_failed',reason:'Disque plein.',field:'delegation',config:null}});
+a.script({error:gone});
+w.setDraft('delegation','never');await w.apply();const refused=html(w);
+const lost=new Error('Pas de réponse.');lost.code='brain_config_timeout';
+a.script({error:lost});a.script({error:gone});
+await w.apply();
+out({refused,unknown:html(w)});""")
+    refused, unknown = unescape(out["refused"]), unescape(out["unknown"])
+    assert "Refusé : Tendance de délégation" in refused and "Disque plein." in refused and "brain_config_write_failed" in refused
+    assert "data-bcp-reread-error" in refused and "Relecture impossible" in refused and "ECONNREFUSED" in refused
+    assert "Issue inconnue" in unknown and "Pas de réponse." in unknown and "brain_config_timeout" in unknown
+    assert "data-bcp-reread-error" in unknown and "brain_config_unreachable" in unknown
+
+
+def test_brain_absent_is_not_a_conflict_and_does_not_invite_to_reapply(tmp_path):
+    out = run_node(tmp_path, OPEN % "voice" + """
+a.script({result:{ok:false,status:409,code:'brain_config_brain_absent',reason:'Absent de l’architecture Duplex.',field:null,config:a.current('voice')}});
+w.setDraft('model','gpt-live-2');await w.apply();
+out({html:html(w),conflict:w.state.conflict});""")
+    h = unescape(out["html"])
+    assert "Cerveau absent" in h and "Ce cerveau n’existe pas dans l’architecture vocale actuelle" in h and "brain_config_brain_absent" in h
+    assert "Modifié ailleurs" not in h and "appliquez à nouveau" not in h and out["conflict"] is None
+
+
+def test_changing_the_cli_says_the_chosen_model_was_dropped(tmp_path):
+    cfgs = {"core": fixture("core")}
+    cfgs["core"]["fields"]["provider"]["choices"][1]["available"] = True
+    out = run_node(tmp_path, OPEN % "core" + """
+w.setDraft('model','claude-haiku-5');w.setDraft('provider','codex');const dropped=html(w);
+w.setDraft('provider','claude');const back=html(w);
+out({dropped,back,draft:w.state.draft});""", cfgs)
+    assert "Votre choix « claude-haiku-5 » est retiré : il appartient à l’autre CLI." in unescape(out["dropped"])
+    assert "data-bcp-dropped-model" not in out["back"] and out["draft"] == {}

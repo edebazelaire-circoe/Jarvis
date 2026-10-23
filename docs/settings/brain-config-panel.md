@@ -101,10 +101,15 @@ champ a son propre propriétaire, sa propre prise d'effet et ses propres refus.
 - `409` (`brain_config_revision_stale`, `prompt_override_stale`, `prompt_override_concurrent`) : config relue,
   brouillon conservé ; pour les instructions, le texte actuel du serveur s'affiche à côté du brouillon ; un nouvel
   « Appliquer » envoie la nouvelle `effective_revision`.
+- Le conflit se reconnaît au **code**, pas au statut : `brain_config_brain_absent` (409 aussi) dit « Ce cerveau
+  n'existe pas dans l'architecture vocale actuelle », sans inviter à réappliquer.
+- Une relecture qui échoue après un refus ou une issue inconnue s'ajoute au message d'origine (« Relecture
+  impossible », son code), elle ne le remplace pas.
 - Issue inconnue (transport, échéance) : « Issue inconnue », relecture forcée ; ce qui reste marqué « Modifié »
   n'est pas appliqué.
 - Changer de CLI désactive le choix du modèle (ses modèles ne sont connus qu'après relecture) : le PATCH part avec
-  `provider` seul, le serveur garde le modèle enregistré pour ce CLI.
+  `provider` seul, le serveur garde le modèle enregistré pour ce CLI ; un modèle déjà choisi dans le brouillon est
+  retiré, et un message le dit à côté du champ.
 - Des instructions plus longues que `max_length` bloquent « Appliquer » et le disent.
 
 ## 5. Accessibilité, focus, mouvement

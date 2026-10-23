@@ -40,6 +40,8 @@
   const FIELD_LABEL={delegation:'Tendance de délégation',provider:'CLI du cerveau',model:'Modèle',activation:'Activation',instructions:'Instructions'};
   const UNKNOWN_OUTCOME=new Set(['brain_config_timeout','brain_config_unreachable']);
   const PROMPT_CONFLICT=new Set(['prompt_override_stale','prompt_override_concurrent']);
+  /* Conflits de révision (par code, pas par statut : `brain_config_brain_absent` est aussi un 409). */
+  const CONFLICT=new Set(['brain_config_revision_stale',...PROMPT_CONFLICT]);
   /* Ordre d'envoi du brouillon : un PATCH par étape. Les instructions passent en dernier : c'est le champ dont
      la révision propre (`effective_revision`) est la plus susceptible d'être périmée. */
   const STEPS=[{id:'delegation',fields:['delegation']},{id:'model',fields:['provider','model']},{id:'activation',fields:['activation']},{id:'instructions',fields:['instructions']}];
@@ -150,9 +152,12 @@
       if(!f||!f.editable||st.saving)return false;
       if(field==='instructions')value=String(value??'');
       st.draft[field]=value;
-      if(field==='provider')delete st.draft.model;  // les modèles du nouveau CLI ne sont connus qu'après relecture
+      /* Les modèles du nouveau CLI ne sont connus qu'après relecture : un modèle choisi est retiré, et on le dit. */
+      if(field==='provider'){if(own(st.draft,'model'))st.droppedModel=st.draft.model;delete st.draft.model}
+      if(field==='model')st.droppedModel=null;
       delete st.saved[stepOf(field)];st.notice=null;
       pruneDraft();
+      if(!own(st.draft,'provider'))st.droppedModel=null;
       return true;
     }
     const stepOf=field=>(STEPS.find(s=>s.fields.includes(field))||{id:field}).id;
@@ -162,7 +167,7 @@
         return `Les instructions dépassent ${f.max_length} caractères.`;
       return '';
     }
-    function discard(){st.draft={};st.conflict=null;st.error=null;st.notice=null;render();announce('Modifications annulées.')}
+    function discard(){st.draft={};st.droppedModel=null;st.conflict=null;st.error=null;st.notice=null;render();announce('Modifications annulées.')}
 
     /* --- rendu ----------------------------------------------------------------- */
     function chip(text,tone,icon){return `<span class="bcp-chip ${tone||''}">${icon?glyph(icon,'bcp-g bcp-g-sm'):''}${esc(text)}</span>`}
@@ -240,7 +245,8 @@
       }else if(f.provider)parts.push(`<p class="bcp-fact"><span>Fournisseur</span><strong>${esc(f.provider)}</strong></p>`);
       const providerChanged=p&&own(st.draft,'provider');
       const mv=own(st.draft,'model')?st.draft.model:f.value;
-      parts.push(`<div class="bcp-row">${selectHtml('model',f,mv,!f.editable||providerChanged||!!st.saving,FIELD_LABEL.model)}${providerChanged
+      const dropped=providerChanged&&st.droppedModel!=null?`<p class="bcp-hint bad" data-bcp-dropped-model>${glyph('warn','bcp-g bcp-g-sm')}Votre choix « ${esc(st.droppedModel||'Défaut')} » est retiré : il appartient à l’autre CLI.</p>`:'';
+      parts.push(`<div class="bcp-row">${selectHtml('model',f,mv,!f.editable||providerChanged||!!st.saving,FIELD_LABEL.model)}${dropped}${providerChanged
         ?`<p class="bcp-hint">${glyph('info','bcp-g bcp-g-sm')}Les modèles de ce CLI s’affichent après l’application du changement de CLI ; il garde le modèle qui lui est déjà enregistré.</p>`
         :choiceState(f,mv)}${reasonLine(f)}${unavailableList(f)}</div>`);
       return `<section class="bcp-sec" data-bcp-field="model">${sectionHead('Modèle',f.applies,'model')}${parts.join('')}</section>`;
@@ -341,7 +347,8 @@
     function errorHtml(){
       if(!st.error)return '';
       const e=st.error;
-      return noticeHtml({tone:e.tone||'bad',title:e.title,text:e.reason,code:e.code,status:e.status},'role="alert" data-bcp-error');
+      const main=noticeHtml({tone:e.tone||'bad',title:e.title,text:e.reason,code:e.code,status:e.status},'role="alert" data-bcp-error');
+      return e.reread?main+noticeHtml({tone:'bad',title:'Relecture impossible',text:e.reread.reason,code:e.reread.code,status:e.reread.status},'data-bcp-reread-error'):main;
     }
     function confirmHtml(){
       const c=st.confirm;if(!c)return '';
@@ -465,7 +472,9 @@
         if(st.destroyed||gen!==generation)return null;
         logError(e&&e.code||'brain_config_load_failed',e,{brainId:id});
         if(e&&e.config&&e.config.fields){st.config=e.config;st.phase='ready'}
-        if(st.config){st.error={code:e&&e.code||'brain_config_load_failed',status:e&&e.status,title:'Relecture impossible',reason:(e&&e.message||String(e))+' La fenêtre montre la dernière configuration lue.'}}
+        const reread={code:e&&e.code||'brain_config_load_failed',status:e&&e.status,reason:(e&&e.message||String(e))+' La fenêtre montre la dernière configuration lue.'};
+        /* Un refus ou une « Issue inconnue » déjà affiché reste la cause d'origine : la relecture ratée s'y ajoute. */
+        if(st.config){st.error=st.error?{...st.error,reread}:{...reread,title:'Relecture impossible'}}
         else{st.phase='error';st.loadError={code:e&&e.code||'brain_config_load_failed',status:e&&e.status,reason:e&&e.message||String(e)}}
         render();return null;
       }
@@ -516,10 +525,11 @@
         const code=r.code||'brain_config_write_refused';
         logError(code,new Error(r.reason||code),{brainId:id,field:r.field||step.id,status:r.status});
         st.saving=null;
-        const conflict=r.status===409||PROMPT_CONFLICT.has(code)||code==='brain_config_revision_stale';
+        const conflict=CONFLICT.has(code),absent=code==='brain_config_brain_absent',label=FIELD_LABEL[r.field||step.id]||step.id;
         st.error={code,status:r.status,tone:conflict?'warn':'bad',
-          title:conflict?`Modifié ailleurs : ${FIELD_LABEL[r.field||step.id]||step.id}`:`Refusé : ${FIELD_LABEL[r.field||step.id]||step.id}`,
-          reason:(r.reason||'Refus du serveur sans raison.')+(conflict?' La configuration a été relue ; votre brouillon est conservé : vérifiez-le, puis appliquez à nouveau.':' Rien n’a été écrit pour ce champ ; votre brouillon est conservé.')};
+          title:conflict?`Modifié ailleurs : ${label}`:absent?'Cerveau absent':`Refusé : ${label}`,
+          reason:absent?'Ce cerveau n’existe pas dans l’architecture vocale actuelle : rien n’a été écrit.'+(r.reason?' ('+r.reason+')':'')
+            :(r.reason||'Refus du serveur sans raison.')+(conflict?' La configuration a été relue ; votre brouillon est conservé : vérifiez-le, puis appliquez à nouveau.':' Rien n’a été écrit pour ce champ ; votre brouillon est conservé.')};
         if(r.config&&r.config.fields){st.config=r.config;st.phase='ready'}
         else await load();
         if(PROMPT_CONFLICT.has(code)||(conflict&&step.id==='instructions'))st.conflict={text:serverValue(st.config,'instructions')||''};
@@ -564,7 +574,7 @@
       const active=doc&&doc.activeElement;
       const outside=active&&active!==doc.body&&!(layer.contains&&layer.contains(active))?active:null;
       origin=o.returnFocus||outside||(first?null:origin);
-      Object.assign(st,{brainId,field:o.field||null,config:null,phase:'loading',loadError:null,since:now(),saving:null,error:null,draft:{},saved:{},conflict:null,confirm:null,notice:null,reveal:first});
+      Object.assign(st,{brainId,field:o.field||null,config:null,droppedModel:null,phase:'loading',loadError:null,since:now(),saving:null,error:null,draft:{},saved:{},conflict:null,confirm:null,notice:null,reveal:first});
       logInfo('brain_config_panel.opened',{brainId,field:st.field});
       render();focusKey('title');
       return load().then(config=>{if(config&&st.field)revealField(st.field);else if(config)focusKey('title');return config});
