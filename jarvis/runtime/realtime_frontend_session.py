@@ -98,8 +98,13 @@ class RealtimeFrontendSession:
             from jarvis.runtime.back_brain_delegation import VOICE_ALONE_RULE, VOICE_ALONE_RULE_ID, without_delegation
             resolved_tools = without_delegation(resolved_tools)
             instructions = instructions + "\n" + VOICE_ALONE_RULE
-            # La consigne ajoutée est déclarée dans les preuves, à côté de celle du catalogue.
-            voice_alone_evidence = {**evidence, "prompt_ids": [VOICE_ALONE_RULE_ID], "layer_revisions": [VOICE_ALONE_RULE_ID]}
+            # La consigne ajoutée est déclarée dans les preuves, à côté de celle du catalogue, avec ses propres
+            # empreintes (I-001 S01-3) : celle de la consigne seule (statique, couche) et celle des instructions
+            # réellement envoyées (rendu), pas celles du programme du catalogue qu'elle complète.
+            from jarvis.domain.prompt_registry import fingerprint
+            rule_fingerprint = fingerprint(VOICE_ALONE_RULE)
+            voice_alone_evidence = {**evidence, "prompt_ids": [VOICE_ALONE_RULE_ID], "layer_revisions": [rule_fingerprint],
+                                    "static_fingerprint": rule_fingerprint, "render_fingerprint": fingerprint(instructions)}
         settings["tools"] = resolved_tools
         from jarvis.runtime.conversation_context import selected_voice_context
         from jarvis.domain.voice_frontend import VoiceContext

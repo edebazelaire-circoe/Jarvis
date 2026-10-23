@@ -160,6 +160,12 @@ async def test_disabling_simple_delegation_removes_the_tool_from_the_real_surfac
         assert VOICE_ALONE_RULE in update["instructions"]
         assert session._back_brain is None and session.dispatch_back_brain(None, "c", "call") is False
         assert session.back_brain_delegation_disabled is True  # un appel halluciné le dira (I-001 S01-4)
+        # I-001 S01-3 : la consigne « voix seule » a ses propres empreintes dans les preuves de prompt.
+        from jarvis.domain.prompt_registry import fingerprint
+        catalog, alone = session.prompt_applications[0], session.prompt_applications[-1]
+        assert alone["prompt_ids"] == ["voice.back_brain_delegation.disabled.v1"]
+        assert alone["static_fingerprint"] == fingerprint(VOICE_ALONE_RULE) == alone["layer_revisions"][0]
+        assert alone["render_fingerprint"] == fingerprint(update["instructions"]) != catalog["render_fingerprint"]
     finally:
         await session.close()
 
