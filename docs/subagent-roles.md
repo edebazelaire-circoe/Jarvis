@@ -744,6 +744,10 @@ ni lue ni effacée, pourvu qu'elle soit un objet.
    routé par `code`, comme `PROFILE_RULE` l'enseigne), à défaut le `default_profile` du rôle (`[coder]` seul ->
    `code`, auparavant `general`).
 
+Ce que le hook écrit dans `model` de l'outil `Agent` est la **famille** du modèle retenu (`haiku`, `sonnet`,
+`opus`, `fable` : seules valeurs que l'outil accepte, constat de la Slice 08 sur le vrai CLI) ;
+`agent.routing.decided` porte l'identifiant du catalogue (`model`) et la valeur écrite (`agent_model`).
+
 Le profil retenu fixe toujours les capacités exigées (`[code]` exige `code`). Sans rôle annoncé, rien ne
 change. `agent.routing.decided` porte en plus `role_id` et `provenance` (`explicit` | `inherited:<profil>`) à
 côté de `reason` (`preferred` | `fallback` | `general_fallback`), et le message cite « rôle qa (explicit) ».

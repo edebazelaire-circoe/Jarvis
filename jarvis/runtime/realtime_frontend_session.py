@@ -58,6 +58,9 @@ class RealtimeFrontendSession:
         self._conversation_sources: OrderedDict[str, object] = OrderedDict()
         self._conversation_references: OrderedDict[str, int] = OrderedDict()
         self._back_brain = None
+        # Liaison Surface -> Core coupée sur le graphe (`voice_surface.back_brain_delegation = false`) : un appel
+        # halluciné de `back_brain_delegate` le dit (I-001 S01-4), au lieu d'un manque de capacité.
+        self.back_brain_delegation_disabled = False
         self.journal = None
         self.conversation_id: str | None = None
         self.prompt_applications = [dict(prompt_evidence)] if isinstance(prompt_evidence, dict) else []
@@ -95,8 +98,13 @@ class RealtimeFrontendSession:
             from jarvis.runtime.back_brain_delegation import VOICE_ALONE_RULE, VOICE_ALONE_RULE_ID, without_delegation
             resolved_tools = without_delegation(resolved_tools)
             instructions = instructions + "\n" + VOICE_ALONE_RULE
-            # La consigne ajoutée est déclarée dans les preuves, à côté de celle du catalogue.
-            voice_alone_evidence = {**evidence, "prompt_ids": [VOICE_ALONE_RULE_ID], "layer_revisions": [VOICE_ALONE_RULE_ID]}
+            # La consigne ajoutée est déclarée dans les preuves, à côté de celle du catalogue, avec ses propres
+            # empreintes (I-001 S01-3) : celle de la consigne seule (statique, couche) et celle des instructions
+            # réellement envoyées (rendu), pas celles du programme du catalogue qu'elle complète.
+            from jarvis.domain.prompt_registry import fingerprint
+            rule_fingerprint = fingerprint(VOICE_ALONE_RULE)
+            voice_alone_evidence = {**evidence, "prompt_ids": [VOICE_ALONE_RULE_ID], "layer_revisions": [rule_fingerprint],
+                                    "static_fingerprint": rule_fingerprint, "render_fingerprint": fingerprint(instructions)}
         settings["tools"] = resolved_tools
         from jarvis.runtime.conversation_context import selected_voice_context
         from jarvis.domain.voice_frontend import VoiceContext
@@ -117,6 +125,7 @@ class RealtimeFrontendSession:
         )
         if voice_alone_evidence is not None:
             facade.prompt_applications.append(voice_alone_evidence)
+        facade.back_brain_delegation_disabled = conversational and not delegation
         if conversational and delegation:
             from jarvis.runtime.back_brain_delegation import BackBrainDelegationController
             facade._back_brain = BackBrainDelegationController(facade)

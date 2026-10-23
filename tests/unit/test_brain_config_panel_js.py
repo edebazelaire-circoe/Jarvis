@@ -221,6 +221,40 @@ out({r,html:html(w),loads:a.calls.filter(c=>c[0]==='load').length,draft:w.state.
     assert out["draft"] == {"delegation": "exploratory"}, "non appliqué d'après la relecture : reste en brouillon"
 
 
+#: Ouverture qui garde ce que l'hôte reçoit : `onSaved` et `onReread` (I-002 point 2 de la tâche
+#: jarvis-architecture-agents-settings-editor), avec le modèle de Core de la configuration transmise.
+OPEN_HOST = ("const a=P.createFixtureAdapter(CFG);const hosted=[];\n"
+             "const w=P.open(host,{adapter:a,brainId:'core',...quiet,\n"
+             "  onSaved:d=>hosted.push(['saved',d.field,d.config.fields.model.value]),\n"
+             "  onReread:d=>hosted.push(['reread',d.field,d.config.fields.model.value])});\n"
+             "await tick();\n")
+
+
+def test_an_unknown_model_outcome_hands_the_reread_config_to_the_host(tmp_path):
+    """Délai dépassé sur le PATCH du modèle, alors que l'écriture est passée : la fenêtre relit, et l'hôte reçoit
+    la configuration relue (`onReread`) pour aligner son brouillon `/api/settings` (`syncCoreCliDraft`)."""
+    out = run_node(tmp_path, OPEN_HOST + """
+a.tamper('core',c=>{c.fields.model.value='claude-haiku-5'});
+const err=new Error('Pas de réponse.');err.code='brain_config_timeout';a.script({error:err});
+w.setDraft('model','claude-haiku-5');const r=await w.apply();
+out({r,hosted,events:host.events.map(e=>e[0])});""")
+    assert out["r"]["unknown"] is True
+    assert out["hosted"] == [["reread", "model", "claude-haiku-5"]]
+    assert "brain-config:reread" in out["events"]
+
+
+def test_a_success_without_config_hands_the_reread_config_to_on_saved(tmp_path):
+    """Réponse `ok` sans descripteur : la fenêtre relit AVANT de prévenir l'hôte, qui reçoit la configuration relue
+    et non l'ancienne."""
+    out = run_node(tmp_path, OPEN_HOST + """
+a.tamper('core',c=>{c.fields.model.value='claude-haiku-5'});
+a.script({result:{ok:true,changed:true,applies:'core_restart',config:null}});
+w.setDraft('model','claude-haiku-5');const r=await w.apply();
+out({r,hosted,loads:a.calls.filter(c=>c[0]==='load').length});""")
+    assert out["r"]["ok"] is True and out["loads"] == 2
+    assert out["hosted"] == [["saved", "model", "claude-haiku-5"]]
+
+
 def test_catalog_unavailable_is_said_and_a_503_shows_its_reason(tmp_path):
     cfgs = {"core": fixture("core")}
     cfgs["core"]["catalog"] = {"status": "unavailable", "reason": "Sonde des modèles en échec."}

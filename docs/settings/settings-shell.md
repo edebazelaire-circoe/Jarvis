@@ -123,7 +123,9 @@ session. Il n'y a plus d'onglet hérité (`SET.tab` et `TABS` retirés à la Sli
   retombé sur `body` (écoute sur `document` tant que les réglages sont ouverts), sauf : capture d'un raccourci en
   cours (elle le prend avant), zone de texte longue ou éditable (une saisie longue ne ferme pas la page),
   événement déjà consommé (`defaultPrevented`), ou cible hors du shell autre que `body` (une confirmation ouverte
-  par-dessus garde son Échap). Le bouton « Fermer » et `ui_close` ferment aussi.
+  par-dessus garde son Échap). Le bouton « Fermer » et `ui_close` ferment aussi ; le raccourci `ui_close` (écoute
+  de `window`) respecte lui aussi une touche déjà consommée (`defaultPrevented` : menu d'un nœud du canevas
+  d'Architecture fermé par Échap, constat de la Slice 08 de `jarvis-architecture-agents-settings-editor`).
 - **Pas de fermeture au clic extérieur.** Le shell couvre toute la fenêtre : il n'y a plus d'extérieur, et un clic
   dans un vide du shell fermerait par accident une page en cours de réglage.
 - Focus visible : `outline` 2 px accent sur tout élément du shell en `:focus-visible`, champs hérités compris

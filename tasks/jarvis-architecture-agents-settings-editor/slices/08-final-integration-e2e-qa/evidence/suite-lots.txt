@@ -1,0 +1,59 @@
+lot=u01 start=0 count=100 rc=1 durée=552s
+lot=u02 start=100 count=60 rc=1 durée=319s
+lot=u03 start=160 count=70 rc=1 durée=392s
+lot=u04 start=230 count=70 rc=1 durée=431s
+lot=u05 start=300 count=65 rc=0 durée=477s
+lot=u06 start=365 count=60 rc=0 durée=530s
+lot=u07 start=425 count=50 rc=0 durée=540s
+lot=u08 start=475 count=35 rc=0 durée=291s
+lot=u09 start=510 count=55 rc=0 durée=308s
+lot=u10 start=565 count=70 rc=1 durée=374s
+lot=u11 start=635 count=70 rc=0 durée=336s
+lot=u12 start=705 count=70 rc=1 durée=289s
+lot=u13 start=775 count=70 rc=0 durée=386s
+lot=b01 start=0 count=10 rc=124 durée=571s
+lot=b01 nodes 0..42 (43 passed) puis délai 570 s dépassé, reprise au nœud 43
+lot=b02 noeuds=[43,80) rc=0 durée=374s 37 passed, 696 deselected in 372.56s (0:06:12)
+lot=b03 noeuds=[80,125) rc=0 durée=49s 45 passed, 688 deselected in 47.00s
+lot=b04 noeuds=[125,175) rc=124 durée=575s .............................s...FFF.......
+  (b04 : 43 exécutés : 39 passed, 1 skipped, 3 F aux nœuds 158-160, délai dépassé ; reprise au nœud 168)
+lot=b05 noeuds=[168,210) rc=0 durée=523s 42 passed, 691 deselected in 521.67s (0:08:41)
+lot=b06 noeuds=[210,245) rc=0 durée=470s 35 passed, 698 deselected in 467.83s (0:07:47)
+lot=b07 noeuds=[245,285) rc=1 durée=305s 4 failed, 36 passed, 693 deselected in 302.72s (0:05:02)
+lot=b08 noeuds=[285,325) rc=124 durée=575s ....................F..s............
+  (b08 : 36 exécutés : 34 passed, 1 skipped, 1 F au nœud 305, délai dépassé ; reprise au nœud 321)
+lot=b09 noeuds=[321,350) rc=0 durée=360s 26 passed, 3 skipped, 704 deselected in 358.93s (0:05:58)
+lot=b10 noeuds=[350,385) rc=124 durée=576s ......................
+  (b10 : 22 passed aux nœuds 350-371, délai dépassé ; reprise au nœud 372)
+lot=b11 noeuds=[372,392) rc=0 durée=421s 20 passed, 713 deselected in 418.60s (0:06:58)
+lot=b12 noeuds=[392,418) rc=0 durée=229s 26 passed, 707 deselected in 225.22s (0:03:45)
+lot=b13 noeuds=[418,455) rc=0 durée=147s 13 passed, 24 skipped, 696 deselected in 145.91s (0:02:25)
+lot=b14 noeuds=[455,495) rc=124 durée=575s .....................................
+  (b14 : 37 passed aux nœuds 455-491, délai dépassé ; reprise au nœud 492)
+lot=b15 noeuds=[492,525) rc=0 durée=360s 26 passed, 7 skipped, 700 deselected in 357.97s (0:05:57)
+lot=b16 noeuds=[525,560) rc=0 durée=382s 28 passed, 7 skipped, 698 deselected in 380.18s (0:06:20)
+lot=b17 noeuds=[560,595) rc=0 durée=539s 32 passed, 3 skipped, 698 deselected in 537.74s (0:08:57)
+lot=b18 noeuds=[595,622) rc=1 durée=498s 1 failed, 26 passed, 706 deselected in 496.19s (0:08:16)
+lot=b19 noeuds=[622,652) rc=0 durée=300s 30 passed, 703 deselected in 298.18s (0:04:58)
+lot=b20 noeuds=[652,690) rc=0 durée=336s 28 passed, 10 skipped, 695 deselected in 333.93s (0:05:33)
+lot=b21 noeuds=[690,733) rc=124 durée=576s ...s..........sssss...............
+  (b21 : 35 exécutés aux nœuds 690-724 : 29 passed, 6 skipped, délai dépassé ; reprise au nœud 725)
+lot=b22 noeuds=[725,733) rc=0 durée=176s 8 passed, 725 deselected in 174.71s (0:02:54)
+lot=i01 start=0 count=40 rc=0 durée=311s
+lot=i02 start=40 count=41 rc=0 durée=466s
+lot=e2e tests/e2e durée=3s 1 passed in 1.32s
+u01: 6 failed, 2441 passed, 2 skipped in 547.94s (0:09:07)
+u02: 6 failed, 1264 passed in 313.32s (0:05:13)
+u03: 1 failed, 1810 passed, 4 skipped in 387.99s (0:06:27)
+u04: 1 failed, 2227 passed, 6 skipped in 427.03s (0:07:07)
+u05: 2249 passed, 10 skipped in 472.59s (0:07:52)
+u06: 1525 passed, 6 skipped in 523.52s (0:08:43)
+u07: 1134 passed in 535.93s (0:08:55)
+u08: 834 passed in 288.39s (0:04:48)
+u09: 1328 passed, 29 skipped in 304.99s (0:05:04)
+u10: 1 failed, 1859 passed, 5 skipped in 371.14s (0:06:11)
+u11: 2154 passed, 5 skipped in 332.90s (0:05:32)
+u12: 1 failed, 1877 passed in 286.07s (0:04:46)
+u13: 1970 passed, 1 skipped in 380.45s (0:06:20)
+i01: 300 passed, 11 skipped in 307.93s (0:05:07)
+i02: 378 passed, 16 skipped in 461.96s (0:07:41)

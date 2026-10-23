@@ -262,6 +262,8 @@ value.
 | `#jvStudioExplorer` (9000) | `control_center_presentation_studio_run.js` | `${H} ` | run overlay internals |
 | `.overlay` (60) | `control_center_wake_word.js` | `:is(#wakeWordSettings,#wakeWordDiagnostics) ` | settings and diagnostics tooltip |
 | `#dossierView` (55) | `control_center_dossier.js` | `#dossierView` | its organisation and context drawers (narrow screens) above the reading pane, whose excerpt is masked (QA S07) |
+| `.overlay` (60) | `control_center_architecture_settings.js` | `.arch-` | Settings › Architecture & Agents canvas internals: edge labels 2, dragged node 3, link-creation band 4, node context menu 5 |
+| `.overlay` (60) | `control_center_brain_config_panel.js` | `.bcp-` | brain configuration window layer (`.bcp-layer`, 60), mounted inside the Architecture section of the settings overlay, above its canvas |
 
 ### Inline ranks
 

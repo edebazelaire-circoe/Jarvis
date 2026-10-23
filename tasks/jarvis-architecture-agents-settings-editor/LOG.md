@@ -25,3 +25,17 @@
 - Note de remplacement écrite dans `tasks/jarvis-settings-ui-reorganization/LOG.md`.
 
 - 2026-10-23 : S07 livrée, QA REWORK léger (un test périmé, corrigé par agent 0 en 5b786031), fusionnée (9546f869) ; 152 tests ciblés verts après fusion. Pas de dérive de main (local ad1e7f4d). S08 lancée dans arch-s08.
+
+## 2026-10-24 - Slice 08 (agent d'intégration finale)
+
+- Worktree `C:\Projects\jarvis\arch-s08`, branche `task/jarvis-architecture-agents-settings-editor-s08` ; `main` local
+  toujours `ad1e7f4d` (aucune dérive). Base de comparaison extraite en worktree détaché en lecture (scratchpad).
+- Suite complète une fois, par lots : unit hors navigateur 22 672 passed / 16 failed ; navigateur 662 passed / 9 failed
+  (733 tests) ; intégration 678 passed ; e2e 1 passed. 21 échecs préexistants sur `main` (relancés sur la base),
+  4 dus à la tâche, corrigés (S04/S05/S02).
+- Bac à sable (27653/27654, vrai CLI `claude` 2.1.309, fixture de catalogue) : les 12 scénarios de `docs/04` prouvés ;
+  trois défauts réels trouvés et corrigés : famille de modèle dans l'outil `Agent` (S03, un rôle réglé ne lançait plus
+  de sous-agent), Échap du menu d'un nœud qui fermait les Réglages (S07), CLI détecté refusé dans la fenêtre de Core
+  (S02). Migration : même ancien fichier, même geste, `main` et S08 donnent le même fichier.
+- I-002 : points 1, 2, 3, 6 faits ; I-001 S01-3, S01-4 faits ; S01-1 et I-002 point 4 non faits (justifiés).
+- Preuves : `slices/08-final-integration-e2e-qa/EVIDENCE.md` ; recette : `HUMAN-CHECKS.md`.

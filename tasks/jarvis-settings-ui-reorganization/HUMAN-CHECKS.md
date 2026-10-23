@@ -52,6 +52,12 @@ Où regarder : la rangée d'entrées sous la tête « Voix & audio ».
 
 ### HV-SETTINGS-003 — Agents & modèles depuis une seule catégorie (Slice 04)
 
+> **Remplacé** (2026-10-23) : la Slice 07 de `jarvis-architecture-agents-settings-editor` a remplacé cette page.
+> Les entrées « Agent principal », « Modèles des sous-agents » et « Rôles des sous-agents » n'existent plus ; la
+> catégorie s'appelle « Architecture & Agents » (onglets Architecture et Sous-agents), le Comportement est dans
+> Personnalisation. Ne faites pas ce check tel quel : il est couvert par HV-ARCH-* de
+> `tasks/jarvis-architecture-agents-settings-editor/HUMAN-CHECKS.md`.
+
 1. Ouvrez Agents & modèles. Trouvez l'agent principal et son modèle, le comportement des réponses (verbosité,
    politesse), puis les rôles des sous-agents.
 

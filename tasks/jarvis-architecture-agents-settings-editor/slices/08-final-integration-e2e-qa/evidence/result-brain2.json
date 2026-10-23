@@ -1,0 +1,49 @@
+{
+ "standard": {
+  "pid": 11568,
+  "model_arg": "claude-haiku-4-5",
+  "disallowed": [],
+  "has_settings_hook": true,
+  "trace_delegation": "standard",
+  "trace_spawn_tools_removed": false,
+  "trace_model": "claude-haiku-4-5",
+  "launched_file": {
+   "delegation": "standard",
+   "pid": 11568
+  },
+  "prompt_len": 23500,
+  "prompt_file": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\claude\\C--Projects-jarvis-jarvis\\05b93d8a-1916-4b86-866a-f10f71884561\\scratchpad\\s08-sandbox\\runtime\\prompts\\append-4946bb525e37921b.txt"
+ },
+ "hook_never": {
+  "init_has_agent": false,
+  "uses": [
+   {
+    "name": "Agent",
+    "id": "toolu_01FSHMMDAX5zwWDh8mJLSNdS",
+    "description": "[general] [qa] Vérifier une addition",
+    "model": null,
+    "parent": null
+   }
+  ],
+  "refused": [
+   {
+    "code": "brain_delegation_never",
+    "tool_use_id": "toolu_01FSHMMDAX5zwWDh8mJLSNdS",
+    "role_id": "qa",
+    "caller_agent_id": null,
+    "caller_agent_type": null,
+    "ephemeral": false,
+    "mission_owner": false,
+    "mission_id": null,
+    "sub_mission": false,
+    "handoff_id": null,
+    "mission_refused": null,
+    "work_method": "result-review@1",
+    "work_method_chosen": false,
+    "work_method_refused": null,
+    "spawn_guard": "brain_delegation_never",
+    "written": false
+   }
+  ]
+ }
+}

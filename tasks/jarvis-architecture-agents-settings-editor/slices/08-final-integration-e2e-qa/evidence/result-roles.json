@@ -1,0 +1,336 @@
+{
+ "roles": {
+  "before": {
+   "interviewer": [
+    "inherited:general",
+    [
+     [
+      "claude",
+      "claude-sonnet-4-5",
+      true
+     ]
+    ],
+    {
+     "outcome": "cli_default",
+     "reason": "compatibility",
+     "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+    }
+   ],
+   "research": [
+    "inherited:general",
+    [
+     [
+      "claude",
+      "claude-sonnet-4-5",
+      true
+     ]
+    ],
+    {
+     "outcome": "cli_default",
+     "reason": "compatibility",
+     "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+    }
+   ],
+   "web-research": [
+    "inherited:general",
+    [
+     [
+      "claude",
+      "claude-sonnet-4-5",
+      true
+     ]
+    ],
+    {
+     "outcome": "cli_default",
+     "reason": "compatibility",
+     "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+    }
+   ],
+   "coder": [
+    "inherited:code",
+    [
+     [
+      "claude",
+      "claude-sonnet-4-5",
+      true
+     ]
+    ],
+    {
+     "outcome": "cli_default",
+     "reason": "compatibility",
+     "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+    }
+   ],
+   "concept": [
+    "inherited:general",
+    [
+     [
+      "claude",
+      "claude-sonnet-4-5",
+      true
+     ]
+    ],
+    {
+     "outcome": "cli_default",
+     "reason": "compatibility",
+     "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+    }
+   ],
+   "research-lead": [
+    "inherited:general",
+    [
+     [
+      "claude",
+      "claude-sonnet-4-5",
+      true
+     ]
+    ],
+    {
+     "outcome": "cli_default",
+     "reason": "compatibility",
+     "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+    }
+   ],
+   "qa": [
+    "inherited:general",
+    [
+     [
+      "claude",
+      "claude-sonnet-4-5",
+      true
+     ]
+    ],
+    {
+     "outcome": "cli_default",
+     "reason": "compatibility",
+     "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+    }
+   ]
+  },
+  "after": {
+   "interviewer": [
+    "inherited:general",
+    [
+     [
+      "claude",
+      "claude-sonnet-4-5",
+      true
+     ]
+    ],
+    {
+     "outcome": "cli_default",
+     "reason": "compatibility",
+     "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+    }
+   ],
+   "research": [
+    "inherited:general",
+    [
+     [
+      "claude",
+      "claude-sonnet-4-5",
+      true
+     ]
+    ],
+    {
+     "outcome": "cli_default",
+     "reason": "compatibility",
+     "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+    }
+   ],
+   "web-research": [
+    "inherited:general",
+    [
+     [
+      "claude",
+      "claude-sonnet-4-5",
+      true
+     ]
+    ],
+    {
+     "outcome": "cli_default",
+     "reason": "compatibility",
+     "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+    }
+   ],
+   "coder": [
+    "inherited:code",
+    [
+     [
+      "claude",
+      "claude-sonnet-4-5",
+      true
+     ]
+    ],
+    {
+     "outcome": "cli_default",
+     "reason": "compatibility",
+     "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+    }
+   ],
+   "concept": [
+    "inherited:general",
+    [
+     [
+      "claude",
+      "claude-sonnet-4-5",
+      true
+     ]
+    ],
+    {
+     "outcome": "cli_default",
+     "reason": "compatibility",
+     "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+    }
+   ],
+   "research-lead": [
+    "inherited:general",
+    [
+     [
+      "claude",
+      "claude-sonnet-4-5",
+      true
+     ]
+    ],
+    {
+     "outcome": "cli_default",
+     "reason": "compatibility",
+     "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+    }
+   ],
+   "qa": [
+    "explicit",
+    [
+     [
+      "claude",
+      "claude-sonnet-4-5",
+      true
+     ]
+    ],
+    {
+     "outcome": "selected",
+     "profile": "general",
+     "agent": "claude",
+     "model": "claude-sonnet-4-5",
+     "reason": "preferred",
+     "considered": [
+      {
+       "agent": "claude",
+       "model": "claude-sonnet-4-5",
+       "eligible": true
+      }
+     ],
+     "role_id": "qa",
+     "provenance": "explicit"
+    }
+   ]
+  },
+  "changed": [
+   "qa"
+  ],
+  "hooks_before": {
+   "[general] [qa] Relire": {
+    "code": 0,
+    "decision": "allow",
+    "model_out": null,
+    "agent_model": null,
+    "role_id": null,
+    "provenance": null,
+    "reason": null,
+    "model": null,
+    "level": null
+   },
+   "[code] [coder] Corriger": {
+    "code": 0,
+    "decision": "allow",
+    "model_out": null,
+    "agent_model": null,
+    "role_id": null,
+    "provenance": null,
+    "reason": null,
+    "model": null,
+    "level": null
+   }
+  },
+  "hooks_after": {
+   "[general] [qa] Relire": {
+    "code": 0,
+    "decision": "allow",
+    "model_out": "sonnet",
+    "agent_model": "sonnet",
+    "role_id": "qa",
+    "provenance": "explicit",
+    "reason": "preferred",
+    "model": "claude-sonnet-4-5",
+    "level": "info"
+   },
+   "[code] [coder] Corriger": {
+    "code": 0,
+    "decision": "allow",
+    "model_out": null,
+    "agent_model": null,
+    "role_id": null,
+    "provenance": null,
+    "reason": null,
+    "model": null,
+    "level": null
+   }
+  },
+  "uses": [
+   {
+    "name": "Agent",
+    "id": "toolu_0196UcT4zgME4TmQZ8HRTiQc",
+    "description": "[general] [qa] Vérifier une addition",
+    "model": null,
+    "parent": null
+   }
+  ],
+  "decided": [
+   {
+    "code": "routing_decided",
+    "tool": "Agent",
+    "tool_use_id": "toolu_0196UcT4zgME4TmQZ8HRTiQc",
+    "requested_model": "",
+    "subagent_type": "general-purpose",
+    "applied": "allow",
+    "charter": true,
+    "profile": "general",
+    "agent": "claude",
+    "model": "claude-sonnet-4-5",
+    "reason": "preferred",
+    "considered": [
+     {
+      "agent": "claude",
+      "model": "claude-sonnet-4-5",
+      "eligible": true
+     }
+    ],
+    "source": "brain",
+    "role_id": "qa",
+    "provenance": "explicit",
+    "agent_model": "sonnet"
+   }
+  ],
+  "models": [
+   [
+    null,
+    "claude-haiku-4-5-20251001"
+   ]
+  ],
+  "launch": {
+   "pid": 34528,
+   "model_arg": "claude-haiku-4-5",
+   "disallowed": [],
+   "has_settings_hook": true,
+   "trace_delegation": "proactive",
+   "trace_spawn_tools_removed": false,
+   "trace_model": "claude-haiku-4-5",
+   "launched_file": {
+    "delegation": "proactive",
+    "pid": 34528
+   },
+   "prompt_len": 23647,
+   "prompt_file": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\claude\\C--Projects-jarvis-jarvis\\05b93d8a-1916-4b86-866a-f10f71884561\\scratchpad\\s08-sandbox\\runtime\\prompts\\append-d73241e702402a0a.txt"
+  }
+ }
+}

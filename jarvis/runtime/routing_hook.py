@@ -319,6 +319,28 @@ def _output(decision: str, reason: str, updated: dict[str, Any] | None = None) -
     return payload
 
 
+#: Valeurs que le paramètre `model` de l'outil `Agent` du CLI Claude accepte : une **famille**, pas un identifiant de
+#: catalogue. Constat de la Slice 08 (CLI 2.1.309, bac à sable) : un `updatedInput` portant `claude-haiku-4-5`
+#: est refusé par le CLI (« failed schema validation … expected one of sonnet|opus|haiku|fable ») et le sous-agent
+#: ne part pas du tout.
+AGENT_TOOL_MODELS = ("sonnet", "opus", "haiku", "fable")
+_AGENT_TOOL_FAMILY = re.compile(r"^claude-(?:[a-z0-9.\-]*-)?(sonnet|opus|haiku|fable)(?:-|$)")
+
+
+def agent_tool_model(model: str) -> str:
+    """La valeur à écrire dans `model` de l'outil `Agent` pour un modèle du catalogue.
+
+    Un identifiant Claude (`claude-haiku-4-5`, `claude-3-5-haiku-…`) devient sa famille (`haiku`) : le CLI la résout
+    vers la version courante de cette famille, ce que la trace dit à côté de l'identifiant choisi (`agent_model`).
+    Une famille reste telle quelle ; un autre identifiant est rendu inchangé (rien n'est deviné pour lui)."""
+
+    value = str(model or "").strip()
+    if value in AGENT_TOOL_MODELS:
+        return value
+    match = _AGENT_TOOL_FAMILY.match(value.lower())
+    return match.group(1) if match else value
+
+
 def decide(
     event: Mapping[str, Any],
     policy: RoutingPolicy,
@@ -365,13 +387,14 @@ def decide(
 
     if decision.reason == routing.REASON_COMPATIBILITY or not decision.model:
         return _allow(), decision
-    if decision.model == requested:
+    applied_model = agent_tool_model(decision.model)
+    if requested in (decision.model, applied_model):
         return _allow(), decision
     return (
         _output(
             "allow",
             f"{_scope(role, decision, profile)} : modèle imposé par les réglages de JARVIS ({decision.model}).",
-            {"model": decision.model},
+            {"model": applied_model},
         ),
         decision,
     )
@@ -674,9 +697,9 @@ def _route(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJournal
 #: Code consigné (`agent.spawn_refused`) quand la tendance de délégation du cerveau Core vaut `never`.
 DELEGATION_NEVER_CODE = "brain_delegation_never"
 DELEGATION_NEVER_REASON = (
-    "Délégation désactivée : la tendance de délégation du cerveau Core vaut « Jamais » (Réglages › Architecture & "
-    "Agents › fenêtre du cerveau Core). Faites-le dans ce tour ou dites à l'utilisateur ce qui demanderait un "
-    "sous-agent."
+    "Délégation désactivée : la tendance de délégation du cerveau Core vaut « Jamais » "
+    "(Réglages › Architecture & Agents › Architecture, fenêtre du cerveau Core). Faites-le dans ce tour ou dites à "
+    "l'utilisateur ce qui demanderait un sous-agent."
 )
 
 
@@ -1012,6 +1035,9 @@ def _log(
     }
     if decision is not None:
         data.update(decision.as_dict())
+        if decision.model:
+            # Ce que l'outil `Agent` reçoit vraiment : la famille du modèle choisi (`agent_tool_model`).
+            data["agent_model"] = agent_tool_model(decision.model)
     message = (
         f"Sous-agent « {strip_profile(tool_input.get('description') or '') or 'sans description'} » : "
         f"profil {data.get('profile', routing.GENERAL_PROFILE)}"

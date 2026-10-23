@@ -9,7 +9,9 @@ règle de bascule de Voice commune avec `POST /api/settings`. Runtime temporaire
 
 from __future__ import annotations
 
+import asyncio
 import json
+import types
 
 from aiohttp.test_utils import TestClient, TestServer
 import pytest
@@ -146,3 +148,57 @@ async def test_post_settings_still_requests_the_switch_through_the_shared_rule(c
     assert request["target_architecture"] == "duplex"
     assert "voice.switch.requested" in kinds(control)
 
+
+
+class _RecordingAgent:
+    """Agent de CLI factice : `start` / `stop` consignés dans l'ordre, rien n'est lancé."""
+
+    def __init__(self, agent_id: str, log: list[str]) -> None:
+        self.agent_id, self.log = agent_id, log
+        self.command = self.model = self.permission_mode = ""
+        self.subtasks = types.SimpleNamespace()
+
+    async def start(self, **_):
+        self.log.append("start:" + self.agent_id)
+        return {}
+
+    async def stop(self, **_):
+        self.log.append("stop:" + self.agent_id)
+        return {}
+
+
+async def test_two_close_core_cli_writes_end_on_the_last_saved_cli(tmp_path, monkeypatch):
+    """I-002 point 3 (QA S07) : deux écritures rapprochées du CLI de Core (codex, puis retour à claude avant que la
+    première bascule ait tourné) finissent sur le dernier CLI enregistré. Avant : la seconde, sans bascule apparente,
+    s'appliquait tout de suite, puis la première passait et laissait Codex actif contre des réglages qui disent Claude."""
+
+    for name in ("JARVIS_AGENT_CLI", "JARVIS_VOICE_ARCH", "JARVIS_VOICE_STACK"):
+        monkeypatch.delenv(name, raising=False)
+    log: list[str] = []
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path,
+                            agent_factory=lambda agent_id: _RecordingAgent(agent_id, log))
+    control._write_settings({**SIMPLE, "agent_cli": "claude"})
+    assert control._agent_id == "claude"
+    control._write_settings({**SIMPLE, "agent_cli": "codex"})
+    control._after_brain_settings_write({})
+    control._write_settings({**SIMPLE, "agent_cli": "claude"})
+    control._after_brain_settings_write({})
+    await _settle(control)
+    # Les deux bascules relisent les réglages au passage du verrou : ils disent déjà Claude, aucun CLI ne change.
+    assert control._agent_id == "claude" and log == [], log
+    assert control._brain_switches_pending == 0
+    # Une écriture seule bascule toujours, l'ancien CLI arrêté avant que le nouveau démarre.
+    control._write_settings({**SIMPLE, "agent_cli": "codex"})
+    control._after_brain_settings_write({})
+    await _settle(control)
+    assert control._agent_id == "codex" and log == ["stop:claude", "start:codex"], log
+    control._write_settings({**SIMPLE, "agent_cli": "claude"})
+    control._after_brain_settings_write({})
+    await _settle(control)
+    assert control._agent_id == "claude" and log[2:] == ["stop:codex", "start:claude"], log
+
+
+async def _settle(control) -> None:
+    while control._session_tasks:
+        results = await asyncio.gather(*tuple(control._session_tasks), return_exceptions=True)
+        assert not [r for r in results if isinstance(r, BaseException)], results

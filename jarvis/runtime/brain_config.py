@@ -600,6 +600,20 @@ class _CatalogReader:
         return {"status": "unavailable" if self.error else "ok", "reason": self.error}
 
 
+#: État du catalogue d'un CLI détecté dont le modèle par défaut et l'authentification ne sont pas invoqués
+#: (`catalog_view`, jamais `selectable` : seul un modèle listé par le compte l'est). Pour le choix du CLI et pour
+#: « défaut du CLI », c'est un choix **légal** (le comportement d'avant cette fenêtre) : constat de la Slice 08 en
+#: bac à sable, sans quoi Codex détecté ne pouvait pas être choisi et le CLI qui tourne se disait « indisponible ».
+UNVERIFIED_STATE = "configured_unverified"
+UNVERIFIED_REASON = "CLI détecté ; son modèle par défaut et son authentification ne se vérifient qu'à l'usage."
+
+
+def _legal_when_detected(choice: dict[str, Any]) -> dict[str, Any]:
+    if choice.get("state") == UNVERIFIED_STATE and not choice["available"]:
+        return {**choice, "available": True, "reason": UNVERIFIED_REASON}
+    return choice
+
+
 def _choice(item: Mapping[str, Any]) -> dict[str, Any]:
     identity = item.get("identity") or {}
     availability = item.get("availability") or {}
@@ -626,6 +640,7 @@ def _model_choices(items: list[Mapping[str, Any]], current: str, catalog: _Catal
             if not default_label:
                 continue
             choice["label"] = default_label
+            choice = _legal_when_detected(choice)
         choices.append(choice)
     if default_label and not any(choice["value"] == "" for choice in choices):
         # Le défaut (aucune clé enregistrée) est toujours un choix légal : il revient au comportement d'avant.
@@ -648,7 +663,7 @@ def _cli_choices(items: list[Mapping[str, Any]], current: str, catalog: _Catalog
             choices.append({"value": spec.id, "label": spec.label, "available": False,
                             "reason": catalog.error or "CLI non mesuré par le catalogue."})
             continue
-        choice = _choice(entry)
+        choice = _legal_when_detected(_choice(entry))
         choices.append({"value": spec.id, "label": spec.label, "available": choice["available"],
                         "reason": choice["reason"]})
     del current

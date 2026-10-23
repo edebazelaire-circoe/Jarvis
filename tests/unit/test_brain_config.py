@@ -438,3 +438,39 @@ async def test_the_delegation_field_says_what_the_live_brain_cli_received(tmp_pa
     publish_launch(tmp_path, DelegationTendency.NEVER, pid=7)
     field = (await service.describe("core"))["fields"]["delegation"]
     assert field["launched"] == "never" and field["pending_relaunch"] is True
+
+
+def _unverified_default(agent: str, provider: str) -> dict:
+    """La ligne réelle d'un CLI détecté (`catalog_view`) : modèle par défaut non invoqué, jamais `selectable`."""
+
+    return {"key": f"k-subagents-{agent}-", "kind": "subagent_model",
+            "identity": {"agent_id": agent, "provider_id": provider, "model_id": ""}, "label": f"{agent} · défaut",
+            "availability": {"state": "configured_unverified", "selectable": False,
+                             "reason_code": "catalog_cli_default_unverified",
+                             "reason": "CLI detected; its default model and authentication were not invoked."}}
+
+
+async def real_shape_catalog(surface: str, role: str) -> dict:
+    items = CATALOG.get((surface, role), [])
+    if (surface, role) == ("subagents", "text"):
+        items = [_unverified_default("claude", "anthropic"),
+                 *[i for i in items if (i["identity"]["model_id"] and i["identity"]["agent_id"] == "claude")],
+                 _unverified_default("codex", "openai")]
+    return {"schema_version": 1, "surface": surface, "role": role, "items": items}
+
+
+async def test_a_detected_cli_and_its_default_model_are_legal_choices_with_the_real_catalog_shape(tmp_path):
+    """Constat de la Slice 08 en bac à sable : le catalogue réel ne rend jamais `selectable` le défaut d'un CLI
+    (`configured_unverified`). La fenêtre disait alors « Claude Code — indisponible » pour le CLI qui tourne, et
+    refusait de passer Core à Codex pourtant installé (`brain_config_model_unavailable`) : la seule surface qui choisit
+    le CLI de Core ne pouvait plus en changer. Un CLI détecté et son défaut sont des choix légaux, avec la raison."""
+
+    service, store, *_ = _service(tmp_path, DUPLEX, catalog=real_shape_catalog)
+    config = await service.describe("core")
+    providers = {c["value"]: c for c in config["fields"]["provider"]["choices"]}
+    assert providers["claude"]["available"] is True and providers["codex"]["available"] is True
+    assert "vérifient qu'à l'usage" in providers["codex"]["reason"]
+    default = next(c for c in config["fields"]["model"]["choices"] if c["value"] == "")
+    assert default["available"] is True and default["state"] == "configured_unverified"
+    result = await service.patch("core", {"base_revision": config["revision"], "provider": "codex", "model": ""})
+    assert result["changed"] and store.read()["agent_cli"] == "codex"

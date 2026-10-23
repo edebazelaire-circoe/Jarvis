@@ -501,3 +501,40 @@ def test_a_refused_profile_stays_refused_and_carries_no_charter(tmp_path, monkey
 
     assert applied(output) == "deny"
     assert updated(output) == {}
+
+
+# ------------------------------------------- l'outil Agent ne prend qu'une famille (Slice 08, vrai CLI)
+
+
+@pytest.mark.parametrize(("model", "expected"), [
+    ("claude-haiku-4-5", "haiku"), ("claude-sonnet-4-5", "sonnet"), ("claude-opus-5-5", "opus"),
+    ("claude-3-5-haiku-20241022", "haiku"), ("claude-haiku-4-5-20251001", "haiku"), ("haiku", "haiku"),
+    ("fable", "fable"), ("petit", "petit"), ("gpt-o", "gpt-o"), ("", ""),
+])
+def test_agent_tool_model_maps_a_catalog_id_to_the_family_the_cli_accepts(model, expected):
+    assert routing_hook.agent_tool_model(model) == expected
+
+
+def test_a_claude_catalog_id_is_written_as_its_family_and_traced_with_both(tmp_path, monkeypatch):
+    """Constat de la Slice 08 en bac à sable (CLI 2.1.309) : `updatedInput.model = "claude-haiku-4-5"` est refusé par
+    le schéma de l'outil `Agent` (sonnet|opus|haiku|fable) et le sous-agent ne part pas. Le hook écrit la famille ;
+    la trace garde l'identifiant choisi (`model`) et ce que l'outil a reçu (`agent_model`)."""
+
+    models = {"anthropic": [{"id": "claude-haiku-4-5", "label": "Haiku", "roles": ("text",)}]}
+    monkeypatch.setattr(routing_hook, "local_agents", lambda: [CLAUDE])
+    (tmp_path / "model-catalog.json").write_text(
+        json.dumps({"anthropic": _cached_models("anthropic", "sk-ant-test", models["anthropic"])}), encoding="utf-8")
+    _write_settings(tmp_path, {"enabled": True, "profiles": {"code": {"candidates": [
+        {"agent": "claude", "model": "claude-haiku-4-5"}]}}})
+
+    output = routing_hook.run(call(model="opus"), tmp_path)
+
+    assert routed_model(output) == "haiku"
+    [event] = [e for e in read_jsonl_tail(tmp_path / "trace.jsonl") if e["kind"] == "agent.routing.decided"]
+    assert event["data"]["model"] == "claude-haiku-4-5" and event["data"]["agent_model"] == "haiku"
+    # Le cerveau demandait déjà la famille retenue : `decide` laisse passer sans imposer de modèle.
+    events = {"tool_name": "Agent", "tool_input": {"description": "[code] Corriger", "model": "haiku"}}
+    output, decision = routing_hook.decide(events, agent_routing.load_policy(json.loads(
+        (tmp_path / "control-center-settings.json").read_text(encoding="utf-8"))), routing_hook.offline_candidates(
+        tmp_path, agent_routing.load_policy(json.loads((tmp_path / "control-center-settings.json").read_text(encoding="utf-8")))))
+    assert decision is not None and decision.model == "claude-haiku-4-5" and routed_model(output) == ""
