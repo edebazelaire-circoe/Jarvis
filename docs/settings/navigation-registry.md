@@ -21,12 +21,12 @@ l'ancien système d'onglets (`TABS`, adaptateur `legacyTabFor`) n'existe plus : 
 
 | Ordre | ID stable | Libellé |
 | --- | --- | --- |
-| 1 | `voice_audio` | Voix & audio |
-| 2 | `agents_models` | Agents & modèles |
-| 3 | `memory_knowledge` | Mémoire & connaissances |
-| 4 | `interface_interactions` | Interface & interactions |
+| 1 | `voice_audio` | Personnalisation |
+| 2 | `agents_models` | Brains & Architecture |
+| 3 | `memory_knowledge` | Mémoire & Connaissances |
+| 4 | `interface_interactions` | Interface & Interactions |
 | 5 | `connections` | Connexions |
-| 6 | `advanced_diagnostics` | Avancé & diagnostic |
+| 6 | `advanced_diagnostics` | Avancé & Diagnostics |
 
 - Les ID sont ASCII et stables ; les libellés et descriptions ne sont que de la présentation.
 - `CATEGORIES`, `CATEGORY_IDS` et chaque catégorie sont gelés. Le registre n'a aucune
@@ -56,7 +56,7 @@ Une catégorie peut déclarer des groupes, gelés dans le registre comme les cat
 - `sections(id)` les ordonne par groupe (ordre de `CATEGORY_GROUPS`), puis `order`, puis ordre
   d'enregistrement. `R.groups(id)` rend les groupes d'une catégorie (liste vide sinon) ;
   `snapshot()` et `shellNavigation` les portent (`groups`), chaque entrée porte son `group`.
-- Ce qui va dans chaque groupe : [`INDEX.md`](INDEX.md) § « Avancé & diagnostic ».
+- Ce qui va dans chaque groupe : [`INDEX.md`](INDEX.md) § « Avancé & Diagnostics ».
 
 ## 2. Enregistrer une section
 
@@ -68,7 +68,7 @@ R.page.register({
   label: 'Mot d’éveil',         // requis
   description: '…',             // optionnel
   order: 50,                    // optionnel (0) ; à égalité, l'ordre d'enregistrement
-  group: 'labs',                // requis dans une catégorie à groupes (Avancé & diagnostic), refusé ailleurs
+  group: 'labs',                // requis dans une catégorie à groupes (Avancé & Diagnostics), refusé ailleurs
   mount(host, context) {},      // requis : dessine la section dans `host`
   destroy() {},                 // requis en pratique pour toute section à état (minuteurs, requêtes, écouteurs)
   save: 'self',                 // requis : 'footer' (bouton Enregistrer du shell) | 'self' (la section s'enregistre) | 'readonly'
@@ -133,12 +133,13 @@ les ancres Bare Hands `barehandsSettings`, `barehandsCalibration`, `barehandsRec
 et `subagents` ne sont pas des alias : ce sont les ID mêmes de leurs sections. La table historique complète (avec les
 destinations `also` du contenu éclaté) est dans [`../legacy/settings-tab-aliases.md`](../legacy/settings-tab-aliases.md).
 
-Sections enregistrées (Slices 03 à 08) :
-`voice_audio` : `conversation`, `voice_output`, `microphone_sound`, `turns_interruptions`, `wake_word` ·
-`agents_models` : `main_agent`, `agent_behavior`, `subagent_models`, `subagents` ·
+Sections enregistrées (Slices 03 à 08 ; hub du 2026-10-23 : `theme_scene` et `agent_behavior` passés dans
+Personnalisation, `mcp_plugins` ajouté) :
+`voice_audio` : `theme_scene`, `agent_behavior`, `conversation`, `voice_output`, `microphone_sound`, `turns_interruptions`, `wake_word` ·
+`agents_models` : `main_agent`, `subagent_models`, `subagents` ·
 `memory_knowledge` : `recall`, `semantic_retrieval`, `consolidation`, `knowledge_sources`, `memory_center` ·
-`interface_interactions` : `theme_scene`, `shortcuts`, `bare_hands` ·
-`connections` : `providers` ·
+`interface_interactions` : `shortcuts`, `bare_hands` ·
+`connections` : `mcp_plugins`, `providers` ·
 `advanced_diagnostics` (groupes déclarés, § 1) : `architecture_compat`, `prompts`, `runtime_cli`, `diagnostics`,
 `scene_gate`, `work_methods`, `barehands_lab`.
 

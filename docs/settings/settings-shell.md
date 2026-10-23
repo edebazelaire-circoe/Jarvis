@@ -15,6 +15,25 @@
   `tests/unit/test_settings_shell_browser.py` (vrai Chrome : clavier, focus, Échap, débordement à 100 % et 125 %,
   mouvement réduit), `tests/unit/test_jarvis_wheel_browser.py` (roue → catégories).
 
+## 0. Le hub (premier niveau, 2026-10-23)
+
+Sans cible, les Réglages s'ouvrent sur un **hub** : `#overlay` › `section#settingsHub` (role=dialog aria-modal),
+au-dessus de JARVIS flouté, assombri et désaturé (`.overlay[data-view=hub]`). En tête : « JARVIS », le titre
+« Paramètres », une phrase d'introduction, un filet ; un bouton × en haut à gauche (`#settingsHubClose`). Au centre,
+six cartes `button.set-hub-card [data-hub-category]` de mêmes dimensions (3 × 2, puis 2 colonnes sous 1100 px, une
+sous 640 px), dessinées depuis `JarvisSettingsRegistry.CATEGORIES` : pictogramme, libellé, description, flèche ;
+teinte de la catégorie (`SETTINGS_HUE`, partagée avec le rail).
+
+- Ouvert par `openSettingsHub` : roue › Paramètres (plus de sous-menu), bouton Réglages (`#openSettings`), raccourci
+  `ui_settings`. Une cible précise (`openSettingsTab(cible)` : liens internes, « Réglages de la voix ») ouvre
+  toujours directement le shell.
+- Une carte ouvre le shell sur sa catégorie (`enterSettingsCategory` → `openSettingsTab`), dans le même overlay ;
+  « Toutes les catégories » (`#settingsBack`, tête du shell) ramène au hub sans fermer l'overlay (le brouillon
+  reste, `SET.dirty`).
+- × ou Échap ferme le hub (`closeSettingsHub`, fondu inverse de 160 ms, sans animation en mouvement réduit) ; le
+  focus revient à l'élément d'ouverture (l'ancre de la roue). Flèches entre les cartes ; Tab reste dans le hub.
+- Le hub ne charge ni n'écrit aucun réglage et ne touche pas `SET.open`.
+
 ## 1. Ce que le shell possède
 
 Le shell possède l'ouverture et la fermeture, les six catégories, les entrées d'une catégorie, le focus, le
@@ -25,11 +44,11 @@ validation. Aucune valeur de réglage n'est écrite par le shell.
 #overlay (plein écran, voile + flou du fond Jarvis)
 └─ #settingsShell  role=dialog aria-modal
    ├─ aside.set-rail
-   │  ├─ h2#modalTitle « Réglages »
+   │  ├─ h2#modalTitle « Paramètres »
    │  └─ nav#settingsCategories role=tablist (vertical ; horizontal sous 900 px)
    │       six button.set-cat role=tab [data-category] : pictogramme, libellé, description (registre)
    └─ main#settingsMain role=tabpanel
-      ├─ .set-head : #settingsIntro (pictogramme + JarvisSettingsUI.intro + avis `notice` de la catégorie,
+      ├─ .set-head : #settingsBack « Toutes les catégories » · #settingsIntro (pictogramme + JarvisSettingsUI.intro + avis `notice` de la catégorie,
       │              p#settingsCategoryNotice) · #closeModal « Fermer · Échap »
       ├─ nav#modalTabs role=tablist : sections de la catégorie, button.set-item [data-section] ;
       │     catégorie à groupes (Avancé, Slice 08) : div.set-group role=none [data-settings-group] par groupe non
@@ -55,7 +74,7 @@ session. Il n'y a plus d'onglet hérité (`SET.tab` et `TABS` retirés à la Sli
   [`../legacy/settings-tab-aliases.md`](../legacy/settings-tab-aliases.md) dit lesquels restent.
 - Cible inconnue (y compris un ancien ID retiré) : toujours signalée (`console.warn('settings_target_unknown',
   {target})`). `openSettingsTab` ouvre alors le shell sur sa catégorie par défaut (`DEFAULT_CATEGORY` du registre,
-  Voix & audio ; si les réglages sont déjà ouverts, l'emplacement y passe) ; `selectTab` et les liens internes
+  Personnalisation ; si les réglages sont déjà ouverts, l'emplacement y passe) ; `selectTab` et les liens internes
   (`openSettingsLink`) ne changent rien.
 - Catégorie seule : dernière section ouverte dans la catégorie, sinon la première.
 - `settingsTabs()` rend les six catégories (`{id, label, description}`) : le sous-menu Paramètres de la roue
@@ -86,7 +105,7 @@ session. Il n'y a plus d'onglet hérité (`SET.tab` et `TABS` retirés à la Sli
   le bouton cliqué disparaît avec la section, le focus irait sur `body`. Il va à l'élément `focus` (sélecteur dans le
   contenu) s'il est déjà dessiné — rendu focalisable par `tabindex=-1` au besoin —, sinon à l'entrée ouverte dans
   `#modalTabs` (journal `settings_link_focus_fallback` quand un sélecteur n'a rien trouvé). Cas : « Modifier dans
-  Interface & interactions › Raccourcis » → la touche `wake_toggle` ; « Voir le diagnostic » du Mot d'éveil →
+  Interface & Interactions › Raccourcis » → la touche `wake_toggle` ; « Voir le diagnostic » du Mot d'éveil →
   `#diagnostic_wake_word` ; « Régler la commande », renvois des sous-agents → l'entrée ouverte ; « Voir le
   diagnostic mémoire » passe aussi par là (`#diagnostic_memory`). L'arrivée passe par `JarvisSettingsUI.landFocus` : elle
   est marquée `data-settings-landed` (retiré quand le focus repart) et son contour se voit même quand le lien a été
@@ -133,7 +152,7 @@ registerSettingsSection({               // porte de la page : R.page.register de
 ```
 
 - **Où :** le module s'enregistre à son chargement par `registerSettingsSection(spec)`. Un refus est journalisé
-  (`settings_section_rejected`, avec `code`) et affiché en notice dans la catégorie visée (Avancé & diagnostic si
+  (`settings_section_rejected`, avec `code`) et affiché en notice dans la catégorie visée (Avancé & Diagnostics si
   la catégorie est inconnue) ; la fonction rend `null`, jamais une exception.
 - **Ordre des entrées :** sections enregistrées, dans l'ordre du registre (groupe déclaré, puis `order`). Dans une catégorie à groupes, les flèches parcourent les onglets
   seuls, jamais les intitulés ; la liste passe à la ligne au lieu de défiler (en dessous de 900 px, elle défile).
@@ -152,7 +171,7 @@ registerSettingsSection({               // porte de la page : R.page.register de
   `self` et `readonly` cachent le pied : la section porte ses propres notices ; une catégorie vide aussi.
 - Les brouillons ne sont pas gardés par le shell au changement de section : chaque module garde son contrat actuel
   (par exemple `SET.subagentDrafts` des rôles de sous-agents, le brouillon partagé `SET.draft` des sections Voix et
-  Agents & modèles, l'état du module Mot d'éveil).
+  Brains & Architecture, l'état du module Mot d'éveil).
 - **Diagnostics en parties (Slice 03).** La section `advanced_diagnostics` / `diagnostics` (lecture seule) monte, dans
   l'ordre, les parties inscrites par `registerSettingsDiagnostic({id, label, order, mount(host, context), destroy()})` :
   chaque partie a son titre (`JarvisSettingsUI.section`), reçoit le même `context` que la section et est détruite avec

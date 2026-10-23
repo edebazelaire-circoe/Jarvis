@@ -83,11 +83,11 @@ en haut du contenu quand la liste a défilé ; le succès se voit sur la carte t
 
 | Depuis | Lien | Atterrit |
 | --- | --- | --- |
-| `agents_models` › Agent principal (aide du modèle principal) | « Connexions › <fournisseur> » (`data-settings-open="providers"`, `data-settings-focus`) | section Fournisseurs, focus sur le titre de la carte du fournisseur du modèle |
-| `memory_knowledge` › Recherche sémantique, Sources de connaissances (ligne du secret) | « Connexions » (`data-mem-open="providers"`) | section Fournisseurs |
+| `agents_models` › Agent principal (aide du modèle principal) | « Plugins & MCP › <fournisseur> » (`data-settings-open="providers"`, `data-settings-focus`) | section Fournisseurs, focus sur le titre de la carte du fournisseur du modèle |
+| `memory_knowledge` › Recherche sémantique, Sources de connaissances (ligne du secret) | « Plugins & MCP » (`data-mem-open="providers"`) | section Fournisseurs |
 
 Les messages du serveur qui demandent une clé (pile vocale sans clé, catalogue sans clé, mémoire) disent
-« Réglages › Connexions ».
+« Réglages › Plugins & MCP ».
 
 ## 7. Tests
 

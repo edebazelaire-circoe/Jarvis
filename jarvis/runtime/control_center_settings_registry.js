@@ -22,12 +22,13 @@
   /* Ordre canonique = ordre d'affichage. Les identifiants sont stables (ASCII) ;
      les libellés ne sont que de la présentation. `notice` (facultatif) : l'avis montré sous l'intro de la catégorie. */
   const CATEGORIES=freezeAll([
-    {id:'voice_audio',label:'Voix & audio',description:'Conversation, voix, micro et mot d’éveil.'},
-    {id:'agents_models',label:'Agents & modèles',description:'Agent principal, modèles et sous-agents.'},
-    {id:'memory_knowledge',label:'Mémoire & connaissances',description:'Rappel, recherche, consolidation et sources.'},
-    {id:'interface_interactions',label:'Interface & interactions',description:'Thème, scène, raccourcis et Bare Hands.'},
-    {id:'connections',label:'Connexions',description:'Fournisseurs et identifiants enregistrés.'},
-    {id:'advanced_diagnostics',label:'Avancé & diagnostic',description:'Architecture, prompts, diagnostics et essais.',
+    /* Libellés et descriptions du hub de cartes (2026-10-23) ; les identifiants n'ont pas changé. */
+    {id:'voice_audio',label:'Personnalisation',description:'Thème, apparence, voix et comportement général.'},
+    {id:'agents_models',label:'Brains & Architecture',description:'Choix des modèles, logique, agents et architecture interne.'},
+    {id:'memory_knowledge',label:'Mémoire & Connaissances',description:'Mémoire, rappel et bases de connaissances.'},
+    {id:'interface_interactions',label:'Interface & Interactions',description:'Interface, modes d’interaction, entrées et sorties.'},
+    {id:'connections',label:'Plugins & MCP',description:'Extensions, outils externes et connecteurs.'},
+    {id:'advanced_diagnostics',label:'Avancé & Diagnostics',description:'Paramètres avancés, journaux et outils de diagnostic.',
       notice:'Outils d’opérateur : architecture, prompts, runtime, état constaté et essais de JARVIS. Les réglages du quotidien sont dans les autres catégories.'},
   ]);
   const CATEGORY_IDS=Object.freeze(CATEGORIES.map(c=>c.id));

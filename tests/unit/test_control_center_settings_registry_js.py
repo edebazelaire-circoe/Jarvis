@@ -35,12 +35,12 @@ MODULE = RUNTIME / SETTINGS_REGISTRY_SCRIPT_FILE
 HTML = RUNTIME / "control_center.html"
 
 CATEGORIES = [
-    ("voice_audio", "Voix & audio"),
-    ("agents_models", "Agents & modèles"),
-    ("memory_knowledge", "Mémoire & connaissances"),
-    ("interface_interactions", "Interface & interactions"),
-    ("connections", "Connexions"),
-    ("advanced_diagnostics", "Avancé & diagnostic"),
+    ("voice_audio", "Personnalisation"),
+    ("agents_models", "Brains & Architecture"),
+    ("memory_knowledge", "Mémoire & Connaissances"),
+    ("interface_interactions", "Interface & Interactions"),
+    ("connections", "Plugins & MCP"),
+    ("advanced_diagnostics", "Avancé & Diagnostics"),
 ]
 #: Alias hérités encore servis après la Slice 09, et l'appelant du dépôt qui les garde.
 ALIASES = {
@@ -99,7 +99,7 @@ SLICE_03_SECTIONS = (
     ("diagnostics", "advanced_diagnostics", 40, "readonly"),
 )
 SLICE_04_SECTIONS = (
-    ("main_agent", "agents_models", 10, "footer"), ("agent_behavior", "agents_models", 20, "footer"),
+    ("main_agent", "agents_models", 10, "footer"), ("agent_behavior", "voice_audio", 8, "footer"),
     ("subagent_models", "agents_models", 30, "footer"), ("subagents", "agents_models", 40, "self"),
     ("runtime_cli", "advanced_diagnostics", 30, "footer"), ("work_methods", "advanced_diagnostics", 50, "self"),
 )
@@ -109,10 +109,10 @@ SLICE_05_SECTIONS = (
     ("memory_center", "memory_knowledge", 50, "readonly"),
 )
 SLICE_06_SECTIONS = (
-    ("theme_scene", "interface_interactions", 10, "self"), ("shortcuts", "interface_interactions", 20, "self"),
+    ("theme_scene", "voice_audio", 5, "self"), ("shortcuts", "interface_interactions", 20, "self"),
     ("bare_hands", "interface_interactions", 30, "self"), ("barehands_lab", "advanced_diagnostics", 60, "self"),
 )
-SLICE_07_SECTIONS = (("providers", "connections", 10, "self"),)
+SLICE_07_SECTIONS = (("mcp_plugins", "connections", 5, "readonly"), ("providers", "connections", 10, "self"))
 SLICE_08_SECTIONS = (
     ("prompts", "advanced_diagnostics", 10, "self"), ("scene_gate", "advanced_diagnostics", 40, "self"),
 )
@@ -280,11 +280,12 @@ def test_category_cycle_wraps_in_canonical_order(tmp_path):
 
 #: Sections cibles prévues (`docs/settings/navigation-registry.md` § 3), enregistrées par les Slices 03 à 08.
 PLANNED_SECTIONS = {
-    "voice_audio": ["conversation", "voice_output", "microphone_sound", "turns_interruptions", "wake_word"],
-    "agents_models": ["main_agent", "agent_behavior", "subagent_models", "subagents"],
+    "voice_audio": ["theme_scene", "agent_behavior", "conversation", "voice_output", "microphone_sound",
+                    "turns_interruptions", "wake_word"],
+    "agents_models": ["main_agent", "subagent_models", "subagents"],
     "memory_knowledge": ["recall", "semantic_retrieval", "consolidation", "knowledge_sources", "memory_center"],
-    "interface_interactions": ["theme_scene", "shortcuts", "bare_hands"],
-    "connections": ["providers"],
+    "interface_interactions": ["shortcuts", "bare_hands"],
+    "connections": ["mcp_plugins", "providers"],
     "advanced_diagnostics": ["architecture_compat", "prompts", "runtime_cli", "diagnostics", "scene_gate", "work_methods",
                              "barehands_lab"],
 }
@@ -328,7 +329,7 @@ def test_page_routes_categories_sections_and_aliases_into_the_six_category_shell
     {await openSettingsTab(target);seen[target]=at()}
   out({first,opened,seen,warn,errors,nav:settingsNavigation(),tabs:settingsTabs(),rendered});
 })();"""))
-    assert out["first"] == ["connections", "providers"] and out["opened"] == 1
+    assert out["first"] == ["connections", "mcp_plugins"] and out["opened"] == 1
     seen = out["seen"]
     assert seen["memory"] == ["memory_knowledge", "recall"]  # le seul alias restant (Memory Center › Réglages)
     assert seen["scene_gate"] == ["advanced_diagnostics", "scene_gate"]
@@ -336,10 +337,10 @@ def test_page_routes_categories_sections_and_aliases_into_the_six_category_shell
     assert seen["bare_hands"] == ["interface_interactions", "bare_hands"]
     assert seen["voice_output"] == ["voice_audio", "voice_output"]
     assert seen["semantic_retrieval"] == ["memory_knowledge", "semantic_retrieval"]
-    assert seen["theme_scene"] == ["interface_interactions", "theme_scene"]
+    assert seen["theme_scene"] == ["voice_audio", "theme_scene"]  # Personnalisation (hub du 2026-10-23)
     # Une catégorie seule rouvre la dernière entrée ouverte dans cette catégorie, sinon la première.
-    assert seen["voice_audio"] == ["voice_audio", "voice_output"]
-    assert seen["interface_interactions"] == ["interface_interactions", "theme_scene"]
+    assert seen["voice_audio"] == ["voice_audio", "theme_scene"]
+    assert seen["interface_interactions"] == ["interface_interactions", "bare_hands"]
     assert seen["providers"] == ["connections", "providers"]
     assert seen["wake_word"] == ["voice_audio", "wake_word"]
     assert out["warn"] == [] and out["errors"] == []
@@ -352,14 +353,14 @@ def test_page_routes_categories_sections_and_aliases_into_the_six_category_shell
     assert [c["id"] for c in nav["categories"]] == [c[0] for c in CATEGORIES]
     assert all("related" not in c for c in nav["categories"])
     assert {c["id"]: [(i["kind"], i["id"]) for i in c["items"]] for c in nav["categories"]} == {
-        "voice_audio": [("section", "conversation"), ("section", "voice_output"), ("section", "microphone_sound"),
+        "voice_audio": [("section", "theme_scene"), ("section", "agent_behavior"), ("section", "conversation"),
+                        ("section", "voice_output"), ("section", "microphone_sound"),
                         ("section", "turns_interruptions"), ("section", "wake_word")],
-        "agents_models": [("section", "main_agent"), ("section", "agent_behavior"), ("section", "subagent_models"),
-                          ("section", "subagents")],
+        "agents_models": [("section", "main_agent"), ("section", "subagent_models"), ("section", "subagents")],
         "memory_knowledge": [("section", "recall"), ("section", "semantic_retrieval"), ("section", "consolidation"),
                              ("section", "knowledge_sources"), ("section", "memory_center")],
-        "interface_interactions": [("section", "theme_scene"), ("section", "shortcuts"), ("section", "bare_hands")],
-        "connections": [("section", "providers")],
+        "interface_interactions": [("section", "shortcuts"), ("section", "bare_hands")],
+        "connections": [("section", "mcp_plugins"), ("section", "providers")],
         # Slice 08 : rangées par groupe déclaré (ordre de `CATEGORY_GROUPS`), puis `order` dans le groupe.
         "advanced_diagnostics": [("section", "architecture_compat"), ("section", "prompts"), ("section", "runtime_cli"),
                                  ("section", "diagnostics"), ("section", "scene_gate"), ("section", "work_methods"),
@@ -390,7 +391,7 @@ def test_an_unknown_or_retired_id_is_logged_and_opens_the_default_category(tmp_p
   out({seen,opened,warn,errors,before,afterSelect});
 })();"""))
     for target in ("nope", "voice", "experimental", "keys", "barehandsRecord"):
-        assert out["seen"][target] == ["voice_audio", "conversation"], (target, out["seen"][target])
+        assert out["seen"][target] == ["voice_audio", "theme_scene"], (target, out["seen"][target])
     assert out["opened"] == (0 if open_ else 1)
     assert out["warn"][:5] == [["settings_target_unknown", {"target": t}] for t in
                                ("nope", "voice", "experimental", "keys", "barehandsRecord")]
@@ -521,7 +522,7 @@ def test_page_interface_sections_match_the_registered_fixture():
     page = HTML.read_text(encoding="utf-8")
     work = (RUNTIME / "control_center_work.js").read_text(encoding="utf-8")
     barehands = (RUNTIME / "control_center_barehands.js").read_text(encoding="utf-8")
-    assert ("const THEME_SCENE_SECTION={id:'theme_scene',category:'interface_interactions',order:10,"
+    assert ("const THEME_SCENE_SECTION={id:'theme_scene',category:'voice_audio',order:5,"
             "save:'self',\n    label:'Thème & scène visuelle',") in work
     assert "const SHORTCUTS_SECTION={id:'shortcuts',category:'interface_interactions',order:20,save:'self'" in page
     assert "registerSettingsSection({id:SETTINGS_ENTRY.ordinary,category:'interface_interactions',order:30,save:'self'" in barehands

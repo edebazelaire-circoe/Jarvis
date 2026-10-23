@@ -153,7 +153,7 @@
     const items=Array.isArray(envelope&&envelope.items)?envelope.items:[];
     const sources=Array.isArray(envelope&&envelope.sources)?envelope.sources:[];
     const credentialMissing=sources.some(source=>source&&source.status_code==='catalog_no_key');
-    if(credentialMissing&&!items.some(compareAllowed))return {kind:'no_credentials',message:'Clé fournisseur absente. Ajoutez-la dans Réglages › Connexions puis actualisez.'};
+    if(credentialMissing&&!items.some(compareAllowed))return {kind:'no_credentials',message:'Clé fournisseur absente. Ajoutez-la dans Réglages › Plugins & MCP › Fournisseurs puis actualisez.'};
     if(!items.length)return {kind:'empty',message:'Aucun modèle publié pour cette vue.'};
     if(items.some(hasMissingMetadata)||sources.some(source=>source&&source.freshness!=='live'&&source.freshness!=='fresh')){
       return {kind:'partial',message:'Métadonnées partielles : les valeurs inconnues restent signalées comme telles.'};

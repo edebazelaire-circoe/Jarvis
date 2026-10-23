@@ -75,7 +75,7 @@ def test_online_rows_are_facts_with_their_source_and_two_existing_routes(tmp_pat
     assert by["agent"]["detail"] == "état du brain : actif, modèle opus"
     assert by["subagents"]["note"] == "2 en cours" and "status" not in by["subagents"]
     assert by["voice_settings"]["kind"] == "action" and "status" not in by["voice_settings"]
-    assert by["voice_settings"]["detail"] == "ouvre les réglages, catégorie Voix & audio"
+    assert by["voice_settings"]["detail"] == "ouvre les réglages, Personnalisation › Conversation"
     # Les lignes d'état n'agissent pas ; le module pur ne branche aucune action.
     assert all("onActivate" not in r for r in rows)
 
@@ -154,20 +154,14 @@ def test_agent_and_subagent_edges(tmp_path):
     assert got["cat"] == {"tone": None, "text": "voix : écoute · 1 sous-agent"}
 
 
-def test_settings_rows_follow_the_six_categories(tmp_path):
-    """Une ligne par catégorie des réglages (`settingsTabs()`, Slice 02 de jarvis-settings-ui-reorganization)."""
-    got = run(tmp_path, """
-      out({tabs:J.settingsItemsOf([{id:'voice_audio',label:'Voix & audio',description:'Conversation, voix.'},
-          {id:'connections',label:'Connexions'},{id:'future_cat',label:'Plus tard',description:'Une description.'},{id:'bare',label:'Nue'}]),
-        none:J.settingsItemsOf(null),bad:J.settingsItemsOf([{label:'sans id'},null])})""")
-    assert [(r["id"], r["tab"], r["label"], r["note"]) for r in got["tabs"]] == [
-        ("tab:voice_audio", "voice_audio", "Voix & audio", "micro, voix, mot d’éveil"),
-        ("tab:connections", "connections", "Connexions", "fournisseurs et clés"),
-        ("tab:future_cat", "future_cat", "Plus tard", "Une description."),
-        ("tab:bare", "bare", "Nue", "catégorie des réglages")]
-    assert got["tabs"][0]["detail"] == "ouvre les réglages, catégorie Voix & audio"
-    assert got["none"] == got["bad"] == [{"id": "settings", "tab": None, "icon": "settings",
-                                          "label": "Réglages de Jarvis", "note": "ouvrir"}]
+def test_settings_opens_the_hub_not_a_submenu():
+    """Hub des Réglages (2026-10-23) : Paramètres ouvre six cartes ; la roue n'a plus de sous-menu à lister."""
+    source = MODULE.read_text(encoding="utf-8")
+    block = source[source.index("W.register({id:'settings',"):]
+    block = block[:block.index("}});") + 4]
+    assert "menu:true" not in block and "onSecondary" not in block
+    assert "root.openSettingsHub({returnFocus:anchor,source:'wheel'})" in block
+    assert "settingsItemsOf" not in source
 
 
 def test_inserted_after_the_wheel_and_fed_by_the_one_status_beat():
@@ -182,7 +176,7 @@ def test_inserted_after_the_wheel_and_fed_by_the_one_status_beat():
     assert "fetch(" not in source and "setInterval" not in source and "setTimeout" not in source, "aucun second sondage"
     # Les deux portes sont les routes existantes : le bouton Agents et le modal des réglages.
     assert "getElementById('agentsButton')" in source and "root.openSettingsTab(" in source
-    # « Réglages de la voix » : l'ID de catégorie, plus l'ancien ID d'onglet `'voice'` (alias retiré à la Slice 09).
-    assert "const VOICE_SETTINGS_TARGET='voice_audio';" in source
+    # « Réglages de la voix » : la section Conversation (Personnalisation s'ouvre sur Thème & scène depuis le hub).
+    assert "const VOICE_SETTINGS_TARGET='conversation';" in source
     assert "openSettingsAt(VOICE_SETTINGS_TARGET," in source and "openSettingsAt('voice'" not in source
     assert re.search(r"function openSettingsTab\(tab,options\)\{", html) and re.search(r"function settingsTabs\(\)\{", html)

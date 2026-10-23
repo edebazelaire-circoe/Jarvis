@@ -28,17 +28,15 @@
      `agent.model` en détail ;
    - **Sous-agents** (action) : `subagents.active` ; ouvre le panneau Agents
      (`#agentsButton`, la même route que le lanceur) ;
-   - **Réglages de la voix** (action) : les réglages sur la catégorie Voix &
-     audio (`VOICE_SETTINGS_TARGET`, jarvis-settings-ui-reorganization Slice 09 ;
-     micro, modèle, pile vocale), la même surface que `#openSettings`.
+   - **Réglages de la voix** (action) : les réglages sur Personnalisation ›
+     Conversation (`VOICE_SETTINGS_TARGET`, une section du registre ; micro,
+     modèle, pile vocale), la même surface que `#openSettings`.
 
-   **Paramètres** : une ligne par catégorie des réglages (`settingsTabs()` de la
-   page : les six catégories du registre, jarvis-settings-ui-reorganization
-   Slice 02), chacune ouvre les mêmes réglages que `#openSettings` sur cette
-   catégorie (`openSettingsTab`).
+   **Paramètres** : ouvre le hub des Réglages (`openSettingsHub` de la page,
+   six cartes, 2026-10-23) ; plus de sous-menu.
 
    Deux blocs : le **modèle pur** (`factsOf`, `wakeHintOf`, `jarvisItemsOf`,
-   `categoryStatusOf`, `settingsItemsOf`), exécuté par node dans
+   `categoryStatusOf`), exécuté par node dans
    `tests/unit/test_jarvis_wheel_js.py`, et le **bloc navigateur** (registre
    de la roue), éprouvé dans Chrome par `tests/unit/test_jarvis_wheel_browser.py`. */
 (function(root){
@@ -147,7 +145,7 @@
       {id:'subagents',kind:'action',icon:'subagents',label:'Sous-agents',note:subNote,
         detail:`${subNote} ; ouvre le panneau Agents`,tone:n===null?'unknown':undefined},
       {id:'voice_settings',kind:'action',icon:'settings',label:'Réglages de la voix',note:'micro, modèle, pile vocale',
-        detail:'ouvre les réglages, catégorie Voix & audio'},
+        detail:'ouvre les réglages, Personnalisation › Conversation'},
     ];
   }
 
@@ -165,28 +163,11 @@
     return {tone:null,text:n?`${voice} · ${n} sous-agent${n>1?'s':''}`:voice};
   }
 
-  /* La ligne « Réglages de la voix » ouvre la catégorie Voix & audio du registre des Réglages (ID canonique : l'ancien
-     identifiant d'onglet `'voice'` n'est plus un alias depuis la Slice 09 de jarvis-settings-ui-reorganization). */
-  const VOICE_SETTINGS_TARGET='voice_audio';
+  /* La ligne « Réglages de la voix » ouvre la section Conversation de Personnalisation (ID canonique de section : la
+     catégorie s'ouvre désormais sur Thème & scène, hub des Réglages du 2026-10-23). */
+  const VOICE_SETTINGS_TARGET='conversation';
 
-  /* ------------------------------------------------- Paramètres
-
-     `tabs` : les catégories des réglages (`[{id, label, description}]`,
-     `settingsTabs()` de la page). Une ligne par catégorie ; aucune liste
-     inventée : sans catégorie lisible, une seule ligne ouvre les réglages tels
-     quels. `TAB_NOTES` ne donne qu'une note courte par identifiant de
-     catégorie ; une catégorie sans note garde sa description. */
-  const TAB_NOTES=Object.freeze({voice_audio:'micro, voix, mot d’éveil',agents_models:'agent, modèles, sous-agents',
-    memory_knowledge:'rappel et connaissances',interface_interactions:'thème, raccourcis, Bare Hands',
-    connections:'fournisseurs et clés',advanced_diagnostics:'architecture, prompts, diagnostics'});
-  function settingsItemsOf(tabs){
-    const list=(Array.isArray(tabs)?tabs:[]).filter(t=>isObject(t)&&typeof t.id==='string'&&t.id);
-    if(!list.length)return [{id:'settings',tab:null,icon:'settings',label:'Réglages de Jarvis',note:'ouvrir'}];
-    return list.map(t=>({id:`tab:${t.id}`,tab:t.id,icon:'settings',label:String(t.label||t.id),
-      note:TAB_NOTES[t.id]||String(t.description||'')||'catégorie des réglages',detail:`ouvre les réglages, catégorie ${String(t.label||t.id)}`}));
-  }
-
-  const api=Object.freeze({VOICE_STATES,AGENT_STATES,VOICE_SETTINGS_TARGET,factsOf,wakeHintOf,jarvisItemsOf,categoryStatusOf,settingsItemsOf});
+  const api=Object.freeze({VOICE_STATES,AGENT_STATES,VOICE_SETTINGS_TARGET,factsOf,wakeHintOf,jarvisItemsOf,categoryStatusOf});
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(typeof window==='undefined'||typeof document==='undefined')return;
 
@@ -247,14 +228,16 @@
         return items();
       }});
 
-    W.register({id:'settings',menu:true,
-      onActivate:()=>{/* `menu:true` : l'activation ouvre le sous-menu. */},
-      onSecondary:ctx=>{
-        let tabs=[];
-        try{tabs=typeof root.settingsTabs==='function'?root.settingsTabs():[]}
-        catch(error){log('warn','jarvis_wheel.settings_tabs_unreadable',{error:String(error&&error.message||error)})}
-        log('info','jarvis_wheel.settings_menu',{source:ctx&&ctx.source||null,tabs:tabs.length});
-        return settingsItemsOf(tabs).map(spec=>({...spec,onActivate:item=>openSettingsAt(spec.tab,item&&item.source)}));
+    /* Paramètres ouvre le hub des Réglages (six cartes, 2026-10-23) : plus de sous-menu dans la roue. Sans hub
+       (page plus ancienne), les Réglages tels quels. */
+    W.register({id:'settings',
+      onActivate:ctx=>{
+        const source=ctx&&ctx.source||null,anchor=document.querySelector('#toolWheel .tw-anchor');
+        if(typeof root.openSettingsHub==='function'){
+          log('info','jarvis_wheel.open_settings_hub',{source});
+          return root.openSettingsHub({returnFocus:anchor,source:'wheel'});
+        }
+        return openSettingsAt(null,source);
       }});
 
     /* Un battement : les faits, la phrase du secteur, et le sous-menu s'il

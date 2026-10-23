@@ -19,11 +19,11 @@ import json
 
 import pytest
 
-from tests.unit.test_wake_word_settings_browser import click, drive, eval_, got, served, wait  # noqa: F401
+from tests.unit.test_wake_word_settings_browser import click, drive, eval_, got, served, wait, open_settings  # noqa: F401
 
 OPEN = [
     wait("!!document.getElementById('openSettings')"),
-    click("#dockMore"), click("#openSettings"),
+    click("#dockMore"), *open_settings(),
     wait("!!document.getElementById('voiceSection_conversation')"),
     click("#settingsCategories [data-category=agents_models]"),
     wait("!!document.getElementById('agentSection_main_agent')"),

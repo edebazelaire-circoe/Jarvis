@@ -4,7 +4,6 @@
   "tabs": [],
   "agent_section_order": [
     "Agent principal",
-    "Comportement",
     "Modèles des sous-agents",
     "Rôles des sous-agents"
   ],
@@ -48,9 +47,9 @@
       "since": "jarvis-settings-ui-reorganization Slice 06"
     },
     "appearance": {
-      "category": "interface_interactions",
+      "category": "voice_audio",
       "section": "theme_scene",
-      "since": "jarvis-settings-ui-reorganization Slice 06"
+      "since": "settings hub 2026-10-23 (Personnalisation ; Slice 06 : interface_interactions)"
     },
     "keys": {
       "category": "connections",

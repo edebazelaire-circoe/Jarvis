@@ -61,6 +61,9 @@ OVERLAY = r"""(()=>({open:document.getElementById('overlay').classList.contains(
   panel:document.getElementById('panel').classList.contains('open')?document.getElementById('panelTitle').textContent:null,
   wheel:window.JarvisToolWheel.isOpen()}))()"""
 STATUS_READS = "window.__statusReads||0"
+#: Le hub des Réglages (2026-10-23) : ce que l'overlay montre et ses cartes.
+HUB = r"""(()=>({view:document.getElementById('overlay').dataset.view||null,
+  cards:[...document.querySelectorAll('#settingsHubGrid [data-hub-category]')].map(c=>c.dataset.hubCategory)}))()"""
 #: Ce que la roue demande aux Réglages (`openSettingsTab`, lu par la roue sur `window` à chaque appel) et les cibles
 #: inconnues dites par la page (`console.warn('settings_target_unknown', …)`).
 SPY_SETTINGS = ("(()=>{const spy=window.__settingsSpy={targets:[],unknown:[]};const open=window.openSettingsTab;"
@@ -180,26 +183,25 @@ def test_the_two_jarvis_routes_and_every_settings_row_open_existing_surfaces(tmp
             ["click", "voiceSettings", "#toolWheel .tw-item[data-tw-item=voice_settings]", 900],
             ["eval", "voice", OVERLAY, 50], ["eval", "opened", "window.__settingsSpy", 0]]},
         {"width": 1280, "height": 720, "seed": ONLINE, "actions": [
-            *_open("settings"), ["eval", "sub", SUB, 50], *_shot("settings-submenu-1280x720"),
-            ["click", "shortcuts", "#toolWheel .tw-item[data-tw-item='tab:interface_interactions']", 900],
+            *_open("settings"), ["eval", "sub", SUB, 50], ["eval", "hub", HUB, 50], *_shot("settings-hub-1280x720"),
+            ["click", "shortcuts", "#settingsHubGrid [data-hub-category=interface_interactions]", 900],
             ["eval", "shortcutsTab", OVERLAY, 50]]},
     ])
     assert out[0]["results"]["agents"]["panel"].startswith("Agents") and out[0]["results"]["agents"]["wheel"] is False
     voice = out[1]["results"]["voice"]
     assert voice["open"] is True and voice["section"] == "conversation" and voice["wheel"] is False
-    assert voice["category"] == "voice_audio"  # « Réglages de la voix » atterrit sur Voix & audio (section Conversation, Slice 03)
-    # Slice 09 : la ligne passe l'ID de catégorie (`voice_audio`), plus l'ancien ID d'onglet `'voice'` ; rien d'inconnu.
-    assert out[1]["results"]["opened"] == {"targets": ["voice_audio"], "unknown": []}
+    assert voice["category"] == "voice_audio"  # « Réglages de la voix » : Personnalisation › Conversation
+    # La ligne passe l'ID de la section Conversation (hub des Réglages, 2026-10-23) ; rien d'inconnu.
+    assert out[1]["results"]["opened"] == {"targets": ["conversation"], "unknown": []}
+    # Paramètres n'ouvre plus de sous-menu : le hub des Réglages, six cartes, la roue refermée.
     sub = out[2]["results"]["sub"]
-    assert sub["head"] == "Paramètres"
-    ids = [i["id"] for i in sub["items"]]
-    # Une ligne par catégorie des réglages (Slice 02 de jarvis-settings-ui-reorganization).
-    assert ids == ["tab:voice_audio", "tab:agents_models", "tab:memory_knowledge", "tab:interface_interactions",
-                   "tab:connections", "tab:advanced_diagnostics"], ids
-    assert all(i["kind"] is None and i["disabled"] is None for i in sub["items"])
+    assert sub["subs"] == 0 and sub["items"] == [], sub
+    hub = out[2]["results"]["hub"]
+    assert hub["view"] == "hub" and hub["cards"] == ["voice_audio", "agents_models", "memory_knowledge",
+                                                     "interface_interactions", "connections", "advanced_diagnostics"]
     shortcuts = out[2]["results"]["shortcutsTab"]
-    # Première entrée d'Interface : la section Thème & scène visuelle (Slice 06 de jarvis-settings-ui-reorganization).
-    assert shortcuts["open"] is True and shortcuts["section"] == "theme_scene" and shortcuts["tab"] is None, shortcuts
+    # Première entrée d'Interface : Raccourcis (Thème & scène est dans Personnalisation depuis le hub).
+    assert shortcuts["open"] is True and shortcuts["section"] == "shortcuts" and shortcuts["tab"] is None, shortcuts
     assert shortcuts["category"] == "interface_interactions", shortcuts
     for step in out:
         errors = [c for c in step["console"] if c["type"] in ("exception", "error")]
@@ -217,7 +219,7 @@ FOCUS = r"""(()=>{const ae=document.activeElement,shell=document.getElementById(
 def test_settings_opened_from_the_wheel_keep_the_focus_and_give_it_back_to_the_anchor(tmp_path):
     """QA Slice 02 de jarvis-settings-ui-reorganization : la roue ne reprend pas le focus que les Réglages ont pris."""
     out = _drive(tmp_path, [{"width": 1280, "height": 720, "seed": ONLINE, "actions": [
-        *_open("settings"), ["click", "agents", "#toolWheel .tw-item[data-tw-item='tab:agents_models']", 100],
+        *_open("settings"), ["click", "agents", "#settingsHubGrid [data-hub-category=agents_models]", 100],
         ["eval", "now", FOCUS, 0], ["eval", "later", FOCUS, 800],
         ["key", "tab1", "Tab", 80], ["key", "tab2", "Tab", 80], ["key", "tab3", "Tab", 80], ["eval", "tabbed", FOCUS, 50],
         ["key", "back", "Tab", 80, True], ["eval", "shifted", FOCUS, 50],

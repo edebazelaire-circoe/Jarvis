@@ -749,7 +749,7 @@ category does comes from its registrant.
 | Sélection | `control_center_input_arbitration.js` (method rows) + `JarvisScene.selectionMenu` (Slice 06, action rows) | Souris / Bare Hands (then Bare Hands › tools, Veille, Aide, Diagnostic, Calibration); then the selection: a count, Ranger dans le Dossier, Masquer, Masqués (N) ›, Changer la forme ›, Retirer du Board… — or « Aucun objet sélectionné » and the hidden row — see *Selection actions* below |
 | Dossier | `control_center_dossier.js` (Slice 07) | **no tree**: a click opens the displayed Board's Dossier directly (same path as « Ouvrir le Dossier », `dossier.wheel_open`); refused with a toast and its reason when the Board is unknown (status lost) or Variantes covers the screen — see [Dossier full-screen view](#dossier-full-screen-view-dossierview) |
 | Capture | `control_center_capture_wheel.js` | Capture d'écran, Enregistrer l'écran, Enregistrer l'audio, each with its second level (stop list, then Core's real targets); live while open (`refresh`) — [capture.md](capture.md) › *Interface* |
-| Paramètres | `control_center_jarvis_wheel.js` (Slice 04) | one row per Settings category (`settingsTabs()`, the six registry categories since Slice 02 of jarvis-settings-ui-reorganization), each opens Settings on that category |
+| Paramètres | `control_center_jarvis_wheel.js` (Slice 04) | **no tree** since the Settings hub (2026-10-23): a click opens the six-card hub (`openSettingsHub`, [settings-shell.md](settings/settings-shell.md) › *Le hub*) |
 
 Every category is registered by its module; the wheel keeps no placeholder
 (the Slice 03 `PLACEHOLDERS` waiting rows were removed in Slice 08, once Dossier
@@ -823,7 +823,7 @@ nothing and keeps no truth of its own.
 | touche d'éveil | status | `manual_wake_key`, `voice_turn_mode`, `voice_state` | what the key does now (`F9 · DÉMARRER`, `F9 · ENVOYER` / `ANNULER`, `F9 · INTERROMPRE`, `F9 · VOICE HORS LIGNE`), note `tour automatique` / `tour manuel` — the former `#wakeHint` |
 | Agent : <nom> | status | `agent.name` / `agent_cli`, `agent.state`, `agent.model` | `actif`, `arrêté`, `en erreur` (error tone)…, model in the long name |
 | Sous-agents | action | `subagents.active` | `N en cours` / `aucun en cours`; opens the Agents panel (`#agentsButton`, the launcher's route) |
-| Réglages de la voix | action | — | opens Settings on the Voix & audio category (`openSettingsTab('voice_audio')`, `VOICE_SETTINGS_TARGET`) |
+| Réglages de la voix | action | — | opens Settings on the Personnalisation category (`openSettingsTab('voice_audio')`, `VOICE_SETTINGS_TARGET`) |
 
 Before the first beat every fact says `état inconnu` (`pas encore lu`); after
 a failed beat, `état inconnu` (`statut du Control Center illisible : rien
@@ -840,7 +840,7 @@ each row opening the same Settings as `#openSettings` on that category
 (`openSettingsTab(category)`: location set before opening, or shown in place when
 already open). « Réglages de la voix » opens `'voice_audio'` (since Slice 09 of
 jarvis-settings-ui-reorganization; the old `'voice'` tab ID is no longer an alias). An
-unknown target logs `settings_target_unknown` and opens the default category (Voix & audio). Journal `[jarvis] jarvis_wheel.installed`,
+unknown target logs `settings_target_unknown` and opens the default category (Personnalisation). Journal `[jarvis] jarvis_wheel.installed`,
 `.menu`, `.settings_menu`, `.facts {read, hint}` (only when a fact changes),
 `.open_agents`, `.open_settings {tab}`, `.route_missing`, `.paint_failed`,
 `.install_failed`. Tests: `tests/unit/test_jarvis_wheel_js.py` (pure model),

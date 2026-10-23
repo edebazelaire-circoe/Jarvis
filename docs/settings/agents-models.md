@@ -1,4 +1,4 @@
-# Réglages : Agents & modèles et ses destinations
+# Réglages : Brains & Architecture et ses destinations
 
 **Statut :** contrat de surface (niveau 3 : sections enregistrées + tests de conformité).
 **Introduit :** tâche `jarvis-settings-ui-reorganization`, Slice 04.
@@ -17,7 +17,7 @@
 
 ## 1. Ce que voit un utilisateur ordinaire
 
-`agents_models` (Agents & modèles) n'a plus d'onglet `Agent / CLI` ni `Sous-agents` : quatre sections orientées tâche.
+`agents_models` (Brains & Architecture) n'a plus d'onglet `Agent / CLI` ni `Sous-agents` : quatre sections orientées tâche.
 
 | Section | Contenu | Enregistrement |
 | --- | --- | --- |
@@ -39,7 +39,7 @@
   `SET.subagentDrafts`, d'une section à l'autre.
 - `subagents` est l'ID même de la section des rôles ; l'ancien ID `cli` n'est plus un alias depuis la Slice 09.
 
-## 2. Ce qui part dans Avancé & diagnostic
+## 2. Ce qui part dans Avancé & Diagnostics
 
 | Section | Groupe | Contenu | Enregistrement |
 | --- | --- | --- | --- |

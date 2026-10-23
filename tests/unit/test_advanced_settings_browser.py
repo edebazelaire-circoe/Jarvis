@@ -25,7 +25,7 @@ import json
 
 import pytest
 
-from tests.unit.test_wake_word_settings_browser import click, drive, eval_, got, key, served, wait  # noqa: F401
+from tests.unit.test_wake_word_settings_browser import click, drive, eval_, got, key, served, wait, open_settings  # noqa: F401
 
 GROUPS = [
     ("architecture_compat", "Architecture & compatibilité"),
@@ -41,7 +41,7 @@ ENTRIES = [
 ]
 OPEN = [
     wait("!!document.getElementById('openSettings')"),
-    click("#dockMore"), click("#openSettings"),
+    click("#dockMore"), *open_settings(),
     wait("!!document.getElementById('voiceSection_conversation')"),
     click("#settingsCategories [data-category=advanced_diagnostics]"),
     wait("!!document.querySelector('#modalTabs .set-group')"),
@@ -252,7 +252,7 @@ async def test_scene_gate_late_replies_errors_and_restart_counter_follow_the_sec
 
 KEYBOARD = [
     wait("!!document.getElementById('openSettings')"),
-    click("#dockMore"), click("#openSettings"),
+    click("#dockMore"), *open_settings(),
     wait("!!document.getElementById('voiceSection_conversation')"),
     eval_("document.querySelector('#settingsCategories [aria-selected=true]').focus();true"),
     key("End"), key("Enter"),

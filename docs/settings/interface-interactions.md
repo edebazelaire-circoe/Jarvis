@@ -1,4 +1,4 @@
-# Réglages : Interface & interactions
+# Réglages : Interface & Interactions
 
 **Statut :** contrat canonique (niveau 3 : sections enregistrées + tests).
 **Introduit :** tâche `jarvis-settings-ui-reorganization`, Slice 06.
@@ -13,7 +13,7 @@ Slice 09) ; `shortcuts` est l'ID de sa section, `appearance` n'est plus un alias
 
 | Section | Libellé | Enregistrée par | `save` | Alias |
 | --- | --- | --- | --- | --- |
-| `theme_scene` (order 10) | Thème & scène visuelle | `control_center_work.js` (`THEME_SCENE_SECTION`) | `self` | `appearance` |
+| `theme_scene` (order 5, dans `voice_audio` › Personnalisation depuis le hub du 2026-10-23) | Thème & scène visuelle | `control_center_work.js` (`THEME_SCENE_SECTION`) | `self` | `appearance` |
 | `shortcuts` (order 20) | Raccourcis | `control_center.html` (`SHORTCUTS_SECTION`) | `self` | — (ID = ancien ID d'onglet) |
 | `bare_hands` (order 30) | Bare Hands | `control_center_barehands.js` (`installSettingsSections`) | `self` | ancres `barehandsSettings`, `barehandsCalibration` |
 
@@ -44,8 +44,8 @@ reste le seul endroit. « Réinitialiser les réglages » reporte `enabled` tel 
 ## 3. Raccourcis : un seul éditeur par touche
 
 - La section rend chaque raccourci du registre, une touche (`button.keycap[data-shortcut]`) par raccourci : c'est
-  l'unique éditeur de chacun. Voix & audio › Tours & interruptions montre `wake_toggle` en lecture seule (`kbd`) et
-  « Modifier dans Interface & interactions › Raccourcis » (destination servie par `voice_settings_schema.py`,
+  l'unique éditeur de chacun. Personnalisation › Tours & interruptions montre `wake_toggle` en lecture seule (`kbd`) et
+  « Modifier dans Interface & Interactions › Raccourcis » (destination servie par `voice_settings_schema.py`,
   `surface.context`).
 - Capture : clic sur la touche → « appuyez… » ; Échap annule (la capture prend la touche avant l'Échap du shell : les
   Réglages restent ouverts) ; une touche valide est envoyée, la section est redessinée et le focus revient sur la même

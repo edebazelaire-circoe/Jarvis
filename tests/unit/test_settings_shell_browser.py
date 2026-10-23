@@ -19,16 +19,19 @@ from __future__ import annotations
 
 import pytest
 
-from tests.unit.test_wake_word_settings_browser import click, drive, eval_, got, key, served, wait  # noqa: F401
+from tests.unit.test_wake_word_settings_browser import click, drive, eval_, got, key, served, wait, open_settings  # noqa: F401
 
 CATEGORY_IDS = ["voice_audio", "agents_models", "memory_knowledge", "interface_interactions", "connections",
                 "advanced_diagnostics"]
 
 OPEN = [
     wait("!!document.getElementById('openSettings')"),
-    click("#dockMore"), click("#openSettings"),
+    click("#dockMore"), *open_settings(),
     wait("document.querySelectorAll('#settingsCategories [role=tab]').length===6&&!!document.querySelector('#modalTabs [role=tab]')"),
 ]
+
+HUB_OPEN = [wait("!!document.getElementById('openSettings')"), click("#dockMore"), click("#openSettings"),
+            wait("!!document.querySelector('#settingsHubGrid [data-hub-category]')")]
 
 STATE = """(()=>{const ae=document.activeElement,q=s=>document.querySelector(s);
   return {open:document.getElementById('overlay').classList.contains('open'),
@@ -74,6 +77,9 @@ async def test_categories_keyboard_shortcuts_escape_and_focus_return(served):
         eval_(CTRL.format(key="ArrowRight")), _state("next"),
         eval_(CTRL.format(key="ArrowLeft")), eval_(CTRL.format(key="ArrowLeft")), _state("prev"),
         click("#modalContent"), _state("clickedVoid"),
+        # Plugins & MCP s'ouvre sur Plugins MCP (des boutons) : les champs sont dans Fournisseurs.
+        click("#modalTabs [data-section=providers]"),
+        wait("!!document.querySelector('#settingsShell #modalContent input:not([type=hidden]),#settingsShell #modalContent select')", 10000),
         # Échap depuis un champ ordinaire (la recherche du catalogue ou n'importe quel champ) ferme quand même.
         eval_("(()=>{const f=document.querySelector('#settingsShell input:not([type=hidden]),#settingsShell select');if(f)f.focus();return f?f.tagName:null})()", "field"),
         {**key("Escape"), "id": "escape"}, _state("closed"),
@@ -83,8 +89,9 @@ async def test_categories_keyboard_shortcuts_escape_and_focus_return(served):
     opened = got(step, "opened")
     assert opened["open"] and opened["cats"] == CATEGORY_IDS and len(set(opened["labels"])) == 6
     assert opened["selected"] == "voice_audio" and opened["focus"] == "settingsCat-voice_audio"
-    assert opened["items"] == ["Conversation", "Voix & transcription", "Micro & son", "Tours & interruptions", "Mot d’éveil"]
-    assert opened["title"] == "Voix & audio"
+    assert opened["items"] == ["Thème & scène visuelle", "Comportement", "Conversation", "Voix & transcription",
+                               "Micro & son", "Tours & interruptions", "Mot d’éveil"]
+    assert opened["title"] == "Personnalisation"
     after_down = got(step, "afterDown")
     assert after_down["focus"] == "settingsCat-agents_models" and after_down["selected"] == "voice_audio"  # rien n'est ouvert
     assert after_down["ring"] not in (None, "none")  # focus clavier visible
@@ -97,7 +104,7 @@ async def test_categories_keyboard_shortcuts_escape_and_focus_return(served):
     assert entered["items"] == ["Architecture & compatibilité", "Prompts", "Runtime & CLI", "Diagnostics",
                                 "Scène constellation", "Work Methods apprises", "Bare Hands · essais"]
     assert got(step, "next")["selected"] == "voice_audio"  # Ctrl+→ en boucle après la sixième
-    assert got(step, "prev")["selected"] == "connections"  # Ctrl+← deux fois : Avancé, puis Connexions
+    assert got(step, "prev")["selected"] == "connections"  # Ctrl+← deux fois : Avancé, puis Plugins & MCP
     assert got(step, "clickedVoid")["open"] is True  # pas de fermeture au clic dans le shell
     closed = got(step, "closed")
     assert closed["open"] is False and closed["focus"] == "dockMore"  # rendu à « Plus d’outils »
@@ -159,8 +166,9 @@ async def test_no_category_overflows_at_desktop_sizes_and_125_percent_zoom(serve
 async def test_reduced_motion_stops_the_opening_animation(served):
     probe = "getComputedStyle(document.getElementById('overlay')).animationName"
     out = await drive(served.url, [
-        {"width": 1440, "height": 900, "reducedMotion": True, "actions": [*OPEN, eval_(probe, "reduced")]},
-        {"width": 1440, "height": 900, "actions": [*OPEN, eval_(probe, "normal")]},
+        # L'ouverture se joue au hub (2026-10-23) ; entrer dans une catégorie ne rejoue pas le fondu.
+        {"width": 1440, "height": 900, "reducedMotion": True, "actions": [*HUB_OPEN, eval_(probe, "reduced")]},
+        {"width": 1440, "height": 900, "actions": [*HUB_OPEN, eval_(probe, "normal")]},
     ])
     assert got(out["steps"][0], "reduced") == "none"
     assert got(out["steps"][1], "normal") == "set-fade"

@@ -4,7 +4,8 @@ Handoff `jarvis-settings-ui-reorganization`, contrat `docs/settings/interface-in
 isolé (fixture `served` de `test_wake_word_settings_browser.py`) sert la page ; le harnais CDP de ce fichier-là envoie
 de vraies frappes et de vrais clics. Ce que ce fichier prouve :
 
-- Interface & interactions montre trois sections (Thème & scène visuelle, Raccourcis, Bare Hands), plus aucun onglet
+- Interface & Interactions montre deux sections (Raccourcis, Bare Hands ; Thème & scène est dans Personnalisation
+  depuis le hub des Réglages du 2026-10-23), plus aucun onglet
   `appearance` ni `shortcuts` ; `experimental` mène à la porte de test de la scène, section `scene_gate` d'Avancé
   (Slice 08) ;
 - anciens identifiants et ancres Bare Hands mènent à leur section ;
@@ -26,14 +27,22 @@ import json
 
 import pytest
 
-from tests.unit.test_wake_word_settings_browser import click, drive, eval_, got, key, served, wait  # noqa: F401
+from tests.unit.test_wake_word_settings_browser import click, drive, eval_, got, key, served, wait, open_settings  # noqa: F401
 
-INTERFACE = ["theme_scene", "shortcuts", "bare_hands"]
+INTERFACE = ["shortcuts", "bare_hands"]
 OPEN = [
     wait("!!document.getElementById('openSettings')"),
-    click("#dockMore"), click("#openSettings"),
+    click("#dockMore"), *open_settings(),
     wait("!!document.getElementById('voiceSection_conversation')"),
     click("#settingsCategories [data-category=interface_interactions]"),
+    wait("!!document.querySelector('#modalContent [data-shortcut]')"),
+]
+#: Thème & scène visuelle vit dans Personnalisation depuis le hub des Réglages (2026-10-23).
+THEME_OPEN = [
+    wait("!!document.getElementById('openSettings')"),
+    click("#dockMore"), *open_settings(),
+    wait("!!document.getElementById('voiceSection_conversation')"),
+    click("#modalTabs [data-section=theme_scene]"),
     wait("!!document.querySelector('#modalContent .theme-choice')"),
 ]
 
@@ -66,7 +75,7 @@ TOUR = """(async()=>{const pause=ms=>new Promise(r=>setTimeout(r,ms)),q=s=>docum
 async def test_sections_aliases_single_wake_editor_and_barehands_split(served):
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [*OPEN, eval_(TOUR, "tour")]}])
     tour = got(out["steps"][0], "tour")
-    assert tour["labels"] == ["Thème & scène visuelle", "Raccourcis", "Bare Hands"]
+    assert tour["labels"] == ["Raccourcis", "Bare Hands"]
     assert tour["related"] is False, "plus de zone « encore dans » (Slice 09)"
     # Plus aucun onglet hérité : `keys` (Slice 07, Fournisseurs de Connexions), `prompts` et `experimental` (Slice 08,
     # sections Prompts et Scène constellation d'Avancé) non plus.
@@ -77,10 +86,10 @@ async def test_sections_aliases_single_wake_editor_and_barehands_split(served):
     alias = tour["alias"]
     # Slice 09 : `appearance`, `experimental` et les ancres Bare Hands ne sont plus des alias (aucun appelant) : un
     # `selectTab` vers eux ne bouge rien ; `shortcuts` est l'ID de la section.
-    assert alias["theme_scene"] == ["interface_interactions", "theme_scene", "section"]
+    assert alias["theme_scene"] == ["voice_audio", "theme_scene", "section"]  # Personnalisation
     for retired in ("appearance", "barehandsSettings", "barehandsCalibration", "barehandsRecord", "barehandsBenchmarkSection",
                     "experimental"):
-        assert alias[retired] == ["interface_interactions", "theme_scene", None], retired
+        assert alias[retired] == ["voice_audio", "theme_scene", None], retired
     assert alias["shortcuts"] == ["interface_interactions", "shortcuts", "section"]
     assert alias["interface_interactions"] == ["interface_interactions", "shortcuts", "category"]  # dernière entrée ouverte
     assert tour["ordinary"] == {"diag": False, "preview": True, "calibrate": True, "wipe": True, "bench": False,
@@ -108,7 +117,7 @@ async def test_capture_cancel_save_and_link_from_voice_focuses_the_editor(served
               "cancelled"),
         # Quitter la section pendant une capture l'annule : la frappe suivante n'enregistre rien.
         click(KEYCAP),
-        click("#modalTabs [data-section=theme_scene]"),
+        click("#modalTabs [data-section=bare_hands]"),
         eval_("!!SET.capture", "left"),
         key("F10"),
         click("#modalTabs [data-section=shortcuts]"),
@@ -154,14 +163,14 @@ SLIDE = """(()=>{const r=document.querySelector('#sceneViewSettings input[type=r
 async def test_theme_applies_in_place_persists_and_scene_view_resets(served):
     out = await drive(served.url, [
         {"width": 1440, "height": 900, "actions": [
-            *OPEN, eval_(THEME, "initial"),
+            *THEME_OPEN, eval_(THEME, "initial"),
             click("#modalContent input[name=jarvisTheme][value=cosmos]"),
             eval_(THEME, "cosmos"),
             eval_(SLIDE, "slid"), eval_(THEME, "slid_state"),
             click("#sceneViewSettings .sc-view-reset"),
             eval_(THEME, "reset"),
         ]},
-        {"width": 1440, "height": 900, "actions": [*OPEN, eval_(THEME, "reloaded"),
+        {"width": 1440, "height": 900, "actions": [*THEME_OPEN, eval_(THEME, "reloaded"),
             click("#modalContent input[name=jarvisTheme][value=circuit-board]"), eval_(THEME, "back")]},
     ])
     first, second = out["steps"]
@@ -273,7 +282,7 @@ async def test_wake_word_diagnostic_link_keeps_its_part_in_view_after_voice_fill
     served.settings_file.write_text(json.dumps({"wake_word": {"schema_version": 7, "enabled": True, "futur": 1}}),
                                     encoding="utf-8")
     out = await drive(served.url, [{"width": width, "height": height, "actions": [
-        wait("!!document.getElementById('openSettings')"), click("#dockMore"), click("#openSettings"),
+        wait("!!document.getElementById('openSettings')"), click("#dockMore"), *open_settings(),
         wait("!!document.getElementById('voiceSection_conversation')", 10000),
         click("#modalTabs [data-section=wake_word]"),
         wait("!!document.querySelector('[data-ww-open-diagnostics]')", 10000),
@@ -302,7 +311,7 @@ async def test_the_diagnostic_target_stays_in_view_when_voice_grows_after_the_li
     served.settings_file.write_text(json.dumps({"wake_word": {"schema_version": 7, "enabled": True, "futur": 1}}),
                                     encoding="utf-8")
     out = await drive(served.url, [{"width": 1366, "height": 768, "actions": [
-        wait("!!document.getElementById('openSettings')"), click("#dockMore"), click("#openSettings"),
+        wait("!!document.getElementById('openSettings')"), click("#dockMore"), *open_settings(),
         wait("!!document.getElementById('voiceSection_conversation')", 10000),
         click("#modalTabs [data-section=wake_word]"),
         wait("!!document.querySelector('[data-ww-open-diagnostics]')", 10000),
@@ -338,7 +347,7 @@ RELEASE = """(async()=>{const before={focus:document.activeElement,mount:documen
 async def test_a_late_shortcut_save_redraws_nothing_once_the_section_is_left(served, leave):
     """QA Slice 06 (B2) : l'envoi d'une touche répond après le départ de la section (autre section, ou Réglages
     fermés) : aucun remontage, focus inchangé, valeur gardée (`startCapture(button, isCurrent)`)."""
-    away = ([click("#modalTabs [data-section=theme_scene]"), wait("!!document.querySelector('#modalContent .theme-choice')")]
+    away = ([click("#modalTabs [data-section=bare_hands]"), wait("SET.section==='bare_hands'")]
             if leave == "section" else [key("Escape"), wait("!SET.open")])
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         *OPEN,
@@ -352,7 +361,7 @@ async def test_a_late_shortcut_save_redraws_nothing_once_the_section_is_left(ser
     assert late["renders"] == 0, late
     assert late["sameFocus"] is True and late["kept"] == "f10" and late["served"] == "f10", late
     if leave == "section":
-        assert late["section"] == "theme_scene" and late["sameMount"] is True and late["open"] is True
+        assert late["section"] == "bare_hands" and late["sameMount"] is True and late["open"] is True
     else:
         assert late["open"] is False
     assert out["console"] == [], out["console"]

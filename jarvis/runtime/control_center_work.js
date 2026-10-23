@@ -682,11 +682,11 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
     }));
   }
 
-  /* `interface_interactions` › Thème & scène visuelle (jarvis-settings-ui-reorganization, Slice 06) : section
+  /* `voice_audio` (Personnalisation, hub des Réglages du 2026-10-23 ; avant : Interface) › Thème & scène visuelle : section
      enregistrée au registre des Réglages. Le thème est rendu ici ; les réglages
      d'affichage de la scène (`control_center_scene_page.js`, `window.JarvisSceneViewSettings`) s'ajoutent à la suite
      et sont détruits avec la section. */
-  const THEME_SCENE_SECTION={id:'theme_scene',category:'interface_interactions',order:10,save:'self',
+  const THEME_SCENE_SECTION={id:'theme_scene',category:'voice_audio',order:5,save:'self',
     label:'Thème & scène visuelle',
     description:'Le thème et l’affichage de la scène s’appliquent immédiatement, dans ce navigateur seulement.',
     mount(host){

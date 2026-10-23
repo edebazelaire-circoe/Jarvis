@@ -156,7 +156,7 @@ process.stdout.write(JSON.stringify({count:registered.length,id:spec.id,category
 
     assert result["count"] == 1
     assert (result["id"], result["category"], result["save"], result["aliases"], result["order"]) == (
-        "theme_scene", "interface_interactions", "self", False, 10)  # Slice 09 : plus d'alias de section
+        "theme_scene", "voice_audio", "self", False, 5)  # Slice 09 : plus d'alias de section
     assert result["activated"] == ["cosmos"]
     assert result["writes"] == 1, "un choix de thème s'applique sans redessiner la section"
     assert result["selected"] == [["circuit-board", False], ["cosmos", True]]

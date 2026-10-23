@@ -788,6 +788,50 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .overlay{position:fixed;inset:0;z-index:60;display:none;background:radial-gradient(120% 90% at 18% 0%,rgba(10,30,40,.55),transparent 60%),rgba(2,6,10,.80);backdrop-filter:blur(22px) saturate(1.12)}
 .overlay.open{display:block;animation:set-fade var(--shell-dur) var(--shell-ease)}
 @keyframes set-fade{from{opacity:0}}
+/* Hub des Réglages (2026-10-23) : premier niveau, au-dessus de JARVIS flouté, assombri et désaturé. Le hub et le shell
+   partagent l'overlay ; `data-view` dit lequel se montre. Animations courtes : fondu de l'overlay, cartes qui montent
+   de quelques pixels, l'inverse à la fermeture (`.closing`). */
+.overlay[data-view=hub]{background:radial-gradient(90% 75% at 50% 45%,rgba(2,6,10,.35),rgba(2,6,10,.82) 100%),rgba(2,6,10,.5);backdrop-filter:blur(18px) saturate(.6) brightness(.85)}
+.overlay[data-view=hub] .settings-shell,.overlay:not([data-view=hub]) .set-hub{display:none}
+.overlay.open.instant{animation:none}
+.overlay.closing{animation:set-fade-out 160ms var(--shell-ease) forwards}
+@keyframes set-fade-out{to{opacity:0}}
+.set-hub{position:absolute;inset:0;display:grid;grid-template-rows:auto auto;align-content:safe center;overflow:auto;padding:clamp(72px,9vh,96px) clamp(16px,6vw,96px) clamp(24px,5vh,56px);font:14px/1.5 "Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;color:var(--text)}
+.set-hub-close{position:absolute;top:clamp(14px,3vh,28px);left:clamp(14px,2.2vw,30px);width:44px;height:44px;display:grid;place-items:center;border-radius:50%;border:1px solid rgba(151,191,209,.32);background:rgba(4,10,15,.6);color:var(--text);cursor:pointer;transition:background-color var(--shell-dur-fast),border-color var(--shell-dur-fast)}
+.set-hub-close svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round}
+.set-hub-close:hover{background:rgba(151,191,209,.12);border-color:rgba(151,191,209,.55)}
+.set-hub-head{max-width:1240px;width:100%;margin:0 auto;padding-left:4px}
+.set-hub-brand{margin:0 0 6px;font-size:12px;letter-spacing:.32em;color:#a9c2cf}
+.set-hub-title{margin:0;font-size:clamp(34px,4.4vw,58px);font-weight:300;letter-spacing:-.01em;line-height:1.1}
+.set-hub-lead{margin:10px 0 0;max-width:420px;font-size:15px;line-height:1.55;color:#a9c2cf}
+.set-hub-rule{display:block;width:64px;height:2px;margin-top:18px;border-radius:2px;background:linear-gradient(90deg,var(--accent),transparent)}
+.set-hub-grid{max-width:1240px;width:100%;margin:clamp(20px,4vh,44px) auto 0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:minmax(clamp(150px,21vh,210px),1fr);gap:clamp(14px,1.6vw,24px)}
+@media(max-width:1100px){.set-hub-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:640px){.set-hub-grid{grid-template-columns:minmax(0,1fr);grid-auto-rows:minmax(132px,auto)}}
+.set-hub-card{--hue:var(--accent);position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;gap:6px;min-width:0;padding:22px 24px;border-radius:16px;border:1px solid color-mix(in srgb,var(--hue) 42%,transparent);background:linear-gradient(135deg,color-mix(in srgb,var(--hue) 13%,rgba(6,12,18,.82)),rgba(5,10,15,.78) 62%);box-shadow:0 0 0 1px rgba(0,0,0,.25),0 10px 30px -18px color-mix(in srgb,var(--hue) 70%,transparent),inset 0 1px 0 rgba(255,255,255,.04);color:var(--text);font:inherit;text-align:left;cursor:pointer;opacity:0;transform:translateY(10px) scale(.985);animation:set-hub-in 240ms var(--shell-ease) forwards;animation-delay:calc(var(--i,0) * 35ms);transition:border-color var(--shell-dur),box-shadow var(--shell-dur),transform var(--shell-dur)}
+@keyframes set-hub-in{to{opacity:1;transform:none}}
+.overlay.closing .set-hub-card{animation:set-hub-out 140ms var(--shell-ease) forwards}
+@keyframes set-hub-out{from{opacity:1;transform:none}to{opacity:0;transform:translateY(8px) scale(.985)}}
+.set-hub-card:hover,.set-hub-card:focus-visible{border-color:color-mix(in srgb,var(--hue) 75%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--hue) 25%,transparent),0 14px 40px -14px color-mix(in srgb,var(--hue) 85%,transparent),inset 0 1px 0 rgba(255,255,255,.06);transform:translateY(-2px)}
+.set-hub-card:focus-visible{outline:2px solid var(--hue);outline-offset:3px}
+.set-hub-icon{position:absolute;top:22px;left:24px;width:52px;height:52px;display:grid;place-items:center;border-radius:50%;color:var(--hue);background:color-mix(in srgb,var(--hue) 14%,rgba(3,8,12,.6));border:1px solid color-mix(in srgb,var(--hue) 45%,transparent)}
+.set-hub-icon svg,.set-hub-art svg,.set-back svg{fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
+.set-hub-icon svg{width:24px;height:24px;stroke-width:1.6}
+.set-hub-art{position:absolute;right:-18px;top:-14px;width:min(46%,170px);aspect-ratio:1;color:var(--hue);opacity:.12;pointer-events:none;transition:opacity var(--shell-dur)}
+.set-hub-art svg{width:100%;height:100%;stroke-width:.9}
+.set-hub-card:hover .set-hub-art,.set-hub-card:focus-visible .set-hub-art{opacity:.2}
+.set-hub-name{margin-top:64px;font-size:19px;font-weight:600;line-height:1.25;padding-right:44px}
+.set-hub-desc{font-size:13.5px;line-height:1.45;color:#a9c2cf;padding-right:48px;max-width:34ch}
+.set-hub-go{position:absolute;right:20px;bottom:20px;width:34px;height:34px;display:grid;place-items:center;border-radius:50%;border:1px solid color-mix(in srgb,var(--hue) 40%,rgba(151,191,209,.25));color:var(--text);background:rgba(3,8,12,.55);transition:border-color var(--shell-dur),background-color var(--shell-dur)}
+.set-hub-go svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.set-hub-card:hover .set-hub-go,.set-hub-card:focus-visible .set-hub-go{border-color:var(--hue);background:color-mix(in srgb,var(--hue) 18%,rgba(3,8,12,.6))}
+@media(max-width:640px){.set-hub-icon{width:42px;height:42px;top:18px;left:18px}.set-hub-name{margin-top:52px;font-size:17px}.set-hub-card{padding:18px}}
+@media(max-height:620px){.set-hub-grid{grid-auto-rows:minmax(136px,auto)}.set-hub-name{margin-top:52px}}
+@media(prefers-reduced-motion:reduce){.set-hub-card,.overlay.closing,.overlay.closing .set-hub-card{animation:none;opacity:1;transform:none;transition:none}.set-hub-card:hover,.set-hub-card:focus-visible{transform:none}}
+.set-head .set-head-text{flex:1 1 auto}
+.set-back{flex:none;display:inline-flex;align-items:center;gap:6px;align-self:flex-start;margin-top:8px;padding:7px 12px 7px 8px;border-radius:999px;border:1px solid var(--set-hair-2);background:rgba(3,8,12,.5);color:var(--set-ink-2);font-size:13px;cursor:pointer}
+.set-back svg{width:16px;height:16px;stroke-width:2}
+.set-back:hover{color:var(--set-ink);border-color:rgba(151,191,209,.4)}
 .settings-shell{--set-font:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;--set-mono:ui-monospace,SFMono-Regular,Consolas,monospace;
   --set-ink:var(--text);--set-ink-2:#a9c2cf;--set-ink-3:#8aa5b3;--set-hair:rgba(151,191,209,.13);--set-hair-2:rgba(151,191,209,.2);
   --set-field-bg:rgba(3,9,13,.72);--set-pad:clamp(20px,3.6vw,56px);--set-hue:var(--accent);
@@ -819,7 +863,7 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-cat[aria-selected=true] .set-cat-icon{background:color-mix(in srgb,var(--set-hue) 20%,transparent);box-shadow:0 6px 18px -10px var(--set-hue)}
 .set-cat-icon svg,.set-intro-icon svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .set-cat-label{font-size:15px;font-weight:600;color:var(--set-ink);line-height:1.25}
-.set-cat-desc{font-size:12.5px;line-height:1.4;color:var(--set-ink-3);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.set-cat-desc{font-size:12.5px;line-height:1.4;color:var(--set-ink-3);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 /* Colonne principale */
 .set-main{display:flex;flex-direction:column;min-width:0;min-height:0}
 .set-main>*{flex:none}
@@ -2494,14 +2538,26 @@ button.wsp-ename:hover{color:var(--accent)}
      plein écran au-dessus du fond Jarvis flouté, six catégories dessinées depuis
      `JarvisSettingsRegistry.CATEGORIES`, puis les entrées de la catégorie (#modalTabs). -->
 <div class="overlay" id="overlay">
+  <!-- Hub des Réglages (2026-10-23) : premier niveau, six cartes ; une carte ouvre le shell sur sa catégorie. -->
+  <section class="set-hub" id="settingsHub" role="dialog" aria-modal="true" aria-labelledby="settingsHubTitle" aria-describedby="settingsHubLead">
+    <button type="button" class="set-hub-close" id="settingsHubClose" aria-label="Fermer les paramètres" aria-keyshortcuts="Escape"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    <header class="set-hub-head">
+      <p class="set-hub-brand">JARVIS</p>
+      <h2 class="set-hub-title" id="settingsHubTitle">Paramètres</h2>
+      <p class="set-hub-lead" id="settingsHubLead">Personnalisez votre assistant et façonnez votre expérience JARVIS.</p>
+      <span class="set-hub-rule" aria-hidden="true"></span>
+    </header>
+    <nav class="set-hub-grid" id="settingsHubGrid" aria-label="Catégories des paramètres"></nav>
+  </section>
   <div class="settings-shell" id="settingsShell" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="settingsHelp">
     <aside class="set-rail">
-      <h2 class="set-rail-title" id="modalTitle">Réglages</h2>
+      <h2 class="set-rail-title" id="modalTitle">Paramètres</h2>
       <nav class="set-cats" id="settingsCategories" role="tablist" aria-orientation="vertical" aria-label="Catégories des réglages"></nav>
       <p class="sr" id="settingsHelp">Flèches haut et bas dans les catégories, puis Entrée pour en ouvrir une. Échap ferme les réglages.</p>
     </aside>
     <main class="set-main" id="settingsMain" role="tabpanel">
       <div class="set-head">
+        <button type="button" class="set-back" id="settingsBack" aria-label="Retour aux catégories des paramètres"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg><span>Toutes les catégories</span></button>
         <div class="set-head-text" id="settingsIntro"></div>
         <button type="button" class="set-close" id="closeModal" aria-label="Fermer les réglages" aria-keyshortcuts="Escape"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Fermer</span><kbd>Échap</kbd></button>
       </div>
@@ -5252,7 +5308,7 @@ const AGENT_SECTIONS=[
   {id:'main_agent',category:'agents_models',order:10,label:'Agent principal',
     description:'Le CLI qui répond à vos demandes et son modèle principal.',
     body:mainAgentHtml,start:revision=>hydrateCliAgents(revision)},
-  {id:'agent_behavior',category:'agents_models',order:20,label:'Comportement',
+  {id:'agent_behavior',category:'voice_audio',order:8,label:'Comportement',
     description:'Longueur et ton des réponses, rappels de rendez-vous.',body:agentBehaviorHtml},
   {id:'subagent_models',category:'agents_models',order:30,label:'Modèles des sous-agents',
     description:'Mode de choix du modèle d’un sous-agent et inventaire comparatif des modèles disponibles.',
@@ -5348,7 +5404,7 @@ const CONNECTIONS_SECTION={id:'providers',category:'connections',order:10,save:'
   mount(host,context){
     const M=window.JarvisConnectionsSettings;
     if(!M){
-      host.innerHTML=context.ui.notice({kind:'bad',live:'assertive',title:'Connexions indisponibles.',
+      host.innerHTML=context.ui.notice({kind:'bad',live:'assertive',title:'Fournisseurs indisponibles.',
         body:'<span class="set-notice-text">Module absent de la page servie. <code>connections_settings_module_missing</code></span>'});
       console.error('connections_settings_module_missing');return}
     const data=context.data();
@@ -5357,6 +5413,29 @@ const CONNECTIONS_SECTION={id:'providers',category:'connections',order:10,save:'
     return connectionsView.load();
   },
   destroy(){if(connectionsView){connectionsView.destroy();connectionsView=null}},
+};
+
+/* --- `connections` › Plugins MCP (hub des Réglages, 2026-10-23) ------------------------------------------------------
+   La catégorie s'appelle désormais « Plugins & MCP » : cette entrée mène aux plugins et outils MCP, qui ont leur propre
+   vue (inspecteur MCP, `control_center_mcp_inspector.js` / `control_center_mcp_plugins.js`). Un lien, pas une copie :
+   aucun réglage MCP n'est dupliqué ici. */
+function openMcpFromSettings(view){
+  const button=document.getElementById('openMcpInspector');
+  if(!button){console.error('settings_mcp_inspector_missing');toast({title:'Inspecteur MCP indisponible',sub:'Bouton absent de la page servie.',kind:'bad'});return}
+  closeSettings();
+  button.click();
+  try{if(window.JarvisMcpPlugins&&typeof window.JarvisMcpPlugins.select==='function')window.JarvisMcpPlugins.select(view,{focus:true})}
+  catch(e){console.error('settings_mcp_view_failed',e)}
+}
+const MCP_PLUGINS_SECTION={id:'mcp_plugins',category:'connections',order:5,save:'readonly',label:'Plugins MCP',
+  description:'Serveurs MCP externes branchés sur le brain, et outils internes qu’il peut appeler.',
+  mount(host,context){
+    host.innerHTML=context.ui.section({id:'mcpPluginsSection',title:'Plugins & outils MCP',
+      description:'Les plugins (serveurs MCP externes : ajout, accès, identifiants) et les outils internes du brain se gèrent dans l’inspecteur MCP.',
+      body:context.ui.actions('<button type="button" class="action primary" data-mcp-open="plugins">Gérer les plugins MCP</button>'
+        +'<button type="button" class="action" data-mcp-open="internal">Voir les outils du brain</button>')});
+    host.querySelectorAll('[data-mcp-open]').forEach(b=>b.addEventListener('click',()=>openMcpFromSettings(b.dataset.mcpOpen)));
+  },
 };
 
 /* --- `interface_interactions` › Raccourcis (Slice 06) ------------------------------------------------------------------ */
@@ -5424,17 +5503,19 @@ function mountSubagentSettings(host,revision,mode){
    Navigation dessinée depuis `JarvisSettingsRegistry.CATEGORIES` par `shellNavigation` : jamais une liste
    recopiée ici. `SETTINGS_LOOK` ne porte que l'apparence (pictogramme, teinte) par identifiant de catégorie ;
    une catégorie sans apparence garde le pictogramme générique. */
+/* Icônes et teintes des six catégories, communes au hub de cartes et au rail (hub des Réglages, 2026-10-23) :
+   pinceau, cerveau, base de données, écran, pièce de puzzle, engrenage ; bleu, violet, vert, ambre, magenta, cyan. */
 const SETTINGS_ICON={
-  voice_audio:'<path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0M12 18v3"/>',
-  agents_models:'<circle cx="12" cy="5" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><path d="M12 7v4m0 0-5.5 5.5M12 11l5.5 5.5"/>',
-  memory_knowledge:'<path d="M12 3 3 7.5l9 4.5 9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/>',
+  voice_audio:'<path d="M18.4 3.6a2 2 0 0 1 2.8 2.8l-8.6 8.6-3.4.6.6-3.4z"/><path d="M8.2 14.6c-2 0-3.4 1.4-3.4 3.4 0 1-.6 1.8-1.8 2.2 1 .6 2.3.8 3.6.8 2.5 0 4.2-1.7 4.2-4"/>',
+  agents_models:'<path d="M9.5 4.5a2.5 2.5 0 0 0-4.6 1.4A3 3 0 0 0 3.5 11a3 3 0 0 0 1.3 4.6 2.8 2.8 0 0 0 4.7 2.9V4.5z"/><path d="M14.5 4.5a2.5 2.5 0 0 1 4.6 1.4 3 3 0 0 1 1.4 5.1 3 3 0 0 1-1.3 4.6 2.8 2.8 0 0 1-4.7 2.9V4.5z"/><path d="M9.5 9H7.5M14.5 9h2M9.5 14H8M14.5 14h1.5"/>',
+  memory_knowledge:'<ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v13c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-13"/><path d="M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8"/>',
   interface_interactions:'<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
-  connections:'<path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/>',
-  advanced_diagnostics:'<path d="M3 12h4l3-7 4 14 3-7h4"/>',
+  connections:'<path d="M9 4.5a2 2 0 0 1 4 0V6h3.5a1 1 0 0 1 1 1v3.5h-1.3a2 2 0 0 0 0 4h1.3V18a1 1 0 0 1-1 1H13v-1.3a2 2 0 0 0-4 0V19H5.5a1 1 0 0 1-1-1v-3.5h1.3a2 2 0 0 0 0-4H4.5V7a1 1 0 0 1 1-1H9z"/>',
+  advanced_diagnostics:'<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/>',
   generic:'<circle cx="12" cy="12" r="3"/><path d="M12 3v3m0 12v3M3 12h3m12 0h3"/>',
 };
-const SETTINGS_HUE={voice_audio:'var(--accent)',agents_models:'var(--role-accent-violet)',memory_knowledge:'var(--role-accent-amber)',
-  interface_interactions:'var(--role-accent-teal)',connections:'var(--role-accent-sky)',advanced_diagnostics:'var(--role-accent-slate)'};
+const SETTINGS_HUE={voice_audio:'#5aa8ff',agents_models:'var(--role-accent-violet)',memory_knowledge:'#3ddc97',
+  interface_interactions:'var(--role-accent-amber)',connections:'#ff6fb5',advanced_diagnostics:'var(--role-accent-cyan)'};
 function settingsIcon(id){return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${SETTINGS_ICON[id]||SETTINGS_ICON.generic}</svg>`}
 /* Refus d'enregistrement de section (`register` du registre) : journalisés et montrés dans la catégorie visée. */
 const SETTINGS_REJECTED=[];
@@ -5598,6 +5679,7 @@ if(typeof window!=='undefined'&&typeof installMemorySettingsSections==='function
 if(typeof window!=='undefined'&&typeof SHORTCUTS_SECTION!=='undefined')registerSettingsSection(SHORTCUTS_SECTION);
 /* Connexions (Slice 07) : même garde. */
 if(typeof window!=='undefined'&&typeof CONNECTIONS_SECTION!=='undefined')registerSettingsSection(CONNECTIONS_SECTION);
+if(typeof window!=='undefined'&&typeof MCP_PLUGINS_SECTION!=='undefined')registerSettingsSection(MCP_PLUGINS_SECTION);
 /* Avancé › Prompts (Slice 08) : même garde. La Scène constellation s'enregistre depuis son module. */
 if(typeof window!=='undefined'&&typeof PROMPTS_SECTION!=='undefined')registerSettingsSection(PROMPTS_SECTION);
 
@@ -6077,7 +6159,7 @@ function draftFrom(data){
 async function openSettings(){
   const generation=++SET.openGeneration,opening=!SET.open;
   if(opening)settingsRememberOpener();
-  overlay.classList.add('open');SET.open=true;
+  settingsOverlayView('shell');overlay.classList.add('open');SET.open=true;
   // Sans modification en cours, relire : l'état de Voice (Solo Owner,
   // annulation d'écho) a pu changer depuis la dernière ouverture.
   if(!SET.data||!SET.dirty)modalContent.innerHTML='<div class="empty">Chargement…</div>';
@@ -6157,7 +6239,9 @@ function settingsFocusOut(){
   if(document.activeElement===document.body&&target!==document.getElementById('openSettings'))document.getElementById('openSettings').focus({preventScroll:true});
 }
 
-function closeSettings(){SET.routingPick={};++SET.openGeneration;++SET.cliGeneration;++SET.cliModelGeneration;++SET.routingGeneration;++SET.voiceGeneration;++SET.audioGeneration;++SET.diagnosticGeneration;SET.renderRevision=(SET.renderRevision||0)+1;SET.routingAdvancedOpen=false;cleanupSettingsSurface();const wasOpen=SET.open;overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel();if(wasOpen)settingsFocusOut()}
+/* Ce que montre l'overlay des Réglages : `hub` (six cartes) ou `shell` (une catégorie) ; `null` à la fermeture. */
+function settingsOverlayView(view){const data=overlay.dataset;if(!data)return;if(view)data.view=view;else delete data.view}
+function closeSettings(){SET.routingPick={};++SET.openGeneration;++SET.cliGeneration;++SET.cliModelGeneration;++SET.routingGeneration;++SET.voiceGeneration;++SET.audioGeneration;++SET.diagnosticGeneration;SET.renderRevision=(SET.renderRevision||0)+1;SET.routingAdvancedOpen=false;cleanupSettingsSurface();const wasOpen=SET.open;overlay.classList.remove('open','instant');settingsOverlayView(null);SET.open=false;if(SET.capture)SET.capture.cancel();if(wasOpen&&!SET.hubReturn)settingsFocusOut()}
 
 async function saveDraft(options){
   const silent=options&&options.silent;
@@ -6186,7 +6270,88 @@ async function saveDraft(options){
 
 modalSave.addEventListener('click',()=>saveDraft().catch(()=>{}));
 $('#closeModal').addEventListener('click',closeSettings);
-$('#openSettings').addEventListener('click',openSettings);
+$('#openSettings').addEventListener('click',()=>openSettingsHub({source:'button'}));
+
+/* --- Hub des Réglages (2026-10-23) -------------------------------------------------------------------------------
+   Premier niveau : six cartes dessinées depuis `JarvisSettingsRegistry.CATEGORIES` (aucune liste recopiée). Une carte
+   ouvre le shell existant sur sa catégorie (`openSettingsTab`) ; « Paramètres » dans la tête du shell y ramène. Le hub
+   ne charge aucun réglage : il ne touche ni à `SET.open`, ni au brouillon, ni à l'état de JARVIS derrière. Il est
+   ouvert par la roue (Paramètres), le bouton Réglages et le raccourci `ui_settings` ; une cible précise (lien interne,
+   « Réglages de la voix ») ouvre toujours directement le shell. */
+const HUB={closing:null};
+function settingsHubOpen(){return overlay.classList.contains('open')&&(overlay.dataset||{}).view==='hub'}
+const HUB_ARROW='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
+function renderSettingsHub(){
+  const R=window.JarvisSettingsRegistry;
+  if(!R){console.error('settings_registry_missing');return}
+  $('#settingsHubGrid').innerHTML=R.CATEGORIES.map((c,i)=>
+    `<button type="button" class="set-hub-card" data-hub-category="${esc(c.id)}" aria-describedby="settingsHubDesc-${esc(c.id)}" style="--hue:${SETTINGS_HUE[c.id]||'var(--accent)'};--i:${i}">`
+    +`<span class="set-hub-art" aria-hidden="true">${settingsIcon(c.id)}</span><span class="set-hub-icon" aria-hidden="true">${settingsIcon(c.id)}</span>`
+    +`<span class="set-hub-name">${esc(c.label)}</span><span class="set-hub-desc" id="settingsHubDesc-${esc(c.id)}">${esc(c.description)}</span>`
+    +`<span class="set-hub-go" aria-hidden="true">${HUB_ARROW}</span></button>`).join('');
+}
+function openSettingsHub(options){
+  if(SET.open)return;
+  clearTimeout(HUB.closing);HUB.closing=null;
+  const opening=!overlay.classList.contains('open');
+  if(options&&options.returnFocus)SET.openerHint=options.returnFocus;
+  if(opening)settingsRememberOpener();
+  overlay.classList.remove('closing');overlay.classList.toggle('instant',!!(options&&options.instant));
+  settingsOverlayView('hub');overlay.classList.add('open');
+  renderSettingsHub();
+  const first=document.querySelector('#settingsHubGrid .set-hub-card');
+  if(first)first.focus({preventScroll:true});
+  console.info('[settings] settings_hub.opened',{source:options&&options.source||null});
+}
+function closeSettingsHub(){
+  if(!settingsHubOpen()||HUB.closing)return;
+  const finish=()=>{HUB.closing=null;overlay.classList.remove('open','closing','instant');settingsOverlayView(null);settingsFocusOut()};
+  const still=typeof matchMedia==='function'&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(still){finish();return}
+  overlay.classList.add('closing');HUB.closing=setTimeout(finish,160);
+}
+/* Une carte : le shell s'ouvre sur sa catégorie, dans le même overlay (pas de fondu rejoué) ; le focus rendu à la
+   fermeture reste celui d'avant le hub. */
+function enterSettingsCategory(id){
+  const opener=SET.opener;SET.opener=null;
+  overlay.classList.add('instant');settingsOverlayView('shell');
+  console.info('[settings] settings_hub.category',{category:id});
+  return openSettingsTab(id,{returnFocus:opener});
+}
+/* « Paramètres » dans la tête du shell : retour au hub, sans fermer l'overlay ; le brouillon reste (`SET.dirty`). */
+function backToSettingsHub(){
+  const opener=SET.opener;
+  SET.hubReturn=true;
+  try{closeSettings()}finally{SET.hubReturn=false}
+  openSettingsHub({instant:true,returnFocus:opener});
+}
+$('#settingsHubGrid').addEventListener('click',event=>{
+  const card=event.target.closest('[data-hub-category]');
+  if(card)enterSettingsCategory(card.dataset.hubCategory);
+});
+$('#settingsHubClose').addEventListener('click',closeSettingsHub);
+$('#settingsBack').addEventListener('click',backToSettingsHub);
+/* Flèches entre les cartes (ordre de lecture) ; Échap ferme ; Tab reste dans le hub (aria-modal). */
+$('#settingsHub').addEventListener('keydown',event=>{
+  const cards=[...document.querySelectorAll('#settingsHubGrid .set-hub-card')];
+  const at=cards.indexOf(document.activeElement);
+  if(at>=0&&['ArrowRight','ArrowDown','ArrowLeft','ArrowUp'].includes(event.key)){
+    event.preventDefault();
+    const step=event.key==='ArrowRight'||event.key==='ArrowDown'?1:-1;
+    cards[(at+step+cards.length)%cards.length].focus();
+    return;
+  }
+  if(event.key==='Tab'){
+    const items=[$('#settingsHubClose'),...cards],first=items[0],last=items[items.length-1];
+    if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}
+    else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}
+  }
+});
+document.addEventListener('keydown',event=>{
+  if(event.key!=='Escape'||!settingsHubOpen())return;
+  event.preventDefault();event.stopPropagation();closeSettingsHub();
+},true);
+
 /* Pas de fermeture au clic extérieur (Slice 02) : le shell couvre toute la fenêtre, il n'y a plus d'« extérieur »,
    et un clic dans un vide du shell fermerait par accident une page en cours de réglage. Ferment : le bouton
    « Fermer », Échap, et le raccourci `ui_close`.
@@ -6283,8 +6448,10 @@ window.addEventListener('keydown',event=>{
   const match=Object.entries(values).find(([id,value])=>id.startsWith('ui_')&&value===signature);
   if(!match)return;
   const [id]=match;
-  if(id==='ui_settings'){event.preventDefault();if(!SET.open)openSettings();return}
-  if(id==='ui_close'){event.preventDefault();if(SET.open)closeSettings();else closePanel();return}
+  /* Hub des Réglages ouvert : modal, seuls ses propres raccourcis passent. */
+  if(settingsHubOpen()&&id!=='ui_settings'&&id!=='ui_close')return;
+  if(id==='ui_settings'){event.preventDefault();if(!SET.open&&!settingsHubOpen())openSettingsHub({source:'shortcut'});return}
+  if(id==='ui_close'){event.preventDefault();if(SET.open)closeSettings();else if(settingsHubOpen())closeSettingsHub();else closePanel();return}
   if(id==='ui_tab_next'||id==='ui_tab_prev'){
     if(!SET.open)return;
     event.preventDefault();

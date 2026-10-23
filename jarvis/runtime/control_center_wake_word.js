@@ -187,7 +187,7 @@
     };
     return {
       label:PROVIDER_LABEL[PROVIDER_PORCUPINE],
-      requires:['Une clé d’accès Picovoice (Réglages › Connexions).','Un mot intégré à la bibliothèque, par exemple « jarvis ».'],
+      requires:['Une clé d’accès Picovoice (Réglages › Plugins & MCP › Fournisseurs).','Un mot intégré à la bibliothèque, par exemple « jarvis ».'],
       license:null,
     };
   }
@@ -454,7 +454,7 @@
       open.addEventListener('click',()=>{if(mounted.form&&mounted.form.open)mounted.form.open('diagnostics',{focus:'#diagnostic_wake_word'})});
       const count=model.problems.length+model.ignored.length;
       section.append(node('div',{className:'notice info','data-ww-diagnostic-link':''},[
-        document.createTextNode(`Le réglage lu porte ${count} remarque${count>1?'s':''} (Avancé & diagnostic › Diagnostics). `),open]));
+        document.createTextNode(`Le réglage lu porte ${count} remarque${count>1?'s':''} (Avancé & Diagnostics › Diagnostics). `),open]));
     }
 
     /* Interrupteur. */

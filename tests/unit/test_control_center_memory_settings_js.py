@@ -97,7 +97,7 @@ out({{seen,html,calls:calls.length,fields:MEM.schema.sections.flatMap(s=>s.field
     assert "SECRET" not in every and "sk-" not in every
     # Le secret se règle dans Connexions (Slice 07 de jarvis-settings-ui-reorganization), par l'ID canonique.
     for section in ("semantic_retrieval", "knowledge_sources"):
-        assert 'data-mem-open="providers">Connexions</button>' in out["html"][section]
+        assert 'data-mem-open="providers">Plugins & MCP › Fournisseurs</button>' in out["html"][section]
     assert "Connaissances par agent" in out["html"]["knowledge_sources"]  # résumé des loadouts, lecture seule
     assert "Ouvrir le Memory Center" in out["html"]["center"]
     for section in SURFACE_SECTIONS:  # ligne d'état courte + lien profond, jamais le détail des étages

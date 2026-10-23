@@ -21,12 +21,12 @@ import json
 
 import pytest
 
-from tests.unit.test_wake_word_settings_browser import click, drive, eval_, got, key, served, type_in, wait  # noqa: F401
+from tests.unit.test_wake_word_settings_browser import click, drive, eval_, got, key, served, type_in, wait, open_settings  # noqa: F401
 
 SECTIONS = ["recall", "semantic_retrieval", "consolidation", "knowledge_sources", "memory_center"]
 OPEN = [
     wait("!!document.getElementById('openSettings')"),
-    click("#dockMore"), click("#openSettings"),
+    click("#dockMore"), *open_settings(),
     wait("!!document.getElementById('voiceSection_conversation')"),
     click("#settingsCategories [data-category=memory_knowledge]"),
     wait("!!document.querySelector('#memSection_recall [data-mem]')"),

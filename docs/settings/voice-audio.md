@@ -1,4 +1,4 @@
-# Réglages : Voix & audio et ses destinations
+# Réglages : Personnalisation et ses destinations
 
 **Statut :** contrat de surface (niveau 3 : métadonnées serveur + tests de conformité).
 **Introduit :** tâche `jarvis-settings-ui-reorganization`, Slice 03.
@@ -16,7 +16,7 @@
 
 ## 1. Ce que voit un utilisateur ordinaire
 
-`voice_audio` (Voix & audio) n'a plus d'onglet `Voix` ni de sous-onglets techniques : cinq sections orientées tâche.
+`voice_audio` (Personnalisation) n'a plus d'onglet `Voix` ni de sous-onglets techniques : cinq sections orientées tâche.
 
 | Section | Contenu |
 | --- | --- |
@@ -37,11 +37,11 @@
 - La ligne « Réglages de la voix » de la roue Jarvis ouvre la catégorie `voice_audio` (Conversation à la première
   ouverture). Les anciens ID `voice` et `wakeword` ne sont plus des alias depuis la Slice 09 (aucun appelant).
 
-## 2. Ce qui part dans Avancé & diagnostic
+## 2. Ce qui part dans Avancé & Diagnostics
 
 | Section | Contenu |
 | --- | --- |
-| `architecture_compat` · Architecture & compatibilité | architecture vocale (`simple`, `front_brain`, `duplex`) et ses invariants (délégation client, orchestration cerveau, deltas spéculatifs, effort), retour au cerveau Claude, pile et mode historiques, réglage fin VAD et du vérificateur de locuteur. Même pied « Enregistrer » que Voix & audio. |
+| `architecture_compat` · Architecture & compatibilité | architecture vocale (`simple`, `front_brain`, `duplex`) et ses invariants (délégation client, orchestration cerveau, deltas spéculatifs, effort), retour au cerveau Claude, pile et mode historiques, réglage fin VAD et du vérificateur de locuteur. Même pied « Enregistrer » que Personnalisation. |
 | `diagnostics` · Diagnostics | lecture seule, faite de parties (`registerSettingsDiagnostic`) : Voix (autorisation, vérificateur, worker, annulation d'écho, bascule de pile, catalogue/adaptateur, disponibilité, profil vocal) et Mot d'éveil (état du bloc lu, version illisible, clés ignorées, dernier événement du détecteur dans le journal, « Actualiser »). |
 
 La Slice 08 affine ces deux sections ; elle range ses autres diagnostics comme des parties de `diagnostics`.
@@ -50,7 +50,7 @@ La Slice 08 affine ces deux sections ; elle range ses autres diagnostics comme d
 
 Le raccourci réveiller / envoyer / interrompre est persisté par le registre des raccourcis : son éditeur est
 la section Raccourcis (`interface_interactions` › `shortcuts`, Slice 06 :
-[`interface-interactions.md`](interface-interactions.md)). Le lien pose le focus sur la touche `wake_toggle`. Voix & audio
+[`interface-interactions.md`](interface-interactions.md)). Le lien pose le focus sur la touche `wake_toggle`. Personnalisation
 en montre la touche effective en lecture seule et un lien « Modifier dans … » (`surface.context`).
 
 ## 4. Table de correspondance option → section

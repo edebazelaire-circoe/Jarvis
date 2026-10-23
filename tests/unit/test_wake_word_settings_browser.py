@@ -124,6 +124,18 @@ def click(selector: str) -> dict:
     return {"a": "click", "selector": selector}
 
 
+def open_settings() -> list:
+    """Le bouton Réglages ouvre le hub (2026-10-23) : la carte Personnalisation, puis sa section Conversation (ce que
+    le bouton ouvrait directement avant le hub)."""
+    return [click("#openSettings"),
+            wait("!!document.querySelector('#settingsHubGrid [data-hub-category=voice_audio]')"),
+            click("#settingsHubGrid [data-hub-category=voice_audio]"),
+            wait("!!document.querySelector('#modalTabs [data-section=conversation]')"),
+            # La porte des cibles (comme un lien interne) : le focus reste sur la catégorie, comme avant le hub.
+            eval_("(openSettingsTab('conversation'),0)"),
+            wait("!!document.getElementById('voiceSection_conversation')", 10000)]
+
+
 def key(name: str, shift: bool = False, ctrl: bool = False) -> dict:
     return {"a": "key", "key": name, "shift": shift, "ctrl": ctrl}
 
@@ -153,7 +165,7 @@ WAKE_ENTRY = "#modalTabs [data-section=wake_word]"
 OPEN = [
     wait("!!document.getElementById('openSettings')"),
     # Réglages est replié dans « Plus d’outils » depuis la Slice 04 de la refonte roue/dossier.
-    click("#dockMore"), click("#openSettings"),
+    click("#dockMore"), *open_settings(),
     # Réglages lus (la section Conversation ne se dessine qu'avec eux) : sans cela, `openSettings` remonte la section
     # du mot d'éveil quand `/api/settings` arrive, au milieu des actions du test (le cas est couvert à part, I3).
     wait("!!document.getElementById('voiceSection_conversation')"),
@@ -247,7 +259,8 @@ async def test_la_section_est_rendue_avec_ses_defauts_et_n_ecrit_rien(served, tm
     first, second = got(step, "first"), got(step, "second")
 
     # La section vient après les quatre sections Voix, dans Voix & audio ; plus d'onglet « Mot d'éveil » à part.
-    assert first["tabs"] == ["Conversation", "Voix & transcription", "Micro & son", "Tours & interruptions", TAB_LABEL], first["tabs"]
+    assert first["tabs"] == ["Thème & scène visuelle", "Comportement", "Conversation", "Voix & transcription", "Micro & son",
+                             "Tours & interruptions", TAB_LABEL], first["tabs"]
     assert first["activeTab"] == TAB_LABEL
     assert "Au prochain démarrage de Voice" in first["text"], "le moment d'application est dit"
 
@@ -592,7 +605,7 @@ async def test_une_lecture_en_echec_se_dit_et_se_reessaie(served, monkeypatch):
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         wait("!!document.getElementById('openSettings')"),
         # Réglages est replié dans « Plus d’outils » depuis la Slice 04 de la refonte roue/dossier.
-        click("#dockMore"), click("#openSettings"),
+        click("#dockMore"), *open_settings(),
         # Réglages lus d'abord : `openSettings` ne remonte pas la section au milieu du test (une seule lecture en panne).
         wait("!!document.getElementById('voiceSection_conversation')"),
         wait(f"!!document.querySelector('{WAKE_ENTRY}')"),
@@ -897,7 +910,7 @@ async def test_cliquer_l_onglet_pendant_l_ouverture_ne_fait_pas_clignoter_la_sec
         wait("!!document.getElementById('openSettings')"),
         eval_(slow_settings_stub()),
         # Réglages est replié dans « Plus d’outils » depuis la Slice 04 de la refonte roue/dossier.
-        click("#dockMore"), click("#openSettings"),
+        click("#dockMore"), *open_settings(),
         wait(f"!!document.querySelector('{WAKE_ENTRY}')"),
         wait("typeof window.__gate==='function'"),
         click(WAKE_ENTRY),

@@ -407,7 +407,7 @@
         +'ambiante est indisponible. Jarvis n’entend que ce qui lui est adressé.'}),
     refused:Object.freeze({line:'Refusé par la voix',tone:'bad',
       said:'PRESENTATION refusé : l’architecture vocale ne le porte pas (une session '
-        +'continue est requise, le Duplex est exclu). Changez-la dans Réglages › Avancé & diagnostic › Architecture & compatibilité.'}),
+        +'continue est requise, le Duplex est exclu). Changez-la dans Réglages › Avancé & Diagnostics › Architecture & compatibilité.'}),
     entry_failed:Object.freeze({line:'Entrée échouée',tone:'bad',
       said:'PRESENTATION n’a pas pu ouvrir le micro partagé : Jarvis reste adressable, '
         +'mais n’écoute pas la salle.'}),
