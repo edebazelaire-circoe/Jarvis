@@ -1,0 +1,245 @@
+{
+  "brain_id": "core",
+  "brain_type": "core",
+  "catalog": {
+    "reason": "",
+    "status": "ok"
+  },
+  "connections": {
+    "edit_on": "graph",
+    "graph_revision": "t-2dad261d3cf2ae34",
+    "incoming": [
+      {
+        "applies": "voice_restart",
+        "channel": "request",
+        "enabled": true,
+        "governed_by": null,
+        "id": "voice.delegate->core.request",
+        "locked_reason": "",
+        "mutability": "toggleable",
+        "peer": "voice",
+        "pending": null,
+        "purpose": "Tours cerveau : la voix confie la demande à Core (outils, sous-agents)"
+      }
+    ],
+    "outgoing": [
+      {
+        "applies": "live",
+        "channel": "speech",
+        "enabled": true,
+        "governed_by": null,
+        "id": "core.speech->voice.speech_in",
+        "locked_reason": "La parole de Core passe toujours par la surface vocale.",
+        "mutability": "required_locked",
+        "peer": "voice",
+        "pending": null,
+        "purpose": "Parole demandée par Core (rappels, résultats de travail)"
+      },
+      {
+        "applies": "core_restart",
+        "channel": "event",
+        "enabled": false,
+        "governed_by": null,
+        "id": "core.events->tool_brain.wake",
+        "locked_reason": "",
+        "mutability": "toggleable",
+        "peer": "tool_brain",
+        "pending": null,
+        "purpose": "Réveils du Tool Brain : tours, intentions d'interface, parole, changements d'écran"
+      },
+      {
+        "applies": null,
+        "channel": "tool_call",
+        "enabled": true,
+        "governed_by": {
+          "field": "delegation",
+          "kind": "brain_config",
+          "node": "core"
+        },
+        "id": "core.agents->subagents.spawn",
+        "locked_reason": "",
+        "mutability": "governed",
+        "peer": "subagents",
+        "pending": null,
+        "purpose": "Lancement de sous-agents (outil Agent) pour les rôles du registre"
+      }
+    ]
+  },
+  "fields": {
+    "activation": {
+      "applies": null,
+      "editable": false,
+      "owner": null,
+      "reason": "Core porte la conversation, le travail et la mémoire.",
+      "value": "active"
+    },
+    "delegation": {
+      "applies": "core_restart",
+      "choices": [
+        {
+          "description": "Le cerveau ne lance aucun sous-agent : l'outil lui est retiré.",
+          "label": "Jamais",
+          "value": "never"
+        },
+        {
+          "description": "Seulement pour un travail clairement long ou en plusieurs étapes.",
+          "label": "Rare",
+          "value": "rare"
+        },
+        {
+          "description": "Comportement actuel : tout travail de plus de quelques secondes part en sous-agent ; dans le doute, il délègue.",
+          "label": "Standard",
+          "value": "standard"
+        },
+        {
+          "description": "Délègue dès qu'une demande dépasse une réponse immédiate.",
+          "label": "Proactive",
+          "value": "proactive"
+        },
+        {
+          "description": "Délègue largement et répartit en parallèle les parties indépendantes d'un travail.",
+          "label": "Exploratoire",
+          "value": "exploratory"
+        }
+      ],
+      "editable": true,
+      "enforcement": [
+        {
+          "applies": "live",
+          "detail": "Le hook refuse tout appel Agent du cerveau dès l'appel suivant (fichier relu à chaque appel).",
+          "mechanism": "routing_hook"
+        },
+        {
+          "applies": "core_restart",
+          "detail": "L'outil Agent est retiré au lancement du CLI cerveau ; un job Back Brain le relit à chaque job.",
+          "mechanism": "cli_disallowed_tools"
+        },
+        {
+          "applies": "core_restart",
+          "detail": "La consigne du niveau entre dans le prompt d'une conversation neuve ; une conversation reprise garde le sien.",
+          "mechanism": "brain_prompt"
+        }
+      ],
+      "launched": null,
+      "owner": "brain_config.core.delegation",
+      "pending_relaunch": false,
+      "reason": "",
+      "store_revision": "bc-0",
+      "stored_invalid": null,
+      "value": "standard"
+    },
+    "instructions": {
+      "applies": "core_restart",
+      "default_revision": "<default_revision>",
+      "editable": true,
+      "effective_revision": "<effective_revision>",
+      "max_length": 8192,
+      "owner": "prompt_overrides.backend.system.addition",
+      "prompt_id": "backend.system.addition",
+      "reason": "",
+      "value": ""
+    },
+    "mission": {
+      "applies": null,
+      "editable": false,
+      "owner": "code:brain_config.BRAIN_MISSIONS",
+      "reason": "Responsabilités décrites par le code ; aucune mission de cerveau n'est enregistrée aujourd'hui.",
+      "value": "Cerveau Core : aiguille chaque demande, répond lui-même quand c'est immédiat, lance les sous-agents pour le travail, tient les Boards, la mémoire et les outils, et fait dire les résultats par la voix."
+    },
+    "model": {
+      "applies": "core_restart",
+      "choices": [
+        {
+          "agent_id": "claude",
+          "available": true,
+          "label": "Modèle par défaut du CLI",
+          "provider_id": "anthropic",
+          "reason": "",
+          "reason_code": "",
+          "state": "usable",
+          "value": ""
+        },
+        {
+          "agent_id": "claude",
+          "available": true,
+          "label": "claude · claude-opus-5-5",
+          "provider_id": "anthropic",
+          "reason": "",
+          "reason_code": "",
+          "state": "usable",
+          "value": "claude-opus-5-5"
+        },
+        {
+          "agent_id": "claude",
+          "available": true,
+          "label": "claude · claude-haiku-5",
+          "provider_id": "anthropic",
+          "reason": "",
+          "reason_code": "",
+          "state": "usable",
+          "value": "claude-haiku-5"
+        },
+        {
+          "agent_id": "claude",
+          "available": false,
+          "label": "claude · claude-retired-1",
+          "provider_id": "anthropic",
+          "reason": "Modèle retiré par le fournisseur.",
+          "reason_code": "catalog_x",
+          "state": "unavailable",
+          "value": "claude-retired-1"
+        }
+      ],
+      "editable": true,
+      "owner": "agent_cli_settings.claude.model",
+      "reason": "Vide : le CLI garde son modèle par défaut. Relu au lancement du CLI cerveau.",
+      "value": "claude-opus-5-5"
+    },
+    "provider": {
+      "applies": "core_restart",
+      "choices": [
+        {
+          "available": true,
+          "label": "Claude Code",
+          "reason": "",
+          "value": "claude"
+        },
+        {
+          "available": false,
+          "label": "Codex CLI",
+          "reason": "CLI Codex introuvable.",
+          "value": "codex"
+        }
+      ],
+      "editable": true,
+      "owner": "agent_cli",
+      "reason": "Le CLI cerveau relit ce choix à son lancement (Back Brain : au démarrage de Core).",
+      "value": "claude"
+    }
+  },
+  "label": "Core Brain",
+  "out_of_scope": {
+    "cli_technical": "Commande, chemin et autorisations du CLI : Avancé › CLI.",
+    "personality": "Ton, politesse, longueur et humour : page Personnalisation, pas la fenêtre du cerveau.",
+    "subagent_models": "Le modèle de chaque rôle de sous-agent se règle dans l'onglet Sous-agents."
+  },
+  "process": "core",
+  "revision": "c-15d1d0af96ae621e",
+  "schema_version": 1,
+  "state": {
+    "reason": "",
+    "state": "active"
+  },
+  "store": {
+    "code": "",
+    "reason": "",
+    "status": "ok"
+  },
+  "system": true,
+  "voice_architecture": {
+    "id": "duplex",
+    "label": "Duplex",
+    "settings_target": "architecture_compat",
+    "source": "settings"
+  }
+}
