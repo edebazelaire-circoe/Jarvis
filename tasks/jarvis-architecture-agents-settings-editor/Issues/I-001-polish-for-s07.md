@@ -14,3 +14,9 @@ Issus des QA indépendantes des Slices 01 et 03, acceptés non bloquants.
 - S03 Fournisseur de candidats du handler de rôles : brancher sur le calcul de `/api/routing/candidates`.
 - S06 Harnais navigateur dupliqué (`_subagent_settings_browser.mjs` copie de `_architecture_settings_browser.mjs`) : n'en garder qu'un.
 - S06 Sélecteurs anciens (réinitialisation, promotion) sans `CSS.escape`.
+- S05 Montage dans le shell : `destroy()` de la fenêtre au démontage de la section (couche `position:fixed`) ;
+  Échap du hub en capture (`control_center.html:~6349`) ne doit pas fermer les Réglages avant la fenêtre ;
+  pièges de Tab du shell (`:~6362`) et de la fenêtre sans conflit ; placement initial qui ne couvre pas le
+  nœud configuré.
+- S05/S04 Ids : le fixture UI du canevas nomme le Tool Brain `tool` ; le runtime dit `tool_brain` — vérifier en
+  live et aligner le fixture UI sur le fixture runtime.
