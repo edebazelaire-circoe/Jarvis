@@ -4369,6 +4369,16 @@ Each decision is journalled as `agent.routing.decided` with the profile, every
 candidate's verdict code, the requested model and the resolved one — enough to
 explain a wrong choice, and nothing resembling reasoning.
 
+**Role layer** (`jarvis/domain/role_routing.py`, `jarvis/runtime/subagent_role_routing.py`; contract in
+[subagent-roles.md](subagent-roles.md) § 10). When the description announces a known role (`[code] [qa]`,
+`[coder]`), the hook resolves that role: its explicit ordered candidate list (stored in
+`<runtime>/subagent-role-routing.json`, revisioned, one writer) with the same `allow_general_fallback`
+semantics, otherwise the profile policy it inherits — the announced profile, else the role's
+`default_profile`. Migration writes nothing: every role inherits until the user sets it, and the profile
+policy stays the compatibility source of truth. An explicit role policy binds whatever the Auto/Dupliqué
+switch (`agent_routing.enabled`) says; inherited roles keep the profile behaviour, so they bind only in Auto.
+Decisions then also carry `role_id` and `provenance` (`explicit` | `inherited:<profile>`).
+
 ## Self-development: two planes
 
 Jarvis can change its own code, never where it runs.
