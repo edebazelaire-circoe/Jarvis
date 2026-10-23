@@ -48,5 +48,5 @@ Before dispatch, PM must ensure the related task `jarvis-settings-ui-reorganizat
 - [x] 04 - approuvée après QA + rework (191cf17d, fix f9019300), fusion 0e70613e.
 - [x] 05 - approuvée après QA (00c923ee, 7df94c51, fix a296998f), fusion a353bed7.
 - [x] 06 - approuvée après QA + rework (4dd2b4d6, fix 2340748b), fusion de la branche s06.
-- [ ] 07 - en cours (worktree arch-s07).
-- [ ] 08 - après 07.
+- [x] 07 - approuvée après QA + fix agent 0 (e6ad6dbb, 2fee4777, 090429f9, 05c9202b, fix 5b786031), fusion 9546f869. Points non bloquants : Issues/I-002.
+- [ ] 08 - en cours (worktree arch-s08).

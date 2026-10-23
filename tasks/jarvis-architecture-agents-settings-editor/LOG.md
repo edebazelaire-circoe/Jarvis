@@ -23,3 +23,5 @@
 - I-001 : sort de chaque point consigné dans `Issues/I-001-polish-for-s07.md` (S01-1, S01-3, S01-4 reportés en S08).
 - Preuves en bac à sable (ports 27653/27654) : `slices/07-settings-integration-and-legacy-migration/EVIDENCE.md`.
 - Note de remplacement écrite dans `tasks/jarvis-settings-ui-reorganization/LOG.md`.
+
+- 2026-10-23 : S07 livrée, QA REWORK léger (un test périmé, corrigé par agent 0 en 5b786031), fusionnée (9546f869) ; 152 tests ciblés verts après fusion. Pas de dérive de main (local ad1e7f4d). S08 lancée dans arch-s08.
