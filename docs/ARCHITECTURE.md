@@ -4355,6 +4355,14 @@ against the saved policy and rewrites `model` (`updatedInput`) when the model
 the brain asked for is not allowed. This is the only point in the system where
 an allowlist can actually bind.
 
+The `Agent` tool's `model` parameter only accepts a model **family**
+(`sonnet` | `opus` | `haiku` | `fable`, Claude Code 2.1.309): a catalog id such
+as `claude-haiku-4-5` written there fails the tool's schema and the sub-agent
+never starts. The hook therefore writes `routing_hook.agent_tool_model(model)`
+(the family of a Claude id, any other value unchanged) and the trace carries both
+the chosen catalog id (`model`) and what the tool received (`agent_model`); the
+CLI resolves the family to its current version of that family.
+
 | Piece | File | Holds |
 | --- | --- | --- |
 | Contracts | `jarvis/domain/routing.py` | profiles, policy, candidates, decision, refusal codes. No I/O, no provider, no model id |
