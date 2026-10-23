@@ -1,0 +1,341 @@
+{
+  "schema_version": 1,
+  "revision": "t-2dad261d3cf2ae34",
+  "voice_architecture": {
+    "id": "duplex",
+    "label": "Duplex",
+    "settings_target": "architecture_compat",
+    "source": "settings"
+  },
+  "nodes": [
+    {
+      "id": "mic",
+      "kind": "endpoint",
+      "label": "Micro",
+      "endpoint_type": "audio_input",
+      "process": "voice",
+      "system": true,
+      "state": "active",
+      "state_reason": "",
+      "activation": {
+        "mutable": false,
+        "reason": "Entrée audio de la surface vocale."
+      },
+      "configurable": false,
+      "ports": [
+        {
+          "id": "audio_out",
+          "direction": "out",
+          "channel": "audio",
+          "family": "audio"
+        }
+      ]
+    },
+    {
+      "id": "voice",
+      "kind": "brain",
+      "label": "Voice Brain",
+      "brain_type": "voice_surface",
+      "process": "voice",
+      "system": true,
+      "state": "active",
+      "state_reason": "",
+      "activation": {
+        "mutable": false,
+        "reason": "La surface vocale porte l'audio."
+      },
+      "configurable": true,
+      "ports": [
+        {
+          "id": "audio_in",
+          "direction": "in",
+          "channel": "audio",
+          "family": "audio"
+        },
+        {
+          "id": "audio_out",
+          "direction": "out",
+          "channel": "audio",
+          "family": "audio"
+        },
+        {
+          "id": "speech_in",
+          "direction": "in",
+          "channel": "speech",
+          "family": "speech"
+        },
+        {
+          "id": "delegate",
+          "direction": "out",
+          "channel": "request",
+          "family": "brain_request"
+        }
+      ],
+      "details": {
+        "surface": "live",
+        "surface_label": "GPT-Live",
+        "model": "gpt-live-1",
+        "stack": "openai_realtime"
+      }
+    },
+    {
+      "id": "core",
+      "kind": "brain",
+      "label": "Core Brain",
+      "brain_type": "core",
+      "process": "core",
+      "system": true,
+      "state": "active",
+      "state_reason": "",
+      "activation": {
+        "mutable": false,
+        "reason": "Core porte la conversation, le travail et la mémoire."
+      },
+      "configurable": true,
+      "ports": [
+        {
+          "id": "request",
+          "direction": "in",
+          "channel": "request",
+          "family": "brain_request"
+        },
+        {
+          "id": "job",
+          "direction": "in",
+          "channel": "tool_call",
+          "family": "brain_job"
+        },
+        {
+          "id": "speech",
+          "direction": "out",
+          "channel": "speech",
+          "family": "speech"
+        },
+        {
+          "id": "events",
+          "direction": "out",
+          "channel": "event",
+          "family": "tool_brain_wake"
+        },
+        {
+          "id": "agents",
+          "direction": "out",
+          "channel": "tool_call",
+          "family": "subagent_spawn"
+        }
+      ]
+    },
+    {
+      "id": "tool_brain",
+      "kind": "brain",
+      "label": "Tool Brain",
+      "brain_type": "tool_brain",
+      "process": "core",
+      "system": false,
+      "state": "inactive",
+      "state_reason": "Tool Brain coupé : Jarvis garde seul la main sur l'écran.",
+      "activation": {
+        "mutable": true,
+        "reason": "Mode lu au démarrage de Core."
+      },
+      "configurable": true,
+      "ports": [
+        {
+          "id": "wake",
+          "direction": "in",
+          "channel": "event",
+          "family": "tool_brain_wake"
+        }
+      ],
+      "details": {
+        "mode": "off",
+        "persisted_mode": "off",
+        "mode_source": "default",
+        "modes": [
+          "off",
+          "shadow",
+          "active"
+        ],
+        "ownership": "jarvis_direct",
+        "ownership_reason": "no_publication"
+      }
+    },
+    {
+      "id": "subagents",
+      "kind": "pool",
+      "label": "Sous-agents",
+      "process": "cli",
+      "system": true,
+      "state": "active",
+      "state_reason": "Lancés à la demande (outil Agent) ; rôle résolu par le registre des sous-agents.",
+      "activation": {
+        "mutable": false,
+        "reason": "Lancés à la demande par le cerveau ; rôles et modèles dans l'onglet Sous-agents."
+      },
+      "configurable": false,
+      "ports": [
+        {
+          "id": "spawn",
+          "direction": "in",
+          "channel": "tool_call",
+          "family": "subagent_spawn"
+        }
+      ]
+    },
+    {
+      "id": "speakers",
+      "kind": "endpoint",
+      "label": "Haut-parleurs",
+      "endpoint_type": "audio_output",
+      "process": "voice",
+      "system": true,
+      "state": "active",
+      "state_reason": "",
+      "activation": {
+        "mutable": false,
+        "reason": "Sortie audio de la surface vocale."
+      },
+      "configurable": false,
+      "ports": [
+        {
+          "id": "audio_in",
+          "direction": "in",
+          "channel": "audio",
+          "family": "audio"
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "mic.audio_out->voice.audio_in",
+      "source": {
+        "node": "mic",
+        "port": "audio_out"
+      },
+      "target": {
+        "node": "voice",
+        "port": "audio_in"
+      },
+      "channel": "audio",
+      "purpose": "Audio du micro vers la surface vocale",
+      "enabled": true,
+      "mutability": "required_locked",
+      "locked_reason": "La surface vocale ne fonctionne pas sans micro.",
+      "impact_when_disabled": "",
+      "applies": "voice_restart",
+      "pending": null,
+      "governed_by": null,
+      "binding": "fixed:voice.capture"
+    },
+    {
+      "id": "voice.audio_out->speakers.audio_in",
+      "source": {
+        "node": "voice",
+        "port": "audio_out"
+      },
+      "target": {
+        "node": "speakers",
+        "port": "audio_in"
+      },
+      "channel": "audio",
+      "purpose": "Voix de JARVIS vers les haut-parleurs",
+      "enabled": true,
+      "mutability": "required_locked",
+      "locked_reason": "La surface vocale dit les réponses ; il n'y a pas de synthèse séparée.",
+      "impact_when_disabled": "",
+      "applies": "voice_restart",
+      "pending": null,
+      "governed_by": null,
+      "binding": "fixed:voice.playback"
+    },
+    {
+      "id": "voice.delegate->core.request",
+      "source": {
+        "node": "voice",
+        "port": "delegate"
+      },
+      "target": {
+        "node": "core",
+        "port": "request"
+      },
+      "channel": "request",
+      "purpose": "Tours cerveau : la voix confie la demande à Core (outils, sous-agents)",
+      "enabled": true,
+      "mutability": "toggleable",
+      "locked_reason": "",
+      "impact_when_disabled": "La voix répond seule ; une demande d'action retombe sur l'analyse spéculative de Core, sans outils ni sous-agents.",
+      "applies": "voice_restart",
+      "pending": null,
+      "governed_by": null,
+      "binding": "voice_architecture.config.brain_orchestration"
+    },
+    {
+      "id": "core.speech->voice.speech_in",
+      "source": {
+        "node": "core",
+        "port": "speech"
+      },
+      "target": {
+        "node": "voice",
+        "port": "speech_in"
+      },
+      "channel": "speech",
+      "purpose": "Parole demandée par Core (rappels, résultats de travail)",
+      "enabled": true,
+      "mutability": "required_locked",
+      "locked_reason": "La parole de Core passe toujours par la surface vocale.",
+      "impact_when_disabled": "",
+      "applies": "live",
+      "pending": null,
+      "governed_by": null,
+      "binding": "fixed:brain.speech.requested"
+    },
+    {
+      "id": "core.events->tool_brain.wake",
+      "source": {
+        "node": "core",
+        "port": "events"
+      },
+      "target": {
+        "node": "tool_brain",
+        "port": "wake"
+      },
+      "channel": "event",
+      "purpose": "Réveils du Tool Brain : tours, intentions d'interface, parole, changements d'écran",
+      "enabled": false,
+      "mutability": "toggleable",
+      "locked_reason": "",
+      "impact_when_disabled": "Le Tool Brain ne se réveille plus ; Jarvis garde seul la main sur l'écran.",
+      "applies": "core_restart",
+      "pending": null,
+      "governed_by": null,
+      "binding": "tool_brain.mode"
+    },
+    {
+      "id": "core.agents->subagents.spawn",
+      "source": {
+        "node": "core",
+        "port": "agents"
+      },
+      "target": {
+        "node": "subagents",
+        "port": "spawn"
+      },
+      "channel": "tool_call",
+      "purpose": "Lancement de sous-agents (outil Agent) pour les rôles du registre",
+      "enabled": true,
+      "mutability": "governed",
+      "locked_reason": "",
+      "impact_when_disabled": "Gouvernée par la tendance de délégation du cerveau Core (fenêtre du cerveau).",
+      "applies": null,
+      "pending": null,
+      "governed_by": {
+        "kind": "brain_config",
+        "node": "core",
+        "field": "delegation"
+      },
+      "binding": "brain_config.core.delegation"
+    }
+  ]
+}

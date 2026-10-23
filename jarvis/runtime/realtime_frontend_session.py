@@ -68,6 +68,9 @@ class RealtimeFrontendSession:
         model = str(settings["model"])
         mode = settings.pop("architecture_config", None) or SimpleVoiceConfig(VoiceModelRef("openai", model))
         conversational = bool(settings.pop("conversational", False))
+        # Liaison Surface -> Core du graphe d'architecture (`docs/architecture-graph.md`) : coupée, la surface
+        # n'offre plus `back_brain_delegate` et aucun contrôleur ne peut soumettre de travail à Core.
+        delegation = bool(settings.pop("back_brain_delegation", True)) or not conversational
         prompt_overrides = settings.pop("prompt_overrides", None)
         if conversational and "voice_ledger" not in context:
             # Legacy history can contain intended partial assistant text. Until
@@ -86,6 +89,14 @@ class RealtimeFrontendSession:
         resolved_tools = json.loads(prompt_channel(resolution, "session.tools"))
         if not isinstance(resolved_tools, list):
             raise ValueError("resolved Realtime tools must be a list")
+        evidence = prompt_evidence(resolution, application="acknowledged", channel="session.instructions")
+        voice_alone_evidence = None
+        if not delegation:
+            from jarvis.runtime.back_brain_delegation import VOICE_ALONE_RULE, VOICE_ALONE_RULE_ID, without_delegation
+            resolved_tools = without_delegation(resolved_tools)
+            instructions = instructions + "\n" + VOICE_ALONE_RULE
+            # La consigne ajoutée est déclarée dans les preuves, à côté de celle du catalogue.
+            voice_alone_evidence = {**evidence, "prompt_ids": [VOICE_ALONE_RULE_ID], "layer_revisions": [VOICE_ALONE_RULE_ID]}
         settings["tools"] = resolved_tools
         from jarvis.runtime.conversation_context import selected_voice_context
         from jarvis.domain.voice_frontend import VoiceContext
@@ -102,9 +113,11 @@ class RealtimeFrontendSession:
         facade = cls(
             frontend,
             str(uuid.uuid4()),
-            prompt_evidence=prompt_evidence(resolution, application="acknowledged", channel="session.instructions"),
+            prompt_evidence=evidence,
         )
-        if conversational:
+        if voice_alone_evidence is not None:
+            facade.prompt_applications.append(voice_alone_evidence)
+        if conversational and delegation:
             from jarvis.runtime.back_brain_delegation import BackBrainDelegationController
             facade._back_brain = BackBrainDelegationController(facade)
         result = await frontend.start(config, operation=facade._operation())

@@ -1227,6 +1227,7 @@ async def _run_voice_v2() -> int:
                 tools=surface_tools,
                 continuous_brain=continuous_capture,
                 conversational=direct_conversation,
+                back_brain_delegation=composition.back_brain_delegation,
                 architecture_config=composition.selection.config if direct_conversation else None,
                 prompt_overrides=prompt_overrides,
                 auto_turn=auto_turn,

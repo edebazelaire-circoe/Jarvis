@@ -16,6 +16,10 @@ Sources de réveil (chacune s'ajoute au tick de sûreté, jamais à sa place) :
 `active` (S6 : file d'actions + exécuteur ; la seule valeur qui permet au Tool Brain de modifier l'écran). Toute autre
 valeur est `off`. S8 : ce même réglage décide **qui possède l'écran** (`tool_brain_ownership` : matrice §16) ; l'arbitre
 de propriété et la garde des actions irréversibles sont construits ici et ne se lisent que par ce réglage.
+
+Réglage persistant (graphe d'architecture, `docs/architecture-graph.md`) : le bloc `tool_brain.mode` de
+`control-center-settings.json` porte le même choix quand `JARVIS_TOOL_BRAIN` n'est pas posée. Une variable posée
+(non vide) garde la priorité ; dans les deux cas le mode n'est lu qu'au démarrage de Core (`resolve_mode`).
 """
 
 from __future__ import annotations
@@ -37,6 +41,9 @@ from jarvis.runtime.tool_brain_queue import ToolBrainActionQueue
 from jarvis.runtime.tool_brain_runtime import ToolBrainConfig, ToolBrainMode, ToolBrainRuntime, WakeClass
 
 TOOL_BRAIN_MODE_ENV = "JARVIS_TOOL_BRAIN"
+#: Bloc persistant de `control-center-settings.json` : `{"mode": "off" | "shadow" | "active"}`.
+TOOL_BRAIN_SETTING = "tool_brain"
+TOOL_BRAIN_MODES = ("off", "shadow", "active")
 TOOL_BRAIN_TICK_ENV = "JARVIS_TOOL_BRAIN_TICK_S"
 
 #: Fait de conversation -> (classe de réveil, urgent). Les faits non listés ne réveillent pas.
@@ -66,6 +73,30 @@ def mode_from_env(environ: Mapping[str, str] | None = None) -> ToolBrainMode:
     env = os.environ if environ is None else environ
     raw = str(env.get(TOOL_BRAIN_MODE_ENV, "") or "").strip().lower()
     return {"shadow": ToolBrainMode.SHADOW, "active": ToolBrainMode.ACTIVE}.get(raw, ToolBrainMode.OFF)
+
+
+def settings_mode(settings: Mapping[str, object] | None) -> ToolBrainMode | None:
+    """Mode persisté dans le bloc `tool_brain`, ou `None` s'il n'y en a pas. Une valeur inconnue est `off`."""
+
+    block = (settings or {}).get(TOOL_BRAIN_SETTING)
+    if not isinstance(block, Mapping) or "mode" not in block:
+        return None
+    raw = str(block.get("mode") or "").strip().lower()
+    return {"shadow": ToolBrainMode.SHADOW, "active": ToolBrainMode.ACTIVE}.get(raw, ToolBrainMode.OFF)
+
+
+def resolve_mode(settings: Mapping[str, object] | None,
+                 environ: Mapping[str, str] | None = None) -> tuple[ToolBrainMode, str]:
+    """Mode effectif au démarrage de Core et sa provenance : `env` (variable posée, prioritaire), `settings`
+    (bloc `tool_brain`) ou `default` (`off`)."""
+
+    env = os.environ if environ is None else environ
+    if str(env.get(TOOL_BRAIN_MODE_ENV, "") or "").strip():
+        return mode_from_env(env), "env"
+    saved = settings_mode(settings)
+    if saved is not None:
+        return saved, "settings"
+    return ToolBrainMode.OFF, "default"
 
 
 def wake_from_event(runtime: ToolBrainRuntime, event: ConversationEvent) -> bool:
@@ -158,7 +189,8 @@ class ToolBrainWakeSources:
 def build_tool_brain(core: Any, *, control_settings: Callable[[], Mapping[str, object]], cwd: Any, runtime_root: Any,
                      diagnostics: Any = None, environ: Mapping[str, str] | None = None
                      ) -> tuple[ToolBrainRuntime, ToolBrainWakeSources] | None:
-    """Construit le Tool Brain autour de Core, ou `None` quand `JARVIS_TOOL_BRAIN` n'est ni `shadow` ni `active`.
+    """Construit le Tool Brain autour de Core, ou `None` quand le mode résolu (`resolve_mode` : variable, puis bloc
+    `tool_brain` des réglages) n'est ni `shadow` ni `active`.
 
     `shadow` : les services de Core ne sont lus que par `read_ui_state`, aucun exécuteur. `active` : une file et un
     exécuteur (scène : `SceneService.apply_if`, Boards : `BoardService.switch(origin="brain")`) ; la porte de
@@ -166,7 +198,7 @@ def build_tool_brain(core: Any, *, control_settings: Callable[[], Mapping[str, o
     """
 
     env = os.environ if environ is None else environ
-    mode = mode_from_env(env)
+    mode, _source = resolve_mode(control_settings(), env)
     if mode is ToolBrainMode.OFF:
         return None
     tick = ToolBrainConfig().tick_interval_s
@@ -211,5 +243,6 @@ def build_tool_brain(core: Any, *, control_settings: Callable[[], Mapping[str, o
     return runtime, sources
 
 
-__all__ = ["EVENT_WAKES", "TOOL_BRAIN_MODE_ENV", "ToolBrainWakeSources", "build_tool_brain", "mode_from_env",
+__all__ = ["EVENT_WAKES", "TOOL_BRAIN_MODE_ENV", "TOOL_BRAIN_SETTING", "ToolBrainWakeSources", "build_tool_brain",
+           "mode_from_env", "resolve_mode", "settings_mode",
            "wake_from_event"]
