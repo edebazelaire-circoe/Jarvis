@@ -7,10 +7,10 @@
 
 | Document | Contenu |
 | --- | --- |
-| [`navigation-registry.md`](navigation-registry.md) | six catégories figées, registre des sections, groupes d'Avancé, seule table d'alias (`memory`) |
+| [`navigation-registry.md`](navigation-registry.md) | six catégories figées, registre des sections, groupes d'Avancé, seule table d'alias (`memory`, `main_agent`, `subagent_models`) |
 | [`settings-shell.md`](settings-shell.md) | shell plein écran : rail, entrées, focus, Échap, piège de Tab, montage et destruction des sections, liens internes, primitives et aides de focus (`keepFocus`, `landFocus`) |
 | [`voice-audio.md`](voice-audio.md) | Personnalisation : sections, destination de chaque option (`surface` servie) |
-| [`agents-models.md`](agents-models.md) | Brains & Architecture, Runtime & CLI et Work Methods apprises sous Avancé |
+| [`architecture-agents.md`](architecture-agents.md) | Architecture & Agents (deux onglets : Architecture, Sous-agents), montage serveur, destinations ; Runtime & CLI et Work Methods apprises sous Avancé (remplace `agents-models.md`) |
 | [`memory.md`](memory.md) | Mémoire & Connaissances : schéma, précédence env/fichier/défaut, destination de chaque champ |
 | [`interface-interactions.md`](interface-interactions.md) | Thème & scène, Raccourcis (seul éditeur), Bare Hands ; Bare Hands · essais sous Avancé |
 | [`architecture-tab.md`](architecture-tab.md) | onglet Architecture d'Architecture & Agents : montage, adaptateur, événement `architecture:configure-brain`, écarts au contrat du graphe |
@@ -21,13 +21,14 @@
 
 Régression navigateur des Réglages (vrai Chrome, `tests/unit/`) : `test_settings_shell_browser.py`,
 `test_settings_accessibility_browser.py`, `test_settings_message_destinations_browser.py`,
-`test_agents_models_settings_browser.py`, `test_memory_settings_browser.py`, `test_interface_settings_browser.py`,
+`test_architecture_agents_settings_browser.py`, `test_memory_settings_browser.py`, `test_interface_settings_browser.py`,
 `test_connections_settings_browser.py`, `test_advanced_settings_browser.py`, `test_wake_word_settings_browser.py`,
 `test_jarvis_wheel_browser.py`. Recette humaine : `tasks/jarvis-settings-ui-reorganization/HUMAN-CHECKS.md`.
 
 
 > **Settings navigation (canonical):** the six top-level categories, the section
-> registration contract and the remaining legacy tab alias (`memory`, Slice 09) live in
+> registration contract and the remaining legacy tab aliases (`memory`, Slice 09; `main_agent`, `subagent_models`,
+> jarvis-architecture-agents-settings-editor Slice 07) live in
 > [`navigation-registry.md`](navigation-registry.md)
 > (`jarvis/runtime/control_center_settings_registry.js`,
 > `window.JarvisSettingsRegistry`). New Settings features register a section
@@ -44,18 +45,19 @@ Régression navigateur des Réglages (vrai Chrome, `tests/unit/`) : `test_settin
 | `jarvis/runtime/prompt_runtime.py` | One bounded Agent-turn composition for ask, direct send and owned jobs | `compose_agent_turn` |
 | `jarvis/runtime/memory_settings.py` | Memory settings (`memory` key): tolerant read, strict whole-request write, server-described schema with one settings destination per field (`surface`), `has_secret` only; see [`memory.md`](memory.md) | `read_memory_settings`, `validate_memory_settings_write`, `describe_memory_settings`, `read_loadout_policy` (`memory.loadouts`, Slice 09), `SURFACE_SECTIONS` |
 | `jarvis/runtime/control_center_memory_settings.js` + `control_center.html` (`MEMORY_SECTIONS`, `MEMORY_DIAGNOSTIC`) | Mémoire & Connaissances: Rappel, Recherche sémantique, Consolidation, Sources de connaissances (Tencent sidecar, read-only per-agent loadouts), Centre mémoire; the Memory part of Advanced › Diagnostics; fields placed by their server `surface`, own save button, unchanged memory patch, draft shared by the memory sections for one opening; see [`memory.md`](memory.md) | `JarvisMemorySettings.create(host, {section\|mode, store})`, `createStore`, `memorySectionSpec`, `installMemorySettingsSections` |
-| `jarvis/runtime/control_center_subagents_settings.js` | Sub-agent settings, two views: `roles` (section `agents_models` › `subagents`: role catalogue, role sheet, read-only Work Methods, order of the appended brief, running instances; writes role instructions through `POST /api/prompts/subagent_role.<id>`) and `work_methods` (section `advanced_diagnostics` › `work_methods`: observed approaches and explicit promotion); see [`../subagent-roles.md`](../subagent-roles.md) § 8 | `JarvisSubagentSettings.create(host, {view})`, `show` |
-| `jarvis/runtime/control_center_architecture_settings.js` | Architecture tab (not mounted until Slice 07 of `jarvis-architecture-agents-settings-editor`): 2D graph projected from the runtime snapshot, link inspector and toggle/create/remove through an injected adapter, layout-only drag, brain context menu; see [`architecture-tab.md`](architecture-tab.md) | `JarvisArchitectureSettings.mount(host, {adapter, onConfigureBrain})`, `createHttpAdapter`, `createFixtureAdapter` |
-| `jarvis/runtime/control_center_brain_config_panel.js` | Floating brain configuration window opened from the Architecture canvas (not mounted until Slice 07): renders only the fields of the server descriptor (`/api/brains/{id}/config`), one window at a time, draft applied as successive one-field PATCHes; see [`brain-config-panel.md`](brain-config-panel.md) | `JarvisBrainConfigPanel.open(host, {adapter, brainId, field, onFocusConnection})`, `canvasReturnFocus`, `createHttpAdapter`, `createFixtureAdapter` |
+| `jarvis/runtime/control_center_subagents_settings.js` | Sub-agent settings, two views: `roles` (section `agents_models` › `subagents`, the « Sous-agents » tab, with the role-routing adapter: role catalogue, role models, role sheet, read-only Work Methods, order of the appended brief, running instances; writes role instructions through `POST /api/prompts/subagent_role.<id>`) and `work_methods` (section `advanced_diagnostics` › `work_methods`: observed approaches and explicit promotion); see [`../subagent-roles.md`](../subagent-roles.md) § 8 | `JarvisSubagentSettings.create(host, {view})`, `show` |
+| `jarvis/runtime/control_center_architecture_settings.js` | Architecture tab (section `agents_models` › `architecture`, mounted with the HTTP adapter since Slice 07 of `jarvis-architecture-agents-settings-editor`): 2D graph projected from the runtime snapshot, link inspector and toggle/create/remove through an injected adapter, layout-only drag, brain context menu; see [`architecture-tab.md`](architecture-tab.md) | `JarvisArchitectureSettings.mount(host, {adapter, onConfigureBrain})`, `createHttpAdapter`, `createFixtureAdapter` |
+| `jarvis/runtime/control_center_brain_config_panel.js` | Floating brain configuration window opened from the Architecture canvas (wired by `mountArchitectureSettings` since Slice 07): renders only the fields of the server descriptor (`/api/brains/{id}/config`), one window at a time, draft applied as successive one-field PATCHes; see [`brain-config-panel.md`](brain-config-panel.md) | `JarvisBrainConfigPanel.open(host, {adapter, brainId, field, onFocusConnection})`, `canvasReturnFocus`, `createHttpAdapter`, `createFixtureAdapter` |
 | `jarvis/runtime/control_center_settings_registry.js` | Canonical Settings navigation: six frozen categories, section registration with deterministic refusals, the explicit legacy alias table (`LEGACY_TAB_ALIASES`; the legacy-tab adapter is removed since Slice 09) and the shell navigation model; see [`navigation-registry.md`](navigation-registry.md) | `JarvisSettingsRegistry.page.register`, `resolve`, `shellNavigation`, `shellTarget`, `DEFAULT_CATEGORY` |
 | `jarvis/runtime/control_center.html` (Settings shell) | Full-screen six-category Settings shell: category rail, category entries, focus/keyboard/Escape, section mount and cleanup, footer save policy; see [`settings-shell.md`](settings-shell.md) | `registerSettingsSection`, `selectTab`, `openSettingsTab`, `settingsTabs`, `mountRegisteredSection` |
 | `jarvis/runtime/voice_settings_schema.py` (`surface`) + `control_center.html` (`VOICE_SECTIONS`, section `diagnostics`) + `control_center_wake_word.js` | Personnalisation : cinq sections orientées tâche, Architecture & compatibilité et Diagnostics sous Avancé, une destination par option décrite par le serveur; see [`voice-audio.md`](voice-audio.md) | `voiceSectionSpec`, `registerSettingsDiagnostic`, `voiceOptions(section)` |
-| `jarvis/runtime/control_center.html` (`AGENT_SECTIONS`, `SUBAGENT_SECTIONS`) | Brains & Architecture: four task sections (Agent principal, Comportement, Modèles des sous-agents, Rôles des sous-agents), Runtime & CLI and Work Methods apprises under Advanced; one destination per Agent/CLI setting, unchanged save payload; see [`agents-models.md`](agents-models.md) | `agentSectionSpec`, `subagentSectionSpec`, `installAgentSettingsSections` |
+| `jarvis/runtime/control_center.html` (`ARCHITECTURE_SECTION`, `AGENT_SECTIONS`, `SUBAGENT_SECTIONS`) | Architecture & Agents: exactly two tabs (Architecture: canvas + brain window; Sous-agents: roles + role routing); Comportement under Personnalisation; Runtime & CLI (command, permission, Auto/Dupliqué compatibility mode, profiles, model inventory) and Work Methods apprises under Advanced; unchanged save payload; see [`architecture-agents.md`](architecture-agents.md) | `mountArchitectureSettings`, `syncCoreCliDraft`, `agentSectionSpec`, `subagentSectionSpec`, `installAgentSettingsSections` |
 | `control_center_work.js` (`THEME_SCENE_SECTION`), `control_center_scene_page.js` (`JarvisSceneViewSettings`), `control_center.html` (`SHORTCUTS_SECTION`), `control_center_barehands.js` (`installSettingsSections`) | Interface & Interactions: Thème & scène visuelle (theme + scene view prefs, browser `localStorage`, immediate), Raccourcis (canonical and only editor of every registered shortcut, `wake_toggle` included), Bare Hands ordinary preferences; Advanced › Bare Hands · essais (`barehands_lab`) and the Bare Hands part of Diagnostics; see [`interface-interactions.md`](interface-interactions.md) | `registerSettingsSection`, `startCapture`, `JarvisBarehands.showSettings`, `openSettingsLink` |
 | `jarvis/runtime/control_center_connections_settings.js` + `control_center.html` (`CONNECTIONS_SECTION`) | Connexions: section Fournisseurs (`providers`; the old `keys` ID is retired since Slice 09), one card per provider served by the credential store (identity, configured state, active key, add/replace/delete, environment fallback by variable name, server `hint` as usage note); unchanged credential routes and payloads, never a value; see [`connections.md`](connections.md) | `JarvisConnectionsSettings.create(host, {request, state, isCurrent, onState})`, `html`, `CONNECTIONS_SECTION` |
 | `control_center_settings_registry.js` (`CATEGORY_GROUPS`) + `control_center.html` (`PROMPTS_SECTION`) + `control_center_scene_settings.js` (`scene_gate`) | Avancé & Diagnostics : cinq groupes déclarés, avis d'outils d'opérateur, section Prompts (atelier, routes et charges inchangées) et section Scène constellation (porte de test + redémarrage du brain) ; voir § « Avancé & Diagnostics » ci-dessous | `R.groups`, `CATEGORY_GROUPS`, `PROMPTS_SECTION`, `promptWorkbenchHtml`, `JarvisSceneSettings` |
 | `jarvis/runtime/control_center_settings_ui.js` | Pure Settings visual primitives (intro, section, field, badge, notice, advanced disclosure, action row) and the two focus helpers that touch only the elements they are given (`keepFocus`: a re-render keeps the focused control; `landFocus`: a jump marks its landing so the outline shows after a mouse click); see [`settings-shell.md`](settings-shell.md) § 5 | `JarvisSettingsUI.section`, `field`, `notice`, `keepFocus`, `landFocus` |
-| `jarvis/runtime/control_center.py` | `/api/settings` projection/save, alias conflict rejection, active-agent refresh | `_settings_payload`, `save_settings`, `_apply_cli`, `agent_ask` |
+| `jarvis/runtime/control_center.py` | `/api/settings` projection/save, alias conflict rejection, active-agent refresh; Architecture & Agents services mounted once (graph, layout, brain config, role routing), real catalog and candidate providers, `after_settings_write` hook (Slice 07, [`architecture-agents.md`](architecture-agents.md) § 4) | `_settings_payload`, `save_settings`, `_apply_cli`, `agent_ask`, `_install_architecture_services`, `_catalog_view_dict`, `_measure_routing_candidates`, `_after_brain_settings_write` |
+| `jarvis/runtime/voice_switch.py` | The single Voice switch rule shared by `POST /api/settings`, the graph and the brain window | `plan_voice_switch`, `VoiceSwitchPlan.issue` |
 | `jarvis/runtime/agent_settings.py` + `back_brain_worker.py` | Carry and consume behavior choice for owned background agent executions | `resolve_agent_execution`, `execute_with_progress` |
 
 ## Avancé & Diagnostics (Slice 08)
@@ -116,12 +118,14 @@ non-selectable in Auto. No cross-CLI fallback or fan-out is attempted.
 ## Control Center surface
 
 Since `jarvis-settings-ui-reorganization` Slice 04 there is no `Agent / CLI` tab: its
-settings are registered sections, one destination each
-([`agents-models.md`](agents-models.md)). `agents_models` › `main_agent` (CLI identity,
-availability, main model), `agent_behavior` (verbosity, politeness/formality, agenda
-reminders), `subagent_models` (Auto/Dupliqué mode, sub-agent model catalog);
+settings are registered sections, one destination each. Since Slice 07 of
+`jarvis-architecture-agents-settings-editor` ([`architecture-agents.md`](architecture-agents.md)),
+which replaces that Slice 04, the CLI and model of Core are chosen in the Core brain window
+(`agents_models` › `architecture`, `PATCH /api/brains/core/config`); `voice_audio` ›
+`agent_behavior` (verbosity, politeness/formality, agenda reminders);
 `advanced_diagnostics` › `runtime_cli` (command, resolved path, re-probe, permission
-mode, profiles and candidate ordering). Delegation and behavior controls are
+mode, Auto/Dupliqué compatibility mode, profiles and candidate ordering, sub-agent model
+inventory). `main_agent` and `subagent_models` are aliases of the two tabs. Delegation and behavior controls are
 generated from `cli.delegation_mode_metadata` and `cli.behavior.fields`; the
 page contains no duplicate option vocabulary. The canonical draft is unchanged,
 shared by these sections and sent by the footer « Enregistrer »:
@@ -135,14 +139,13 @@ candidates endpoint stays internal, including saved unavailable candidates. The
 inventory mounts `JarvisCatalog` with `surface=subagents` and `role=subagent`;
 it loads independently from settings save and exposes no request/add action.
 Each section renders before CLI/model probes finish. CLI and model hydration
-replaces and rebinds only the `#cliTechnical` container of Agent principal or
-Runtime & CLI. Failures stay local and expose retry controls. The
+replaces and rebinds only the `#cliTechnical` container of Runtime & CLI. Failures stay local and expose retry controls. The
 candidates endpoint is called only when the advanced disclosure opens, with
 its own local retryable error.
-The catalog controller is created by the Modèles des sous-agents section and
-destroyed by its `destroy` (section or category switch, modal close), so
+The catalog controller is created when the inventory disclosure of Runtime & CLI opens and
+destroyed by the section's `destroy` (section or category switch, modal close), so
 requests and delegated handlers cannot outlive their surface. The old IDs
-`cli` and `routing` are no longer aliases (retired in Slice 09): callers use `main_agent` and `runtime_cli`.
+`cli` and `routing` are no longer aliases (retired in Slice 09): callers use `architecture` and `runtime_cli`.
 
 Behavior is persisted only under `agent_behavior.response_verbosity` and
 `agent_behavior.politeness_formality`. Invalid stored values read as `inherit`
@@ -158,17 +161,17 @@ combined layer before their atomic writer runs.
 
 ## Sub-agent roles and Work Methods
 
-Section `agents_models` › `subagents` (label `Rôles des sous-agents`, `save: 'self'`, no footer save
+Section `agents_models` › `subagents` (label `Sous-agents`, one of the two tabs, `save: 'self'`, no footer save
 button; the old tab ID `subagents` is its ID). It reads `GET /api/subagent-roles` (v2) and
 `GET /api/agent/tasks`, and writes nothing but role instructions, through the existing prompt route with
 optimistic revisions (`base_revision` + `expected_effective_revision`). Capabilities and Work Methods are
 labelled read-only. A non-editable default Work Method is shown as appended after the editable
-instructions. Sub-agent models are set in `agents_models` › `subagent_models`. Observed approaches and
+instructions. Sub-agent models are set per role in the same tab (`/api/subagent-role-routing`). Observed approaches and
 their explicit promotion live in `advanced_diagnostics` › `work_methods` (group `labs`), the same module
 with `view: 'work_methods'`. Full contract, states and error codes:
-[`../subagent-roles.md`](../subagent-roles.md) § 8 and [`agents-models.md`](agents-models.md).
+[`../subagent-roles.md`](../subagent-roles.md) § 8 and § 10, and [`architecture-agents.md`](architecture-agents.md).
 Regression: `tests/unit/test_control_center_subagents_settings_js.py`,
-`tests/unit/test_agents_models_settings_browser.py`,
+`tests/unit/test_architecture_agents_settings_browser.py`,
 `tests/integration/test_settings_redesign_migration.py` (assembled navigation).
 
 ## Observability / Test Contract

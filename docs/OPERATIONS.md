@@ -154,13 +154,13 @@ touche `s`, ou la catégorie **Paramètres** de la roue d'outils (une ligne par
 catégorie, qui ouvre les réglages directement sur elle) ouvrent les réglages en plein
 écran, au-dessus du fond flouté (`docs/settings/settings-shell.md`). Ils se ferment par
 « Fermer » ou `Échap` (plus de clic à l'extérieur : il n'y en a plus). Six catégories à
-gauche — Voix & audio, Agents & modèles, Mémoire & connaissances, Interface & interactions,
+gauche — Voix & audio, Architecture & Agents, Mémoire & connaissances, Interface & interactions,
 Connexions, Avancé & diagnostic — ; Ctrl+→ / Ctrl+← passent de l'une à l'autre. Il n'y a plus
 d'onglet : Voix et Mot d'éveil (Slice 03), Agent / CLI et Sous-agents (Slice 04), Mémoire (Slice 05),
 Raccourcis, Apparence et Bare Hands (Slice 06, `docs/settings/interface-interactions.md`), API Keys
 (Slice 07, Connexions › Fournisseurs), Prompts et Expérimental (Slice 08, Avancé & diagnostic ›
 Prompts et › Scène constellation) sont devenus des sections (`docs/settings/voice-audio.md`,
-`docs/settings/agents-models.md`, `docs/settings/memory.md`, `docs/settings/INDEX.md`). Avancé & diagnostic
+`docs/settings/architecture-agents.md`, `docs/settings/memory.md`, `docs/settings/INDEX.md`). Avancé & diagnostic
 range ses outils d'opérateur en cinq groupes : Architecture & compatibilité, Prompts & instructions,
 Runtime & CLI, Diagnostics, Labs & outils de test. Ce guide écrit encore parfois « Réglages → onglet »
 (ancien nom de la section). Depuis la Slice 09, les anciens identifiants d'onglet ne sont plus des alias (sauf
@@ -242,9 +242,11 @@ fournisseurs ne les expose par une API. La persona vit dans `JARVIS_PERSONA`,
 
 ### Agent / CLI
 
-Depuis la Slice 04 de la refonte des Réglages : **Agents & modèles › Agent principal** (CLI, modèle
-principal), **Comportement**, **Modèles des sous-agents** ; commande, chemin et autorisations sous
-**Avancé & diagnostic › Runtime & CLI** (`docs/settings/agents-models.md`).
+Depuis la Slice 07 de jarvis-architecture-agents-settings-editor : **Architecture & Agents** a deux onglets,
+**Architecture** (graphe ; clic droit ou « … » sur Core Brain : CLI, modèle, délégation, instructions) et
+**Sous-agents** (rôles et leurs modèles) ; **Comportement** est dans Personnalisation ; commande, chemin,
+autorisations, mode Auto / Dupliqué et profils sous **Avancé & diagnostic › Runtime & CLI**
+(`docs/settings/architecture-agents.md`).
 
 | CLI | Pilotage | Console | Modèles listés depuis |
 | --- | --- | --- | --- |
@@ -5289,9 +5291,9 @@ routes Agent `ask` et `send` comme sur les jobs possédés. Ajout de tour sauveg
 et comportement généré partagent une borne de 8 192 caractères, validée avant
 toute écriture. Détails et contrat de test : `docs/settings/INDEX.md`.
 
-Agents & modèles sépare l'agent principal, le comportement et les modèles des
+Architecture & Agents (ex-Agents & modèles) sépare la configuration du cerveau Core, le comportement et les modèles des
 sous-agents ; Runtime & CLI (Avancé) porte la commande, les autorisations et les
-profils (`docs/settings/agents-models.md`). Le mode **Dupliqué** conserve le modèle du CLI/appelant sans
+profils (`docs/settings/architecture-agents.md`). Le mode **Dupliqué** conserve le modèle du CLI/appelant sans
 dupliquer l'exécution. Le mode **Auto** applique à chaque profil le premier
 candidat autorisé *et* utilisable. Les profils et recours restent accessibles
 sous **Configuration avancée des sous-agents**, dans Avancé & diagnostic › Runtime & CLI.

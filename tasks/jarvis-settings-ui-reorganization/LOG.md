@@ -1352,3 +1352,18 @@ Non bloquants (à reprendre hors de cette tâche) : R1 sens de frappe et exempti
 testés ; R2 liste simulée ; R3 nom « Catalogue de modèles subagents » ; R4 tables du Test Lab sans `tabindex`
 (préexistant) ; R5 fichiers navigateur à 480-540 s, à lancer en moitiés. Nettoyage à faire après acceptation et merge :
 worktree `setui`, profil Chrome non suivi `.tmp-cosmos/`, données des bacs à sable au scratchpad (après copie des bases).
+
+## Note de remplacement — Slice 04 remplacée par jarvis-architecture-agents-settings-editor (2026-10-23)
+
+La Slice 04 de cette tâche (« Agents & modèles » : sections `main_agent`, `subagent_models`, `subagents`) est
+**remplacée** par la Slice 07 de `jarvis-architecture-agents-settings-editor` (audit S00, correction C1). Ce qui fait foi
+désormais : `docs/settings/architecture-agents.md` (ex-`agents-models.md`).
+
+- `agents_models` garde son id et s'appelle « Architecture & Agents » ; exactement deux sections, ses deux onglets :
+  `architecture` (graphe + fenêtre flottante du cerveau) et `subagents` (rôles et modèles par rôle). Pas d'onglet Brains.
+- `main_agent` et `subagent_models` ne sont plus des sections : alias (`LEGACY_TAB_ALIASES`) vers `architecture` et
+  `subagents`. Le CLI et le modèle de Core se règlent dans la fenêtre du cerveau Core ; le mode Auto / Dupliqué et
+  l'inventaire comparatif sont dans Avancé › Runtime & CLI ; Comportement reste dans Personnalisation.
+- Aucun réglage n'est réécrit ; la charge de `POST /api/settings` est inchangée clé par clé.
+- Les contrôles de HUMAN-CHECKS qui citent Agent principal ou Modèles des sous-agents sont à lire avec cette table ;
+  `tests/unit/test_agents_models_settings_browser.py` est devenu `test_architecture_agents_settings_browser.py`.

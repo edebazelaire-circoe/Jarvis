@@ -22,7 +22,7 @@ l'ancien système d'onglets (`TABS`, adaptateur `legacyTabFor`) n'existe plus : 
 | Ordre | ID stable | Libellé |
 | --- | --- | --- |
 | 1 | `voice_audio` | Personnalisation |
-| 2 | `agents_models` | Brains & Architecture |
+| 2 | `agents_models` | Architecture & Agents (exactement deux sections, ses deux onglets : `architecture`, `subagents`) |
 | 3 | `memory_knowledge` | Mémoire & Connaissances |
 | 4 | `interface_interactions` | Interface & Interactions |
 | 5 | `connections` | Connexions |
@@ -125,6 +125,8 @@ qui exige aussi l'appelant).
 | Alias | Destination | Appelant qui le garde |
 | --- | --- | --- |
 | `memory` | `memory_knowledge` / `recall` | bouton Réglages du Memory Center (`control_center_memory.js`, `selectTab('memory')`) |
+| `main_agent` | `agents_models` / `architecture` | [`../legacy/settings-tab-aliases.md`](../legacy/settings-tab-aliases.md) (section retirée par la Slice 07 de jarvis-architecture-agents-settings-editor : CLI et modèle de Core dans la fenêtre du cerveau) |
+| `subagent_models` | `agents_models` / `subagents` | idem (modèle de chaque rôle dans l'onglet Sous-agents ; mode Auto / Dupliqué et inventaire dans Runtime & CLI) |
 
 Retirés à la Slice 09 (aucun appelant ni document durable) : `voice` (la roue ouvre désormais `voice_audio`),
 `wakeword`, `cli`, `routing` (et sa redirection historique vers `cli`), `keys`, `appearance`, `experimental`, et
@@ -136,7 +138,7 @@ destinations `also` du contenu éclaté) est dans [`../legacy/settings-tab-alias
 Sections enregistrées (Slices 03 à 08 ; hub du 2026-10-23 : `theme_scene` et `agent_behavior` passés dans
 Personnalisation, `mcp_plugins` ajouté) :
 `voice_audio` : `theme_scene`, `agent_behavior`, `conversation`, `voice_output`, `microphone_sound`, `turns_interruptions`, `wake_word` ·
-`agents_models` : `main_agent`, `subagent_models`, `subagents` ·
+`agents_models` : `architecture`, `subagents` (Slice 07 de jarvis-architecture-agents-settings-editor ; un onglet interne = une section, [`architecture-agents.md`](architecture-agents.md) § 1) ·
 `memory_knowledge` : `recall`, `semantic_retrieval`, `consolidation`, `knowledge_sources`, `memory_center` ·
 `interface_interactions` : `shortcuts`, `bare_hands` ·
 `connections` : `mcp_plugins`, `providers` ·

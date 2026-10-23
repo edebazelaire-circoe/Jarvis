@@ -1,6 +1,7 @@
 # Réglages — alias des anciens onglets
 
-**Introduit :** tâche `jarvis-settings-ui-reorganization`, Slice 01. **État final :** Slice 09.
+**Introduit :** tâche `jarvis-settings-ui-reorganization`, Slice 01. **État final :** Slice 09, complété par la
+Slice 07 de `jarvis-architecture-agents-settings-editor` (alias `main_agent`, `subagent_models`).
 **Contrat :** [`../settings/navigation-registry.md`](../settings/navigation-registry.md) § 3.
 
 ## Table finale (Slice 09)
@@ -14,6 +15,21 @@ compatibilité restante est la table explicite `LEGACY_TAB_ALIASES` de
 | Alias | Destination | Appelant du dépôt | Test |
 | --- | --- | --- | --- |
 | `memory` | `memory_knowledge` / `recall` | Memory Center › Réglages (`control_center_memory.js` : `root.selectTab('memory')`) | `test_every_remaining_alias_is_explicit_data_with_a_caller_and_its_declared_destination`, `test_memory_alias_opens_recall_and_every_memory_section` (node), `test_sections_destinations_alias_and_links` (vrai Chrome) |
+| `main_agent` | `agents_models` / `architecture` | ce document (identifiant publié par la tâche settings-ui-reorganization) ; liens enregistrés hors du dépôt | `test_every_remaining_alias_is_explicit_data_with_a_caller_and_its_declared_destination`, `test_agent_sections_open_and_their_retired_ids_do_not` (node), `test_two_tabs_destinations_and_legacy_ids` (vrai Chrome) |
+| `subagent_models` | `agents_models` / `subagents` | idem | idem |
+
+### Alias de la Slice 07 de jarvis-architecture-agents-settings-editor
+
+| Ancien ID | Statut | Ce que la section portait | Nouvelle destination | Raison |
+| --- | --- | --- | --- | --- |
+| `main_agent` | alias → `agents_models` / `architecture` | choix du CLI de Core et de son modèle ; version, clé et disponibilité du CLI | fenêtre du cerveau Core (clic droit ou « … » sur Core Brain, onglet Architecture) ; commande, chemin, permission et re-détection restent dans Avancé › Runtime & CLI | le cerveau Core se configure là où il est dessiné (D04, D13) |
+| `subagent_models` | alias → `agents_models` / `subagents` | mode Auto / Dupliqué et inventaire comparatif des modèles | modèle de chaque rôle : onglet Sous-agents ; mode Auto / Dupliqué (compatibilité, il ne gouverne plus que les rôles qui héritent de leur profil) et inventaire : Avancé › Runtime & CLI | le choix d'un sous-agent est global par rôle (D16, D18) |
+
+Aucun réglage n'est réécrit : `agent_cli`, `agent_cli_settings.<cli>.model`, `agent_routing.enabled`
+(`delegation_mode`) et les profils restent les mêmes clés, écrites par les mêmes chemins (`PATCH
+/api/brains/core/config` pour le CLI et le modèle de Core, `POST /api/settings` pour Runtime & CLI). Retirer ces alias :
+quand plus aucun lien enregistré ni document ne publie ces identifiants ; supprimer alors les lignes de cette table,
+celles de `LEGACY_TAB_ALIASES` et les entrées `ALIASES` / `ALIAS_CALLERS` de `test_control_center_settings_registry_js.py`.
 
 Inventaire de la Slice 09 (grep du code, des tests et des documents durables) :
 
@@ -61,7 +77,7 @@ par défaut (`DEFAULT_CATEGORY`, Voix & audio). Retirer `memory` : quand le Memo
   `subagents` = l'ID de la section des rôles). Le renvoi du module des sous-agents vers `cli` est remplacé par
   `subagent_models`. `canonicalSettingsTab` et la redirection `routing` → `tab:'cli'` ne servent plus à la page
   (seulement aux extraits de tests) : retrait à la Slice 09
-  ([`../settings/agents-models.md`](../settings/agents-models.md)). Testé : `test_agent_legacy_ids_open_their_sections`
+  ([`../settings/architecture-agents.md`](../settings/architecture-agents.md), ex-`agents-models.md`). Testé : `test_agent_legacy_ids_open_their_sections`
   (registre), `test_category_sections_destinations_and_legacy_ids` (vrai Chrome).
 - Slice 05 : l'onglet `memory` n'existe plus ; son ID reste l'alias de la section `recall` (`memory_knowledge`,
   déclaré par la section : `aliases:['memory']`). Appelant connu : le bouton Réglages du Memory Center
@@ -101,4 +117,5 @@ par défaut (`DEFAULT_CATEGORY`, Voix & audio). Retirer `memory` : quand le Memo
 - Adaptateur, entrées `{kind:'tab'}` et liens `related` : retirés (toutes les catégories sont servies par des
   sections enregistrées depuis la Slice 08).
 - Injecteurs : aucun (`test_no_legacy_tab_machinery_is_left_in_the_repository`).
-- Alias : seul `memory` reste, tant que le Memory Center l'appelle.
+- Alias : seul `memory` reste, tant que le Memory Center l'appelle (puis `main_agent` et `subagent_models` s'ajoutent à
+  la Slice 07 de jarvis-architecture-agents-settings-editor, ci-dessus).

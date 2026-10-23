@@ -11,3 +11,15 @@
   livrée (`b0b53b51`) : rien à bloquer, la Slice 07 la remplace.
 - Task Type : `waived-by-agent-0` (précédents orchestration et settings-ui-reorganization).
 - Dispatch en deux vagues (≤ 3 agents) : A = 01, 03, 04 ; B = 02, 05, 06.
+
+## 2026-10-23 - Slice 07 (agent d'implémentation)
+
+- Worktree `C:\Projects\jarvis\arch-s07`, branche `task/jarvis-architecture-agents-settings-editor-s07` (Slices 01 à 06
+  fusionnées ; `main` n'a pas bougé depuis `ad1e7f4d`, rien à fusionner).
+- Montage serveur (`ControlCenter._install_architecture_services`), règle unique de bascule de Voice
+  (`voice_switch.plan_voice_switch`), fournisseurs réels de catalogue et de candidats, crochet `after_settings_write`.
+- Page à deux onglets (sections `architecture`, `subagents`) ; `main_agent` / `subagent_models` retirés en alias ;
+  technique du CLI, mode Auto / Dupliqué et inventaire dans Avancé › Runtime & CLI.
+- I-001 : sort de chaque point consigné dans `Issues/I-001-polish-for-s07.md` (S01-1, S01-3, S01-4 reportés en S08).
+- Preuves en bac à sable (ports 27653/27654) : `slices/07-settings-integration-and-legacy-migration/EVIDENCE.md`.
+- Note de remplacement écrite dans `tasks/jarvis-settings-ui-reorganization/LOG.md`.

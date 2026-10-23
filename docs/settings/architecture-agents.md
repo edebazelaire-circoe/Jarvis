@@ -1,80 +1,157 @@
-# Réglages : Brains & Architecture et ses destinations
+# Réglages : Architecture & Agents et ses destinations
 
-**Statut :** contrat de surface (niveau 3 : sections enregistrées + tests de conformité).
-**Introduit :** tâche `jarvis-settings-ui-reorganization`, Slice 04.
-**S'appuie sur :** [`navigation-registry.md`](navigation-registry.md) (sections réservées), [`settings-shell.md`](settings-shell.md)
-(montage d'une section), [`INDEX.md`](INDEX.md) (contrat backend Agent / CLI, inchangé),
-[`../subagent-roles.md`](../subagent-roles.md) § 8 (écran des rôles), [`../work-methods.md`](../work-methods.md) (promotion).
+**Statut :** contrat de surface (niveau 3 : sections enregistrées, routes montées, tests de conformité et navigateur).
+**Introduit :** tâche `jarvis-architecture-agents-settings-editor`, Slice 07, qui **remplace** la Slice 04
+(« Agents & modèles ») de `jarvis-settings-ui-reorganization` ; l'ancien contrat de cette page s'appelait
+`agents-models.md`.
+**S'appuie sur :** [`navigation-registry.md`](navigation-registry.md) (catégories, sections, alias),
+[`settings-shell.md`](settings-shell.md) (montage d'une section, clavier), [`architecture-tab.md`](architecture-tab.md)
+(canevas), [`brain-config-panel.md`](brain-config-panel.md) (fenêtre d'un cerveau), [`../architecture-graph.md`](../architecture-graph.md)
+et [`../brain-config.md`](../brain-config.md) (contrats serveur), [`../subagent-roles.md`](../subagent-roles.md) § 8 et § 10
+(onglet Sous-agents, routage par rôle), [`../work-methods.md`](../work-methods.md) (promotion).
 
-- Sections : `control_center.html` (`AGENT_SECTIONS`, `agentSectionSpec`, `SUBAGENT_SECTIONS`, `subagentSectionSpec`,
-  `installAgentSettingsSections`), `control_center_subagents_settings.js` (`create(host, {view})`, vues `roles` et
-  `work_methods`).
-- Conformité : `tests/unit/test_agent_cli_settings_ui.py` (charge figée clé par clé, champs répartis entre Agent principal
-  et Runtime & CLI, cycle de vie du catalogue), `tests/unit/test_routing_settings_screen.py`,
-  `tests/unit/test_control_center_subagents_settings_js.py` (vues, conflits de révision, promotion),
-  `tests/unit/test_control_center_settings_registry_js.py` (alias), `tests/unit/test_agents_models_settings_browser.py`
-  (vrai Chrome : sections, alias, enregistrement et relecture, débordement).
+Règle produit : **le graphe décide de ce qui peut parler à quoi ; un cerveau décide quand il délègue ; la configuration
+globale des sous-agents décide quel agent ou modèle exécute un rôle délégué.**
 
-## 1. Ce que voit un utilisateur ordinaire
+- Page : `control_center.html` (`ARCHITECTURE_SECTION`, `mountArchitectureSettings`, `destroyArchitectureSettings`,
+  `syncCoreCliDraft`, `SUBAGENT_SECTIONS`, `subagentSectionSpec`, `mountSubagentSettings`, `AGENT_SECTIONS`,
+  `agentSectionSpec`, `installAgentSettingsSections`).
+- Modules injectés par `ControlCenter.index()` (un marqueur chacun) : `control_center_architecture_settings.js`
+  (`JarvisArchitectureSettings`), `control_center_brain_config_panel.js` (`JarvisBrainConfigPanel`),
+  `control_center_subagent_routing.js` (`JarvisSubagentRouting`, inséré **avant** le module des sous-agents qui le lit),
+  `control_center_subagents_settings.js` (`JarvisSubagentSettings`, vues `roles` et `work_methods`).
+- Serveur : `ControlCenter._install_architecture_services` (§ 4).
+- Conformité : `tests/unit/test_architecture_settings_mount.py` (assemblage serveur, crochet, règle de bascule de Voice),
+  `tests/unit/test_architecture_agents_settings_browser.py` (vrai Chrome contre un vrai Control Center isolé : deux
+  onglets, contrôles interdits absents, fenêtre du cerveau sur le canevas, Échap/Tab, délégation réelle, onglet
+  Sous-agents, alias, charge `/api/settings`, débordement), `tests/unit/test_agent_cli_settings_ui.py` (Runtime & CLI,
+  charge figée clé par clé, catalogue), `tests/unit/test_control_center_settings_registry_js.py` (catégorie, sections,
+  alias), `tests/unit/test_control_center_subagents_settings_js.py` (page servie).
 
-`agents_models` (Brains & Architecture) n'a plus d'onglet `Agent / CLI` ni `Sous-agents` : quatre sections orientées tâche.
+## 1. Deux onglets, et rien d'autre
+
+La catégorie `agents_models` (id inchangé, libellé « Architecture & Agents ») a **exactement deux sections**, rendues
+par le shell comme ses deux onglets internes (`#modalTabs`, onglets ARIA à activation manuelle). Il n'y a pas
+d'onglet « Brains » : un cerveau se configure dans sa fenêtre flottante.
 
 | Section | Contenu | Enregistrement |
 | --- | --- | --- |
-| `main_agent` · Agent principal | le CLI piloté (Claude Code, Codex…) avec sa version, l'état de sa clé et sa disponibilité ; le modèle principal de ce CLI (catalogue du fournisseur, `/api/models`) ; renvoi vers Runtime & CLI | pied « Enregistrer » |
-| `agent_behavior` · Comportement | longueur des réponses, politesse/formalité (métadonnées `cli.behavior.fields`), rappels de rendez-vous (`agenda_reminders`) | pied « Enregistrer » |
-| `subagent_models` · Modèles des sous-agents | mode des sous-agents Auto / Dupliqué (`cli.delegation_mode_metadata`), inventaire comparatif `JarvisCatalog` (`surface=subagents`, `role=subagent`), renvoi vers Runtime & CLI pour les profils | pied « Enregistrer » |
-| `subagents` · Rôles des sous-agents | liste des rôles, identité, mission, quand l'employer, capacités (lecture seule), Work Methods (lecture seule), ordre de la consigne, instructions éditables, instances en cours (repliées) ; renvoi vers Work Methods apprises pour un rôle porteur de mission | la section s'enregistre (`save: 'self'`) |
+| `architecture` · Architecture | le graphe réel (`GET /api/architecture`) : nœuds de l'architecture vocale effective, liaisons typées, verrouillées, basculables ou gouvernées ; bandeau en lecture seule de l'architecture vocale avec lien vers Avancé ; disposition des nœuds (`/api/architecture/layout`) ; fenêtre d'un cerveau (`/api/brains/{id}/config`) | chaque geste s'enregistre (`save: 'self'`) |
+| `subagents` · Sous-agents | les sept rôles du registre : identité, mission, capacités, Work Methods (lecture seule), instructions éditables, instances en cours ; **modèles du rôle** : candidats harness + modèle ordonnés, repli automatique, provenance, restauration de l'héritage (`/api/subagent-role-routing`) | la section s'enregistre (`save: 'self'`) |
 
-- Les trois premières écrivent dans le brouillon partagé `SET.draft` : « Enregistrer » envoie `/api/settings` exactement
-  comme l'ancien onglet (`cli={agent,settings,delegation_mode,behavior}`, `routing={profiles}`, plus `voice`, `audio`,
-  `agenda_reminders` ; `test_agent_cli_save_payload_is_frozen_key_by_key`). Le brouillon survit aux changements de
-  section et de catégorie.
-- Le modèle principal reste le sélecteur alimenté par le catalogue du fournisseur ; l'inventaire comparatif reste
-  l'unique `JarvisCatalog` : aucune seconde liste de modèles. Son contrôleur est créé au montage de Modèles des
-  sous-agents et détruit par son `destroy` (changement de section, de catégorie, fermeture).
-- Les rôles : lecture `GET /api/subagent-roles` et `GET /api/agent/tasks` ; seule écriture, les instructions, par la
-  voie canonique des prompts (`subagent_role.<id>`, `base_revision` + `expected_effective_revision`, conflit
-  `prompt_override_concurrent` / `prompt_override_stale` : texte gardé, révisions relues). Brouillons dans
-  `SET.subagentDrafts`, d'une section à l'autre.
-- `subagents` est l'ID même de la section des rôles ; l'ancien ID `cli` n'est plus un alias depuis la Slice 09.
+**Pourquoi des sections.** Le registre a déjà la notion d'entrée d'une catégorie, dessinée par le shell comme une liste
+d'onglets, avec ses règles (activation manuelle, focus, `destroy` à la sortie, alias). Deux sections enregistrées sont
+donc les deux onglets internes : aucun second niveau d'onglets, aucun champ nouveau dans le registre (ses clés
+autorisées sont inchangées), aucune seconde navigation. Le registre garde ses six catégories.
 
-## 2. Ce qui part dans Avancé & Diagnostics
+### Onglet Architecture
 
-| Section | Groupe | Contenu | Enregistrement |
+- **Montage** : `mountArchitectureSettings(host, context)` crée `[data-architecture-page]` › `#architectureCanvas`
+  (canevas, adaptateur `JarvisArchitectureSettings.createHttpAdapter()`) et `#brainConfigPanels` (hôte de la fenêtre,
+  distinct du canevas, qu'il réécrit). Module absent : notice codée `architecture_module_missing`.
+- **Configurer…** (menu du nœud par clic droit, Menu, Maj+F10 ou le bouton « … » ; bouton de l'inspecteur ; liaison
+  gouvernée) → `JarvisBrainConfigPanel.open(#brainConfigPanels, {adapter: createHttpAdapter(), brainId, field,
+  returnFocus: canvasReturnFocus(…), anchor: le nœud, nodeLabel, onFocusConnection, onSaved, onClose})`.
+- **Voir sur le graphe** (résumé des connexions de la fenêtre) → `view.select('connection', id)` ; rien n'est écrit.
+- **Après un enregistrement** de la fenêtre, le graphe est relu (`view.load()`) : la tendance de délégation de Core
+  gouverne la liaison `core.agents->subagents.spawn`, le mode du Tool Brain sa liaison.
+- **CLI et modèle de Core** : la fenêtre écrit par `PATCH /api/brains/core/config` ; `syncCoreCliDraft` aligne alors
+  `SET.data.cli` et `SET.draft.cli` (`agent`, `settings[<CLI>].model`). Sans cela, « Enregistrer » d'une section à pied
+  (Runtime & CLI, Comportement), qui envoie toujours `cli.agent` et `cli.settings`, réécrirait l'ancien CLI.
+- **Liens internes** : les boutons `data-settings-open` du canevas (« Changer dans Avancé › Architecture vocale » →
+  `architecture_compat`) et de la fenêtre (« Ouvrir Sous-agents » → `subagents`) passent par `context.open`.
+- **Placement initial** de la fenêtre : contre le bord droit du canevas si le nœud configuré reste libre, sinon contre le
+  bord gauche de l'écran (sur le rail des catégories), sinon du côté qui a le plus de place ; elle ne couvre pas le nœud
+  (mesuré à 1440 × 900 dans le test navigateur).
+- **Démontage** : `destroy` de la section (changement d'onglet, de catégorie, fermeture des Réglages) appelle
+  `destroy()` de la fenêtre (sa couche est `position: fixed` : elle survivrait à la section sinon) puis du canevas.
+  Un brouillon non appliqué de la fenêtre est alors perdu (limite connue : le shell n'interroge pas `isDirty`).
+- **Échap** : le canevas (menu, création, sélection) et la fenêtre (fermeture, confirmation) consomment la touche
+  (`preventDefault`) ; une Échap non consommée alors qu'une fenêtre est ouverte la ferme d'abord (avec un brouillon, elle
+  demande) ; le shell ne ferme les Réglages que pour une Échap que personne n'a prise. Le hub, qui écoute en capture,
+  n'agit que lorsqu'il est affiché.
+- **Tab** : la fenêtre (`aria-modal="false"`) fait tourner le focus en elle-même ; le piège du shell ignore une touche
+  déjà traitée (`defaultPrevented`), il n'y a donc qu'un piège actif à la fois.
+
+### Onglet Sous-agents
+
+Le module des sous-agents (vue `roles`) reçoit `routing: JarvisSubagentSettings.createRoutingHttpAdapter()` : la fiche
+d'un rôle porte ses modèles (§ 10 de [`../subagent-roles.md`](../subagent-roles.md)). Écritures : instructions par la voie
+des prompts (`subagent_role.<id>`), politique d'un rôle par `PUT` / `DELETE /api/subagent-role-routing/{role_id}`, une
+seule à la fois, révisée. Brouillons dans `SET.subagentDrafts`, d'un onglet à l'autre.
+
+### Ce qui n'apparaît pas sur la page
+
+Aucun contrôle de personnalité (ton, politesse, formalité, longueur, humour : Personnalisation › Comportement), aucune
+commande, chemin, autorisation ni re-détection de CLI (Avancé › Runtime & CLI), plus de sélecteur Auto / Dupliqué ni
+d'inventaire brut des modèles (Avancé › Runtime & CLI). Le test navigateur le vérifie sur les deux onglets (sélecteurs
+interdits et libellés de contrôle).
+
+## 2. Ce qui vit dans Avancé & Diagnostics (et Personnalisation)
+
+| Section | Catégorie / groupe | Contenu | Enregistrement |
 | --- | --- | --- | --- |
-| `runtime_cli` · Runtime & CLI | `runtime_cli` | commande et chemin résolu du CLI choisi, « re-détecter » (enregistre puis relance la sonde), mode d'autorisation / bac à sable ; « Configuration avancée des sous-agents » : profils actifs, candidats ordonnés (harness puis modèle), recours au profil Général, source des listes de modèles | pied « Enregistrer » |
-| `work_methods` · Work Methods apprises | `labs` | approches observées dans les missions closes (`GET /api/work-methods/candidates`), un bloc par rôle porteur de mission, promotion explicite confirmée en deux temps (`POST /api/work-methods/promotions`) | la section s'enregistre |
+| `runtime_cli` · Runtime & CLI | `advanced_diagnostics` / `runtime_cli` | commande et chemin résolu du CLI de Core, « re-détecter », mode d'autorisation / bac à sable ; **routage des sous-agents par profil (compatibilité)** : mode Auto / Dupliqué (`cli.delegation_mode`), « Configuration avancée des sous-agents » (profils, candidats, recours au profil Général), **inventaire comparatif** des modèles (`JarvisCatalog`, chargé à l'ouverture de sa divulgation) | pied « Enregistrer » |
+| `work_methods` · Work Methods apprises | `advanced_diagnostics` / `labs` | approches observées, promotion explicite | la section s'enregistre |
+| `architecture_compat` | `advanced_diagnostics` / `architecture_compat` | choix de l'architecture vocale (le graphe l'affiche en lecture seule) | pied « Enregistrer » |
+| `agent_behavior` · Comportement | `voice_audio` (Personnalisation) | longueur et ton des réponses, rappels de rendez-vous | pied « Enregistrer » |
 
-- La configuration avancée n'est demandée au serveur (`/api/routing/candidates`) qu'à l'ouverture de sa divulgation ;
-  elle reste ouverte quand la section est remontée (enregistrement), se referme quand on quitte Runtime & CLI.
-- L'ancien ID `routing` (et sa redirection historique vers `cli`) n'est plus un alias depuis la Slice 09.
-- **Pourquoi la promotion va dans Avancé.** [`../subagent-roles.md`](../subagent-roles.md) § 1bis et § 8 : « capacités et
-  méthode par défaut suivent le code » ; la seule écriture d'un rôle est ses instructions, la promotion est une « autre
-  écriture », « explicite » ; [`../work-methods.md`](../work-methods.md) : « la promotion est un acte explicite, jamais un
-  effet de bord », faite à partir de l'historique des missions. Aucun document ne la classe comme configuration ordinaire
-  d'un rôle : c'est un outil d'opérateur (`docs/07-target-settings-map.md`, Labs).
-- La Slice 08 regroupe les sections d'Avancé ; ces deux identifiants et leurs groupes sont stables.
+Le mode Auto / Dupliqué n'est plus le concept principal : une politique **explicite** de rôle s'applique quel que soit
+le mode ; un rôle qui **hérite** suit la politique par profil, donc ne lie qu'en Auto. Il reste lu et écrit comme avant.
 
-## 3. Table de correspondance réglage → section
+## 3. Table de correspondance réglage → destination
 
-| Réglage (clé de la charge ou route) | Destination |
+| Réglage (clé ou route) | Destination | Écrivain |
+| --- | --- | --- |
+| `agent_cli` (CLI de Core) | fenêtre du cerveau Core, champ `provider` | `PATCH /api/brains/core/config` (et toujours `POST /api/settings` `cli.agent`) |
+| `agent_cli_settings.<cli>.model` | fenêtre du cerveau Core, champ `model` | idem (`cli.settings[<CLI>].model`) |
+| `agent_cli_settings.<cli>.command`, `.permission_mode` | Avancé › Runtime & CLI | `POST /api/settings` |
+| tendance de délégation de Core (`brain-config.json`) | fenêtre du cerveau Core | `PATCH /api/brains/core/config` |
+| instructions d'un cerveau (`backend.system.addition`…) | fenêtre du cerveau | `PATCH` (voie des prompts) |
+| liaisons basculables (`brain_orchestration`, `voice_surface.back_brain_delegation`, `tool_brain.mode`) | onglet Architecture | `POST /api/architecture/connections/{id}` |
+| disposition des nœuds (`architecture-layout.json`) | onglet Architecture | `PUT /api/architecture/layout` |
+| `cli.delegation_mode` (Auto / Dupliqué) | Avancé › Runtime & CLI | `POST /api/settings` |
+| `routing.profiles` | Avancé › Runtime & CLI | `POST /api/settings` |
+| politique d'un rôle (`subagent-role-routing.json`) | onglet Sous-agents | `PUT` / `DELETE /api/subagent-role-routing/{role_id}` |
+| instructions d'un rôle (`subagent_role.<id>`) | onglet Sous-agents | `POST /api/prompts/subagent_role.<id>` |
+| `cli.behavior.*`, `agenda_reminders.*` | Personnalisation › Comportement | `POST /api/settings` |
+| promotion d'un candidat de Work Method | Avancé › Work Methods apprises | `POST /api/work-methods/promotions` |
+
+**Migration : aucun réglage réécrit.** Les clés sont les mêmes qu'avant la Slice 07 ; seules les surfaces qui les
+éditent ont bougé. La charge de `POST /api/settings` est inchangée clé par clé
+(`test_agent_cli_save_payload_is_frozen_key_by_key`, `test_saving_from_behavior_posts_the_unchanged_payload_and_reads_back`).
+Alias : `main_agent` → `architecture`, `subagent_models` → `subagents`
+([`../legacy/settings-tab-aliases.md`](../legacy/settings-tab-aliases.md)) ; `subagents` reste l'ID de sa section.
+
+## 4. Serveur : montage (Slice 07)
+
+`ControlCenter._install_architecture_services(runtime_root)` construit **une fois**, pour la vie du Control Center :
+
+| Objet | Rôle |
 | --- | --- |
-| `cli.agent` | `agents_models` › `main_agent` |
-| `cli.settings[<CLI>].model` | `agents_models` › `main_agent` |
-| `cli.settings[<CLI>].command` | `advanced_diagnostics` › `runtime_cli` |
-| `cli.settings[<CLI>].permission_mode` | `advanced_diagnostics` › `runtime_cli` |
-| re-détection (`/api/cli/agents`) | `advanced_diagnostics` › `runtime_cli` (état et version aussi dans `main_agent`) |
-| `cli.behavior.response_verbosity` | `agents_models` › `agent_behavior` |
-| `cli.behavior.politeness_formality` | `agents_models` › `agent_behavior` |
-| `agenda_reminders.*` | `agents_models` › `agent_behavior` |
-| `cli.delegation_mode` | `agents_models` › `subagent_models` |
-| catalogue des modèles de sous-agents (`JarvisCatalog`) | `agents_models` › `subagent_models` |
-| `routing.profiles` (actif, candidats, recours) | `advanced_diagnostics` › `runtime_cli` |
-| instructions d'un rôle (`subagent_role.<id>`) | `agents_models` › `subagents` |
-| promotion d'un candidat de Work Method | `advanced_diagnostics` › `work_methods` |
+| `architecture_graph` (`ArchitectureGraphService`) | snapshot et écritures de topologie ; son `write_lock` sérialise les écritures de `control-center-settings.json` faites hors de `/api/settings` (graphe et cerveaux) |
+| `ArchitectureLayoutStore` | disposition, à part |
+| `brain_config` (`BrainConfigService`) | descripteurs et `PATCH` ; un store de tendance (`brain-config.json`) et un store de surcharges de prompt gardés par le service |
+| `role_routing_routes` (`SubagentRoleRoutingApi` + `RoleRoutingStore`) | politique par rôle |
 
-`delegation_mode` est placé avec les modèles des sous-agents, non dans Comportement (`docs/07` le citait sous
-Behavior « when user-facing ») : c'est l'interrupteur qui fait appliquer ou non les profils de candidats ; il sert au
-choix du modèle d'un sous-agent, pas au ton des réponses. Les rappels de rendez-vous, absents de `docs/07`, suivent
-l'onglet qui les portait : Comportement, puisqu'ils règlent ce que JARVIS fait de lui-même.
+- Routes ajoutées à la même `web.Application` que le reste : handlers `async` de la boucle aiohttp, sans exécuteur ; le
+  middleware d'origine protège les écritures comme les autres routes.
+- **Catalogue** de la fenêtre du cerveau : `ControlCenter._catalog_view_dict(surface, role)`, la fonction qui sert
+  `GET /api/catalog`. **Candidats** du routage par rôle : `ControlCenter._measure_routing_candidates()`, le calcul de
+  `GET /api/routing/candidates`. Une seule vérité serveur, aucune liste recopiée.
+- **Crochet** `after_settings_write` (`_after_brain_settings_write`) : après une écriture du CLI ou du modèle de Core,
+  même effet qu'un `POST /api/settings` qui les change : autre CLI → `_switch_agent` (l'ancien s'arrête avant que le
+  nouveau démarre), sinon `_apply_agent_settings` (effectif au prochain lancement de chaque CLI). Journal
+  `brain_config.agents_reconfigured`.
+- **Bascule de Voice** : une seule règle, `voice_switch.plan_voice_switch(previous, updated, running_configuration_id=…)`
+  (source = configuration publiée par Voice si son battement est frais, sinon les réglages précédents ; rien si l'une
+  des compositions n'est pas démarrable, si l'identité ne change pas ou si la cible n'a pas de modèle), appelée par
+  `POST /api/settings` et par `ArchitectureGraphService.write_settings` (graphe, modèles vocaux de la fenêtre).
+
+## 5. Limites connues
+
+- `POST /api/settings` n'a toujours ni révision ni verrou partagé avec le graphe : une écriture concurrente est détectée
+  par les révisions calculées du graphe et des cerveaux, pas empêchée. Côté page, `syncCoreCliDraft` évite l'écrasement
+  du CLI de Core par un brouillon périmé ; une modification de l'architecture vocale dans Avancé, dans la même ouverture
+  des Réglages qu'une bascule du graphe, peut encore renvoyer l'ancienne valeur de `brain_orchestration`.
+- Le brouillon d'une fenêtre de cerveau n'est pas gardé quand on quitte l'onglet (voir § 1).

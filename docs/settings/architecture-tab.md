@@ -1,8 +1,9 @@
 # Onglet Architecture (Architecture & Agents)
 
 Module : `jarvis/runtime/control_center_architecture_settings.js` (`window.JarvisArchitectureSettings`, aussi
-`module.exports` pour node). Livré par la Slice 04 de `jarvis-architecture-agents-settings-editor` ; la Slice 07 le
-monte dans la catégorie `agents_models` et y branche l'adaptateur HTTP. Contrat JSON du graphe :
+`module.exports` pour node). Livré par la Slice 04 de `jarvis-architecture-agents-settings-editor` ; depuis la Slice 07
+il est monté par la section `agents_models` › `architecture` avec l'adaptateur HTTP (`mountArchitectureSettings`,
+[architecture-agents.md](architecture-agents.md) § 1). Contrat JSON du graphe :
 `tasks/jarvis-architecture-agents-settings-editor/docs/11-graph-wire-contract.md`.
 
 Règle : le composant est une **projection** du snapshot servi par le runtime. Il ne connaît aucune topologie, aucun

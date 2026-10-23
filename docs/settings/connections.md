@@ -83,7 +83,7 @@ en haut du contenu quand la liste a défilé ; le succès se voit sur la carte t
 
 | Depuis | Lien | Atterrit |
 | --- | --- | --- |
-| `agents_models` › Agent principal (aide du modèle principal) | « Plugins & MCP › <fournisseur> » (`data-settings-open="providers"`, `data-settings-focus`) | section Fournisseurs, focus sur le titre de la carte du fournisseur du modèle |
+| `advanced_diagnostics` › Runtime & CLI (clé du fournisseur des modèles du CLI ; Agent principal jusqu'à la Slice 07 de jarvis-architecture-agents-settings-editor) | « Plugins & MCP › <fournisseur> » (`data-settings-open="providers"`, `data-settings-focus`) | section Fournisseurs, focus sur le titre de la carte du fournisseur du modèle |
 | `memory_knowledge` › Recherche sémantique, Sources de connaissances (ligne du secret) | « Plugins & MCP » (`data-mem-open="providers"`) | section Fournisseurs |
 
 Les messages du serveur qui demandent une clé (pile vocale sans clé, catalogue sans clé, mémoire) disent
