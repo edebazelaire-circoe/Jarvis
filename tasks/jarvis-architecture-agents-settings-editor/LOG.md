@@ -39,3 +39,4 @@
   (S02). Migration : même ancien fichier, même geste, `main` et S08 donnent le même fichier.
 - I-002 : points 1, 2, 3, 6 faits ; I-001 S01-3, S01-4 faits ; S01-1 et I-002 point 4 non faits (justifiés).
 - Preuves : `slices/08-final-integration-e2e-qa/EVIDENCE.md` ; recette : `HUMAN-CHECKS.md`.
+- 2026-10-24 : S08 livrée (suite complète une fois : 4 échecs de la tâche corrigés, 21 préexistants sur main), QA ciblée des correctifs APPROUVÉE, fusion f3d5f9a5. main et origin/main inclus. Machine acceptée ; attente du Human : HV-ARCH-001..008, décisions produit (famille vs version du modèle de rôle, I-001 S01-1), merge dans main, redémarrage, Drive.
