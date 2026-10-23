@@ -26,6 +26,7 @@ const win = JarvisBrainConfigPanel.open(panelsHost, {
   nodeLabel: id => label,         // facultatif : nom des pairs dans le résumé des connexions
   onFocusConnection: id => view.select('connection', id),  // « Voir sur le graphe »
   onSaved: ({brainId, field, applies, changed, config}) => view.load(), // relire le graphe (liaison gouvernée)
+  onReread: ({brainId, field, config}) => {},  // issue inconnue d'un PATCH : configuration relue (l'écriture a pu passer)
   onClose: ({brainId}) => {},
   timeoutMs: 15000,
 });
@@ -40,7 +41,12 @@ win.destroy();   // démonte sans condition (changement de page)
   l'édition » s'affiche d'abord. Pendant un enregistrement, le remplacement est refusé et dit pourquoi.
 - Le contrôleur expose aussi `show`, `apply`, `discard`, `setDraft(field, value)`, `reload`, `confirm(bool)`,
   `moveBy(dx, dy)`, `state`, `brainId`, `dirty`, `element`.
-- Événements sur l'hôte (bouillonnent) : `brain-config:saved` (même `detail` que `onSaved`).
+- Événements sur l'hôte (bouillonnent) : `brain-config:saved` (même `detail` que `onSaved`), `brain-config:reread`
+  (même `detail` que `onReread`).
+- `onSaved` reçoit toujours la configuration **relue** : une réponse `ok` sans `config` fait relire la fenêtre avant
+  de prévenir l'hôte. Après une issue inconnue (délai dépassé, réseau), la fenêtre relit puis appelle `onReread` :
+  l'écriture a pu passer, l'hôte s'aligne sur ce qui a été relu (la page des Réglages y aligne son brouillon
+  `/api/settings`, `syncCoreCliDraft`, I-002 de `jarvis-architecture-agents-settings-editor`).
 - Lien « Ouvrir Sous-agents » : `data-settings-open="subagents"`, pris en charge par le lien interne des
   Réglages (`subagents` est resté l'identifiant de l'onglet Sous-agents à la Slice 07).
 

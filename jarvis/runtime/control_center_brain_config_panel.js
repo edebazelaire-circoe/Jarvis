@@ -516,7 +516,9 @@
           logError(code,e,{brainId:id,step:step.id});
           st.saving=null;
           st.error={code,title:'Issue inconnue',reason:`${e&&e.message||e} On ne sait pas si « ${FIELD_LABEL[step.id]} » a été enregistré : la fenêtre relit la configuration ; ce qui reste marqué « Modifié » n’est pas appliqué.`};
-          await load();
+          const reread=await load();
+          /* I-002 point 2 : l'écriture a pu passer ; ce qui a été relu est la vérité du serveur, l'hôte s'y aligne. */
+          if(reread&&!st.destroyed&&gen===generation)notify('reread',{brainId:id,field:step.id,config:reread});
           return {ok:false,code,unknown:true,done};
         }
         if(st.destroyed||gen!==generation)return {ok:false,code:'brain_config_closed'};
@@ -525,9 +527,11 @@
           for(const f of step.fields)delete st.draft[f];
           st.saved[step.id]={applies:res.applies||null,changed:res.changed};
           done.push(step.id);
+          /* Réponse sans descripteur : relire AVANT de prévenir l'hôte, qui reçoit sinon l'ancienne configuration
+             (I-002 point 2). Relecture ratée : l'hôte n'a rien de neuf à recevoir. */
+          if(!res.config){st.saving=null;await load();if(st.destroyed||gen!==generation)return {ok:false,code:'brain_config_closed'}}
           logInfo('brain_config_panel.saved',{brainId:id,field:step.id,changed:res.changed,applies:res.applies,revision:st.config.revision});
           notify('saved',{brainId:id,field:step.id,applies:res.applies||null,changed:res.changed,config:st.config});
-          if(!res.config){st.saving=null;await load()}
           pruneDraft();
           continue;
         }
@@ -555,6 +559,7 @@
     }
     function notify(kind,detail){
       try{if(kind==='saved'&&typeof opts.onSaved==='function')opts.onSaved(detail)}catch(e){logError('brain_config_on_saved_failed',e,{brainId:detail.brainId})}
+      try{if(kind==='reread'&&typeof opts.onReread==='function')opts.onReread(detail)}catch(e){logError('brain_config_on_reread_failed',e,{brainId:detail.brainId})}
       try{const Ev=root.CustomEvent;if(typeof Ev==='function'&&host.dispatchEvent)host.dispatchEvent(new Ev('brain-config:'+kind,{bubbles:true,detail}))}
       catch(e){logError('brain_config_event_failed',e,{kind})}
     }

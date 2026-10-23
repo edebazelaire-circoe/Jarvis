@@ -205,6 +205,47 @@ async def test_saving_from_behavior_posts_the_unchanged_payload_and_reads_back(s
     assert out["console"] == [], out["console"]
 
 
+#: Le modèle de Core choisi dans sa fenêtre, appliqué, puis le brouillon `/api/settings` que la page garde.
+PICK_MODEL = """(()=>{const s=document.querySelector('.bcp-win [data-bcp-input=model]');s.value='claude-haiku-5';
+  s.dispatchEvent(new Event('change',{bubbles:true}));return s.value})()"""
+CLI_DRAFT = "[SET.draft.cli.agent,(SET.draft.cli.settings.claude||{}).model,SET.data.cli.agent,(SET.data.cli.settings.claude||{}).model]"
+
+
+async def test_a_core_model_saved_in_its_window_survives_a_footer_save_of_behavior(served, monkeypatch):
+    """I-002 point 1 (QA S07) : `syncCoreCliDraft`. Le modèle de Core change dans la fenêtre du cerveau
+    (`PATCH /api/brains/core/config`), puis « Enregistrer » de Comportement envoie la charge `/api/settings` entière,
+    `cli.agent` et `cli.settings` compris : elle porte le modèle choisi, pas l'ancien, et le réglage relu le garde."""
+
+    from tests.unit.test_brain_config import fake_catalog
+
+    served.control.brain_config._catalog = fake_catalog  # même place que le fournisseur réel, sans réseau
+    monkeypatch.setattr(served.control, "_apply_agent_settings", lambda settings: None)  # aucun CLI à reconfigurer
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        *OPEN, eval_(CLI_DRAFT, "draft_before"), *OPEN_CORE,
+        wait("!!document.querySelector('.bcp-win [data-bcp-input=model] option[value=claude-haiku-5]')", 8000),
+        eval_(PICK_MODEL, "model_picked"),
+        click(".bcp-win [data-bcp-act=apply]"),
+        wait("!document.querySelector('.bcp-win [data-bcp-act=apply]:not([disabled])')||"
+             "(ARCH.panel&&!ARCH.panel.dirty&&!ARCH.panel.state.saving)", 10000),
+        eval_(CLI_DRAFT, "draft_after"),
+        key("Escape"), wait("document.querySelector('.bcp-win')===null"),
+        *SAVE,
+    ]}])
+    step = out["steps"][0]
+    assert_waits(step)
+    assert got(step, "model_picked") == "claude-haiku-5"
+    assert got(step, "draft_before")[0] == "claude" and got(step, "draft_before")[1] in ("", None)
+    assert got(step, "draft_after") == ["claude", "claude-haiku-5", "claude", "claude-haiku-5"]
+    patches = [json.loads(r["body"]) for r in out["requests"] if r["method"] == "PATCH" and r["path"] == "/api/brains/core/config"]
+    assert len(patches) == 1 and patches[0]["model"] == "claude-haiku-5"
+    posts = [json.loads(r["body"]) for r in out["requests"] if r["method"] == "POST" and r["path"] == "/api/settings"]
+    assert len(posts) == 1
+    assert posts[0]["cli"]["agent"] == "claude" and posts[0]["cli"]["settings"]["claude"]["model"] == "claude-haiku-5"
+    assert served.stored()["agent_cli_settings"]["claude"]["model"] == "claude-haiku-5"
+    assert served.stored()["agent_behavior"]["response_verbosity"] == "detailed"
+    assert out["console"] == [], out["console"]
+
+
 #: Chaque onglet de la catégorie et les sections d'Avancé, divulgations ouvertes, catalogue chargé : rien ne dépasse.
 LAYOUT = """(async()=>{const pause=ms=>new Promise(r=>setTimeout(r,ms)),out=[];
   for(const id of ['architecture','subagents','agent_behavior','runtime_cli','work_methods']){

@@ -5342,7 +5342,8 @@ function installAgentSettingsSections(){
      sélectionne la liaison ; un enregistrement relit le graphe (la tendance de délégation gouverne la liaison
      Core → Sous-agents) ;
    - un enregistrement du CLI ou du modèle de Core aligne le brouillon `/api/settings` (`syncCoreCliDraft`) : sans cela,
-     « Enregistrer » d'une section à pied (Runtime & CLI) renverrait l'ancien CLI et l'écraserait ;
+     « Enregistrer » d'une section à pied (Runtime & CLI) renverrait l'ancien CLI et l'écraserait ; une issue inconnue
+     (délai dépassé) aligne aussi le brouillon sur la configuration relue (`onReread`) ;
    - liens `data-settings-open` du canevas (architecture vocale → Avancé) et de la fenêtre (« Ouvrir Sous-agents ») :
      lien interne des Réglages (`context.open`) ;
    - `destroy` démonte la fenêtre (sa couche est `position:fixed`) puis le canevas, au changement de section, de
@@ -5398,6 +5399,12 @@ function mountArchitectureSettings(host,context){
       onFocusConnection:id=>{if(ARCH.view)ARCH.view.select('connection',id)},
       onSaved:saved=>{
         if(saved.brainId==='core'&&(saved.field==='provider'||saved.field==='model'))syncCoreCliDraft(saved.config);
+        if(ARCH.view)ARCH.view.load();
+      },
+      /* Issue inconnue d'un PATCH (délai dépassé) : la fenêtre a relu la configuration ; le brouillon `/api/settings`
+         suit ce qui a été relu, que l'écriture soit passée ou non (I-002 point 2). */
+      onReread:reread=>{
+        if(reread.brainId==='core'&&reread.field==='model')syncCoreCliDraft(reread.config);
         if(ARCH.view)ARCH.view.load();
       },
       onClose:()=>{ARCH.panel=null}});
