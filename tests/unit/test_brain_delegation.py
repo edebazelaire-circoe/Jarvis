@@ -1078,16 +1078,26 @@ async def test_background_events_are_counted_read_and_acknowledged(control):
 
     control.journal.emit("agent.subagent.finished", "Sous-agent interrompu après 1 min 28 s : Git branches",
                          level="warning", data={"status": "interrupted", "description": "Git branches vs main status"})
+    # Un réveil du cerveau n'est plus une notification (retour du 23/10/2026).
     control.journal.emit("core.brain.woken_by_work", "tour ouvert par un changement de travail de fond",
                          data={"notes": 3})
+    control.journal.emit("voice.speech.abandoned", "Réponse du cerveau soldée sans avoir été dite",
+                         data={"reason": "not_revalidated", "text": "C'est fait."})
     control.journal.emit("voice.state.updated", "bruit de fonctionnement", data={})
 
     summary = json.loads((await control.status(QueryRequest())).text)["background"]
-    assert (summary["unread"], summary["counts"]) == (2, {"failed": 1, "attention": 1})
+    assert (summary["unread"], summary["counts"]) == (2, {"failed": 1, "said": 1})
 
     listing = json.loads((await control.background_events(QueryRequest())).text)
-    assert [event["category"] for event in listing["events"]] == ["attention", "failed"]
-    assert listing["events"][-1]["detail"] == "Git branches vs main status"
+    assert [event["category"] for event in listing["events"]] == ["said", "failed"]
+    assert listing["events"][-1]["title"] == "Git branches vs main status"
+    assert listing["events"][0]["body"] == "C'est fait."
+
+    # Ouvrir le détail d'une notification la marque vue, elle seule.
+    opened = json.loads((await control.background_ack(JsonRequest({"event": listing["events"][0]["seq"]}))).text)
+    assert (opened["unread"], opened["counts"]) == (1, {"failed": 1})
+    assert (await control.background_ack(JsonRequest({"event": True}))).status == 400
+    assert (await control.background_ack(JsonRequest({"event": 1, "category": "failed"}))).status == 400
 
     # On n'acquitte que ce qui a été affiché : un événement arrivé entre-temps reste.
     control.journal.emit("agent.subagent.finished", "Sous-agent en échec après 3 s : Tests",

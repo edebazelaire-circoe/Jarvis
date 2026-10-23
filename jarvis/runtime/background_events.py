@@ -198,7 +198,12 @@ def _attention_detail(attention: dict[str, Any]) -> str:
     return f"{sources} · {_ATTENTION_BAND_WORDS.get(str(attention.get('band')), '')}".strip(" ·")
 
 
-def _classify(kind: str, data: dict[str, Any]) -> str | None:
+#: Phrase des tours spontanés muets d'avant le drapeau `nothing_to_say` : la
+#: trace déjà écrite les porte encore, et le suivi peut la relire.
+NOTHING_TO_SAY_MESSAGE = "Tour spontané du brain, rien à dire"
+
+
+def _classify(kind: str, data: dict[str, Any], message: str = "") -> str | None:
     """Catégorie d'un événement du journal, ou None s'il n'est pas à signaler.
 
     Volontairement une table de correspondance et non une heuristique : ce qui
@@ -218,16 +223,22 @@ def _classify(kind: str, data: dict[str, Any]) -> str | None:
     if kind == "voice.speech.abandoned":
         # Une réponse complète rédigée puis retirée sans avoir été dite. Le
         # retrait est légitime — c'est le cerveau qui l'a décidé — mais
-        # l'utilisateur doit pouvoir constater qu'une réponse existait.
-        return ATTENTION
+        # l'utilisateur doit pouvoir constater qu'une réponse existait. C'est
+        # un résultat non dit, pas un point à vérifier (retour du 23/10/2026) :
+        # la fenêtre de détail en montre le texte.
+        return SAID
     if kind == ATTENTION_RAISED_KIND:
         # Slice 09 : une contradiction vérifiée. Elle arrive déjà jugée — la
         # porte est `decide_attention`, côté Core — et ce registre ne fait que
         # la compter et la rendre lisible. Il ne rejuge rien, et surtout il ne
         # peut rien faire dire à personne : D11 tient plus haut.
         return ATTENTION
-    if kind in ("core.brain.woken_by_work", "core.brain.notice_dropped"):
+    if kind == "core.brain.notice_dropped":
         return ATTENTION
+    # `core.brain.woken_by_work` n'est plus signalé (retour du 23/10/2026) : un
+    # réveil est une cause, pas un résultat. Ce qu'il produit se signale déjà —
+    # échec du travail, réponse non dite, tour en échec — et chaque rappel
+    # d'agenda ajoutait un « point à vérifier » sans rien à vérifier.
     if kind == SPEECH_WITHHELD_KIND:
         # Slice 07 : un Board inactif avait quelque chose à dire et la porte de
         # Core l'a retenu. Jamais dit à voix haute — c'est tout l'objet de la
@@ -237,7 +248,11 @@ def _classify(kind: str, data: dict[str, Any]) -> str | None:
         return ATTENTION if data.get("status") == "blocked" else None
     if kind in ("agent.unsolicited_result", "core.brain.notice_relayed"):
         # Un relais effectivement dit n'a pas besoin du badge : l'utilisateur
-        # l'a entendu. Seul un relais resté silencieux se signale.
+        # l'a entendu. Seul un relais resté silencieux se signale — et pas un
+        # tour où le cerveau n'avait rien à dire (`nothing_to_say`, posé par
+        # `claude_local`) : il n'y a là aucun résultat à lire.
+        if data.get("nothing_to_say") is True or message == NOTHING_TO_SAY_MESSAGE:
+            return None
         return None if data.get("spoken") is not False else SAID
     return None
 
@@ -267,12 +282,21 @@ class BackgroundEvent:
     #: (`retitle`) et gardé avec l'entrée : Core arrêté, l'alerte persistée
     #: sait encore d'où elle vient.
     board_title: str = ""
+    #: Présentation (retour du 23/10/2026, voir `_present`) : titre en clair,
+    #: famille et problème (icônes), corps et faits de la fenêtre de détail.
+    title: str = ""
+    family: str = ""
+    issue: str = ""
+    body: str = ""
+    facts: list[dict[str, str]] = field(default_factory=list)
 
     def to_payload(self) -> dict[str, Any]:
         payload = {"seq": self.seq, "ts": self.ts, "category": self.category,
                    "kind": self.kind, "label": self.label, "detail": self.detail,
                    "task_id": self.task_id, "board_id": self.board_id or None,
-                   "board_title": self.board_title or None}
+                   "board_title": self.board_title or None,
+                   "title": self.title or self.label, "family": self.family or _FAMILY_BY_KIND.get(self.kind, "work"),
+                   "issue": self.issue or None, "body": self.body, "facts": list(self.facts)}
         if self.attention is not None:
             payload["attention"] = self.attention
         return payload
@@ -309,6 +333,11 @@ class BackgroundEvent:
             attention=_attention_payload(attention) if isinstance(attention, dict) else None,
             board_id=_board_id(record.get("board_id")),
             board_title=_text(record.get("board_title"), MAX_BOARD_TITLE),
+            title=_text(record.get("title"), MAX_LABEL),
+            family=family if (family := record.get("family")) in FAMILIES else "",
+            issue=issue if (issue := record.get("issue")) in ISSUES else "",
+            body=_text(record.get("body"), MAX_BODY),
+            facts=_facts_record(record.get("facts")),
         )
 
 
@@ -326,6 +355,215 @@ def _detail(kind: str, fields: dict[str, Any], attention: dict[str, Any] | None)
         return _WITHHELD_ORIGINS.get(origin, origin)
     return str(fields.get("description") or fields.get("error_class")
                or fields.get("reason") or fields.get("status") or "")
+
+
+# --- Présentation ------------------------------------------------------------
+#
+# Retour utilisateur du 23/10/2026 : les notifications « ne disent pas toujours
+# quelque chose d'utile, et les ouvrir n'apprend rien de plus ». Le libellé
+# brut de la trace (« le backend cerveau a rendu un échec ») est écrit pour un
+# journal, pas pour un coup d'œil. Chaque entrée porte donc, en plus :
+#
+# - `title` : ce qui s'est passé, en clair (le sujet d'une tâche, « Le cerveau
+#   n'a pas pu répondre ») ;
+# - `family` : d'où cela vient (sous-agent, cerveau, voix…), et `issue` : la
+#   nature d'un problème (indisponible, délai, arrêt…) — l'interface en fait
+#   une icône, jamais un texte ;
+# - `detail` : une ligne qui complète le titre sans le répéter ;
+# - `body` et `facts` : ce que montre la fenêtre de détail (la réponse non
+#   dite, l'explication d'une erreur, modèle, durée, jetons…).
+#
+# Tout est composé de champs retaillés et de mots fixes : la trace n'est pas
+# crue davantage qu'ailleurs dans ce module.
+
+#: Longueur retenue du corps d'une notification : de quoi relire une réponse
+#: non dite ou un compte rendu, pas un rapport entier (la trace le garde).
+MAX_BODY = 2000
+
+#: Faits gardés au plus pour la fenêtre de détail.
+MAX_FACTS = 10
+
+#: Familles connues : la source d'un événement, que l'interface dessine.
+FAMILIES = ("subagent", "brain", "speech", "relay", "presentation", "board", "work")
+
+_FAMILY_BY_KIND = {
+    "agent.subagent.finished": "subagent",
+    "core.brain.turn_failed": "brain",
+    "agent.unsolicited_failed": "relay",
+    "agent.unsolicited_result": "relay",
+    "core.brain.notice_relayed": "relay",
+    "core.brain.notice_dropped": "relay",
+    "agent.work_state_failed": "work",
+    "core.work.attention": "work",
+    "voice.speech.error_withheld": "speech",
+    "voice.speech.abandoned": "speech",
+    ATTENTION_RAISED_KIND: "presentation",
+    SPEECH_WITHHELD_KIND: "board",
+}
+
+#: Statut final d'une sous-tâche : (mot affiché, problème).
+_TASK_STATUSES = {
+    "completed": ("terminé", ""),
+    "failed": ("en échec", "error"),
+    "killed": ("arrêté de force", "stopped"),
+    "stopped": ("arrêté", "stopped"),
+    "interrupted": ("interrompu", "interrupted"),
+}
+
+#: Erreur d'un tour du cerveau : (libellé court, problème, explication).
+_BRAIN_ERRORS = {
+    "claude_unavailable": (
+        "Claude indisponible", "unavailable",
+        "Le service Claude n'a pas répondu (réseau, quota ou panne du fournisseur). "
+        "La demande n'a pas été traitée : répétez-la dans un instant."),
+    "brain_backend_timeout": (
+        "Délai de réponse dépassé", "timeout",
+        "Le cerveau n'a pas rendu sa réponse dans le temps imparti et le tour a été abandonné. "
+        "Répétez la demande, ou découpez-la si elle était longue."),
+    "claude_handover": (
+        "Session Claude en relève", "handover",
+        "La session Claude changeait de main (redémarrage ou bascule d'agent) au moment du tour, "
+        "qui n'a pas pu être pris. Répétez la demande."),
+    "agent_turn_failed": (
+        "Tour de l'agent en échec", "error",
+        "L'agent a terminé son tour sur une erreur. Le message exact est dans la trace du brain "
+        "(panneau Agents)."),
+}
+
+#: Raison d'une parole non dite : (mots affichés, problème).
+_SPEECH_REASONS = {
+    "not_revalidated": ("devenue obsolète avant d'être dite", "stale"),
+    "stale_source": ("devenue obsolète avant d'être dite", "stale"),
+    "voice_background": ("la voix était en arrière-plan", "muted"),
+    "held_for_brain_timeout": ("retenue trop longtemps en attendant le cerveau", "timeout"),
+}
+
+#: Problèmes connus ; un code hors table est ramené à `error`.
+ISSUES = ("error", "unavailable", "timeout", "handover", "stopped", "interrupted", "stale", "muted", "blocked")
+
+_MODEL_FAMILIES = {"opus": "Opus", "sonnet": "Sonnet", "haiku": "Haiku", "fable": "Fable"}
+
+
+def _model_name(value: object) -> str:
+    """`claude-opus-5-5` -> `Opus 5.5` ; un nom inconnu est rendu tel quel, borné."""
+
+    raw = _text(value, 64)
+    parts = raw.lower().split("-")
+    for index, part in enumerate(parts):
+        if part in _MODEL_FAMILIES:
+            version = ".".join(p for p in parts[index + 1:index + 3] if p.isdigit())
+            return f"{_MODEL_FAMILIES[part]} {version}".strip()
+    return raw
+
+
+def _duration(value: object) -> str:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        return ""
+    seconds = int(value // 1000)
+    if seconds < 60:
+        return f"{seconds} s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes} min {seconds:02d} s" if seconds else f"{minutes} min"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} h {minutes:02d} min"
+
+
+def _number(value: object) -> str:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return ""
+    return f"{value:,}".replace(",", " ")
+
+
+def _split_roles(description: str) -> tuple[list[str], str]:
+    """`[code] [opus] Sujet` -> (`["code", "opus"]`, `Sujet`) : les marqueurs de rôle à part."""
+
+    roles: list[str] = []
+    rest = description.strip()
+    while rest.startswith("[") and "]" in rest[:40]:
+        end = rest.index("]")
+        roles.append(rest[1:end].strip())
+        rest = rest[end + 1:].lstrip()
+    return [role for role in roles if role], rest
+
+
+def _facts(*pairs: tuple[str, object]) -> list[dict[str, str]]:
+    out = []
+    for label, value in pairs:
+        text = _text(value, MAX_LABEL).strip()
+        if text:
+            out.append({"label": label, "value": text})
+    return out[:MAX_FACTS]
+
+
+def _present(kind: str, message: str, fields: dict[str, Any], detail: str) -> dict[str, Any]:
+    """Titre, famille, problème, ligne de détail, corps et faits d'une entrée. Ne lève jamais."""
+
+    family = _FAMILY_BY_KIND.get(kind, "work")
+    title, issue, body, facts = message, "", "", []
+    if kind == "agent.subagent.finished":
+        roles, subject = _split_roles(_text(fields.get("description"), MAX_LABEL))
+        status = _text(fields.get("status"), 32)
+        word, issue = _TASK_STATUSES.get(status, (status or "terminé", "error" if status else ""))
+        duration = _duration(fields.get("duration_ms"))
+        model = _model_name(fields.get("model"))
+        title = subject or message
+        detail = " · ".join(part for part in (
+            f"{word[:1].upper()}{word[1:]}" + (f" en {duration}" if duration else ""), model, ", ".join(roles)) if part)
+        facts = _facts(("Statut", word), ("Durée", duration), ("Modèle", model), ("Rôle", ", ".join(roles)),
+                       ("Type", fields.get("subagent_type")), ("Jetons", _number(fields.get("tokens"))),
+                       ("Outils appelés", _number(fields.get("tool_uses"))), ("Erreur", fields.get("error_class")))
+        # Un arrêt dit sa cause dans la phrase du journal (« … (agent principal arrêté) : sujet ») : gardée.
+        head = message.split(" : ", 1)[0]
+        cause = head[head.find("(") + 1:head.rfind(")")] if issue and "(" in head and head.endswith(")") else ""
+        body = _text(fields.get("summary"), MAX_BODY) or (f"Cause : {cause}." if cause else "")
+    elif kind == "core.brain.turn_failed":
+        code = _text(fields.get("error"), 64)
+        label, issue, explain = _BRAIN_ERRORS.get(code, (code or "erreur inconnue", "error", ""))
+        title, detail, body = "Le cerveau n'a pas pu répondre", label, explain
+        facts = _facts(("Erreur", code))
+    elif kind == "agent.unsolicited_failed":
+        title, issue = "Le résumé d'un travail de fond a échoué", "error"
+        detail = "le cerveau n'a pas pu rédiger le compte rendu"
+        body = message
+        facts = _facts(("Origine", fields.get("origin")), ("Sous-type", fields.get("subtype")),
+                       ("Durée", _duration(fields.get("duration_ms"))))
+    elif kind == "agent.work_state_failed":
+        issue = "error"
+        facts = _facts(("Erreur", fields.get("error_class") or fields.get("error")), ("Statut", fields.get("status")))
+    elif kind in ("voice.speech.abandoned", "voice.speech.error_withheld"):
+        reason = _text(fields.get("reason"), 64)
+        words, issue = _SPEECH_REASONS.get(reason, (reason, "muted"))
+        title = "Réponse non prononcée" if kind == "voice.speech.abandoned" else "Message d'erreur non prononcé"
+        detail = words
+        body = _text(fields.get("text"), MAX_BODY)
+        facts = _facts(("Raison", words))
+    elif kind == SPEECH_WITHHELD_KIND:
+        title, issue = "Parole retenue : son Board n'était pas actif", "muted"
+        body = _text(fields.get("text"), MAX_BODY)
+    elif kind == "core.work.attention":
+        title, issue = "Un travail de fond est bloqué", "blocked"
+        detail = message
+        facts = _facts(("Source", fields.get("source")), ("Statut", fields.get("status")),
+                       ("Erreur", fields.get("error_class")))
+    elif kind == "core.brain.notice_dropped":
+        title, issue = "Un compte rendu n'a pas été relayé", "muted"
+        body = message
+    elif kind in ("agent.unsolicited_result", "core.brain.notice_relayed"):
+        title, issue = "Résultat non prononcé", "muted"
+        detail = "le cerveau l'a rédigé sans le dire"
+        body = _text(message, MAX_BODY)
+    return {"title": _text(title, MAX_LABEL) or kind, "family": family, "issue": issue if issue in ISSUES else "",
+            "detail": _text(detail, MAX_LABEL), "body": _text(body, MAX_BODY), "facts": facts}
+
+
+def _facts_record(value: object) -> list[dict[str, str]]:
+    """Les faits d'une entrée persistée, retaillés ; une forme inattendue est écartée."""
+
+    if not isinstance(value, list):
+        return []
+    return _facts(*((item.get("label"), item.get("value")) for item in value[:MAX_FACTS]
+                    if isinstance(item, dict) and isinstance(item.get("label"), str)))
 
 
 @dataclass(slots=True)
@@ -348,7 +586,7 @@ class BackgroundEventLedger:
         """
 
         fields = dict(data or {})
-        category = _classify(kind, fields)
+        category = _classify(kind, fields, message)
         if category is None:
             return None
         self.seq += 1
@@ -357,16 +595,22 @@ class BackgroundEventLedger:
         conversation_id = fields.get("conversation_id")
         if not board_id and resolve_board is not None and isinstance(conversation_id, str) and conversation_id:
             board_id = _board_id(resolve_board(conversation_id))
+        presented = _present(kind, message or kind, fields, _detail(kind, fields, attention))
         entry = BackgroundEvent(
             seq=self.seq,
             ts=ts,
             category=category,
             kind=kind,
             label=(message or kind)[:MAX_LABEL],
-            detail=_detail(kind, fields, attention)[:MAX_LABEL],
+            detail=presented["detail"],
             task_id=str(fields.get("task_id") or "")[:MAX_LABEL],
             attention=attention,
             board_id=board_id,
+            title=presented["title"],
+            family=presented["family"],
+            issue=presented["issue"],
+            body=presented["body"],
+            facts=presented["facts"],
         )
         self.entries.append(entry)
         del self.entries[:-MAX_ENTRIES]
@@ -414,6 +658,18 @@ class BackgroundEventLedger:
             if entry.category == category and entry.seq <= target:
                 entry.seen = True
         return self.acknowledged
+
+    def mark_seen(self, seq: int) -> bool:
+        """Marquer vue la seule entrée `seq` (sa fenêtre de détail a été ouverte).
+
+        Rend `False` si elle n'est plus dans le registre ; le curseur ne bouge pas.
+        """
+
+        for entry in self.entries:
+            if entry.seq == seq:
+                entry.seen = True
+                return True
+        return False
 
     def attention_digest(self, *, limit: int = MAX_ATTENTION_DIGEST) -> list[dict[str, Any]]:
         """Les points d'attention **non vus**, du plus récent au plus ancien.

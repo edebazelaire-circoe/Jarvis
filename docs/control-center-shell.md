@@ -227,6 +227,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 75 | `#jvStudioReloadBand` | `control_center_presentation_studio_reload.js` | `#${BAND_ID}` | Studio reload band |
 | 80 | `.ctxmenu` | `control_center.html` | `.ctxmenu` | the one shared context menu, above the choosers it replaces |
 | 82 | `#barehandsCards` | `control_center_barehands_hud.js` | `#${DOM.cardsId}` | Bare Hands quick cards, opened from the context menu |
+| 84 | `.ntdetail-back` | `control_center.html` | `.ntdetail-back` | notification detail window (2026-10-23), opened from a background pill row or a sub-agent toast: above the pill popover it replaces, below the in-page confirmation |
 | 85 | `.cdialog-back` | `control_center.html` | `.cdialog-back` | in-page confirmation |
 | 9000 | `#jvStudioExplorer` | `control_center_presentation_studio_explorer_core.js` | `#${HOST_ID}` | Variantes (Studio explorer) |
 | 9100 | `html.jvr-studio #presentationRail` | `control_center_presentation_rail.js` | `html.jvr-studio #${DOM.hostId}` | rail docked as the right column beside the Studio |

@@ -1892,7 +1892,8 @@ class ClaudeLocalAgent:
             )
             return
         if silent:
-            self.journal.emit("agent.unsolicited_result", "Tour spontané du brain, rien à dire", data=data)
+            self.journal.emit("agent.unsolicited_result", "Tour spontané du brain, rien à dire",
+                              data={**data, "nothing_to_say": True})
             return
         if quiet:
             # Tâche éphémère terminée avec succès : le silence est décidé ici,

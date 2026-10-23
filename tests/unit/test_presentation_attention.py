@@ -773,7 +773,7 @@ def test_un_evenement_ordinaire_ne_porte_pas_de_charge_utile_d_attention():
     """L'ajout est strictement additif : rien d'autre ne gagne une clé."""
 
     ledger = BackgroundEventLedger()
-    entry = ledger.observe("voice.speech.abandoned", "réponse retirée", data={}, ts="")
+    entry = ledger.observe("core.brain.notice_dropped", "relais abandonné", data={}, ts="")
     assert entry.category == ATTENTION
     assert entry.attention is None
     assert "attention" not in entry.to_payload()

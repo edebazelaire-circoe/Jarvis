@@ -174,6 +174,59 @@ def test_click_opens_same_popover_and_ack_clears(tmp_path):
     _no_errors(step)
 
 
+#: Notifications telles que `background_events._present` les écrit (retour du 23/10/2026).
+NOTICES = [
+    {"seq": 3, "ts": "2026-10-23T08:12:00+00:00", "category": "failed", "kind": "core.brain.turn_failed",
+     "label": "le backend cerveau a rendu un échec", "title": "Le cerveau n'a pas pu répondre",
+     "family": "brain", "issue": "unavailable", "detail": "Claude indisponible",
+     "body": "Le service Claude n'a pas répondu (réseau, quota ou panne du fournisseur).",
+     "facts": [{"label": "Erreur", "value": "claude_unavailable"}], "task_id": "", "unread": True},
+    {"seq": 2, "ts": "2026-10-23T08:02:00+00:00", "category": "failed", "kind": "agent.subagent.finished",
+     "label": "Sous-agent tué après 35 s : [code] Scène Réunion", "title": "Scène Réunion",
+     "family": "subagent", "issue": "stopped", "detail": "Arrêté de force en 35 s · Opus 5.5 · code",
+     "body": "", "facts": [{"label": "Modèle", "value": "Opus 5.5"}], "task_id": "a62", "unread": True},
+    {"seq": 1, "ts": "2026-10-23T07:50:00+00:00", "category": "said", "kind": "voice.speech.abandoned",
+     "label": "Réponse du cerveau soldée sans avoir été dite", "title": "Réponse non prononcée",
+     "family": "speech", "issue": "stale", "detail": "devenue obsolète avant d'être dite",
+     "body": "C'est lancé, Monsieur. Un agent Opus s'en occupe.", "facts": [], "task_id": "", "unread": True},
+]
+
+
+def test_a_notification_row_says_what_happened_and_opens_its_detail(tmp_path):
+    """Retour du 23/10/2026 : un titre en clair, une icône du type, et un détail au clic."""
+    rows = r"""[...document.querySelectorAll('#bgPop .bgitem')].map(b=>({title:b.querySelector('.emsg').textContent,
+      meta:b.querySelector('.emeta').textContent,svg:b.querySelectorAll('.ico svg').length}))"""
+    detail = r"""(()=>{const d=document.getElementById('ntDetail'),back=document.getElementById('ntDetailBack');
+      return {open:!back.hidden,cls:d.className,title:(d.querySelector('h2')||{}).textContent||null,
+        kind:(d.querySelector('.ntkind')||{}).textContent||'',body:[...d.querySelectorAll('.nttext')].map(e=>e.textContent),
+        facts:[...d.querySelectorAll('.ntmain > section dt')].map(e=>e.textContent),
+        focusInside:d.contains(document.activeElement),z:getComputedStyle(back).zIndex}})()"""
+    step = _drive(tmp_path, [{"width": 1280, "height": 720, "seed": {
+        "counts": {"failed": 2, "attention": 0, "done": 0, "said": 1}, "seq": 3, "events": NOTICES}, "actions": [
+        ["click", "open", '#bgPills [data-bg-cat="failed"]', 900],
+        ["eval", "rows", rows, 100],
+        *_shot("notifications-popover-1280x720"),
+        ["click", "row", "#bgPop .bgitem", 700],
+        ["eval", "detail", detail, 100],
+        *_shot("notifications-detail-1280x720"),
+        ["key", "escape", "Escape", 400],
+        ["eval", "closed", "document.getElementById('ntDetailBack').hidden", 100],
+    ]}])[0]
+    assert step["results"]["rows"] == [
+        {"title": "Le cerveau n'a pas pu répondre", "meta": step["results"]["rows"][0]["meta"], "svg": 1},
+        {"title": "Scène Réunion", "meta": step["results"]["rows"][1]["meta"], "svg": 1}]
+    assert step["results"]["rows"][0]["meta"].endswith(" · Claude indisponible")
+    seen = step["results"]["detail"]
+    assert seen["open"] and "bad" in seen["cls"] and seen["title"] == "Le cerveau n'a pas pu répondre"
+    assert "Échec" in seen["kind"] and "Cerveau" in seen["kind"] and "Service indisponible" in seen["kind"]
+    assert seen["body"] == ["Le service Claude n'a pas répondu (réseau, quota ou panne du fournisseur)."]
+    assert seen["facts"] == ["Erreur"] and seen["focusInside"] and seen["z"] == "84"
+    # Ouvrir le détail marque cette notification vue, elle seule.
+    assert {"event": 3} in step["acks"]
+    assert step["results"]["closed"] is True
+    _no_errors(step)
+
+
 def test_icons_have_label_and_count_not_colour_only(tmp_path):
     eye = r"""(()=>{const e=document.getElementById('hiddenEye');if(!e)return null;const r=e.getBoundingClientRect();
       return {label:e.getAttribute('aria-label'),title:e.title,pressed:e.getAttribute('aria-pressed'),w:r.width,h:r.height,

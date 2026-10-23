@@ -110,9 +110,11 @@ def test_background_notifications_are_round_pills_in_the_main_interface_not_a_to
     assert ".bgpill{" in html and "border-radius:50%" in html[html.index(".bgpill{") :][:400]
     # Slice 07 (board-session) : le Board actif, pour marquer les alertes venues d’un autre Board.
     assert "renderBackgroundPills(s.background,s.boards)" in html
-    # Chaque pastille s'acquitte seule, et mène au panneau Agents.
+    # Chaque pastille s'acquitte seule ; une ligne ouvre son détail (retour du
+    # 23/10/2026), d'où la trace du sous-agent reste à un clic.
     assert "JSON.stringify({seq:data.seq,category})" in html
-    assert "openAgentsAt(id?'trace':'list',id||null)" in html
+    assert "openNoticeDetail({...e,board:where?where.label:''}" in html
+    assert "openAgentsAt('trace',task?task.id:n.task_id)" in html
     # Une géométrie pour les deux thèmes (Slice 01 de l'orbital UI) ; depuis la
     # Slice 06, les pastilles sont au centre d'état du bas (même code, mêmes ids),
     # sous Cosmos comme au circuit imprimé.

@@ -15,6 +15,7 @@ from jarvis.runtime.background_events import (
     ATTENTION,
     DONE,
     FAILED,
+    SAID,
     MAX_ENTRIES,
     MAX_READ_BYTES,
     BackgroundEventLedger,
@@ -38,14 +39,19 @@ def test_the_incident_of_the_day_is_classified_exactly_as_it_happened():
          status="interrupted", description="Note Agar reindex requirement")
     emit(ledger, "core.brain.turn_failed", "le backend cerveau a rendu un échec", error="claude_handover")
     emit(ledger, "voice.speech.error_withheld", "Erreur non prononcée", reason="stale_source")
-    emit(ledger, "core.brain.woken_by_work", "tour ouvert par un changement de travail de fond", notes=3)
+    # Le réveil du cerveau est une cause, pas un résultat : plus signalé
+    # (retour du 23/10/2026), ce qu'il produit l'est déjà.
+    assert emit(ledger, "core.brain.woken_by_work", "tour ouvert par un changement de travail de fond", notes=3) is None
 
-    assert ledger.counts() == {FAILED: 4, ATTENTION: 1}
-    assert ledger.unread == 5
+    assert ledger.counts() == {FAILED: 4}
+    assert ledger.unread == 4
     payload = ledger.to_payload()
     # Le plus récent d'abord : c'est l'ordre de lecture d'un panneau.
-    assert payload["events"][0]["kind"] == "core.brain.woken_by_work"
-    assert payload["events"][-1]["detail"] == "Git branches vs main status"
+    assert payload["events"][0]["kind"] == "voice.speech.error_withheld"
+    oldest = payload["events"][-1]
+    assert oldest["title"] == "Git branches vs main status"
+    assert oldest["detail"] == "Interrompu" and oldest["issue"] == "interrupted"
+    assert oldest["body"] == "Cause : agent principal arrêté."
 
 
 def test_a_finished_subagent_counts_as_done_and_a_spoken_relay_counts_as_nothing():
@@ -257,3 +263,63 @@ def test_a_trace_that_does_not_exist_yet_is_read_in_full_when_it_appears(tmp_pat
     write(path, trace_entry("agent.subagent.finished", status="failed"))
     assert follow(ledger, follower) == 1
     assert ledger.counts() == {FAILED: 1}
+
+
+def test_each_notification_says_in_plain_words_what_happened():
+    """Retour du 23/10/2026 : un titre utile d'un coup d'œil, et de quoi lire au clic."""
+    ledger = BackgroundEventLedger()
+
+    task = emit(ledger, "agent.subagent.finished", "Sous-agent terminé en 14 min 23 s : [code] Décor bureau (Opus)",
+                status="completed", description="[code] Décor bureau (Opus)", model="claude-opus-5-5",
+                duration_ms=863_000, tokens=139_156, tool_uses=52, subagent_type="general-purpose", task_id="a62")
+    brain = emit(ledger, "core.brain.turn_failed", "le backend cerveau a rendu un échec", error="claude_unavailable")
+    unsaid = emit(ledger, "voice.speech.abandoned", "Réponse du cerveau soldée sans avoir été dite",
+                  reason="not_revalidated", status="superseded", text="C'est lancé, Monsieur.")
+
+    assert (task.title, task.family, task.issue) == ("Décor bureau (Opus)", "subagent", "")
+    assert task.detail == "Terminé en 14 min 23 s · Opus 5.5 · code"
+    facts = {fact["label"]: fact["value"] for fact in task.facts}
+    assert facts["Modèle"] == "Opus 5.5" and facts["Rôle"] == "code" and facts["Outils appelés"] == "52"
+    assert (brain.title, brain.family, brain.issue, brain.detail) == (
+        "Le cerveau n'a pas pu répondre", "brain", "unavailable", "Claude indisponible")
+    assert "répétez-la" in brain.body
+    # Une réponse retirée est un résultat non dit, et son texte se relit.
+    assert unsaid.category == SAID and unsaid.issue == "stale" and unsaid.body == "C'est lancé, Monsieur."
+    assert unsaid.detail == "devenue obsolète avant d'être dite"
+
+
+def test_a_silent_relay_with_nothing_to_say_is_not_a_notification():
+    ledger = BackgroundEventLedger()
+
+    assert emit(ledger, "agent.unsolicited_result", "Tour spontané du brain, rien à dire",
+                spoken=False, nothing_to_say=True) is None
+    # Trace écrite avant le drapeau : la phrase suffit.
+    assert emit(ledger, "agent.unsolicited_result", "Tour spontané du brain, rien à dire", spoken=False) is None
+    unsaid = emit(ledger, "agent.unsolicited_result", "Le rapport est prêt.", spoken=False)
+    assert unsaid.title == "Résultat non prononcé" and unsaid.body == "Le rapport est prêt."
+
+
+def test_presentation_survives_persistence_and_an_old_record_still_reads():
+    ledger = BackgroundEventLedger()
+    emit(ledger, "core.brain.turn_failed", "le backend cerveau a rendu un échec", error="brain_backend_timeout")
+    record = json.loads(json.dumps(ledger.to_record()))
+    reread = BackgroundEventLedger.from_record(record).to_payload()["events"][0]
+    assert (reread["title"], reread["issue"], reread["family"]) == (
+        "Le cerveau n'a pas pu répondre", "timeout", "brain")
+
+    old = {"seq": 1, "acknowledged": 0, "entries": [
+        {"seq": 1, "ts": "", "category": "failed", "kind": "core.brain.turn_failed",
+         "label": "le backend cerveau a rendu un échec", "detail": "", "task_id": "",
+         "issue": "<script>", "facts": [{"label": "x", "value": 3}, "bad"]}]}
+    event = BackgroundEventLedger.from_record(old).to_payload()["events"][0]
+    assert event["title"] == "le backend cerveau a rendu un échec" and event["family"] == "brain"
+    assert event["issue"] is None and event["facts"] == [{"label": "x", "value": "3"}]
+
+
+def test_opening_one_notification_marks_only_it_seen():
+    ledger = BackgroundEventLedger()
+    first = emit(ledger, "agent.subagent.finished", "mort", status="failed")
+    emit(ledger, "agent.subagent.finished", "mort aussi", status="failed")
+
+    assert ledger.mark_seen(first.seq) is True and ledger.unread == 1 and ledger.acknowledged == 0
+    assert ledger.mark_seen(99) is False

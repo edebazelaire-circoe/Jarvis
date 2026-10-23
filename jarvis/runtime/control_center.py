@@ -6824,7 +6824,15 @@ class ControlCenter:
         if category is not None and category not in BACKGROUND_CATEGORIES:
             return web.json_response({"ok": False, "code": "invalid_request",
                                       "error": f"catégorie inconnue : {category}"}, status=400)
-        cursor = self.background.acknowledge(seq, category=category)
+        # `event` : la seule notification dont la fenêtre de détail a été ouverte.
+        event = body.get("event")
+        if "event" in body:
+            if isinstance(event, bool) or not isinstance(event, int) or event < 1 or "seq" in body or category:
+                return self._ack_refused(f"event doit être un entier positif, seul, reçu {event!r}"[:160])
+            self.background.mark_seen(event)
+            cursor = self.background.acknowledged
+        else:
+            cursor = self.background.acknowledge(seq, category=category)
         # Un acquittement doit survivre au redémarrage autant qu'un non-lu. Un
         # échec d'écriture est dit (journal `error`) et rendu : l'état en
         # mémoire est juste, seul son maintien après redémarrage est en jeu.

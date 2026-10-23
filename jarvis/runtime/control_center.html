@@ -37,6 +37,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    @shell-layer 75: .bgpop, #jvStudioReloadBand
    @shell-layer 80: .ctxmenu
    @shell-layer 82: #barehandsCards
+   @shell-layer 84: .ntdetail-back
    @shell-layer 85: .cdialog-back
    @shell-layer 9000: #jvStudioExplorer
    @shell-layer 9100: html.jvr-studio #presentationRail
@@ -389,6 +390,38 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 .cdialog.danger button.go{border-color:rgba(255,101,119,.55);color:var(--danger)}
 .cdialog button.go:hover{background:rgba(110,231,255,.08)}.cdialog.danger button.go:hover{background:rgba(255,101,119,.1)}
 @media(prefers-reduced-motion:reduce){.cdialog{animation:none}}
+/* Fenêtre de détail d'une notification (retour du 23/10/2026) : ce qui s'est
+   passé, en clair, avec le texte non dit, l'explication d'une erreur, les faits
+   (modèle, durée, jetons…) et le compte rendu d'un sous-agent. Sous la
+   confirmation (85), au-dessus de la liste des pastilles (75). */
+.ntdetail-back{position:fixed;inset:0;z-index:84;display:grid;place-items:center;padding:16px;background:rgba(2,6,10,.58);backdrop-filter:blur(3px)}
+.ntdetail-back[hidden]{display:none}
+.ntdetail{--nt:var(--accent);width:min(560px,100%);max-height:min(640px,calc(100vh - 32px));display:flex;flex-direction:column;background:#08121a;border:1px solid var(--line);border-top:3px solid var(--nt);border-radius:10px;box-shadow:0 24px 70px rgba(0,0,0,.7);animation:toastIn .16s ease-out}
+.ntdetail.bad{--nt:var(--sem-alert)}.ntdetail.warn{--nt:var(--sem-question)}.ntdetail.ok{--nt:var(--sem-done)}.ntdetail.info{--nt:var(--muted)}
+.ntdetail:focus{outline:none}
+.ntdetail header{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:start;padding:16px 12px 12px 16px;border-bottom:1px solid var(--line)}
+.ntdetail .ntico{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;color:var(--nt);background:color-mix(in srgb,var(--nt) 12%,#03080c);border:1px solid color-mix(in srgb,var(--nt) 45%,transparent)}
+.ntdetail .ntico svg{width:21px;height:21px}
+.ntdetail .ntkind{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 5px;font:600 10px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.ntdetail .ntkind .ntcat{color:var(--nt)}
+.ntdetail h2{margin:0;font-size:15px;font-weight:600;line-height:1.35;color:var(--text);overflow-wrap:anywhere}
+.ntdetail .ntsub{margin:4px 0 0;font-size:12.5px;line-height:1.45;color:#b3cbd6;overflow-wrap:anywhere}
+.ntdetail .ntmain{overflow:auto;min-height:0;padding:12px 16px 4px;display:grid;gap:14px}
+.ntdetail section h3{margin:0 0 6px;font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.ntdetail .nttext{margin:0;padding:10px 12px;border:1px solid var(--line);border-left:2px solid color-mix(in srgb,var(--nt) 60%,transparent);border-radius:6px;background:rgba(3,12,18,.7);font-size:13px;line-height:1.55;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto}
+.ntdetail dl{margin:0;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 14px;font-size:12.5px;line-height:1.45}
+.ntdetail dt{color:var(--muted)}
+.ntdetail dd{margin:0;color:var(--text);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.ntdetail details{font-size:12px;color:var(--muted)}
+.ntdetail details summary{cursor:pointer;font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase}
+.ntdetail details[open] summary{margin-bottom:6px}
+.ntdetail .ntnote{margin:0;font-size:12px;line-height:1.45;color:var(--muted)}
+.ntdetail footer{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;padding:10px 12px;border-top:1px solid var(--line)}
+.ntdetail footer button{padding:7px 12px;border-radius:6px;border:1px solid var(--line);background:rgba(3,14,20,.9);color:var(--text);font:inherit;font-size:12.5px;cursor:pointer}
+.ntdetail footer button.go{border-color:rgba(110,231,255,.5);color:var(--accent)}
+.ntdetail footer button:hover{background:rgba(110,231,255,.08)}
+.ntdetail button:focus-visible,.ntdetail summary:focus-visible{outline:var(--shell-focus-w) solid var(--shell-focus);outline-offset:2px}
+@media(prefers-reduced-motion:reduce){.ntdetail{animation:none}}
 /* Pile en bas à droite, au-dessus de la rangée de l'onglet Chat (18 + 40 + 10 px) ;
    étroite, elle laisse la colonne gauche (Bare Hands, rail de capture : 146 px). */
 .toasts{position:fixed;right:var(--shell-gutter);bottom:68px;z-index:70;display:grid;gap:8px;width:clamp(220px,calc(100vw - 164px),340px);pointer-events:none}
@@ -399,6 +432,11 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 .toast.clickable{cursor:pointer}
 .toast.clickable:hover{border-color:rgba(110,231,255,.4)}
 .toast .ttxt{min-width:0}
+.toast .tico{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;color:var(--accent);background:rgba(110,231,255,.08)}
+.toast.ok .tico{color:var(--sem-done);background:color-mix(in srgb,var(--sem-done) 12%,transparent)}
+.toast.bad .tico{color:var(--sem-alert);background:color-mix(in srgb,var(--sem-alert) 12%,transparent)}
+.toast.warn .tico{color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,transparent)}
+.toast .tico svg{width:17px;height:17px}
 .toast .ttxt strong{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .toast .ttxt span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;font-size:11px;line-height:1.4;color:var(--muted);margin-top:2px;overflow:hidden;overflow-wrap:anywhere}
 .tclose{background:none;border:0;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;padding:0 4px;align-self:start}
@@ -710,6 +748,10 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .bgitem{display:flex;align-items:flex-start;gap:9px;width:100%;padding:8px;background:none;border:0;border-radius:6px;color:var(--text);font:inherit;font-size:13px;text-align:left;cursor:pointer}
 .bgitem:hover,.bgitem:focus-visible{outline:none;background:rgba(110,231,255,.08)}
 .bgitem .ico svg{width:16px;height:16px;vertical-align:-3px}
+.bgitem .etxt{display:grid;min-width:0;gap:2px}
+.bgitem .emsg{font-weight:600;line-height:1.35;overflow-wrap:anywhere}
+.bgitem .emeta{font-size:11.5px;line-height:1.4;color:var(--muted);overflow-wrap:anywhere}
+.bgitem .epeek{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;font-size:12px;line-height:1.4;color:#b3cbd6}
 .bgpop.bad .bgitem .ico{color:var(--sem-alert)}.bgpop.warn .bgitem .ico{color:var(--sem-question)}.bgpop.ok .bgitem .ico{color:var(--sem-done)}.bgpop.info .bgitem .ico{color:var(--muted)}
 .bgpop footer{display:flex;gap:8px;justify-content:flex-end;padding:8px 10px;border-top:1px solid var(--line)}
 /* Slice 07 (board-session) : Board source des alertes. Une pastille qui compte
@@ -2108,6 +2150,7 @@ button.wsp-ename:hover{color:var(--accent)}
   <section class="board-drop-tray" id="boardDropTray" data-shell-control aria-label="Dépôts sur le Board" hidden><ul id="boardDropList" role="log" aria-live="polite" aria-label="Envois vers le Board"></ul></section>
 </div>
 <div class="ctxmenu" id="ctxMenu" role="menu" hidden></div>
+<div class="ntdetail-back" id="ntDetailBack" hidden><div class="ntdetail" id="ntDetail" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="ntDetailTitle"></div></div>
 <div class="cdialog-back" id="confirmBack" hidden><div class="cdialog" id="confirmDialog" tabindex="-1" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmBody"><h2 id="confirmTitle"></h2><ul id="confirmBody"></ul><div class="crow"><button type="button" id="confirmCancel">Annuler</button><button type="button" class="go" id="confirmGo">Confirmer</button></div></div></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <div class="bgpop" id="bgPop" role="dialog" aria-label="Notifications d’arrière-plan" hidden></div>
@@ -2435,15 +2478,48 @@ function bgCueAllowed(seq){
    les tracés d'une icône SVG 24×24 (Slice 06 de l'orbital UI, D8 : jamais un
    émoji, jamais la couleur seule) — alerte, question, coche, haut-parleur barré. */
 const BG_CATS=[
-  {id:'failed',one:'échec',many:'échecs',icon:['M12 3.8 21.2 19.5H2.8z','M12 9.6v4.6','M12 16.9v.2'],tone:'bad'},
-  {id:'attention',one:'point à vérifier',many:'points à vérifier',icon:['M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 1 0 0-17z','M9.5 9.4a2.6 2.6 0 1 1 3.7 2.4c-.8.4-1.2.9-1.2 1.8v.5','M12 16.9v.2'],tone:'warn'},
-  {id:'done',one:'tâche terminée',many:'tâches terminées',icon:['M4.8 12.6l4.4 4.4L19.4 6.8'],tone:'ok'},
-  {id:'said',one:'résultat non dit',many:'résultats non dits',icon:['M4 9.4h3.4L12 5.6v12.8l-4.6-3.8H4z','M15.6 9.4l4.6 5.2','M20.2 9.4l-4.6 5.2'],tone:'info'},
+  {id:'failed',chip:'Échec',one:'échec',many:'échecs',icon:['M12 3.8 21.2 19.5H2.8z','M12 9.6v4.6','M12 16.9v.2'],tone:'bad'},
+  {id:'attention',chip:'À vérifier',one:'point à vérifier',many:'points à vérifier',icon:['M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 1 0 0-17z','M9.5 9.4a2.6 2.6 0 1 1 3.7 2.4c-.8.4-1.2.9-1.2 1.8v.5','M12 16.9v.2'],tone:'warn'},
+  {id:'done',chip:'Terminé',one:'tâche terminée',many:'tâches terminées',icon:['M4.8 12.6l4.4 4.4L19.4 6.8'],tone:'ok'},
+  {id:'said',chip:'Non dit',one:'résultat non dit',many:'résultats non dits',icon:['M4 9.4h3.4L12 5.6v12.8l-4.6-3.8H4z','M15.6 9.4l4.6 5.2','M20.2 9.4l-4.6 5.2'],tone:'info'},
 ];
 const bgCat=id=>BG_CATS.find(c=>c.id===id)||{id,one:id,many:id,icon:['M12 11.9v.2'],tone:'info'};
 /* L'icône d'une catégorie : tracés fixes de `BG_CATS`, jamais un texte d'auteur. */
 const bgIcon=cat=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${cat.icon.map(d=>`<path d="${d}"/>`).join('')}</svg>`;
 const bgCount=(cat,n)=>`${n} ${n>1?cat.many:cat.one}`;
+
+/* Icônes d'une notification (retour du 23/10/2026) : la pastille dit la
+   catégorie par sa couleur, l'icône dit **de quoi** il s'agit. Un problème
+   (`issue`, posé par `background_events._present`) l'emporte sur la source
+   (`family`) : « Claude indisponible » se reconnaît mieux à son nuage barré
+   qu'au seul fait que le cerveau est en cause. Tracés fixes, jamais un texte
+   d'auteur, comme `BG_CATS`. */
+const NT_FAMILIES={
+  subagent:{name:'Sous-agent',icon:['M7 8h10a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z','M12 4.5V8','M9.5 12.8v1','M14.5 12.8v1']},
+  brain:{name:'Cerveau',icon:['M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1-5.1-1.9 5.1-1.9z','M18.5 16.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z']},
+  speech:{name:'Voix',icon:['M4 9.4h3.4L12 5.6v12.8l-4.6-3.8H4z','M15.4 9.2a4 4 0 0 1 0 5.6','M18 6.6a7.6 7.6 0 0 1 0 10.8']},
+  relay:{name:'Compte rendu',icon:['M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-4 3.5V16H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z','M8 9.5h8','M8 12.5h5']},
+  presentation:{name:'Présentation',icon:['M3.5 5h17','M5 5v9h14V5','M12 14v3','M9 20.5l3-3.5 3 3.5']},
+  board:{name:'Board',icon:['M4 4h7v7H4z','M13 4h7v7h-7z','M4 13h7v7H4z','M13 13h7v7h-7z']},
+  work:{name:'Travail de fond',icon:['M12 4l8 4-8 4-8-4z','M4 12l8 4 8-4','M4 16l8 4 8-4']},
+};
+const NT_ISSUES={
+  error:{name:'Erreur',icon:['M12 3.8 21.2 19.5H2.8z','M12 9.6v4.6','M12 16.9v.2']},
+  unavailable:{name:'Service indisponible',icon:['M7.2 18h9.6a3.9 3.9 0 0 0 .7-7.7 5.9 5.9 0 0 0-11.3-.6A4.1 4.1 0 0 0 7.2 18z','M4 4l16 16']},
+  timeout:{name:'Délai dépassé',icon:['M7 3.5h10','M7 20.5h10','M8 3.5c0 4.2 8 4.3 8 8.5s-8 4.3-8 8.5','M16 3.5c0 4.2-8 4.3-8 8.5s8 4.3 8 8.5']},
+  handover:{name:'Relève de session',icon:['M4 8h14l-3.5-3.5','M20 16H6l3.5 3.5']},
+  stopped:{name:'Arrêté',icon:['M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 1 0 0-17z','M9.5 9.5h5v5h-5z']},
+  interrupted:{name:'Interrompu',icon:['M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 1 0 0-17z','M10 9v6','M14 9v6']},
+  stale:{name:'Devenu obsolète',icon:['M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 1 0 0-17z','M12 7.5V12l3 2']},
+  muted:{name:'Non prononcé',icon:['M4 9.4h3.4L12 5.6v12.8l-4.6-3.8H4z','M15.6 9.4l4.6 5.2','M20.2 9.4l-4.6 5.2']},
+  blocked:{name:'Bloqué',icon:['M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 1 0 0-17z','M6 6l12 12']},
+};
+/* L'icône d'une notification : problème, sinon source, sinon catégorie. */
+const ntIcon=n=>bgIcon(NT_ISSUES[n&&n.issue]||NT_FAMILIES[n&&n.family]||bgCat(n&&n.category));
+/* Sous-agent : `[code] [opus] Sujet` -> le sujet ; les marqueurs vont dans les faits. */
+const ntSubject=text=>String(text||'').replace(/^(\s*\[[^\]]{1,38}\])+\s*/,'').trim();
+/* Statut final d'une sous-tâche vu par une notification (même table que `_TASK_STATUSES`). */
+const NT_TASK_ISSUES={failed:'error',killed:'stopped',stopped:'stopped',interrupted:'interrupted',cancelled:'stopped'};
 
 /* Les pastilles suivent le résumé de `/api/status` (sondé chaque seconde) :
    le DOM n'est réécrit que si un compte change, pour ne pas voler le focus. */
@@ -2544,19 +2620,25 @@ async function openBackgroundPop(category,pill){
   pop.innerHTML=`<header><span class="dot ${cat.tone==='info'?'busy':cat.tone}"></span><strong>${esc(bgCount(cat,events.length))}</strong><button type="button" class="tclose" data-bg-close aria-label="Fermer">×</button></header>`
     +(data.store_warning?`<div class="bgwarn" role="alert">${esc(data.store_warning)}</div>`:'')
     +`<div class="bglist">${events.length?events.map(e=>{
-        const task=bgTaskFor(e.task_id),where=B?B.alertBoardOf(e,BG.active):null,away=!!(where&&where.elsewhere);
+        const where=B?B.alertBoardOf(e,BG.active):null,away=!!(where&&where.elsewhere);
         const chipTitle=!where?'':where.here?'Alerte du Board actif':where.elsewhere?'Alerte venue d’un autre Board':'Board actif inconnu pour l’instant';
         const chip=where?`<span class="bgboard" title="${esc(chipTitle)}">${esc(where.label)}</span>`:'';
         /* L'action nomme sa cible (« Aller sur « X » »), jamais « Aller au Board ». */
         const go=away&&canGo?`<button type="button" class="bggo" data-bg-go="${esc(where.board_id)}" data-bg-go-title="${esc(where.title)}" aria-label="${esc(where.action)}" title="${esc(where.action)} : bascule normale, la voix et la conversation suivent">${esc(where.action)} →</button><p class="bggo-note" role="status" hidden></p>`:'';
-        return `<div class="bgrow${away?' elsewhere':''}"><button type="button" class="bgitem" data-bg-task="${esc(task?task.id:'')}" title="${task?'Ouvrir la trace de ce sous-agent':'Ouvrir le panneau Agents'}"><span class="ico">${bgIcon(cat)}</span><span class="etxt">${chip}<span class="emsg">${esc(e.label)}</span><span class="emeta">${esc(timeOf(e.ts))}${e.detail?' · '+esc(e.detail):''}</span></span></button>${go}</div>`;
+        const peek=e.body&&e.family!=='brain'?`<span class="epeek">${esc(e.body)}</span>`:'';
+        return `<div class="bgrow${away?' elsewhere':''}"><button type="button" class="bgitem" data-bg-seq="${esc(e.seq)}" title="Voir le détail"><span class="ico">${ntIcon(e)}</span><span class="etxt">${chip}<span class="emsg">${esc(e.title||e.label)}</span><span class="emeta">${esc(ntClock(e.ts))}${e.detail?' · '+esc(e.detail):''}</span>${peek}</span></button>${go}</div>`;
       }).join(''):'<div class="empty">Rien en attente.</div>'}</div>`
     +`<footer><button type="button" class="action primary" data-bg-ack>Marquer comme vu</button><button type="button" class="action" data-bg-agents>Agents →</button></footer>`;
   placeBackgroundPop(pill);
   pop.querySelector('[data-bg-close]').addEventListener('click',()=>{closeBackgroundPop();pill.focus()});
   pop.querySelector('[data-bg-agents]').addEventListener('click',()=>{closeBackgroundPop();openAgentsAt('list')});
-  pop.querySelectorAll('[data-bg-task]').forEach(item=>item.addEventListener('click',()=>{
-    const id=item.dataset.bgTask;closeBackgroundPop();openAgentsAt(id?'trace':'list',id||null);
+  /* Une ligne ouvre sa fenêtre de détail (retour du 23/10/2026) : avant, elle
+     menait au panneau Agents, qui n'apprenait rien sur un échec du cerveau ou
+     une réponse non dite. La trace du sous-agent reste à un clic, depuis le détail. */
+  pop.querySelectorAll('[data-bg-seq]').forEach(item=>item.addEventListener('click',()=>{
+    const e=events.find(x=>String(x.seq)===item.dataset.bgSeq);if(!e)return;
+    const where=B?B.alertBoardOf(e,BG.active):null;
+    closeBackgroundPop();openNoticeDetail({...e,board:where?where.label:''},pill.isConnected?pill:null);
   }));
   /* « Aller au Board » : la bascule normale (`JarvisBoardsControl.switchTo`
      -> `POST /api/boards/switch {board_id}`), attente et refus dits sur place.
@@ -2600,6 +2682,118 @@ document.addEventListener('keydown',e=>{
   const pill=document.querySelector(`#bgPills [data-bg-cat="${category}"]`);if(pill)pill.focus();
 },true);
 window.addEventListener('resize',()=>{if(BG.open)closeBackgroundPop()});
+
+/* =====================================================================
+   Détail d'une notification (retour du 23/10/2026)
+   =====================================================================
+   « Lorsque je les ouvre je n'ai aucune information supplémentaire. » Une
+   notification ouverte — ligne d'une pastille ou toast de fin de sous-agent —
+   montre ici tout ce qui est connu : le texte non dit, l'explication d'une
+   erreur, les faits (modèle, durée, jetons…), et pour un sous-agent sa
+   consigne et son compte rendu, lus dans sa trace. Ouvrir une notification
+   d'arrière-plan la marque comme vue, elle seule. */
+const NT={back:$('#ntDetailBack'),box:$('#ntDetail'),opener:null,token:0};
+function ntClock(ts){
+  const d=new Date(ts);if(!ts||isNaN(d))return timeOf(ts);
+  const sameDay=d.toDateString()===new Date().toDateString();
+  return d.toLocaleString('fr-FR',sameDay?{hour:'2-digit',minute:'2-digit'}:{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+}
+function ntWhen(ts){
+  const d=new Date(ts);if(!ts||isNaN(d))return String(ts||'');
+  const full=d.toLocaleString('fr-FR',{weekday:'long',day:'numeric',month:'long',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const min=Math.round((Date.now()-d.getTime())/60000);
+  const ago=min<1?'à l’instant':min<60?`il y a ${min} min`:min<1440?`il y a ${Math.floor(min/60)} h ${pad2(min%60)}`:`il y a ${Math.floor(min/1440)} j`;
+  return `${full} · ${ago}`;
+}
+/* Ce que montre le corps, selon la source : le mot dit ce qu'on lit. */
+const NT_BODY_TITLES={speech:'Ce qui devait être dit',relay:'Le compte rendu',brain:'Ce qui s’est passé',subagent:'Compte rendu',board:'Ce qui a été retenu'};
+/* Notification d'une tâche terminée, vue par le toast de `noticeTransitions`. */
+function taskNotice(t){
+  const st=statusInfo(t.status),issue=NT_TASK_ISSUES[t.status]||'';
+  const roles=(String(t.description||'').match(/^(\s*\[[^\]]{1,38}\])+/)||[''])[0].match(/[^\[\]\s][^\[\]]*/g)||[];
+  const facts=[['Statut',st.label],['Durée',fmtDuration(taskElapsed(t,serverNow()))],['Modèle',t.model?prettyModel(t.model):''],
+    ['Rôle',roles.map(r=>r.trim()).join(', ')],['Type',t.subagent_type||''],['Jetons',fmtTokens(t.tokens)],['Outils appelés',t.tool_uses||''],['Erreur',errorLabel(t.error_class)]]
+    .filter(([,v])=>v!==''&&v!=null).map(([label,value])=>({label,value:String(value)}));
+  return {category:issue?'failed':'done',family:'subagent',issue,title:ntSubject(t.description)||taskTitle(t),
+    detail:[st.verb.charAt(0).toUpperCase()+st.verb.slice(1),t.model?prettyModel(t.model):''].filter(Boolean).join(' · '),
+    ts:t.ended_ms?new Date(Number(t.ended_ms)).toISOString():'',body:String(t.summary||''),facts,task_id:t.id,kind:'agent.subagent.finished'};
+}
+function closeNoticeDetail(){
+  NT.token++;NT.back.hidden=true;NT.box.innerHTML='';
+  const opener=NT.opener;NT.opener=null;
+  if(opener&&opener.isConnected)opener.focus({preventScroll:true});
+}
+async function ntCopy(n,button){
+  const text=[n.title,n.detail,ntWhen(n.ts),n.body,...(n.facts||[]).map(f=>`${f.label} : ${f.value}`)].filter(Boolean).join('\n');
+  try{await navigator.clipboard.writeText(text);button.textContent='Copié'}
+  catch(e){button.textContent='Copie impossible';console.error('[notifications] copy_failed',e)}
+}
+/* Consigne et compte rendu d'un sous-agent, lus dans sa trace (`/api/agent/tasks/{id}/trace`). */
+async function ntLoadTask(n,slot,token){
+  const task=bgTaskFor(n.task_id),id=task?task.id:n.task_id;
+  let data;
+  try{data=await api(`/api/agent/tasks/${encodeURIComponent(id)}/trace?limit=120`)}
+  catch(e){
+    if(token!==NT.token)return;
+    slot.innerHTML=`<p class="ntnote">${/inconnue|not_found|404/i.test(e.message)?'La trace de ce sous-agent n’est plus en mémoire (Control Center redémarré depuis) : seuls les faits ci-dessus restent.':'Trace illisible : '+esc(e.message)}</p>`;
+    console.warn('[notifications] notice_task_trace_unavailable',e);
+    return;
+  }
+  if(token!==NT.token)return;
+  const t=data.task||{},entries=Array.isArray(data.entries)?data.entries:[];
+  const last=role=>[...entries].reverse().find(x=>x&&x.role===role&&String(x.text||'').trim());
+  const report=String(t.summary||'').trim()||String((last('result')||last('assistant')||{}).text||'').trim();
+  const prompt=String(t.prompt||'').trim();
+  slot.innerHTML=(report?`<section><h3>Compte rendu</h3><p class="nttext">${esc(report)}</p></section>`:'<p class="ntnote">Aucun compte rendu écrit dans la trace.</p>')
+    +(prompt?`<details><summary>Consigne donnée au sous-agent</summary><p class="nttext">${esc(prompt)}</p></details>`:'');
+}
+function openNoticeDetail(n,opener){
+  const cat=bgCat(n.category),token=++NT.token;
+  NT.opener=opener||document.activeElement;
+  const fam=NT_FAMILIES[n.family],issue=NT_ISSUES[n.issue];
+  const facts=(n.facts||[]).filter(f=>f&&f.label&&f.value);
+  if(n.board)facts.push({label:'Board',value:n.board});
+  const hasTask=!!n.task_id&&n.family==='subagent';
+  NT.box.className=`ntdetail ${cat.tone}`;
+  NT.box.innerHTML=`<header><span class="ntico" aria-hidden="true">${ntIcon(n)}</span><div>`
+      +`<p class="ntkind"><span class="ntcat">${esc(cat.chip||cat.one)}</span>${fam?`<span>· ${esc(fam.name)}</span>`:''}${issue?`<span>· ${esc(issue.name)}</span>`:''}</p>`
+      +`<h2 id="ntDetailTitle">${esc(n.title||n.label||'Notification')}</h2>`
+      +(n.detail?`<p class="ntsub">${esc(n.detail)}</p>`:'')
+      +`<p class="ntsub" style="color:var(--muted)">${esc(ntWhen(n.ts))}</p></div>`
+      +`<button type="button" class="tclose" data-nt-close aria-label="Fermer le détail">×</button></header>`
+    +`<div class="ntmain">`
+      +(n.body?`<section><h3>${esc(NT_BODY_TITLES[n.family]||'Détail')}</h3><p class="nttext">${esc(n.body)}</p></section>`:'')
+      +(facts.length?`<section><h3>Faits</h3><dl>${facts.map(f=>`<dt>${esc(f.label)}</dt><dd>${esc(f.value)}</dd>`).join('')}</dl></section>`:'')
+      +(hasTask?'<div data-nt-task><p class="ntnote">Lecture de la trace du sous-agent…</p></div>':'')
+      +(!n.body&&!facts.length&&!hasTask?'<p class="ntnote">La trace n’a rien consigné de plus pour cet événement.</p>':'')
+      +`<details><summary>Technique</summary><dl>${[['Événement',n.kind],['Numéro',n.seq],['Tâche',n.task_id],['Libellé du journal',n.label]].filter(([,v])=>v).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl></details>`
+    +`</div><footer>`
+      +(hasTask?'<button type="button" class="go" data-nt-trace>Trace complète →</button>':'')
+      +'<button type="button" data-nt-copy>Copier</button><button type="button" data-nt-close>Fermer</button></footer>';
+  NT.back.hidden=false;
+  NT.box.querySelectorAll('[data-nt-close]').forEach(b=>b.addEventListener('click',closeNoticeDetail));
+  NT.box.querySelector('[data-nt-copy]').addEventListener('click',e=>ntCopy(n,e.currentTarget));
+  const trace=NT.box.querySelector('[data-nt-trace]');
+  if(trace)trace.addEventListener('click',()=>{const task=bgTaskFor(n.task_id);closeNoticeDetail();openAgentsAt('trace',task?task.id:n.task_id)});
+  if(hasTask)ntLoadTask(n,NT.box.querySelector('[data-nt-task]'),token);
+  NT.box.focus({preventScroll:true});
+  /* Vue, elle seule : une notification ouverte n'a plus à compter dans sa pastille. */
+  if(n.seq&&n.unread)api('/api/background/ack',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event:Number(n.seq)})})
+    .then(()=>refreshStatus())
+    .catch(e=>{console.error('[notifications] notice_ack_failed',e);toast({title:'Notification non marquée comme vue',sub:e.message,kind:'bad'})});
+}
+NT.back.addEventListener('mousedown',e=>{if(e.target===NT.back)closeNoticeDetail()});
+document.addEventListener('keydown',e=>{
+  if(NT.back.hidden)return;
+  if(e.key==='Escape'){e.stopPropagation();e.preventDefault();closeNoticeDetail();return}
+  /* Le focus reste dans la fenêtre (aria-modal). */
+  if(e.key==='Tab'){
+    const items=[...NT.box.querySelectorAll('button,summary')];if(!items.length)return;
+    const first=items[0],lastItem=items[items.length-1];
+    if(e.shiftKey&&(document.activeElement===first||document.activeElement===NT.box)){e.preventDefault();lastItem.focus()}
+    else if(!e.shiftKey&&document.activeElement===lastItem){e.preventDefault();first.focus()}
+  }
+},true);
 async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){toast({title:'Archivage des erreurs impossible',sub:e.message,kind:'bad'});console.error('errors_archive_failed',e)}finally{archive.disabled=false}})}
 /* La touche d'éveil et ce qu'elle fait maintenant (« F9 · DÉMARRER »…), l'état de la
    voix, de l'agent et des sous-agents : plus de capsule au bas-centre (orbital-ui Slice 06,
@@ -3102,30 +3296,35 @@ function noticeTransitions(tasks,key){
     toast({title:`${ended.length} sous-agents terminés`,sub:failed?`dont ${plural(failed,'échec','échecs')}`:'',kind:failed?'bad':'warn',onClick:()=>openAgentsAt('list')});
     return;
   }
+  /* Retour du 23/10/2026 : le titre dit le sujet de la tâche (pas « General
+     Purpose · terminé »), l'icône son issue, la ligne grise le statut, la durée,
+     le modèle et le début du compte rendu ; un clic ouvre le détail. */
   for(const t of ended){
-    const st=statusInfo(t.status);
-    const detail=String(t.summary||t.description||'').replace(/\s+/g,' ').trim();
+    const st=statusInfo(t.status),n=taskNotice(t);
+    const summary=String(t.summary||'').replace(/\s+/g,' ').trim();
     toast({
-      title:`${taskTitle(t)} · ${st.verb}`,
-      sub:[prettyModel(t.model),fmtDuration(taskElapsed(t,serverNow())),errorLabel(t.error_class),detail].filter(Boolean).join(' · '),
+      title:n.title,
+      sub:[`${st.verb.charAt(0).toUpperCase()+st.verb.slice(1)} en ${fmtDuration(taskElapsed(t,serverNow()))}`,t.model?prettyModel(t.model):'',errorLabel(t.error_class),summary].filter(Boolean).join(' · '),
       kind:st.cls==='ok'?'ok':st.cls==='bad'?'bad':'warn',
-      logo:logoHtml(t),
-      onClick:()=>openAgentsAt('trace',t.id),
+      icon:ntIcon(n),
+      onClick:()=>openNoticeDetail(n),
     });
   }
 }
 
-function toast({title:heading,sub='',kind='info',logo='',onClick=null,ms=5000}){
+/* Icône par défaut d'un toast, selon son ton : chaque toast dit d'un coup d'œil s'il annonce un échec, un succès ou un avertissement. */
+function toastIcon(kind){return bgIcon(kind==='bad'?NT_ISSUES.error:kind==='ok'?bgCat('done'):kind==='warn'?bgCat('attention'):{icon:['M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 1 0 0-17z','M12 11v5','M12 7.8v.2']})}
+function toast({title:heading,sub='',kind='info',logo='',icon='',onClick=null,ms=5000}){
   const box=$('#toasts'),el=document.createElement('div');
   el.className=`toast ${kind}`;
   el.setAttribute('role','status');
-  el.innerHTML=`${logo}<div class="ttxt"><strong>${esc(heading)}</strong>${sub?`<span>${esc(sub)}</span>`:''}</div><button type="button" class="tclose" aria-label="Fermer la notification">×</button>`;
-  if(!logo)el.style.gridTemplateColumns='minmax(0,1fr) auto';
+  const mark=logo||`<span class="tico" aria-hidden="true">${icon||toastIcon(kind)}</span>`;
+  el.innerHTML=`${mark}<div class="ttxt"><strong>${esc(heading)}</strong>${sub?`<span>${esc(sub)}</span>`:''}</div><button type="button" class="tclose" aria-label="Fermer la notification">×</button>`;
   let timer=null;
   const dismiss=()=>{clearTimeout(timer);el.classList.add('out');setTimeout(()=>el.remove(),220)};
   const arm=delay=>{clearTimeout(timer);timer=setTimeout(dismiss,delay)};
   el.querySelector('.tclose').addEventListener('click',e=>{e.stopPropagation();dismiss()});
-  if(onClick){el.classList.add('clickable');el.title='Ouvrir';el.addEventListener('click',()=>{dismiss();onClick()})}
+  if(onClick){el.classList.add('clickable');el.title='Voir le détail';el.addEventListener('click',()=>{dismiss();onClick()})}
   el.addEventListener('mouseenter',()=>clearTimeout(timer));
   el.addEventListener('mouseleave',()=>arm(2000));
   box.appendChild(el);
