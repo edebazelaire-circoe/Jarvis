@@ -1,0 +1,321 @@
+{
+  "schema_version": 1,
+  "revision": "t-17",
+  "voice_architecture": {
+    "id": "duplex",
+    "label": "Duplex",
+    "settings_target": "architecture_compat",
+    "source": "settings"
+  },
+  "nodes": [
+    {
+      "id": "mic",
+      "kind": "endpoint",
+      "endpoint_type": "audio_input",
+      "label": "Micro",
+      "system": true,
+      "state": "active",
+      "state_reason": "",
+      "activation": {
+        "mutable": false,
+        "reason": "Entrée audio de la surface vocale."
+      },
+      "configurable": false,
+      "ports": [
+        {
+          "id": "audio_out",
+          "direction": "out",
+          "channel": "audio",
+          "family": "audio"
+        }
+      ],
+      "details": {}
+    },
+    {
+      "id": "voice",
+      "kind": "brain",
+      "label": "Voice Brain",
+      "brain_type": "voice_surface",
+      "process": "voice",
+      "system": true,
+      "state": "active",
+      "state_reason": "",
+      "activation": {
+        "mutable": false,
+        "reason": "La surface vocale porte l'audio."
+      },
+      "configurable": true,
+      "ports": [
+        {
+          "id": "audio_in",
+          "direction": "in",
+          "channel": "audio",
+          "family": "audio"
+        },
+        {
+          "id": "audio_out",
+          "direction": "out",
+          "channel": "audio",
+          "family": "audio"
+        },
+        {
+          "id": "delegate",
+          "direction": "out",
+          "channel": "request",
+          "family": "brain_request"
+        },
+        {
+          "id": "speech_in",
+          "direction": "in",
+          "channel": "speech",
+          "family": "brain_speech"
+        }
+      ],
+      "details": {}
+    },
+    {
+      "id": "core",
+      "kind": "brain",
+      "label": "Core Brain",
+      "brain_type": "core",
+      "process": "core",
+      "system": true,
+      "state": "active",
+      "state_reason": "",
+      "activation": {
+        "mutable": false,
+        "reason": "Core orchestre les actions et la mémoire."
+      },
+      "configurable": true,
+      "ports": [
+        {
+          "id": "request",
+          "direction": "in",
+          "channel": "request",
+          "family": "brain_request"
+        },
+        {
+          "id": "speech",
+          "direction": "out",
+          "channel": "speech",
+          "family": "brain_speech"
+        },
+        {
+          "id": "events",
+          "direction": "out",
+          "channel": "event",
+          "family": "brain_event"
+        },
+        {
+          "id": "agents",
+          "direction": "out",
+          "channel": "tool_call",
+          "family": "agent_spawn"
+        }
+      ],
+      "details": {}
+    },
+    {
+      "id": "tool",
+      "kind": "brain",
+      "label": "Tool Brain",
+      "brain_type": "tool",
+      "process": "core",
+      "system": false,
+      "state": "inactive",
+      "state_reason": "Réglé sur « off » : le Tool Brain n'observe ni n'agit.",
+      "activation": {
+        "mutable": false,
+        "reason": "Son activation suit la liaison Core → Tool Brain."
+      },
+      "configurable": true,
+      "ports": [
+        {
+          "id": "events",
+          "direction": "in",
+          "channel": "event",
+          "family": "brain_event"
+        }
+      ],
+      "details": {}
+    },
+    {
+      "id": "subagents",
+      "kind": "pool",
+      "label": "Sous-agents CLI",
+      "process": "core",
+      "system": true,
+      "state": "active",
+      "state_reason": "",
+      "activation": {
+        "mutable": false,
+        "reason": "Lancés par l'outil Agent de Core."
+      },
+      "configurable": false,
+      "ports": [
+        {
+          "id": "spawn",
+          "direction": "in",
+          "channel": "tool_call",
+          "family": "agent_spawn"
+        }
+      ],
+      "details": {}
+    },
+    {
+      "id": "speakers",
+      "kind": "endpoint",
+      "endpoint_type": "audio_output",
+      "label": "Haut-parleurs",
+      "system": true,
+      "state": "active",
+      "state_reason": "",
+      "activation": {
+        "mutable": false,
+        "reason": "Sortie audio de la surface vocale."
+      },
+      "configurable": false,
+      "ports": [
+        {
+          "id": "audio_in",
+          "direction": "in",
+          "channel": "audio",
+          "family": "audio"
+        }
+      ],
+      "details": {}
+    }
+  ],
+  "connections": [
+    {
+      "id": "mic.audio_out->voice.audio_in",
+      "source": {
+        "node": "mic",
+        "port": "audio_out"
+      },
+      "target": {
+        "node": "voice",
+        "port": "audio_in"
+      },
+      "channel": "audio",
+      "purpose": "Flux audio du micro vers la surface vocale",
+      "enabled": true,
+      "mutability": "required_locked",
+      "locked_reason": "Sans micro, JARVIS n'entend plus rien : l'entrée audio est obligatoire.",
+      "impact_when_disabled": "",
+      "applies": "voice_restart",
+      "pending": null,
+      "governed_by": null,
+      "binding": "voice.audio_input_device"
+    },
+    {
+      "id": "voice.audio_out->speakers.audio_in",
+      "source": {
+        "node": "voice",
+        "port": "audio_out"
+      },
+      "target": {
+        "node": "speakers",
+        "port": "audio_in"
+      },
+      "channel": "audio",
+      "purpose": "Voix synthétisée vers les haut-parleurs",
+      "enabled": true,
+      "mutability": "required_locked",
+      "locked_reason": "La surface vocale dit les réponses : la sortie audio est obligatoire.",
+      "impact_when_disabled": "",
+      "applies": "voice_restart",
+      "pending": null,
+      "governed_by": null,
+      "binding": "voice.audio_output_device"
+    },
+    {
+      "id": "voice.delegate->core.request",
+      "source": {
+        "node": "voice",
+        "port": "delegate"
+      },
+      "target": {
+        "node": "core",
+        "port": "request"
+      },
+      "channel": "request",
+      "purpose": "Délégation des demandes au cerveau Core",
+      "enabled": true,
+      "mutability": "toggleable",
+      "locked_reason": "",
+      "impact_when_disabled": "La voix répond seule ; aucune action ni outil Core.",
+      "applies": "next_turn",
+      "pending": null,
+      "governed_by": null,
+      "binding": "voice_architecture.config.brain_orchestration"
+    },
+    {
+      "id": "core.speech->voice.speech_in",
+      "source": {
+        "node": "core",
+        "port": "speech"
+      },
+      "target": {
+        "node": "voice",
+        "port": "speech_in"
+      },
+      "channel": "speech",
+      "purpose": "Parole demandée par Core (brain.speech.requested)",
+      "enabled": true,
+      "mutability": "required_locked",
+      "locked_reason": "Core ne parle qu'à travers la surface vocale.",
+      "impact_when_disabled": "",
+      "applies": "live",
+      "pending": null,
+      "governed_by": null,
+      "binding": "brain.speech.requested"
+    },
+    {
+      "id": "core.events->tool.events",
+      "source": {
+        "node": "core",
+        "port": "events"
+      },
+      "target": {
+        "node": "tool",
+        "port": "events"
+      },
+      "channel": "event",
+      "purpose": "Réveils et intentions d'interface vers le Tool Brain",
+      "enabled": false,
+      "mutability": "toggleable",
+      "locked_reason": "",
+      "impact_when_disabled": "Plus de réveil du Tool Brain : les intentions d'interface ne sont pas exécutées.",
+      "applies": "core_restart",
+      "pending": null,
+      "governed_by": null,
+      "binding": "tool_brain.mode"
+    },
+    {
+      "id": "core.agents->subagents.spawn",
+      "source": {
+        "node": "core",
+        "port": "agents"
+      },
+      "target": {
+        "node": "subagents",
+        "port": "spawn"
+      },
+      "channel": "tool_call",
+      "purpose": "Lancement de sous-agents par l'outil Agent",
+      "enabled": true,
+      "mutability": "governed",
+      "locked_reason": "",
+      "impact_when_disabled": "Core ne lance plus aucun sous-agent.",
+      "applies": null,
+      "pending": null,
+      "governed_by": {
+        "kind": "brain_config",
+        "node": "core",
+        "field": "delegation"
+      },
+      "binding": "brain.core.delegation"
+    }
+  ]
+}
