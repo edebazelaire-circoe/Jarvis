@@ -1447,6 +1447,9 @@ class ControlCenter:
             on_evict=self._forget_agents,
         )
         self._agent_lock = asyncio.Lock()
+        # Bascules de CLI demandées par la fenêtre du cerveau Core et pas encore passées (I-002 point 3) : tant qu'il
+        # en reste une, un enregistrement suivant passe lui aussi par la file au lieu de s'appliquer tout de suite.
+        self._brain_switches_pending = 0
         #: Dernier `(agent_cli, agent_session_id)` rapporté à Core, par liaison.
         self._binding_reports: dict[tuple[str, str], tuple[str, str | None]] = {}
         self._session_tasks: set[asyncio.Task[None]] = set()
@@ -1717,8 +1720,12 @@ class ControlCenter:
         settings = self._settings()
         agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
         switching = agent_id != self._agent_id
-        if switching:
-            self._spawn_session_task(self._switch_agent(agent_id, settings), name="brain_config_agent_switch")
+        if switching or self._brain_switches_pending:
+            # Sérialisé (I-002 point 3) : la bascule attend son tour derrière le verrou de l'agent (FIFO) et relit
+            # alors les réglages. Deux PATCH rapprochés finissent donc sur le dernier CLI enregistré, jamais sur
+            # celui d'une bascule passée après coup.
+            self._brain_switches_pending += 1
+            self._spawn_session_task(self._switch_agent_to_saved(), name="brain_config_agent_switch")
         else:
             self._apply_agent_settings(settings)
         self.journal.emit("brain_config.agents_reconfigured", "Agents reconfigurés après la fenêtre du cerveau",
@@ -1910,13 +1917,25 @@ class ControlCenter:
         if callable(getattr(agent, "set_prompt_overrides", None)):
             agent.set_prompt_overrides(prompt_override_document(settings))
 
-    async def _switch_agent(self, agent_id: str, settings: dict[str, Any]) -> None:
+    async def _switch_agent_to_saved(self) -> None:
+        """Bascule demandée par la fenêtre du cerveau Core : CLI et réglages relus une fois le verrou obtenu."""
+
+        try:
+            await self._switch_agent(None, None)
+        finally:
+            self._brain_switches_pending -= 1
+
+    async def _switch_agent(self, agent_id: str | None, settings: dict[str, Any] | None) -> None:
         """Changer de CLI : arrêter l'ancien avant d'armer le nouveau.
 
         Laisser deux agents vivants voudrait dire deux processus qui écrivent
         dans le même dépôt sans se voir.
         """
         async with self._agent_lock:
+            if settings is None:
+                # `None` : relire les réglages au passage du verrou (`_switch_agent_to_saved`).
+                settings = self._settings()
+                agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
             if agent_id == self._agent_id:
                 self._apply_agent_settings(settings)
                 return
