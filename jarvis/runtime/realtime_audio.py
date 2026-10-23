@@ -5253,7 +5253,11 @@ class RealtimeConversationBridge:
             # This only schedules bounded Core admission; it never awaits the
             # independent job and does not block provider/input consumption.
             if not self.session.dispatch_back_brain(self.core, self.conversation_id, call_id):
-                await self.session.send_back_brain_tool_result(call_id, {"status": "unavailable", "reason": "back_brain_capacity"})
+                # Liaison Surface -> Core coupée (graphe d'architecture) : la raison le dit, ce n'est pas un manque de
+                # capacité de Core (I-001 S01-4, `docs/architecture-graph.md` § 3).
+                disabled = getattr(self.session, "back_brain_delegation_disabled", False) is True
+                reason = "back_brain_delegation_disabled" if disabled else "back_brain_capacity"
+                await self.session.send_back_brain_tool_result(call_id, {"status": "unavailable", "reason": reason})
             return
         arguments = event.payload.get("arguments") if isinstance(event.payload.get("arguments"), dict) else {}
         if call_id and call_id in self._dispatched_calls:

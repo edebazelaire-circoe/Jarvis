@@ -159,6 +159,7 @@ async def test_disabling_simple_delegation_removes_the_tool_from_the_real_surfac
         assert BACK_BRAIN_DELEGATE not in json.dumps(update.get("tools", []))
         assert VOICE_ALONE_RULE in update["instructions"]
         assert session._back_brain is None and session.dispatch_back_brain(None, "c", "call") is False
+        assert session.back_brain_delegation_disabled is True  # un appel halluciné le dira (I-001 S01-4)
     finally:
         await session.close()
 
@@ -172,6 +173,7 @@ async def test_default_simple_surface_still_offers_the_delegation_tool():
         update = next(event["session"] for event in wire.sent if event["type"] == "session.update")
         assert BACK_BRAIN_DELEGATE in json.dumps(update.get("tools", []))
         assert VOICE_ALONE_RULE not in update["instructions"] and session._back_brain is not None
+        assert session.back_brain_delegation_disabled is False
     finally:
         await session.close()
 

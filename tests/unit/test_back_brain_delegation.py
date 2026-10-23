@@ -128,3 +128,53 @@ async def test_lost_acceptance_response_never_claims_the_job_did_not_start():
     assert notices[0].work_id is None
     assert session.results[0][1]["reason"] == "back_brain_submission_unknown"
     await control.close()
+
+
+# ------------------------------------------------- liaison Surface -> Core coupée (I-001 S01-4)
+
+
+def _tool_call_answer(*, disabled: bool) -> list:
+    import asyncio as _asyncio
+
+    from jarvis.domain.v2 import ProtocolEnvelope
+    from jarvis.runtime.back_brain_delegation import BACK_BRAIN_DELEGATE
+    from jarvis.runtime.realtime_audio import RealtimeConversationBridge
+    from jarvis.testlab.virtual.harness import FakeAudio, FakeRealtimeSession
+    from tests.fakes.virtual_time_loop import run_virtual
+    from tests.unit.test_v2_speech_scheduler import CONVERSATION, FakeCore, RecordingJournal
+
+    class Session(FakeRealtimeSession):
+        """Surface Simple / Front Brain sans contrôleur de délégation : `dispatch_back_brain` refuse."""
+
+        back_brain_delegation_disabled = disabled
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.tool_results: list = []
+
+        def dispatch_back_brain(self, core, conversation_id, call_id):  # noqa: ANN001
+            return False
+
+        async def send_back_brain_tool_result(self, call_id, result):  # noqa: ANN001
+            self.tool_results.append((call_id, result))
+
+    async def scenario():
+        session = Session()
+        bridge = RealtimeConversationBridge(
+            core=FakeCore(), session=session, conversation_id=CONVERSATION, audio=FakeAudio(), continuous=True,
+            auto_turn=True, clock=_asyncio.get_running_loop().time, on_addressed=lambda: None, on_mute=lambda: None,
+            journal=RecordingJournal(), direct_conversation=True)
+        await bridge._handle_tool_call(ProtocolEnvelope("realtime.tool_call", {"call_id": "call-1",
+                                                                              "name": BACK_BRAIN_DELEGATE}))
+        return session.tool_results
+
+    return run_virtual(scenario())
+
+
+def test_a_hallucinated_delegation_on_a_cut_link_says_the_link_is_cut():
+    """Liaison `voice.delegate->core.job` coupée sur le graphe : l'outil n'est plus offert, mais un appel halluciné
+    reçoit `back_brain_delegation_disabled`, pas `back_brain_capacity` (qui ferait croire à Core saturé)."""
+
+    assert _tool_call_answer(disabled=True) == [("call-1", {"status": "unavailable",
+                                                            "reason": "back_brain_delegation_disabled"})]
+    assert _tool_call_answer(disabled=False) == [("call-1", {"status": "unavailable", "reason": "back_brain_capacity"})]

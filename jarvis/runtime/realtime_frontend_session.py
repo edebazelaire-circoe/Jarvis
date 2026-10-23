@@ -58,6 +58,9 @@ class RealtimeFrontendSession:
         self._conversation_sources: OrderedDict[str, object] = OrderedDict()
         self._conversation_references: OrderedDict[str, int] = OrderedDict()
         self._back_brain = None
+        # Liaison Surface -> Core coupée sur le graphe (`voice_surface.back_brain_delegation = false`) : un appel
+        # halluciné de `back_brain_delegate` le dit (I-001 S01-4), au lieu d'un manque de capacité.
+        self.back_brain_delegation_disabled = False
         self.journal = None
         self.conversation_id: str | None = None
         self.prompt_applications = [dict(prompt_evidence)] if isinstance(prompt_evidence, dict) else []
@@ -117,6 +120,7 @@ class RealtimeFrontendSession:
         )
         if voice_alone_evidence is not None:
             facade.prompt_applications.append(voice_alone_evidence)
+        facade.back_brain_delegation_disabled = conversational and not delegation
         if conversational and delegation:
             from jarvis.runtime.back_brain_delegation import BackBrainDelegationController
             facade._back_brain = BackBrainDelegationController(facade)

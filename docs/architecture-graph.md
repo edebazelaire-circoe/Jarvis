@@ -85,7 +85,7 @@ Les identifiants de nœud sont stables ; la configuration des cerveaux les réut
 - **Simple / Front Brain** : nouveau réglage `voice_surface.back_brain_delegation` (bloc de
   `control-center-settings.json`, absent = `true`). À `false`, `RealtimeFrontendSession.connect` retire
   `back_brain_delegate` du catalogue de la session, ne construit pas le contrôleur de délégation (un appel
-  halluciné répond `unavailable`) et ajoute la consigne `VOICE_ALONE_RULE` (déclarée dans les preuves de prompt,
+  halluciné répond `unavailable`, raison `back_brain_delegation_disabled`) et ajoute la consigne `VOICE_ALONE_RULE` (déclarée dans les preuves de prompt,
   `voice.back_brain_delegation.disabled.v1`) : la voix traite seule. Le réglage entre dans l'identité de
   configuration de Voice (`VoiceComposition.configuration_id`, seulement quand il est coupé).
 - **Tool Brain** : nouveau réglage persistant `tool_brain.mode` (`off` | `shadow` | `active`), lu par
