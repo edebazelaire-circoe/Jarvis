@@ -330,15 +330,21 @@ ENDS = """((which)=>{const ov=document.getElementById('overlay');
   all.forEach(el=>{delete el.__end});all[0].__end='first';all[all.length-1].__end='last';
   const hidden=[...ov.querySelectorAll('details:not([open]) button')].filter(el=>el.getClientRects().length>0).length;
   const el=which==='first'?all[0]:all[all.length-1];el.focus();
+  const shell=document.getElementById('settingsShell');window.__escapes=[];
+  if(!window.__escapeWatch){window.__escapeWatch=true;document.addEventListener('focusout',e=>{
+    if(!e.relatedTarget||!shell.contains(e.relatedTarget))window.__escapes.push(e.relatedTarget?e.relatedTarget.id||e.relatedTarget.tagName:'body')},true)}
   return {tag:el.tagName,hidden,focused:document.activeElement===el}})"""
+#: Où est le focus après la frappe, et est-il passé hors du shell en route (`body` ou la page derrière, même un instant) ?
 WHERE = """(()=>{const e=document.activeElement;
-  return {end:e&&e.__end||null,tag:e&&e.tagName,inShell:!!e&&document.getElementById('settingsShell').contains(e)}})()"""
+  return {end:e&&e.__end||null,tag:e&&e.tagName,inShell:!!e&&document.getElementById('settingsShell').contains(e),
+    escapes:window.__escapes||[]}})()"""
 
 #: Sections dont le dernier contrôle visible précède un `<details>` fermé qui cache des boutons : Connexions ›
 #: Fournisseurs (« Ajouter une clé ») et Agents & modèles › Rôles des sous-agents (« Afficher et modifier les
 #: instructions » ; rôles chargés).
 TRAP_SECTIONS = [("providers", "!!document.querySelector('#modalContent summary')"),
-                 ("subagents", "!!document.querySelector('#modalContent details summary')")]
+                 ("subagents", "!!document.querySelector('#modalContent details summary')"
+                  "&&!/Lecture des instances/.test(document.getElementById('modalContent').textContent)")]
 
 
 @pytest.mark.parametrize(("section", "ready"), TRAP_SECTIONS)
@@ -359,8 +365,9 @@ async def test_tab_from_the_last_reachable_control_stays_in_the_shell(served, se
     step = out["steps"][0]
     last = got(step, "last")
     assert last["focused"] and last["hidden"] > 0, last  # le piège existait bien : des boutons cachés suivent
-    assert got(step, "after_tab") == {"end": "first", "tag": got(step, "first")["tag"], "inShell": True}, got(step, "after_tab")
-    assert got(step, "after_shift_tab") == {"end": "last", "tag": last["tag"], "inShell": True}, got(step, "after_shift_tab")
+    after_tab, after_shift_tab = got(step, "after_tab"), got(step, "after_shift_tab")
+    assert after_tab == {"end": "first", "tag": got(step, "first")["tag"], "inShell": True, "escapes": []}, after_tab
+    assert after_shift_tab == {"end": "last", "tag": last["tag"], "inShell": True, "escapes": []}, after_shift_tab
     assert out["console"] == [], out["console"]
 
 
