@@ -223,7 +223,7 @@ def test_policy_ui_is_advanced_inside_agent_cli_and_saved_canonically():
     assert "id:'routing'" not in page
     assert "{id:'runtime_cli',category:'advanced_diagnostics',group:'runtime_cli',order:30,advanced:true,label:'Runtime & CLI'," in page
     assert "Configuration avancée des sous-agents" in page
-    assert "body:runtimeCliHtml,start:revision=>{hydrateCliAgents(revision);bindRoutingDisclosure(revision)}}" in page
+    assert "body:runtimeCliHtml,start:revision=>{hydrateCliAgents(revision);bindRoutingDisclosure(revision);bindAgentCatalogDisclosure(revision)}," in page
     # Une réponse tardive ne dessine rien : garde `isCurrent` du shell (la garde de l'ancien rendu d'onglet est partie
     # avec lui à la Slice 09).
     assert "isCurrent:()=>SET.open&&SET.sectionView===view&&revision===SET.renderRevision" in page

@@ -321,3 +321,13 @@ def test_ui_fixtures_are_the_projection_output(name, settings):
     if os.environ.get("JARVIS_WRITE_ARCHITECTURE_FIXTURES") == "1":
         path.write_text(text, encoding="utf-8")
     assert path.read_text(encoding="utf-8") == text, f"fixture périmée : {path.name} (régénérez-la)"
+
+
+def test_resolve_mode_reads_a_set_variable_first_then_the_saved_block_then_off():
+    """I-001 S01-5 (Slice 07) : `resolve_mode` testé directement. Une variable vide ne compte pas (le bloc décide)."""
+    block = {"tool_brain": {"mode": "active"}}
+    assert resolve_mode(block, {}) == (ToolBrainMode.ACTIVE, "settings")
+    assert resolve_mode(block, {"JARVIS_TOOL_BRAIN": "  "}) == (ToolBrainMode.ACTIVE, "settings")
+    assert resolve_mode(block, {"JARVIS_TOOL_BRAIN": "shadow"}) == (ToolBrainMode.SHADOW, "env")
+    assert resolve_mode({}, {}) == (ToolBrainMode.OFF, "default")
+    assert resolve_mode({"tool_brain": {"mode": "inconnu"}}, {}) == (ToolBrainMode.OFF, "settings")

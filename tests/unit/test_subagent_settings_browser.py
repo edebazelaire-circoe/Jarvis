@@ -2,7 +2,7 @@
 
 Une page STATIQUE (fichier temporaire) charge le module, son module de routage et l'adaptateur de fixture, avec
 la feuille de style de `control_center.html` ; aucun Control Center n'est servi, le JARVIS vivant n'est jamais
-visé. Chrome sans tête rejoue de vraies touches (harnais `_subagent_settings_browser.mjs`). Ce que le fichier
+visé. Chrome sans tête rejoue de vraies touches (harnais `_architecture_settings_browser.mjs`). Ce que le fichier
 prouve :
 
 - un candidat se réordonne au clavier seul (Entrée sur Monter, Alt + flèches), le focus suit le candidat ;
@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 PAGE = RUNTIME / "control_center.html"
 FIXTURE = ROOT / "tests" / "fixtures" / "subagent_role_routing.json"
-HARNESS = Path(__file__).parent / "_subagent_settings_browser.mjs"
+HARNESS = Path(__file__).parent / "_architecture_settings_browser.mjs"
 
 CHROME_CANDIDATES = (
     Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Google/Chrome/Application/chrome.exe",

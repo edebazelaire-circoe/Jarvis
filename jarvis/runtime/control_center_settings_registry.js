@@ -24,7 +24,9 @@
   const CATEGORIES=freezeAll([
     /* Libellés et descriptions du hub de cartes (2026-10-23) ; les identifiants n'ont pas changé. */
     {id:'voice_audio',label:'Personnalisation',description:'Thème, apparence, voix et comportement général.'},
-    {id:'agents_models',label:'Brains & Architecture',description:'Choix des modèles, logique, agents et architecture interne.'},
+    /* `agents_models` : « Architecture & Agents » (jarvis-architecture-agents-settings-editor, D01 et C2) ; deux sections,
+       Architecture et Sous-agents, qui sont ses deux onglets internes (`docs/settings/architecture-agents.md`). */
+    {id:'agents_models',label:'Architecture & Agents',description:'Architecture des cerveaux, délégation et modèles des sous-agents.'},
     {id:'memory_knowledge',label:'Mémoire & Connaissances',description:'Mémoire, rappel et bases de connaissances.'},
     {id:'interface_interactions',label:'Interface & Interactions',description:'Interface, modes d’interaction, entrées et sorties.'},
     {id:'connections',label:'Plugins & MCP',description:'Extensions, outils externes et connecteurs.'},
@@ -55,9 +57,15 @@
   /* Alias hérités encore servis (Slice 09) : ancien identifiant d'onglet → catégorie et section. Donnée explicite, la
      seule : aucune section ne déclare d'alias et aucune condition n'en devine. Un alias ne reste ici que tant qu'un
      appelant du dépôt ou un document durable s'en sert ; table et appelants : `docs/legacy/settings-tab-aliases.md`.
-     - `memory` : bouton Réglages du Memory Center (`selectTab('memory')`, `control_center_memory.js`). */
+     - `memory` : bouton Réglages du Memory Center (`selectTab('memory')`, `control_center_memory.js`).
+     - `main_agent`, `subagent_models` : sections retirées par la Slice 07 de jarvis-architecture-agents-settings-editor
+       (liens enregistrés, tests et documents durables). Le CLI et le modèle de Core se règlent dans la fenêtre du
+       cerveau Core, onglet Architecture ; le modèle de chaque rôle dans l'onglet Sous-agents (le mode Auto / Dupliqué et
+       l'inventaire comparatif sont dans Avancé › Runtime & CLI). */
   const LEGACY_TAB_ALIASES=Object.freeze({
     memory:Object.freeze({category:'memory_knowledge',section:'recall'}),
+    main_agent:Object.freeze({category:'agents_models',section:'architecture'}),
+    subagent_models:Object.freeze({category:'agents_models',section:'subagents'}),
   });
 
   const ERROR_CODES=Object.freeze({

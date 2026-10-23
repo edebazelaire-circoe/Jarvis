@@ -1,11 +1,16 @@
 {
   "programmatic_ids_superseded_by": "docs/legacy/settings-tab-aliases.md (jarvis-settings-ui-reorganization Slice 09): the 'routing' -> 'cli' redirect and the old tab IDs below are retired; only the explicit LEGACY_TAB_ALIASES table remains",
-  "retired_programmatic_ids": ["routing", "cli", "voice", "keys", "appearance"],
+  "retired_programmatic_ids": [
+    "routing",
+    "cli",
+    "voice",
+    "keys",
+    "appearance"
+  ],
   "tabs": [],
   "agent_section_order": [
-    "Agent principal",
-    "Modèles des sous-agents",
-    "Rôles des sous-agents"
+    "Architecture",
+    "Sous-agents"
   ],
   "cli_payload_keys": [
     "agent",
@@ -28,8 +33,8 @@
     },
     "cli": {
       "category": "agents_models",
-      "section": "main_agent",
-      "since": "jarvis-settings-ui-reorganization Slice 04"
+      "section": "architecture",
+      "since": "jarvis-architecture-agents-settings-editor Slice 07 (main_agent retiré : fenêtre du cerveau Core)"
     },
     "routing": {
       "category": "advanced_diagnostics",

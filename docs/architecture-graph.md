@@ -14,7 +14,7 @@ configuration globale des sous-agents décide quel agent ou modèle exécute un 
 | `jarvis/domain/architecture_graph.py` | Types purs (nœud, port, liaison, snapshot, disposition), compatibilité des ports, codes d'erreur stables |
 | `jarvis/runtime/architecture_graph.py` | Projection du runtime vivant, service de mutation transactionnelle, `FileSettingsStore`, observations |
 | `jarvis/runtime/architecture_layout.py` | Store de disposition (positions), séparé de la topologie |
-| `jarvis/runtime/architecture_graph_routes.py` | Routes aiohttp `ArchitectureGraphRoutes.routes()`, **non montées** : le Control Center les monte (Slice 07) |
+| `jarvis/runtime/architecture_graph_routes.py` | Routes aiohttp `ArchitectureGraphRoutes.routes()`, montées par le Control Center (`_install_architecture_services`, Slice 07) sur un service unique |
 | `tests/fixtures/architecture_snapshot_{duplex,simple}.json` | Fixtures de l'interface, produites par la projection (`JARVIS_WRITE_ARCHITECTURE_FIXTURES=1 pytest tests/unit/test_architecture_graph.py`) |
 
 Le graphe n'a **pas d'état propre**. Il projette des réglages qui existent ailleurs (`binding`) et observe ce qui
@@ -172,5 +172,6 @@ Une disposition illisible est signalée (`architecture.layout.unreadable`) puis 
 - Le verrou (`write_lock`) sérialise les écritures du graphe et celles de la configuration des cerveaux
   ([brain-config.md](brain-config.md), qui réutilise `write_settings` pour l'écriture et la bascule de Voice) ;
   une écriture concurrente de `/api/settings` est détectée par la révision calculée, pas empêchée.
-- La règle de bascule de Voice existe aussi en ligne dans `ControlCenter` ; elle sera mise en commun au
-  branchement des routes (Slice 07).
+- La règle de bascule de Voice est unique depuis la Slice 07 : `voice_switch.plan_voice_switch`, appelée par
+  `request_voice_switch` (ce service) et par `ControlCenter.save_settings`
+  ([settings/architecture-agents.md](settings/architecture-agents.md) § 4).

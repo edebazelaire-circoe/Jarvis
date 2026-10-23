@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime, timezone
 import json
@@ -38,7 +39,7 @@ from jarvis.domain.speaker import (
     VerifierAvailability,
     assess_authorization,
 )
-from jarvis.domain.routing import RoutingError
+from jarvis.domain.routing import ModelCandidate, RoutingError
 from jarvis.domain.subagent_roles import PROMPT_PREFIX as SUBAGENT_ROLE_PROMPT_PREFIX
 from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, AddressingDecision, SpeechKind
 from jarvis.runtime.audio_devices import AudioDiagnosticError, SoundDeviceAudioDiagnostics, normalize_device_id
@@ -815,6 +816,16 @@ RELATION_BOARD_SCRIPT_MARKER = "/*__CONTROL_CENTER_RELATION_BOARD_JS__*/"
 SCENE_ROLES_SCRIPT_FILE = "control_center_scene_roles.js"
 SCENE_ROLES_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_ROLES_JS__*/"
 SUBAGENTS_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_SUBAGENTS_SETTINGS_JS__*/"
+#: Page Architecture & Agents (jarvis-architecture-agents-settings-editor, Slice 07) : transport de la politique par
+#: rôle (`window.JarvisSubagentRouting`, lu par le module des sous-agents : inséré avant lui), canevas du graphe
+#: (`window.JarvisArchitectureSettings`) et fenêtre du cerveau (`window.JarvisBrainConfigPanel`). Contrats :
+#: `docs/settings/architecture-agents.md`, `docs/settings/architecture-tab.md`, `docs/settings/brain-config-panel.md`.
+SUBAGENT_ROUTING_SCRIPT_FILE = "control_center_subagent_routing.js"
+SUBAGENT_ROUTING_SCRIPT_MARKER = "/*__CONTROL_CENTER_SUBAGENT_ROUTING_JS__*/"
+ARCHITECTURE_SETTINGS_SCRIPT_FILE = "control_center_architecture_settings.js"
+ARCHITECTURE_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_ARCHITECTURE_SETTINGS_JS__*/"
+BRAIN_CONFIG_PANEL_SCRIPT_FILE = "control_center_brain_config_panel.js"
+BRAIN_CONFIG_PANEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_BRAIN_CONFIG_PANEL_JS__*/"
 MEMORY_SCRIPT_FILE = "control_center_memory.js"
 MEMORY_SCRIPT_MARKER = "/*__CONTROL_CENTER_MEMORY_JS__*/"
 #: Chat (jarvis-unified-chat-and-board-drop, Slice 06, `docs/chat.md` › Panel) : modèle pur de la Slice 02
@@ -1505,6 +1516,7 @@ class ControlCenter:
         self.dossier_navigation = DossierNavigationRoutes(journal=self.journal)
         # Tour adresse de l'utilisateur en vol (Slice 21) : l'origine d'un demarrage de lecture par le cerveau vient de LA, jamais d'un argument.
         self.studio_turn = AddressedTurnTracker()
+        self._install_architecture_services(runtime_root)
         self._apply_agent_settings(settings)
 
         self._app = web.Application(middlewares=[self._origin_guard, self._mcp_json_errors])
@@ -1643,6 +1655,12 @@ class ControlCenter:
             *self.studio_explorer.routes(),
             *self.dossier_navigation.routes(),
             *self.studio_turn.routes(),
+            # Réglages › Architecture & Agents (jarvis-architecture-agents-settings-editor, Slice 07) : graphe
+            # d'architecture, configuration des cerveaux, politique de routage par rôle. Handlers async de la boucle
+            # aiohttp (pas d'exécuteur) sur des services uniques (`_install_architecture_services`).
+            *self.architecture_routes.routes(),
+            *self.brain_config_routes.routes(),
+            *self.role_routing_routes.routes(),
             web.get("/api/background", self.background_events),
             web.post("/api/background/ack", self.background_ack),
             web.get("/api/conversations", self.conversations_list),
@@ -1661,6 +1679,51 @@ class ControlCenter:
         from jarvis.testlab.http import install_testlab_routes
         install_testlab_routes(self._app, runtime_root=runtime_root, journal=self.journal)
         self._runner: web.AppRunner | None = None
+
+    # ------------------------------------------------------------------ Architecture & Agents (Slice 07)
+
+    def _install_architecture_services(self, runtime_root: Path) -> None:
+        """Services de la page Architecture & Agents, construits UNE fois pour la vie du Control Center : un service
+        de graphe (son verrou `write_lock` sérialise les écritures de `control-center-settings.json` faites hors de
+        `/api/settings`, graphe et cerveaux), un store de disposition, un store de tendance (`brain-config.json`), un
+        store de surcharges de prompt pour la fenêtre du cerveau, un store de routage par rôle. Contrats :
+        `docs/architecture-graph.md`, `docs/brain-config.md`, `docs/subagent-roles.md` § 10."""
+
+        from jarvis.runtime.architecture_graph import ArchitectureGraphService
+        from jarvis.runtime.architecture_graph_routes import ArchitectureGraphRoutes
+        from jarvis.runtime.architecture_layout import ArchitectureLayoutStore
+        from jarvis.runtime.brain_config import BrainConfigService
+        from jarvis.runtime.brain_config_http import BrainConfigRoutes
+        from jarvis.runtime.subagent_role_routing import RoleRoutingStore
+        from jarvis.runtime.subagent_role_routing_http import SubagentRoleRoutingApi
+
+        self.architecture_graph = ArchitectureGraphService(runtime_root, journal=self.journal)
+        self.architecture_routes = ArchitectureGraphRoutes(
+            self.architecture_graph, ArchitectureLayoutStore(runtime_root, journal=self.journal), journal=self.journal)
+        self.brain_config = BrainConfigService(
+            self.architecture_graph, catalog=self._catalog_view_dict, journal=self.journal,
+            after_settings_write=self._after_brain_settings_write)
+        self.brain_config_routes = BrainConfigRoutes(self.brain_config, journal=self.journal)
+        self.role_routing_routes = SubagentRoleRoutingApi(
+            RoleRoutingStore(runtime_root), settings=self._settings, candidates=self._role_routing_candidates,
+            journal=self.journal)
+
+    def _after_brain_settings_write(self, _written: dict[str, Any]) -> None:
+        """Crochet de la fenêtre du cerveau Core (CLI, modèle) : même effet qu'un `POST /api/settings` qui change ces
+        champs. Un autre CLI → `_switch_agent` (l'ancien s'arrête avant que le nouveau démarre), sinon les agents
+        vivants sont reconfigurés (`_apply_agent_settings`, effectif au prochain lancement de chaque CLI). Les réglages
+        relus par `_settings()` portent les mêmes défauts que ceux de `save_settings`."""
+
+        settings = self._settings()
+        agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
+        switching = agent_id != self._agent_id
+        if switching:
+            self._spawn_session_task(self._switch_agent(agent_id, settings), name="brain_config_agent_switch")
+        else:
+            self._apply_agent_settings(settings)
+        self.journal.emit("brain_config.agents_reconfigured", "Agents reconfigurés après la fenêtre du cerveau",
+                          data={"code": "brain_config_agents_reconfigured", "agent_cli": agent_id,
+                                "switch": switching})
 
     # ------------------------------------------------------------------ agent
 
@@ -2645,7 +2708,10 @@ class ControlCenter:
                              (SCENE_ROLES_SCRIPT_MARKER, SCENE_ROLES_SCRIPT_FILE),
                              (MEMORY_SETTINGS_SCRIPT_MARKER, MEMORY_SETTINGS_SCRIPT_FILE),
                              (CONNECTIONS_SETTINGS_SCRIPT_MARKER, CONNECTIONS_SETTINGS_SCRIPT_FILE),
+                             (SUBAGENT_ROUTING_SCRIPT_MARKER, SUBAGENT_ROUTING_SCRIPT_FILE),
                              (SUBAGENTS_SETTINGS_SCRIPT_MARKER, SUBAGENTS_SETTINGS_SCRIPT_FILE),
+                             (ARCHITECTURE_SETTINGS_SCRIPT_MARKER, ARCHITECTURE_SETTINGS_SCRIPT_FILE),
+                             (BRAIN_CONFIG_PANEL_SCRIPT_MARKER, BRAIN_CONFIG_PANEL_SCRIPT_FILE),
                              (MEMORY_SCRIPT_MARKER, MEMORY_SCRIPT_FILE),
                              (CHAT_MODEL_SCRIPT_MARKER, CHAT_MODEL_SCRIPT_FILE),
                              (CHAT_SCRIPT_MARKER, CHAT_SCRIPT_FILE),
@@ -5262,11 +5328,8 @@ class ControlCenter:
         if not isinstance(payload, dict):
             raise web.HTTPBadRequest(text="settings must be an object")
         current = self._settings()
-        from jarvis.runtime.voice_composition import resolve_voice_composition
-        try:
-            previous_composition = resolve_voice_composition(current)
-        except (VoiceConfigError, ConfigurationError):
-            previous_composition = None
+        # Réglages d'avant ce corps : la bascule de Voice se décide sur le couple (avant, après).
+        previous_settings = deepcopy(current)
         creds.migrate_legacy(current)
         switch_to: str | None = None
 
@@ -5379,46 +5442,18 @@ class ControlCenter:
             if problem:
                 self.journal.emit("voice.settings.rejected", "Settings validation rejected", level="warning", data={"code": problem["code"]})
                 raise web.HTTPBadRequest(text=problem["message"], headers={SETTINGS_ERROR_CODE_HEADER: problem["code"]})
-        switch_values = None
-        try:
-            target = resolve_voice_composition(current)
-        except (VoiceConfigError, ConfigurationError):
-            # An injected/extended Settings registry may describe an adapter
-            # this production composition root does not own.
-            target = None
-        if target is not None and previous_composition is not None:
-            from jarvis.domain.voice_architecture import FrontBrainVoiceConfig
-            from jarvis.runtime.voice_switch import VoiceSwitchBus
-            config = target.selection.config
-            model = (config.reflex_model if isinstance(config, FrontBrainVoiceConfig)
-                     else config.conversation_model).model_id
-            runtime = VisualSignalBus._read_json(self.runtime_root / VisualSignalBus.VOICE_RUNTIME_FILE)
-            runtime_id = runtime.get("configuration_id") if isinstance(runtime, dict) else None
-            runtime_ts = runtime.get("ts") if isinstance(runtime, dict) else None
-            source_id = previous_composition.configuration_id
-            if (isinstance(runtime_id, str) and isinstance(runtime_ts, (int, float))
-                    and not isinstance(runtime_ts, bool)
-                    and time.time() - float(runtime_ts) <= VOICE_HEARTBEAT_MAX_AGE_S):
-                source_id = runtime_id
-            # La projection de compatibilité conserve volontairement un
-            # modèle Gemini manquant pour que Settings puisse être réparé.
-            # Ce n'est pas encore une cible démarrable : ne pas arrêter Voice.
-            if source_id != target.configuration_id and model:
-                switch_values = (VoiceSwitchBus(self.runtime_root), source_id,
-                                 target.configuration_id, config.architecture.value, model)
+        # Règle unique de bascule de Voice (`voice_switch.plan_voice_switch`), partagée avec le graphe d'architecture
+        # et la configuration des cerveaux. Décidée avant l'écriture, demandée après.
+        from jarvis.runtime.architecture_graph import observe_runtime
+        from jarvis.runtime.voice_switch import plan_voice_switch
+        running = observe_runtime(self.runtime_root).voice
+        switch_plan = plan_voice_switch(
+            previous_settings, current,
+            running_configuration_id=running.get("configuration_id") if running else None)
         self._write_settings(current)
-        if switch_values is not None:
-            bus, source_id, target_id, architecture, model = switch_values
-            issued = bus.request(source_configuration_id=source_id,
-                                 target_configuration_id=target_id,
-                                 target_architecture=architecture, target_model=model)
-            self.journal.emit(
-                "voice.switch.requested", "Voice architecture switch requested",
-                data={"request_id": issued.request_id,
-                      "source_configuration_id": source_id,
-                      "target_configuration_id": target_id,
-                      "target_architecture": architecture, "target_model": model},
-            )
+        if switch_plan is not None:
+            self.journal.emit("voice.switch.requested", "Voice architecture switch requested",
+                              data=switch_plan.issue(self.runtime_root))
         if switch_to is not None:
             await self._switch_agent(switch_to, current)
         else:
@@ -5855,8 +5890,12 @@ class ControlCenter:
                 status=400,
             )
         refresh = str(request.query.get("refresh", "")).strip().lower() in {"1", "true", "yes"}
-        settings = self._settings()
+        return web.json_response({"ok": True, **await self._catalog_view_dict(surface, role, refresh=refresh)})
 
+    async def _catalog_view_dict(self, surface: str, role: str, *, refresh: bool = False) -> dict[str, Any]:
+        """La vue de `GET /api/catalog` (surface et rôle déjà validés). Aussi le fournisseur de catalogue de la
+        configuration des cerveaux (`BrainConfigService(catalog=…)`, Slice 07) : un seul calcul, une seule vérité."""
+        settings = self._settings()
         if surface == "subagents":
             commands = {
                 spec.id: self._agent_settings(settings, spec.id)["command"]
@@ -5883,7 +5922,7 @@ class ControlCenter:
                 catalogs=catalogs,
                 role=role,
             )
-        return web.json_response({"ok": True, **view.to_dict()})
+        return view.to_dict()
 
     async def models(self, request: web.Request) -> web.Response:
         provider = str(request.query.get("provider", "")).strip().lower()
@@ -5929,8 +5968,16 @@ class ControlCenter:
         préférences enregistrées restent visibles même devenues inutilisables.
         """
         del request
+        measured, unavailable_reasons, sources = await self._measure_routing_candidates()
+        policy = agent_routing.load_policy(self._settings())
+        candidates = agent_routing.with_saved(measured, policy, unavailable_reasons_by_agent=unavailable_reasons)
+        return web.json_response({"ok": True, "sources": sources, **agent_routing.describe(policy, candidates)})
+
+    async def _measure_routing_candidates(self) -> tuple[list[ModelCandidate], dict[str, str], dict[str, str]]:
+        """Les couples agent + modèle mesurés maintenant (CLI qui répondent, modèles texte déclarés), les raisons
+        d'indisponibilité par agent et la source de chaque catalogue. Un seul calcul pour `/api/routing/candidates`
+        et pour le routage par rôle (`SubagentRoleRoutingApi(candidates=…)`, Slice 07)."""
         settings = self._settings()
-        policy = agent_routing.load_policy(settings)
         commands = {spec.id: self._agent_settings(settings, spec.id)["command"] for spec in cli_catalog.AGENT_CLIS}
         detected = await cli_catalog.detect_all(commands)
         agents = [
@@ -5968,12 +6015,11 @@ class ControlCenter:
             for spec in cli_catalog.AGENT_CLIS
             if not snapshots[spec.model_provider].authoritative
         }
-        candidates = agent_routing.with_saved(
-            agent_routing.build_candidates(agents, models),
-            policy,
-            unavailable_reasons_by_agent=unavailable_reasons,
-        )
-        return web.json_response({"ok": True, "sources": sources, **agent_routing.describe(policy, candidates)})
+        return agent_routing.build_candidates(agents, models), unavailable_reasons, sources
+
+    async def _role_routing_candidates(self) -> tuple[list[ModelCandidate], dict[str, str]]:
+        measured, unavailable_reasons, _sources = await self._measure_routing_candidates()
+        return measured, unavailable_reasons
 
     # ------------------------------------------------- auto-développement
 

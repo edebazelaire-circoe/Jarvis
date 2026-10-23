@@ -362,7 +362,9 @@ async def test_assembled_primary_navigation_has_six_categories_and_no_legacy_nav
     assert [item["id"] for item in data["navigation"]] == [
         "voice", "prompts", "agent_cli", "credentials", "shortcuts", "appearance",
     ]
-    for section in ("conversation", "prompts", "main_agent", "providers", "shortcuts", "theme_scene"):
+    # Agent / CLI : `main_agent` (Slice 04) est devenu l'onglet `architecture` (jarvis-architecture-agents-settings-editor,
+    # Slice 07 : CLI et modèle de Core dans la fenêtre du cerveau ; `main_agent` reste un alias).
+    for section in ("conversation", "prompts", "architecture", "providers", "shortcuts", "theme_scene"):
         assert re.search(r"\{id:'%s',category:'[a-z_]+'" % section, served), section
     assert "Aiguillage" not in served
     assert "function tabConfig" not in served

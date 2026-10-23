@@ -36,7 +36,7 @@ FOCUS = """(()=>{const e=document.activeElement,cs=e&&getComputedStyle(e);
   return {id:e&&e.id||null,tag:e&&e.tagName,inShell:!!e&&document.getElementById('settingsShell').contains(e),
     landed:!!e&&e.hasAttribute('data-settings-landed'),
     outline:!!cs&&cs.outlineStyle!=='none'&&parseFloat(cs.outlineWidth)>=2,
-    section:SET.section,key:e&&(e.dataset.shortcut||e.dataset.memSave!==undefined&&'mem_save'||e.dataset.sarOpenModels!==undefined&&'models'||null)}})()"""
+    section:SET.section,key:e&&(e.dataset.shortcut||e.dataset.memSave!==undefined&&'mem_save'||e.dataset.sarOpenModels!==undefined&&'models'||e.dataset.sarRole&&'role:'+e.dataset.sarRole||null)}})()"""
 
 
 async def test_internal_links_followed_with_the_mouse_land_with_a_visible_outline(served):
@@ -70,10 +70,11 @@ async def test_internal_links_followed_with_the_mouse_land_with_a_visible_outlin
         click("#modalContent [data-mem-open]"),
         wait("SET.section==='providers'"),
         eval_(FOCUS, "entry"),
-        # Agent principal : le champ du modèle (`.field input:focus{outline:none}` hérité) garde le contour du shell.
-        eval_("selectTab('main_agent');true"),
-        wait("!!document.getElementById('f_cli_model')", 8000),
-        click("#f_cli_model"),
+        # Runtime & CLI : le champ de la commande (`.field input:focus{outline:none}` hérité) garde le contour du shell
+        # (le champ du modèle d'Agent principal jusqu'à la Slice 07 de jarvis-architecture-agents-settings-editor).
+        eval_("selectTab('runtime_cli');true"),
+        wait("!!document.getElementById('f_cli_cmd')", 8000),
+        click("#f_cli_cmd"),
         eval_(FOCUS, "field"),
     ]}])
     step = out["steps"][0]
@@ -82,7 +83,7 @@ async def test_internal_links_followed_with_the_mouse_land_with_a_visible_outlin
     assert diagnostic["landed"] and diagnostic["outline"] and diagnostic["inShell"], diagnostic
     assert memory["id"] == "diagnostic_memory" and memory["landed"] and memory["outline"], memory
     assert entry["section"] == "providers" and entry["tag"] == "BUTTON" and entry["landed"] and entry["outline"], entry
-    assert field["id"] == "f_cli_model" and field["outline"], field
+    assert field["id"] == "f_cli_cmd" and field["outline"], field
     assert out["console"] == [], out["console"]
 
 
@@ -132,7 +133,9 @@ async def test_changing_category_from_the_content_keeps_the_focus_in_the_shell(s
     step = out["steps"][0]
     assert got(step, "in_content") is True
     after = got(step, "after")
-    assert after["inShell"] and after["tag"] == "BUTTON" and after["section"] == "providers", after
+    # Hub du 2026-10-23 : Plugins MCP est la première section de la catégorie (test resté en retard, corrigé à la Slice 07
+    # de jarvis-architecture-agents-settings-editor).
+    assert after["inShell"] and after["tag"] == "BUTTON" and after["section"] == "mcp_plugins", after
     assert after["landed"] and after["outline"], after  # un saut non choisi : son arrivée se voit
     assert out["console"] == [], out["console"]
 
@@ -143,16 +146,18 @@ SLOW_TASKS = """(()=>{const base=window.fetch;window.fetch=(url,init)=>{const p=
 
 
 async def test_the_models_link_keeps_its_focus_when_the_instances_arrive(served):
+    """Le lien « Modèles des sous-agents » n'existe plus depuis la Slice 07 de jarvis-architecture-agents-settings-editor (les
+    modèles du rôle sont dans la fiche) : le contrat se vérifie sur l'entrée du rôle de la liste, redessinée elle aussi."""
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         *OPEN, eval_(SLOW_TASKS),
         eval_("selectTab('subagents');true"),
-        wait("!!document.querySelector('#modalContent [data-sar-open-models]')", 8000),
-        eval_("document.querySelector('#modalContent [data-sar-open-models]').focus();!!document.querySelector('#modalContent .sar-instances')", "rendered"),
+        wait("!!document.querySelector('#modalContent [data-sar-role]')", 8000),
+        eval_("document.querySelector('#modalContent [data-sar-role]').focus();!!document.querySelector('#modalContent .sar-instances')", "rendered"),
         wait("!/Lecture des instances/.test(document.getElementById('modalContent').textContent)", 8000),
         eval_(FOCUS, "after"),
     ]}])
     after = got(out["steps"][0], "after")
-    assert after["key"] == "models" and after["inShell"], after
+    assert str(after["key"]).startswith("role:") and after["inShell"], after
     assert out["console"] == [], out["console"]
 
 
@@ -167,7 +172,7 @@ LIVE_AFTER = """(()=>{const s=document.getElementById('connectionsStatus'),e=doc
 async def test_connections_live_regions_are_stable_nodes(served):
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         *OPEN,
-        click("#settingsCategories [data-category=connections]"),
+        eval_("selectTab('providers');true"),  # Plugins MCP ouvre la catégorie depuis le hub du 2026-10-23
         wait("!!document.querySelector('form[data-conn-add=openai]')", 8000),
         eval_(LIVE_BEFORE, "roles"),
         eval_("document.querySelector('#connection_openai details.conn-add').open=true;true"),
@@ -197,7 +202,8 @@ LAYOUT = """(async()=>{const pause=ms=>new Promise(r=>setTimeout(r,ms)),out={};
     lineStarts:groups.filter((g,i)=>i===0||g.top!==groups[i-1].top).map(g=>[g.id,g.left<0]),
     inner:groups.filter((g,i)=>i>0&&g.top===groups[i-1].top).map(g=>[g.id,g.left>=0]),
     hidden:[...list.querySelectorAll('[role=tab]')].filter(b=>b.getBoundingClientRect().right>lr.right+0.5).map(b=>b.dataset.section)};
-  selectTab('subagent_models');await pause(3000);
+  /* L'inventaire comparatif vit dans Runtime & CLI depuis la Slice 07 (jarvis-architecture-agents-settings-editor). */
+  selectTab('runtime_cli');await pause(400);document.getElementById('agentCatalogDisclosure').open=true;await pause(3000);
   const f=document.querySelector('#modalContent .catalog-filters');
   out.filters=f?{scroll:f.scrollWidth-f.clientWidth,cut:[...f.children].filter(x=>x.getBoundingClientRect().right>f.getBoundingClientRect().right+1).length,
     count:f.children.length}:null;
@@ -346,7 +352,7 @@ QUIET = """new Promise(r=>{let t;const o=new MutationObserver(()=>{clearTimeout(
   t=setTimeout(done,600)})"""
 
 #: Sections dont le dernier contrôle visible précède un `<details>` fermé qui cache des boutons : Connexions ›
-#: Fournisseurs (« Ajouter une clé ») et Agents & modèles › Rôles des sous-agents (« Afficher et modifier les
+#: Fournisseurs (« Ajouter une clé ») et Architecture & Agents › Sous-agents (« Afficher et modifier les
 #: instructions » ; rôles chargés).
 TRAP_SECTIONS = [("providers", "!!document.querySelector('#modalContent summary')"),
                  ("subagents", "!!document.querySelector('#modalContent details summary')"
@@ -415,7 +421,9 @@ FOCUSED_WRAP = """(()=>{const e=document.activeElement,cs=getComputedStyle(e);co
 async def test_the_scrolling_catalog_table_is_reachable_and_named(served):
     out = await drive(served.url, [{"width": 1093, "height": 614, "actions": [
         *OPEN,
-        eval_("selectTab('subagent_models');true"),
+        eval_("selectTab('runtime_cli');true"),
+        wait("!!document.getElementById('agentCatalogDisclosure')", 8000),
+        eval_("(document.getElementById('agentCatalogDisclosure').open=true,true)"),
         wait("!!document.querySelector('#modalContent .catalog-table-wrap')", 15000),
         eval_(CATALOG_WRAP, "wrap"),
         key("Tab"),
@@ -485,7 +493,7 @@ STUCK = """(async()=>{const c=document.getElementById('modalContent');c.scrollTo
 async def test_a_connections_error_stays_at_the_top_while_scrolling(served):
     out = await drive(served.url, [{"width": 1366, "height": 768, "actions": [
         *OPEN,
-        click("#settingsCategories [data-category=connections]"),
+        eval_("selectTab('providers');true"),  # Plugins MCP ouvre la catégorie depuis le hub du 2026-10-23
         wait("!!document.querySelector('form[data-conn-add=openai]')", 8000),
         eval_(REFUSE_POST),
         eval_("document.querySelector('#connection_openai details.conn-add').open=true;true"),

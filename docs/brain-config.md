@@ -16,7 +16,7 @@ d'un cerveau ne choisit donc jamais le modèle d'un rôle de sous-agent ([subage
 | `jarvis/domain/brain_config.py` | Vocabulaire pur : `DelegationTendency`, libellés, consigne par niveau, missions, codes d'erreur et statuts |
 | `jarvis/runtime/brain_config_store.py` | `<runtime>/brain-config.json` : la tendance de délégation, révisée ; lecteurs à froid (hook, CLI, graphe) |
 | `jarvis/runtime/brain_config.py` | `BrainConfigService` : descripteur par cerveau, écriture chez chaque propriétaire |
-| `jarvis/runtime/brain_config_http.py` | `BrainConfigRoutes.routes()`, **non montées** : le Control Center les monte (Slice 07) |
+| `jarvis/runtime/brain_config_http.py` | `BrainConfigRoutes.routes()`, montées par le Control Center (`_install_architecture_services`, Slice 07) ; catalogue = `ControlCenter._catalog_view_dict` (le calcul de `GET /api/catalog`) |
 | `tests/fixtures/brain_config_{core,voice}.json` | Fixtures de la fenêtre du cerveau (Slice 05), produites par le service (`JARVIS_WRITE_BRAIN_CONFIG_FIXTURES=1 pytest tests/unit/test_brain_config.py`) |
 
 Les identifiants de cerveau sont ceux des nœuds du graphe ([architecture-graph.md](architecture-graph.md)) :
@@ -193,8 +193,10 @@ Journal : `brain_config.read` | `saved` | `unchanged` | `rejected` | `apply_fail
 - Les écritures de `control-center-settings.json` faites par ce service prennent le verrou du graphe
   (`ArchitectureGraphService.write_lock`) ; `/api/settings` n'en prend aucun : une écriture concurrente est
   détectée par la révision calculée (relue sous le verrou), pas empêchée.
-- Sans le crochet `after_settings_write` (Slice 07 : `ControlCenter._apply_agent_settings`), un changement de
-  modèle de Core vaut au prochain démarrage de JARVIS ; avec lui, au prochain lancement du CLI cerveau.
+- Le crochet `after_settings_write` est branché depuis la Slice 07 (`ControlCenter._after_brain_settings_write`) :
+  un changement de modèle de Core vaut au prochain lancement du CLI cerveau (`_apply_agent_settings`), un changement
+  de CLI arrête l'ancien et démarre le nouveau (`_switch_agent`), comme `POST /api/settings`. Les instructions de Core
+  (voie des prompts) n'appellent pas le crochet : elles valent au prochain démarrage (`core_restart`).
 - `applies` des instructions vocales est déclaré `voice_restart` par prudence (relecture au démarrage de Voice).
 - Une trace réelle d'un CLI cerveau en `never` (outil absent, refus du hook) reste à faire en bac à sable
   (Slice 08) ; la Slice 02 la prouve par l'argv simulé et par le hook exécuté hors ligne.

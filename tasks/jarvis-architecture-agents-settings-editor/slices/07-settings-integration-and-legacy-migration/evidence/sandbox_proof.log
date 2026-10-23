@@ -1,0 +1,29 @@
+control-center lancé : PID 32936, cwd C:\Projects\jarvis\arch-s07, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s07-sandbox\runtime
+(a) GET /api/architecture -> 200 ; voix duplex ; nœuds ['mic', 'voice', 'core', 'tool_brain', 'subagents', 'speakers']
+(a) liaison voice.delegate->core.request : enabled=True mutability=toggleable binding=voice_architecture.config.brain_orchestration applies=voice_restart
+(a) POST coupure -> 200 ok=True changed=True ; réglage persisté brain_orchestration=False ; lu par le runtime (load_voice_architecture) brain_orchestration=False ; demande de bascule Voice écrite=True
+(a) POST liaison verrouillée mic->voice -> 423 code=connection_locked raison=« La surface vocale ne fonctionne pas sans micro. »
+(a) POST révision périmée -> 409 code=architecture_revision_stale
+(a) POST remise -> 200 changed=True ; brain_orchestration=True
+(b) GET /api/brains/core/config -> 200 ; provider=claude model=(défaut) delegation=standard catalog=ok ; choix de modèle servis=1
+(b) PATCH delegation=never -> 200 changed=True applies=core_restart ; brain-config.json core=never ; graphe spawn enabled=False mutability=governed governed_by={'kind': 'brain_config', 'node': 'core', 'field': 'delegation'}
+(b) PATCH delegation=standard -> 200 ; graphe spawn enabled=True
+(b) PATCH révision périmée -> 409 code=brain_config_revision_stale
+(c) GET /api/subagent-role-routing -> 200 ; révision rr-0 ; qa provenance=inherited:general ; harnesses servis=['claude', 'codex']
+(c) PUT /api/subagent-role-routing/qa -> 200 ok=True code=None ; provenance=explicit candidats=[('claude', 'claude-haiku-4-5', False)]
+(c) routing-hook -> code 0 ; sortie : {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow", "permissionDecisionReason": "Charte du chantier apposée sur la consigne du sous-agent. Méthode du rôle apposée sur la consigne du sous-agent.", "updatedInput": {"description": "[general] [qa] Relire le diff de la Slice 07", "prompt": "[chantier JARVIS]\nTu es responsable de cette tâche, du début à la fin. La cons
+(c) trace agent.routing.decided : level=warning role_id=qa provenance=explicit reason=role_passthrough message=« Sous-agent « Relire le diff de la Slice 07 » : profil general, rôle qa (explicit), aucun candidat du rôle utilisable : le CLI garde la main (Dupliqué) »
+journal (trace.jsonl) : agent.boards_dir_created×1, agent.declared×1, agent.global_context×1, agent.prompt×1, agent.role_applied×1, agent.routing.decided×1, agent.start×1, agent.subagent_roles_snapshot_written×1, architecture.connection.updated×2, architecture.write.refused×2, brain_config.read×1, brain_config.rejected×1, brain_config.saved×2, subagent_role_routing.read×1, subagent_role_routing.saved×1, voice.switch.requested×2
+(d) attentes tenues : 9/9
+(d) tabs = ['Architecture', 'Sous-agents']
+(d) nodes = ['mic', 'voice', 'core', 'tool_brain', 'subagents', 'speakers']
+(d) window = 
+        
+        
+        Core Braincor
+(d) after_escape = [True, 'architecture']
+(d) subagents = ['subagents', 7, True]
+(d) requêtes : [('GET', '/api/agent/tasks'), ('GET', '/api/architecture'), ('GET', '/api/architecture/layout'), ('GET', '/api/barehands'), ('GET', '/api/barehands/profile'), ('GET', '/api/brains/core/config'), ('GET', '/api/captures/status'), ('GET', '/api/fullscreen/commands'), ('GET', '/api/presentation-studio/explorer/commands'), ('GET', '/api/presentation-studio/playback'), ('GET', '/api/scene'), ('GET', '/api/settings'), ('GET', '/api/shortcuts'), ('GET', '/api/status'), ('GET', '/api/subagent-role-routing'), ('GET', '/api/subagent-roles'), ('GET', '/api/work')]
+(d) erreurs console : []
+(d) captures : ['sandbox-architecture.png', 'sandbox-core-window.png', 'sandbox-subagents.png']
+control-center arrêté : PID 32936, code 1

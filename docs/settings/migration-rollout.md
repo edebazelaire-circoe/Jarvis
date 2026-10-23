@@ -40,9 +40,10 @@ category cannot manufacture a migration choice.
 2. Start Jarvis and confirm `/api/status`, `/api/settings` and `/api/catalog`
    return successfully. A Voice runtime may legitimately be offline while its
    settings remain editable.
-3. In Brains & Architecture, confirm Agent principal, Comportement, Modèles des
-   sous-agents and Rôles des sous-agents render in that order (since
-   jarvis-settings-ui-reorganization Slice 04, `agents-models.md`). Check the
+3. In Architecture & Agents, confirm exactly two tabs, Architecture and Sous-agents
+   (since jarvis-architecture-agents-settings-editor Slice 07, `architecture-agents.md`, which
+   replaces Slice 04 of jarvis-settings-ui-reorganization); Comportement is under Personnalisation,
+   the Auto/Dupliqué mode and the model inventory under Avancé › Runtime & CLI. Check the
    projected Auto/Dupliqué value in Modèles des sous-agents and saved
    unavailable candidates in Avancé & Diagnostics › Runtime & CLI before saving.
 4. Change one Agent/CLI preference, save, reload the Control Center, then

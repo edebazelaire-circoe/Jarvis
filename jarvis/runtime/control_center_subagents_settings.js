@@ -1,7 +1,7 @@
 /* Réglages des sous-agents (jarvis-organic-agent-orchestration, Slice 10 ; sections depuis
    jarvis-settings-ui-reorganization Slice 04).
 
-   Deux vues (`options.view`) : `roles` (défaut, section Agents & modèles › Rôles des sous-agents) et
+   Deux vues (`options.view`) : `roles` (défaut, onglet Architecture & Agents › Sous-agents) et
    `work_methods` (section Avancé & diagnostic › Work Methods apprises : approches observées et promotion).
 
    Rend le registre des rôles servi par `GET /api/subagent-roles` (`schema_version` 2) : liste des rôles,
@@ -29,7 +29,7 @@
    provenance (hérité du profil / réglé pour ce rôle), la restauration de l'héritage et l'aperçu servi ; une vue
    d'ensemble en lecture seule projette le même instantané. Chaque écriture ne vise qu'UN rôle ; l'écran affiche
    l'instantané renvoyé, garde le brouillon sur un refus, relit sur un 409 ou une issue inconnue. Sans adaptateur,
-   la vue garde son renvoi d'avant vers « Modèles des sous-agents ». Le style propre à cette composition est
+   la vue renvoie vers Avancé › Runtime & CLI (profils hérités). Le style propre à cette composition est
    injecté une fois (`#jarvisSubagentSettingsStyle`), jetons du thème seulement. */
 (function(root){
   'use strict';
@@ -636,7 +636,7 @@
           <ul class="sar-list" role="list" aria-label="Rôles de sous-agent" data-sar-list>${roles().map(listItem).join('')}</ul>
           <p class="hint">Flèches haut et bas pour parcourir les rôles.</p>
           ${instancesHtml()}
-          ${st.route.phase==='off'?`<p class="hint sar-models">Les modèles des sous-agents se règlent dans ${opts.openTab?'<button type="button" class="sar-link" data-sar-open-models>Agents &amp; modèles › Modèles des sous-agents</button>':'Agents &amp; modèles › Modèles des sous-agents'}.</p>`:''}</div>
+          ${st.route.phase==='off'?`<p class="hint sar-models">Les modèles des sous-agents se règlent dans ${opts.openTab?'<button type="button" class="sar-link" data-sar-open-models>Avancé &amp; diagnostic › Runtime &amp; CLI</button>':'Avancé &amp; diagnostic › Runtime &amp; CLI'}.</p>`:''}</div>
         <div class="sar-detail-pane" role="region" aria-label="Fiche du rôle">${detailHtml(roleById(st.selected))}</div></div>`;
       const pane=host.querySelector('.sar-detail-pane');if(pane&&scroll)pane.scrollTop=scroll;
       bind();tick();
@@ -691,33 +691,33 @@
         st.drafts[role.id]=area.value;
         const dirty=isDirty(role),busy=!!st.save;
         const count=host.querySelector('[data-sar-count]');if(count)count.textContent=countText(role,area.value,dirty);
-        const save=host.querySelector(`[data-sar-save="${role.id}"]`),discard=host.querySelector(`[data-sar-discard="${role.id}"]`);
+        const save=host.querySelector(`[data-sar-save="${cssId(role.id)}"]`),discard=host.querySelector(`[data-sar-discard="${cssId(role.id)}"]`);
         if(save)save.disabled=!dirty||busy||!canSave(role,area.value);if(discard)discard.disabled=!dirty||busy;
       }));
       host.querySelectorAll('[data-sar-save]').forEach(b=>b.addEventListener('click',()=>save(b.dataset.sarSave)));
       host.querySelectorAll('[data-sar-discard]').forEach(b=>b.addEventListener('click',()=>{delete st.drafts[b.dataset.sarDiscard];delete st.notice[b.dataset.sarDiscard];render()}));
       host.querySelectorAll('[data-sar-reset]').forEach(b=>b.addEventListener('click',()=>{
         const id=b.dataset.sarReset;
-        if(st.confirmReset!==id){st.confirmReset=id;render();const again=host.querySelector(`[data-sar-reset="${id}"]`);if(again&&again.focus)again.focus();return}
+        if(st.confirmReset!==id){st.confirmReset=id;render();const again=host.querySelector(`[data-sar-reset="${cssId(id)}"]`);if(again&&again.focus)again.focus();return}
         reset(id);
       }));
       const refresh=host.querySelector('[data-sar-tasks-refresh]');if(refresh)refresh.addEventListener('click',()=>loadTasks());
       const inst=host.querySelector('[data-sar-instances]');if(inst)inst.addEventListener('toggle',()=>{st.instancesOpen=inst.open});
       host.querySelectorAll('[data-sar-reread]').forEach(b=>b.addEventListener('click',()=>reread(b.dataset.sarReread)));
       bindRouting();
-      const back=host.querySelector('[data-sar-back]');if(back)back.addEventListener('click',()=>{const b=host.querySelector(`[data-sar-role="${st.selected}"]`);if(b){if(b.scrollIntoView)b.scrollIntoView({block:'center'});b.focus()}});
-      const models=host.querySelector('[data-sar-open-models]');if(models)models.addEventListener('click',()=>opts.openTab('subagent_models'));
+      const back=host.querySelector('[data-sar-back]');if(back)back.addEventListener('click',()=>{const b=host.querySelector(`[data-sar-role="${cssId(st.selected)}"]`);if(b){if(b.scrollIntoView)b.scrollIntoView({block:'center'});b.focus()}});
+      const models=host.querySelector('[data-sar-open-models]');if(models)models.addEventListener('click',()=>opts.openTab('runtime_cli'));
       const learned=host.querySelector('[data-sar-open-learned]');if(learned)learned.addEventListener('click',()=>opts.openTab('work_methods'));
       const learnedRetry=host.querySelector('[data-sar-learned-retry]');if(learnedRetry)learnedRetry.addEventListener('click',()=>loadCandidates());
       host.querySelectorAll('[data-sar-promote]').forEach(b=>b.addEventListener('click',()=>{
         const id=b.dataset.sarPromote;
-        if(st.confirmPromote!==id){st.confirmPromote=id;st.promoteNotice=null;render();const again=host.querySelector(`[data-sar-promote="${id}"]`);if(again&&again.focus)again.focus();return}
+        if(st.confirmPromote!==id){st.confirmPromote=id;st.promoteNotice=null;render();const again=host.querySelector(`[data-sar-promote="${cssId(id)}"]`);if(again&&again.focus)again.focus();return}
         promote(id);
       }));
       const cancel=host.querySelector('[data-sar-promote-cancel]');if(cancel)cancel.addEventListener('click',()=>{
         const id=st.confirmPromote;st.confirmPromote=null;render();
         /* Le focus revient au bouton de promotion, jamais perdu en haut de page. */
-        const back=id&&host.querySelector(`[data-sar-promote="${id}"]`);if(back&&back.focus)back.focus();
+        const back=id&&host.querySelector(`[data-sar-promote="${cssId(id)}"]`);if(back&&back.focus)back.focus();
       });
     }
 

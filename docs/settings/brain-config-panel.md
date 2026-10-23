@@ -1,8 +1,9 @@
 # Fenêtre de configuration d'un cerveau (Architecture & Agents)
 
 Module : `jarvis/runtime/control_center_brain_config_panel.js` (`window.JarvisBrainConfigPanel`, aussi
-`module.exports` pour node). Livré par la Slice 05 de `jarvis-architecture-agents-settings-editor` ; la Slice 07 le
-branche sur le canevas ([architecture-tab.md](architecture-tab.md)) avec l'adaptateur HTTP. Contrat serveur :
+`module.exports` pour node). Livré par la Slice 05 de `jarvis-architecture-agents-settings-editor` ; depuis la Slice 07
+il est branché sur le canevas ([architecture-tab.md](architecture-tab.md)) avec l'adaptateur HTTP par
+`mountArchitectureSettings` ([architecture-agents.md](architecture-agents.md) § 1). Contrat serveur :
 [../brain-config.md](../brain-config.md) (`GET` / `PATCH /api/brains/{id}/config`).
 
 Il n'y a **pas d'onglet « Cerveau »** : cette fenêtre flottante est la seule surface de configuration d'un
@@ -41,7 +42,7 @@ win.destroy();   // démonte sans condition (changement de page)
   `moveBy(dx, dy)`, `state`, `brainId`, `dirty`, `element`.
 - Événements sur l'hôte (bouillonnent) : `brain-config:saved` (même `detail` que `onSaved`).
 - Lien « Ouvrir Sous-agents » : `data-settings-open="subagents"`, pris en charge par le lien interne des
-  Réglages (la Slice 07 ajuste l'identifiant si l'onglet Sous-agents change de nom).
+  Réglages (`subagents` est resté l'identifiant de l'onglet Sous-agents à la Slice 07).
 
 ## 2. Adaptateur
 
@@ -124,7 +125,9 @@ champ a son propre propriétaire, sa propre prise d'effet et ses propres refus.
   Slice), le bouton « Configurer… » de l'inspecteur, sinon le nœud. Sans `returnFocus`, l'élément actif à
   l'ouverture.
 - Glisser par l'en-tête, ou le bouton de prise + flèches (pas de 16 px) ; la fenêtre reste dans l'écran. Position
-  initiale : contre le bord droit de l'hôte (colonne de l'inspecteur), à la hauteur de l'ancre.
+  initiale : contre le bord droit de l'hôte (colonne de l'inspecteur), à la hauteur de l'ancre ; si l'ancre (le nœud)
+  tomberait dessous, contre le bord gauche de l'écran, sinon du côté qui a le plus de place (Slice 07 : la fenêtre ne
+  couvre pas le cerveau qu'elle configure).
 - Sous 720 px : panneau en bas d'écran sur toute la largeur, voile derrière (un clic ferme, avec garde), pas de
   glisser, aucun défilement horizontal.
 - États qui durent : lecture et enregistrement montrent un compteur de secondes et une échéance (`timeoutMs`) ; à

@@ -265,7 +265,8 @@ async def test_internal_links_never_drop_focus_on_body(served):
     step = out["steps"][0]
     assert got(step, "wake") == {"section": "diagnostics", "focus": "diagnostic_wake_word", "entry": False}
     assert got(step, "generic") == {"section": "runtime_cli", "focus": "runtime_cli", "entry": True}
-    assert got(step, "subagents") == {"section": "subagent_models", "focus": "subagent_models", "entry": True}
+    # `subagent_models` est un alias de l'onglet Sous-agents depuis la Slice 07 de jarvis-architecture-agents-settings-editor.
+    assert got(step, "subagents") == {"section": "subagents", "focus": "subagents", "entry": True}
     assert out["console"] == [], out["console"]
 
 

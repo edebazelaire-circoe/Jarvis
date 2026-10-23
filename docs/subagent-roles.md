@@ -470,17 +470,18 @@ lancement, le cerveau ne promet pas de compte rendu ; un échec est toujours ann
 | Règles du cerveau (rôles proposés : `offered_to_brain` de `research-lead` et `qa`, éphémère élargie, `[mission]` enseigné au cerveau) | fait (Slice 07, section 9) |
 | Rôle dans la scène, badge Mission Owner | Slice 08 |
 
-## 8. Interface : Réglages > Agents & modèles › Rôles des sous-agents
+## 8. Interface : Réglages › Architecture & Agents › Sous-agents
 
-Section `subagents` de la catégorie Agents & modèles (Slice 10 ; onglet jusqu'à la Slice 04 de
+Section `subagents` de la catégorie Architecture & Agents, son onglet « Sous-agents » (Slice 07 de
+jarvis-architecture-agents-settings-editor, [settings/architecture-agents.md](settings/architecture-agents.md)) (Slice 10 ; onglet jusqu'à la Slice 04 de
 jarvis-settings-ui-reorganization, l'ancien ID ouvre la section). Module
 `jarvis/runtime/control_center_subagents_settings.js` (`window.JarvisSubagentSettings`), monté par la section
 (`subagentSectionSpec`, vue `roles`) dans `#subagentSettingsMount`, détruit par son `destroy` au changement de section.
 Les approches observées et leur promotion sont la vue `work_methods` du même module, section **Avancé & diagnostic ›
 Work Methods apprises** (`work_methods`, groupe Labs) : outil d'opérateur, pas configuration d'un rôle (voir
-[settings/agents-models.md](settings/agents-models.md) § 2). La fiche d'un rôle porteur de mission y renvoie par un lien.
+[settings/architecture-agents.md](settings/architecture-agents.md) § 2). La fiche d'un rôle porteur de mission y renvoie par un lien.
 Tests : `tests/unit/test_control_center_subagents_settings_js.py` (node, sur la vraie charge utile v2),
-`tests/unit/test_agents_models_settings_browser.py` (vrai Chrome).
+`tests/unit/test_architecture_agents_settings_browser.py` (vrai Chrome).
 
 **Sources.** Lecture seule de `GET /api/subagent-roles` (section 1ter) pour le catalogue, et de
 `GET /api/agent/tasks` (champ `role`, le marqueur tel que le hook le lit) pour les instances en cours. Aucune
@@ -506,7 +507,8 @@ autre donnée, aucune liste recopiée : libellés, capacités, méthodes, libell
   liste reste un alias, nommé avec sa cible), « Marqueur hors registre » pour un mot inconnu, « Général, aucun
   rôle déclaré » sans marqueur, étiquette éphémère. Seules les clés propres de `aliases` comptent
   (`constructor` n'est pas un alias) ;
-- un renvoi vers « Agents & modèles › Modèles des sous-agents », qui règle les modèles des sous-agents.
+- les modèles du rôle (§ 10, adaptateur `routing` monté par la page) ; sans adaptateur, un renvoi vers Avancé ›
+  Runtime & CLI (profils hérités).
 
 **Identité visuelle.** `visual.accent` est un jeton : il devient `var(--role-accent-<jeton>)`, défini une
 seule fois dans `control_center.html` pour les dix jetons de `ROLE_ACCENTS` (table partagée avec le graphe des
@@ -703,7 +705,7 @@ n'est jamais un champ de la configuration d'un cerveau.
 | --- | --- | --- |
 | Contrat | `jarvis/domain/role_routing.py` | `RolePolicy`, `RoleRoutingDocument`, héritage, `resolve_for_role` ; sans I/O |
 | Stockage et lecture | `jarvis/runtime/subagent_role_routing.py` | fichier révisé, lecture tolérante, écriture stricte, `describe` |
-| HTTP (non monté) | `jarvis/runtime/subagent_role_routing_http.py` | `GET` / `PUT` / `DELETE`, montés par la Slice 07 |
+| HTTP | `jarvis/runtime/subagent_role_routing_http.py` | `GET` / `PUT` / `DELETE`, montés par le Control Center (Slice 07), candidats = `ControlCenter._measure_routing_candidates` (le calcul de `/api/routing/candidates`) |
 | Application | `jarvis/runtime/routing_hook.py` (`decide`, `_route`) | la politique du rôle annoncé, journalisée |
 
 **Politique d'un rôle.** Clé = id canonique du registre, alias résolus (`reviewer` -> `qa`). Une liste ordonnée

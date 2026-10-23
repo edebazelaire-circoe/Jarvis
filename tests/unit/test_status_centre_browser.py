@@ -687,14 +687,14 @@ def test_settings_hub_opens_from_the_wheel_enters_a_category_and_closes_back(tmp
     ]}])[0]
     hub = step["results"]["hub"]
     assert hub["view"] == "hub" and hub["open"] and not hub["submenu"] and hub["title"] == "Paramètres"
-    assert [c["name"] for c in hub["cards"]] == ["Personnalisation", "Brains & Architecture", "Mémoire & Connaissances",
+    assert [c["name"] for c in hub["cards"]] == ["Personnalisation", "Architecture & Agents", "Mémoire & Connaissances",
                                                  "Interface & Interactions", "Plugins & MCP", "Avancé & Diagnostics"]
     assert all(c["desc"] for c in hub["cards"])
     # 3 × 2, cartes identiques.
     assert len({(c["w"], c["h"]) for c in hub["cards"]}) == 1
     assert len({c["t"] for c in hub["cards"]}) == 2 and len({c["l"] for c in hub["cards"]}) == 3
     assert "set-hub-card" in hub["focus"] and not hub["overflowX"]
-    assert step["results"]["shell"] == {"view": "shell", "title": "Brains & Architecture"}
+    assert step["results"]["shell"] == {"view": "shell", "title": "Architecture & Agents"}
     assert step["results"]["back"] == "hub"
     assert step["results"]["closed"]["open"] is False and "tw-anchor" in step["results"]["closed"]["focus"]
     _no_errors(step)

@@ -71,7 +71,7 @@ def clean_env(monkeypatch):
 TOUR = """(async()=>{const pause=ms=>new Promise(r=>setTimeout(r,ms)),q=s=>document.querySelector(s);
   const all=[];for(const c of window.JarvisSettingsRegistry.CATEGORY_IDS){q(`#settingsCategories [data-category=${c}]`).click();await pause(150);
     all.push(...[...document.querySelectorAll('#modalTabs [role=tab]')].map(b=>b.textContent))}
-  selectTab('connections');await pause(250);
+  selectTab('providers');await pause(250);
   const out={labels:[...document.querySelectorAll('#modalTabs [role=tab]')].map(b=>b.textContent),all,
     at:[SET.category,SET.section],footer:!document.querySelector('.set-foot').hidden,
     cards:[...document.querySelectorAll('#modalContent .conn-card')].map(c=>c.dataset.connProvider),
@@ -86,8 +86,9 @@ async def test_category_cards_alias_environment_fallback_and_links(served, clean
     clean_env.setenv("ANTHROPIC_API_KEY", ENV_SECRET)
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         *OPEN, eval_(TOUR, "tour"), eval_(leak(ENV_SECRET), "leak"),
-        # Agent principal › « Connexions › anthropic » : la carte du fournisseur du modèle, focalisée.
-        eval_("selectTab('main_agent')"),
+        # Runtime & CLI › « Plugins & MCP › anthropic » : la carte du fournisseur des modèles du CLI, focalisée (lien
+        # porté par Agent principal jusqu'à la Slice 07 de jarvis-architecture-agents-settings-editor).
+        eval_("selectTab('runtime_cli')"),
         wait("!!document.querySelector('#modalContent [data-settings-focus]')", 8000),
         click("#modalContent [data-settings-focus]"),
         wait("SET.section==='providers'&&document.activeElement&&document.activeElement.id==='connection_anthropic_title'"),
@@ -101,7 +102,9 @@ async def test_category_cards_alias_environment_fallback_and_links(served, clean
     ]}])
     step = out["steps"][0]
     tour = got(step, "tour")
-    assert tour["labels"] == ["Fournisseurs"] and "API Keys" not in tour["all"]
+    # Hub du 2026-10-23 : Plugins MCP précède Fournisseurs dans la catégorie (test resté en retard, corrigé à la Slice 07
+    # de jarvis-architecture-agents-settings-editor).
+    assert tour["labels"] == ["Plugins MCP", "Fournisseurs"] and "API Keys" not in tour["all"]
     assert tour["tabs"] == "undefined"  # Slice 09 : plus de système d'onglets
     assert tour["at"] == ["connections", "providers"] and tour["footer"] is False
     assert tour["cards"] == tour["served"] == [p.id for p in creds.PROVIDERS]

@@ -95,7 +95,8 @@ session. Il n'y a plus d'onglet hérité (`SET.tab` et `TABS` retirés à la Sli
   section ou de catégorie alors que le focus est dans le contenu (un bouton de la section, puis Ctrl+→) le porte à
   l'entrée ouverte, arrivée marquée (`landFocus`, contour visible) : le contenu est remplacé, il ne tombe jamais sur
   `body` (passe de finitions avant la Slice 10).
-- Tab et Maj+Tab bouclent dans le shell ; depuis `body`, ils y entrent.
+- Tab et Maj+Tab bouclent dans le shell ; depuis `body`, ils y entrent. Une touche déjà traitée par un module
+  (`defaultPrevented` : piège de Tab de la fenêtre d'un cerveau, Architecture & Agents) lui reste : un seul piège actif.
 - Quelle que soit la route d'ouverture (bouton, raccourci `s`, roue › Paramètres, `openSettingsTab`), le focus
   finit sur la catégorie active : la roue ne reprend pas un focus qu'une action a porté hors d'elle, et le retour
   à la fermeture se fait sur l'ancre de la roue quand c'est elle qui a ouvert.
@@ -171,7 +172,8 @@ registerSettingsSection({               // porte de la page : R.page.register de
   `self` et `readonly` cachent le pied : la section porte ses propres notices ; une catégorie vide aussi.
 - Les brouillons ne sont pas gardés par le shell au changement de section : chaque module garde son contrat actuel
   (par exemple `SET.subagentDrafts` des rôles de sous-agents, le brouillon partagé `SET.draft` des sections Voix et
-  Brains & Architecture, l'état du module Mot d'éveil).
+  de Runtime & CLI, l'état du module Mot d'éveil ; la fenêtre d'un cerveau perd son brouillon quand on quitte l'onglet
+  Architecture).
 - **Diagnostics en parties (Slice 03).** La section `advanced_diagnostics` / `diagnostics` (lecture seule) monte, dans
   l'ordre, les parties inscrites par `registerSettingsDiagnostic({id, label, order, mount(host, context), destroy()})` :
   chaque partie a son titre (`JarvisSettingsUI.section`), reçoit le même `context` que la section et est détruite avec

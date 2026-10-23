@@ -21,7 +21,7 @@ MODULE = ROOT / "jarvis" / "runtime" / "control_center_architecture_settings.js"
 FIXTURE = ROOT / "tests" / "fixtures" / "architecture_snapshot_fixture_ui.json"
 
 TOGGLE = "voice.delegate->core.request"
-RESTART = "core.events->tool.events"
+RESTART = "core.events->tool_brain.events"
 LOCKED = "mic.audio_out->voice.audio_in"
 GOVERNED = "core.agents->subagents.spawn"
 
@@ -76,7 +76,7 @@ out({html:host.innerHTML,errors,infos,attrs:host.attrs,listeners:Object.keys(hos
 
 def test_no_topology_is_hard_coded_a_future_brain_renders_and_colors_are_tokens(tmp_path):
     source = MODULE.read_text(encoding="utf-8")
-    for literal in ("Core Brain", "Tool Brain", "Voice Brain", "'core'", "'tool'", "'subagents'", "'mic'", "'speakers'",
+    for literal in ("Core Brain", "Tool Brain", "Voice Brain", "'core'", "'tool_brain'", "'subagents'", "'mic'", "'speakers'",
                     "brain_orchestration"):
         assert literal not in source, literal
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", source), "aucune couleur littérale : des jetons du thème seulement"
@@ -209,8 +209,8 @@ def test_moving_nodes_writes_the_layout_only_with_its_revision_and_rereads_on_40
     out = run_node(tmp_path, """
 const a=A.createFixtureAdapter(SNAP);const v=A.mount(host,{adapter:a,...quiet});await v.ready;
 v.moveNode('core',500,40);await v.saveLayout();const first=v.state.layout.revision;
-v.moveNode('tool',520,260);await v.saveLayout();
-const saves=a.calls.filter(c=>c[0]==='saveLayout').map(c=>[c[1].base_revision,c[1].positions.core||null,c[1].positions.tool||null]);
+v.moveNode('tool_brain',520,260);await v.saveLayout();
+const saves=a.calls.filter(c=>c[0]==='saveLayout').map(c=>[c[1].base_revision,c[1].positions.core||null,c[1].positions.tool_brain||null]);
 const topo=writes(a).filter(c=>c[0]!=='saveLayout');
 const stale={load:async()=>clone(SNAP),loadLayout:async()=>({revision:'l-9',positions:{core:{x:10,y:10}}}),saveLayout:async()=>({ok:false,status:409,code:'layout_revision_stale',reason:'autre onglet'})};
 v.destroy();const w=A.mount(host,{adapter:stale,...quiet});await w.ready;w.moveNode('core',300,300);await w.saveLayout();
@@ -230,11 +230,11 @@ const v=A.mount(host,{adapter:a,onConfigureBrain:(id,d)=>seen.push([id,d]),...qu
 v.openMenu('voice');const voice=host.innerHTML;
 v.menuAction('configure');const afterConfigure={menu:v.state.menu,html:host.innerHTML};
 v.openMenu('mic');const endpoint=v.state.menu;
-const snap=clone(SNAP);snap.nodes.find(n=>n.id==='tool').activation={mutable:true,reason:''};
+const snap=clone(SNAP);snap.nodes.find(n=>n.id==='tool_brain').activation={mutable:true,reason:''};
 const calls=[];const b={...A.createFixtureAdapter(snap),setNodeActivation:async(id,body)=>{calls.push([id,body]);return {ok:true,snapshot:snap}}};
-v.destroy();const w=A.mount(host,{adapter:b,...quiet});await w.ready;w.openMenu('tool');const tool=host.innerHTML;
+v.destroy();const w=A.mount(host,{adapter:b,...quiet});await w.ready;w.openMenu('tool_brain');const tool=host.innerHTML;
 w.menuAction('activate');await new Promise(r=>setTimeout(r,10));
-const noAdapter=A.mount(host,{adapter:A.createFixtureAdapter(snap),...quiet});await noAdapter.ready;noAdapter.openMenu('tool');
+const noAdapter=A.mount(host,{adapter:A.createFixtureAdapter(snap),...quiet});await noAdapter.ready;noAdapter.openMenu('tool_brain');
 v.state.menu=null;
 out({voice,afterConfigure,endpoint,tool,calls,noAdapter:host.innerHTML,seen,events:host.events});""")
     voice = out["voice"]
@@ -245,7 +245,7 @@ out({voice,afterConfigure,endpoint,tool,calls,noAdapter:host.innerHTML,seen,even
     assert ["architecture:configure-brain", {"nodeId": "voice", "field": None, "source": "menu", "opener": "node"}] in out["events"]
     assert out["endpoint"] is None, "un endpoint n'a pas de menu de cerveau"
     assert 'data-arch-menu="activate"' in out["tool"]
-    assert out["calls"] == [["tool", {"base_revision": "t-17", "active": True}]]
+    assert out["calls"] == [["tool_brain", {"base_revision": "t-17", "active": True}]]
     assert 'data-arch-menu="activate"' not in out["noAdapter"], "pas d'entrée sans opération légale côté adaptateur"
 
 
@@ -263,23 +263,23 @@ out({{html,seen,events:host.events}});""")
 def test_create_only_from_an_exposed_compatible_port_and_remove_a_removable_link(tmp_path):
     snap = fixture()
     snap["nodes"][2]["ports"].append({"id": "notes", "direction": "out", "channel": "event", "family": "brain_event"})
-    snap["creatable"] = [{"source": {"node": "core", "port": "notes"}, "target": {"node": "tool", "port": "events"}, "channel": "event", "purpose": "Notes"}]
+    snap["creatable"] = [{"source": {"node": "core", "port": "notes"}, "target": {"node": "tool_brain", "port": "events"}, "channel": "event", "purpose": "Notes"}]
     out = run_node(tmp_path, """
 const a=A.createFixtureAdapter(SNAP);const v=A.mount(host,{adapter:a,...quiet});await v.ready;
 const ports=host.innerHTML;
-await v.create({source:{node:'voice',port:'delegate'},target:{node:'tool',port:'events'}});const refused=v.state.notice.code;const n0=writes(a).length;
-await v.create({source:{node:'core',port:'notes'},target:{node:'tool',port:'events'}});
-const created=v.state.snapshot.connections.find(c=>c.id==='core.notes->tool.events');
+await v.create({source:{node:'voice',port:'delegate'},target:{node:'tool_brain',port:'events'}});const refused=v.state.notice.code;const n0=writes(a).length;
+await v.create({source:{node:'core',port:'notes'},target:{node:'tool_brain',port:'events'}});
+const created=v.state.snapshot.connections.find(c=>c.id==='core.notes->tool_brain.events');
 v.select('connection',created.id);const insp=host.innerHTML;
 await v.remove(created.id);
 out({ports,refused,n0,writes:writes(a),created,insp,left:v.state.snapshot.connections.some(c=>c.id===created.id),creatable:v.state.snapshot.creatable.length});""", snap)
     assert out["ports"].count("data-arch-port-source=") == 1 and 'data-arch-port-source="core/notes"' in out["ports"]
     assert out["refused"] == "connection_incompatible" and out["n0"] == 0
     assert out["writes"][0] == ["createConnection", {"base_revision": "t-17", "source": {"node": "core", "port": "notes"},
-                                                     "target": {"node": "tool", "port": "events"}, "channel": "event"}]
+                                                     "target": {"node": "tool_brain", "port": "events"}, "channel": "event"}]
     assert out["created"]["mutability"] == "creatable_removable"
     assert 'data-arch-act="remove"' in out["insp"] and 'data-arch-act="toggle"' not in out["insp"]
-    assert out["writes"][1] == ["removeConnection", "core.notes->tool.events", {"base_revision": "f-1"}]
+    assert out["writes"][1] == ["removeConnection", "core.notes->tool_brain.events", {"base_revision": "f-1"}]
     assert out["left"] is False and out["creatable"] == 1
 
 
@@ -400,7 +400,7 @@ out({{notice:v.state.notice,html:host.innerHTML}});""")
 def test_creation_keys_survive_ids_with_colons_and_arrows(tmp_path):
     snap = fixture()
     snap["nodes"][2]["ports"].append({"id": "a:b>c", "direction": "out", "channel": "event", "family": "brain_event"})
-    snap["creatable"] = [{"source": {"node": "core", "port": "a:b>c"}, "target": {"node": "tool", "port": "events"}, "channel": "event"}]
+    snap["creatable"] = [{"source": {"node": "core", "port": "a:b>c"}, "target": {"node": "tool_brain", "port": "events"}, "channel": "event"}]
     out = run_node(tmp_path, """
 const a=A.createFixtureAdapter(SNAP);const v=A.mount(host,{adapter:a,...quiet});await v.ready;v.select('node','core');
 const html=host.innerHTML;

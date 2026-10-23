@@ -54,17 +54,17 @@ def all_states_snapshot() -> dict:
     snap = copy.deepcopy(json.loads(FIXTURE.read_text(encoding="utf-8")))
     core = next(n for n in snap["nodes"] if n["id"] == "core")
     core["ports"].append({"id": "notes", "direction": "out", "channel": "event", "family": "brain_event"})
-    tool = next(n for n in snap["nodes"] if n["id"] == "tool")
+    tool = next(n for n in snap["nodes"] if n["id"] == "tool_brain")
     tool["ports"].append({"id": "notes_in", "direction": "in", "channel": "event", "family": "brain_event"})
     snap["connections"].append({
-        "id": "voice.delegate->tool.notes_in", "source": {"node": "voice", "port": "delegate"},
-        "target": {"node": "tool", "port": "notes_in"}, "channel": "request", "purpose": "Liaison de démonstration",
+        "id": "voice.delegate->tool_brain.notes_in", "source": {"node": "voice", "port": "delegate"},
+        "target": {"node": "tool_brain", "port": "notes_in"}, "channel": "request", "purpose": "Liaison de démonstration",
         "enabled": True, "mutability": "creatable_removable", "locked_reason": "", "impact_when_disabled": "",
         "applies": "next_turn", "pending": None, "governed_by": None, "binding": "demo"})
-    snap["creatable"] = [{"source": {"node": "core", "port": "notes"}, "target": {"node": "tool", "port": "notes_in"},
+    snap["creatable"] = [{"source": {"node": "core", "port": "notes"}, "target": {"node": "tool_brain", "port": "notes_in"},
                           "channel": "event", "purpose": "Notes de Core vers le Tool Brain"}]
     for c in snap["connections"]:
-        if c["id"] == "core.events->tool.events":
+        if c["id"] == "core.events->tool_brain.events":
             c["pending"] = {"enabled": True, "applies": "core_restart"}
     return snap
 
@@ -172,7 +172,7 @@ def test_shift_f10_and_right_click_open_the_brain_menu_and_configure_emits_the_e
         {"eval": "document.querySelector('.arch-menu').getAttribute('data-arch-menu-for')"},
         {"key": "Enter"},
         {"eval": "[window.__configured, window.__events, document.querySelector('.arch-menu')===null]"},
-        {"click": '[data-arch-menu-btn="tool"]'},
+        {"click": '[data-arch-menu-btn="tool_brain"]'},
         {"eval": "document.querySelector('.arch-menu').getAttribute('data-arch-menu-for')"},
         {"click": '[data-arch-node="mic"] .arch-node-name', "button": "right"},
         {"eval": "document.querySelector('.arch-menu')===null"},
@@ -186,7 +186,7 @@ def test_shift_f10_and_right_click_open_the_brain_menu_and_configure_emits_the_e
     assert out[8] == "core"
     configured, events, closed = out[10]
     assert configured == [["core", "menu"]] and events == [{"nodeId": "core", "field": None, "source": "menu", "opener": "node"}] and closed
-    assert out[12] == "tool"
+    assert out[12] == "tool_brain"
     # Un endpoint n'est pas un cerveau : le clic droit n'ouvre aucun menu.
     assert out[14] is True
 
@@ -234,12 +234,12 @@ def test_states_differ_by_stroke_and_reduced_motion_stops_the_pulse(tmp_path):
         {"shot": str(shots / "architecture-all-states.png")},
         {"click": '[data-arch-port-source="core/notes"]'},
         {"eval": "[document.querySelectorAll('[data-arch-port-target]').length, getComputedStyle(document.querySelector('[data-arch-port-target]')).animationName]"},
-        {"click": '.arch-label[data-arch-conn="core.events->tool.events"]'},
+        {"click": '.arch-label[data-arch-conn="core.events->tool_brain.events"]'},
         {"shot": str(shots / "architecture-inspector-pending.png")},
     ], reduced=True)
     s = out[0]
-    locked, on, off = s["mic.audio_out->voice.audio_in"], s["voice.delegate->core.request"], s["core.events->tool.events"]
-    removable, governed = s["voice.delegate->tool.notes_in"], s["core.agents->subagents.spawn"]
+    locked, on, off = s["mic.audio_out->voice.audio_in"], s["voice.delegate->core.request"], s["core.events->tool_brain.events"]
+    removable, governed = s["voice.delegate->tool_brain.notes_in"], s["core.agents->subagents.spawn"]
     assert locked["casing"] and locked["dash"] == "none" and float(locked["width"][:-2]) > float(on["width"][:-2])
     assert on["dash"] == "none" and not on["casing"]
     assert off["dash"] != "none" and float(off["opacity"]) < 1

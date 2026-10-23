@@ -34,8 +34,8 @@ PANEL = ROOT / "jarvis" / "runtime" / "control_center_brain_config_panel.js"
 
 def build_page(tmp_path: Path) -> Path:
     snap = json.loads(CANVAS_FIXTURE.read_text(encoding="utf-8"))
-    # Les cerveaux du fixture du canevas s'appellent voice, core, tool : la fenêtre reçoit l'id du nœud.
-    configs = {"core": fixture("core"), "voice": fixture("voice"), "tool": tool_brain()}
+    # Les cerveaux du fixture du canevas s'appellent voice, core, tool_brain (ids du runtime) : la fenêtre reçoit l'id du nœud.
+    configs = {"core": fixture("core"), "voice": fixture("voice"), "tool_brain": tool_brain()}
     page = tmp_path / "brain_config_demo.html"
     page.write_text(f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Fenêtre du cerveau (démo)</title>
@@ -77,7 +77,9 @@ def test_configure_opens_the_window_tab_stays_inside_and_escape_returns_to_the_n
         {"eval": f"[{IN_PANEL},{ACTIVE},document.querySelector('.bcp-win').getAttribute('role')]"},
         {"eval": """(()=>{const w=document.querySelector('.bcp-win').getBoundingClientRect(),c=document.querySelector('.arch-canvas').getBoundingClientRect();
           const ox=Math.max(0,Math.min(w.right,c.right)-Math.max(w.left,c.left)),oy=Math.max(0,Math.min(w.bottom,c.bottom)-Math.max(w.top,c.top));
-          return {covered:(ox*oy)/(c.width*c.height),inViewport:w.left>=0&&w.top>=0&&w.right<=innerWidth&&w.bottom<=innerHeight}})()"""},
+          const n=document.querySelector('[data-arch-node="core"]').getBoundingClientRect();
+          const nx=Math.max(0,Math.min(w.right,n.right)-Math.max(w.left,n.left)),ny=Math.max(0,Math.min(w.bottom,n.bottom)-Math.max(w.top,n.top));
+          return {covered:(ox*oy)/(c.width*c.height),node:nx*ny,inViewport:w.left>=0&&w.top>=0&&w.right<=innerWidth&&w.bottom<=innerHeight}})()"""},
         {"shot": str(shots / "brain-config-core.png")},
     ]
     for _ in range(45):
@@ -86,7 +88,9 @@ def test_configure_opens_the_window_tab_stays_inside_and_escape_returns_to_the_n
     out = run_plan(tmp_path, page, steps)
     assert out[4] == [True, "title", "dialog"]
     geo = out[5]
-    assert geo["inViewport"] and geo["covered"] < 0.45, f"le graphe reste visible : {geo}"
+    # Slice 07 : la fenêtre ne couvre plus le nœud configuré ; elle passe à gauche de l'écran quand le nœud tombe sous la
+    # colonne de droite, au prix d'un peu plus de canevas couvert (le graphe reste lisible à plus de moitié).
+    assert geo["inViewport"] and geo["covered"] < 0.5 and geo["node"] == 0, f"le graphe reste visible : {geo}"
     trapped = out[8:8 + 90:2]
     assert all(trapped), "Tab ne sort jamais de la fenêtre"
     assert out[-3] is True
@@ -165,8 +169,10 @@ def test_the_header_drags_the_window_and_replacing_with_a_draft_asks(tmp_path):
     left = "[parseInt(document.querySelector('.bcp-win').style.left),parseInt(document.querySelector('.bcp-win').style.top)]"
     out = run_plan(tmp_path, page, OPEN_CORE_BY_MENU + [
         {"eval": left},
-        {"drag": ".bcp-head .bcp-sub", "dx": -240, "dy": 60},
+        {"drag": ".bcp-head .bcp-sub", "dx": 240, "dy": 60},
         {"eval": left},
+        # Rendue à sa place, à gauche : le nœud Voice reste libre pour le clic droit qui suit.
+        {"drag": ".bcp-head .bcp-sub", "dx": -240, "dy": 0},
         {"eval": "window.__panel.setDraft('instructions','Brouillon en cours');1"},
         {"click": '[data-arch-node="voice"] .arch-node-name', "button": "right"},
         {"key": "Enter"},
@@ -180,9 +186,9 @@ def test_the_header_drags_the_window_and_replacing_with_a_draft_asks(tmp_path):
     ])
     (x0, y0), (x1, y1) = out[4], out[6]
     # La fenêtre est presque aussi haute que la fenêtre du navigateur : verticalement, elle reste bornée à l'écran.
-    assert x1 - x0 == -240 and 8 <= y1 <= y0 + 60
-    assert out[11] == ["replace", "core", 1, "confirm-keep"]
-    brain, count, delegation = out[15]
+    assert x1 - x0 == 240 and 8 <= y1 <= y0 + 60  # posée à gauche (Slice 07), elle se glisse vers la droite
+    assert out[12] == ["replace", "core", 1, "confirm-keep"]
+    brain, count, delegation = out[16]
     assert brain == "voice" and count == 1 and "Sans objet" in delegation and "onglet Sous-agents" in delegation
 
 

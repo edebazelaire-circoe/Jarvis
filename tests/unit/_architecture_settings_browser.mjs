@@ -1,12 +1,13 @@
-/* Harnais CDP de l'onglet Architecture (`test_architecture_settings_browser.py`,
-   jarvis-architecture-agents-settings-editor Slice 04).
+/* Harnais CDP partagé des onglets Architecture et Sous-agents (`test_architecture_settings_browser.py`,
+   `test_brain_config_panel_browser.py`, `test_subagent_settings_browser.py` ; jarvis-architecture-agents-settings-editor
+   Slices 04 à 07 : le harnais de la Slice 06 en était une copie, fusionnée ici à la Slice 07, Alt compris).
 
    Charge une page STATIQUE (fichier local : le module et son adaptateur de fixture, jamais le Control Center
    vivant) dans Chrome sans tête et rejoue un plan de VRAIES entrées : touches (Tab, Maj+F10, Entrée, Échap,
    flèches), clic droit, glisser à la souris, captures d'écran. Chaque étape rend une valeur :
 
      {"eval": "<expression JS, éventuellement asynchrone>"}            -> sa valeur
-     {"key": "Tab", "shift": false}                                     -> null
+     {"key": "Tab", "shift": false, "alt": false}                       -> null
      {"click": "<sélecteur>", "button": "left"|"right"}                 -> null
      {"drag": "<sélecteur>", "dx": 120, "dy": 40}                       -> null
      {"shot": "<chemin.png>"}                                           -> le chemin
@@ -60,7 +61,7 @@ try{
     if(step.eval!=null){out.push(await evaluate(step.eval));continue}
     if(step.wait!=null){await sleep(step.wait);out.push(null);continue}
     if(step.key){
-      const [code,name]=KEYS[step.key]||[0,step.key];const modifiers=step.shift?8:0;
+      const [code,name]=KEYS[step.key]||[0,step.key];const modifiers=(step.shift?8:0)|(step.alt?1:0);
       const base={key:step.key,code:name,windowsVirtualKeyCode:code,nativeVirtualKeyCode:code,modifiers};
       await send('Input.dispatchKeyEvent',{type:'rawKeyDown',...base});
       if(step.key===' '||step.key==='Enter')await send('Input.dispatchKeyEvent',{type:'char',...base,text:step.key===' '?' ':'\r'});

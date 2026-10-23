@@ -196,6 +196,57 @@ class VoiceSwitchBus:
         replace_with_retry(tmp, path)
 
 
+@dataclass(frozen=True, slots=True)
+class VoiceSwitchPlan:
+    """Bascule de Voice à demander après une écriture de réglages (règle unique, voir `plan_voice_switch`)."""
+
+    source_configuration_id: str
+    target_configuration_id: str
+    target_architecture: str
+    target_model: str
+
+    def issue(self, root: Path) -> dict[str, object]:
+        """Écrire la demande sur le bus ; rend ce que le journal `voice.switch.requested` porte."""
+        issued = VoiceSwitchBus(root).request(
+            source_configuration_id=self.source_configuration_id,
+            target_configuration_id=self.target_configuration_id,
+            target_architecture=self.target_architecture, target_model=self.target_model)
+        return {"request_id": issued.request_id, "source_configuration_id": self.source_configuration_id,
+                "target_configuration_id": self.target_configuration_id,
+                "target_architecture": self.target_architecture, "target_model": self.target_model}
+
+
+def plan_voice_switch(previous: object, updated: object, *, running_configuration_id: object = None,
+                      environ=None) -> VoiceSwitchPlan | None:  # noqa: ANN001 - Mapping[str, str] | None
+    """La seule règle de bascule de Voice, partagée par `POST /api/settings` et les écritures du graphe et de la
+    configuration des cerveaux (jarvis-architecture-agents-settings-editor, Slice 07).
+
+    Source = la configuration que Voice publie (`running_configuration_id`, à passer seulement si son battement est
+    frais), sinon celle des réglages précédents. Rien à demander (`None`) si l'une des deux compositions n'est pas
+    démarrable, si l'identité ne change pas, ou si la cible n'a pas de modèle (projection de compatibilité qui garde
+    un modèle manquant pour que Réglages puisse être réparé : ce n'est pas une cible démarrable, Voice n'est pas
+    arrêtée). Import local : ce module est chargé par le processus Voice, qui n'a pas besoin de la composition ici.
+    """
+
+    from jarvis.domain.errors import ConfigurationError
+    from jarvis.domain.voice_architecture import FrontBrainVoiceConfig, VoiceConfigError
+    from jarvis.runtime.voice_composition import resolve_voice_composition
+
+    try:
+        before = resolve_voice_composition(previous, environ=environ)
+        target = resolve_voice_composition(updated, environ=environ)
+    except (VoiceConfigError, ConfigurationError):
+        # argued: no startable composition on one side means there is nothing to switch from or to; the writer has
+        # already validated what it persists, and Voice reports its own startup refusal.
+        return None
+    config = target.selection.config
+    model = (config.reflex_model if isinstance(config, FrontBrainVoiceConfig) else config.conversation_model).model_id
+    source = running_configuration_id if isinstance(running_configuration_id, str) else before.configuration_id
+    if source == target.configuration_id or not model:
+        return None
+    return VoiceSwitchPlan(source, target.configuration_id, config.architecture.value, model)
+
+
 def active_task_context(work: object, *, max_items: int = 8, max_chars: int = 4096) -> str:
     """Project bounded public Core work summaries for a replacement frontend."""
     if not isinstance(work, dict) or not isinstance(work.get("items"), list):
