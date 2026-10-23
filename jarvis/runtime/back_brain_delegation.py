@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
+from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 import uuid
@@ -15,11 +16,38 @@ from jarvis.domain.v2 import SpeechRequest, SpeechKind, SpeechProvenance
 
 BACK_BRAIN_DELEGATE = "back_brain_delegate"
 
+#: Réglage canonique de la liaison Surface vocale -> Core en Simple et Front Brain (graphe d'architecture,
+#: `docs/architecture-graph.md`) : bloc `voice_surface` de `control-center-settings.json`,
+#: `{"back_brain_delegation": bool}`. Absent = délégation active, le comportement d'avant ce réglage.
+VOICE_SURFACE_SETTING = "voice_surface"
+BACK_BRAIN_DELEGATION_FIELD = "back_brain_delegation"
+#: Consigne ajoutée à la session quand la délégation est coupée : l'outil n'est plus offert, et les règles
+#: de conversation qui le nomment ne doivent pas faire promettre un travail que personne ne lancera.
+VOICE_ALONE_RULE_ID = "voice.back_brain_delegation.disabled.v1"
+VOICE_ALONE_RULE = (
+    "Background delegation to Core is disabled by the user's architecture settings: back_brain_delegate is not "
+    "available in this session. Answer on your own; never claim that background work, a tool, an agent or Core "
+    "has been started. If a request needs it, say honestly that delegation is turned off."
+)
+
+
+def delegation_enabled(settings: Mapping[str, object] | None) -> bool:
+    """`False` seulement si le bloc `voice_surface` coupe explicitement la délégation (booléen `False`)."""
+
+    block = (settings or {}).get(VOICE_SURFACE_SETTING)
+    return not (isinstance(block, Mapping) and block.get(BACK_BRAIN_DELEGATION_FIELD) is False)
+
 
 def conversation_tools() -> list[dict]:
     return [{"type": "function", "name": BACK_BRAIN_DELEGATE,
              "description": "Submit the current application-admitted request as independent background work. No arguments; Core supplies the exact request and authority.",
              "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}}]
+
+
+def without_delegation(tools: list) -> list:
+    """Le catalogue de la surface sans `back_brain_delegate` (délégation coupée)."""
+
+    return [tool for tool in tools if not (isinstance(tool, dict) and tool.get("name") == BACK_BRAIN_DELEGATE)]
 
 
 @dataclass(slots=True)
