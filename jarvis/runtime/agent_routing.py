@@ -152,24 +152,42 @@ def describe_delegation_modes() -> dict[str, Any]:
 # ------------------------------------------------------------------ écriture
 
 
-def _write_candidates(raw: object, profile: str) -> tuple[CandidateRef, ...]:
+def _write_candidates(raw: object, profile: str, *, owner: str = "le profil") -> tuple[CandidateRef, ...]:
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
         raise RoutingError(
             "routing_bad_candidates",
-            f"Les candidats du profil « {profile} » doivent être une liste.",
+            f"Les candidats {_of(owner)} « {profile} » doivent être une liste.",
         )
     refs: list[CandidateRef] = []
     for entry in raw:
         ref = CandidateRef.parse(entry)
         if ref.agent not in _known_agents():
-            raise RoutingError("routing_unknown_agent", f"CLI inconnu dans le profil « {profile} » : {ref.agent}.")
+            raise RoutingError("routing_unknown_agent", f"CLI inconnu dans {owner} « {profile} » : {ref.agent}.")
         if ref in refs:
             raise RoutingError(
                 "routing_duplicate_candidate",
-                f"« {ref.key} » est proposé deux fois dans le profil « {profile} ».",
+                f"« {ref.key} » est proposé deux fois dans {owner} « {profile} ».",
             )
         refs.append(ref)
     return tuple(refs)
+
+
+def _of(owner: str) -> str:
+    return "du " + owner[3:] if owner.startswith("le ") else "de " + owner
+
+
+def parse_candidates(raw: object, owner_id: str, *, owner: str = "le profil") -> tuple[CandidateRef, ...]:
+    """Validation stricte d'une liste de candidats reçue (mêmes codes que pour un profil).
+
+    Réutilisée par la politique par rôle (`subagent_role_routing`, `owner="le rôle"`) : une seule
+    règle d'écriture pour toutes les listes de candidats.
+    """
+    return _write_candidates(raw, owner_id, owner=owner)
+
+
+def read_candidates(raw: object) -> tuple[CandidateRef, ...]:
+    """Lecture tolérante d'une liste enregistrée : entrées illisibles et doublons écartés."""
+    return _read_candidates(raw)
 
 
 def _known_agents() -> tuple[str, ...]:
@@ -295,6 +313,7 @@ def with_saved(
     policy: RoutingPolicy,
     *,
     unavailable_reasons_by_agent: Mapping[str, str] | None = None,
+    extra_refs: Iterable[CandidateRef] = (),
 ) -> list[ModelCandidate]:
     """Ajouter, marqués indisponibles, les candidats enregistrés qui ont disparu.
 
@@ -302,30 +321,32 @@ def with_saved(
     candidat sortirait de l'écran, et le réglage semblerait s'être effacé tout
     seul. Il reste, il est dit indisponible, et il revient à la vie dès que le
     fournisseur le redonne.
+
+    `extra_refs` : d'autres listes enregistrées (politiques par rôle) qui obéissent à la même règle.
     """
     known = {(item.agent, item.model) for item in candidates}
     enriched = list(candidates)
     reasons = unavailable_reasons_by_agent or {}
-    for entry in policy.profiles:
-        for ref in entry.candidates:
-            if (ref.agent, ref.model) in known:
-                continue
-            known.add((ref.agent, ref.model))
-            enriched.append(
-                ModelCandidate(
-                    agent=ref.agent,
-                    model=ref.model,
-                    label=ref.key,
-                    capabilities=frozenset(),
-                    available=False,
-                    unavailable_reason=(
-                        reasons.get(ref.agent)
-                        or (MISSING_MODEL_REASON if ref.model else MISSING_AGENT_REASON)
-                    ),
-                    agent_label=ref.agent,
-                    model_label=ref.model or DEFAULT_MODEL_LABEL,
-                )
+    saved = [ref for entry in policy.profiles for ref in entry.candidates] + list(extra_refs)
+    for ref in saved:
+        if (ref.agent, ref.model) in known:
+            continue
+        known.add((ref.agent, ref.model))
+        enriched.append(
+            ModelCandidate(
+                agent=ref.agent,
+                model=ref.model,
+                label=ref.key,
+                capabilities=frozenset(),
+                available=False,
+                unavailable_reason=(
+                    reasons.get(ref.agent)
+                    or (MISSING_MODEL_REASON if ref.model else MISSING_AGENT_REASON)
+                ),
+                agent_label=ref.agent,
+                model_label=ref.model or DEFAULT_MODEL_LABEL,
             )
+        )
     return enriched
 
 

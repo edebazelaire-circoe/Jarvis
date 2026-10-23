@@ -1,0 +1,461 @@
+{
+  "ok": true,
+  "schema_version": 1,
+  "revision": "rr-1",
+  "applies": "live",
+  "store": {
+    "status": "ok",
+    "code": "",
+    "reason": ""
+  },
+  "catalog": {
+    "status": "ok",
+    "reason": ""
+  },
+  "compatibility": {
+    "delegation_mode": "duplicate",
+    "profiles_enabled": false,
+    "note": "Une politique explicite de rôle s'applique quel que soit Auto/Dupliqué ; un rôle qui hérite suit la politique par profil, active seulement en Auto."
+  },
+  "roles": [
+    {
+      "role_id": "interviewer",
+      "marker": "interviewer",
+      "name": "Intervieweur",
+      "aliases": [],
+      "default_profile": "general",
+      "provenance": "inherited:general",
+      "explicit": false,
+      "inherited_profile": "general",
+      "binding": false,
+      "binding_reason": "Héritée et inactive : le mode Dupliqué laisse le CLI choisir son modèle.",
+      "restorable": false,
+      "allow_general_fallback": true,
+      "candidates": [
+        {
+          "agent": "claude",
+          "model": "grand",
+          "position": 0,
+          "label": "Claude Code · Grand",
+          "available": true,
+          "unavailable_reason": "",
+          "selectable": true,
+          "selectable_reason": ""
+        }
+      ],
+      "fallback": {
+        "enabled": false,
+        "profile": "general",
+        "candidates": [
+          {
+            "agent": "claude",
+            "model": "grand",
+            "position": 0,
+            "label": "Claude Code · Grand",
+            "available": true,
+            "unavailable_reason": "",
+            "selectable": true,
+            "selectable_reason": ""
+          }
+        ]
+      },
+      "preview": {
+        "outcome": "cli_default",
+        "reason": "compatibility",
+        "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+      }
+    },
+    {
+      "role_id": "research",
+      "marker": "research",
+      "name": "Recherche documentaire",
+      "aliases": [],
+      "default_profile": "general",
+      "provenance": "inherited:general",
+      "explicit": false,
+      "inherited_profile": "general",
+      "binding": false,
+      "binding_reason": "Héritée et inactive : le mode Dupliqué laisse le CLI choisir son modèle.",
+      "restorable": false,
+      "allow_general_fallback": true,
+      "candidates": [
+        {
+          "agent": "claude",
+          "model": "grand",
+          "position": 0,
+          "label": "Claude Code · Grand",
+          "available": true,
+          "unavailable_reason": "",
+          "selectable": true,
+          "selectable_reason": ""
+        }
+      ],
+      "fallback": {
+        "enabled": false,
+        "profile": "general",
+        "candidates": [
+          {
+            "agent": "claude",
+            "model": "grand",
+            "position": 0,
+            "label": "Claude Code · Grand",
+            "available": true,
+            "unavailable_reason": "",
+            "selectable": true,
+            "selectable_reason": ""
+          }
+        ]
+      },
+      "preview": {
+        "outcome": "cli_default",
+        "reason": "compatibility",
+        "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+      }
+    },
+    {
+      "role_id": "web-research",
+      "marker": "web-research",
+      "name": "Recherche web",
+      "aliases": [],
+      "default_profile": "general",
+      "provenance": "inherited:general",
+      "explicit": false,
+      "inherited_profile": "general",
+      "binding": false,
+      "binding_reason": "Héritée et inactive : le mode Dupliqué laisse le CLI choisir son modèle.",
+      "restorable": false,
+      "allow_general_fallback": true,
+      "candidates": [
+        {
+          "agent": "claude",
+          "model": "grand",
+          "position": 0,
+          "label": "Claude Code · Grand",
+          "available": true,
+          "unavailable_reason": "",
+          "selectable": true,
+          "selectable_reason": ""
+        }
+      ],
+      "fallback": {
+        "enabled": false,
+        "profile": "general",
+        "candidates": [
+          {
+            "agent": "claude",
+            "model": "grand",
+            "position": 0,
+            "label": "Claude Code · Grand",
+            "available": true,
+            "unavailable_reason": "",
+            "selectable": true,
+            "selectable_reason": ""
+          }
+        ]
+      },
+      "preview": {
+        "outcome": "cli_default",
+        "reason": "compatibility",
+        "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+      }
+    },
+    {
+      "role_id": "coder",
+      "marker": "coder",
+      "name": "Développement",
+      "aliases": [],
+      "default_profile": "code",
+      "provenance": "inherited:code",
+      "explicit": false,
+      "inherited_profile": "code",
+      "binding": false,
+      "binding_reason": "Héritée et inactive : le mode Dupliqué laisse le CLI choisir son modèle.",
+      "restorable": false,
+      "allow_general_fallback": true,
+      "candidates": [
+        {
+          "agent": "claude",
+          "model": "petit",
+          "position": 0,
+          "label": "Claude Code · Petit",
+          "available": true,
+          "unavailable_reason": "",
+          "selectable": true,
+          "selectable_reason": ""
+        }
+      ],
+      "fallback": {
+        "enabled": true,
+        "profile": "general",
+        "candidates": [
+          {
+            "agent": "claude",
+            "model": "grand",
+            "position": 0,
+            "label": "Claude Code · Grand",
+            "available": true,
+            "unavailable_reason": "",
+            "selectable": true,
+            "selectable_reason": ""
+          }
+        ]
+      },
+      "preview": {
+        "outcome": "cli_default",
+        "reason": "compatibility",
+        "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+      }
+    },
+    {
+      "role_id": "concept",
+      "marker": "concept",
+      "name": "Conceptualisation",
+      "aliases": [],
+      "default_profile": "general",
+      "provenance": "inherited:general",
+      "explicit": false,
+      "inherited_profile": "general",
+      "binding": false,
+      "binding_reason": "Héritée et inactive : le mode Dupliqué laisse le CLI choisir son modèle.",
+      "restorable": false,
+      "allow_general_fallback": true,
+      "candidates": [
+        {
+          "agent": "claude",
+          "model": "grand",
+          "position": 0,
+          "label": "Claude Code · Grand",
+          "available": true,
+          "unavailable_reason": "",
+          "selectable": true,
+          "selectable_reason": ""
+        }
+      ],
+      "fallback": {
+        "enabled": false,
+        "profile": "general",
+        "candidates": [
+          {
+            "agent": "claude",
+            "model": "grand",
+            "position": 0,
+            "label": "Claude Code · Grand",
+            "available": true,
+            "unavailable_reason": "",
+            "selectable": true,
+            "selectable_reason": ""
+          }
+        ]
+      },
+      "preview": {
+        "outcome": "cli_default",
+        "reason": "compatibility",
+        "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+      }
+    },
+    {
+      "role_id": "research-lead",
+      "marker": "research-lead",
+      "name": "Direction de recherche",
+      "aliases": [],
+      "default_profile": "general",
+      "provenance": "inherited:general",
+      "explicit": false,
+      "inherited_profile": "general",
+      "binding": false,
+      "binding_reason": "Héritée et inactive : le mode Dupliqué laisse le CLI choisir son modèle.",
+      "restorable": false,
+      "allow_general_fallback": true,
+      "candidates": [
+        {
+          "agent": "claude",
+          "model": "grand",
+          "position": 0,
+          "label": "Claude Code · Grand",
+          "available": true,
+          "unavailable_reason": "",
+          "selectable": true,
+          "selectable_reason": ""
+        }
+      ],
+      "fallback": {
+        "enabled": false,
+        "profile": "general",
+        "candidates": [
+          {
+            "agent": "claude",
+            "model": "grand",
+            "position": 0,
+            "label": "Claude Code · Grand",
+            "available": true,
+            "unavailable_reason": "",
+            "selectable": true,
+            "selectable_reason": ""
+          }
+        ]
+      },
+      "preview": {
+        "outcome": "cli_default",
+        "reason": "compatibility",
+        "detail": "Le CLI garde son propre modèle (aucune liste ne s'impose)."
+      }
+    },
+    {
+      "role_id": "qa",
+      "marker": "qa",
+      "name": "Contrôle qualité",
+      "aliases": [
+        "reviewer"
+      ],
+      "default_profile": "general",
+      "provenance": "explicit",
+      "explicit": true,
+      "inherited_profile": "general",
+      "binding": true,
+      "binding_reason": "Politique du rôle appliquée à chaque lancement de ce rôle.",
+      "restorable": true,
+      "allow_general_fallback": true,
+      "candidates": [
+        {
+          "agent": "claude",
+          "model": "disparu",
+          "position": 0,
+          "label": "claude:disparu",
+          "available": false,
+          "unavailable_reason": "Ce modèle n'est plus proposé par le fournisseur.",
+          "selectable": false,
+          "selectable_reason": "Ce modèle n'est plus proposé par le fournisseur."
+        },
+        {
+          "agent": "claude",
+          "model": "petit",
+          "position": 1,
+          "label": "Claude Code · Petit",
+          "available": true,
+          "unavailable_reason": "",
+          "selectable": true,
+          "selectable_reason": ""
+        },
+        {
+          "agent": "codex",
+          "model": "gpt-o",
+          "position": 2,
+          "label": "Codex CLI · GPT O",
+          "available": false,
+          "unavailable_reason": "« codex » est introuvable dans le PATH.",
+          "selectable": false,
+          "selectable_reason": "« codex » est introuvable dans le PATH."
+        }
+      ],
+      "fallback": {
+        "enabled": true,
+        "profile": "general",
+        "candidates": [
+          {
+            "agent": "claude",
+            "model": "grand",
+            "position": 0,
+            "label": "Claude Code · Grand",
+            "available": true,
+            "unavailable_reason": "",
+            "selectable": true,
+            "selectable_reason": ""
+          }
+        ]
+      },
+      "preview": {
+        "outcome": "selected",
+        "profile": "general",
+        "agent": "claude",
+        "model": "petit",
+        "reason": "fallback",
+        "considered": [
+          {
+            "agent": "claude",
+            "model": "disparu",
+            "eligible": false,
+            "code": "model_unavailable",
+            "detail": "Ce modèle n'est plus proposé par le fournisseur."
+          },
+          {
+            "agent": "claude",
+            "model": "petit",
+            "eligible": true
+          }
+        ],
+        "fallback_from": {
+          "agent": "claude",
+          "model": "disparu"
+        },
+        "fallback_code": "model_unavailable",
+        "role_id": "qa",
+        "provenance": "explicit"
+      }
+    }
+  ],
+  "harnesses": [
+    {
+      "id": "claude",
+      "label": "Claude Code",
+      "provider": "anthropic",
+      "capabilities": [
+        "code",
+        "computer_use",
+        "semantic"
+      ],
+      "available": true,
+      "unavailable_reason": "",
+      "models": [
+        {
+          "model": "",
+          "label": "Modèle par défaut du CLI",
+          "available": true,
+          "unavailable_reason": ""
+        },
+        {
+          "model": "grand",
+          "label": "Grand",
+          "available": true,
+          "unavailable_reason": ""
+        },
+        {
+          "model": "petit",
+          "label": "Petit",
+          "available": true,
+          "unavailable_reason": ""
+        },
+        {
+          "model": "disparu",
+          "label": "disparu",
+          "available": false,
+          "unavailable_reason": "Ce modèle n'est plus proposé par le fournisseur."
+        }
+      ]
+    },
+    {
+      "id": "codex",
+      "label": "Codex CLI",
+      "provider": "openai",
+      "capabilities": [
+        "code",
+        "semantic"
+      ],
+      "available": false,
+      "unavailable_reason": "« codex » est introuvable dans le PATH.",
+      "models": [
+        {
+          "model": "",
+          "label": "Modèle par défaut du CLI",
+          "available": false,
+          "unavailable_reason": "« codex » est introuvable dans le PATH."
+        },
+        {
+          "model": "gpt-o",
+          "label": "GPT O",
+          "available": false,
+          "unavailable_reason": "« codex » est introuvable dans le PATH."
+        }
+      ]
+    }
+  ]
+}
