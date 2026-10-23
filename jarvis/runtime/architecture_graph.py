@@ -489,34 +489,16 @@ VoiceSwitchRequester = Callable[[Mapping[str, Any], Mapping[str, Any], RuntimeOb
 
 
 def request_voice_switch(runtime_root: Path | str, env: Mapping[str, str]) -> VoiceSwitchRequester:
-    """Demande à Voice de recharger sa configuration, selon la règle de `ControlCenter` (POST /api/settings) :
-    source = configuration publiée par Voice si fraîche, sinon celle des réglages précédents ; rien si l'identité
-    ne change pas ou si la cible n'a pas de modèle démarrable.
-
-    TODO(Slice 07) : le Control Center a la même règle en ligne ; la monter une seule fois (ce module ou une
-    fonction partagée) au moment de brancher les routes.
-    """
+    """Demande à Voice de recharger sa configuration : la règle unique `voice_switch.plan_voice_switch`, la même
+    que `POST /api/settings` (mise en commun à la Slice 07). Source = configuration publiée par Voice si fraîche
+    (`observations.voice` ne porte qu'un battement frais), sinon celle des réglages précédents."""
 
     def issue(previous: Mapping[str, Any], updated: Mapping[str, Any],
               observations: RuntimeObservations) -> dict[str, object] | None:
-        from jarvis.runtime.voice_switch import VoiceSwitchBus
-        target = resolve_voice_composition(updated, environ=env)
-        try:
-            before = resolve_voice_composition(previous, environ=env)
-        except (VoiceConfigError, ConfigurationError):
-            return None  # same as the Control Center: no startable previous composition, nothing to switch from
-        config = target.selection.config
-        model = (config.reflex_model if isinstance(config, FrontBrainVoiceConfig) else config.conversation_model).model_id
+        from jarvis.runtime.voice_switch import plan_voice_switch
         running = observations.voice.get("configuration_id") if observations.voice else None
-        source = running if isinstance(running, str) else before.configuration_id
-        if source == target.configuration_id or not model:
-            return None
-        issued = VoiceSwitchBus(Path(runtime_root)).request(
-            source_configuration_id=source, target_configuration_id=target.configuration_id,
-            target_architecture=config.architecture.value, target_model=model)
-        return {"request_id": issued.request_id, "source_configuration_id": source,
-                "target_configuration_id": target.configuration_id,
-                "target_architecture": config.architecture.value, "target_model": model}
+        plan = plan_voice_switch(previous, updated, running_configuration_id=running, environ=env)
+        return plan.issue(Path(runtime_root)) if plan is not None else None
 
     return issue
 
