@@ -30,7 +30,8 @@
   'use strict';
   const STYLE_ID='jarvisArchitectureSettingsStyle';
   const DEFAULT_TIMEOUT_MS=15000;
-  const NODE_W=208,NODE_H=136,COL=340,ROW=190,PAD=28,LAYOUT_STEP=16;
+  /* ROW laisse ~100 px entre deux rangs : deux libellés de liaisons opposées et leurs pointes y tiennent. */
+  const NODE_W=208,NODE_H=136,COL=340,ROW=236,PAD=28,LAYOUT_STEP=16,BEND_STEP=60,LABEL_H=26;
   const UNKNOWN_OUTCOME=new Set(['architecture_timeout','architecture_unreachable']);
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const own=(o,k)=>!!o&&Object.prototype.hasOwnProperty.call(o,k);
@@ -123,7 +124,7 @@
      dans la case libre la plus proche sous son parent (grille repliée : pas de graphe hors cadre). Sert tant
      qu'aucune position n'est enregistrée pour un nœud. */
   function autoLayout(snapshot,maxCols){
-    const limit=Math.max(2,Math.floor(Number(maxCols))||3);
+    const limit=Math.max(1,Math.floor(Number(maxCols))||3);
     const rank=new Map(),out=new Map();
     for(const c of snapshot.connections){if(!out.has(c.source.node))out.set(c.source.node,[]);out.get(c.source.node).push(c.target.node)}
     const endpoints=snapshot.nodes.filter(n=>n.kind==='endpoint');
@@ -161,21 +162,49 @@
     const t=Math.min(dx?hw/Math.abs(dx):Infinity,dy?hh/Math.abs(dy):Infinity);
     return [cx+dx*t,cy+dy*t];
   }
-  function edgeGeometry(conn,posOf,lane){
-    const a=posOf(conn.source.node),b=posOf(conn.target.node);
+  /* Une liaison est une courbe quadratique : droite quand rien ne gêne, arquée pour séparer deux liaisons entre
+     les mêmes nœuds (sens opposés compris) et pour contourner un nœud qui serait sur son chemin. */
+  function quad(g,t){const u=1-t;return [u*u*g.x1+2*u*t*g.cx+t*t*g.x2,u*u*g.y1+2*u*t*g.cy+t*t*g.y2]}
+  const unit=(x,y)=>{const l=Math.hypot(x,y)||1;return [x/l,y/l]};
+  function curve(a,b,off){
     const ax=a.x+NODE_W/2,ay=a.y+NODE_H/2,bx=b.x+NODE_W/2,by=b.y+NODE_H/2;
-    let dx=bx-ax,dy=by-ay;const len=Math.hypot(dx,dy)||1;dx/=len;dy/=len;
-    /* Couloir perpendiculaire stable pour les liaisons d'une même paire (sens opposés compris). */
-    const flip=conn.source.node<conn.target.node?1:-1,off=lane*22*flip;
-    const px=-dy*off,py=dx*off;
-    const [x1,y1]=border(ax,ay,dx,dy,4),[x2,y2]=border(bx,by,-dx,-dy,8);
-    return {x1:x1+px,y1:y1+py,x2:x2+px,y2:y2+py};
+    const [dx,dy]=unit(bx-ax,by-ay);
+    /* Contrôle à 2×off du milieu : le sommet de l'arc est à `off` de la droite des centres. */
+    const cx=(ax+bx)/2-dy*off*2,cy=(ay+by)/2+dx*off*2;
+    const [sx,sy]=off?unit(cx-ax,cy-ay):[dx,dy],[ex,ey]=off?unit(cx-bx,cy-by):[-dx,-dy];
+    const [x1,y1]=border(ax,ay,sx,sy,4),[x2,y2]=border(bx,by,ex,ey,8);
+    return {x1,y1,cx:off?cx:(x1+x2)/2,cy:off?cy:(y1+y2)/2,x2,y2};
   }
-  function lanes(connections){
-    const groups=new Map(),lane=new Map();
-    for(const c of connections){const k=[c.source.node,c.target.node].sort().join('\u0000');if(!groups.has(k))groups.set(k,[]);groups.get(k).push(c.id)}
+  function rectOf(p,grow){return {l:p.x-grow,t:p.y-grow,r:p.x+NODE_W+grow,b:p.y+NODE_H+grow}}
+  function crossings(g,rects){
+    let n=0;
+    /* Un point hors du monde (x ou y négatif) compte comme un obstacle : le canevas ne défile pas vers la gauche. */
+    for(let i=1;i<20;i+=1){const [x,y]=quad(g,i/20);if(x<PAD/2||y<PAD/2)n+=3;for(const r of rects)if(x>r.l&&x<r.r&&y>r.t&&y<r.b)n+=1}
+    return n;
+  }
+  function routeEdges(connections,nodeIds,posOf){
+    const groups=new Map();
+    for(const c of connections){const k=JSON.stringify([c.source.node,c.target.node].sort());if(!groups.has(k))groups.set(k,[]);groups.get(k).push(c.id)}
+    const lane=new Map();
     for(const ids of groups.values())ids.forEach((id,i)=>lane.set(id,i-(ids.length-1)/2));
-    return lane;
+    const out=new Map();
+    for(const c of connections){
+      const a=posOf(c.source.node),b=posOf(c.target.node);
+      const [,dy]=unit(b.x-a.x,b.y-a.y);
+      /* Même sens de « gauche » pour les deux liaisons d'une paire ; l'écart suit la taille du libellé à loger
+         côte à côte : large quand la liaison est verticale, une hauteur de libellé quand elle est horizontale. */
+      const flip=c.source.node<c.target.node?1:-1,l=lane.get(c.id)||0;
+      const base=l*flip*2*(LABEL_H+48*Math.abs(dy));
+      const others=nodeIds.filter(id=>id!==c.source.node&&id!==c.target.node).map(id=>rectOf(posOf(id),10));
+      const sign=Math.sign(base)||1;let best=null;
+      for(const k of [0,1,-1,2,-2,3,-3,4,-4]){
+        const g=curve(a,b,base+sign*k*BEND_STEP),n=crossings(g,others);
+        if(!best||n<best.n)best={g,n};
+        if(!n)break;
+      }
+      out.set(c.id,best.g);
+    }
+    return out;
   }
 
   function mount(host,options){
@@ -211,7 +240,7 @@
     function columnsFit(){
       const w=Number(host.clientWidth)||0;if(!w)return 3;
       const avail=w>=860?w-352:w;
-      return Math.max(2,Math.floor((avail-2*PAD-NODE_W)/COL)+1);
+      return Math.max(1,Math.floor((avail-2*PAD-NODE_W)/COL)+1);
     }
     function posOf(id){return st.moved[id]||st.layout.positions[id]||auto[id]||{x:PAD,y:PAD}}
     const nodeLabel=id=>(nodeById(id)||{label:id}).label;
@@ -244,7 +273,8 @@
     const codeLine=code=>code?`<span class="arch-code">Code : <code>${esc(code)}</code></span>`:'';
     function noticeHtml(n){
       if(!n)return '';
-      return `<div class="arch-notice ${esc(n.tone||'')}" role="${n.tone==='bad'?'alert':'status'}" data-arch-notice>${glyph(n.tone==='bad'?'close':n.tone==='ok'?'on':'clock','arch-g arch-notice-g')}<div><p>${esc(n.text)}</p>${n.hint?`<p class="arch-hint">${esc(n.hint)}</p>`:''}${codeLine(n.code)}</div></div>`;
+      const f=n.followup?`<p data-arch-followup>${esc(n.followup.text)}</p>${n.followup.hint?`<p class="arch-hint">${esc(n.followup.hint)}</p>`:''}${codeLine(n.followup.code)}`:'';
+      return `<div class="arch-notice ${esc(n.tone||'')}" role="${n.tone==='bad'?'alert':'status'}" data-arch-notice>${glyph(n.tone==='bad'?'close':n.tone==='ok'?'on':'clock','arch-g arch-notice-g')}<div><p>${esc(n.text)}</p>${n.hint?`<p class="arch-hint">${esc(n.hint)}</p>`:''}${codeLine(n.code)}${f}</div></div>`;
     }
     function voiceBanner(){
       const va=st.snapshot&&st.snapshot.voice_architecture;
@@ -278,7 +308,8 @@
       return `<span class="arch-state ${tone}" title="${esc(n.state_reason||text)}"><span class="arch-dot" aria-hidden="true"></span>${esc(text)}</span>`;
     }
     function portHtml(n,p){
-      const L=st.linking,key=n.id+':'+p.id;
+      /* Clé encodée composant par composant : un identifiant peut contenir « : » ou « > ». */
+      const L=st.linking,key=encodeURIComponent(n.id)+'/'+encodeURIComponent(p.id);
       const creatable=(st.snapshot&&st.snapshot.creatable)||[];
       const asSource=p.direction==='out'&&creatable.some(o=>o.source.node===n.id&&o.source.port===p.id);
       const asTarget=L&&p.direction==='in'&&creatable.some(o=>o.source.node===L.node&&o.source.port===L.port&&o.target.node===n.id&&o.target.port===p.id);
@@ -304,35 +335,46 @@
         <div class="arch-ports">${ports}</div></div>`;
     }
     function edgesHtml(){
-      const lane=lanes(connections());
+      const ids=nodes().map(n=>n.id),geo=routeEdges(connections(),ids,posOf);
       let w=0,h=0;
       for(const n of nodes()){const p=posOf(n.id);w=Math.max(w,p.x+NODE_W+PAD);h=Math.max(h,p.y+NODE_H+PAD)}
       const markers=Object.keys(CHANNEL).concat(['other']).map(ch=>`<marker id="${uid}-arrow-${ch}" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="arch-mk ch-${ch}"/></marker>`).join('');
-      const paths=[],labels=[],placed=[];
-      /* Libellé posé au milieu de la liaison, sinon glissé le long d'elle jusqu'à ne plus en chevaucher un autre. */
-      const place=(g,text)=>{
-        const w=34+text.length*6.5,h=26;let best=null;
-        for(const t of [.5,.38,.62,.28,.72,.2,.8]){
-          const x=g.x1+(g.x2-g.x1)*t,y=g.y1+(g.y2-g.y1)*t;
-          const overlap=placed.reduce((sum,b)=>sum+Math.max(0,(b.w+w)/2+4-Math.abs(b.x-x))*Math.max(0,h+2-Math.abs(b.y-y)),0);
-          if(!best||overlap<best.overlap)best={x,y,w,overlap};
-          if(!overlap)break;
+      /* Obstacles d'un libellé : les nœuds, toutes les pointes de flèche, les libellés déjà posés. */
+      const nodeRects=ids.map(id=>rectOf(posOf(id),6));
+      const tips=[...geo.values()].map(g=>{const [tx,ty]=unit(g.x2-g.cx,g.y2-g.cy);const x=g.x2-tx*4,y=g.y2-ty*4;return {l:x-10,t:y-10,r:x+10,b:y+10}});
+      const placed=[];
+      const area=(a,b)=>Math.max(0,Math.min(a.r,b.r)-Math.max(a.l,b.l))*Math.max(0,Math.min(a.b,b.b)-Math.max(a.t,b.t));
+      /* Libellé au milieu de la courbe ; sinon glissé le long d'elle et/ou décalé de côté, au moindre recouvrement. */
+      const place=(g,text,pending)=>{
+        const lw=42+text.length*6.8+(pending?18:0);let best=null;
+        const [nx,ny]=(()=>{const [dx,dy]=unit(g.x2-g.x1,g.y2-g.y1);return [-dy,dx]})();
+        search:for(const t of [.5,.42,.58,.34,.66,.26,.74])for(const o of [0,18,-18,36,-36,54,-54]){
+          const [qx,qy]=quad(g,t),x=qx+nx*o,y=qy+ny*o;
+          const box={l:x-lw/2-3,t:y-LABEL_H/2-3,r:x+lw/2+3,b:y+LABEL_H/2+3};
+          const out=Math.max(0,4-box.l)+Math.max(0,4-box.t);
+          const cost=out*1e4+[...placed,...nodeRects,...tips].reduce((sum,r)=>sum+area(box,r),0);
+          if(!best||cost<best.cost)best={x,y,box,cost};
+          if(!cost)break search;
         }
-        placed.push(best);return best;
+        placed.push(best.box);w=Math.max(w,best.box.r+PAD);h=Math.max(h,best.box.b+PAD);return best;
       };
+      const paths=[],labels=[];
       for(const c of connections()){
-        const g=edgeGeometry(c,posOf,lane.get(c.id)||0),ch=CHANNEL[c.channel]?c.channel:'other';
+        const g=geo.get(c.id),ch=CHANNEL[c.channel]?c.channel:'other';
         const sel=st.selected&&st.selected.type==='connection'&&st.selected.id===c.id;
         const cls=`arch-edge m-${esc(c.mutability)} ch-${ch} ${c.enabled?'on':'off'}${sel?' sel':''}${c.pending?' pending':''}`;
-        const d=`M${g.x1.toFixed(1)} ${g.y1.toFixed(1)}L${g.x2.toFixed(1)} ${g.y2.toFixed(1)}`;
+        const f=v=>v.toFixed(1);
+        const d=`M${f(g.x1)} ${f(g.y1)}Q${f(g.cx)} ${f(g.cy)} ${f(g.x2)} ${f(g.y2)}`;
+        w=Math.max(w,g.cx+PAD,g.x2+PAD);h=Math.max(h,g.cy+PAD,g.y2+PAD);
         paths.push(`<g data-arch-edge="${esc(c.id)}">${c.mutability==='required_locked'?`<path d="${d}" class="arch-casing ch-${ch}"/>`:''}<path d="${d}" class="${cls}" marker-end="url(#${uid}-arrow-${ch})"/><path d="${d}" class="arch-hit" data-arch-conn="${esc(c.id)}"/></g>`);
         const mg=c.mutability==='toggleable'?(c.enabled?'on':'off'):(MUT_GLYPH[c.mutability]||'lock');
         const state=c.enabled?'active':'désactivée';
         const mut=(MUTABILITY[c.mutability]||[c.mutability])[0];
-        const lp=place(g,channelLabel(c.channel));
+        const lp=place(g,channelLabel(c.channel),!!c.pending);
         const aria=`Liaison ${nodeLabel(c.source.node)} vers ${nodeLabel(c.target.node)}, ${channelLabel(c.channel)}, ${state}, ${mut}${c.pending?', changement en attente '+(appliesText(c.pending.applies)):''}. Entrée pour inspecter.`;
         labels.push(`<button type="button" class="arch-label m-${esc(c.mutability)} ch-${ch} ${c.enabled?'on':'off'}${sel?' sel':''}" style="left:${lp.x.toFixed(1)}px;top:${lp.y.toFixed(1)}px" data-arch-conn="${esc(c.id)}" aria-label="${esc(aria)}" aria-pressed="${sel?'true':'false'}">${glyph(mg,'arch-g arch-g-sm')}<span>${esc(channelLabel(c.channel))}</span>${c.pending?glyph('clock','arch-g arch-g-sm arch-pending-g'):''}</button>`);
       }
+      w=Math.ceil(w);h=Math.ceil(h);
       return {w,h,svg:`<svg class="arch-edges" width="${w}" height="${h}" aria-hidden="true"><defs>${markers}</defs>${paths.join('')}</svg>`,labels:labels.join('')};
     }
     function menuHtml(){
@@ -388,8 +430,8 @@
     function nodeInspector(n){
       const ins=connections().filter(c=>c.target.node===n.id),outs=connections().filter(c=>c.source.node===n.id);
       const list=(title,items,other)=>`<div class="arch-insp-list"><h4>${esc(title)}</h4>${items.length?`<ul>${items.map(c=>`<li><button type="button" class="arch-linkbtn" data-arch-focus-conn="${esc(c.id)}">${esc(nodeLabel(other(c)))} · ${esc(channelLabel(c.channel))}</button> <span class="arch-hint">${esc((MUTABILITY[c.mutability]||[c.mutability])[0])}${c.enabled?'':', désactivée'}</span></li>`).join('')}</ul>`:'<p class="arch-hint">aucune</p>'}</div>`;
-      const creatable=((st.snapshot&&st.snapshot.creatable)||[]).filter(o=>o.source.node===n.id);
-      const create=creatable.length?`<div class="arch-insp-list"><h4>Liaisons possibles</h4><ul>${creatable.map(o=>`<li><button type="button" class="arch-linkbtn" data-arch-create="${esc(o.source.node+':'+o.source.port+'>'+o.target.node+':'+o.target.port)}"${st.write?' disabled':''}>Créer ${esc(o.source.port)} → ${esc(nodeLabel(o.target.node))}</button> <span class="arch-hint">${esc(channelLabel(o.channel))}${o.purpose?' · '+esc(o.purpose):''}</span></li>`).join('')}</ul></div>`:'';
+      const creatable=((st.snapshot&&st.snapshot.creatable)||[]).map((o,i)=>({...o,index:i})).filter(o=>o.source.node===n.id);
+      const create=creatable.length?`<div class="arch-insp-list"><h4>Liaisons possibles</h4><ul>${creatable.map(o=>`<li><button type="button" class="arch-linkbtn" data-arch-create="${o.index}"${st.write?' disabled':''}>Créer ${esc(o.source.port)} → ${esc(nodeLabel(o.target.node))}</button> <span class="arch-hint">${esc(channelLabel(o.channel))}${o.purpose?' · '+esc(o.purpose):''}</span></li>`).join('')}</ul></div>`:'';
       return `<header class="arch-insp-head"><h3 id="${uid}-insp" tabindex="-1">${esc(n.label)}</h3>
         <button type="button" class="arch-icon-btn" data-arch-act="close" aria-label="Fermer l’inspecteur">${glyph('close','arch-g')}</button></header>
         <div class="arch-insp-tags">${stateChip(n)}<span class="arch-tag">${esc(kindLabel(n))}</span>${n.system?`<span class="arch-tag">${glyph('lock','arch-g arch-g-sm')}système</span>`:''}</div>
@@ -493,7 +535,12 @@
         const code=e&&e.code||'architecture_load_failed';
         logError(code,e,{phase:first?'first_load':'reload'});
         if(first){st.phase='error';st.error={code,message:String(e&&e.message||e)}}
-        else st.notice={tone:'bad',text:'Relecture impossible : '+String(e&&e.message||e),hint:'L’écran montre la dernière version lue, qui peut être dépassée.',code};
+        else{
+          const followup={text:'Relecture impossible : '+String(e&&e.message||e),code,hint:'L’écran montre la dernière version lue, qui peut être dépassée.'};
+          /* Un message déjà affiché (issue inconnue, refus) reste : la relecture ratée s'ajoute dessous. */
+          if(st.notice)st.notice={...st.notice,tone:'bad',followup};
+          else st.notice={tone:'bad',...followup};
+        }
       }finally{st.reloading=null;render()}
     }
     function applySnapshot(snap){
@@ -534,8 +581,17 @@
           logInfo('architecture_settings.write_ok',{target,revision:st.snapshot.revision});
           return result;
         }
-        const r=result||{},code=r.code||(r.ok===true?'architecture_snapshot_missing':'architecture_write_refused');
-        const reason=r.reason||(r.ok===true?'Le serveur a accepté sans renvoyer l’architecture : relecture.':'Refus sans raison donnée.');
+        const r=result||{};
+        if(r.ok===true){
+          /* Accepté sans snapshot : l'écriture a eu lieu, seul l'état affiché manque ; on le relit. */
+          logInfo('architecture_settings.write_ok_without_snapshot',{target});
+          st.notice={tone:'ok',target,code:'architecture_snapshot_missing',text:'Enregistré, relecture de l’architecture…',
+            hint:'Le serveur n’a pas renvoyé l’architecture : l’écran est relu pour montrer l’état réel.'};
+          announce(st.notice.text);st.write=null;await load();
+          return result;
+        }
+        const code=r.code||'architecture_write_refused';
+        const reason=r.reason||'Refus sans raison donnée.';
         logError(code,new Error(reason),{target,status:r.status||null});
         if(r.snapshot)try{applySnapshot(normalizeSnapshot(r.snapshot))}catch(e){logError('architecture_payload_invalid',e,{target})}
         const stale=r.status===409||code==='architecture_revision_stale';
@@ -634,15 +690,16 @@
       render();
       if(focusInspector)focus(`#${uid}-insp`);
     }
-    function openMenu(nodeId,at){
+    function openMenu(nodeId,at,opener){
       const n=nodeById(nodeId);if(!n||n.kind!=='brain')return;
       const p=posOf(nodeId);
-      st.menu={nodeId,x:at&&Number.isFinite(at.x)?at.x:p.x+NODE_W-28,y:at&&Number.isFinite(at.y)?at.y:p.y+40};
+      st.menu={nodeId,opener:opener==='button'?'button':'node',x:at&&Number.isFinite(at.x)?at.x:p.x+NODE_W-28,y:at&&Number.isFinite(at.y)?at.y:p.y+40};
       render();focus('.arch-menu [role="menuitem"]');
     }
     function closeMenu(returnFocus){
-      const id=st.menu&&st.menu.nodeId;st.menu=null;render();
-      if(returnFocus&&id)focus(`[data-arch-node="${cssEsc(id)}"]`);
+      const id=st.menu&&st.menu.nodeId,opener=st.menu&&st.menu.opener;st.menu=null;render();
+      /* Le focus revient à ce qui a ouvert le menu : le bouton « … » ou le nœud. */
+      if(returnFocus&&id)focus(opener==='button'?`[data-arch-menu-btn="${cssEsc(id)}"]`:`[data-arch-node="${cssEsc(id)}"]`);
     }
     function configure(nodeId,detail){
       const d={nodeId,field:detail&&detail.field||null,source:detail&&detail.source||'menu'};
@@ -665,6 +722,7 @@
 
     /* --- événements (délégués sur l'hôte) -------------------------------------- */
     const on=(type,fn)=>{if(host.addEventListener)host.addEventListener(type,fn);return ()=>host.removeEventListener&&host.removeEventListener(type,fn)};
+    const portKey=v=>String(v||'').split('/').map(decodeURIComponent);
     const closest=(t,sel)=>t&&t.closest?t.closest(sel):null;
     const offs=[];
     function onClick(ev){
@@ -673,11 +731,11 @@
       const t=ev.target;let el;
       if((el=closest(t,'[data-arch-menu]')))return menuAction(el.getAttribute('data-arch-menu'));
       if(st.menu&&!closest(t,'.arch-menu'))closeMenu(false);
-      if((el=closest(t,'[data-arch-menu-btn]'))){ev.stopPropagation&&ev.stopPropagation();return openMenu(el.getAttribute('data-arch-menu-btn'))}
-      if((el=closest(t,'[data-arch-port-source]'))){const [node,port]=el.getAttribute('data-arch-port-source').split(':');st.linking={node,port};render();focus('[data-arch-port-target]');return}
-      if((el=closest(t,'[data-arch-port-target]'))){const [node,port]=el.getAttribute('data-arch-port-target').split(':');const L=st.linking;
+      if((el=closest(t,'[data-arch-menu-btn]'))){ev.stopPropagation&&ev.stopPropagation();return openMenu(el.getAttribute('data-arch-menu-btn'),null,'button')}
+      if((el=closest(t,'[data-arch-port-source]'))){const [node,port]=portKey(el.getAttribute('data-arch-port-source'));st.linking={node,port};render();focus('[data-arch-port-target]');return}
+      if((el=closest(t,'[data-arch-port-target]'))){const [node,port]=portKey(el.getAttribute('data-arch-port-target'));const L=st.linking;
         return create({source:{node:L.node,port:L.port},target:{node,port}})}
-      if((el=closest(t,'[data-arch-create]'))){const [s,tg]=el.getAttribute('data-arch-create').split('>');const [sn,sp]=s.split(':'),[tn,tp]=tg.split(':');return create({source:{node:sn,port:sp},target:{node:tn,port:tp}})}
+      if((el=closest(t,'[data-arch-create]'))){const o=((st.snapshot&&st.snapshot.creatable)||[])[Number(el.getAttribute('data-arch-create'))];if(o)return create({source:o.source,target:o.target});return}
       if((el=closest(t,'[data-arch-focus-conn]'))){const id=el.getAttribute('data-arch-focus-conn');select('connection',id);focus(`.arch-label[data-arch-conn="${cssEsc(id)}"]`);return}
       if((el=closest(t,'[data-arch-act]'))){
         const act=el.getAttribute('data-arch-act'),id=el.getAttribute('data-arch-id');
@@ -766,6 +824,17 @@
     }
 
     ensureStyle();
+    /* Redimensionnement : la disposition automatique suit le nombre de colonnes qui tiennent (les positions
+       enregistrées ne bougent pas). Rien pendant un glisser. */
+    let fitCols=null;
+    if(typeof root.ResizeObserver==='function'){
+      const ro=new root.ResizeObserver(()=>{
+        if(st.destroyed||drag||!st.snapshot)return;
+        const cols=columnsFit();if(cols===fitCols)return;
+        fitCols=cols;auto=autoLayout(st.snapshot,cols);render();
+      });
+      ro.observe(host);offs.push(()=>ro.disconnect());
+    }
     /* Un clic hors de l'onglet ferme le menu contextuel. */
     if(doc&&doc.addEventListener){
       const outside=ev=>{if(st.menu&&host.contains&&!host.contains(ev.target))closeMenu(false)};

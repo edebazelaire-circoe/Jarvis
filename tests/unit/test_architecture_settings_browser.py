@@ -232,7 +232,7 @@ def test_states_differ_by_stroke_and_reduced_motion_stops_the_pulse(tmp_path):
     out = run_plan(tmp_path, page, [
         {"eval": style},
         {"shot": str(shots / "architecture-all-states.png")},
-        {"click": '[data-arch-port-source="core:notes"]'},
+        {"click": '[data-arch-port-source="core/notes"]'},
         {"eval": "[document.querySelectorAll('[data-arch-port-target]').length, getComputedStyle(document.querySelector('[data-arch-port-target]')).animationName]"},
         {"click": '.arch-label[data-arch-conn="core.events->tool.events"]'},
         {"shot": str(shots / "architecture-inspector-pending.png")},
@@ -258,3 +258,52 @@ def test_narrow_viewport_stacks_the_inspector_without_page_scroll(tmp_path):
         {"shot": str(shots / "architecture-narrow.png")},
     ], width=420, height=900)
     assert out[0] == [True, 1]
+
+
+GEOMETRY = """(()=>{
+  const box=e=>{const r=e.getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom,id:e.getAttribute('data-arch-conn')||e.getAttribute('data-arch-node')}};
+  const hit=(a,b,g)=>a.l<b.r-g&&b.l<a.r-g&&a.t<b.b-g&&b.t<a.b-g;
+  const inside=(x,y,r,g)=>x>r.l-g&&x<r.r+g&&y>r.t-g&&y<r.b+g;
+  const labels=[...document.querySelectorAll('.arch-label')].map(box),nodes=[...document.querySelectorAll('.arch-node')].map(box);
+  const bad=[];
+  labels.forEach((a,i)=>labels.slice(i+1).forEach(b=>{if(hit(a,b,0))bad.push('libellé/libellé '+a.id+' | '+b.id)}));
+  for(const a of labels)for(const n of nodes)if(hit(a,n,0))bad.push('libellé/nœud '+a.id+' | '+n.id);
+  for(const p of document.querySelectorAll('.arch-edges .arch-edge')){
+    const id=p.parentNode.getAttribute('data-arch-edge'),m=p.getScreenCTM(),q=p.getPointAtLength(p.getTotalLength());
+    const x=m.a*q.x+m.c*q.y+m.e,y=m.b*q.x+m.d*q.y+m.f;
+    for(const a of labels)if(inside(x,y,a,3))bad.push('pointe masquée par un libellé '+id+' | '+a.id);
+    for(const n of nodes)if(inside(x,y,n,1))bad.push('pointe sous un nœud '+id+' | '+n.id);
+  }
+  const world=document.querySelector('[data-arch-world]').getBoundingClientRect();
+  for(const a of labels)if(a.l<world.left||a.t<world.top)bad.push('libellé hors du canevas '+a.id);
+  for(const p of document.querySelectorAll('.arch-edges .arch-edge')){const r=p.getBoundingClientRect();
+    if(r.left<world.left-1||r.top<world.top-1)bad.push('liaison hors du canevas '+p.parentNode.getAttribute('data-arch-edge'))}
+  const cols=new Set(nodes.map(n=>Math.round(n.l))).size;
+  return {bad,cols,labels:labels.length,scroll:document.documentElement.scrollWidth<=window.innerWidth};
+})()"""
+
+
+@pytest.mark.parametrize("mode", ["duplex", "simple"])
+@pytest.mark.parametrize("width,cols", [(1360, 3), (1100, 2), (420, 1)])
+def test_no_label_overlaps_a_label_or_a_node_and_no_arrow_tip_is_hidden(tmp_path, mode, width, cols):
+    snap = json.loads((ROOT / "tests" / "fixtures" / f"architecture_snapshot_{mode}.json").read_text(encoding="utf-8"))
+    page = build_page(tmp_path, snap)
+    shot = shots_dir(tmp_path) / f"architecture-{mode}-{width}.png"
+    out = run_plan(tmp_path, page, [{"eval": GEOMETRY}, {"shot": str(shot)}], width=width, height=1500 if width < 800 else 1000)
+    g = out[0]
+    assert g["labels"] == len(snap["connections"])
+    assert g["cols"] == cols
+    assert g["bad"] == []
+    assert g["scroll"], "aucun défilement horizontal de la page"
+
+
+def test_the_menu_opened_by_its_button_gives_focus_back_to_that_button(tmp_path):
+    page = build_page(tmp_path, json.loads(FIXTURE.read_text(encoding="utf-8")))
+    out = run_plan(tmp_path, page, [
+        {"eval": "document.querySelector('[data-arch-menu-btn=\"core\"]').focus();1"},
+        {"key": "Enter"},
+        {"eval": "document.activeElement.getAttribute('data-arch-menu')"},
+        {"key": "Escape"},
+        {"eval": "document.activeElement.getAttribute('data-arch-menu-btn')"},
+    ])
+    assert out[2] == "configure" and out[4] == "core"

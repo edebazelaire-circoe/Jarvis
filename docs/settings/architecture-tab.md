@@ -60,7 +60,12 @@ Fournis : `createHttpAdapter({fetch, base='/api/architecture', timeoutMs})` (rou
 - **Disposition** : glisser un nœud (ou Maj+flèches, pas de 16 px) n'appelle que `saveLayout`, avec la révision lue ;
   `409 layout_revision_stale` relit la disposition et le dit. Sans disposition lisible, la disposition automatique
   sert et les déplacements ne sont pas enregistrés. La disposition automatique est générique (rangs depuis les
-  endpoints, grille repliée sur la largeur du canevas).
+  endpoints, grille repliée sur 3, 2 ou 1 colonne selon la largeur du canevas, recalculée au redimensionnement par
+  `ResizeObserver` ; les positions enregistrées ne bougent pas).
+- **Tracé** : chaque liaison est une courbe quadratique, droite si rien ne gêne, arquée pour séparer deux liaisons
+  entre les mêmes nœuds et pour contourner un nœud intermédiaire ou le bord gauche/haut du canevas. Un libellé se
+  pose au milieu de sa courbe, sinon glisse le long d'elle ou de côté, au moindre recouvrement avec un autre
+  libellé, un nœud ou une pointe de flèche.
 - **Création** : seulement depuis les paires que le snapshot expose dans `creatable` (champ facultatif ajouté au
   contrat, voir § 5) ; les ports source deviennent des boutons, les ports cibles compatibles s'allument.
 - **États** : chargement (compteur, échéance), erreur, injoignable, vide, version de contrat inattendue, éléments

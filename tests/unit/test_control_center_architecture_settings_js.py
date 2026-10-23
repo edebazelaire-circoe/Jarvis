@@ -273,7 +273,7 @@ const created=v.state.snapshot.connections.find(c=>c.id==='core.notes->tool.even
 v.select('connection',created.id);const insp=host.innerHTML;
 await v.remove(created.id);
 out({ports,refused,n0,writes:writes(a),created,insp,left:v.state.snapshot.connections.some(c=>c.id===created.id),creatable:v.state.snapshot.creatable.length});""", snap)
-    assert out["ports"].count("data-arch-port-source=") == 1 and 'data-arch-port-source="core:notes"' in out["ports"]
+    assert out["ports"].count("data-arch-port-source=") == 1 and 'data-arch-port-source="core/notes"' in out["ports"]
     assert out["refused"] == "connection_incompatible" and out["n0"] == 0
     assert out["writes"][0] == ["createConnection", {"base_revision": "t-17", "source": {"node": "core", "port": "notes"},
                                                      "target": {"node": "tool", "port": "events"}, "channel": "event"}]
@@ -373,3 +373,39 @@ const a={load:async()=>clone(SNAP),loadLayout:async()=>({revision:'l-1',position
 const v=A.mount(host,{adapter:a,...quiet});await v.ready;v.moveNode('core',5,5);await v.saveLayout();
 out(v.state.layoutNotice);""")
     assert out["code"] == "layout_invalid" and "Position hors bornes" in out["text"]
+
+
+def test_an_accepted_write_without_snapshot_says_saved_and_rereads(tmp_path):
+    out = run_node(tmp_path, f"""
+let loads=0;const a={{load:async()=>{{loads+=1;return clone(SNAP)}},setConnection:async()=>({{ok:true}})}};
+const v=A.mount(host,{{adapter:a,...quiet}});await v.ready;v.select('connection','{TOGGLE}');await v.toggle('{TOGGLE}');
+out({{loads,notice:v.state.notice}});""")
+    assert out["loads"] == 2 and out["notice"]["tone"] == "ok"
+    assert out["notice"]["text"] == "Enregistré, relecture de l’architecture…" and "Refusé" not in out["notice"]["text"]
+
+
+def test_an_unknown_outcome_keeps_its_message_when_the_reread_fails_too(tmp_path):
+    out = run_node(tmp_path, f"""
+let loads=0;
+const a={{load:async()=>{{loads+=1;if(loads>1){{const e=new Error('Core muet');e.code='architecture_unreachable';throw e}}return clone(SNAP)}},
+  setConnection:async()=>{{const e=new Error('socket fermé');e.code='architecture_timeout';throw e}}}};
+const v=A.mount(host,{{adapter:a,...quiet}});await v.ready;v.select('connection','{TOGGLE}');await v.toggle('{TOGGLE}');
+out({{notice:v.state.notice,html:host.innerHTML}});""")
+    n = out["notice"]
+    assert n["text"].startswith("Issue inconnue") and "socket fermé" in n["text"]
+    assert n["followup"]["text"] == "Relecture impossible : Core muet" and n["followup"]["code"] == "architecture_unreachable"
+    assert "data-arch-followup" in out["html"] and "architecture_timeout" in out["html"]
+
+
+def test_creation_keys_survive_ids_with_colons_and_arrows(tmp_path):
+    snap = fixture()
+    snap["nodes"][2]["ports"].append({"id": "a:b>c", "direction": "out", "channel": "event", "family": "brain_event"})
+    snap["creatable"] = [{"source": {"node": "core", "port": "a:b>c"}, "target": {"node": "tool", "port": "events"}, "channel": "event"}]
+    out = run_node(tmp_path, """
+const a=A.createFixtureAdapter(SNAP);const v=A.mount(host,{adapter:a,...quiet});await v.ready;v.select('node','core');
+const html=host.innerHTML;
+const click=(attr,value)=>host.listeners.click[0]({target:{closest:sel=>sel==='['+attr+']'?{getAttribute:()=>value}:null},detail:1});
+click('data-arch-create','0');await new Promise(r=>setTimeout(r,20));
+out({html,writes:writes(a)});""", snap)
+    assert 'data-arch-create="0"' in out["html"] and 'data-arch-port-source="core/a%3Ab%3Ec"' in out["html"]
+    assert out["writes"][0][1]["source"] == {"node": "core", "port": "a:b>c"}
