@@ -1,0 +1,23 @@
+== never : 23759 car. ; standard 23500 car.
+  replace standard[935:936] « D »
+      -> never[935:939] « Régl »
+  replace standard[937:941] « ns l »
+      -> never[940:941] « g »
+  replace standard[944:945] « o »
+      -> never[944:948] « e l' »
+  insert standard[947:947] «  »
+      -> never[950:956] « ilisat »
+  replace standard[948:949] « , »
+      -> never[957:967] « ur : tu ne »
+  insert standard[956:956] «  »
+      -> never[974:1215] « es jamais. L'outil Agent t'est retiré et tout appel serait refusé : ce qui précède sur les sous-agents ne s'applique pas. Fais toi-même ce qui tient en un tour court, et dis franchement ce qui demanderait un sous-agent au lieu de le promettr »
+== proactive : 23647 car. ; standard 23500 car.
+  insert standard[935:935] «  »
+      -> proactive[935:984] « Réglage de l'utilisateur : délégation proactive.  »
+  insert standard[936:936] «  »
+      -> proactive[985:1083] « élègue dès qu'une demande dépasse une réponse immédiate, sans attendre qu'elle paraisse longue ; d »
+== exploratory : 23733 car. ; standard 23500 car.
+  insert standard[935:935] «  »
+      -> exploratory[935:987] « Réglage de l'utilisateur : délégation exploratoire.  »
+  insert standard[936:936] «  »
+      -> exploratory[988:1169] « élègue largement : quand un travail a des parties indépendantes (recherches, vérifications, alternatives), lance-les en sous-agents parallèles, dans la borne de sûreté de JARVIS ; d »

@@ -1,0 +1,53 @@
+{
+ "never": {
+  "pid": 38580,
+  "model_arg": "claude-haiku-4-5",
+  "disallowed": [
+   "Agent",
+   "Task"
+  ],
+  "has_settings_hook": true,
+  "trace_delegation": "never",
+  "trace_spawn_tools_removed": true,
+  "trace_model": "claude-haiku-4-5",
+  "launched_file": {
+   "delegation": "never",
+   "pid": 38580
+  },
+  "prompt_len": 23759,
+  "prompt_file": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\claude\\C--Projects-jarvis-jarvis\\05b93d8a-1916-4b86-866a-f10f71884561\\scratchpad\\s08-sandbox\\runtime\\prompts\\append-87616db40243c07c.txt",
+  "init_model": "claude-haiku-4-5",
+  "init_has_agent": false,
+  "uses": []
+ },
+ "proactive": {
+  "pid": 35784,
+  "model_arg": "claude-haiku-4-5",
+  "disallowed": [],
+  "has_settings_hook": true,
+  "trace_delegation": "proactive",
+  "trace_spawn_tools_removed": false,
+  "trace_model": "claude-haiku-4-5",
+  "launched_file": {
+   "delegation": "proactive",
+   "pid": 35784
+  },
+  "prompt_len": 23647,
+  "prompt_file": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\claude\\C--Projects-jarvis-jarvis\\05b93d8a-1916-4b86-866a-f10f71884561\\scratchpad\\s08-sandbox\\runtime\\prompts\\append-d73241e702402a0a.txt"
+ },
+ "exploratory": {
+  "pid": 9292,
+  "model_arg": "claude-haiku-4-5",
+  "disallowed": [],
+  "has_settings_hook": true,
+  "trace_delegation": "exploratory",
+  "trace_spawn_tools_removed": false,
+  "trace_model": "claude-haiku-4-5",
+  "launched_file": {
+   "delegation": "exploratory",
+   "pid": 9292
+  },
+  "prompt_len": 23733,
+  "prompt_file": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\claude\\C--Projects-jarvis-jarvis\\05b93d8a-1916-4b86-866a-f10f71884561\\scratchpad\\s08-sandbox\\runtime\\prompts\\append-a7753eda01b1ae94.txt"
+ }
+}

@@ -1,0 +1,282 @@
+=== phase prep (2026-10-23 23:27:46) ===
+prep : bac à sable neuf C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox ; réglages anciens (duplex gpt-live-1, agent_routing Dupliqué) ; catalogue figé anthropic ['claude-haiku-4-5', 'claude-sonnet-4-5'] (empreinte de la clé fixture)
+=== phase graph (2026-10-23 23:27:47) ===
+control-center lancé : PID 29592, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 29592, code 1
+=== phase prep (2026-10-23 23:28:02) ===
+prep : bac à sable neuf C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox ; réglages anciens (duplex gpt-live-1, agent_routing Dupliqué) ; catalogue figé anthropic ['claude-haiku-4-5', 'claude-sonnet-4-5'] (empreinte de la clé fixture)
+=== phase graph (2026-10-23 23:28:02) ===
+control-center lancé : PID 15252, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+(1) GET /api/architecture -> 200 ; architecture duplex (composition runtime : DuplexVoiceConfig, stack openai_realtime) ; nœuds [('mic', 'inactive'), ('voice', 'inactive'), ('core', 'unavailable'), ('tool_brain', 'inactive'), ('subagents', 'active'), ('speakers', 'inactive')]
+(1) nœuds attendus pour duplex (docs/architecture-graph.md § 2) ['mic', 'voice', 'core', 'tool_brain', 'subagents', 'speakers'] : identiques
+(1) liaisons : mic.audio_out->voice.audio_in required_locked enabled=True; voice.audio_out->speakers.audio_in required_locked enabled=True; voice.delegate->core.request toggleable enabled=True; core.speech->voice.speech_in required_locked enabled=True; core.events->tool_brain.wake toggleable enabled=False; core.agents->subagents.spawn governed enabled=True
+(2) coupure voice.delegate->core.request -> 200 ok=True changed=True ; chemin de délégation Live construit par le runtime depuis les réglages relus : brain_turn -> speculative ; demande de bascule Voice déposée=True
+(3) remise -> 200 changed=True ; chemin : brain_turn
+(2/3) Tool Brain core.events->tool_brain.wake : 200 puis 200 ; mode lu par tool_brain_wiring.resolve_mode (démarrage de Core) : off -> shadow -> off ; pending après bascule=None
+(4) liaison verrouillée mic->voice -> 423 code=connection_locked raison=« La surface vocale ne fonctionne pas sans micro. » ; réglages inchangés=True ; révision inchangée=True ; enabled=True
+(4) liaison gouvernée core->subagents -> 422 code=connection_governed raison=« Liaison gouvernée par la tendance de délégation du cerveau : réglez-la dans la fenêtre du cerveau. »
+(5) création invalide (sens) -> 422 code=connection_incompatible ; création sans mécanisme -> 422 code=connection_incompatible raison=« Canaux différents : speech vers event. » ; liaisons inchangées=True ; réglages inchangés=True
+(5) disposition (interface seule) -> 200 ; fichier séparé architecture-layout.json : False
+journal : {'voice.switch.requested': 2, 'architecture.connection.updated': 4, 'architecture.write.refused': 4}
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 15252, code 1
+=== phase brain1 (2026-10-23 23:28:17) ===
+control-center lancé : PID 16312, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+(6) GET /api/brains/core/config -> 200 ; provider=claude model=(défaut) delegation=standard catalog=ok ; choix servis=[('', False), ('claude-haiku-4-5', True), ('claude-sonnet-4-5', True)]
+(6) PATCH model=claude-haiku-4-5 -> 200 changed=True applies=core_restart ; agent_cli_settings.claude.model=claude-haiku-4-5
+(7) PATCH delegation=never -> 200 ; brain-config.json=never
+[never] relance -> 503 ; agent.start absent : Nouvelle Session impossible (core_unreachable) : Core session token is unavailable; is `jarvis core` running?
+[never] ask -> 200 ; réponse : « L'outil Agent a été refusé : la délégation est coupée parce que la tendance de délégation du cerveau Core est réglée sur « Jamais », donc aucun sous-agent n'a été lancé. »
+(6/7) CLI réel en never : modèle annoncé par le CLI (init)=claude-opus-5-5 ; outils du CLI contiennent Agent=False Task=True ; appels d'outil=[('Agent', '[general] [qa] Vérifier une addition')]
+[proactive] relance -> 503 ; agent.start absent : Nouvelle Session impossible (core_unreachable) : Core session token is unavailable; is `jarvis core` running?
+[exploratory] relance -> 503 ; agent.start absent : Nouvelle Session impossible (core_unreachable) : Core session token is unavailable; is `jarvis core` running?
+remise delegation=standard -> 200
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 16312, code 1
+=== phase brain1 (2026-10-23 23:29:20) ===
+control-center lancé : PID 6816, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+(6) GET /api/brains/core/config -> 200 ; provider=claude model=claude-haiku-4-5 delegation=standard catalog=ok ; choix servis=[('', False), ('claude-haiku-4-5', True), ('claude-sonnet-4-5', True)]
+(6) PATCH model=claude-haiku-4-5 -> 200 changed=False applies=core_restart ; agent_cli_settings.claude.model=claude-haiku-4-5
+(7) PATCH delegation=never -> 200 ; brain-config.json=never
+[never] CLI lancé PID 38580 : --model=claude-haiku-4-5 --disallowedTools=['Agent', 'Task'] hook=True ; agent.start delegation=never spawn_tools_removed=True model=claude-haiku-4-5 ; brain-delegation-launched.json={'delegation': 'never', 'pid': 38580} ; consigne 23759 car.
+[never] ask -> 200 ; réponse : « L'outil Agent n'existe pas dans ma liste d'outils disponibles. »
+(6/7) CLI réel en never : modèle annoncé par le CLI (init)=claude-haiku-4-5 ; outils du CLI contiennent Agent=False Task=False ; appels d'outil=[]
+[proactive] CLI lancé PID 35784 : --model=claude-haiku-4-5 --disallowedTools=[] hook=True ; agent.start delegation=proactive spawn_tools_removed=False model=claude-haiku-4-5 ; brain-delegation-launched.json={'delegation': 'proactive', 'pid': 35784} ; consigne 23647 car.
+[exploratory] CLI lancé PID 9292 : --model=claude-haiku-4-5 --disallowedTools=[] hook=True ; agent.start delegation=exploratory spawn_tools_removed=False model=claude-haiku-4-5 ; brain-delegation-launched.json={'delegation': 'exploratory', 'pid': 9292} ; consigne 23733 car.
+remise delegation=standard -> 200
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 6816, code 1
+=== phase brain2 (2026-10-23 23:30:00) ===
+control-center lancé : PID 25976, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+[standard] CLI lancé PID 12256 : --model=claude-haiku-4-5 --disallowedTools=[] hook=True ; agent.start delegation=standard spawn_tools_removed=False model=claude-haiku-4-5 ; brain-delegation-launched.json={'delegation': 'standard', 'pid': 12256} ; consigne 23500 car.
+(7) never posé à chaud (CLI vivant lancé en standard, outil Agent présent) -> 200
+[hook-never] ask -> 200 ; réponse : « L'outil Agent est refusé car la délégation est désactivée dans les Réglages du cerveau Core (Architecture › Agents › Architecture, réglage sur « Jamais »). »
+(7) CLI standard : init Agent présent=False ; appels d'outil=[('Agent', 'toolu_0164YCEhYk8uUjXLM9CxNw5s')] ; agent.spawn_refused=[('brain_delegation_never', 'toolu_0164YCEhYk8uUjXLM9CxNw5s')]
+remise delegation=standard -> 200
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 25976, code 1
+=== phase roles (2026-10-23 23:31:42) ===
+control-center lancé : PID 12076, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+(9) GET /api/subagent-role-routing -> 200 ; 7 rôles ; avant : {'interviewer': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'research': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'web-research': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'coder': ('inherited:code', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'concept': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'research-lead': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'qa': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."})}
+(9) hook hors ligne avant : {'[general] [qa] Relire': {'code': 0, 'decision': 'allow', 'model_out': None, 'role_id': None, 'provenance': None, 'reason': None, 'model': None, 'level': None}, '[code] [coder] Corriger': {'code': 0, 'decision': 'allow', 'model_out': None, 'role_id': None, 'provenance': None, 'reason': None, 'model': None, 'level': None}}
+(9) PUT qa=[claude/claude-haiku-4-5] -> 200 ok=True ; rôles dont la vue change : ['qa'] ; qa après : ('explicit', [('claude', 'claude-haiku-4-5', True)], {'outcome': 'selected', 'profile': 'general', 'agent': 'claude', 'model': 'claude-haiku-4-5', 'reason': 'preferred', 'considered': [{'agent': 'claude', 'model': 'claude-haiku-4-5', 'eligible': True}], 'role_id': 'qa', 'provenance': 'explicit'})
+(9) hook hors ligne après : {'[general] [qa] Relire': {'code': 0, 'decision': 'allow', 'model_out': 'claude-haiku-4-5', 'role_id': 'qa', 'provenance': 'explicit', 'reason': 'preferred', 'model': 'claude-haiku-4-5', 'level': 'info'}, '[code] [coder] Corriger': {'code': 0, 'decision': 'allow', 'model_out': None, 'role_id': None, 'provenance': None, 'reason': None, 'model': None, 'level': None}}
+(9) PUT révision périmée -> 409 code=role_routing_revision_stale
+(10) PUT architect avec un modèle hors catalogue -> 404 ok=False code=role_routing_unknown_role ; candidats : []
+[roles] CLI lancé PID 8692 : --model=claude-haiku-4-5 --disallowedTools=[] hook=True ; agent.start delegation=standard spawn_tools_removed=False model=claude-haiku-4-5 ; brain-delegation-launched.json={'delegation': 'standard', 'pid': 8692} ; consigne 23500 car.
+[roles] ask -> 200 ; réponse : « L'outil Agent existe mais est refusé par un hook de pré-traitement qui valide le modèle avec une configuration incorrecte. »
+(9) vrai appel : outils=[('Agent', '[general] [qa] Vérifier une addition', None)] ; décisions du hook=[('qa', 'explicit', 'preferred', 'claude-haiku-4-5', 'info')] ; agent.role_applied=['qa'] ; modèles des messages (parent, modèle)=[(None, 'claude-haiku-4-5-20251001')]
+restauration qa -> 200
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 12076, code 1
+=== phase roles (2026-10-23 23:37:10) ===
+control-center lancé : PID 8132, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+(9) GET /api/subagent-role-routing -> 200 ; 7 rôles ; avant : {'interviewer': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'research': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'web-research': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'coder': ('inherited:code', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'concept': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'research-lead': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'qa': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."})}
+(9) hook hors ligne avant : {'[general] [qa] Relire': {'code': 0, 'decision': 'allow', 'model_out': None, 'agent_model': None, 'role_id': None, 'provenance': None, 'reason': None, 'model': None, 'level': None}, '[code] [coder] Corriger': {'code': 0, 'decision': 'allow', 'model_out': None, 'agent_model': None, 'role_id': None, 'provenance': None, 'reason': None, 'model': None, 'level': None}}
+(9) PUT qa=[claude/claude-sonnet-4-5] -> 200 ok=True ; rôles dont la vue change : ['qa'] ; qa après : ('explicit', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'selected', 'profile': 'general', 'agent': 'claude', 'model': 'claude-sonnet-4-5', 'reason': 'preferred', 'considered': [{'agent': 'claude', 'model': 'claude-sonnet-4-5', 'eligible': True}], 'role_id': 'qa', 'provenance': 'explicit'})
+(9) hook hors ligne après : {'[general] [qa] Relire': {'code': 0, 'decision': 'allow', 'model_out': 'sonnet', 'agent_model': 'sonnet', 'role_id': 'qa', 'provenance': 'explicit', 'reason': 'preferred', 'model': 'claude-sonnet-4-5', 'level': 'info'}, '[code] [coder] Corriger': {'code': 0, 'decision': 'allow', 'model_out': None, 'agent_model': None, 'role_id': None, 'provenance': None, 'reason': None, 'model': None, 'level': None}}
+(9) PUT révision périmée -> 409 code=role_routing_revision_stale
+(10) PUT research avec un modèle hors catalogue -> 200 ok=True code=None ; candidats : [('claude-retired-9', False, "Ce modèle n'est plus proposé par le fournisseur."), ('claude-sonnet-4-5', True, '')]
+(10) restauration de l'héritage (DELETE) -> 200 ; provenance=inherited:general
+[roles] CLI lancé PID 16164 : --model=claude-haiku-4-5 --disallowedTools=[] hook=True ; agent.start delegation=standard spawn_tools_removed=False model=claude-haiku-4-5 ; brain-delegation-launched.json={'delegation': 'standard', 'pid': 16164} ; consigne 23500 car.
+[roles] ask -> 200 ; réponse : « Sous-agent lancé en arrière-plan — j'attends sa réponse. »
+(9) vrai appel : outils=[('Agent', '[general] [qa] Vérifier une addition', None)] ; décisions du hook=[('qa', 'explicit', 'preferred', 'claude-sonnet-4-5', 'info')] ; agent.role_applied=['qa'] ; modèles des messages (parent, modèle)=[(None, 'claude-haiku-4-5-20251001'), ('toolu_01CiVLvXDbXZh91H2SskV3ny', 'claude-sonnet-5-5')]
+restauration qa -> 200
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 8132, code 1
+=== phase browser (2026-10-23 23:37:50) ===
+control-center lancé : PID 2584, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+navigateur : harnais en échec : file:///C:/Projects/jarvis/arch-s08/tests/unit/_wake_word_settings_browser.mjs:72
+      throw new Error(r.exceptionDetails.exception?.description||JSON.stringify(r.exceptionDetails));
+            ^
+
+Error: TypeError: Cannot read properties of null (reading 'focus')
+    at <anonymous>:1:54
+    at evaluate (file:///C:/Projects/jarvis/arch-s08/tests/unit/_wake_word_settings_browser.mjs:72:13)
+    at async act (file:///C:/Projects/jarvis/arch-s08/tests/unit/_wake_word_settings_browser.mjs:98:32)
+    at async file:///C:/Projects/jarvis/arch-s08/tests/unit/_wake_word_settings_browser.mjs:89:63
+
+Node.js v24.18.0
+
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 2584, code 1
+=== phase browser (2026-10-23 23:38:34) ===
+control-center lancé : PID 16252, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+navigateur : harnais en échec : file:///C:/Projects/jarvis/arch-s08/tests/unit/_wake_word_settings_browser.mjs:72
+      throw new Error(r.exceptionDetails.exception?.description||JSON.stringify(r.exceptionDetails));
+            ^
+
+Error: TypeError: Cannot read properties of null (reading 'focus')
+    at <anonymous>:1:74
+    at evaluate (file:///C:/Projects/jarvis/arch-s08/tests/unit/_wake_word_settings_browser.mjs:72:13)
+    at async act (file:///C:/Projects/jarvis/arch-s08/tests/unit/_wake_word_settings_browser.mjs:98:32)
+    at async file:///C:/Projects/jarvis/arch-s08/tests/unit/_wake_word_settings_browser.mjs:89:63
+
+Node.js v24.18.0
+
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 16252, code 1
+=== phase browser (2026-10-23 23:39:09) ===
+control-center lancé : PID 23152, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+navigateur : harnais en échec : file:///C:/Projects/jarvis/arch-s08/tests/unit/_wake_word_settings_browser.mjs:72
+      throw new Error(r.exceptionDetails.exception?.description||JSON.stringify(r.exceptionDetails));
+            ^
+
+Error: TypeError: Cannot read properties of null (reading 'getBoundingClientRect')
+    at <anonymous>:1:49
+    at <anonymous>:6:87
+    at evaluate (file:///C:/Projects/jarvis/arch-s08/tests/unit/_wake_word_settings_browser.mjs:72:13)
+    at async act (file:///C:/Projects/jarvis/arch-s08/tests/unit/_wake_word_settings_browser.mjs:98:32)
+    at async file:///C:/Projects/jarvis/arch-s08/tests/unit/_wake_word_settings_browser.mjs:89:63
+
+Node.js v24.18.0
+
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 23152, code 1
+=== phase browser (2026-10-23 23:39:56) ===
+control-center lancé : PID 23412, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+navigateur : attentes tenues 9/12 ; échouées : ["!!document.querySelector('[data-arch-menu=configure]')", "!!document.querySelector('.bcp-win [data-bcp-radio=delegation]')", "!!document.querySelector('[data-sar-route]')"]
+(12) onglets de la catégorie : ['Architecture', 'Sous-agents'] ; interdits sur architecture : [] / libellés [] ; sur subagents : [] / []
+(12) « Brains » dans un onglet : False ; « Agent principal » : False ; Runtime & CLI porte commande/permission/mode/profils/inventaire : [True, True, True, True, True]
+liens profonds : {'main_agent': ['agents_models', 'architecture'], 'subagent_models': ['agents_models', 'subagents'], 'memory': ['memory_knowledge', 'recall']} ; anciens id (tour) : {'main_agent': ['agents_models', 'architecture', 'alias'], 'subagent_models': ['agents_models', 'subagents', 'alias'], 'subagents': ['agents_models', 'subagents', 'section'], 'cli': ['voice_audio', 'agent_behavior', None], 'routing': ['voice_audio', 'agent_behavior', None]}
+clavier/données : after_deep = [True, 'memory_knowledge', 'recall']
+clavier/données : node_focusable = False
+clavier/données : focus_node = ['DIV', 'core']
+clavier/données : focus_menu = ['BODY', '']
+clavier/données : after_menu_escape = [['BUTTON', 'dockMore'], False, 'architecture']
+clavier/données : focus_menu_2 = ['BUTTON', 'dockMore']
+clavier/données : menu_items = ['JARVIS', 'Sélection', 'Dossier', 'Capture?', 'Paramètres']
+clavier/données : geometry = ERR: Cannot read properties of null (reading 'getBoundingClientRect')
+clavier/données : focus_in_window = False
+clavier/données : tab_kept = False
+clavier/données : after_window_escape = [['BUTTON', 'chatTab'], False, 'architecture']
+clavier/données : context_menu = ERR: Cannot read properties of null (reading 'getBoundingClientRect')
+clavier/données : roles = {'registry': ['interviewer', 'research', 'web-research', 'coder', 'concept', 'research-lead', 'qa'], 'dom': [], 'routing': ['interviewer', 'research', 'web-research', 'coder', 'concept', 'research-lead', 'qa']}
+requêtes /api : [('GET', '/api/agent/tasks'), ('GET', '/api/architecture'), ('GET', '/api/architecture/layout'), ('GET', '/api/barehands'), ('GET', '/api/barehands/profile'), ('GET', '/api/captures/status'), ('GET', '/api/cli/agents'), ('GET', '/api/fullscreen/commands'), ('GET', '/api/presentation-studio/explorer/commands'), ('GET', '/api/presentation-studio/playback'), ('GET', '/api/settings'), ('GET', '/api/shortcuts'), ('GET', '/api/status'), ('GET', '/api/subagent-role-routing'), ('GET', '/api/subagent-roles'), ('GET', '/api/work'), ('GET', '/api/work-methods/candidates')]
+erreurs console : []
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 23412, code 1
+=== phase browser (2026-10-23 23:41:08) ===
+control-center lancé : PID 33044, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+navigateur : attentes tenues 11/14 ; échouées : ["!!document.querySelector('[data-arch-menu=configure]')", "!!document.querySelector('.bcp-win [data-bcp-radio=delegation]')", "!!document.querySelector('[data-sar-route]')"]
+(12) onglets de la catégorie : ['Architecture', 'Sous-agents'] ; interdits sur architecture : [] / libellés [] ; sur subagents : [] / []
+(12) « Brains » dans un onglet : False ; « Agent principal » : False ; Runtime & CLI porte commande/permission/mode/profils/inventaire : [True, True, True, True, True]
+liens profonds : {'main_agent': ['agents_models', 'architecture'], 'subagent_models': ['agents_models', 'subagents'], 'memory': ['memory_knowledge', 'recall']} ; anciens id (tour) : {'main_agent': ['agents_models', 'architecture', 'alias'], 'subagent_models': ['agents_models', 'subagents', 'alias'], 'subagents': ['agents_models', 'subagents', 'section'], 'cli': ['voice_audio', 'agent_behavior', None], 'routing': ['voice_audio', 'agent_behavior', None]}
+clavier/données : after_deep = [True, 'memory_knowledge', 'recall']
+clavier/données : node_focusable = False
+clavier/données : focus_node = ['DIV', 'core']
+clavier/données : focus_menu = ['BUTTON', 'configure']
+clavier/données : after_menu_escape = [['BUTTON', 'dockMore'], False, 'architecture']
+clavier/données : focus_menu_2 = ['BUTTON', 'dockMore']
+clavier/données : menu_items = ['JARVIS', 'Sélection', 'Dossier', 'Capture?', 'Paramètres']
+clavier/données : geometry = ERR: Cannot read properties of null (reading 'getBoundingClientRect')
+clavier/données : focus_in_window = False
+clavier/données : tab_kept = False
+clavier/données : after_window_escape = [['BUTTON', 'chatTab'], False, 'architecture']
+clavier/données : context_menu = ERR: Cannot read properties of null (reading 'getBoundingClientRect')
+clavier/données : roles = {'registry': ['interviewer', 'research', 'web-research', 'coder', 'concept', 'research-lead', 'qa'], 'dom': [], 'routing': ['interviewer', 'research', 'web-research', 'coder', 'concept', 'research-lead', 'qa']}
+requêtes /api : [('GET', '/api/agent/tasks'), ('GET', '/api/architecture'), ('GET', '/api/architecture/layout'), ('GET', '/api/barehands'), ('GET', '/api/barehands/profile'), ('GET', '/api/captures/status'), ('GET', '/api/cli/agents'), ('GET', '/api/fullscreen/commands'), ('GET', '/api/presentation-studio/explorer/commands'), ('GET', '/api/presentation-studio/playback'), ('GET', '/api/settings'), ('GET', '/api/shortcuts'), ('GET', '/api/status'), ('GET', '/api/subagent-role-routing'), ('GET', '/api/subagent-roles'), ('GET', '/api/work'), ('GET', '/api/work-methods/candidates')]
+erreurs console : []
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 33044, code 1
+=== phase browser (2026-10-24 00:09:12) ===
+control-center lancé : PID 16844, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+navigateur : attentes tenues 14/14 ; échouées : []
+(12) onglets de la catégorie : ['Architecture', 'Sous-agents'] ; interdits sur architecture : [] / libellés [] ; sur subagents : [] / []
+(12) « Brains » dans un onglet : False ; « Agent principal » : False ; Runtime & CLI porte commande/permission/mode/profils/inventaire : [True, True, True, True, True]
+liens profonds : {'main_agent': ['agents_models', 'architecture'], 'subagent_models': ['agents_models', 'subagents'], 'memory': ['memory_knowledge', 'recall']} ; anciens id (tour) : {'main_agent': ['agents_models', 'architecture', 'alias'], 'subagent_models': ['agents_models', 'subagents', 'alias'], 'subagents': ['agents_models', 'subagents', 'section'], 'cli': ['voice_audio', 'agent_behavior', None], 'routing': ['voice_audio', 'agent_behavior', None]}
+clavier/données : after_deep = [True, 'memory_knowledge', 'recall']
+clavier/données : node_focusable = True
+clavier/données : focus_node = ['DIV', 'core']
+clavier/données : focus_menu = ['BUTTON', 'configure']
+clavier/données : after_menu_escape = [['DIV', 'core'], True, 'architecture']
+clavier/données : focus_menu_2 = ['BUTTON', 'configure']
+clavier/données : menu_items = ['JARVIS', 'Sélection', 'Dossier', 'Capture?', 'Paramètres', 'Configurer…', 'Inspecter']
+clavier/données : geometry = {'overlap': 0, 'inViewport': True, 'inOverlay': True, 'radios': 5}
+clavier/données : focus_in_window = True
+clavier/données : tab_kept = True
+clavier/données : after_window_escape = [['DIV', 'core'], True, 'architecture']
+clavier/données : context_menu = True
+clavier/données : roles = {'registry': ['interviewer', 'research', 'web-research', 'coder', 'concept', 'research-lead', 'qa'], 'dom': ['interviewer', 'research', 'web-research', 'coder', 'concept', 'research-lead', 'qa'], 'routing': ['interviewer', 'research', 'web-research', 'coder', 'concept', 'research-lead', 'qa']}
+requêtes /api : [('GET', '/api/agent/tasks'), ('GET', '/api/architecture'), ('GET', '/api/architecture/layout'), ('GET', '/api/barehands'), ('GET', '/api/barehands/profile'), ('GET', '/api/brains/core/config'), ('GET', '/api/captures/status'), ('GET', '/api/cli/agents'), ('GET', '/api/fullscreen/commands'), ('GET', '/api/presentation-studio/explorer/commands'), ('GET', '/api/presentation-studio/playback'), ('GET', '/api/settings'), ('GET', '/api/shortcuts'), ('GET', '/api/status'), ('GET', '/api/subagent-role-routing'), ('GET', '/api/subagent-roles'), ('GET', '/api/work'), ('GET', '/api/work-methods/candidates')]
+erreurs console : []
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 16844, code 1
+(6) choix servis : CLI [('claude', True, None, "CLI détecté ; son modèle par défaut et son authentification ne se vérifient qu'à l'usage."), ('codex', True, None, "CLI détecté ; son modèle par défaut et son authentification ne se vérifient qu'à l'usage.")] ; modèle [('', True, 'configured_unverified'), ('claude-haiku-4-5', True, 'usable'), ('claude-sonnet-4-5', True, 'usable')]
+(6) PATCH model='' (retour au défaut du CLI) -> 200 code=None raison=« None »
+(6) PATCH model=claude-haiku-4-5 (remise) -> 200
+(6) PATCH provider=claude + model (même CLI) -> 200 code=None
+(6) PATCH provider=codex -> 200 code=None raison=« None » ; agent_cli=codex
+(6) PATCH provider=claude (retour) -> 200 code=None ; agent_cli=claude
+(6) bascule de CLI réelle : [('brain_config.agents_reconfigured', 'codex'), ('agent.stop', None), ('agent.switch', 'codex'), ('agent.start', None), ('brain_config.agents_reconfigured', 'claude'), ('agent.stop', None), ('agent.switch', 'claude'), ('agent.start', None)]
+=== phase brain2 (2026-10-24 00:13:24) ===
+control-center lancé : PID 32760, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+[standard] CLI lancé PID 11568 : --model=claude-haiku-4-5 --disallowedTools=[] hook=True ; agent.start delegation=standard spawn_tools_removed=False model=claude-haiku-4-5 ; brain-delegation-launched.json={'delegation': 'standard', 'pid': 11568} ; consigne 23500 car.
+(7) never posé à chaud (CLI vivant lancé en standard, outil Agent présent) -> 200
+[hook-never] ask -> 200 ; réponse : « L'outil Agent est refusé : la délégation est désactivée dans les réglages du cerveau Core (Architecture & Agents › Architecture vaut « Jamais »). »
+(7) CLI standard : outil de lancement (Agent/Task) dans l'init=['Task'] ; appels d'outil=[('Agent', 'toolu_01FSHMMDAX5zwWDh8mJLSNdS')] ; agent.spawn_refused=[('brain_delegation_never', 'toolu_01FSHMMDAX5zwWDh8mJLSNdS')]
+remise delegation=standard -> 200
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 32760, code 1
+=== phase roles (2026-10-24 00:14:00) ===
+control-center lancé : PID 11120, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+(9) GET /api/subagent-role-routing -> 200 ; 7 rôles ; avant : {'interviewer': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'research': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'web-research': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'coder': ('inherited:code', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'concept': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'research-lead': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."}), 'qa': ('inherited:general', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'cli_default', 'reason': 'compatibility', 'detail': "Le CLI garde son propre modèle (aucune liste ne s'impose)."})}
+(9) hook hors ligne avant : {'[general] [qa] Relire': {'code': 0, 'decision': 'allow', 'model_out': None, 'agent_model': None, 'role_id': None, 'provenance': None, 'reason': None, 'model': None, 'level': None}, '[code] [coder] Corriger': {'code': 0, 'decision': 'allow', 'model_out': None, 'agent_model': None, 'role_id': None, 'provenance': None, 'reason': None, 'model': None, 'level': None}}
+(9) PUT qa=[claude/claude-sonnet-4-5] -> 200 ok=True ; rôles dont la vue change : ['qa'] ; qa après : ('explicit', [('claude', 'claude-sonnet-4-5', True)], {'outcome': 'selected', 'profile': 'general', 'agent': 'claude', 'model': 'claude-sonnet-4-5', 'reason': 'preferred', 'considered': [{'agent': 'claude', 'model': 'claude-sonnet-4-5', 'eligible': True}], 'role_id': 'qa', 'provenance': 'explicit'})
+(9) hook hors ligne après : {'[general] [qa] Relire': {'code': 0, 'decision': 'allow', 'model_out': 'sonnet', 'agent_model': 'sonnet', 'role_id': 'qa', 'provenance': 'explicit', 'reason': 'preferred', 'model': 'claude-sonnet-4-5', 'level': 'info'}, '[code] [coder] Corriger': {'code': 0, 'decision': 'allow', 'model_out': None, 'agent_model': None, 'role_id': None, 'provenance': None, 'reason': None, 'model': None, 'level': None}}
+(9) PUT révision périmée -> 409 code=role_routing_revision_stale
+(10) PUT research avec un modèle hors catalogue -> 200 ok=True code=None ; candidats : [('claude-retired-9', False, "Ce modèle n'est plus proposé par le fournisseur."), ('claude-sonnet-4-5', True, '')]
+(10) restauration de l'héritage (DELETE) -> 200 ; provenance=inherited:general
+(8) delegation=proactive -> 200
+[roles] CLI lancé PID 34528 : --model=claude-haiku-4-5 --disallowedTools=[] hook=True ; agent.start delegation=proactive spawn_tools_removed=False model=claude-haiku-4-5 ; brain-delegation-launched.json={'delegation': 'proactive', 'pid': 34528} ; consigne 23647 car.
+[roles] ask -> 200 ; réponse : « Le sous-agent a répondu : 4. »
+(9) vrai appel : outils=[('Agent', '[general] [qa] Vérifier une addition', None)] ; décisions du hook=[('qa', 'explicit', 'preferred', 'claude-sonnet-4-5', 'info')] ; agent.role_applied=['qa'] ; modèles des messages (parent, modèle)=[(None, 'claude-haiku-4-5-20251001')]
+remise delegation=standard -> 200
+restauration qa -> 200
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 11120, code 1
+=== phase browser (2026-10-24 00:14:53) ===
+control-center lancé : PID 34924, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+navigateur : attentes tenues 14/14 ; échouées : []
+(12) onglets de la catégorie : ['Architecture', 'Sous-agents'] ; interdits sur architecture : [] / libellés [] ; sur subagents : [] / []
+(12) « Brains » dans un onglet : False ; « Agent principal » : False ; Runtime & CLI porte commande/permission/mode/profils/inventaire : [True, True, True, True, True]
+liens profonds : {'main_agent': ['agents_models', 'architecture'], 'subagent_models': ['agents_models', 'subagents'], 'memory': ['memory_knowledge', 'recall']} ; anciens id (tour) : {'main_agent': ['agents_models', 'architecture', 'alias'], 'subagent_models': ['agents_models', 'subagents', 'alias'], 'subagents': ['agents_models', 'subagents', 'section'], 'cli': ['voice_audio', 'agent_behavior', None], 'routing': ['voice_audio', 'agent_behavior', None]}
+clavier/données : after_deep = [True, 'memory_knowledge', 'recall']
+clavier/données : node_focusable = True
+clavier/données : focus_node = ['DIV', 'core']
+clavier/données : focus_menu = ['BUTTON', 'configure']
+clavier/données : after_menu_escape = [['DIV', 'core'], True, 'architecture']
+clavier/données : focus_menu_2 = ['BUTTON', 'configure']
+clavier/données : menu_items = ['JARVIS', 'Sélection', 'Dossier', 'Capture?', 'Paramètres', 'Configurer…', 'Inspecter']
+clavier/données : geometry = {'overlap': 0, 'inViewport': True, 'inOverlay': True, 'radios': 5}
+clavier/données : focus_in_window = True
+clavier/données : tab_kept = True
+clavier/données : after_window_escape = [['DIV', 'core'], True, 'architecture']
+clavier/données : context_menu = True
+clavier/données : roles = {'registry': ['interviewer', 'research', 'web-research', 'coder', 'concept', 'research-lead', 'qa'], 'dom': ['interviewer', 'research', 'web-research', 'coder', 'concept', 'research-lead', 'qa'], 'routing': ['interviewer', 'research', 'web-research', 'coder', 'concept', 'research-lead', 'qa']}
+requêtes /api : [('GET', '/api/agent/tasks'), ('GET', '/api/architecture'), ('GET', '/api/architecture/layout'), ('GET', '/api/barehands'), ('GET', '/api/barehands/profile'), ('GET', '/api/brains/core/config'), ('GET', '/api/captures/status'), ('GET', '/api/cli/agents'), ('GET', '/api/fullscreen/commands'), ('GET', '/api/presentation-studio/explorer/commands'), ('GET', '/api/presentation-studio/playback'), ('GET', '/api/settings'), ('GET', '/api/shortcuts'), ('GET', '/api/status'), ('GET', '/api/subagent-role-routing'), ('GET', '/api/subagent-roles'), ('GET', '/api/work'), ('GET', '/api/work-methods/candidates')]
+erreurs console : []
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 34924, code 1
+=== phase migrate (2026-10-24 00:15:22) ===
+control-center lancé : PID 30312, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+(migration) GET /api/settings -> 200 ; fenêtre Core : model=claude-haiku-4-5 delegation=standard (aucun brain-config.json écrit avant : présent après les phases précédentes)
+(migration) rôles : [('interviewer', 'inherited:general'), ('research', 'inherited:general'), ('web-research', 'inherited:general'), ('coder', 'inherited:code'), ('concept', 'inherited:general'), ('research-lead', 'inherited:general'), ('qa', 'inherited:general')] ; compat={'delegation_mode': 'duplicate', 'profiles_enabled': False, 'note': "Une politique explicite de rôle s'applique quel que soit Auto/Dupliqué ; un rôle qui hérite suit la politique par profil, active seulement en Auto."}
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 30312, code 1
+(migration) réglages « avant » vs « après » toutes phases : clés perdues=[] ; valeurs changées=['agent_cli_settings.claude.model'] ; clés ajoutées=['tool_brain.mode', 'voice_architecture.config.barge_in_decider', 'voice_architecture.config.brain_orchestration', 'voice_architecture.config.client_delegation', 'voice_architecture.config.idle_timeout_s']
+control-center lancé : PID 16956, cwd C:\Projects\jarvis\arch-s08, UI http://127.0.0.1:27654, runtime C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\s08-sandbox\runtime
+(migration) ancien fichier relu : CLI=claude modèle=(défaut) délégation=standard (store bc-0) ; rôles ['inherited:code', 'inherited:general'] ; révision rôles rr-0
+(migration) Enregistrer de Comportement : 1 POST /api/settings, clés ['agenda_reminders', 'audio', 'cli', 'routing', 'voice'] ; attentes tenues 10 ; console []
+arrêt du CLI cerveau par l'API du bac à sable -> 200
+control-center arrêté : PID 16956, code 1
+(migration) ancien fichier avant/après la page et un enregistrement à pied : clés perdues=['agent_behavior.politeness'] ; valeurs changées={'agent_cli_settings.codex.permission_mode': ['default', 'danger-full-access'], 'agent_behavior.response_verbosity': ['concise', 'detailed'], 'agenda_reminders.lead_minutes': [10, '10'], 'voice_stack': ['openai', 'openai_realtime']} ; clés ajoutées=['agenda_reminders.evening_time', 'agenda_reminders.late_minutes', 'agenda_reminders.morning_time', 'agenda_reminders.refresh_minutes', 'agent_behavior.politeness_formality', 'agent_routing.profiles.code.enabled', 'agent_routing.profiles.code.profile', 'agent_routing.profiles.desktop.allow_general_fallback', 'agent_routing.profiles.desktop.candidates', 'agent_routing.profiles.desktop.enabled', 'agent_routing.profiles.desktop.profile', 'agent_routing.profiles.fast.allow_general_fallback', 'agent_routing.profiles.fast.candidates', 'agent_routing.profiles.fast.enabled', 'agent_routing.profiles.fast.profile', 'agent_routing.profiles.general.allow_general_fallback', 'agent_routing.profiles.general.enabled', 'agent_routing.profiles.general.profile', 'claude_cli', 'claude_permission_mode', 'credential_bindings.anthropic', 'credentials', 'voice_stack_settings.gemini_live.input_transcription', 'voice_stack_settings.gemini_live.model', 'voice_stack_settings.gemini_live.output_transcription', 'voice_stack_settings.gemini_live.turn_mode', 'voice_stack_settings.gemini_live.vad_end_sensitivity', 'voice_stack_settings.gemini_live.vad_prefix_padding_ms', 'voice_stack_settings.gemini_live.vad_silence_duration_ms', 'voice_stack_settings.gemini_live.vad_start_sensitivity', 'voice_stack_settings.gemini_live.voice', 'voice_stack_settings.openai_realtime.ack_delay_ms', 'voice_stack_settings.openai_realtime.echo_cancellation', 'voice_stack_settings.openai_realtime.model', 'voice_stack_settings.openai_realtime.noise_reduction', 'voice_stack_settings.openai_realtime.reflex_enabled', 'voice_stack_settings.openai_realtime.transcription_language', 'voice_stack_settings.openai_realtime.transcription_model', 'voice_stack_settings.openai_realtime.turn_mode', 'voice_stack_settings.openai_realtime.vad_eagerness', 'voice_stack_settings.openai_realtime.vad_prefix_padding_ms', 'voice_stack_settings.openai_realtime.vad_silence_duration_ms', 'voice_stack_settings.openai_realtime.vad_threshold', 'voice_stack_settings.openai_realtime.vad_type', 'voice_stack_settings.openai_realtime.voice'] ; brain-config.json écrit=False ; subagent-role-routing.json écrit=False
+[main] control-center lancé depuis C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\05b93d8a-1916-4b86-866a-f10f71884561\scratchpad\base-ad1e : PID 29020
+[main] attentes tenues 6/6 ; console []
+[main] control-center arrêté : PID 29020
+[s08] control-center lancé depuis C:\Projects\jarvis\arch-s08 : PID 30432
+[s08] attentes tenues 6/6 ; console []
+[s08] control-center arrêté : PID 30432
+(migration A/B) fichier après le même geste, main vs S08 : différences={'credential_bindings.anthropic': ['cred_22044bbf', 'cred_adc5c141'], 'credentials': [[{'id': 'cred_22044bbf', 'provider': 'anthropic', 'name': "Reprise de l'ancienne configuration", 'value': 'sk-ant-s08-fixture-not-a-real-key', 'created_at': '2026-10-23T22:16:38+00:00'}], [{'id': 'cred_adc5c141', 'provider': 'anthropic', 'name': "Reprise de l'ancienne configuration", 'value': 'sk-ant-s08-fixture-not-a-real-key', 'created_at': '2026-10-23T22:16:47+00:00'}]]}
+(migration A/B) clés de l'ancien fichier absentes après S08 et présentes après main : []
