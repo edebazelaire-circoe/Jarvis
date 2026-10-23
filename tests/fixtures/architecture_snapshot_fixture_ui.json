@@ -116,10 +116,10 @@
       "details": {}
     },
     {
-      "id": "tool",
+      "id": "tool_brain",
       "kind": "brain",
       "label": "Tool Brain",
-      "brain_type": "tool",
+      "brain_type": "tool_brain",
       "process": "core",
       "system": false,
       "state": "inactive",
@@ -272,13 +272,13 @@
       "binding": "brain.speech.requested"
     },
     {
-      "id": "core.events->tool.events",
+      "id": "core.events->tool_brain.events",
       "source": {
         "node": "core",
         "port": "events"
       },
       "target": {
-        "node": "tool",
+        "node": "tool_brain",
         "port": "events"
       },
       "channel": "event",

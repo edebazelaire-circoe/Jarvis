@@ -152,9 +152,12 @@ def test_settings_window_is_a_full_screen_shell_closed_explicitly():
     assert "target.tagName==='TEXTAREA'" in keys and "event.defaultPrevented" in keys
     # Slice 04 : « Agent / CLI » n'est plus un onglet, ses réglages sont des sections enregistrées.
     # Slice 07 : « API Keys » non plus, section Fournisseurs de Connexions.
-    for label in ("Voix", "Prompts", "Agent principal", "Fournisseurs", "Raccourcis"):
+    # jarvis-architecture-agents-settings-editor Slice 07 : Agent principal devient l'onglet Architecture (fenêtre du
+    # cerveau Core) ; Architecture & Agents a deux onglets, Architecture et Sous-agents.
+    for label in ("Voix", "Prompts", "Architecture", "Sous-agents", "Fournisseurs", "Raccourcis"):
         assert f"label:'{label}'" in html
     assert "label:'Agent / CLI'" not in html and "label:'API Keys'" not in html
+    assert "label:'Agent principal'" not in html and "label:'Modèles des sous-agents'" not in html
     assert "id:'config'" not in html
     # Les listes de modèles passent par le catalogue du serveur : aucune liste
     # de modèles ne doit être écrite dans la page.

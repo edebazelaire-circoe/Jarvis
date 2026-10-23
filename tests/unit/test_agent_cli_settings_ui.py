@@ -66,6 +66,7 @@ def test_navigation_fixture_matches_the_sections_and_the_retired_programmatic_id
     sections = (page[page.index("const VOICE_SECTIONS=[") : page.index("function voiceSectionSpec")]
                 + page[page.index("const AGENT_SECTIONS=[") : page.index("function agentSectionSpec")]
                 + page[page.index("const SUBAGENT_SECTIONS=[") : page.index("function installAgentSettingsSections")]
+                + page[page.index("const ARCHITECTURE_SECTION=") : page.index("/* --- Micro & son : périphériques audio")]
                 + page[page.index("const SHORTCUTS_SECTION=") : page.index("function renderShortcutsSection")]
                 + page[page.index("const CONNECTIONS_SECTION=") : page.index("/* --- `interface_interactions` › Raccourcis")]
                 + page[page.index("const PROMPTS_SECTION=") : page.index("/* --- Agent principal et Runtime & CLI")]
@@ -85,9 +86,11 @@ def test_navigation_fixture_matches_the_sections_and_the_retired_programmatic_id
 def test_agent_cli_sections_are_in_locked_order_and_advanced_policy_is_disclosed():
     page = PAGE.read_text(encoding="utf-8")
     expected = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    # Slice 04 : sections enregistrées de `agents_models`, dans l'ordre ; Runtime & CLI sous Avancé.
-    registered = page[page.index("const AGENT_SECTIONS=[") : page.index("function installAgentSettingsSections")]
+    # Slice 07 (jarvis-architecture-agents-settings-editor) : les deux onglets de `agents_models`, dans l'ordre ;
+    # Runtime & CLI sous Avancé.
+    registered = page[page.index("const AGENT_SECTIONS=[") : page.index("/* --- Micro & son : périphériques audio")]
     labels = re.findall(r"category:'agents_models',order:(\d+),label:'([^']+)'", registered)
+    assert len(labels) == 2, labels  # exactement deux onglets : Architecture et Sous-agents
     assert [label for _order, label in sorted(labels, key=lambda item: int(item[0]))] == expected["agent_section_order"]
     assert "{id:'runtime_cli',category:'advanced_diagnostics',group:'runtime_cli',order:30,advanced:true,label:'Runtime & CLI'" in registered
     body = page[page.index("function routingRow(") : page.index("/* --- Micro & son : périphériques audio")]
@@ -99,9 +102,11 @@ def test_agent_cli_sections_are_in_locked_order_and_advanced_policy_is_disclosed
     # retenu, dans quel ordre, et pourquoi un candidat n'est pas utilisable.
     assert "unavailable_reason" in body and "rank===0?'préféré'" in body
     assert "data-routing-harness" in body and "data-routing-drop" in body
-    builders = page[page.index("function mainAgentHtml()") : page.index("/* --- configuration avancée")]
+    builders = page[page.index("function agentBehaviorHtml()") : page.index("/* --- configuration avancée")]
     assert "await " not in builders and "api(" not in builders and "catalog(" not in builders
-    assert "function runtimeCliHtml(){\n  return `<div id=\"cliTechnical\">${cliTechnicalHtml()}</div>${routingAdvancedShell()}`;" in builders
+    # Runtime & CLI porte le technique du CLI, le mode hérité Auto / Dupliqué, les profils et l'inventaire comparatif.
+    assert builders.index("${cliTechnicalHtml()}") < builders.index("${delegationModeHtml()}${routingAdvancedShell()}")
+    assert '<details class="rd" id="agentCatalogDisclosure">' in builders and 'id="agentCatalog"' in builders
 
 
 def test_cli_failure_keeps_mode_behavior_and_catalog_shell_visible(tmp_path: Path):
@@ -111,58 +116,49 @@ def test_cli_failure_keeps_mode_behavior_and_catalog_shell_visible(tmp_path: Pat
         tmp_path,
         {},
         """
-        const SET={agentSection:'main_agent',clis:{ok:false,error:'CLI probe failed',agents:[]},draft:{cli:{agent:'claude'}}};
+        const SET={agentSection:'runtime_cli',clis:{ok:false,error:'CLI probe failed',agents:[]},draft:{cli:{agent:'claude'}}};
         const esc=value=>String(value),delegationModeHtml=()=>'<mode>MODE</mode>',behaviorHtml=()=>'<behavior>BEHAVIOR</behavior>',tabAgenda=()=>'<agenda>AGENDA</agenda>',routingAdvancedShell=()=>'<advanced>CLOSED</advanced>';
         """
         + functions
-        + "const main=mainAgentHtml();SET.agentSection='runtime_cli';"
-        "process.stdout.write(JSON.stringify({main,behavior:agentBehaviorHtml(),models:subagentModelsHtml(),runtime:runtimeCliHtml()}));",
+        + "process.stdout.write(JSON.stringify({behavior:agentBehaviorHtml(),runtime:runtimeCliHtml()}));",
     )
 
-    # Une sonde en échec reste locale : Agent principal et Runtime & CLI le disent avec « réessayer »,
-    # Comportement et Modèles des sous-agents restent rendus.
-    for section in ("main", "runtime"):
-        assert "CLI probe failed" in result[section] and "data-cli-retry" in result[section]
-    assert "MODE" in result["models"] and 'id="agentCatalog"' in result["models"]
+    # Une sonde en échec reste locale : Runtime & CLI le dit avec « réessayer » ; le mode hérité, les profils et
+    # l'inventaire restent rendus, Comportement aussi.
+    runtime = result["runtime"]
+    assert "CLI probe failed" in runtime and "data-cli-retry" in runtime
+    assert "MODE" in runtime and "CLOSED" in runtime and 'id="agentCatalog"' in runtime
+    assert 'data-settings-open="subagents"' in runtime  # le modèle d'un rôle se règle dans l'onglet Sous-agents
     assert "BEHAVIOR" in result["behavior"] and "AGENDA" in result["behavior"]
-    assert "CLOSED" in result["runtime"] and "CLOSED" not in result["main"]
-    assert 'data-settings-open="runtime_cli"' in result["main"] and 'data-settings-open="runtime_cli"' in result["models"]
     assert "<label>Agent piloté</label>" not in functions
 
 
-def test_main_agent_and_runtime_split_the_cli_fields_without_changing_the_draft(tmp_path: Path):
-    """Agent principal : identité, modèle, disponibilité ; Runtime & CLI : commande, chemin, re-détection, permission.
-    Les deux écrivent dans le même `cli.settings[<CLI>]` (mêmes `data-cli-field`)."""
+def test_runtime_cli_carries_the_technical_fields_and_no_cli_or_model_choice(tmp_path: Path):
+    """Slice 07 (jarvis-architecture-agents-settings-editor) : le choix du CLI et du modèle de Core passe par la fenêtre
+    du cerveau Core ; Runtime & CLI garde commande, chemin, re-détection, permission (`cli.settings[<CLI>]`)."""
     page = PAGE.read_text(encoding="utf-8")
-    functions = page[page.index("function cliTechnicalHtml()") : page.index("function mainAgentHtml()")]
+    functions = page[page.index("function cliTechnicalHtml()") : page.index("function agentBehaviorHtml()")]
     result = run_node(
         tmp_path,
         {},
         """
         const esc=value=>String(value),keyStateFor=()=>'',providerLabel=String,catalogNote=()=>'NOTE',connectionCardId=p=>'connection_'+p;
         const selectOptions=(values,selected,placeholder)=>(placeholder?`<option value="">${placeholder}</option>`:'')+values.map(v=>`<option value="${v.value}">${v.label}</option>`).join('');
-        const SET={agentSection:'main_agent',catalog:{'anthropic:text':{ok:true,models:[{id:'m1'}]}},
+        const SET={agentSection:'runtime_cli',catalog:{'anthropic:text':{ok:true,models:[{id:'m1'}]}},
           clis:{agents:[{id:'claude',label:'Claude Code',available:true,version:'9.9',path:'C:/bin/claude.exe',description:'D',model_provider:'anthropic',permission_label:'Permissions',permission_modes:['default','bypass'],docs:'docs'},
                         {id:'codex',label:'Codex',available:false,error:'introuvable',description:'D',model_provider:'openai',permission_modes:[]}]},
           draft:{cli:{agent:'claude',settings:{claude:{model:'m1',command:'claude',permission_mode:'default'}}}}};
         """
         + functions
-        + "const main=cliTechnicalHtml();SET.agentSection='runtime_cli';"
-        "process.stdout.write(JSON.stringify({main,runtime:cliTechnicalHtml()}));",
+        + "process.stdout.write(JSON.stringify({runtime:cliTechnicalHtml()}));",
     )
 
-    main, runtime = result["main"], result["runtime"]
-    assert 'name="clicagent"' in main and 'data-cli-field="model"' in main and "9.9" in main and "introuvable" in main
-    assert 'data-cli-field="command"' not in main and 'data-cli-field="permission_mode"' not in main
-    assert "C:/bin/claude.exe" not in main and 'id="reprobe"' not in main
+    runtime = result["runtime"]
     assert 'data-cli-field="command"' in runtime and 'data-cli-field="permission_mode"' in runtime
-    assert "C:/bin/claude.exe" in runtime and 'id="reprobe"' in runtime
+    assert "C:/bin/claude.exe" in runtime and 'id="reprobe"' in runtime and 'data-scope="claude"' in runtime
     assert 'name="clicagent"' not in runtime and 'data-cli-field="model"' not in runtime
-    assert 'data-scope="claude"' in main and 'data-scope="claude"' in runtime
-    # Slice 07 : la clé du fournisseur du modèle se règle dans Connexions, focus sur sa carte.
-    assert ('data-settings-open="providers" data-settings-focus="#connection_anthropic_title">Connexions › anthropic</button>'
-            in main)
-    assert "data-settings-focus" not in runtime
+    assert 'data-settings-open="architecture"' in runtime and 'data-settings-open="main_agent"' not in runtime
+    assert "function cliMainAgentHtml" not in page and "function hydrateCliModel" not in page
 
 
 @pytest.mark.asyncio
@@ -263,7 +259,7 @@ def test_catalog_mount_is_shared_async_and_has_owned_lifecycle(tmp_path: Path):
         """
         let destroyed=0,loaded=0,refreshed=0,captured=null,refreshHandler=null;
         const host={},refresh={addEventListener:(kind,handler)=>{refreshHandler=handler}};
-        const SET={section:'subagent_models',agentSection:'subagent_models',agentCatalog:{destroy:()=>{destroyed+=1}}};
+        const SET={section:'runtime_cli',agentSection:'runtime_cli',agentCatalog:{destroy:()=>{destroyed+=1}}};
         const currentAgentSection=()=>true;
         const $=selector=>selector==='#agentCatalog'?host:selector==='#agentCatalogRefresh'?refresh:null;
         const JarvisCatalog={createCatalogTable:(target,options)=>{
@@ -296,8 +292,9 @@ def test_agent_catalog_lifecycle_error_and_accessibility_contracts_are_wired():
     sections = page[page.index("const AGENT_SECTIONS=[") : page.index("function bindAgentSection(")]
     assert render.lstrip().startswith("async function renderTab(){\n  cleanupSettingsSurface();")
     assert "destroyAgentCatalog();destroyVoiceCatalog()" in cleanup
-    # Slice 04 : le catalogue est monté par la section Modèles des sous-agents et détruit par son `destroy`.
-    assert "body:subagentModelsHtml,start:revision=>mountAgentCatalog(revision),stop:destroyAgentCatalog}" in sections
+    # Slice 07 (jarvis-architecture-agents-settings-editor) : le catalogue est dans Runtime & CLI, monté à l'ouverture
+    # de sa divulgation et détruit par le `destroy` de la section.
+    assert "bindAgentCatalogDisclosure(revision)}," in sections and "stop:destroyAgentCatalog}," in sections
     assert "destroy(){if(stop)stop();" in sections
     assert "mountAgentCatalog" not in render
     assert "SET.renderRevision=(SET.renderRevision||0)+1" in close
@@ -335,7 +332,7 @@ def test_open_close_race_cannot_publish_or_mount_after_settings_response(tmp_pat
 
 def test_advanced_policy_is_lazy_local_and_last_render_wins(tmp_path: Path):
     page = PAGE.read_text(encoding="utf-8")
-    hydrate = page[page.index("async function hydrateRoutingAdvanced") : page.index("/* --- `agents_models` et leurs sections")]
+    hydrate = page[page.index("async function hydrateRoutingAdvanced") : page.index("/* --- Architecture & Agents (`agents_models`)")]
     result = run_node(
         tmp_path,
         {},
@@ -389,15 +386,15 @@ def test_cli_hydration_retries_locally_without_remounting_catalog_or_accumulatin
         function node(dataset={}){return {dataset,addEventListener(){this.binds=(this.binds||0)+1}}}
         const technical={
           _html:'',radios:[],fields:[],
-          replaceNodes(){this.radios=[node()];this.fields=[node({scope:'claude',cliField:'model'})];boundNodes.push(...this.radios,...this.fields)},
+          replaceNodes(){this.fields=[node({scope:'claude',cliField:'command'})];boundNodes.push(...this.fields)},
           set innerHTML(value){this._html=value;partialRenders+=1;this.replaceNodes()},get innerHTML(){return this._html},
-          querySelectorAll(selector){return selector==='input[name=clicagent]'?this.radios:selector==='[data-cli-field]'?this.fields:[]},
+          querySelectorAll(selector){return selector==='[data-cli-field]'?this.fields:[]},
           querySelector(){return null}
         };
         technical.replaceNodes();
         const catalogHost={},refresh={addEventListener(){}};
         const controller={state:{search:'needle',compare:['model-a']},load(){},refresh(){},destroy(){destroys+=1}};
-        const SET={open:true,section:'main_agent',agentSection:'main_agent',renderRevision:9,clis:null,cliGeneration:0,cliModelGeneration:0,catalog:{},agentCatalog:null,draft:{cli:{agent:'claude',settings:{claude:{model:'',command:'claude',permission_mode:'default'}}}}};
+        const SET={open:true,section:'runtime_cli',agentSection:'runtime_cli',renderRevision:9,clis:null,cliGeneration:0,cliModelGeneration:0,catalog:{},agentCatalog:null,draft:{cli:{agent:'claude',settings:{claude:{model:'',command:'claude',permission_mode:'default'}}}}};
         const $=selector=>selector==='#cliTechnical'?technical:selector==='#agentCatalog'?catalogHost:selector==='#agentCatalogRefresh'?refresh:null;
         const cliTechnicalHtml=()=>'<technical></technical>',say=()=>{},saveDraft=async()=>{};
         const api=async()=>{apiCalls+=1;if(apiCalls===1)throw new Error('probe offline');return {ok:true,agents:[{id:'claude',model_provider:'anthropic'}]}};
@@ -424,47 +421,39 @@ def test_cli_hydration_retries_locally_without_remounting_catalog_or_accumulatin
     )
 
     assert result["failed"] == "probe offline" and result["apiCalls"] == 2
-    assert result["clisOk"] is True and result["catalog"]["models"][0]["id"] == "model-a"
+    assert result["clisOk"] is True and result.get("catalog") is None  # plus de modèle principal à lister ici (Slice 07)
     assert result["mounts"] == 1 and result["destroys"] == 0
     assert result["sameController"] is True
     assert result["controllerState"] == {"search": "needle", "compare": ["model-a"]}
     assert result["fullRenders"] == 0 and result["revision"] == 9
-    assert result["partialRenders"] == 4
+    assert result["partialRenders"] == 3  # échec, nouvelle sonde, réussite
     assert set(result["bindCounts"]) == {1}
 
 
-def test_cli_and_model_hydrations_ignore_stale_or_closed_render(tmp_path: Path):
+def test_cli_hydration_ignores_a_closed_render(tmp_path: Path):
     page = PAGE.read_text(encoding="utf-8")
-    cli_hydrate = page[page.index("async function hydrateCliAgents") : page.index("async function hydrateCliModel")]
-    model_hydrate = page[page.index("async function hydrateCliModel") : page.index("function renderRoutingAdvanced")]
-    assert "renderTab()" not in cli_hydrate + model_hydrate
+    cli_hydrate = page[page.index("async function hydrateCliAgents") : page.index("/* Redessiner la section jette le focus")]
+    assert "renderTab()" not in cli_hydrate
     result = run_node(
         tmp_path,
         {},
         """
         function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no});return {promise,resolve,reject}}
-        const cliRequest=deferred(),modelRequest=deferred();let renders=0,modelCalls=0;
-        const SET={open:true,section:'main_agent',agentSection:'main_agent',renderRevision:3,clis:null,cliGeneration:0,cliModelGeneration:0,catalog:{},draft:{cli:{agent:'claude'}}};
+        const cliRequest=deferred();let renders=0;
+        const SET={open:true,section:'runtime_cli',agentSection:'runtime_cli',renderRevision:3,clis:null,cliGeneration:0,catalog:{},draft:{cli:{agent:'claude'}}};
         const currentAgentSection=revision=>SET.open&&SET.section===SET.agentSection&&revision===SET.renderRevision;
-        const api=()=>cliRequest.promise,renderTab=()=>{renders+=1};
-        const requestCatalog=async()=>{modelCalls+=1;await modelRequest.promise;return {ok:true,models:[]}};
+        const api=()=>cliRequest.promise,renderTab=()=>{renders+=1},renderCliTechnical=()=>{renders+=1};
         """
         + cli_hydrate
-        + model_hydrate
         + """
         (async()=>{
           const cli=hydrateCliAgents(3);SET.open=false;cliRequest.reject(new Error('probe failed'));await cli;
-          const closed={clis:SET.clis,renders};
-          SET.open=true;SET.renderRevision=4;SET.clis={agents:[{id:'claude',model_provider:'anthropic'}]};
-          const model=hydrateCliModel(4);SET.renderRevision=5;modelRequest.resolve();await model;
-          process.stdout.write(JSON.stringify({closed,renders,modelCalls,catalog:SET.catalog}));
+          process.stdout.write(JSON.stringify({clis:SET.clis,renders}));
         })().catch(error=>{console.error(error);process.exitCode=1});
         """,
     )
 
-    assert result["closed"] == {"clis": None, "renders": 0}
-    assert result["modelCalls"] == 1 and result["renders"] == 0
-    assert result["catalog"] == {}
+    assert result == {"clis": None, "renders": 0}
 
 
 @pytest.mark.asyncio

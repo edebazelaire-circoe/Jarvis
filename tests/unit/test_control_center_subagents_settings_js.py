@@ -254,7 +254,12 @@ def test_served_page_carries_the_sections_and_the_module(tmp_path):
     served = asyncio.run(ControlCenter(runtime_root=tmp_path, project_root=tmp_path).index(None)).text
     # jarvis-settings-ui-reorganization Slice 04 : plus d'onglet `subagents` ; deux sections du même module.
     assert "{id:'subagents',label:'Sous-agents',save:false}" not in served
-    assert "{id:'subagents',category:'agents_models',order:40,label:'Rôles des sous-agents',view:'roles'," in served
+    # jarvis-architecture-agents-settings-editor Slice 07 : `subagents` est l'onglet « Sous-agents » d'Architecture &
+    # Agents, servi avec le transport de la politique par rôle (inséré avant le module, qui le lit au chargement).
+    assert "{id:'subagents',category:'agents_models',order:20,label:'Sous-agents',view:'roles'," in served
+    assert served.index("root.JarvisSubagentRouting=") < served.index("root.JarvisSubagentSettings=Object.freeze")
+    assert "routing=mode==='roles'?window.JarvisSubagentSettings.createRoutingHttpAdapter():undefined" in served
+    assert "/*__CONTROL_CENTER_SUBAGENT_ROUTING_JS__*/" not in served
     assert "{id:'work_methods',category:'advanced_diagnostics',group:'labs',order:50,advanced:true,label:'Work Methods apprises',view:'work_methods'," in served
     assert "root.JarvisSubagentSettings=Object.freeze" in served
     assert "/*__CONTROL_CENTER_SUBAGENTS_SETTINGS_JS__*/" not in served
@@ -406,7 +411,7 @@ def test_served_page_hides_the_empty_footer_scrolls_the_active_tab_and_links_mod
     out = run_node(tmp_path, payload, """
 const opened=[];const v=M.create(host,{fetch:reply,openTab:t=>opened.push(t),...quiet});await v.load();
 process.stdout.write(JSON.stringify({html:host.innerHTML}));""")
-    assert "data-sar-open-models" in out["html"] and "Agents &amp; modèles › Modèles des sous-agents" in out["html"]
+    assert "data-sar-open-models" in out["html"] and "Avancé &amp; diagnostic › Runtime &amp; CLI" in out["html"]
     assert "Agent / CLI" not in out["html"]
     assert 'aria-live' not in out["html"]  # la fiche n'est plus une région live
 

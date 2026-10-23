@@ -36,7 +36,7 @@ HTML = RUNTIME / "control_center.html"
 
 CATEGORIES = [
     ("voice_audio", "Personnalisation"),
-    ("agents_models", "Brains & Architecture"),
+    ("agents_models", "Architecture & Agents"),
     ("memory_knowledge", "Mémoire & Connaissances"),
     ("interface_interactions", "Interface & Interactions"),
     ("connections", "Plugins & MCP"),
@@ -45,9 +45,16 @@ CATEGORIES = [
 #: Alias hérités encore servis après la Slice 09, et l'appelant du dépôt qui les garde.
 ALIASES = {
     "memory": ("memory_knowledge", "recall"),
+    # jarvis-architecture-agents-settings-editor, Slice 07 : sections retirées, liens durables redirigés.
+    "main_agent": ("agents_models", "architecture"),
+    "subagent_models": ("agents_models", "subagents"),
 }
+#: Appelant de chaque alias, chemin depuis la racine du dépôt : un module de la page, ou le document durable qui
+#: publie l'ancien identifiant (`docs/legacy/settings-tab-aliases.md`).
 ALIAS_CALLERS = {
-    "memory": ("control_center_memory.js", "root.selectTab('memory')"),
+    "memory": ("jarvis/runtime/control_center_memory.js", "root.selectTab('memory')"),
+    "main_agent": ("docs/legacy/settings-tab-aliases.md", "| `main_agent` | alias →"),
+    "subagent_models": ("docs/legacy/settings-tab-aliases.md", "| `subagent_models` | alias →"),
 }
 #: Anciens ID d'onglet et ancres retirés à la Slice 09 (plus aucun appelant ni document durable) : inconnus.
 RETIRED_IDS = ("voice", "wakeword", "cli", "routing", "keys", "appearance", "experimental",
@@ -99,8 +106,7 @@ SLICE_03_SECTIONS = (
     ("diagnostics", "advanced_diagnostics", 40, "readonly"),
 )
 SLICE_04_SECTIONS = (
-    ("main_agent", "agents_models", 10, "footer"), ("agent_behavior", "voice_audio", 8, "footer"),
-    ("subagent_models", "agents_models", 30, "footer"), ("subagents", "agents_models", 40, "self"),
+    ("agent_behavior", "voice_audio", 8, "footer"), ("subagents", "agents_models", 20, "self"),
     ("runtime_cli", "advanced_diagnostics", 30, "footer"), ("work_methods", "advanced_diagnostics", 50, "self"),
 )
 SLICE_05_SECTIONS = (
@@ -113,11 +119,13 @@ SLICE_06_SECTIONS = (
     ("bare_hands", "interface_interactions", 30, "self"), ("barehands_lab", "advanced_diagnostics", 60, "self"),
 )
 SLICE_07_SECTIONS = (("mcp_plugins", "connections", 5, "readonly"), ("providers", "connections", 10, "self"))
+#: jarvis-architecture-agents-settings-editor, Slice 07 : les deux onglets d'Architecture & Agents.
+ARCHITECTURE_AGENTS_SECTIONS = (("architecture", "agents_models", 10, "self"),)
 SLICE_08_SECTIONS = (
     ("prompts", "advanced_diagnostics", 10, "self"), ("scene_gate", "advanced_diagnostics", 40, "self"),
 )
 ALL_SECTIONS = (*SLICE_03_SECTIONS, *SLICE_04_SECTIONS, *SLICE_05_SECTIONS, *SLICE_06_SECTIONS, *SLICE_07_SECTIONS,
-                *SLICE_08_SECTIONS)
+                *SLICE_08_SECTIONS, *ARCHITECTURE_AGENTS_SECTIONS)
 
 
 def _group(section_id: str) -> str:
@@ -246,7 +254,7 @@ out({{aliases:R.LEGACY_TAB_ALIASES,frozen:Object.isFrozen(R.LEGACY_TAB_ALIASES)&
     for alias, (category, section) in ALIASES.items():
         assert out["resolved"][alias] == {"category": category, "section": section, "source": "alias"}
         name, call = ALIAS_CALLERS[alias]
-        assert call in (RUNTIME / name).read_text(encoding="utf-8"), (alias, name)
+        assert call in (ROOT / name).read_text(encoding="utf-8"), (alias, name)
     assert all(hit is None and legacy is None for _t, hit, legacy in out["retired"]), out["retired"]
     assert {k: (v["category"], v["section"], v["source"]) for k, v in out["oldTabSections"].items()} == {
         k: (*v, "section") for k, v in SECTION_IDS_FROM_OLD_TABS.items()}
@@ -282,7 +290,7 @@ def test_category_cycle_wraps_in_canonical_order(tmp_path):
 PLANNED_SECTIONS = {
     "voice_audio": ["theme_scene", "agent_behavior", "conversation", "voice_output", "microphone_sound",
                     "turns_interruptions", "wake_word"],
-    "agents_models": ["main_agent", "subagent_models", "subagents"],
+    "agents_models": ["architecture", "subagents"],  # exactement deux onglets (D02)
     "memory_knowledge": ["recall", "semantic_retrieval", "consolidation", "knowledge_sources", "memory_center"],
     "interface_interactions": ["shortcuts", "bare_hands"],
     "connections": ["mcp_plugins", "providers"],
@@ -356,7 +364,7 @@ def test_page_routes_categories_sections_and_aliases_into_the_six_category_shell
         "voice_audio": [("section", "theme_scene"), ("section", "agent_behavior"), ("section", "conversation"),
                         ("section", "voice_output"), ("section", "microphone_sound"),
                         ("section", "turns_interruptions"), ("section", "wake_word")],
-        "agents_models": [("section", "main_agent"), ("section", "subagent_models"), ("section", "subagents")],
+        "agents_models": [("section", "architecture"), ("section", "subagents")],
         "memory_knowledge": [("section", "recall"), ("section", "semantic_retrieval"), ("section", "consolidation"),
                              ("section", "knowledge_sources"), ("section", "memory_center")],
         "interface_interactions": [("section", "shortcuts"), ("section", "bare_hands")],
@@ -461,8 +469,9 @@ out({seen,warn,resolved:['cli','routing','subagents'].map(t=>R.page.resolve(t))}
     assert seen["subagents"] == ["agents_models", "subagents"]
     assert seen["agents_models"] == ["agents_models", "subagents"]  # dernière entrée ouverte de la catégorie
     assert seen["work_methods"] == ["advanced_diagnostics", "work_methods"]
-    assert seen["main_agent"] == ["agents_models", "main_agent"]
-    assert seen["subagent_models"][1] == "subagent_models" and seen["agent_behavior"][1] == "agent_behavior"
+    # Slice 07 (jarvis-architecture-agents-settings-editor) : les sections retirées sont des alias vers les onglets.
+    assert seen["main_agent"] == ["agents_models", "architecture"]
+    assert seen["subagent_models"] == ["agents_models", "subagents"] and seen["agent_behavior"][1] == "agent_behavior"
     assert seen["runtime_cli"] == ["advanced_diagnostics", "runtime_cli"]
     # Un ID retiré ne déplace rien (`selectTab`) et se dit.
     assert seen["cli"] == seen["routing"] == ["advanced_diagnostics", "runtime_cli"]
