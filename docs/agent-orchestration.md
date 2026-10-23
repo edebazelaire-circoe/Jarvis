@@ -55,7 +55,10 @@ Mission Owner reçoit la note de compte rendu assortie ; contrat : [subagent-rol
 
 Pour chaque appel `Agent`/`Task` (`routing_hook.run`) :
 
-1. **Garde de lancement** (`decide_spawn_guard`), avant tout :
+0. **Tendance de délégation du cerveau** (`_delegation_guard`), avant tout : si le cerveau Core vaut `never`
+   (`<runtime>/brain-config.json`, [brain-config.md](brain-config.md) § 3), un appel du cerveau (`agent_id`
+   absent) est refusé `brain_delegation_never` ; un appel imbriqué passe. Fichier illisible : `standard`.
+1. **Garde de lancement** (`decide_spawn_guard`) :
    - appel émis depuis le type restreint (`agent_type == "jarvis-no-spawn"`) : refus `caller_cannot_spawn` ;
    - borne de sûreté : au plus `MAX_SPAWNS_PER_WINDOW` (120) lancements par `SPAWN_WINDOW_S` (600 s), tous
      cerveaux du poste confondus, comptés sur les noms du registre local : refus `spawn_rate_cap` avec une

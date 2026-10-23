@@ -302,7 +302,14 @@ The runtime topology (microphone, voice surface, Luna, Core, Tool Brain,
 sub-agents, speakers) is projected per effective voice architecture as an
 editable graph whose toggleable links are real runtime settings
 (`brain_orchestration`, `voice_surface.back_brain_delegation`,
-`tool_brain.mode`): [architecture-graph.md](architecture-graph.md).
+`tool_brain.mode`): [architecture-graph.md](architecture-graph.md). Each brain
+of that graph (`voice`, `luna`, `core`, `tool_brain`) has a contextual
+configuration read from its existing owners (model/provider, prompt overrides,
+Tool Brain mode) plus one value of its own, the Core delegation tendency
+(`never` | `rare` | `standard` | `proactive` | `exploratory`, in
+`<runtime>/brain-config.json`); `never` really removes the `Agent` tool from the
+brain CLI and the routing hook refuses the brain's `Agent` calls:
+[brain-config.md](brain-config.md).
 
 Continuous mode fails loudly instead of degrading: it refuses manual turn mode,
 and it refuses any voice stack that does not implement the semantic output

@@ -15,6 +15,7 @@ from jarvis.domain import (
     agenda_reminders, agent_charter, context_enrichment_prompt, conversation_prompt, front_brain_prompt, live_prompt,
     presentation_studio_authoring_policy, subagent_roles, work_attention_prompt,
 )
+from jarvis.domain.brain_config import DEFAULT_DELEGATION, DelegationTendency, apply_delegation_rule
 from jarvis.domain.prompt_registry import (
     PromptDescriptor,
     PromptOperation,
@@ -107,6 +108,17 @@ def _global_context(values: Mapping[str, object]) -> str:
     return global_context.render_global_context_prompt(values.get("global_context"))
 
 
+def _brain_system(values: Mapping[str, object]) -> str:
+    # Valeur absente (aperçu, tests) ou illisible : `standard`, le prompt d'avant ce réglage. La lecture stricte
+    # du réglage vit dans `brain_config_store` ; ici une valeur inattendue ne doit jamais casser le lancement.
+    raw = values.get(claude_local.BRAIN_DELEGATION_VARIABLE)
+    try:
+        level = DelegationTendency(raw) if isinstance(raw, str) else DEFAULT_DELEGATION
+    except ValueError:
+        level = DEFAULT_DELEGATION
+    return apply_delegation_rule(claude_local.BRAIN_SYSTEM_PROMPT, level)
+
+
 def _request_text(values: Mapping[str, object]) -> str:
     request_text = values.get("request_text")
     return request_text if isinstance(request_text, str) else ""
@@ -159,8 +171,10 @@ def default_prompt_registry() -> PromptRegistry:
                     apply_policy="read_only"),
         _descriptor("live.duplex.addition", _THIS_MODULE, "LIVE_DUPLEX_ADDITION", LIVE_DUPLEX_ADDITION,
                     editable=True, apply_policy="next_session"),
+        # Rendu par `_brain_system` (docs/brain-config.md) : la tendance de délégation du cerveau Core remplace
+        # une seule phrase ; sans variable ou en `standard`, le texte rendu est `BRAIN_SYSTEM_PROMPT` tel quel.
         _descriptor("backend.claude.conversation.system", claude_local, "BRAIN_SYSTEM_PROMPT",
-                    claude_local.BRAIN_SYSTEM_PROMPT, apply_policy="read_only"),
+                    claude_local.BRAIN_SYSTEM_PROMPT, dynamic=True, apply_policy="read_only"),
         # Consigne d'affichage (Slice 06) : seulement dans le programme
         # `conversation_display_session`, choisi quand `scene.enabled` est vrai.
         # Consigne des réglages (20/09/2026) : dans **les quatre** programmes de
@@ -433,4 +447,5 @@ def default_prompt_registry() -> PromptRegistry:
         "backend.turn.brief": _backend_brief,
         "backend.turn.request": _request_text,
         "backend.claude.conversation.global_context": _global_context,
+        "backend.claude.conversation.system": _brain_system,
     })

@@ -60,7 +60,7 @@ Seuls les nœuds qui existent dans l'architecture vocale effective sont projeté
 | Sous-agents (pool CLI, outil `Agent`) | `subagents` | toujours |
 | Haut-parleurs (sortie audio) | `speakers` | toujours |
 
-Les identifiants de nœud sont stables ; la configuration des cerveaux (Slice 02) les réutilise.
+Les identifiants de nœud sont stables ; la configuration des cerveaux les réutilise ([brain-config.md](brain-config.md)).
 
 ## 3. Liaisons et mutabilité
 
@@ -94,7 +94,13 @@ Les identifiants de nœud sont stables ; la configuration des cerveaux (Slice 02
   `active` si c'était la valeur persistée ; la désactiver écrit `off`.
 - **Sous-agents** : lecture seule sur le graphe, `governed_by = {"kind": "brain_config", "node": "core",
   "field": "delegation"}`. Son seul écrivain est le champ de délégation de la configuration du cerveau
-  (Slice 02) ; `applies` est alors celui de ce champ.
+  (`<runtime>/brain-config.json`, [brain-config.md](brain-config.md) § 3) ; `applies` est alors celui de ce champ.
+  `enabled = delegation != never` : `never` retire l'outil `Agent` au lancement du CLI cerveau et le hook refuse
+  l'appel du cerveau dès l'appel suivant. La tendance n'entre dans la révision de topologie que hors du défaut
+  `standard`.
+- **Mode du Tool Brain** (`off` | `shadow` | `active`) : réglage du nœud, écrit par
+  `ArchitectureGraphService.set_tool_brain_mode` (fenêtre du cerveau), même bloc `tool_brain.mode` et même
+  révision que la liaison.
 
 ## 4. Écritures
 
@@ -163,7 +169,8 @@ Une disposition illisible est signalée (`architecture.layout.unreadable`) puis 
 
 - L'environnement consulté pour « imposé par l'environnement » et pour l'architecture vocale est celui du
   processus du Control Center, qui héberge le service ; Core et Voice sont lancés avec le même `.env`.
-- Le verrou ne sérialise que les écritures du graphe ; une écriture concurrente de `/api/settings` est détectée
-  par la révision calculée, pas empêchée.
+- Le verrou (`write_lock`) sérialise les écritures du graphe et celles de la configuration des cerveaux
+  ([brain-config.md](brain-config.md), qui réutilise `write_settings` pour l'écriture et la bascule de Voice) ;
+  une écriture concurrente de `/api/settings` est détectée par la révision calculée, pas empêchée.
 - La règle de bascule de Voice existe aussi en ligne dans `ControlCenter` ; elle sera mise en commun au
   branchement des routes (Slice 07).

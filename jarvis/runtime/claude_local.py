@@ -12,10 +12,11 @@ import uuid
 
 from jarvis.adapters import global_context, safe_folders
 from jarvis.domain import agent_orchestration
+from jarvis.domain.brain_config import DEFAULT_DELEGATION, DelegationTendency
 from jarvis.domain.brain_notice import NoticeTyping
 from jarvis.domain.subagent_roles import brain_rules
 from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, SpeechKind
-from jarvis.runtime import routing_hook
+from jarvis.runtime import brain_config_store, routing_hook
 from jarvis.runtime.routing_hook import PROFILE_RULE
 from jarvis.runtime.agent_tasks import EPHEMERAL_MARKER, AgentTaskTracker
 from jarvis.runtime.subagent_conversation import SubagentConversationScope, consumed_message_uuids
@@ -126,6 +127,11 @@ MÉMOIRE DE BOARD
 RETOURS UTILISATEUR
 Quand l'utilisateur signale un dysfonctionnement de JARVIS constaté en usage, la fiche va dans le dossier de la session en cours, donné par la variable d'environnement JARVIS_FEEDBACK_DIR (retours-utilisateur/<lancement de JARVIS en secondes Unix>, déjà créé). Jamais à la racine de retours-utilisateur. Transmets ce chemin au sous-agent qui écrit la fiche.
 """
+
+#: Variable du programme de conversation qui porte la tendance de délégation du cerveau Core : le catalogue
+#: (`prompt_catalog`) remplace la phrase « Dans le doute, délègue. » de `BRAIN_SYSTEM_PROMPT` par la consigne du
+#: niveau (`jarvis.domain.brain_config.apply_delegation_rule`). Absente ou `standard` : prompt inchangé.
+BRAIN_DELEGATION_VARIABLE = "brain_delegation"
 
 # Consigne d'affichage, ajoutée après `BRAIN_SYSTEM_PROMPT` seulement quand
 # `scene.enabled` est vrai et que le serveur MCP `jarvis-display` est déclaré au
@@ -681,6 +687,8 @@ class ClaudeLocalAgent:
         self._barehands_tools_active = False
         self._console_tools_active = False
         self._display_prompt_active = False
+        #: Tendance de délégation reçue par le processus en cours (`None` avant le premier lancement).
+        self.launched_delegation: str | None = None
         from jarvis.runtime.prompt_runtime import normalize_prompt_overrides
         self._prompt_overrides = normalize_prompt_overrides(prompt_overrides)
         self.prompt_applications: list[dict[str, object]] = []
@@ -1137,6 +1145,24 @@ class ClaudeLocalAgent:
                 invocation = "conversation_" + conversation_session_name(
                     tools=bool(tools_args), display=bool(display_args), hands=bool(barehands_args), studio=bool(studio_args))
             prompt_variables: dict[str, object] = {}
+            # Tendance de délégation du cerveau Core (docs/brain-config.md) : relue à chaque lancement, pour le CLI
+            # cerveau comme pour un job Back Brain. `never` retire l'outil qui lance les sous-agents (le hook refuse
+            # aussi, en défense en profondeur) ; les autres niveaux ne changent que la consigne de conversation, et
+            # `standard` la laisse identique octet pour octet. Un profil restreint n'a déjà aucun outil de lancement.
+            delegation = DEFAULT_DELEGATION
+            if self.execution_profile not in RESTRICTED_PROFILES:
+                loaded_config = brain_config_store.load(self.runtime_root)
+                delegation = loaded_config.document.delegation_for("core")
+                if loaded_config.error_code:
+                    self.journal.emit(
+                        "agent.delegation.unreadable",
+                        "Configuration des cerveaux illisible : le CLI démarre avec la tendance standard.",
+                        level="warning", data={"code": loaded_config.error_code,
+                                               "execution_profile": self.execution_profile})
+            spawn_args = (["--disallowedTools", *agent_orchestration.SPAWN_TOOLS]
+                          if delegation is DelegationTendency.NEVER else [])
+            if self.execution_profile == "conversation":
+                prompt_variables[BRAIN_DELEGATION_VARIABLE] = delegation.value
             if self.execution_profile == "conversation" and self.global_context_dir is not None:
                 # Relu à chaque lancement : c'est ainsi qu'une modification faite
                 # par l'agent devient son prochain prompt initial. Hors de la boucle.
@@ -1238,6 +1264,8 @@ class ClaudeLocalAgent:
                     *drive_args,
                     *tools_args,
                     *restricted_args,
+                    # `--disallowedTools` est variadique comme `--add-dir` : toujours suivi d'une option.
+                    *spawn_args,
                     # `--add-dir` est variadique : toujours suivi d'une option.
                     *(["--add-dir", *map(str, add_dirs)] if add_dirs else []),
                     *permission_args,
@@ -1269,6 +1297,17 @@ class ClaudeLocalAgent:
             self._drive_tools_active = bool(drive_args)
             self._workspace_tools_active = bool(workspace_args)
             self._tools_gateway_active = bool(tools_args)
+            self.launched_delegation = delegation.value
+            if self.execution_profile == "conversation":
+                # Publication du dernier lancement du CLI cerveau : le graphe y lit ce que le CLI vivant a reçu
+                # (outil retiré ou non, consigne), pour afficher `pending` jusqu'à sa relance (docs/brain-config.md).
+                try:
+                    brain_config_store.publish_launch(self.runtime_root, delegation, pid=self.process.pid)
+                except OSError as exc:
+                    self.journal.emit("agent.delegation.publish_failed",
+                                      "Lancement du cerveau non publié : le graphe montrera la valeur enregistrée.",
+                                      level="warning", data={"code": "brain_launch_publish_failed",
+                                                             "error_class": type(exc).__name__})
             if not resume_args:
                 self._display_prompt_active = bool(display_args)
             self.subtasks.process_started()
@@ -1283,7 +1322,8 @@ class ClaudeLocalAgent:
                                                     "console_mcp": bool(console_args), "tools_mcp": bool(tools_args),
                                                     "capture_mcp": bool(capture_args), "drive_mcp": bool(drive_args),
                                                     "workspace_mcp": bool(workspace_args), "presentation_mcp": bool(studio_args), "remotion_mcp": bool(remotion_args), "memory_mcp": bool(memory_args),
-                                                    "add_dirs": [str(path) for path in add_dirs]})
+                                                    "add_dirs": [str(path) for path in add_dirs],
+                                                    "delegation": delegation.value, "spawn_tools_removed": bool(spawn_args)})
             self.journal.emit("agent.prompt", "Prompt application recorded", data=applied)
             self._reader_task = asyncio.create_task(self._read_stdout(), name="jarvis-claude-stdout")
             self._stderr_task = asyncio.create_task(self._read_stderr(), name="jarvis-claude-stderr")

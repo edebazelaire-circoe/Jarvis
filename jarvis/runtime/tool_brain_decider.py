@@ -5,7 +5,9 @@ Contrat : `docs/tool-brain-contracts.md` §13. Le port est `jarvis/ports/tool_br
 - `ModelToolBrainDecider` : texte en entrée, JSON en sortie, **aucun outil**. Il réutilise le modèle texte déjà
   construit pour le worker d'enrichissement (`ClaudeCliEnrichmentModel` : CLI Claude en profil restreint
   `speculative_analysis`, `--tools ""`, sans MCP, sans session) ; seul le nom du modèle change :
-  `JARVIS_TOOL_BRAIN_MODEL`, sinon `DEFAULT_TOOL_BRAIN_MODEL`. Remplacer le fournisseur = fournir un autre
+  `JARVIS_TOOL_BRAIN_MODEL` (posée non vide : prioritaire), sinon le réglage persistant `tool_brain.model` de
+  `control-center-settings.json` (Slice 02, docs/brain-config.md), sinon `DEFAULT_TOOL_BRAIN_MODEL`, relu à chaque
+  décision. Remplacer le fournisseur = fournir un autre
   `TextModel` (même forme que `ContextEnrichmentModel`), sans toucher perception, manifeste ni validateur.
   Sans CLI Claude natif : le fournisseur rend `None`, le runtime dit `unavailable` et attend (backoff), l'interface
   ne bouge pas.
@@ -34,6 +36,8 @@ from jarvis.runtime.context_enrichment_model import ClaudeCliEnrichmentModel
 from jarvis.runtime.tool_brain_perception import INSPECTION_READS
 
 TOOL_BRAIN_MODEL_ENV = "JARVIS_TOOL_BRAIN_MODEL"
+#: Champ du bloc `tool_brain` de `control-center-settings.json` (le bloc porte aussi `mode`).
+TOOL_BRAIN_MODEL_FIELD = "model"
 TOOL_BRAIN_DECIDER_ENV = "JARVIS_TOOL_BRAIN_DECIDER"
 #: Alias du CLI Claude : rapide et bon marché pour un choix borné parmi des valeurs données (changeable par env).
 DEFAULT_TOOL_BRAIN_MODEL = "haiku"
@@ -63,9 +67,24 @@ timing "now". Prefer tying an action to the speech or to a fact over a clock: {"
 - The reads are: """
 
 
-def tool_brain_model_name(environ: Mapping[str, str] | None = None) -> str:
+def tool_brain_model_source(environ: Mapping[str, str] | None = None,
+                            settings: Mapping[str, object] | None = None) -> tuple[str, str]:
+    """Modèle du décideur et sa provenance : `env` (variable posée, prioritaire), `settings` ou `default`."""
+
     env = os.environ if environ is None else environ
-    return str(env.get(TOOL_BRAIN_MODEL_ENV, "") or "").strip() or DEFAULT_TOOL_BRAIN_MODEL
+    from_env = str(env.get(TOOL_BRAIN_MODEL_ENV, "") or "").strip()
+    if from_env:
+        return from_env, "env"
+    block = (settings or {}).get("tool_brain")
+    saved = block.get(TOOL_BRAIN_MODEL_FIELD) if isinstance(block, Mapping) else None
+    if isinstance(saved, str) and saved.strip():
+        return saved.strip(), "settings"
+    return DEFAULT_TOOL_BRAIN_MODEL, "default"
+
+
+def tool_brain_model_name(environ: Mapping[str, str] | None = None,
+                          settings: Mapping[str, object] | None = None) -> str:
+    return tool_brain_model_source(environ, settings)[0]
 
 
 def build_prompt(request: ToolBrainRequest) -> str:
@@ -161,12 +180,13 @@ def tool_brain_decider_provider(control_settings: Callable[[], Mapping[str, obje
         from jarvis.runtime.back_brain_worker import BackBrainJobWorker
         from jarvis.runtime.cli_catalog import resolve_command
 
-        settings = resolve_agent_execution(control_settings(), cwd=cwd, runtime_root=runtime_root)
+        control = control_settings()
+        settings = resolve_agent_execution(control, cwd=cwd, runtime_root=runtime_root)
         if settings.agent_cli != "claude":
             return None
         if not BackBrainJobWorker._supports_speculative_settings(settings, resolve_command(settings.command)):
             return None
-        return ModelToolBrainDecider(_ToolBrainCliModel(settings, tool_brain_model_name(env)))
+        return ModelToolBrainDecider(_ToolBrainCliModel(settings, tool_brain_model_name(env, control)))
 
     return provide
 
@@ -182,5 +202,6 @@ class _ToolBrainCliModel(ClaudeCliEnrichmentModel):
 
 __all__ = [
     "DEFAULT_TOOL_BRAIN_MODEL", "ModelToolBrainDecider", "RuleToolBrainDecider", "TOOL_BRAIN_DECIDER_ENV",
-    "TOOL_BRAIN_MODEL_ENV", "build_prompt", "parse_plan", "tool_brain_decider_provider", "tool_brain_model_name",
+    "TOOL_BRAIN_MODEL_ENV", "TOOL_BRAIN_MODEL_FIELD", "build_prompt", "parse_plan", "tool_brain_decider_provider",
+    "tool_brain_model_name", "tool_brain_model_source",
 ]

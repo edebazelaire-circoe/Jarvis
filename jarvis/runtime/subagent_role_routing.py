@@ -146,7 +146,9 @@ def load(runtime_root: Path) -> LoadedDocument:
     except FileNotFoundError:
         # Normal au premier démarrage et tant que personne n'a réglé un rôle : tout hérite.
         return LoadedDocument(role_routing.EMPTY_DOCUMENT, {})
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
+        # `UnicodeDecodeError` : fichier en UTF-16 (`Out-File` de PowerShell 5.1) ou octets abîmés ; illisible,
+        # jamais une exception qui ferait passer les appels `Agent` du hook sans politique.
         return LoadedDocument(role_routing.EMPTY_DOCUMENT, {}, UNREADABLE_CODE,
                               f"{STORE_UNREADABLE_REASON} ({type(exc).__name__})")
     try:
