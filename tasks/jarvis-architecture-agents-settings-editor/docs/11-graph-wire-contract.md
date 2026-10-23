@@ -69,3 +69,14 @@ Réponse : `200 {"ok": true, "snapshot": {…}}` (snapshot complet faisant foi) 
 
 `{"revision": "l-3", "positions": {"voice": {"x": 120, "y": 80}}}` ; `PUT` avec `base_revision`.
 Stockée à part, ne change jamais le runtime ; `409 layout_revision_stale`.
+
+## Ajouts acceptés par agent 0 après la Slice 01 (2026-10-23)
+
+- `applies: "voice_restart"` : réglage relu au démarrage de Voice (l'écriture demande la bascule de Voice,
+  même règle que `POST /api/settings`).
+- Une liaison `governed` a `applies: null` : c'est le champ qui la gouverne qui déclare son application.
+- Codes : `connection_unbindable`, `connection_not_removable` (422), `architecture_request_invalid` (400),
+  `architecture_snapshot_failed` (500), `layout_invalid` (400), `layout_write_failed` (500).
+- Champs : `node.details` (objet libre), `voice_architecture.source`. `GET` rend le snapshot sans enveloppe.
+- Ids de nœuds : `mic`, `voice`, `luna` (front_brain seulement), `core`, `tool_brain`, `subagents`,
+  `speakers`. La Slice 02 écrit `delegation` sur `core` (`brain_config.core.delegation`).
