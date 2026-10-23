@@ -185,7 +185,7 @@ def test_shift_f10_and_right_click_open_the_brain_menu_and_configure_emits_the_e
     assert out[6] == [True, "voice"]
     assert out[8] == "core"
     configured, events, closed = out[10]
-    assert configured == [["core", "menu"]] and events == [{"nodeId": "core", "field": None, "source": "menu"}] and closed
+    assert configured == [["core", "menu"]] and events == [{"nodeId": "core", "field": None, "source": "menu", "opener": "node"}] and closed
     assert out[12] == "tool"
     # Un endpoint n'est pas un cerveau : le clic droit n'ouvre aucun menu.
     assert out[14] is True

@@ -241,8 +241,8 @@ out({voice,afterConfigure,endpoint,tool,calls,noAdapter:host.innerHTML,seen,even
     assert 'role="menu"' in voice and voice.index("Configurer…") < voice.index("Inspecter")
     assert "La surface vocale porte l'audio" in voice.replace("&#39;", "'") and "Désactiver" not in voice
     assert out["afterConfigure"]["menu"] is None
-    assert out["seen"] == [["voice", {"nodeId": "voice", "field": None, "source": "menu"}]]
-    assert ["architecture:configure-brain", {"nodeId": "voice", "field": None, "source": "menu"}] in out["events"]
+    assert out["seen"] == [["voice", {"nodeId": "voice", "field": None, "source": "menu", "opener": "node"}]]
+    assert ["architecture:configure-brain", {"nodeId": "voice", "field": None, "source": "menu", "opener": "node"}] in out["events"]
     assert out["endpoint"] is None, "un endpoint n'a pas de menu de cerveau"
     assert 'data-arch-menu="activate"' in out["tool"]
     assert out["calls"] == [["tool", {"base_revision": "t-17", "active": True}]]
@@ -256,7 +256,7 @@ v.select('connection','{GOVERNED}');const html=host.innerHTML;
 const gb=v.state.snapshot.connections.find(c=>c.id==='{GOVERNED}').governed_by;v.configure(gb.node,{{field:gb.field,source:'governed'}});
 out({{html,seen,events:host.events}});""")
     assert 'data-arch-act="governed"' in out["html"] and "Gouvernée" in out["html"]
-    assert out["seen"] == [["core", {"nodeId": "core", "field": "delegation", "source": "governed"}]]
+    assert out["seen"] == [["core", {"nodeId": "core", "field": "delegation", "source": "governed", "opener": None}]]
     assert out["events"][-1][1]["field"] == "delegation"
 
 

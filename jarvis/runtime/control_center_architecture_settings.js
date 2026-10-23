@@ -702,7 +702,8 @@
       if(returnFocus&&id)focus(opener==='button'?`[data-arch-menu-btn="${cssEsc(id)}"]`:`[data-arch-node="${cssEsc(id)}"]`);
     }
     function configure(nodeId,detail){
-      const d={nodeId,field:detail&&detail.field||null,source:detail&&detail.source||'menu'};
+      /* `opener` (`node` | `button`, menu seulement) : la fenêtre du cerveau y rend le focus à sa fermeture. */
+      const d={nodeId,field:detail&&detail.field||null,source:detail&&detail.source||'menu',opener:detail&&detail.opener||null};
       logInfo('architecture_settings.configure_brain',d);
       try{if(typeof opts.onConfigureBrain==='function')opts.onConfigureBrain(nodeId,d)}
       catch(e){logError('architecture_configure_failed',e,d);st.notice={tone:'bad',code:'architecture_configure_failed',text:'La fenêtre du cerveau n’a pas pu s’ouvrir : '+String(e&&e.message||e)};render()}
@@ -713,9 +714,9 @@
       return d;
     }
     function menuAction(action){
-      const id=st.menu&&st.menu.nodeId;if(!id)return;
+      const id=st.menu&&st.menu.nodeId,opener=st.menu&&st.menu.opener;if(!id)return;
       st.menu=null;
-      if(action==='configure'){render();configure(id,{source:'menu'})}
+      if(action==='configure'){render();configure(id,{source:'menu',opener})}
       else if(action==='inspect')select('node',id,{focusInspector:true});
       else if(action==='activate'||action==='deactivate')setActivation(id,action==='activate');
     }

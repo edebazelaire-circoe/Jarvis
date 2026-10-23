@@ -83,7 +83,7 @@ Fournis : `createHttpAdapter({fetch, base='/api/architecture', timeoutMs})` (rou
   mixtes, points), pictogramme (cadenas, interrupteur, prise, lien sortant) et texte. Légende compacte sous le graphe.
 - `prefers-reduced-motion` : transitions et pulsation des ports coupées, rotation d'attente ralentie.
 - **`architecture:configure-brain`** : `CustomEvent` émis sur l'hôte (bouillonne), `detail = {nodeId, field, source}`
-  avec `source` ∈ `menu | inspector | governed` et `field` le champ gouverneur (`delegation`…) ; `onConfigureBrain`
+  avec `source` ∈ `menu | inspector | governed`, `field` le champ gouverneur (`delegation`…) et `opener` (`node` | `button` pour le menu, sinon `null`) : la fenêtre du cerveau y rend le focus ; `onConfigureBrain`
   reçoit les mêmes valeurs.
 - Bandeau de l'architecture vocale effective, lecture seule, avec `data-settings-open="<settings_target>"`
   (`architecture_compat`), pris en charge par le lien interne des Réglages.
