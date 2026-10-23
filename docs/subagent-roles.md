@@ -639,3 +639,89 @@ mot restant dans le libellé (grammaire inchangée, `test_agent_markers_equivale
 Taille : `BRAIN_SYSTEM_PROMPT` 8 880 → 11 300 (première passe) → 10 661 (reprise QA) → 11 082 caractères
 (revérification) ; `brain_rules()` 2 412 → 3 550 → 3 648 (empreinte dans `tests/unit/test_scene_artifacts.py`). Une conversation ouverte
 avant ce changement garde l'ancienne consigne jusqu'au redémarrage de JARVIS (`--system-prompt-snapshot`).
+
+## 10. Routage par rôle : quels candidats servent un rôle
+
+Couche posée au-dessus du routage par profil (`jarvis/domain/routing.py`, `jarvis/runtime/agent_routing.py`) et
+du registre (§ 1), sans recopier ni l'un ni l'autre (`jarvis-architecture-agents-settings-editor`, Slice 03).
+Le cerveau annonce un **rôle** (et un profil) ; le runtime choisit le harness et le modèle. Le choix du modèle
+n'est jamais un champ de la configuration d'un cerveau.
+
+| Pièce | Fichier | Porte |
+| --- | --- | --- |
+| Contrat | `jarvis/domain/role_routing.py` | `RolePolicy`, `RoleRoutingDocument`, héritage, `resolve_for_role` ; sans I/O |
+| Stockage et lecture | `jarvis/runtime/subagent_role_routing.py` | fichier révisé, lecture tolérante, écriture stricte, `describe` |
+| HTTP (non monté) | `jarvis/runtime/subagent_role_routing_http.py` | `GET` / `PUT` / `DELETE`, montés par la Slice 07 |
+| Application | `jarvis/runtime/routing_hook.py` (`decide`, `_route`) | la politique du rôle annoncé, journalisée |
+
+**Politique d'un rôle.** Clé = id canonique du registre, alias résolus (`reviewer` -> `qa`). Une liste ordonnée
+de `CandidateRef(agent, model)` (l'ordre est la préférence, aucun poids) et `allow_general_fallback` : liste
+épuisée, la liste du profil `general` est tentée, même sémantique que pour un profil. Une liste explicite vide
+est refusée (`role_routing_empty_candidates`) : revenir à l'héritage, c'est **restaurer** le rôle. Une liste
+sans aucun candidat Claude (seul hôte de l'outil `Agent`) est refusée aussi (`role_routing_no_host_candidate`) :
+le hook ne pourrait jamais servir ce rôle et refuserait chacun de ses lancements. Les
+instructions, Work Methods, loadout, outils et compétences restent dans le registre ; rien n'est copié ici.
+
+**Migration non destructive.** Aucun rôle n'a de politique explicite au départ : chacun **hérite** de la liste
+du profil de son `default_profile` (provenance `inherited:<profil>`). Rien n'est écrit pour matérialiser cet
+héritage ; la politique par profil (`agent_routing`) reste intacte et toujours utilisée. Régler un rôle
+n'écrit que son entrée (provenance `explicit`) ; aucun autre rôle ne change. Restaurer retire l'entrée.
+
+**Stockage.** `<runtime>/subagent-role-routing.json`, à côté de `control-center-settings.json` et non dans une
+de ses clés : `POST /api/settings` réécrit ce fichier entier sans révision, une clé intérieure serait écrasée
+par tout enregistrement concurrent de la page Réglages. Le fichier dédié a un seul écrivain
+(`RoleRoutingStore`, verrou + écriture atomique `replace_with_retry`) et une révision entière, exposée
+`rr-<n>`. Fichier absent = tout hérite (révision `rr-0`). Le contenu est lu **strictement** : JSON
+invalide, mais aussi `revision` qui n'est pas un entier (`"7"`), `roles` qui n'est pas un objet, entrée de rôle
+mal formée (pas un objet, candidats invalides ou vides) ou `allow_general_fallback` non booléen (`"false"`)
+rendent le fichier **illisible** — rien n'est coercé (la révision ne recule jamais, le repli ne s'inverse
+jamais). Illisible : la lecture le dit (`store.status = unreadable`), le hook hérite de tout, et aucune
+écriture ne l'écrase (`role_routing_store_unreadable`). L'entrée d'un rôle retiré du registre est conservée,
+ni lue ni effacée, pourvu qu'elle soit un objet.
+
+**Résolution dans le hook** (hors réseau, déterministe). Si la description annonce un rôle actif :
+
+1. politique explicite du rôle : ses candidats, puis le repli `general` si permis ; sinon, en **Auto**, refus
+   explicite (comme pour un profil) ; en **Dupliqué**, le hook laisse passer (le CLI garde son modèle,
+   comportement d'avant) et journalise `agent.routing.decided` au niveau `warning`, `reason` =
+   `role_passthrough`, avec les verdicts — le cas typique est un cache de catalogue périmé qui rend tous les
+   candidats Claude indisponibles ;
+2. sinon héritage : exactement le routage par profil d'avant, avec le profil **annoncé** (`[code] [qa]` reste
+   routé par `code`, comme `PROFILE_RULE` l'enseigne), à défaut le `default_profile` du rôle (`[coder]` seul ->
+   `code`, auparavant `general`).
+
+Le profil retenu fixe toujours les capacités exigées (`[code]` exige `code`). Sans rôle annoncé, rien ne
+change. `agent.routing.decided` porte en plus `role_id` et `provenance` (`explicit` | `inherited:<profil>`) à
+côté de `reason` (`preferred` | `fallback` | `general_fallback`), et le message cite « rôle qa (explicit) ».
+
+**Auto / Dupliqué (`agent_routing.enabled`, compatibilité).** L'interrupteur reste lu et écrit comme avant,
+mais n'est plus le concept principal : une politique **explicite** de rôle s'applique quel que soit
+l'interrupteur (choix délibéré pour ce rôle) ; un rôle qui **hérite** suit la politique par profil, donc ne lie
+qu'en Auto. En Dupliqué sans rôle explicite, le hook se tait comme avant. Le repli `general` d'un rôle
+explicite utilise la liste `general` enregistrée même en Dupliqué (le repli a été demandé pour ce rôle).
+
+**Disponibilité.** Les candidats enregistrés disparus restent visibles, marqués, avec leur raison
+(`agent_routing.with_saved(..., extra_refs=...)`). `selectable` est faux pour un candidat indisponible ou
+d'un autre CLI que Claude (seul hôte de l'outil `Agent`), avec `selectable_reason`.
+
+**Lecture `GET /api/subagent-role-routing`** — forme figée par `tests/fixtures/subagent_role_routing.json`
+(produite par le code : `JARVIS_WRITE_ROLE_ROUTING_FIXTURE=1 pytest tests/unit/test_subagent_role_routing.py`) :
+`revision`, `applies` (`live` : vaut au prochain lancement), `store`, `catalog`, `compatibility`
+(`delegation_mode`, `profiles_enabled`), `harnesses` (catalogue, `agent_routing.group_by_harness`) et `roles[]`
+dans l'ordre du registre : `role_id`, `marker`, `name`, `aliases`, `default_profile`, `provenance`, `explicit`,
+`inherited_profile`, `binding` + `binding_reason`, `restorable`, `allow_general_fallback`, `candidates[]`
+(`agent`, `model`, `position`, `label`, `available`, `unavailable_reason`, `selectable`, `selectable_reason`),
+`fallback` (`enabled`, `profile`, `candidates[]`) et `preview` (`selected` | `cli_default` | `refused`).
+
+**Écritures.** `PUT /api/subagent-role-routing/{role_id}` `{"base_revision", "candidates",
+"allow_general_fallback"}` ; `DELETE /api/subagent-role-routing/{role_id}?base_revision=…` (restauration).
+Succès `200 {"ok": true, "applies", "snapshot"}` ; refus `{"ok": false, "code", "reason", "snapshot"}` :
+`409 role_routing_revision_stale` | `role_routing_not_explicit`, `404 role_routing_unknown_role`,
+`400 role_routing_bad_payload`, `422 role_routing_empty_candidates` | `role_routing_no_host_candidate` |
+`routing_bad_candidates` (pas une liste) | `routing_bad_candidate` | `routing_unknown_agent` |
+`routing_duplicate_candidate`, `500 role_routing_store_unreadable` | `role_routing_write_failed` (rien n'a
+changé). L'instantané ne fait jamais échouer une écriture réussie : si la relecture échoue, la réponse reste
+`ok: true` et `snapshot.degraded = {"code": "role_routing_snapshot_failed", "reason"}` (`null` sinon) ; un
+`GET` dont la lecture échoue rend `500 role_routing_snapshot_failed`. Journal :
+`subagent_role_routing.saved|restored|rejected|read|catalog_failed|snapshot_failed`, avec `role_id` canonique
+(alias résolu, `null` si inconnu) et `role_marker` (le mot reçu, borné).

@@ -329,6 +329,10 @@ class RoutingDecision:
     fallback_from: CandidateRef | None = None
     fallback_code: str = ""
     source: str = ""
+    # Couche par rôle (`role_routing`) : le rôle canonique annoncé et d'où vient la liste appliquée
+    # (`explicit` = politique du rôle, `inherited:<profil>` = politique du profil). Vides hors rôle.
+    role_id: str = ""
+    provenance: str = ""
 
     @property
     def ref(self) -> CandidateRef:
@@ -347,6 +351,9 @@ class RoutingDecision:
             payload["fallback_code"] = self.fallback_code
         if self.source:
             payload["source"] = self.source
+        if self.role_id:
+            payload["role_id"] = self.role_id
+            payload["provenance"] = self.provenance
         return payload
 
 
@@ -385,6 +392,21 @@ def _walk(
             chosen = ref
             break
     return chosen
+
+
+def first_eligible(
+    refs: Iterable[CandidateRef],
+    candidates: Iterable[ModelCandidate],
+    required: frozenset[str],
+) -> tuple[CandidateRef | None, tuple[CandidateVerdict, ...]]:
+    """Le premier candidat éligible d'une liste ordonnée, et les verdicts rendus en chemin.
+
+    Même jugement que `resolve` (`_judge`) : c'est la brique que la couche par rôle (`role_routing`)
+    réutilise au lieu de recopier les règles d'éligibilité.
+    """
+    verdicts: list[CandidateVerdict] = []
+    chosen = _walk(refs, _index(candidates), required, verdicts)
+    return chosen, tuple(verdicts)
 
 
 def resolve(

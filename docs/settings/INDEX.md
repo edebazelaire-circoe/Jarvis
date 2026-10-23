@@ -99,7 +99,10 @@ is documented in [`../voice-settings-schema.md`](../voice-settings-schema.md).
 `agent_routing.enabled=true`; `duplicate` maps to `false`. Existing profile
 candidates remain the source of truth and keep their order across mode changes.
 Both modes select at most one model for the one sub-agent call requested by the
-caller.
+caller. The per-role policy (`subagent-role-routing.json`,
+[`../subagent-roles.md`](../subagent-roles.md) § 10) sits above this switch: an
+explicit role policy binds in both modes; a role that inherits follows the
+profile policy, hence binds only in Auto.
 
 Auto is enforceable only inside the active Claude CLI, whose `Agent`/`Task`
 hook is the verified sub-agent boundary. Codex exposes no equivalent hook in

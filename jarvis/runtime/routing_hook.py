@@ -35,7 +35,7 @@ import sys
 from typing import Any, Mapping, Sequence
 
 from jarvis.domain import (
-    agent_markers, agent_orchestration, delivery_quality, relation_runtime, routing,
+    agent_markers, agent_orchestration, delivery_quality, relation_runtime, role_routing, routing,
 )
 from jarvis.domain.agent_charter import sign_brief
 from jarvis.domain.loadout_view import MANIFEST_MARK
@@ -58,7 +58,7 @@ from jarvis.domain.routing import (
 )
 from jarvis.runtime import (
     agent_declarations, agent_handoffs, hook_failsafe, agent_routing, cli_catalog, credentials, loadout_snapshot,
-    subagent_roles_snapshot, work_methods_snapshot,
+    subagent_role_routing, subagent_roles_snapshot, work_methods_snapshot,
 )
 from jarvis.runtime.catalog_view import ProviderCatalogSnapshot
 from jarvis.runtime.journal import RuntimeJournal
@@ -102,6 +102,19 @@ PROFILE_RULE = (
 def read_profile(tool_input: Mapping[str, Any]) -> str:
     """Le profil annoncé, ou « general ». Un profil inconnu n'en est pas un (`agent_markers`)."""
     return agent_markers.read_profile(tool_input)
+
+
+def announced_profile(tool_input: Mapping[str, Any]) -> str | None:
+    """Le profil réellement écrit en tête (`description`, sinon `prompt`), ou `None` s'il n'y en a pas.
+
+    À la différence de `read_profile`, l'absence n'est pas « general » : un rôle annoncé seul
+    (`[coder] ...`) prend alors le `default_profile` de son contrat (couche par rôle, C9).
+    """
+    for key in ("description", "prompt"):
+        profile = agent_markers.parse_head(str(tool_input.get(key) or "")).profile
+        if profile is not None:
+            return profile
+    return None
 
 
 def _markers(text: str) -> tuple[int, str | None]:
@@ -310,24 +323,37 @@ def decide(
     candidates: Sequence[ModelCandidate],
     *,
     host_agent: str = HOST_AGENT,
+    role_policies: role_routing.RoleRoutingDocument | None = None,
 ) -> tuple[dict[str, Any], RoutingDecision | None]:
     """Ce que le hook répond au CLI, et la décision qui l'explique.
 
     Les candidats sont restreints au CLI hôte : l'outil `Agent` n'a pas d'autre
     moyen d'exécution, et prétendre router vers un autre CLI ici serait un
     mensonge de plus dans la trace.
+
+    Un rôle connu annoncé en tête (`[code] [qa]`, `[coder]`) passe par la couche par rôle
+    (`role_routing.resolve_for_role`) : sa politique explicite si elle existe, sinon l'héritage du
+    profil (annoncé, à défaut `default_profile`). Sans rôle, comportement par profil inchangé.
     """
     if str(event.get("tool_name") or "") not in AGENT_TOOLS:
         return _allow(), None
     tool_input = event.get("tool_input")
     tool_input = tool_input if isinstance(tool_input, Mapping) else {}
 
+    role = role_for(read_role(tool_input))
     profile = read_profile(tool_input)
     requested = str(tool_input.get("model") or "")
     local = [item for item in candidates if item.agent == host_agent]
 
     try:
-        decision = resolve_for(profile, policy, local, source="brain")
+        if role is not None:
+            decision = role_routing.resolve_for_role(
+                role, announced_profile(tool_input), role_policies or role_routing.EMPTY_DOCUMENT,
+                policy, local, source="brain",
+            )
+            profile = decision.profile
+        else:
+            decision = resolve_for(profile, policy, local, source="brain")
     except NoEligibleCandidateError as exc:
         return _output("deny", f"{exc} Ouvrez les réglages d'aiguillage pour autoriser un modèle."), None
     except RoutingError:
@@ -342,11 +368,26 @@ def decide(
     return (
         _output(
             "allow",
-            f"Profil « {profile} » : modèle imposé par les réglages de JARVIS ({decision.model}).",
+            f"{_scope(role, decision, profile)} : modèle imposé par les réglages de JARVIS ({decision.model}).",
             {"model": decision.model},
         ),
         decision,
     )
+
+
+def _scope(role: SubagentRole | None, decision: RoutingDecision, profile: str) -> str:
+    if role is None:
+        return f"Profil « {profile} »"
+    if decision.provenance == role_routing.PROVENANCE_EXPLICIT:
+        return f"Rôle « {role.id} » (politique du rôle)"
+    return f"Rôle « {role.id} » (hérité du profil {profile})"
+
+
+def explicit_role_policy(event: Mapping[str, Any], role_policies: role_routing.RoleRoutingDocument) -> bool:
+    """L'appel annonce-t-il un rôle qui a une politique explicite ? Elle lie même en mode Dupliqué."""
+    tool_input = event.get("tool_input")
+    role = role_for(read_role(tool_input if isinstance(tool_input, Mapping) else {}))
+    return role is not None and role_policies.for_role(role.id) is not None
 
 
 def resolve_for(
@@ -392,6 +433,7 @@ def offline_candidates(
     *,
     now: datetime | None = None,
     settings: dict[str, Any] | None = None,
+    extra_refs: Sequence[CandidateRef] = (),
 ) -> list[ModelCandidate]:
     """Offline candidates require a fresh cache for the active credential."""
     catalog = ModelCatalog(runtime_root / "model-catalog.json")
@@ -416,6 +458,7 @@ def offline_candidates(
         agent_routing.build_candidates(local_agents(), models),
         policy,
         unavailable_reasons_by_agent=reasons,
+        extra_refs=extra_refs,
     )
 
 
@@ -603,10 +646,13 @@ def _route(event: Mapping[str, Any], runtime_root: Path, journal: RuntimeJournal
     try:
         settings = load_settings(runtime_root)
         policy = agent_routing.load_policy(settings)
-        if not policy.enabled:
+        # Couche par rôle : un fichier à part, lu hors réseau ; absent ou abîmé = tout hérite.
+        role_policies = subagent_role_routing.load_document(runtime_root)
+        if not policy.enabled and not explicit_role_policy(event, role_policies):
+            # Dupliqué et aucun rôle réglé explicitement : comportement d'avant, le CLI garde la main.
             return _allow()
-        candidates = offline_candidates(runtime_root, policy, settings=settings)
-        output, decision = decide(event, policy, candidates)
+        candidates = offline_candidates(runtime_root, policy, settings=settings, extra_refs=role_policies.refs())
+        output, decision = decide(event, policy, candidates, role_policies=role_policies)
     except Exception as exc:  # noqa: BLE001 - un hook qui lève bloquerait l'outil
         try:
             journal.emit(
@@ -934,10 +980,16 @@ def _log(
         f"Sous-agent « {strip_profile(tool_input.get('description') or '') or 'sans description'} » : "
         f"profil {data.get('profile', routing.GENERAL_PROFILE)}"
     )
+    if decision is not None and decision.role_id:
+        message += f", rôle {decision.role_id} ({decision.provenance})"
+    if decision is not None and decision.reason == role_routing.REASON_ROLE_PASSTHROUGH:
+        message += ", aucun candidat du rôle utilisable : le CLI garde la main (Dupliqué)"
     if decision is not None and decision.model:
         message += f", modèle {decision.model}"
     try:
-        journal.emit("agent.routing.decided", message, level="warning" if applied == "deny" else "info", data=data)
+        passthrough = decision is not None and decision.reason == role_routing.REASON_ROLE_PASSTHROUGH
+        level = "warning" if applied == "deny" or passthrough else "info"
+        journal.emit("agent.routing.decided", message, level=level, data=data)
     except OSError:
         pass
 
