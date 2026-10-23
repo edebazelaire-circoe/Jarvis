@@ -12,3 +12,5 @@ Issus des QA indépendantes des Slices 01 et 03, acceptés non bloquants.
 - S01-5 Test direct de `tool_brain_wiring.resolve_mode` (env vide + bloc présent).
 - S01-6 `request_voice_switch` duplique la règle de `ControlCenter.save_settings` (TODO S07).
 - S03 Fournisseur de candidats du handler de rôles : brancher sur le calcul de `/api/routing/candidates`.
+- S06 Harnais navigateur dupliqué (`_subagent_settings_browser.mjs` copie de `_architecture_settings_browser.mjs`) : n'en garder qu'un.
+- S06 Sélecteurs anciens (réinitialisation, promotion) sans `CSS.escape`.
