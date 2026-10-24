@@ -1,6 +1,6 @@
 /* Memory Center du Control Center (jarvis-memory-intelligence-knowledge, Slice 12 ; refonte-ui-settings, Slice 06).
 
-   Atelier d'inspection et de décision, monté dans l'onglet « Memory Center » de Réglages › Mémoire & connaissances
+   Atelier d'inspection et de décision, monté dans l'onglet « Memory Center » de Réglages › Mémoire & Connaissances
    (section `memory_center`, maquette `tasks/refonte-ui-settings/references/ui/05-memory-center.png`). Il n'a plus
    de seconde maison : le bouton « Memory Center » de Sessions & Boards ouvre cet onglet (`open`).
 

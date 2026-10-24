@@ -212,7 +212,7 @@ def test_the_two_jarvis_routes_and_every_settings_row_open_existing_surfaces(tmp
 #: Où est le focus : dans le shell des Réglages (et sur quelle catégorie), ou ailleurs.
 FOCUS = r"""(()=>{const ae=document.activeElement,shell=document.getElementById('settingsShell');
   return {open:document.getElementById('overlay').classList.contains('open'),inShell:!!(shell&&shell.contains(ae)),
-    cat:ae&&ae.dataset?ae.dataset.category||null:null,anchor:!!(ae&&ae.classList&&ae.classList.contains('tw-anchor')),
+    cat:ae&&ae.dataset?ae.dataset.category||null:null,section:ae&&ae.dataset?ae.dataset.section||null:null,anchor:!!(ae&&ae.classList&&ae.classList.contains('tw-anchor')),
     id:ae?(ae.id||ae.className||ae.tagName):null}})()"""
 
 
@@ -225,7 +225,8 @@ def test_settings_opened_from_the_wheel_keep_the_focus_and_give_it_back_to_the_a
         ["key", "back", "Tab", 80, True], ["eval", "shifted", FOCUS, 50],
         ["key", "esc", "Escape", 200], ["eval", "closed", FOCUS, 50]]}])
     r = out[0]["results"]
-    assert r["now"]["open"] and r["now"]["inShell"] and r["now"]["cat"] == "agents_models", r["now"]
-    assert r["later"]["inShell"] and r["later"]["cat"] == "agents_models", r["later"]
+    # Architecture & Agents s'ouvre en page pleine (refonte-ui-settings, Slice 07) : le focus va à son onglet de page.
+    assert r["now"]["open"] and r["now"]["inShell"] and r["now"]["section"] in ("architecture", "subagents"), r["now"]
+    assert r["later"]["inShell"] and r["later"]["section"] == r["now"]["section"], r["later"]
     assert r["tabbed"]["inShell"] and r["shifted"]["inShell"], (r["tabbed"], r["shifted"])
     assert r["closed"]["open"] is False and r["closed"]["anchor"] is True, (r["closed"]["id"], r["closed"])

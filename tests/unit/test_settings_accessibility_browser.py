@@ -314,7 +314,8 @@ async def test_reduced_motion_and_forced_colors(served):
         {"width": 1440, "height": 900, "forcedColors": True, "actions": [
             *OPEN, eval_("selectTab('recall');true"),
             wait("!!document.querySelector('#modalContent [data-mem-save][aria-disabled=true]')", 8000),
-            eval_("document.querySelector('#settingsCategories [aria-selected=true]').focus();true"), key("ArrowDown"),
+            # Mémoire & Connaissances est une page pleine (Slice 07) : le focus clavier part de l'onglet de page ouvert.
+            eval_("document.querySelector('#modalTabs [aria-selected=true]').focus();true"), key("ArrowRight"),
             eval_(FORCED, "forced")]},
     ])
     motion = got(out["steps"][0], "motion")
