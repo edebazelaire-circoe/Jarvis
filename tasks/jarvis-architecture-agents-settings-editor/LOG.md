@@ -41,3 +41,4 @@
 - Preuves : `slices/08-final-integration-e2e-qa/EVIDENCE.md` ; recette : `HUMAN-CHECKS.md`.
 - 2026-10-24 : S08 livrée (suite complète une fois : 4 échecs de la tâche corrigés, 21 préexistants sur main), QA ciblée des correctifs APPROUVÉE, fusion f3d5f9a5. main et origin/main inclus. Machine acceptée ; attente du Human : HV-ARCH-001..008, décisions produit (famille vs version du modèle de rôle, I-001 S01-1), merge dans main, redémarrage, Drive.
 - 2026-10-24 : décision du Human (HV-ARCH-007) : le modèle d'un rôle se règle par famille ; « Sonnet » = la Sonnet courante du CLI (constatée 5.5). Retouche d'affichage confiée en S08 suite (worktree arch-s09).
+- 2026-10-24 : retouche HV-ARCH-007 (76065de2, modèle de rôle par famille) QA APPROUVÉE et fusionnée. Non bloquants : écran de routage par profil encore en ids de version (décision du Human), mention « enregistré par famille » approximative pour un rôle hérité, suffixe [1m] perdu.
