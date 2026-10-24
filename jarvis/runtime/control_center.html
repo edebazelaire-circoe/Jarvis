@@ -1009,19 +1009,19 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-empty{padding:28px 0;color:var(--set-ink-3)}
 /* Catégorie en page pleine (refonte-ui-settings Slice 07 ; `page` du registre : Architecture & Agents, Mémoire &
    Connaissances) : même présentation que la page Personnalisation — × rond en haut à gauche, fil d'Ariane, grand titre,
-   phrase, onglets de page (`.set-tab`), sans rail. La colonne principale est la seule zone qui défile (en-tête compris),
-   jamais en largeur ; la composition est centrée à `--set-view-max` comme `.set-page`. Le pied Enregistrer, s'il sert,
-   colle en bas. */
+   phrase, onglets de page (`.set-tab`), sans rail. L'en-tête et les onglets restent en place ; le contenu est la seule
+   zone qui défile, jamais en largeur (la fenêtre flottante d'un cerveau, fixe, ne recouvre ainsi jamais le fil
+   d'Ariane, le titre ni les onglets). La composition est centrée à `--set-view-max` comme `.set-page`, la barre de
+   défilement reste au bord de la fenêtre. */
 .settings-shell[data-layout=page]{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
 .settings-shell[data-layout=page] :is(.set-rail,.set-back){display:none}
-.settings-shell[data-layout=page] .set-main{overflow-x:hidden;overflow-y:auto;padding:clamp(52px,7vh,72px) var(--set-view-pad) 0}
-.settings-shell[data-layout=page] .set-main>*{width:100%;max-width:var(--set-view-max);margin-inline:auto}
+.settings-shell[data-layout=page] .set-main{padding-top:clamp(52px,7vh,72px)}
+.settings-shell[data-layout=page] .set-main>:is(.set-head,.set-items){width:calc(100% - 2 * var(--set-view-pad));max-width:var(--set-view-max);margin-inline:auto}
 .settings-shell[data-layout=page] .set-head{display:block;padding:0 0 0 clamp(0px,2.2vw,34px);margin-bottom:clamp(18px,3vh,28px)}
 .settings-shell[data-layout=page] .set-head-text{display:block}
 .settings-shell[data-layout=page] .set-hub-close>:not(svg){display:none}
 .settings-shell[data-layout=page] .set-items{margin-top:0;margin-bottom:var(--set-gap);padding:4px;gap:var(--set-sp-3);flex-wrap:wrap;border:0;overflow:visible}
-.settings-shell[data-layout=page] .set-main>.set-body{flex:none;overflow:visible;min-height:0;padding:0 0 clamp(24px,5vh,48px)}
-.settings-shell[data-layout=page] .set-foot{position:sticky;bottom:0;z-index:var(--set-z-sticky);backdrop-filter:blur(var(--set-blur))}
+.settings-shell[data-layout=page] .set-main>.set-body{padding:4px max(var(--set-view-pad),calc((100% - var(--set-view-max)) / 2)) clamp(24px,5vh,48px)}
 @media(max-width:900px){.settings-shell[data-layout=page] .set-main{padding-top:84px}}
 /* Contenu hérité : typographie de lecture (le contenu lui-même ne change pas). */
 /* Titres de primitive (`.set-panel-title`, `.set-float-title`) exclus : ils gardent la fondation (Slice 07). */

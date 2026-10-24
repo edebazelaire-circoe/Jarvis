@@ -10,7 +10,7 @@ la page ; le harnais CDP de `test_wake_word_settings_browser.py` clique, tape et
 - les trois autres catégories gardent le shell à rail, et « Réglages détaillés » de Personnalisation l'ouvre toujours ;
 - liens profonds et alias (`memory`, `semantic_retrieval`, `main_agent`, `subagent_models`) mènent à la page pleine,
   sur le bon onglet ; un lien interne vers Avancé rend le rail ;
-- une seule zone défile par page (la colonne principale, en-tête compris), jamais en largeur ;
+- une seule zone défile par page (le contenu, sous l'en-tête et les onglets qui restent en place), jamais en largeur ;
 - captures finales des cinq vues aux tailles des maquettes et à 1280×800 (`JARVIS_BROWSER_SHOTS=<dossier>` les garde,
   en JPEG), sans débordement horizontal ni message de console.
 
@@ -93,7 +93,7 @@ async def test_three_mockup_categories_open_as_full_pages_and_the_others_keep_th
         assert [t[0] for t in page["tabs"]] == sections and all(t[1] == "set-tab" and t[3] for t in page["tabs"]), page
         assert page["focus"] == page["section"], ("le focus va à l'onglet ouvert", page)
         assert page["labelled"] == "settingsCategoryTitle", page
-        assert page["scrollers"] in ([], ["#settingsMain"]), ("une seule zone défile : la colonne principale", page)
+        assert page["scrollers"] in ([], ["#modalContent"]), ("une seule zone défile : le contenu, sous l'en-tête", page)
     assert got(step, "hub_focus") is True
     kb = got(step, "keyboard_tab")
     assert kb["section"] == "knowledge_sources" and kb["focus"] == "knowledge_sources", kb

@@ -77,14 +77,14 @@ emplacement, même brouillon ; seule la présentation change.
 
 ```
 #settingsShell[data-layout=page]   (aria-labelledby = #settingsCategoryTitle)
-└─ main#settingsMain               SEULE zone qui défile (en-tête compris), jamais en largeur ; contenu centré à --set-view-max
+└─ main#settingsMain               en-tête et onglets en place ; contenu centré à --set-view-max
    ├─ .set-head
    │  ├─ #closeModal.set-hub-close  × rond en haut à gauche, fixe (même bouton, même nom accessible, même raccourci)
    │  └─ #settingsIntro › .set-page-intro : nav.set-crumb « JARVIS › [Paramètres] » (#settingsCrumbHub → hub)
    │                                       · h2.set-title#settingsCategoryTitle · p.set-lead (`page.lead`) · .set-rule
    ├─ nav#modalTabs role=tablist : onglets de page button.set-tab [data-section] (pictogramme + libellé)
-   ├─ #modalContent : la section, sans défilement propre
-   └─ footer.set-foot : collé en bas, seulement pour une section `save:'footer'` (aucune aujourd'hui)
+   ├─ #modalContent : la section, SEULE zone qui défile (jamais en largeur), barre au bord de la fenêtre
+   └─ footer.set-foot : seulement pour une section `save:'footer'` (aucune aujourd'hui)
 ```
 
 - Pas de rail : `aside.set-rail` et « Toutes les catégories » ne sont pas rendus (`display:none`) ; on change de
@@ -99,8 +99,10 @@ emplacement, même brouillon ; seule la présentation change.
 - Focus à l'ouverture : l'onglet de page ouvert (il n'y a pas de catégorie active à focaliser).
 - Fenêtre d'un cerveau (Architecture) : sa zone d'ouverture (`architecturePanelZone`) commence sous les onglets de la
   page et sous le × ; elle ne couvre jamais le fil d'Ariane, le titre ni l'onglet actif.
+- Défilement : l'en-tête et les onglets restent en place, seul le contenu défile. Une page entière qui défilait a été
+  essayée puis écartée : la fenêtre d'un cerveau est fixe, et après défilement elle recouvrait le titre et les onglets.
 - Rangs : `.settings-shell[data-layout=page] ` est inscrit au registre des couches de `docs/control-center-shell.md`
-  (× `--set-z-chrome`, pied `--set-z-sticky`).
+  (× `--set-z-chrome`).
 - Tests : `tests/unit/test_settings_page_layout_browser.py` (mise en page, rail, focus, alias, défilement unique,
   captures finales des cinq vues), `tests/unit/test_architecture_workspace_browser.py` (chrome de la page atteignable,
   fenêtre du cerveau ouverte).

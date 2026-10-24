@@ -665,7 +665,7 @@ def test_a_lost_status_says_the_pill_counts_are_unconfirmed(tmp_path):
 
 def test_settings_hub_opens_from_the_wheel_enters_a_category_and_closes_back(tmp_path):
     """Hub des Réglages (2026-10-23) : roue › Paramètres ouvre six cartes 3 × 2 de même taille, sans sous-menu ;
-    une carte ouvre sa catégorie, « Toutes les catégories » ramène au hub, Échap ferme et rend le focus à la roue."""
+    une carte ouvre sa catégorie, « Paramètres » (fil d'Ariane de la page) ramène au hub, Échap ferme et rend le focus à la roue."""
     state = r"""(()=>{const o=document.getElementById('overlay');
       return {view:o.dataset.view||null,open:o.classList.contains('open'),submenu:!!document.querySelector('#toolWheel .tw-item'),
         cards:[...document.querySelectorAll('.set-hub-card')].map(c=>{const r=c.getBoundingClientRect();
@@ -680,7 +680,8 @@ def test_settings_hub_opens_from_the_wheel_enters_a_category_and_closes_back(tmp
         *_shot("settings-hub-1440x900"),
         ["click", "card", "[data-hub-category=agents_models]", 900],
         ["eval", "shell", "({view:document.getElementById('overlay').dataset.view,title:(document.getElementById('settingsCategoryTitle')||{}).textContent})", 100],
-        ["click", "back", "#settingsBack", 600],
+        # Architecture & Agents s'ouvre en page pleine (refonte-ui-settings, Slice 07) : « Paramètres » du fil d'Ariane.
+        ["click", "back", "#settingsCrumbHub", 600],
         ["eval", "back", "document.getElementById('overlay').dataset.view", 100],
         ["key", "esc", "Escape", 500],
         ["eval", "closed", "({open:document.getElementById('overlay').classList.contains('open'),focus:document.activeElement&&document.activeElement.className})", 100],

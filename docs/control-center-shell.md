@@ -263,7 +263,7 @@ value.
 | `.overlay` (60) | `control_center_wake_word.js` | `:is(#wakeWordSettings,#wakeWordDiagnostics) ` | settings and diagnostics tooltip |
 | `.overlay` (60) | `control_center.html` | `.set-perso ` | Personnalisation page: its close button stays over the scrolling grid |
 | `.overlay` (60) | `control_center.html` | `.perso-` | Personnalisation page: the profile popover floats over the grid |
-| `.overlay` (60) | `control_center.html` | `.settings-shell[data-layout=page] ` | Settings category opened as a full page (Architecture & Agents, Mémoire & Connaissances; refonte-ui-settings S07): its close button stays over the scrolling column (`--set-z-chrome`), the Save footer sticks to the bottom (`--set-z-sticky`) |
+| `.overlay` (60) | `control_center.html` | `.settings-shell[data-layout=page] ` | Settings category opened as a full page (Architecture & Agents, Mémoire & Connaissances; refonte-ui-settings S07): its close button stays over the scrolling content (`--set-z-chrome`) |
 | `.overlay` (60) / `.wsp` (55) | `control_center.html` | `.set-table` | shared Settings dense-table shell: sticky header (`--set-z-sticky`), see `docs/settings/visual-foundation.md` |
 | `.overlay` (60) / `.wsp` (55) | `control_center.html` | `.set-float` | shared Settings floating panel (`--set-z-float`) and short popover (`--set-z-popover`) above a page's grid, see `docs/settings/visual-foundation.md` |
 | `.overlay` (60) | `control_center_subagents_settings.js` | `.sar-` | Sous-agents board: the row-actions disclosure (`.sar-row.menu-open`, `.sar-menu`, `--set-z-popover`) over the next rows, the routing matrix's sticky model column (`--set-z-raised`) and corner header (`--set-z-sticky` + 1) inside `.set-table-scroll` (refonte-ui-settings S03) |
