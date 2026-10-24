@@ -176,64 +176,99 @@ Code: `jarvis/runtime/memory_relay.py`, registered in `jarvis/runtime/control_ce
 Historique : un onglet **Memoire** des Reglages, monte dans `#memorySettingsMount`. Remplace par la categorie
 **Memoire & connaissances** (section suivante) ; le module, sa lecture et son correctif sont les memes.
 
-## Reglages a six categories (jarvis-settings-ui-reorganization, Slice 05)
+## Reglages a six categories (jarvis-settings-ui-reorganization, Slice 05 ; refonte-ui-settings, Slices 05/06)
 
-Plus d onglet `memory` : la categorie `memory_knowledge` monte cinq sections enregistrees
-(`MEMORY_SECTIONS` et `installMemorySettingsSections` dans `control_center.html`), et Avance & diagnostic
-porte la partie **Memoire** de la section `diagnostics` (`registerSettingsDiagnostic`).
+La categorie `memory_knowledge` (« Memoire & connaissances ») a **trois onglets**, maquette
+`tasks/refonte-ui-settings/references/ui/04-memory-settings.png` : **Memoire** (section `recall`),
+**Connaissances** (`knowledge_sources`) et **Memory Center** (`memory_center`). Les reglages d operateur vivent dans
+**Avance & diagnostic › Memoire** (`memory_advanced`, groupe Architecture & compatibilite). Enregistrement :
+`MEMORY_SECTIONS` et `installMemorySettingsSections` dans `control_center.html` ; Avance & diagnostic porte aussi la
+partie **Memoire** de la section `diagnostics` (`registerSettingsDiagnostic`).
 
 - **Destination servie par le serveur.** Chaque champ du schema porte `surface = {category, section}`
-  (`SURFACE_SECTIONS`, `_SURFACE` dans `memory_settings.py`) ; les loadouts aussi
-  (`schema.loadouts.surface`). Une section du bloc sans destination leve `RuntimeError`. La page range les
-  champs par `surface.section` : aucune liste de champs dans le navigateur. Valeurs, precedence
-  env/fichier/defaut et charge utile inchangees.
+  (`SURFACE_SECTIONS` : section -> categorie, `_SURFACE` par section du bloc, `_FIELD_SURFACE` pour un champ qui
+  s en ecarte, dans `memory_settings.py`) ; les loadouts aussi (`schema.loadouts.surface`). Une section du bloc sans
+  destination leve `RuntimeError`. La page range les champs par `surface.section` : aucune liste de champs dans le
+  navigateur. Valeurs, precedence env/fichier/defaut et charge utile inchangees.
+- **Champs ordinaires vs champs d operateur.** Onglet Memoire : rappel (actif, souvenirs par tour), recherche
+  semantique (active, fournisseur, memoire privee), consolidation (mode, seuil de confiance, candidats par passe).
+  Avance › Memoire : `recall.timeout_ms` (delai brut en millisecondes) et tout le sidecar Tencent (URL, identifiant
+  d instance, memoire privee, activation). Rien de cela n est retire : une seule place editable par champ.
+- **Libelles servis.** Options et libelles viennent du schema (`Aucun` / `OpenAI` pour le fournisseur — les deux
+  seuls existants —, `Manuelle` / `Automatique` pour la consolidation) ; le navigateur n en code aucun.
 - **Une seule place editable par champ** (table ci-dessous, verifiee par
   `tests/unit/test_memory_settings_surface.py`).
-- **Enregistrement.** Chaque section de champs porte son bouton « Enregistrer la mémoire » (`save: 'self'`) :
-  `{memory: {<section>: {<champ>: valeur}}}`, les seuls champs modifies, comme avant. Le brouillon est partage
-  par les sections memoire le temps d une ouverture des Reglages (`memorySettingsStore`, une lecture) : une
-  regle de compatibilite peut ramener un champ d une autre section (couper la recherche semantique remet la
-  consolidation en manuel) ; la section le dit (« Enregistre aussi les changements en attente… ») et
-  l enregistrement envoie tout le brouillon. Les cles inconnues du bloc restent intactes (cote serveur).
-- **Moment d application** lu dans `status.restart_required` : badge « Au prochain demarrage de Core » ou
-  « Au prochain tour » par section (par groupe dans Sources de connaissances), avis « Redemarrage de Core
-  necessaire pour … » tant qu un tel champ est en attente, puis rappel apres l enregistrement.
-- **Cycle de vie.** Chaque montage cree une vue (`JarvisMemorySettings.create`) ; quitter la section l a
-  detruit (`destroy`) : elle ne dessine plus rien et une reponse tardive est ignoree.
-- **Etat.** La page ordinaire garde une ligne courte (etages de la section, nombre de points a verifier) et
-  le lien « Voir le diagnostic mémoire » (ouvre Avance › Diagnostics, focus sur la partie Memoire). Le
-  detail (chaque etage, raison et code, comment reparer, combinaisons coupees a la lecture, valeurs imposees
-  par l environnement) vit dans la partie Memoire des diagnostics, en lecture seule.
-- **Alias.** `memory` (ancien onglet ; Memory Center › Reglages) ouvre `recall` : seul alias encore servi depuis la
-  Slice 09, garde par cet appelant
+- **Enregistrement.** Les onglets Memoire et Connaissances et la section Avance › Memoire portent la barre
+  « Enregistrer la mémoire » (`save: 'self'`) : `{memory: {<section>: {<champ>: valeur}}}`, les seuls champs
+  modifies. Le brouillon est partage le temps d une ouverture des Reglages (`memorySettingsStore`, une lecture) :
+  une regle de compatibilite peut ramener un champ d un autre onglet (couper la recherche semantique remet la
+  consolidation en manuelle) ; la barre le dit (« Enregistre aussi les changements en attente… ») et l envoi
+  porte tout le brouillon. Barre collante en bas tant que le brouillon n est pas vide.
+- **Moment d application** lu dans `status.restart_required` : la carte Recherche semantique dit « Au prochain
+  démarrage de Core » ; avis « Redemarrage de Core necessaire pour … » tant qu un tel champ est en attente, puis
+  rappel apres l enregistrement.
+- **Etat vivant** (`loadLive` de `JarvisMemorySettings.create`) : une lecture par ouverture de `/api/memory/status`,
+  `/api/memory/notes?limit=200` et `/api/memory/candidates?state=proposed&limit=200`. Il nourrit la ligne
+  « Memoire canonique » du resume, les compteurs de l entree du Memory Center (« 200+ » au-dela d une page de 200)
+  et l etat reel des sources. Core muet : « — indisponible », « Compteurs indisponibles : <raison reelle> », bouton « Réessayer », jamais un
+  chiffre invente.
+- **Cycle de vie.** Chaque montage cree une vue ; quitter la section l a detruite (`destroy`) : elle ne dessine plus
+  rien et une reponse tardive est ignoree.
+- **Alias.** `memory` (ancien onglet ; Memory Center › Reglages) ouvre `recall`. `semantic_retrieval` et
+  `consolidation` (anciennes sections, fondues dans l onglet Memoire) ouvrent aussi `recall`
   ([`../legacy/settings-tab-aliases.md`](../legacy/settings-tab-aliases.md)).
+
+### Onglet Memoire (vue `memory`)
+
+Deux colonnes (une seule sous 720 px de large, requete de conteneur) :
+
+| Carte | Contenu | Donnees |
+| --- | --- | --- |
+| Rappel | interrupteur, curseur « Souvenirs injectés par tour » (n / max) | `recall.enabled`, `recall.max_items` (bornes servies) |
+| Consolidation | modes Manuelle / Automatique (Automatique indisponible sans recherche semantique), seuil de confiance (%), nombre maximum de candidats | `consolidation.*` |
+| Recherche semantique | interrupteur, fournisseur, presence de la cle (jamais la valeur, lien Plugins & MCP › Fournisseurs), memoire privee | `semantic.*`, `secrets.semantic.has_secret`, `status.legs.semantic` |
+| Resume du systeme memoire | Memoire canonique (etat vivant du `store`), Rappel (par mots / + semantique / desactive), Consolidation, Memoire privee (reste sur ce PC / envoyee a …) ; chaque ligne mene a sa carte ou au Memory Center | etat ENREGISTRE (`effective`, `status.legs`) + `/api/memory/status` |
+| Ouvrir le Memory Center | tuiles Notes (nombre), Candidats (en attente), Test de rappel | etat vivant |
+| Avance & diagnostic | bandeau secondaire : « Ouvrir les paramètres avancés » (Avance › Memoire), « Voir le diagnostic mémoire » | `status` (nombre de points a verifier) |
+
+Ecarts voulus a la maquette : pas de **profil de rappel** Rapide / Equilibre / Approfondi (aucun reglage reel
+derriere ; un preset decoratif est interdit par le contrat), le maximum du curseur est la borne servie (10, pas 20),
+pas de ligne « Portees » inventee (remplacee par « Memoire privee », reelle) ; le resume est un etat, jamais une
+seconde copie editable.
+
+### Onglet Connaissances (vue `knowledge`)
+
+Une carte par source (Wiki, Graphe de code, Skills) : interrupteur de preference et pastille d etat qui croise la
+preference et l etat vivant de Core — **Actif** (Core la declare saine), **Désactivé**, **Indisponible** (aucun
+fournisseur monte, comme le graphe de code tant qu aucun depot n est branche, ou etage degrade avec sa raison) ou
+**État inconnu** (Core injoignable : jamais « Actif » par defaut). Puis les portees en langage produit (explicatif),
+les regles d acces par agent en lecture seule (l editeur graphique des loadouts est hors champ) et un renvoi vers la
+source externe Tencent (Avance › Memoire).
 
 | Champ | Section |
 | --- | --- |
-| `recall.enabled` | `recall` · Rappel |
-| `recall.max_items` | `recall` · Rappel |
-| `recall.timeout_ms` | `recall` · Rappel |
-| `semantic.enabled` | `semantic_retrieval` · Recherche sémantique |
-| `semantic.provider` | `semantic_retrieval` · Recherche sémantique |
-| `semantic.allow_private` | `semantic_retrieval` · Recherche sémantique |
-| `consolidation.mode` | `consolidation` · Consolidation |
-| `consolidation.auto_min_confidence` | `consolidation` · Consolidation |
-| `consolidation.max_candidates_per_run` | `consolidation` · Consolidation |
-| `tencent.enabled` | `knowledge_sources` · Sources de connaissances |
-| `tencent.url` | `knowledge_sources` · Sources de connaissances |
-| `tencent.service_id` | `knowledge_sources` · Sources de connaissances |
-| `tencent.allow_private` | `knowledge_sources` · Sources de connaissances |
-| `knowledge.wiki_enabled` | `knowledge_sources` · Sources de connaissances |
-| `knowledge.codegraph_enabled` | `knowledge_sources` · Sources de connaissances |
-| `knowledge.skills_enabled` | `knowledge_sources` · Sources de connaissances |
-| `loadouts` (lecture seule) | `knowledge_sources` · Sources de connaissances |
+| `recall.enabled` | `recall` · Mémoire |
+| `recall.max_items` | `recall` · Mémoire |
+| `recall.timeout_ms` | `memory_advanced` · Avancé › Mémoire |
+| `semantic.enabled` | `recall` · Mémoire |
+| `semantic.provider` | `recall` · Mémoire |
+| `semantic.allow_private` | `recall` · Mémoire |
+| `consolidation.mode` | `recall` · Mémoire |
+| `consolidation.auto_min_confidence` | `recall` · Mémoire |
+| `consolidation.max_candidates_per_run` | `recall` · Mémoire |
+| `tencent.enabled` | `memory_advanced` · Avancé › Mémoire |
+| `tencent.url` | `memory_advanced` · Avancé › Mémoire |
+| `tencent.service_id` | `memory_advanced` · Avancé › Mémoire |
+| `tencent.allow_private` | `memory_advanced` · Avancé › Mémoire |
+| `knowledge.wiki_enabled` | `knowledge_sources` · Connaissances |
+| `knowledge.codegraph_enabled` | `knowledge_sources` · Connaissances |
+| `knowledge.skills_enabled` | `knowledge_sources` · Connaissances |
+| `loadouts` (lecture seule) | `knowledge_sources` · Connaissances |
 
-Section `memory_center` · Centre memoire (`save: 'readonly'`) : ligne d etat et bouton « Ouvrir le Memory
-Center » (`JarvisMemoryCenter.open`, qui ferme les Reglages) ; desactive et explique si le module manque.
-Le sidecar Tencent est une source de recuperation externe : il vit avec les sources de connaissances. Tests :
+Section `memory_center` · Memory Center (`save: 'readonly'`) : voir « Memory Center » plus bas. Tests :
 `tests/unit/test_control_center_memory_settings_js.py` (module et cycle de vie de la page),
 `tests/unit/test_memory_settings_surface.py`, `tests/unit/test_control_center_settings_registry_js.py`
-(alias), `tests/unit/test_memory_settings_browser.py` (vrai Chrome).
+(alias), `tests/unit/test_memory_settings_browser.py` (vrai Chrome, faux Core `_memory_center_fixture.py`).
 
 ## Memory Center (Slice 12)
 

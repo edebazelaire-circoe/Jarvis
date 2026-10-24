@@ -45,6 +45,9 @@ CATEGORIES = [
 #: Alias hérités encore servis après la Slice 09, et l'appelant du dépôt qui les garde.
 ALIASES = {
     "memory": ("memory_knowledge", "recall"),
+    # refonte-ui-settings, Slice 05 : sections fondues dans l'onglet Mémoire.
+    "semantic_retrieval": ("memory_knowledge", "recall"),
+    "consolidation": ("memory_knowledge", "recall"),
     # jarvis-architecture-agents-settings-editor, Slice 07 : sections retirées, liens durables redirigés.
     "main_agent": ("agents_models", "architecture"),
     "subagent_models": ("agents_models", "subagents"),
@@ -53,6 +56,8 @@ ALIASES = {
 #: publie l'ancien identifiant (`docs/legacy/settings-tab-aliases.md`).
 ALIAS_CALLERS = {
     "memory": ("jarvis/runtime/control_center_memory.js", "root.selectTab('memory')"),
+    "semantic_retrieval": ("docs/legacy/settings-tab-aliases.md", "| `semantic_retrieval` | `memory_knowledge` / `recall` |"),
+    "consolidation": ("docs/legacy/settings-tab-aliases.md", "| `consolidation` | `memory_knowledge` / `recall` |"),
     "main_agent": ("docs/legacy/settings-tab-aliases.md", "| `main_agent` | alias →"),
     "subagent_models": ("docs/legacy/settings-tab-aliases.md", "| `subagent_models` | alias →"),
 }
@@ -75,7 +80,8 @@ ADVANCED_GROUPS = [
 ]
 #: Groupe déclaré de chaque section d'Avancé enregistrée par la page servie (Slices 03-08).
 ADVANCED_SECTION_GROUP = {
-    "architecture_compat": "architecture_compat", "prompts": "prompts", "runtime_cli": "runtime_cli",
+    "architecture_compat": "architecture_compat", "memory_advanced": "architecture_compat", "prompts": "prompts",
+    "runtime_cli": "runtime_cli",
     "diagnostics": "diagnostics", "scene_gate": "labs", "work_methods": "labs", "barehands_lab": "labs",
 }
 
@@ -110,9 +116,8 @@ SLICE_04_SECTIONS = (
     ("runtime_cli", "advanced_diagnostics", 30, "footer"), ("work_methods", "advanced_diagnostics", 50, "self"),
 )
 SLICE_05_SECTIONS = (
-    ("recall", "memory_knowledge", 10, "self"), ("semantic_retrieval", "memory_knowledge", 20, "self"),
-    ("consolidation", "memory_knowledge", 30, "self"), ("knowledge_sources", "memory_knowledge", 40, "self"),
-    ("memory_center", "memory_knowledge", 50, "readonly"),
+    ("recall", "memory_knowledge", 10, "self"), ("knowledge_sources", "memory_knowledge", 40, "self"),
+    ("memory_center", "memory_knowledge", 50, "readonly"), ("memory_advanced", "advanced_diagnostics", 20, "self"),
 )
 SLICE_06_SECTIONS = (
     ("theme_scene", "voice_audio", 5, "self"), ("shortcuts", "interface_interactions", 20, "self"),
@@ -291,11 +296,11 @@ PLANNED_SECTIONS = {
     "voice_audio": ["theme_scene", "agent_behavior", "conversation", "voice_output", "microphone_sound",
                     "turns_interruptions", "wake_word"],
     "agents_models": ["architecture", "subagents"],  # exactement deux onglets (D02)
-    "memory_knowledge": ["recall", "semantic_retrieval", "consolidation", "knowledge_sources", "memory_center"],
+    "memory_knowledge": ["recall", "knowledge_sources", "memory_center"],  # trois onglets (refonte-ui-settings S05)
     "interface_interactions": ["shortcuts", "bare_hands"],
     "connections": ["mcp_plugins", "providers"],
-    "advanced_diagnostics": ["architecture_compat", "prompts", "runtime_cli", "diagnostics", "scene_gate", "work_methods",
-                             "barehands_lab"],
+    "advanced_diagnostics": ["architecture_compat", "memory_advanced", "prompts", "runtime_cli", "diagnostics", "scene_gate",
+                             "work_methods", "barehands_lab"],
 }
 
 
@@ -344,7 +349,7 @@ def test_page_routes_categories_sections_and_aliases_into_the_six_category_shell
     assert seen["prompts"] == ["advanced_diagnostics", "prompts"]
     assert seen["bare_hands"] == ["interface_interactions", "bare_hands"]
     assert seen["voice_output"] == ["voice_audio", "voice_output"]
-    assert seen["semantic_retrieval"] == ["memory_knowledge", "semantic_retrieval"]
+    assert seen["semantic_retrieval"] == ["memory_knowledge", "recall"]  # alias (refonte-ui-settings S05)
     assert seen["theme_scene"] == ["voice_audio", "theme_scene"]  # Personnalisation (hub du 2026-10-23)
     # Une catégorie seule rouvre la dernière entrée ouverte dans cette catégorie, sinon la première.
     assert seen["voice_audio"] == ["voice_audio", "theme_scene"]
@@ -365,12 +370,12 @@ def test_page_routes_categories_sections_and_aliases_into_the_six_category_shell
                         ("section", "voice_output"), ("section", "microphone_sound"),
                         ("section", "turns_interruptions"), ("section", "wake_word")],
         "agents_models": [("section", "architecture"), ("section", "subagents")],
-        "memory_knowledge": [("section", "recall"), ("section", "semantic_retrieval"), ("section", "consolidation"),
-                             ("section", "knowledge_sources"), ("section", "memory_center")],
+        "memory_knowledge": [("section", "recall"), ("section", "knowledge_sources"), ("section", "memory_center")],
         "interface_interactions": [("section", "shortcuts"), ("section", "bare_hands")],
         "connections": [("section", "mcp_plugins"), ("section", "providers")],
         # Slice 08 : rangées par groupe déclaré (ordre de `CATEGORY_GROUPS`), puis `order` dans le groupe.
-        "advanced_diagnostics": [("section", "architecture_compat"), ("section", "prompts"), ("section", "runtime_cli"),
+        "advanced_diagnostics": [("section", "architecture_compat"), ("section", "memory_advanced"), ("section", "prompts"),
+                                 ("section", "runtime_cli"),
                                  ("section", "diagnostics"), ("section", "scene_gate"), ("section", "work_methods"),
                                  ("section", "barehands_lab")],
     }
@@ -427,6 +432,7 @@ def test_advanced_groups_are_declared_once_and_every_page_registration_names_one
             found[match.group(1).strip("'")] = match.group(3)
     # Bare Hands nomme ses entrées par `SETTINGS_ENTRY.lab`, la scène par `SECTION_ENTRY` ; les autres par leur ID.
     assert found == {"runtime_cli": "runtime_cli", "work_methods": "labs", "architecture_compat": "architecture_compat",
+                     "memory_advanced": "architecture_compat",
                      "diagnostics": "diagnostics", "prompts": "prompts", "SETTINGS_ENTRY.lab": "labs",
                      "SECTION_ENTRY": "labs"}
     scene = (RUNTIME / "control_center_scene_settings.js").read_text(encoding="utf-8")
@@ -480,8 +486,9 @@ out({seen,warn,resolved:['cli','routing','subagents'].map(t=>R.page.resolve(t))}
 
 
 def test_memory_alias_opens_recall_and_every_memory_section(tmp_path):
-    """Slice 05 : `memory` (onglet disparu, Memory Center › Réglages) ouvre Rappel ; chaque section mémoire s'ouvre ;
-    la catégorie rouvre la dernière section mémoire ouverte."""
+    """Slice 05 : `memory` (onglet disparu, Memory Center › Réglages) ouvre l'onglet Mémoire (`recall`), comme les
+    anciennes sections `semantic_retrieval` et `consolidation` (refonte-ui-settings S05) ; chaque onglet s'ouvre ; la
+    catégorie rouvre le dernier onglet ouvert."""
     page = HTML.read_text(encoding="utf-8")
     out = run(tmp_path, _routing_script(page, open_=True, body="""
 const seen={};
@@ -491,12 +498,13 @@ const nav=settingsNavigation().categories.find(c=>c.id==='memory_knowledge');
 out({seen,warn,resolved:R.page.resolve('memory'),items:nav.items.map(i=>[i.kind,i.id,i.save])});"""))
     seen = out["seen"]
     assert seen["memory"] == ["memory_knowledge", "recall"]
-    for section in ("semantic_retrieval", "consolidation", "knowledge_sources", "memory_center"):
+    for alias in ("semantic_retrieval", "consolidation"):
+        assert seen[alias] == ["memory_knowledge", "recall"]
+    for section in ("knowledge_sources", "memory_center"):
         assert seen[section] == ["memory_knowledge", section]
     assert seen["memory_knowledge"] == ["memory_knowledge", "memory_center"]  # dernière entrée ouverte
     assert out["resolved"] == {"category": "memory_knowledge", "section": "recall", "source": "alias"}
-    assert out["items"] == [["section", "recall", "self"], ["section", "semantic_retrieval", "self"],
-                            ["section", "consolidation", "self"], ["section", "knowledge_sources", "self"],
+    assert out["items"] == [["section", "recall", "self"], ["section", "knowledge_sources", "self"],
                             ["section", "memory_center", "readonly"]]
     assert out["warn"] == []
 
@@ -506,7 +514,7 @@ def test_page_memory_sections_match_the_registered_fixture():
     page = HTML.read_text(encoding="utf-8")
     block = page[page.index("const MEMORY_SECTIONS=[") : page.index("function memorySettingsStore()")]
     assert "aliases" not in block
-    found = re.findall(r"\{id:'([a-z_]+)',category:'([a-z_]+)',order:(\d+),label:'[^']+'((?:,mode:'\w+')?)((?:,save:'\w+')?)", block)
+    found = re.findall(r"\{id:'([a-z_]+)',category:'([a-z_]+)',(?:group:'\w+',)?order:(\d+),label:'[^']+'((?:,mode:'\w+')?)((?:,save:'\w+')?)", block)
     assert [(i, c, int(o), save[7:-1] if save else "self") for i, c, o, _m, save in found] == list(SLICE_05_SECTIONS)
 
 

@@ -72,19 +72,22 @@ def run_node(tmp_path: Path, settings: dict, source: str, environ: dict | None =
 
 
 SECTIONS_JS = json.dumps(list(SURFACE_SECTIONS))
+#: La vue que la page monte pour chaque section de champs (`MEMORY_SECTIONS`, refonte-ui-settings Slice 05).
+MODES = {"recall": "memory", "knowledge_sources": "knowledge", "memory_advanced": "fields"}
+MODES_JS = json.dumps(MODES)
 
 
 def test_every_server_field_renders_in_exactly_one_section_its_server_destination(tmp_path):
     settings = {"credentials": {"openai": {"value": "sk-SECRET-123"}}, "memory": {"semantic": {"provider": "openai"}}}
     out = run_node(tmp_path, settings, f"""
-const store=M.createStore(),seen={{}},html={{}};
+const store=M.createStore(),seen={{}},html={{}},modes={MODES_JS};
 for(const section of {SECTIONS_JS}){{
-  const host=fakeHost();await M.create(host,{{fetch:fetchFn,store,section}}).load();
-  seen[section]=paths(host.innerHTML);html[section]=host.innerHTML;
+  const host=fakeHost();await M.create(host,{{fetch:fetchFn,store,section,mode:modes[section]}}).load();
+  seen[section]=[...new Set(paths(host.innerHTML))];html[section]=host.innerHTML;  // un groupe radio = un champ
 }}
 for(const mode of ['center','diagnostics']){{const host=fakeHost();await M.create(host,{{fetch:fetchFn,store,mode}}).load();
   seen[mode]=paths(host.innerHTML);html[mode]=host.innerHTML}}
-out({{seen,html,calls:calls.length,fields:MEM.schema.sections.flatMap(s=>s.fields.map(f=>[f.path,f.surface.section]))}});""")
+out({{seen,html,calls:calls.filter(c=>c[0]==='/api/settings').length,fields:MEM.schema.sections.flatMap(s=>s.fields.map(f=>[f.path,f.surface.section]))}});""")
     rendered = [path for section in SURFACE_SECTIONS for path in out["seen"][section]]
     assert sorted(rendered) == sorted(path for path, _ in out["fields"])  # chaque champ, une seule fois
     assert len(rendered) == len(set(rendered))
@@ -96,9 +99,11 @@ out({{seen,html,calls:calls.length,fields:MEM.schema.sections.flatMap(s=>s.field
     every = "".join(out["html"].values())
     assert "SECRET" not in every and "sk-" not in every
     # Le secret se règle dans Connexions (Slice 07 de jarvis-settings-ui-reorganization), par l'ID canonique.
-    for section in ("semantic_retrieval", "knowledge_sources"):
+    for section in ("recall", "memory_advanced"):  # clé du fournisseur d'embeddings, jeton du sidecar
         assert 'data-mem-open="providers">Plugins & MCP › Fournisseurs</button>' in out["html"][section]
-    assert "Connaissances par agent" in out["html"]["knowledge_sources"]  # résumé des loadouts, lecture seule
+    assert "Accès par agent" in out["html"]["knowledge_sources"]  # résumé des loadouts, lecture seule
+    # Le délai brut et le sidecar ne sont jamais sur la page ordinaire.
+    assert "mem_recall_timeout_ms" not in out["html"]["recall"] and "tencent." not in "".join(out["seen"]["recall"])
     assert "Ouvrir le Memory Center" in out["html"]["center"]
     for section in SURFACE_SECTIONS:  # ligne d'état courte + lien profond, jamais le détail des étages
         assert "data-mem-diagnostics" in out["html"][section] and "État des étages mémoire" not in out["html"][section]
@@ -108,9 +113,10 @@ out({{seen,html,calls:calls.length,fields:MEM.schema.sections.flatMap(s=>s.field
 def test_dependent_toggles_are_blocked_and_the_patch_is_minimal(tmp_path):
     out = run_node(tmp_path, {}, """
 const store=M.createStore();
-const host=fakeHost(),v=M.create(host,{fetch:fetchFn,store,section:'semantic_retrieval'});await v.load();
+const host=fakeHost(),v=M.create(host,{fetch:fetchFn,store,section:'recall',mode:'memory'});await v.load();
 const blocked=/id="mem_semantic_enabled"[^>]*disabled/.test(host.innerHTML);
-const r=fakeHost(),recall=M.create(r,{fetch:fetchFn,store,section:'recall'});await recall.load();
+v.destroy();
+const r=fakeHost(),recall=M.create(r,{fetch:fetchFn,store,section:'recall',mode:'memory'});await recall.load();
 change(r,'recall.max_items',{value:'3'});change(r,'recall.enabled',{checked:false});
 const patch=recall.patch();
 click(r,'data-mem-save');await new Promise(x=>setTimeout(x,10));
@@ -125,7 +131,7 @@ out({blocked,patch,calls,draft:store.draft});""")
 def test_a_refusal_is_shown_and_keeps_the_draft(tmp_path):
     out = run_node(tmp_path, {}, """
 const bad=async()=>{const e=new Error('semantic.enabled invalide');e.code='memory_settings_semantic_needs_provider';throw e};
-const host=fakeHost(),v=M.create(host,{fetch:async(p,i)=>i?bad():{memory:MEM},section:'recall'});await v.load();
+const host=fakeHost(),v=M.create(host,{fetch:async(p,i)=>i?bad():{memory:MEM},section:'recall',mode:'memory'});await v.load();
 change(host,'recall.max_items',{value:'2'});await v.submit();
 out({html:host.innerHTML,draft:v.state.draft});""")
     assert "memory_settings_semantic_needs_provider" in out["html"] and "Rien n" in out["html"]
@@ -137,7 +143,7 @@ def test_degradation_is_counted_on_the_page_and_detailed_in_diagnostics(tmp_path
     out = run_node(tmp_path, {"memory": {"tencent": {"enabled": True}}}, """
 const store=M.createStore(),page=fakeHost(),diag=fakeHost();
 let opened=0;
-await M.create(page,{fetch:fetchFn,store,section:'knowledge_sources',openDiagnostics:()=>opened++}).load();
+await M.create(page,{fetch:fetchFn,store,section:'recall',mode:'memory',openDiagnostics:()=>opened++}).load();
 await M.create(diag,{fetch:fetchFn,store,mode:'diagnostics'}).load();
 click(page,'data-mem-diagnostics');
 out({page:page.innerHTML,diag:diag.innerHTML,opened});""")
@@ -150,7 +156,7 @@ out({page:page.innerHTML,diag:diag.innerHTML,opened});""")
 def test_env_imposed_values_are_locked_and_listed_in_diagnostics(tmp_path):
     out = run_node(tmp_path, {}, """
 const store=M.createStore(),page=fakeHost(),diag=fakeHost();
-await M.create(page,{fetch:fetchFn,store,section:'recall'}).load();
+await M.create(page,{fetch:fetchFn,store,section:'recall',mode:'memory'}).load();
 await M.create(diag,{fetch:fetchFn,store,mode:'diagnostics'}).load();
 out({page:page.innerHTML,diag:diag.innerHTML});""", environ={"JARVIS_MEMORY_RECALL_MAX_ITEMS": "4"})
     assert "JARVIS_MEMORY_RECALL_MAX_ITEMS" in out["page"]
@@ -158,34 +164,34 @@ out({page:page.innerHTML,diag:diag.innerHTML});""", environ={"JARVIS_MEMORY_RECA
 
 
 def test_the_draft_is_shared_and_a_cross_section_fix_is_saved_with_it(tmp_path):
-    """Couper la recherche sémantique ramène la consolidation automatique à « manuel » (autre section) : la section
-    sémantique le dit, la section Consolidation le montre, et l'enregistrement envoie les deux."""
+    """Couper la recherche sémantique ramène la consolidation automatique à « manuelle » (même onglet Mémoire) ; un
+    autre onglet monté sur le même état (Connaissances) dit ce que le brouillon porte, et l'enregistrement envoie tout."""
     settings = {"memory": {"semantic": {"enabled": True, "provider": "openai"}, "consolidation": {"mode": "auto"}}}
     out = run_node(tmp_path, settings, """
 const store=M.createStore(),sem=fakeHost(),con=fakeHost();
-const s=M.create(sem,{fetch:fetchFn,store,section:'semantic_retrieval'});await s.load();
+const s=M.create(sem,{fetch:fetchFn,store,section:'recall',mode:'memory'});await s.load();
 change(sem,'semantic.enabled',{checked:false});
 s.destroy();
-const c=M.create(con,{fetch:fetchFn,store,section:'consolidation'});await c.load();
+const c=M.create(con,{fetch:fetchFn,store,section:'knowledge_sources',mode:'knowledge'});await c.load();
 const pending=con.innerHTML;
 click(con,'data-mem-save');await new Promise(x=>setTimeout(x,10));
 out({semantic:sem.innerHTML,pending,body:JSON.parse(calls[calls.length-1][1]),after:con.innerHTML});""")
-    assert "Mode de consolidation" in out["semantic"]  # « Enregistre aussi les changements en attente… »
-    assert 'value="manual" selected' in out["pending"]
-    assert "Recherche sémantique" in out["pending"]
+    assert 'value="manual" data-mem="consolidation.mode" checked' in out["semantic"]  # ramenée à l'état sûr
+    assert "Enregistre aussi les changements en attente" in out["pending"]
+    assert "Mode de consolidation" in out["pending"] and "Recherche sémantique active" in out["pending"]
     assert out["body"] == {"memory": {"semantic": {"enabled": False}, "consolidation": {"mode": "manual"}}}
     assert "prochain démarrage de Core" in out["after"]  # semantic.enabled ne s'applique qu'au redémarrage
 
 
 def test_restart_required_notice_is_shown_while_pending(tmp_path):
     out = run_node(tmp_path, {}, """
-const host=fakeHost(),v=M.create(host,{fetch:fetchFn,section:'knowledge_sources'});await v.load();
+const host=fakeHost(),v=M.create(host,{fetch:fetchFn,section:'memory_advanced'});await v.load();
 change(host,'tencent.url',{value:'http://127.0.0.1:9000'});
 const pending=host.innerHTML;
-change(host,'knowledge.wiki_enabled',{checked:false});
+change(host,'recall.timeout_ms',{value:'600'});
 out({pending,both:host.innerHTML,draft:v.state.draft});""")
     assert "Redémarrage de Core nécessaire pour" in out["pending"] and "URL du sidecar" in out["pending"]
-    assert out["draft"] == {"tencent.url": "http://127.0.0.1:9000", "knowledge.wiki_enabled": False}
+    assert out["draft"] == {"tencent.url": "http://127.0.0.1:9000", "recall.timeout_ms": 600}
     assert "Au prochain démarrage de Core" in out["both"] and "Au prochain tour" in out["both"]  # badges par groupe
 
 
@@ -195,7 +201,7 @@ const pending=[];const slow=(p,i)=>new Promise(r=>pending.push(()=>r({memory:MEM
 const store=M.createStore(),a=fakeHost(),b=fakeHost();
 const first=M.create(a,{fetch:slow,store,section:'recall'});const firstLoad=first.load();
 first.destroy();                                   // le shell quitte la section pendant la lecture
-const second=M.create(b,{fetch:slow,store,section:'consolidation'});const secondLoad=second.load();
+const second=M.create(b,{fetch:slow,store,section:'knowledge_sources'});const secondLoad=second.load();
 const reads=pending.length;
 pending.forEach(r=>r());await firstLoad;await secondLoad;
 first.render();
@@ -203,7 +209,7 @@ out({reads,a:a.innerHTML,b:paths(b.innerHTML),destroyed:first.destroyed});""")
     assert out["reads"] == 1
     assert out["a"] == '<div class="empty">Chargement…</div>'  # la réponse tardive n'a rien dessiné
     assert out["destroyed"] is True
-    assert out["b"] == ["consolidation.mode", "consolidation.auto_min_confidence", "consolidation.max_candidates_per_run"]
+    assert out["b"] == ["knowledge.wiki_enabled", "knowledge.codegraph_enabled", "knowledge.skills_enabled"]
 
 
 async def test_the_saved_payload_is_frozen_key_by_key_and_unknown_fields_survive(tmp_path, monkeypatch):
@@ -213,7 +219,7 @@ async def test_the_saved_payload_is_frozen_key_by_key_and_unknown_fields_survive
         if name.startswith("JARVIS_MEMORY_"):
             monkeypatch.delenv(name)
     out = run_node(tmp_path, {}, """
-const host=fakeHost(),v=M.create(host,{fetch:fetchFn,section:'consolidation'});await v.load();
+const host=fakeHost(),v=M.create(host,{fetch:fetchFn,section:'recall',mode:'memory'});await v.load();
 change(host,'consolidation.max_candidates_per_run',{value:'7'});
 click(host,'data-mem-save');await new Promise(x=>setTimeout(x,10));
 out({body:calls[calls.length-1][1]});""")
@@ -304,7 +310,7 @@ def test_leaving_a_memory_section_destroys_its_view_and_ignores_the_late_respons
     assert done.returncode == 0, done.stderr
     result = json.loads(done.stdout)
     seen = result["seen"]
-    assert list(seen) == ["recall", "semantic_retrieval", "consolidation", "knowledge_sources", "memory_center"]
+    assert list(seen) == ["recall", "knowledge_sources", "memory_center", "memory_advanced"]
     for section, item in seen.items():
         assert item["save"] == ("readonly" if section == "memory_center" else "self"), section
         assert item["reads"] == 1 and item["mount"] == '<div id="memorySettingsMount"></div>', item
@@ -321,11 +327,12 @@ def test_the_page_registers_memory_sections_and_has_no_memory_tab():
     # Slice 09 : plus aucun onglet de premier niveau ; `memory` est l'alias explicite de Rappel (registre).
     assert "\nconst TABS=" not in html and "SET.tab" not in html
     block = html[html.index("const MEMORY_SECTIONS=[") : html.index("function memorySettingsStore()")]
-    for section in (*SURFACE_SECTIONS, "memory_center"):
-        assert f"{{id:'{section}',category:'memory_knowledge'" in block, section
+    for section, category in (*SURFACE_SECTIONS.items(), ("memory_center", "memory_knowledge")):
+        assert f"{{id:'{section}',category:'{category}'" in block, section
     assert "aliases" not in block
     registry = (HTML.parent / "control_center_settings_registry.js").read_text(encoding="utf-8")
-    assert "memory:Object.freeze({category:'memory_knowledge',section:'recall'})" in registry
+    for alias in ("memory", "semantic_retrieval", "consolidation"):  # anciennes entrées : l'onglet Mémoire
+        assert f"{alias}:Object.freeze({{category:'memory_knowledge',section:'recall'}})" in registry
     assert "if(typeof window!=='undefined'&&typeof installMemorySettingsSections==='function')installMemorySettingsSections();" in html
     assert "registerSettingsDiagnostic(MEMORY_DIAGNOSTIC);" in html
 
@@ -334,18 +341,18 @@ def test_the_page_registers_memory_sections_and_has_no_memory_tab():
 
 @pytest.mark.parametrize("refused", [False, True])
 def test_leaving_a_section_during_a_save_redraws_the_section_now_shown(tmp_path, refused):
-    """Enregistrer depuis Recherche sémantique, passer à Consolidation pendant l'envoi : à l'issue, Consolidation n'est plus
-    figée (« Enregistrement… », champs désactivés) ; elle montre l'issue réelle, succès ou refus."""
+    """Enregistrer depuis l'onglet Mémoire, passer à Connaissances pendant l'envoi : à l'issue, Connaissances n'est plus
+    figé (« Enregistrement… », champs désactivés) ; il montre l'issue réelle, succès ou refus."""
     out = run_node(tmp_path, {}, """
 let answer;const held=new Promise(r=>answer=r);
 const slow=async(p,i)=>{if(!i)return {memory:MEM};await held;
   if(REFUSED){const e=new Error('refusé');e.code='memory_settings_bad_type';throw e}return {memory:MEM}};
 const store=M.createStore(),sem=fakeHost(),con=fakeHost();
-const s=M.create(sem,{fetch:slow,store,section:'semantic_retrieval'});await s.load();
+const s=M.create(sem,{fetch:slow,store,section:'recall',mode:'memory'});await s.load();
 change(sem,'semantic.provider',{value:'openai'});
 const saving=s.submit();
 s.destroy();                                         // le shell quitte la section pendant l'envoi
-const c=M.create(con,{fetch:slow,store,section:'consolidation'});await c.load();
+const c=M.create(con,{fetch:slow,store,section:'knowledge_sources',mode:'knowledge'});await c.load();
 const during=con.innerHTML;
 answer();await saving;
 out({during,after:con.innerHTML,busy:store.busy,draft:store.draft,views:store.views.size});""".replace("REFUSED", "true" if refused else "false"))
@@ -353,7 +360,7 @@ out({during,after:con.innerHTML,busy:store.busy,draft:store.draft,views:store.vi
     after = out["after"]
     assert out["busy"] is False and out["views"] == 1
     assert "Enregistrement…" not in after and "Enregistrer la mémoire" in after
-    assert "mem_consolidation_mode" in after and not __import__("re").search(r'id="mem_consolidation_mode"[^>]*disabled', after)
+    assert "mem_knowledge_wiki_enabled" in after and not __import__("re").search(r'id="mem_knowledge_wiki_enabled"[^>]*disabled', after)
     if refused:
         assert "memory_settings_bad_type" in after and "Rien n" in after
         assert out["draft"] == {"semantic.provider": "openai"} and "Enregistre aussi" in after
@@ -365,10 +372,10 @@ out({during,after:con.innerHTML,busy:store.busy,draft:store.draft,views:store.vi
 def test_a_section_opened_after_a_save_does_not_repeat_its_message(tmp_path):
     out = run_node(tmp_path, {}, """
 const store=M.createStore(),sem=fakeHost(),con=fakeHost();
-const s=M.create(sem,{fetch:fetchFn,store,section:'semantic_retrieval'});await s.load();
+const s=M.create(sem,{fetch:fetchFn,store,section:'recall',mode:'memory'});await s.load();
 change(sem,'semantic.provider',{value:'openai'});await s.submit();
 const saved=sem.innerHTML;s.destroy();
-await M.create(con,{fetch:fetchFn,store,section:'consolidation'}).load();
+await M.create(con,{fetch:fetchFn,store,section:'knowledge_sources',mode:'knowledge'}).load();
 out({saved,later:con.innerHTML});""")
     assert "Réglages mémoire enregistrés." in out["saved"] and "prochain démarrage de Core" in out["saved"]
     assert "Réglages mémoire enregistrés." not in out["later"] and "prochain démarrage de Core" not in out["later"]

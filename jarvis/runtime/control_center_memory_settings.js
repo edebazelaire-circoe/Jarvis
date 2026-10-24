@@ -6,13 +6,18 @@
    d'options, aucun libellé de champ, aucune destination n'est copié ici : tout vient du schéma serveur, et chaque
    champ dit lui-même la section de Réglages qui l'édite (`surface.section`). Jamais de secret : seulement `has_secret`.
 
-   Trois vues d'un même état partagé (`createStore`, un par ouverture des Réglages) :
-   - `fields` : les champs d'UNE section (`options.section`), avec une ligne d'état courte et le lien vers le diagnostic ;
+   Vues d'un même état partagé (`createStore`, un par ouverture des Réglages) :
+   - `memory` : l'onglet « Mémoire » (refonte-ui-settings, Slice 05, maquette 04) : cartes Rappel, Consolidation,
+     Recherche sémantique, résumé du système, entrée du Memory Center avec ses compteurs réels, bandeau Avancé ;
+   - `knowledge` : l'onglet « Connaissances » : sources (préférence ET disponibilité réelle), portées, loadouts ;
+   - `fields` : les champs d'UNE section (`options.section`) en liste simple — Avancé › Mémoire (`memory_advanced`) ;
    - `center` : l'entrée du Memory Center ;
    - `diagnostics` : l'état détaillé des étages et des valeurs coupées (partie « Mémoire » d'Avancé › Diagnostics).
    Le brouillon vit dans l'état partagé : il survit au passage d'une section mémoire à l'autre (une règle de
    compatibilité peut ramener un champ d'une autre section), et « Enregistrer la mémoire » envoie tout le brouillon.
-   Une vue détruite (`destroy`) ne dessine plus rien et ignore les réponses tardives. */
+   Une vue détruite (`destroy`) ne dessine plus rien et ignore les réponses tardives.
+   L'état VIVANT de Core (`/api/memory/status`, nombre de notes et de candidats en attente) est lu une fois par
+   ouverture (`loadLive`, vues `memory` et `knowledge`) : jamais inventé ; « — » et la raison réelle si Core se tait. */
 (function(root){
   'use strict';
   const MOUNT_ID='memorySettingsMount';
@@ -23,12 +28,193 @@
   const SECRET_HINT={semantic:'Clé du fournisseur',tencent:'Jeton du sidecar'};
   const own=(o,k)=>Object.prototype.hasOwnProperty.call(o,k);
 
+  /* Pictogrammes au trait (24×24), partagés avec le Memory Center (`JarvisMemorySettings.icon`). */
+  const ICONS=Object.freeze({
+    brain:'<path d="M9.5 4A3 3 0 0 0 6.5 7v.3A3 3 0 0 0 4.5 10.5a3 3 0 0 0 .9 2.2A3.2 3.2 0 0 0 6.5 18a3 3 0 0 0 3 2 2.5 2.5 0 0 0 2.5-2.5V6.5A2.5 2.5 0 0 0 9.5 4z"/><path d="M14.5 4A3 3 0 0 1 17.5 7v.3a3 3 0 0 1 2 3.2 3 3 0 0 1-.9 2.2A3.2 3.2 0 0 1 17.5 18a3 3 0 0 1-3 2 2.5 2.5 0 0 1-2.5-2.5"/><path d="M8.5 10.5h1.5M14 13.5h1.5"/>',
+    search:'<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
+    db:'<ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v13c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-13"/><path d="M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8"/>',
+    gear:'<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.8 1.8M16.7 16.7l1.8 1.8M5.5 18.5l1.8-1.8M16.7 7.3l1.8-1.8"/>',
+    user:'<circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/>',
+    users:'<circle cx="9" cy="8" r="3.2"/><path d="M3 20c.7-3.3 3-5 6-5s5.3 1.7 6 5"/><path d="M15.5 4.9a3.2 3.2 0 0 1 0 6.2M17.5 15.2c1.8.6 3 2.2 3.5 4.8"/>',
+    shield:'<path d="M12 3 5 6v5c0 4.6 3 8.4 7 10 4-1.6 7-5.4 7-10V6z"/><path d="m9.5 12 1.8 1.8 3.4-3.6"/>',
+    doc:'<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M10 12h5M10 16h5"/>',
+    chevron:'<path d="m9 6 6 6-6 6"/>',
+    chevronLeft:'<path d="m15 6-6 6 6 6"/>',
+    wrench:'<path d="M14.7 6.3a4 4 0 0 0 5 5L11.5 19.5a2.1 2.1 0 0 1-3-3z"/><path d="M14.7 6.3 17 4"/>',
+    lock:'<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+    star:'<path d="m12 3.5 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.2-4.1 5.8-.8z"/>',
+    bars:'<path d="M5 20v-6M10 20V8M15 20v-9M20 20V4"/>',
+    nodes:'<circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="18" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M11 7 6 16M13 7l5 9M7.2 18h9.6"/>',
+    book:'<path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H19v-3"/>',
+    code:'<path d="m8.5 8-4 4 4 4M15.5 8l4 4-4 4M13.5 5l-3 14"/>',
+    cube:'<path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z"/><path d="M12 12 20 7.5M12 12 4 7.5M12 12v9"/>',
+    layers:'<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>',
+    cloud:'<path d="M7 18a4.5 4.5 0 0 1-.5-9A6 6 0 0 1 18 9.5a4 4 0 0 1-.5 8.5z"/>',
+    folder:'<path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4.5l2 2.5H19a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/>',
+    refresh:'<path d="M20 11a8 8 0 0 0-14.3-4.5L4 8"/><path d="M4 4v4h4M4 13a8 8 0 0 0 14.3 4.5L20 16"/><path d="M20 20v-4h-4"/>',
+    check:'<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+    close:'<path d="M6 6l12 12M18 6 6 18"/>',
+    play:'<path d="M8 5.5v13l10-6.5z"/>',
+    more:'<circle cx="12" cy="5.5" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="12" cy="18.5" r="1.2"/>',
+  });
+  const icon=(name,cls)=>`<svg class="mem-ico${cls?' '+cls:''}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICONS[name]||''}</svg>`;
+
+  /* Feuille de la page Mémoire & connaissances, injectée une fois (préfixe `.mem-`). Jetons du shell seulement
+     (`--set-*`, `--shell-*`, `--accent`, `--ok`…) : la fondation visuelle partagée (Slice 01) les redéfinit. */
+  const STYLE_ID='jarvisMemorySettingsStyle';
+  const STYLE=`
+.mem-page{--mem-hue:var(--accent);--mem-violet:var(--role-accent-violet,#b9a2ff);--mem-line:color-mix(in srgb,var(--mem-hue) 22%,var(--set-hair-2,#1b3442));
+  --mem-glass:var(--shell-glass-strong,rgba(4,10,15,.8));--mem-ink-2:var(--set-ink-2,#a9c2cf);--mem-ink-3:var(--set-ink-3,#8aa5b3);--mem-hair:var(--set-hair-2,#24414f);--mem-r:14px;
+  container-type:inline-size;display:grid;gap:16px;min-width:0;color:var(--set-ink,var(--text));font-size:13.5px;line-height:1.5}
+.mem-page *{box-sizing:border-box}
+.mem-page .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.mem-ico{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.mem-grid{display:grid;gap:16px;grid-template-columns:minmax(0,1fr);align-items:start}
+@container (min-width:720px){.mem-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+.mem-col{display:grid;gap:16px;align-content:start;min-width:0}
+.mem-card{position:relative;display:grid;gap:14px;min-width:0;padding:18px 20px;border:1px solid var(--mem-line);border-radius:var(--mem-r);
+  background:radial-gradient(120% 90% at 0% 0%,color-mix(in srgb,var(--mem-hue) 7%,transparent),transparent 55%),var(--mem-glass);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.035),0 10px 30px rgba(0,0,0,.18)}
+.mem-card:focus-visible,.mem-card[data-settings-landed]:focus{outline:2px solid var(--accent);outline-offset:3px}
+.mem-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:center}
+.mem-medal{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;color:var(--mem-hue);
+  border:1.5px solid color-mix(in srgb,var(--mem-hue) 65%,transparent);
+  background:radial-gradient(circle at 50% 40%,color-mix(in srgb,var(--mem-hue) 20%,transparent),transparent 72%);
+  box-shadow:0 0 18px color-mix(in srgb,var(--mem-hue) 26%,transparent),inset 0 0 12px color-mix(in srgb,var(--mem-hue) 14%,transparent)}
+.mem-medal .mem-ico{width:24px;height:24px}
+.mem-head-2{grid-template-columns:auto minmax(0,1fr)}
+.mem-medal.sm{width:38px;height:38px}.mem-medal.sm .mem-ico{width:19px;height:19px}
+.mem-title{margin:0;font-size:18px;font-weight:600;line-height:1.25;letter-spacing:-.005em}
+.mem-sub{margin:2px 0 0;color:var(--mem-ink-2);font-size:13px}
+.mem-text{margin:0;color:var(--mem-ink-2);max-width:62ch}
+.mem-label{margin:0;font-size:13px;font-weight:600;color:var(--set-ink,var(--text))}
+.mem-hint{margin:0;color:var(--mem-ink-3);font-size:12px}
+.mem-hint.warn{color:var(--warn)}.mem-hint.bad{color:var(--danger)}
+.mem-switch{display:inline-flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--mem-ink-3);white-space:nowrap;cursor:pointer}
+.mem-switch-text.on{color:var(--ok)}
+input.mem-toggle{appearance:none;-webkit-appearance:none;position:relative;flex:none;width:46px;height:26px;margin:0;border-radius:999px;cursor:pointer;color:var(--set-ink,var(--text));
+  border:1px solid var(--mem-hair);background:rgba(113,144,160,.18);transition:background-color var(--shell-dur,.18s),border-color var(--shell-dur,.18s)}
+input.mem-toggle::before{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#d6e7ef;
+  box-shadow:0 1px 3px rgba(0,0,0,.4);transition:transform var(--shell-dur,.18s) var(--shell-ease,ease)}
+input.mem-toggle:checked{background:color-mix(in srgb,var(--mem-hue) 70%,#0b4a6b);border-color:color-mix(in srgb,var(--mem-hue) 80%,transparent);
+  box-shadow:0 0 12px color-mix(in srgb,var(--mem-hue) 40%,transparent)}
+input.mem-toggle:checked::before{transform:translateX(20px);background:#fff}
+input.mem-toggle:disabled{cursor:not-allowed}
+.mem-meter{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:6px 14px;align-items:center;padding:14px 16px;border:1px solid var(--mem-line);border-radius:12px;background:rgba(3,9,13,.5)}
+.mem-meter>.mem-ico{width:26px;height:26px;color:var(--mem-hue)}
+.mem-meter .mem-label{font-weight:500}
+.mem-meter .mem-range,.mem-meter .mem-hint{grid-column:1/-1}
+.mem-out{font-size:24px;font-weight:600;line-height:1;color:var(--set-ink,var(--text));font-variant-numeric:tabular-nums;white-space:nowrap}
+.mem-out small{font-size:15px;font-weight:500;color:var(--mem-ink-2)}
+.mem-out.sm{font-size:13px;padding:3px 9px;border:1px solid var(--mem-line);border-radius:8px}
+input.mem-range{--fill:50%;appearance:none;-webkit-appearance:none;width:100%;height:22px;margin:0;background:transparent;cursor:pointer}
+input.mem-range::-webkit-slider-runnable-track{height:6px;border-radius:999px;background:linear-gradient(90deg,var(--mem-hue) var(--fill),rgba(113,144,160,.22) var(--fill))}
+input.mem-range::-moz-range-track{height:6px;border-radius:999px;background:linear-gradient(90deg,var(--mem-hue) var(--fill),rgba(113,144,160,.22) var(--fill))}
+input.mem-range::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;margin-top:-6px;border-radius:50%;background:#e9f8ff;border:3px solid var(--mem-hue);box-shadow:0 0 10px color-mix(in srgb,var(--mem-hue) 60%,transparent)}
+input.mem-range::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#e9f8ff;border:3px solid var(--mem-hue)}
+input.mem-range:disabled{cursor:not-allowed;opacity:.6}
+.mem-range-ends{display:flex;justify-content:space-between;gap:10px;color:var(--mem-ink-3);font-size:12px}
+.mem-pair{display:grid;gap:18px 22px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));align-items:start}
+.mem-slider{display:grid;gap:6px;min-width:0}
+.mem-slider-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:42px}
+.mem-modes{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin:0;padding:0;border:0;min-width:0}
+.mem-modes legend{padding:0;margin:0 0 10px;font-size:13px;font-weight:600}
+.mem-mode{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 12px;align-items:center;padding:12px 34px 12px 14px;border:1px solid var(--mem-line);
+  border-radius:12px;background:rgba(3,9,13,.45);cursor:pointer;transition:border-color var(--shell-dur,.18s),box-shadow var(--shell-dur,.18s)}
+.mem-mode input{appearance:none;-webkit-appearance:none;position:absolute;top:12px;right:12px;width:16px;height:16px;margin:0;border:2px solid currentColor;border-radius:50%;color:var(--set-ink,var(--text));background:transparent;cursor:inherit}
+.mem-mode input:checked{border-color:var(--mem-hue);background:radial-gradient(circle,var(--mem-hue) 0 3px,transparent 4px)}
+.mem-mode input:focus-visible{outline:none}
+.mem-mode .mem-ico{grid-row:1/3;width:26px;height:26px;color:var(--mem-ink-2)}
+.mem-mode strong{font-size:14px;font-weight:600}
+.mem-mode span{font-size:12px;color:var(--mem-ink-2)}
+.mem-mode:hover{border-color:color-mix(in srgb,var(--mem-hue) 45%,transparent)}
+.mem-mode:has(input:checked){border-color:var(--mem-hue);background:color-mix(in srgb,var(--mem-hue) 10%,rgba(3,9,13,.5));
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--mem-hue) 50%,transparent),0 0 18px color-mix(in srgb,var(--mem-hue) 26%,transparent)}
+.mem-mode:has(input:checked) .mem-ico{color:var(--mem-hue)}
+.mem-mode:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+.mem-mode:has(input:disabled){cursor:not-allowed;border-style:dashed}
+.mem-mode:has(input:disabled) strong{color:var(--mem-ink-2)}
+.mem-select{display:flex;align-items:center;gap:12px;padding:0 14px;border:1px solid var(--mem-line);border-radius:12px;background:rgba(3,9,13,.5)}
+.mem-select>.mem-ico{color:var(--mem-hue)}
+.mem-select select{flex:1;min-width:0;height:46px;padding:0;border:0;background:transparent;color:var(--set-ink,var(--text));font-size:15px;cursor:pointer}
+.mem-select select option{background:#08121a}
+.mem-select:has(select:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+.mem-select select:focus-visible{outline:none}
+.mem-field{display:grid;gap:8px;min-width:0}
+.mem-inline{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding-top:14px;border-top:1px solid var(--set-hair,rgba(151,191,209,.13))}
+.mem-inline .mem-medal{color:var(--mem-ink-2);border-color:var(--mem-hair);box-shadow:none;background:none}
+.mem-inline .mem-hint{grid-column:2/-1}
+.mem-secretline{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12.5px;color:var(--mem-ink-2)}
+.mem-pill{display:inline-flex;align-items:center;gap:6px;padding:1px 9px;border:1px solid var(--mem-hair);border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;color:var(--mem-ink-2)}
+.mem-dot{width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor;flex:none}
+.mem-tone-ok{color:var(--ok)}.mem-tone-info{color:var(--accent)}.mem-tone-warn{color:var(--warn)}.mem-tone-bad{color:var(--danger)}.mem-tone-off{color:var(--mem-ink-3)}
+.mem-pill.mem-tone-ok{border-color:color-mix(in srgb,var(--ok) 40%,transparent)}.mem-pill.mem-tone-bad{border-color:color-mix(in srgb,var(--danger) 40%,transparent)}
+.mem-pill.mem-tone-warn{border-color:color-mix(in srgb,var(--warn) 40%,transparent)}.mem-pill.mem-tone-info{border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
+.mem-rows{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.mem-row{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(0,1.1fr) auto;gap:12px;align-items:center;width:100%;min-height:46px;padding:8px 12px;
+  border:1px solid var(--mem-hair);border-radius:10px;background:rgba(3,9,13,.4);color:inherit;font:inherit;text-align:left;cursor:pointer}
+.mem-row:hover{border-color:color-mix(in srgb,var(--mem-hue) 45%,transparent)}
+.mem-row>.mem-ico{color:var(--mem-ink-2)}
+.mem-row-k{font-weight:500}
+.mem-row-v{display:inline-flex;align-items:center;gap:8px;min-width:0;font-size:12.5px}
+.mem-row-v span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mem-cta{--mem-hue:var(--mem-violet);border-color:color-mix(in srgb,var(--mem-violet) 60%,transparent);
+  background:radial-gradient(120% 120% at 0% 0%,color-mix(in srgb,var(--mem-violet) 15%,transparent),transparent 60%),var(--mem-glass);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--mem-violet) 18%,transparent),0 0 26px color-mix(in srgb,var(--mem-violet) 18%,transparent)}
+.mem-cta-open{display:grid;place-items:center;width:38px;height:38px;border:1px solid transparent;border-radius:50%;background:none;color:var(--set-ink,var(--text));cursor:pointer}
+.mem-cta-open:hover{border-color:var(--mem-violet)}
+.mem-tiles{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(118px,1fr))}
+.mem-tile{display:grid;gap:2px;align-content:start;min-height:62px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--mem-violet) 40%,transparent);
+  border-radius:12px;background:rgba(10,6,24,.4);color:inherit;font:inherit;text-align:left;cursor:pointer}
+.mem-tile:hover{border-color:var(--mem-violet);box-shadow:0 0 14px color-mix(in srgb,var(--mem-violet) 28%,transparent)}
+.mem-tile-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.mem-tile-top .mem-ico:first-child{width:24px;height:24px;color:var(--mem-violet)}
+.mem-tile-top .mem-ico:last-child{width:16px;height:16px;color:var(--mem-ink-2)}
+.mem-tile strong{font-size:13.5px;font-weight:600}
+.mem-tile small{font-size:12px;color:var(--mem-ink-2)}
+.mem-adv{grid-template-columns:auto minmax(0,1fr);align-items:center;gap:14px 18px;--mem-hue:var(--mem-ink-3);border-color:var(--mem-hair);background:var(--mem-glass)}
+.mem-adv-note{display:flex;align-items:center;gap:10px;color:var(--mem-ink-2);font-size:12.5px;grid-column:1/-1}
+.mem-adv-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;grid-column:1/-1}
+@container (min-width:820px){.mem-adv{grid-template-columns:auto minmax(0,.9fr) minmax(0,1.3fr) auto}
+  .mem-adv-note{grid-column:auto;padding-left:18px;border-left:1px dashed var(--mem-hair)}.mem-adv-actions{grid-column:auto;flex-direction:column;align-items:flex-end}}
+.mem-btn{display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:7px 14px;border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);border-radius:10px;
+  background:rgba(3,9,13,.5);color:var(--set-ink,var(--text));font:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
+.mem-btn:hover{border-color:var(--accent);box-shadow:0 0 12px color-mix(in srgb,var(--accent) 24%,transparent)}
+.mem-btn .mem-ico{width:16px;height:16px}
+.mem-savebar{position:relative;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 16px;padding:10px 16px;
+  border:1px solid var(--mem-hair);border-radius:12px;background:color-mix(in srgb,var(--solid,#070d13) 92%,transparent);backdrop-filter:blur(14px)}
+.mem-savebar.dirty{position:sticky;bottom:0;border-color:color-mix(in srgb,var(--warn) 45%,transparent);box-shadow:0 -8px 24px rgba(0,0,0,.35)}
+.mem-savebar .set-actions{margin:0}
+.mem-savebar-text{margin:0;font-size:12.5px;color:var(--mem-ink-2)}
+.mem-savebar.dirty .mem-savebar-text{color:var(--warn)}
+.mem-messages{display:grid;gap:8px}.mem-messages:empty{display:none}
+.mem-sources{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.mem-source{align-content:start}
+.mem-source .mem-head{grid-template-columns:auto minmax(0,1fr)}
+.mem-source-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding-top:12px;border-top:1px solid var(--set-hair,rgba(151,191,209,.13))}
+.mem-scopes{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin:0;padding:0;list-style:none}
+.mem-scopes li{display:grid;gap:2px;padding:10px 12px;border:1px solid var(--mem-hair);border-radius:10px;background:rgba(3,9,13,.4)}
+.mem-scopes strong{font-size:13px}.mem-scopes span{font-size:12px;color:var(--mem-ink-2)}
+.mem-loadouts{display:grid;gap:0;margin:0;padding:0;list-style:none}
+.mem-loadouts li{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 12px;padding:8px 0;border-bottom:1px solid var(--set-hair,rgba(151,191,209,.13));font-size:12.5px}
+.mem-loading{display:inline-flex;align-items:center;gap:8px;color:var(--mem-ink-2);font-size:12.5px}
+.mem-spin{width:14px;height:14px;flex:none;border-radius:50%;border:2px solid color-mix(in srgb,var(--accent) 25%,transparent);border-top-color:var(--accent);animation:memSpin .8s linear infinite}
+@keyframes memSpin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.mem-spin{animation:none}.mem-page *{transition:none!important}}
+.mem-linkish{padding:0;border:0;background:none;color:var(--accent);font:inherit;font-size:12.5px;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+`;
+  function injectStyle(){
+    const doc=root.document;
+    if(!doc||!doc.head||doc.getElementById(STYLE_ID))return;
+    const el=doc.createElement('style');el.id=STYLE_ID;el.textContent=STYLE;doc.head.appendChild(el);
+  }
+
   /* Étages d'une section du bloc : le sien (`recall`, `semantic`, `tencent`), ou ses `knowledge:*`. */
   function legsOf(legs,sectionId){return Object.keys(legs).filter(k=>k===sectionId||k.startsWith(sectionId+':'))}
   function fields(schema){return (schema.sections||[]).flatMap(s=>s.fields.map(f=>({...f,section:s.id})))}
   /* `views` : le dessin de chaque vue vivante du store. Une lecture ou un enregistrement redessine toutes les vues à sa
      fin : la section qui l'a lancé a pu être quittée entre-temps, celle qui est affichée doit refléter le résultat. */
-  function createStore(){return {memory:null,draft:{},busy:false,message:null,restart:false,loading:null,views:new Set()}}
+  function createStore(){return {memory:null,draft:{},busy:false,message:null,restart:false,loading:null,live:null,views:new Set()}}
 
   /* Primitives du shell (`JarvisSettingsUI`) : celles passées par la page, sinon celles de la page. */
   function primitives(opts){
@@ -43,7 +229,8 @@
     const mode=opts.mode||'fields';
     const fetchJson=opts.fetch||(async(path,init)=>{
       const r=await root.fetch(path,init),text=await r.text();let body={};try{body=text?JSON.parse(text):{}}catch{body={error:text}}
-      if(!r.ok){const e=new Error(body.error||body.message||('HTTP '+r.status));e.code=r.headers.get('X-Settings-Error-Code')||r.headers.get('X-Jarvis-Error-Code')||'';throw e}
+      if(!r.ok){const err=body.error,msg=err&&typeof err==='object'?err.message:err;const e=new Error(msg||body.message||('HTTP '+r.status));
+        e.code=r.headers.get('X-Settings-Error-Code')||r.headers.get('X-Jarvis-Error-Code')||(err&&typeof err==='object'&&err.code)||'';e.status=r.status;throw e}
       return body;
     });
     const st=opts.store||createStore();
@@ -188,11 +375,258 @@
         <p class="hint">État déduit des réglages, sans appel réseau. L’état en direct (sidecar injoignable, index en synchronisation) est dans le Memory Center, onglet Santé des index. La mémoire canonique (notes Markdown) reste utilisable même si tous les étages optionnels sont coupés.</p>`;
     }
 
+
+    /* ---------------------------------------------------------------- page « Mémoire » (maquette 04)
+       Présentation : titres et textes des cartes. Données : champs, bornes, options et libellés du schéma servi,
+       valeurs du brouillon, état enregistré (`status`) et état vivant (`st.live`). Rien de la maquette n'est recopié :
+       pas de « profil de rappel » (aucun réglage réel derrière), pas de fournisseur hors du schéma. */
+    const idOf=p=>'mem_'+p.replace(/\./g,'_');
+    const effOf=p=>(st.memory.effective||{})[p]||{};
+    const has=p=>!!field(p);
+    /* Aide d'un contrôle : l'aide servie (`help`) reste le nom accessible détaillé ; elle n'est affichée que si
+       `shown`. Une contrainte (valeur imposée par l'environnement, dépendance non remplie) s'affiche toujours. */
+    function hintOf(f,shown){
+      const env=effOf(f.path).source==='env',why=blocked(f),v=current(f.path);
+      const warn=[env?`Valeur imposée par l’environnement (${f.env}) : modifiez-la là.`:'',why&&!v?why:''].filter(Boolean);
+      if(warn.length)return `<p class="mem-hint warn" id="${idOf(f.path)}-hint">${esc(warn.join(' '))}<span class="sr"> ${esc(f.help||'')}</span></p>`;
+      return `<p class="mem-hint${shown?'':' sr'}" id="${idOf(f.path)}-hint">${esc(f.help||'')}</p>`;
+    }
+    function locked(f){return effOf(f.path).source==='env'||st.busy}
+    function toggle(path){
+      const f=field(path);if(!f)return '';
+      const id=idOf(path),v=!!current(path),why=blocked(f);
+      const dis=locked(f)||(!v&&why)?' disabled':'';
+      return `<label class="mem-switch" for="${id}"><span class="mem-switch-text${v?' on':''}" aria-hidden="true">${v?'Activé':'Désactivé'}</span>`
+        +`<input type="checkbox" role="switch" class="mem-toggle" id="${id}" data-mem="${esc(path)}"${v?' checked':''}${dis} aria-label="${esc(f.label)}" aria-describedby="${id}-hint"></label>`;
+    }
+    const fill=(f,v)=>Math.max(0,Math.min(100,((Number(v)-f.min)/((f.max-f.min)||1))*100)).toFixed(1)+'%';
+    const percent=v=>Math.round(Number(v)*100)+' %';
+    function rangeInput(f,format){
+      const id=idOf(f.path),v=current(f.path),step=f.type==='float'?'0.05':'1';
+      return `<input type="range" class="mem-range" id="${id}" data-mem="${esc(f.path)}" data-mem-range min="${esc(f.min)}" max="${esc(f.max)}" step="${step}" value="${esc(v)}"`
+        +` style="--fill:${fill(f,v)}" aria-label="${esc(f.label)}" aria-valuetext="${esc(format(v))}" aria-describedby="${id}-hint"${locked(f)?' disabled':''}>`;
+    }
+    function slider(path,format,ends,shown){
+      const f=field(path);if(!f)return '';
+      return `<div class="mem-slider"><div class="mem-slider-head"><label class="mem-label" for="${idOf(path)}">${esc(f.label)}</label>`
+        +`<output class="mem-out sm" for="${idOf(path)}" data-mem-out="${esc(path)}">${esc(format(current(path)))}</output></div>`
+        +rangeInput(f,format)+`<div class="mem-range-ends" aria-hidden="true"><span>${esc(ends[0])}</span><span>${esc(ends[1])}</span></div>${hintOf(f,shown)}</div>`;
+    }
+    function head(iconName,title,sub,trailing,id){
+      return `<div class="mem-head"><span class="mem-medal">${icon(iconName)}</span><div><h3 class="mem-title"${id?` id="${id}"`:''}>${esc(title)}</h3>`
+        +`${sub?`<p class="mem-sub">${esc(sub)}</p>`:''}</div>${trailing||'<span></span>'}</div>`;
+    }
+    function pill(tone,text){return `<span class="mem-pill mem-tone-${tone}"><span class="mem-dot" aria-hidden="true"></span>${esc(text)}</span>`}
+    const savedLegs=()=>st.memory.status.legs||{};
+
+    function recallCard(){
+      const max=field('recall.max_items');
+      const legs=savedLegs(),sem=legs.semantic&&legs.semantic.status,semText=sem==='ok'?' (c’est le cas)':sem==='unavailable'?' (activée, mais indisponible pour l’instant)':' (elle ne l’est pas)';
+      const meter=max?`<div class="mem-meter">${icon('db')}<label class="mem-label" for="${idOf(max.path)}">${esc(max.label)}</label>`
+        +`<output class="mem-out" for="${idOf(max.path)}" data-mem-out="${esc(max.path)}" data-mem-max="${esc(max.max)}">${esc(current(max.path))} <small>/ ${esc(max.max)}</small></output>`
+        +rangeInput(max,v=>`${v} sur ${max.max}`)+hintOf(max)+'</div>':'';
+      return `<section class="mem-card" id="memCardRecall" tabindex="-1" aria-labelledby="memRecallTitle">
+        ${head('brain','Rappel','Injection de souvenirs contextuels',toggle('recall.enabled'),'memRecallTitle')}
+        ${has('recall.enabled')?hintOf(field('recall.enabled')):''}
+        <p class="mem-text">JARVIS récupère les souvenirs pertinents pour enrichir chaque réponse avec votre contexte. La recherche par mots
+          fonctionne toujours ; la recherche sémantique s’y ajoute quand elle est active${semText}.</p>
+        ${meter}
+        <p class="mem-hint">Le délai maximal du rappel est un réglage d’opérateur : Avancé &amp; diagnostic › Mémoire.</p>
+      </section>`;
+    }
+
+    const MODE_ART={auto:['gear','Analyse et enregistre automatiquement au-dessus du seuil.'],manual:['user','Vous validez chaque candidat dans le Memory Center.']};
+    function consolidationCard(){
+      const mode=field('consolidation.mode');
+      const modes=mode?`<fieldset class="mem-modes" aria-describedby="${idOf(mode.path)}-hint"><legend>${esc(mode.label)}</legend>${mode.options.map(o=>{
+        const id=`${idOf(mode.path)}_${o.id}`,on=current(mode.path)===o.id,b=blockedOption(mode,o),off=(b&&!on)||locked(mode);
+        const [ico,text]=MODE_ART[o.id]||['gear',''];
+        return `<label class="mem-mode" for="${id}"><input type="radio" name="${idOf(mode.path)}" id="${id}" value="${esc(o.id)}" data-mem="${esc(mode.path)}"${on?' checked':''}${off?' disabled':''}>`
+          +`${icon(ico)}<strong>${esc(o.label)}</strong><span>${esc(b&&!on?`Indisponible : ${b}.`:text)}</span></label>`}).join('')}</fieldset>${hintOf(mode)}`:'';
+      const auto=current('consolidation.mode')==='auto';
+      return `<section class="mem-card" id="memCardConsolidation" tabindex="-1" aria-labelledby="memConsTitle">
+        ${head('db','Consolidation','Gestion et enrichissement de la mémoire','','memConsTitle')}
+        <p class="mem-text">La consolidation repère dans vos échanges ce qui mérite d’être retenu et en fait des <strong>candidats</strong> :
+          des propositions, pas encore des souvenirs. Un candidat devient une note de la mémoire quand vous l’acceptez${auto?', ou automatiquement au-dessus du seuil de confiance':''}.</p>
+        ${modes}
+        <div class="mem-pair">${slider('consolidation.auto_min_confidence',percent,['Plus permissif','Plus strict'],true)}
+          ${slider('consolidation.max_candidates_per_run',v=>String(v),['Moins','Plus'])}</div>
+      </section>`;
+    }
+
+    function semanticCard(){
+      const prov=field('semantic.provider'),priv=field('semantic.allow_private');
+      const select=prov?`<div class="mem-field"><label class="mem-label" for="${idOf(prov.path)}">${esc(prov.label)}</label>`
+        +`<div class="mem-select">${icon('cloud')}<select id="${idOf(prov.path)}" data-mem="${esc(prov.path)}" aria-describedby="${idOf(prov.path)}-hint"${locked(prov)?' disabled':''}>`
+        +prov.options.map(o=>`<option value="${esc(o.id)}"${o.id===current(prov.path)?' selected':''}>${esc(o.label)}</option>`).join('')+`</select></div>${hintOf(prov)}</div>`:'';
+      const s=(st.memory.secrets||{}).semantic;
+      const secret=s?`<p class="mem-secretline">Clé du fournisseur : ${s.has_secret?pill('ok','présente'):pill('warn','absente')}`
+        +` <button type="button" class="mem-linkish" data-mem-open="providers">Plugins & MCP › Fournisseurs</button></p>`:'';
+      const leg=savedLegs().semantic;
+      const degraded=leg&&leg.status==='unavailable'?`<p class="mem-hint bad" role="status">${esc(leg.reason)} ${esc(leg.how_to_fix||'')}</p>`:'';
+      const privRow=priv?`<div class="mem-inline"><span class="mem-medal sm">${icon('shield')}</span><div><p class="mem-label">${esc(priv.label)}</p></div>${toggle(priv.path)}${hintOf(priv,true)}</div>`:'';
+      return `<section class="mem-card" id="memCardSemantic" tabindex="-1" aria-labelledby="memSemTitle">
+        ${head('search','Recherche sémantique','Retrouver un souvenir par son sens',toggle('semantic.enabled'),'memSemTitle')}
+        ${has('semantic.enabled')?hintOf(field('semantic.enabled')):''}
+        <p class="mem-text">Trouve aussi les souvenirs qui disent la même chose avec d’autres mots. Facultative : sans elle, le rappel par mots
+          continue de fonctionner normalement.</p>
+        ${degraded}${select}${secret}${privRow}
+        <p class="mem-hint">${ui.appliesBadge('next_core_start')} Ces trois réglages s’appliquent au prochain démarrage de Core.</p>
+      </section>`;
+    }
+
+    function liveStatus(){return st.live&&st.live.core}
+    function summaryCard(){
+      const legs=savedLegs(),eff=p=>(effOf(p).value),core=liveStatus();
+      let canon;
+      if(!st.live||st.live.state==='loading')canon=['info','Lecture…'];
+      else if(core&&core.ok){
+        const store=core.data.available===false?null:(core.data.legs||{}).store;
+        canon=core.data.available===false?['bad',`Indisponible (${core.data.reason_code||'raison inconnue'})`]
+          :store?(store.status==='ok'?['ok','Active']:['bad',store.reason||store.reason_code||'Dégradée']):['ok','Active'];
+      }else canon=['warn','Inconnu'];
+      const recall=!eff('recall.enabled')?['off','Désactivé']:legs.semantic&&legs.semantic.status==='ok'?['ok','Par mots + sémantique']:['info','Par mots'];
+      const modeField=field('consolidation.mode'),mode=eff('consolidation.mode');
+      const modeLabel=modeField?(modeField.options.find(o=>o.id===mode)||{label:mode}).label:mode;
+      const out=[eff('semantic.enabled')&&eff('semantic.allow_private')?'fournisseur d’embeddings':'',eff('tencent.enabled')&&eff('tencent.allow_private')?'sidecar Tencent':''].filter(Boolean);
+      const priv=out.length?['warn','Envoyée au '+out.join(' et au ')]:['ok','Reste sur ce PC'];
+      const row=(ico,label,[tone,text],attr)=>`<li><button type="button" class="mem-row" ${attr}>${icon(ico)}<span class="mem-row-k">${esc(label)}</span>`
+        +`<span class="mem-row-v mem-tone-${tone}"><span class="mem-dot" aria-hidden="true"></span><span>${esc(text)}</span></span>${icon('chevron')}</button></li>`;
+      return `<section class="mem-card" aria-labelledby="memSumTitle">
+        <div class="mem-head mem-head-2"><span class="mem-medal sm">${icon('doc')}</span><h3 class="mem-title" id="memSumTitle">Résumé du système mémoire</h3></div>
+        <ul class="mem-rows">
+          ${row('db','Mémoire canonique',canon,'data-mem-center-tab="notes"')}
+          ${row('brain','Rappel',recall,'data-mem-focus="memCardRecall"')}
+          ${row('layers','Consolidation',[mode==='auto'?'info':'warn',modeLabel],'data-mem-focus="memCardConsolidation"')}
+          ${row('shield','Mémoire privée',priv,'data-mem-focus="memCardSemantic"')}
+        </ul>
+        <p class="mem-hint">État enregistré. La mémoire canonique, ce sont vos notes Markdown ; les index de recherche en sont dérivés.</p>
+      </section>`;
+    }
+
+    function liveCount(part,unit){
+      if(!st.live||st.live.state==='loading')return 'Lecture…';
+      const x=st.live[part];
+      if(!x||!x.ok)return '— indisponible';
+      if(part==='cands'&&x.available===false)return 'Revue non branchée';
+      return `${x.capped?x.count+'+':x.count} ${unit}`;
+    }
+    function centerCard(){
+      const tile=(tab,ico,title,sub)=>`<button type="button" class="mem-tile" data-mem-center-tab="${tab}"><span class="mem-tile-top">${icon(ico)}${icon('chevron')}</span><strong>${esc(title)}</strong><small>${esc(sub)}</small></button>`;
+      const err=st.live&&st.live.state==='ready'&&!(st.live.core&&st.live.core.ok)
+        ?`<p class="mem-hint warn" role="status">Compteurs indisponibles : ${esc(st.live.core&&st.live.core.error||'Core ne répond pas')}. <button type="button" class="mem-linkish" data-mem-live-retry>Réessayer</button></p>`:'';
+      return `<section class="mem-card mem-cta" aria-labelledby="memCtaTitle">
+        <div class="mem-head"><span class="mem-medal">${icon('nodes')}</span><div><h3 class="mem-title" id="memCtaTitle">Ouvrir le Memory Center</h3>
+          <p class="mem-sub">Explorez vos notes, décidez des candidats et testez le rappel dans un espace dédié.</p></div>
+          <button type="button" class="mem-cta-open" data-mem-center-tab="notes" aria-label="Ouvrir le Memory Center">${icon('chevron')}</button></div>
+        <div class="mem-tiles">${tile('notes','doc','Notes',liveCount('notes','notes'))}${tile('candidates','star','Candidats',liveCount('cands','en attente'))}
+          ${tile('recall','bars','Test de rappel','Évaluer la pertinence')}</div>${err}
+      </section>`;
+    }
+
+    function advancedBand(){
+      const n=problems();
+      return `<section class="mem-card mem-adv" aria-labelledby="memAdvTitle">
+        <span class="mem-medal">${icon('wrench')}</span>
+        <div><h3 class="mem-title" id="memAdvTitle">Avancé &amp; diagnostic</h3><p class="mem-sub">Réglages d’opérateur et diagnostics.</p></div>
+        <p class="mem-adv-note">${icon('lock')}<span>Le délai du rappel, le sidecar Tencent et l’état détaillé des index sont réglés dans le mode avancé.
+          ${n?`<strong class="mem-tone-bad">${n} point${n>1?'s':''} à vérifier.</strong>`:''}</span></p>
+        <div class="mem-adv-actions"><button type="button" class="mem-btn" data-mem-open="memory_advanced">Ouvrir les paramètres avancés ${icon('chevron')}</button>
+          <button type="button" class="mem-linkish" data-mem-diagnostics>Voir le diagnostic mémoire</button></div>
+      </section>`;
+    }
+
+    /* Barre d'enregistrement commune aux deux onglets : le brouillon est partagé, un seul envoi. */
+    function saveBar(){
+      const n=Object.keys(st.draft).length;
+      const text=st.busy?'Enregistrement…':n?`${n} modification${n>1?'s':''} non enregistrée${n>1?'s':''}.`:'Tout est enregistré.';
+      return `<div class="mem-messages">${restartHtml()}${messageHtml()}${elsewhereHtml()}</div>
+        <div class="mem-savebar${n?' dirty':''}"><p class="mem-savebar-text" role="status">${esc(text)}</p>${actionsHtml()}</div>`;
+    }
+
+    function memoryHtml(){
+      return `<div class="mem-page" id="memSection_${esc(opts.section||'recall')}" data-mem-view="memory">
+        <div class="mem-grid"><div class="mem-col">${recallCard()}${consolidationCard()}</div>
+          <div class="mem-col">${semanticCard()}${summaryCard()}${centerCard()}</div></div>
+        ${saveBar()}${advancedBand()}</div>`;
+    }
+
+    /* ---------------------------------------------------------------- onglet « Connaissances »
+       Préférence (réglage) ET disponibilité réelle (`/api/memory/status` de Core) : une source activée n'est
+       « Active » que si Core la déclare saine ; sans fournisseur monté (graphe de code), elle est « Indisponible ». */
+    const SOURCES=Object.freeze([
+      ['wiki','knowledge.wiki_enabled','book','Pages du wiki proposées au cerveau comme connaissances.'],
+      ['codegraph','knowledge.codegraph_enabled','code','Structure du code d’un dépôt, quand un fournisseur de dépôt est monté.'],
+      ['skills','knowledge.skills_enabled','cube','Skills et loadouts disponibles pour les agents.'],
+    ]);
+    function sourceState(kind,path){
+      if(!current(path))return ['off','Désactivé',''];
+      const core=liveStatus();
+      if(!st.live||st.live.state==='loading')return ['info','Lecture…',''];
+      if(!core||!core.ok)return ['warn','État inconnu',`Activé dans les réglages ; état réel inconnu : ${core&&core.error||'Core ne répond pas'}.`];
+      if(core.data.available===false)return ['bad','Indisponible',`La mémoire n’est pas disponible côté Core (${core.data.reason_code||'raison inconnue'}).`];
+      const leg=(core.data.legs||{})['knowledge:'+kind];
+      if(!leg)return ['bad','Indisponible','Aucun fournisseur monté par Core pour cette source.'];
+      if(leg.status==='ok')return own(st.draft,path)?['info','Activé (à enregistrer)','']:['ok','Actif',''];
+      if(leg.status==='disabled')return ['off','Désactivé côté Core',leg.reason||''];
+      return ['bad','Indisponible',`${leg.reason||''}${leg.reason_code?` (${leg.reason_code})`:''}`];
+    }
+    function knowledgeHtml(){
+      const cards=SOURCES.filter(([,p])=>has(p)).map(([kind,path,ico,text])=>{
+        const f=field(path),[tone,label,why]=sourceState(kind,path);
+        return `<section class="mem-card mem-source" aria-labelledby="memSrc_${kind}">
+          <div class="mem-head"><span class="mem-medal">${icon(ico)}</span><div><h3 class="mem-title" id="memSrc_${kind}">${esc(f.label)}</h3><p class="mem-sub">${esc(text)}</p></div></div>
+          ${why?`<p class="mem-hint${tone==='bad'?' bad':tone==='warn'?' warn':''}">${esc(why)}</p>`:''}
+          <div class="mem-source-foot">${pill(tone,label)}${toggle(path)}</div>${hintOf(f)}</section>`;
+      }).join('');
+      const rules=Object.entries(st.memory.loadouts||{});
+      const flags=r=>[r.wiki===false?'sans wiki':'',r.codegraph===false?'sans graphe de code':'',r.skills===false?'sans skills':'',r.allow_private?'mémoire privée autorisée':''].filter(Boolean).join(', ');
+      const loadouts=rules.length?`<ul class="mem-loadouts">${rules.map(([k,r])=>`<li><code>${esc(k)}</code><span class="mem-hint">${(r.memory_scopes||[]).length} portée(s)${flags(r)?' · '+esc(flags(r)):''}</span></li>`).join('')}</ul>`
+        :'<p class="mem-hint">Aucune règle personnalisée : les préréglages par agent s’appliquent (aucun sous-agent ne reçoit la mémoire privée).</p>';
+      const live=st.live&&st.live.state==='ready'&&!(st.live.core&&st.live.core.ok)
+        ?`<p class="mem-hint warn" role="status">État réel des sources indisponible. <button type="button" class="mem-linkish" data-mem-live-retry>Réessayer</button></p>`:'';
+      return `<div class="mem-page" id="memSection_${esc(opts.section||'knowledge_sources')}" data-mem-view="knowledge">
+        <p class="mem-text">Les connaissances enrichissent les réponses du cerveau sans jamais devenir de la mémoire canonique.
+          Chaque source dit ce que vous avez choisi et ce que Core peut réellement fournir.</p>${live}
+        <div class="mem-sources">${cards}</div>
+        <section class="mem-card" aria-labelledby="memScopesTitle">${head('folder','Portées de la mémoire','Qui peut lire quoi','','memScopesTitle')}
+          <ul class="mem-scopes"><li><strong>Privée</strong><span>Vous seul et le cerveau principal. Jamais envoyée à un fournisseur sans votre accord.</span></li>
+            <li><strong>Partagée</strong><span>Ce que les agents peuvent lire pour vous aider.</span></li>
+            <li><strong>Projet</strong><span>Rattachée à un projet ; lue par les agents qui travaillent dessus.</span></li></ul></section>
+        <section class="mem-card" aria-labelledby="memLoadTitle" data-mem-loadouts>${head('users','Accès par agent','Ce que chaque agent peut lire','','memLoadTitle')}
+          ${loadouts}<p class="mem-hint">Lecture seule ici ; les règles se définissent dans le fichier de réglages.</p></section>
+        <section class="mem-card mem-adv" aria-labelledby="memExtTitle"><span class="mem-medal">${icon('cloud')}</span>
+          <div><h3 class="mem-title" id="memExtTitle">Source externe</h3><p class="mem-sub">Sidecar Tencent : réglage d’opérateur.</p></div>
+          <p class="mem-adv-note">${icon('lock')}<span>Son adresse, son identifiant et son état vivent dans Avancé &amp; diagnostic ${pill(savedLegs().tencent&&savedLegs().tencent.status==='ok'?'ok':'off',savedLegs().tencent&&savedLegs().tencent.status==='ok'?'Activé':'Désactivé')}</span></p>
+          <div class="mem-adv-actions"><button type="button" class="mem-btn" data-mem-open="memory_advanced">Ouvrir les paramètres avancés ${icon('chevron')}</button>
+            <button type="button" class="mem-linkish" data-mem-diagnostics>Voir le diagnostic mémoire</button></div></section>
+        ${saveBar()}</div>`;
+    }
+
+    /* État vivant (Core) : une lecture par ouverture des Réglages, partagée par les vues. Chaque partie échoue seule. */
+    function loadLive(force){
+      if(st.live&&st.live.pending&&!force)return st.live.pending;
+      if(st.live&&st.live.state==='ready'&&!force)return Promise.resolve(st.live);
+      const live={state:'loading',core:null,notes:null,cands:null};st.live=live;
+      const fail=e=>({ok:false,error:(e&&e.message||String(e))+(e&&e.code?` (${e.code})`:'')});
+      live.pending=Promise.allSettled([fetchJson('/api/memory/status'),fetchJson('/api/memory/notes?limit=200'),fetchJson('/api/memory/candidates?state=proposed&limit=200')])
+        .then(([s,n,c])=>{
+          live.core=s.status==='fulfilled'?{ok:true,data:s.value}:fail(s.reason);
+          live.notes=n.status==='fulfilled'?{ok:true,count:(n.value.notes||[]).length,capped:(n.value.notes||[]).length>=200}:fail(n.reason);
+          live.cands=c.status==='fulfilled'?{ok:true,count:(c.value.candidates||[]).length,capped:(c.value.candidates||[]).length>=200,available:c.value.available!==false}:fail(c.reason);
+          if(!live.core.ok)console.warn('memory_settings_live_unavailable',{error:live.core.error});
+          live.state='ready';live.pending=null;renderAll();return live;
+        });
+      renderAll();
+      return live.pending;
+    }
+
     /* Chaque rendu remplace la vue : le contrôle qui avait le focus le reprend (`keepFocus` du shell). */
     function render(){
       if(dead)return;
       if(!st.memory){host.innerHTML='<div class="empty">Chargement…</div>';return}
-      const draw=()=>{host.innerHTML=`<div class="mem-settings">${mode==='center'?centerHtml():mode==='diagnostics'?diagnosticsHtml():fieldsHtml()}</div>`;bind()};
+      const body={memory:memoryHtml,knowledge:knowledgeHtml,center:centerHtml,diagnostics:diagnosticsHtml}[mode]||fieldsHtml;
+      const draw=()=>{host.innerHTML=`<div class="mem-settings">${body()}</div>`;bind()};
       if(typeof ui.keepFocus==='function')ui.keepFocus(host,draw);else draw();
     }
     function coerce(el,f){
@@ -217,6 +651,20 @@
       on('[data-mem-center]',()=>{if(root.JarvisMemoryCenter&&root.JarvisMemoryCenter.open)root.JarvisMemoryCenter.open()});
       on('[data-mem-diagnostics]',()=>{if(opts.openDiagnostics)opts.openDiagnostics()});
       on('[data-mem-open]',el=>{if(opts.open)opts.open(el.dataset.memOpen)});
+      /* Curseurs : la valeur affichée suit le pouce pendant le geste ; le brouillon change au relâchement (`change`). */
+      host.querySelectorAll('[data-mem-range]').forEach(el=>el.addEventListener('input',()=>{
+        const f=field(el.dataset.mem),out=host.querySelector(`[data-mem-out="${el.dataset.mem}"]`);
+        el.style.setProperty('--fill',fill(f,el.value));
+        const text=f.type==='float'?percent(el.value):String(el.value);el.setAttribute('aria-valuetext',text);
+        if(out)out.innerHTML=out.dataset.memMax?`${esc(el.value)} <small>/ ${esc(out.dataset.memMax)}</small>`:esc(text);
+      }));
+      on('[data-mem-center-tab]',el=>{
+        if(opts.openCenter)return opts.openCenter(el.dataset.memCenterTab);
+        if(root.JarvisMemoryCenter&&root.JarvisMemoryCenter.open)root.JarvisMemoryCenter.open();
+      });
+      on('[data-mem-focus]',el=>{const card=host.querySelector('#'+el.dataset.memFocus);if(!card)return;
+        if(card.scrollIntoView)card.scrollIntoView({block:'nearest',behavior:'smooth'});if(ui.landFocus)ui.landFocus(card);else card.focus()});
+      on('[data-mem-live-retry]',()=>{loadLive(true)});
     }
 
     /* Correctif à plat -> imbriqué : `{recall:{enabled:false}}`. Seuls les champs modifiés partent. */
@@ -236,6 +684,7 @@
         render();
         await pending;
       }
+      if(!dead&&(mode==='memory'||mode==='knowledge'))loadLive();
       render();return st.memory;
     }
     async function submit(){
@@ -251,12 +700,13 @@
     }
     function renderAll(){[...st.views].forEach(draw=>draw())}
     function destroy(){dead=true;st.views.delete(render)}
+    injectStyle();
     host.setAttribute('data-memory-settings','1');
     st.views.add(render);
     render();
-    return {load,render,state:st,patch,submit,destroy,get destroyed(){return dead}};
+    return {load,loadLive,render,state:st,patch,submit,destroy,get destroyed(){return dead}};
   }
 
   root.JarvisMemorySettings=Object.freeze({mountId:MOUNT_ID,mount:()=>root.document?root.document.getElementById(MOUNT_ID):null,
-    create,createStore});
+    create,createStore,icon,ICONS,STYLE_ID});
 })(typeof window!=='undefined'?window:globalThis);

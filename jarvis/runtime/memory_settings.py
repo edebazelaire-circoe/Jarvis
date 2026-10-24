@@ -103,19 +103,29 @@ _READ_ONLY_KEYS = frozenset({"has_secret"})
 #: Clé du bloc des loadouts, hors `_SECTIONS` : ce n'est pas une section de champs plats.
 LOADOUTS_KEY = "loadouts"
 MAX_LOADOUT_RULES = len(LOADOUT_PROFILES) * (1 + len(LOADOUT_ROLES))
-#: Destination de chaque champ dans les Réglages à six catégories (jarvis-settings-ui-reorganization, Slice 05) :
-#: la seule section qui l'édite. Présentation seulement : ni valeur, ni précédence, ni charge utile n'en dépendent.
-#: Le sidecar Tencent est une source de récupération externe : il vit avec les sources de connaissances.
+#: Destination de chaque champ dans les Réglages à six catégories : la seule section qui l'édite, et sa catégorie.
+#: Présentation seulement : ni valeur, ni précédence, ni charge utile n'en dépendent.
+#: refonte-ui-settings, Slices 05/06 (maquette 04) : la catégorie Mémoire & connaissances a trois onglets — `recall`
+#: (« Mémoire » : rappel, recherche sémantique, consolidation, chacun dans sa carte), `knowledge_sources`
+#: (« Connaissances ») et le Memory Center (sans champ). Les réglages d'opérateur (délai brut du rappel, sidecar
+#: Tencent) quittent la page ordinaire pour `memory_advanced`, dans Avancé & diagnostic.
 SURFACE_CATEGORY = "memory_knowledge"
-SURFACE_SECTIONS = ("recall", "semantic_retrieval", "consolidation", "knowledge_sources")
+ADVANCED_CATEGORY = "advanced_diagnostics"
+SURFACE_SECTIONS: dict[str, str] = {
+    "recall": SURFACE_CATEGORY,
+    "knowledge_sources": SURFACE_CATEGORY,
+    "memory_advanced": ADVANCED_CATEGORY,
+}
 _SURFACE = {
     "recall": "recall",
-    "semantic": "semantic_retrieval",
-    "consolidation": "consolidation",
-    "tencent": "knowledge_sources",
+    "semantic": "recall",
+    "consolidation": "recall",
+    "tencent": "memory_advanced",
     "knowledge": "knowledge_sources",
     LOADOUTS_KEY: "knowledge_sources",  # résumé en lecture seule des règles par agent
 }
+#: Champ dont la destination diffère de celle de sa section du bloc.
+_FIELD_SURFACE = {"recall.timeout_ms": "memory_advanced"}
 _RULE_BOOLS = ("allow_private", "wiki", "codegraph", "skills")
 _RULE_FIELDS = frozenset({"memory_scopes", *_RULE_BOOLS})
 _TRUE = frozenset({"1", "true", "yes", "on"})
@@ -175,21 +185,29 @@ class _Field:
             out["max_length"] = MAX_SERVICE_ID_CHARS
         if self.kind == "enum":
             out["options"] = [{"id": key, "label": label} for key, label in self.options]
-        out["surface"] = surface(self.section)
+        out["surface"] = surface(self.section, self.path)
         return out
 
 
-def surface(section: str) -> dict[str, str]:
-    """`{category, section}` des Réglages pour une section du bloc ; une section sans destination est une erreur."""
-    target = _SURFACE.get(section)
+def surface(section: str, path: str = "") -> dict[str, str]:
+    """`{category, section}` des Réglages pour une section du bloc (ou un champ, `path`) ; sans destination : erreur."""
+    target = _FIELD_SURFACE.get(path) or _SURFACE.get(section)
     if target not in SURFACE_SECTIONS:
         raise RuntimeError(f"memory settings section without settings destination: {section}")
-    return {"category": SURFACE_CATEGORY, "section": target}
+    return {"category": SURFACE_SECTIONS[target], "section": target}
 
+
+#: Libellés servis des options (`schema.options[].label`) : l'interface n'en code aucun.
+_OPTION_LABELS: dict[StrEnum, str] = {
+    EmbeddingProviderId.NONE: "Aucun",
+    EmbeddingProviderId.OPENAI: "OpenAI",
+    ConsolidationMode.MANUAL: "Manuelle",
+    ConsolidationMode.AUTO: "Automatique",
+}
 
 _FIELDS: tuple[_Field, ...] = (
     _Field("recall", "enabled", "bool", "Rappel actif", "Injecte les souvenirs pertinents dans le tour."),
-    _Field("recall", "max_items", "int", "Souvenirs par tour", "Nombre maximal de souvenirs rappelés.",
+    _Field("recall", "max_items", "int", "Souvenirs injectés par tour", "Nombre maximal de souvenirs rappelés.",
            low=1, high=MAX_SETTINGS_RECALL_ITEMS),
     _Field("recall", "timeout_ms", "int", "Délai de rappel (ms)", "Au-delà, le tour continue sans rappel.",
            low=MIN_RECALL_TIMEOUT_MS, high=MAX_RECALL_TIMEOUT_MS),
@@ -197,16 +215,16 @@ _FIELDS: tuple[_Field, ...] = (
            "Ajoute une recherche par sens ; exige un fournisseur d'embeddings."),
     _Field("semantic", "provider", "enum", "Fournisseur d'embeddings",
            "Fournisseur des embeddings ; la clé se règle dans Réglages › Connexions.",
-           options=tuple((str(item), item.name.capitalize()) for item in EmbeddingProviderId)),
-    _Field("semantic", "allow_private", "bool", "Autoriser les scopes privés",
+           options=tuple((str(item), _OPTION_LABELS[item]) for item in EmbeddingProviderId)),
+    _Field("semantic", "allow_private", "bool", "Autoriser la mémoire privée au fournisseur",
            "Envoie aussi la mémoire privée au fournisseur distant."),
     _Field("consolidation", "mode", "enum", "Mode de consolidation",
            "Manuel : l'utilisateur tranche. Auto : exige la recherche sémantique.",
-           options=tuple((str(item), item.name.capitalize()) for item in ConsolidationMode)),
-    _Field("consolidation", "auto_min_confidence", "float", "Confiance minimale (auto)",
-           "Sous ce seuil, un candidat reste en attente.", low=0.0, high=1.0),
-    _Field("consolidation", "max_candidates_per_run", "int", "Candidats par passe",
-           "Borne le travail d'une consolidation.", low=1, high=MAX_CANDIDATES_PER_RUN),
+           options=tuple((str(item), _OPTION_LABELS[item]) for item in ConsolidationMode)),
+    _Field("consolidation", "auto_min_confidence", "float", "Seuil de confiance",
+           "En mode automatique, sous ce seuil un candidat reste en attente de votre décision.", low=0.0, high=1.0),
+    _Field("consolidation", "max_candidates_per_run", "int", "Nombre maximum de candidats",
+           "Candidats proposés au plus par passe de consolidation.", low=1, high=MAX_CANDIDATES_PER_RUN),
     _Field("tencent", "enabled", "bool", "Sidecar actif", "Source optionnelle ; exige une URL."),
     _Field("tencent", "url", "text", "URL du sidecar",
            "http(s) sans identifiants ; le jeton se règle dans Réglages › Connexions."),

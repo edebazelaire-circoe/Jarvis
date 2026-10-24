@@ -139,10 +139,10 @@ Sections enregistrées (Slices 03 à 08 ; hub du 2026-10-23 : `theme_scene` et `
 Personnalisation, `mcp_plugins` ajouté) :
 `voice_audio` : `theme_scene`, `agent_behavior`, `conversation`, `voice_output`, `microphone_sound`, `turns_interruptions`, `wake_word` ·
 `agents_models` : `architecture`, `subagents` (Slice 07 de jarvis-architecture-agents-settings-editor ; un onglet interne = une section, [`architecture-agents.md`](architecture-agents.md) § 1) ·
-`memory_knowledge` : `recall`, `semantic_retrieval`, `consolidation`, `knowledge_sources`, `memory_center` ·
+`memory_knowledge` : `recall` (onglet Mémoire), `knowledge_sources` (Connaissances), `memory_center` (refonte-ui-settings S05/S06 ; `semantic_retrieval` et `consolidation` sont devenus des alias de `recall`) ·
 `interface_interactions` : `shortcuts`, `bare_hands` ·
 `connections` : `mcp_plugins`, `providers` ·
-`advanced_diagnostics` (groupes déclarés, § 1) : `architecture_compat`, `prompts`, `runtime_cli`, `diagnostics`,
+`advanced_diagnostics` (groupes déclarés, § 1) : `architecture_compat`, `memory_advanced`, `prompts`, `runtime_cli`, `diagnostics`,
 `scene_gate`, `work_methods`, `barehands_lab`.
 
 ## 4. Cas particuliers relevés par l'audit

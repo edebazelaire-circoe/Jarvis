@@ -1647,7 +1647,7 @@ An unreachable, slow or misbehaving Tencent sidecar never blocks a turn and neve
 
 #### Enabling remote embeddings
 
-Off by default: `semantic.provider = none` sends nothing anywhere. To opt in, in Mémoire & connaissances › Recherche sémantique choose the provider `openai`, enable semantic search, save the key under the `openai` provider in Réglages › Connexions, then restart Core (semantic settings apply at the next start). Note text is then sent to the embedding provider to be vectorized. Notes in the `private` scope are excluded unless you also tick "Autoriser les scopes privés" (`semantic.allow_private`, default false); legacy notes without front matter are `private`, so with the default they are found by the lexical leg only. To go back, set the provider to `none`; the semantic file is derived and can be deleted.
+Off by default: `semantic.provider = none` sends nothing anywhere. To opt in, in Mémoire & connaissances › Mémoire, card Recherche sémantique, choose the provider `OpenAI`, enable semantic search, save the key under the `openai` provider in Réglages › Connexions, then restart Core (semantic settings apply at the next start). Note text is then sent to the embedding provider to be vectorized. Notes in the `private` scope are excluded unless you also turn on "Autoriser la mémoire privée au fournisseur" (`semantic.allow_private`, default false); legacy notes without front matter are `private`, so with the default they are found by the lexical leg only. To go back, set the provider to `none`; the semantic file is derived and can be deleted.
 
 ### Tencent MemoryCore sidecar
 

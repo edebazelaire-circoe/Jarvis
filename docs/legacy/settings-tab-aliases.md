@@ -6,6 +6,10 @@ Slice 07 de `jarvis-architecture-agents-settings-editor` (alias `main_agent`, `s
 
 ## Table finale (Slice 09)
 
+Complétée par la Slice 05 de `refonte-ui-settings` (2026-10-24) : `semantic_retrieval` et `consolidation` ne sont
+plus des sections mais des cartes de l'onglet Mémoire (`recall`). Retirer ces deux alias quand plus aucun lien ni
+document ne les publie (même procédure que ci-dessous).
+
 L'ancien système d'onglets de premier niveau n'existe plus (`TABS`, `SET.tab`, `bindTab`, `canonicalSettingsTab`,
 `legacyTabFor`, `navigationFromLegacyTabs`, `LEGACY_ANCHORS`, `#modalSub`, liens « encore dans » : retirés). La seule
 compatibilité restante est la table explicite `LEGACY_TAB_ALIASES` de
@@ -17,6 +21,8 @@ compatibilité restante est la table explicite `LEGACY_TAB_ALIASES` de
 | `memory` | `memory_knowledge` / `recall` | Memory Center › Réglages (`control_center_memory.js` : `root.selectTab('memory')`) | `test_every_remaining_alias_is_explicit_data_with_a_caller_and_its_declared_destination`, `test_memory_alias_opens_recall_and_every_memory_section` (node), `test_sections_destinations_alias_and_links` (vrai Chrome) |
 | `main_agent` | `agents_models` / `architecture` | ce document (identifiant publié par la tâche settings-ui-reorganization) ; liens enregistrés hors du dépôt | `test_every_remaining_alias_is_explicit_data_with_a_caller_and_its_declared_destination`, `test_agent_sections_open_and_their_retired_ids_do_not` (node), `test_two_tabs_destinations_and_legacy_ids` (vrai Chrome) |
 | `subagent_models` | `agents_models` / `subagents` | idem | idem |
+| `semantic_retrieval` | `memory_knowledge` / `recall` | ce document (section fondue dans l'onglet Mémoire, refonte-ui-settings Slice 05) ; liens enregistrés et `docs/OPERATIONS.md` d'avant | `test_every_remaining_alias_is_explicit_data_with_a_caller_and_its_declared_destination`, `test_memory_alias_opens_recall_and_every_memory_section` (node) |
+| `consolidation` | `memory_knowledge` / `recall` | idem | idem |
 
 ### Alias de la Slice 07 de jarvis-architecture-agents-settings-editor
 

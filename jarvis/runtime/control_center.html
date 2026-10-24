@@ -5823,23 +5823,24 @@ if(typeof window!=='undefined')installVoiceSettingsSections();
    ne portent pas le bloc de ces sections n'ont pas la fonction (`typeof` d'une déclaration absente : 'undefined') ;
    dans la page, elle est toujours déclarée (remontée). */
 if(typeof window!=='undefined'&&typeof installAgentSettingsSections==='function')installAgentSettingsSections();
-/* --- `memory_knowledge` (Slice 05) --------------------------------------------------------------------------------
-   Quatre sections de champs et l'entrée du Memory Center. Chaque section rend les champs que le serveur lui adresse
-   (`surface.section` du schéma mémoire) ; libellés et descriptions ci-dessous sont de la présentation. Elles portent leur
-   propre bouton (« Enregistrer la mémoire », correctif mémoire seul) : `save: 'self'`. L'état et le brouillon sont
-   partagés le temps d'une ouverture des Réglages (`memorySettingsStore`) ; chaque montage crée une vue, détruite en
-   quittant la section (réponses tardives ignorées). La partie « Mémoire » d'Avancé › Diagnostics porte le détail. */
+/* --- `memory_knowledge` (Slice 05 ; refonte-ui-settings, Slices 05/06) ------------------------------------------
+   Trois onglets, maquette 04 : « Mémoire » (`recall` : rappel, recherche sémantique, consolidation, résumé, entrée du
+   Memory Center), « Connaissances » (`knowledge_sources`) et « Memory Center ». Les champs vont où le serveur les
+   envoie (`surface.section` du schéma mémoire) ; libellés et descriptions ci-dessous sont de la présentation. Les
+   sections de champs portent leur propre bouton (« Enregistrer la mémoire », correctif mémoire seul) : `save: 'self'`.
+   L'état et le brouillon sont partagés le temps d'une ouverture des Réglages (`memorySettingsStore`) ; chaque montage
+   crée une vue, détruite en quittant la section (réponses tardives ignorées). Les réglages d'opérateur (délai brut du
+   rappel, sidecar Tencent) vivent dans Avancé › Mémoire (`memory_advanced`) ; le détail des étages dans Avancé ›
+   Diagnostics. Anciens identifiants `semantic_retrieval` et `consolidation` : alias vers `recall` (registre). */
 const MEMORY_SECTIONS=[
-  {id:'recall',category:'memory_knowledge',order:10,label:'Rappel',
-    description:'Les souvenirs que JARVIS ajoute à chaque tour : combien, et combien de temps il les cherche.'},
-  {id:'semantic_retrieval',category:'memory_knowledge',order:20,label:'Recherche sémantique',
-    description:'Retrouver un souvenir par son sens et pas seulement par ses mots, grâce à un fournisseur externe.'},
-  {id:'consolidation',category:'memory_knowledge',order:30,label:'Consolidation',
-    description:'Comment les propositions de souvenirs deviennent des notes : décision manuelle ou automatique.'},
-  {id:'knowledge_sources',category:'memory_knowledge',order:40,label:'Sources de connaissances',
-    description:'Wiki, graphe de code, Skills et sidecar Tencent proposés au cerveau, et ce que reçoit chaque agent.'},
-  {id:'memory_center',category:'memory_knowledge',order:50,label:'Centre mémoire',mode:'center',save:'readonly',
+  {id:'recall',category:'memory_knowledge',order:10,label:'Mémoire',mode:'memory',
+    description:'Comment JARVIS se souvient : rappel, recherche sémantique et consolidation.'},
+  {id:'knowledge_sources',category:'memory_knowledge',order:40,label:'Connaissances',mode:'knowledge',
+    description:'Sources de connaissances proposées au cerveau, et ce que chaque agent peut lire.'},
+  {id:'memory_center',category:'memory_knowledge',order:50,label:'Memory Center',mode:'center',save:'readonly',
     description:'Inspecter les notes, décider des candidats, vérifier les index et tester le rappel.'},
+  {id:'memory_advanced',category:'advanced_diagnostics',group:'architecture_compat',order:20,label:'Mémoire',
+    description:'Réglages d’opérateur de la mémoire : délai brut du rappel et sidecar Tencent (source externe).'},
 ];
 function memorySettingsStore(){
   if(!SET.memoryStore||SET.memoryStoreOpening!==SET.openGeneration){

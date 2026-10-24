@@ -58,12 +58,17 @@
      seule : aucune section ne déclare d'alias et aucune condition n'en devine. Un alias ne reste ici que tant qu'un
      appelant du dépôt ou un document durable s'en sert ; table et appelants : `docs/legacy/settings-tab-aliases.md`.
      - `memory` : bouton Réglages du Memory Center (`selectTab('memory')`, `control_center_memory.js`).
+     - `semantic_retrieval`, `consolidation` : sections fondues dans l'onglet Mémoire (`recall`) par la Slice 05 de
+       refonte-ui-settings (liens et documents durables).
      - `main_agent`, `subagent_models` : sections retirées par la Slice 07 de jarvis-architecture-agents-settings-editor
        (liens enregistrés, tests et documents durables). Le CLI et le modèle de Core se règlent dans la fenêtre du
        cerveau Core, onglet Architecture ; le modèle de chaque rôle dans l'onglet Sous-agents (le mode Auto / Dupliqué et
        l'inventaire comparatif sont dans Avancé › Runtime & CLI). */
   const LEGACY_TAB_ALIASES=Object.freeze({
     memory:Object.freeze({category:'memory_knowledge',section:'recall'}),
+    /* refonte-ui-settings, Slice 05 : Recherche sémantique et Consolidation sont des cartes de l'onglet Mémoire. */
+    semantic_retrieval:Object.freeze({category:'memory_knowledge',section:'recall'}),
+    consolidation:Object.freeze({category:'memory_knowledge',section:'recall'}),
     main_agent:Object.freeze({category:'agents_models',section:'architecture'}),
     subagent_models:Object.freeze({category:'agents_models',section:'subagents'}),
   });
