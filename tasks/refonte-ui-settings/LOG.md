@@ -306,3 +306,5 @@ Après : node 89 verts (`subagents_settings_js`, `routing_ui_js`, `scene_task_gr
 Notes : règles `.sar-side`/`.sar-summary` de `control_center.html` devenues inutiles pour la vue `roles` (laissées pour ne
 pas croiser S04 ; à retirer en S07). Constat pour la fondation : `.settings-shell .content h3` (15 px, marge 30 px) écrase
 `.set-panel-title` dans `#modalContent` ; la Slice 03 le neutralise dans son `STYLE`, une correction partagée serait mieux.
+
+- 2026-10-24 : agent 0 — S04 APPROUVÉE après reprise (placement de la fenêtre du cerveau, `457d916a`), fusionnée (`9f29d4b3`) ; contrôle 37 verts. Décision de mise en page pour S07 (maquettes > shell à rail) : les trois catégories des maquettes (Personnalisation, Architecture & Agents, Mémoire & connaissances) s'ouvrent en page pleine comme Personnalisation (fil d'Ariane JARVIS › Paramètres, grand titre, phrase, onglets de page, × en haut à gauche, retour au hub par « Paramètres »), sans rail ; les trois autres catégories gardent le shell. Liens profonds, alias, raccourcis et onglets inchangés. Dispatch S07 dans `rui`.
