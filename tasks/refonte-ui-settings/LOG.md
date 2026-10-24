@@ -203,6 +203,22 @@ Après : `test_personalization_page_browser` 7 verts ; `test_personalization_pro
   module Sessions & Boards (`test_boards_hud_js`, `test_presentation_artifacts_docs`, `test_workspace_presentations_js`,
   `test_workspace_rail_model_js`) 69 passés.
 
+
+## Agent 0 — intégration (2026-10-24)
+
+- S02 et S03 APPROUVÉES par la QA (aucun bloquant) et fusionnées. Après fusion, agent 0 a trouvé une régression S03 (`test_control_center_shell_layers.py::test_every_rank_in_css_matches_the_registry`, z-index `.sar-*` hors registre) : renvoyée, corrigée (`01f967e3`), fusionnée (`e4d5bf1d`).
+- S05/S06 : QA avec essai réel en bac à sable (vrai Core) → REPRISE (B1 clé `knowledge:skill`, B2 tests Avancé/shell) ; corrigées (`8bc39b13`, `468e1463`), revérifiées par agent 0, APPROUVÉES, fusionnées (`4ae49d1a`).
+- Contrôle agent 0 sur la branche d'intégration : 65 tests rapides + `test_memory_settings_browser.py` et `test_personalization_page_browser.py` (22) + couches du shell (12) verts.
+
+### Lot de finitions pour S07 (non bloquants des QA)
+- Fondation : `.settings-shell .content h3` (`control_center.html` ~1072) et `.content h3` (~1349) écrasent `.set-panel-title` → exclure les titres de panneau en fondation, puis retirer le contournement `.sar-board .set-panel-head h3.set-panel-title`.
+- Cohérence de mise en page : Personnalisation est une page pleine (grand titre, sans rail) alors que Mémoire, Sous-agents, Architecture restent dans le shell à rail ; trancher une seule présentation conforme aux maquettes (grand titre, fil d'Ariane, onglets de page) sans casser la navigation du hub.
+- Migrer les contrôles locaux de Mémoire / Memory Center (interrupteur, curseur, cartes de mode, pastilles) vers les primitives `.set-*` ; `.mcpp-switch` → `.set-switch`.
+- Retirer `.sar-side` / `.sar-summary` devenues inutiles.
+- S02 : tests manquants (refus → restauration, échéance 15 s, brouillon d'instructions préservé, piège Tab) ; commentaire `control_center.html:871` (1080 → 1240 px) ; course possible `control_center_personalization.js:220` ; aides des rappels tronquées sans info-bulle ; espace vide en bas de « Réglages détaillés ».
+- S03 : une cellule `guarded` n'affiche pas le code d'erreur.
+- S05/S06 : test automatisé de la pastille Tencent (N1) ; valeurs navigateur préexistantes (`max=10` du test de rappel alors que Core accepte 50, libellés `LEVELS`/`RETENTIONS`/`KINDS`) ; `memoryCenterTab` non consommé si l'ouverture échoue.
+
 ## LOG Drive d'origine
 # Execution log
 
