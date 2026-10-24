@@ -284,7 +284,8 @@ GEOMETRY = """(()=>{
 
 
 @pytest.mark.parametrize("mode", ["duplex", "simple"])
-@pytest.mark.parametrize("width,cols", [(1360, 3), (1100, 2), (420, 1)])
+# Slice 04 de refonte-ui-settings : le canevas a toute la largeur (inspecteur flottant), trois colonnes au plus.
+@pytest.mark.parametrize("width,cols", [(1360, 3), (1100, 3), (800, 2), (420, 1)])
 def test_no_label_overlaps_a_label_or_a_node_and_no_arrow_tip_is_hidden(tmp_path, mode, width, cols):
     snap = json.loads((ROOT / "tests" / "fixtures" / f"architecture_snapshot_{mode}.json").read_text(encoding="utf-8"))
     page = build_page(tmp_path, snap)

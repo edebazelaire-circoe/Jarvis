@@ -68,6 +68,44 @@ Tests : `test_control_center_settings_registry_js` + `test_settings_visual_found
 35 verts ; `test_settings_visual_foundation_browser` 12 + `_js` 3 = 15 verts ; `test_settings_shell_browser` +
 `test_personalization_page_browser` 13 verts.
 
+## Slice 04 — Architecture (2026-10-24)
+
+Ligne de base AVANT modification (worktree `r04`, HEAD `10f69d41`) : tests Python `*architecture*` / `*brain_config*`
++ registre + couches du shell 180 verts ; `test_architecture_settings_browser` + `test_brain_config_panel_browser`
+20 verts ; `test_architecture_agents_settings_browser` + `test_settings_visual_foundation_browser` 21 verts. Aucun
+échec préexistant.
+
+Livré :
+- Canevas (`control_center_architecture_settings.js`) : bandeau de trois cartes `.set-panel` (État du système, Règles
+  d'architecture, Actions rapides) calculées depuis le snapshot ; canevas en pleine largeur (au plus 3 colonnes),
+  inspecteur flottant au bord opposé à l'élément choisi (absent sans sélection, sous le canevas en colonne unique) ;
+  liaisons colorées par canal avec lueur (jetons `--set-*`), mutabilité toujours dite par le trait ; nœuds à médaillon
+  lumineux, nœud configuré marqué (cadre pointillé) ; journal d'architecture (`adapter.loadJournal`, `GET /api/trace`
+  filtré `architecture.*` / `brain_config.*`, sans `*.read`) avec états chargement/vide/erreur/indisponible ; légende
+  des canaux présents + mutabilité ; « Réinitialiser la disposition » en deux temps (`positions: {}`, aucune liaison
+  écrite). Le focus et les défilements (canevas, règles, journal) survivent aux rendus ; le journal ne remplace que sa
+  carte.
+- Fenêtre du cerveau (`control_center_brain_config_panel.js`) : verre flottant de la fondation, surtitre
+  « Configuration », médaillon, `.set-select`, `.set-btn`/`-primary`, segments à la teinte du nœud ; événements
+  `brain-config:shown` / `brain-config:closed`. Champs, brouillon, PATCH successifs inchangés.
+- `control_center.html` : une seule ligne (`subagentsTarget:'subagents'` au montage du canevas).
+- Doc : `docs/settings/architecture-tab.md` § 3 (composition, sémantique visuelle, éléments écartés),
+  `docs/settings/brain-config-panel.md` § 1 et § 5.
+- Tests : nouveau `test_architecture_workspace_browser.py` (4) ; `test_architecture_settings_browser.py` : colonnes
+  attendues à 1100 px = 3 (le canevas n'est plus partagé avec l'inspecteur), cas 800 px = 2 ajouté.
+- Preuves : `slices/04-architecture-agents-architecture-ui/evidence/` (2 avant, 6 après, JPEG).
+
+Écartés de la maquette (aucune donnée ni action réelle) : latence moyenne, requêtes/min, presets charger/sauvegarder,
+puces de responsabilités des nœuds, filtre « Tous les modules » et pause du journal, curseur continu de délégation
+(le contrat a 5 niveaux).
+
+Après : 180 + 20 (+4 cas de colonnes) verts ; `test_architecture_workspace_browser` 4 ; `test_architecture_agents_settings_browser`
+9 ; `test_settings_visual_foundation_browser` 12 ; panneau/registre/shell/montage 72. Instabilité vue une fois (focus
+perdu sur une règle par la relecture du journal) : corrigée (`renderJournal`, clés de focus), test ajouté.
+
+Risques de fusion : `control_center.html` touché d'une ligne (montage du canevas) ; les deux modules et leurs docs
+sont propres à la Slice 04.
+
 ## LOG Drive d'origine
 # Execution log
 

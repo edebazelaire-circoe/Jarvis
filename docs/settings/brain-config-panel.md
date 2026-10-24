@@ -42,7 +42,8 @@ win.destroy();   // démonte sans condition (changement de page)
 - Le contrôleur expose aussi `show`, `apply`, `discard`, `setDraft(field, value)`, `reload`, `confirm(bool)`,
   `moveBy(dx, dy)`, `state`, `brainId`, `dirty`, `element`.
 - Événements sur l'hôte (bouillonnent) : `brain-config:saved` (même `detail` que `onSaved`), `brain-config:reread`
-  (même `detail` que `onReread`).
+  (même `detail` que `onReread`), `brain-config:shown` (`{brainId}`, à chaque cerveau montré) et
+  `brain-config:closed` (`{brainId}`, à la fermeture ou au démontage) : le canevas y marque le nœud configuré.
 - `onSaved` reçoit toujours la configuration **relue** : une réponse `ok` sans `config` fait relire la fenêtre avant
   de prévenir l'hôte. Après une issue inconnue (délai dépassé, réseau), la fenêtre relit puis appelle `onReread` :
   l'écriture a pu passer, l'hôte s'aligne sur ce qui a été relu (la page des Réglages y aligne son brouillon
@@ -119,7 +120,17 @@ champ a son propre propriétaire, sa propre prise d'effet et ses propres refus.
   retiré, et un message le dit à côté du champ.
 - Des instructions plus longues que `max_length` bloquent « Appliquer » et le disent.
 
-## 5. Accessibilité, focus, mouvement
+## 5. Apparence (refonte-ui-settings, Slice 04)
+
+Verre flottant de la fondation visuelle (`--set-glass-float`, `--set-r-xl`, bord `--set-edge-hot` et lueur
+`--set-glow-hot` à la teinte du nœud `--bcp-accent`, même formule que le canevas). En-tête : surtitre
+« Configuration », grand titre, médaillon lumineux, sous-titre (identifiant, type, processus). Listes :
+primitive `.set-select` ; boutons : `.set-btn` (Annuler), `.set-btn-primary` (Appliquer), `.set-btn-sm`
+(« Voir sur le graphe », confirmation, Relire). La délégation reste un contrôle segmenté de **cinq niveaux** (le
+curseur continu de la maquette n'existe pas dans le contrat) à la teinte du nœud ; mission en encart enfoncé. Le
+nœud configuré porte un cadre pointillé lumineux sur le canevas tant que la fenêtre est ouverte.
+
+## 6. Accessibilité, focus, mouvement
 
 - `role="dialog"`, `aria-modal="false"` (le graphe reste utilisable à la souris), titre et sous-titre reliés.
 - À l'ouverture, le focus va sur le titre (ou sur le contrôle de `field`). Tab et Maj+Tab tournent dans la fenêtre

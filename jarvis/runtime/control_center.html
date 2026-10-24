@@ -5780,7 +5780,7 @@ function mountArchitectureSettings(host,context){
     event.preventDefault();ARCH.panel.close();
   });
   const nodeLabel=id=>{const n=ARCH.view&&((ARCH.view.state.snapshot||{}).nodes||[]).find(x=>x.id===id);return n?n.label:id};
-  ARCH.view=A.mount(canvas,{adapter:A.createHttpAdapter(),onConfigureBrain:(nodeId,detail)=>{
+  ARCH.view=A.mount(canvas,{adapter:A.createHttpAdapter(),subagentsTarget:'subagents',onConfigureBrain:(nodeId,detail)=>{
     if(!context.isCurrent())return;
     ARCH.panel=P.open(panels,{adapter:panelAdapter,brainId:nodeId,field:detail&&detail.field,
       returnFocus:P.canvasReturnFocus(canvas,nodeId,detail||{}),
