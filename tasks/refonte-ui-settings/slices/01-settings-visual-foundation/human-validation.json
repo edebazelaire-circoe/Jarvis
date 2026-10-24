@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-SETTINGS-UI-FOUNDATION-001",
+      "description": "Review the shared visual primitives in at least two target pages and confirm the dark glass/neon language is coherent with the supplied references without excessive glow or HUD-like typography.",
+      "evidence_required": ["before/after screenshots", "machine QA clean"]
+    }
+  ]
+}

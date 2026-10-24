@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "id": "HV-SETTINGS-FINAL-001",
+      "description": "Review all five final reference/implementation screenshot pairs and approve the Settings refactor as a coherent visual system with page-specific fidelity.",
+      "evidence_required": ["five reference images", "five final target-viewport screenshots", "final QA reports"]
+    },
+    {
+      "id": "HV-SETTINGS-FINAL-002",
+      "description": "Navigate the five views in the application and approve interaction polish, responsiveness and consistency after final machine validation.",
+      "evidence_required": ["runtime validation report", "responsive screenshots", "accessibility/keyboard results"]
+    }
+  ]
+}

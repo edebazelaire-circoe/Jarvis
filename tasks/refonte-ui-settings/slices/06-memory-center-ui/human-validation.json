@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "id": "HV-SETTINGS-MEMCENTER-001",
+      "description": "Compare the populated Memory Center against 05-memory-center.png and validate hero metrics, tabs, notes table, candidate rail, recall test, essential settings and health summary composition.",
+      "evidence_required": ["1254x1254 implementation screenshot", "reference image", "machine QA clean"]
+    },
+    {
+      "id": "HV-SETTINGS-MEMCENTER-002",
+      "description": "Exercise note navigation, candidate decisions and recall testing and confirm the dense workbench remains readable and responsive with real data volumes.",
+      "evidence_required": ["runtime validation notes", "large-data or representative fixture evidence"]
+    }
+  ]
+}

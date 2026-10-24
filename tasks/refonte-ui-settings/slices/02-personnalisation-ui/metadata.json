@@ -1,0 +1,25 @@
+{
+  "id": "02-personnalisation-ui",
+  "title": "Personalisation UI refactor",
+  "task_type": "waived-by-agent-0",
+  "depends_on": [
+    "01-settings-visual-foundation"
+  ],
+  "implementation": true,
+  "task_kind": "frontend",
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ],
+  "preferred_agent": "Claude when supported",
+  "reference_images": [
+    "references/ui/01-personnalisation.png"
+  ],
+  "readiness": "READY",
+  "freshness_paths": [
+    "jarvis/runtime/control_center_personalization.js",
+    "jarvis/runtime/personalization_profiles.py",
+    "docs/settings/personalization-page.md"
+  ]
+}

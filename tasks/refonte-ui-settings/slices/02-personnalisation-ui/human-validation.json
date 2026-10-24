@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "id": "HV-SETTINGS-PERSONALISATION-001",
+      "description": "Compare the implemented Personalisation page side-by-side with 01-personnalisation.png and validate the three-column hierarchy, card proportions, neon/glass treatment and control alignment.",
+      "evidence_required": ["1672x941 implementation screenshot", "reference image", "machine QA clean"]
+    },
+    {
+      "id": "HV-SETTINGS-PERSONALISATION-002",
+      "description": "Interact with voice/profile/personality/proactivity controls and confirm the redesign remains clear and polished in real use, including dropdown/focus behavior.",
+      "evidence_required": ["runtime validation notes", "keyboard/focus validation"]
+    }
+  ]
+}

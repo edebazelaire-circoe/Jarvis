@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "id": "HV-SETTINGS-MEMORY-001",
+      "description": "Compare the Mémoire page with 04-memory-settings.png and validate the two-column composition, Recall/Consolidation emphasis, semantic-search card, summary, Memory Center CTA and secondary Advanced entry.",
+      "evidence_required": ["1254x1254 implementation screenshot", "reference image", "machine QA clean"]
+    },
+    {
+      "id": "HV-SETTINGS-MEMORY-002",
+      "description": "Validate the page in at least one degraded state (for example semantic provider unavailable) and confirm the visual design stays clear without inventing capabilities.",
+      "evidence_required": ["degraded-state screenshot", "runtime validation notes"]
+    }
+  ]
+}

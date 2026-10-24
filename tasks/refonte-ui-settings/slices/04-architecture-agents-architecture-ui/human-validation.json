@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "id": "HV-SETTINGS-ARCHITECTURE-001",
+      "description": "Compare the Architecture tab with 03-architecture-agents-architecture.png while the contextual brain panel is open; validate graph composition, node/edge legibility, top cards, journal and legend.",
+      "evidence_required": ["1254x1254 implementation screenshot", "reference image", "machine QA clean"]
+    },
+    {
+      "id": "HV-SETTINGS-ARCHITECTURE-002",
+      "description": "Drag nodes and open/apply/cancel the brain panel to confirm the polished UI preserves runtime semantics and does not make layout movement change architecture behavior.",
+      "evidence_required": ["runtime validation notes", "graph mutation evidence"]
+    }
+  ]
+}

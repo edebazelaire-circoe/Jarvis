@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "id": "HV-SETTINGS-SUBAGENTS-001",
+      "description": "Compare the live full-role Sous-agents view against 02-architecture-agents-subagents.png and validate overview/policy hierarchy, row density, model/fallback controls, routing matrix and global-rules composition.",
+      "evidence_required": ["1254x1254 implementation screenshot", "reference image", "machine QA clean"]
+    },
+    {
+      "id": "HV-SETTINGS-SUBAGENTS-002",
+      "description": "Confirm the page remains usable with the canonical role count and that no obsolete Brains tab or fake metric was introduced for screenshot fidelity.",
+      "evidence_required": ["runtime role inventory", "interaction validation"]
+    }
+  ]
+}

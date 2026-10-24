@@ -1,0 +1,31 @@
+{
+  "id": "07-settings-visual-integration-qa",
+  "title": "Settings visual integration and final QA",
+  "task_type": "waived-by-agent-0",
+  "depends_on": [
+    "02-personnalisation-ui",
+    "03-architecture-agents-subagents-ui",
+    "04-architecture-agents-architecture-ui",
+    "05-memory-settings-ui",
+    "06-memory-center-ui"
+  ],
+  "implementation": true,
+  "task_kind": "frontend-integration",
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ],
+  "preferred_agent": "Claude when supported",
+  "reference_images": [
+    "references/ui/01-personnalisation.png",
+    "references/ui/02-architecture-agents-subagents.png",
+    "references/ui/03-architecture-agents-architecture.png",
+    "references/ui/04-memory-settings.png",
+    "references/ui/05-memory-center.png"
+  ],
+  "readiness": "WAITING-deps",
+  "freshness_paths": [
+    "jarvis/runtime/control_center.html"
+  ]
+}

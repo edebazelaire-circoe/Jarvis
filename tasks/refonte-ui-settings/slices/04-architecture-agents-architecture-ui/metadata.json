@@ -1,0 +1,26 @@
+{
+  "id": "04-architecture-agents-architecture-ui",
+  "title": "Architecture & Agents — Architecture UI refactor",
+  "task_type": "waived-by-agent-0",
+  "depends_on": [
+    "01-settings-visual-foundation"
+  ],
+  "implementation": true,
+  "task_kind": "frontend",
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ],
+  "preferred_agent": "Claude when supported",
+  "reference_images": [
+    "references/ui/03-architecture-agents-architecture.png"
+  ],
+  "readiness": "READY",
+  "freshness_paths": [
+    "jarvis/runtime/control_center_architecture_settings.js",
+    "jarvis/runtime/control_center_brain_config_panel.js",
+    "docs/settings/architecture-tab.md",
+    "docs/settings/brain-config-panel.md"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "id": "03-architecture-agents-subagents-ui",
+  "title": "Architecture & Agents — Sous-agents UI refactor",
+  "task_type": "waived-by-agent-0",
+  "depends_on": [
+    "01-settings-visual-foundation"
+  ],
+  "implementation": true,
+  "task_kind": "frontend",
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ],
+  "preferred_agent": "Claude when supported",
+  "reference_images": [
+    "references/ui/02-architecture-agents-subagents.png"
+  ],
+  "readiness": "READY",
+  "freshness_paths": [
+    "jarvis/runtime/control_center_subagents_settings.js",
+    "docs/settings/architecture-agents.md",
+    "tests/unit/test_subagent_settings_browser.py"
+  ]
+}

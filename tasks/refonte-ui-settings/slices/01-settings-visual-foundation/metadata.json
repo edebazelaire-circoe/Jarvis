@@ -1,0 +1,23 @@
+{
+  "id": "01-settings-visual-foundation",
+  "title": "Settings visual foundation",
+  "task_type": "waived-by-agent-0",
+  "depends_on": [
+    "00-project-manager"
+  ],
+  "implementation": true,
+  "task_kind": "frontend",
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ],
+  "preferred_agent": "Claude when supported",
+  "readiness": "READY",
+  "freshness_paths": [
+    "jarvis/runtime/control_center.html",
+    "jarvis/runtime/control_center_settings_ui.js",
+    "docs/settings/settings-shell.md",
+    "tests/unit/test_settings_shell_browser.py"
+  ]
+}

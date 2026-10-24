@@ -1,0 +1,27 @@
+{
+  "project": "Jarvis",
+  "slug": "refonte-ui-settings",
+  "title": "Refonte UI Settings",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "base_branch": "main",
+  "observed_head": "be80ab9baed0ea3819af5e916b102f3835663ce3",
+  "goal": "Refactor five Jarvis Settings views to the supplied approved visual references while preserving canonical runtime semantics.",
+  "drive_destination": "Jarvis/task/to-do/refonte-ui-settings/",
+  "reference_images": [
+    "references/ui/01-personnalisation.png",
+    "references/ui/02-architecture-agents-subagents.png",
+    "references/ui/03-architecture-agents-architecture.png",
+    "references/ui/04-memory-settings.png",
+    "references/ui/05-memory-center.png"
+  ],
+  "slices": [
+    "00-project-manager",
+    "01-settings-visual-foundation",
+    "02-personnalisation-ui",
+    "03-architecture-agents-subagents-ui",
+    "04-architecture-agents-architecture-ui",
+    "05-memory-settings-ui",
+    "06-memory-center-ui",
+    "07-settings-visual-integration-qa"
+  ]
+}
