@@ -106,6 +106,21 @@ perdu sur une règle par la relecture du journal) : corrigée (`renderJournal`, 
 Risques de fusion : `control_center.html` touché d'une ligne (montage du canevas) ; les deux modules et leurs docs
 sont propres à la Slice 04.
 
+## Slice 04 — reprise avant fusion (2026-10-24)
+
+- Bloquant QA : avec 3 colonnes, la fenêtre du cerveau s'ouvrait au bord gauche (y = 8) sur « Toutes les
+  catégories », l'onglet, le titre et le rail. Nouvelle position initiale (`initialPos`, option `zone`) : côté du nœud
+  qui a le plus de place, à 16 px, rétrécie jusqu'à 340 px, jamais sur le nœud, hauteur bornée à la zone ; zone
+  donnée par `architecturePanelZone()` (`control_center.html` : sous `#modalTabs` + 8, à droite de
+  `#settingsCategories` + 16). Mode feuille sous 720 px et glisser inchangés.
+- Test ajouté (`test_architecture_workspace_browser`) : à 1672×941, 1254×1254, 1280×800, `#settingsBack`, l'onglet actif
+  et le rail restent atteignables (`elementFromPoint`), fenêtre près du nœud, sans le couvrir, ≥ 340×300.
+  `test_brain_config_panel_browser` : le menu de Voice s'ouvre au clavier (la fenêtre, contre Core, couvre Voice).
+- Mineur : le serveur journalise la réinitialisation comme un déplacement (`architecture.layout.saved`) ; sans changer
+  le contrat, le journal de la page lit `data.nodes === 0` comme « Disposition réinitialisée ».
+- Tests : panneau navigateur 8, espace de travail 5, canevas statique + js + couches du shell + panneau js 81,
+  `test_architecture_agents_settings_browser` + autres 59 verts. Captures `apres-fenetre-*` refaites.
+
 ## LOG Drive d'origine
 # Execution log
 

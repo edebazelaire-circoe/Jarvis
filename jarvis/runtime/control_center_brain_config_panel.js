@@ -25,7 +25,7 @@
   'use strict';
   const STYLE_ID='jarvisBrainConfigPanelStyle';
   const DEFAULT_TIMEOUT_MS=15000;
-  const MOVE_STEP=16,EDGE=8,WIN_W=460;
+  const MOVE_STEP=16,EDGE=8,WIN_W=460,MIN_W=340,GAP=16,PREFERRED_H=640;
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const own=(o,k)=>!!o&&Object.prototype.hasOwnProperty.call(o,k);
   const clone=v=>v==null?v:JSON.parse(JSON.stringify(v));
@@ -125,7 +125,7 @@
       conflict:null,            // {text} : texte relu du serveur après un conflit d'instructions
       confirm:null,             // {kind:'close'|'replace', next}
       notice:null,              // {tone, text}
-      live:'',pos:null,destroyed:false,
+      live:'',pos:null,box:null,destroyed:false,
     };
     let ticker=null,origin=null,drag=null,generation=0;
     const layer=doc&&doc.createElement?doc.createElement('div'):null;
@@ -437,24 +437,34 @@
     const narrow=()=>{try{return !!(root.matchMedia&&root.matchMedia('(max-width:720px)').matches)}catch(_e){return false}};
     function viewport(){return {w:root.innerWidth||1280,h:root.innerHeight||800}}
     function rectOf(x){try{const el=typeof x==='function'?x():x;return el&&el.getBoundingClientRect?el.getBoundingClientRect():(x&&Number.isFinite(x.left)?x:null)}catch(_e){return null}}
-    /* Première position : à côté de l'ancre (le nœud), sinon contre le bord droit de l'hôte ; jamais hors écran. */
+    /* Zone où la fenêtre s'ouvre : `opts.zone` (rectangle ou fonction, donné par l'hôte : dans les Réglages, sous les
+       onglets et à droite du rail des catégories), sinon l'écran ; toujours rognée à l'écran moins EDGE. */
+    function zoneRect(){
+      const v=viewport();let z=null;
+      try{z=typeof opts.zone==='function'?opts.zone():opts.zone}catch(e){logError('brain_config_zone_failed',e,{brainId:st.brainId})}
+      const ok=z&&[z.left,z.top,z.right,z.bottom].every(Number.isFinite);
+      const r={left:Math.max(EDGE,ok?z.left:0),top:Math.max(EDGE,ok?z.top:0),right:Math.min(v.w-EDGE,ok?z.right:v.w),bottom:Math.min(v.h-EDGE,ok?z.bottom:v.h)};
+      /* Zone dégénérée (fenêtre minuscule) : l'écran entier plutôt qu'une fenêtre écrasée. */
+      return r.right-r.left<240||r.bottom-r.top<200?{left:EDGE,top:EDGE,right:v.w-EDGE,bottom:v.h-EDGE}:r;
+    }
+    /* Première position (refonte-ui-settings, Slice 04, reprise) : dans la zone, du côté du nœud qui a le plus de place,
+       à GAP px de lui, sans jamais le recouvrir ; à côté (largeur ≥ MIN_W), sinon dessous ou dessus. La hauteur
+       maximale suit la place disponible (le corps défile). Sans ancre : en haut à droite de la zone. */
     function initialPos(){
-      /* Contre le bord droit de l'hôte, sur la colonne de l'inspecteur du canevas plutôt que sur les nœuds, à la
-         hauteur de l'ancre : le graphe reste lisible (la fenêtre se déplace ensuite au gré de l'utilisateur). */
-      const v=viewport(),w=Math.min(WIN_W,v.w-2*EDGE),a=rectOf(opts.anchor),h=rectOf(host);
-      const hostRight=Math.min(h&&h.width?h.right:v.w,v.w);
-      const right=hostRight-w-16,left=EDGE+8;
-      /* Slice 07 : dans le shell des Réglages, le canevas est plus étroit que la page de démonstration et le nœud peut
-         tomber sous la colonne de droite. La fenêtre ne doit pas couvrir le cerveau qu'elle configure : bord droit de
-         l'hôte si le nœud reste libre, sinon bord gauche de l'écran (sur le rail des catégories, le graphe reste
-         visible), sinon le côté qui a le plus de place, collé au nœud. */
-      let x=right;
-      if(a&&a.width&&a.right>right){
-        if(left+w<=a.left)x=left;
-        else x=a.left>(v.w-a.right)?Math.max(left,a.left-w-16):a.right+16;
+      const z=zoneRect(),w=Math.min(WIN_W,z.right-z.left),a=rectOf(opts.anchor),zh=z.bottom-z.top;
+      const tall=Math.min(zh,PREFERRED_H);
+      if(!a||!a.width)return {x:z.right-w,y:z.top,w,maxH:zh};
+      /* À côté : le côté qui a le plus de place ; la fenêtre s'y rétrécit jusqu'à MIN_W plutôt que de passer
+         dessus ou dessous, où elle serait trop basse pour être utile. */
+      const right=z.right-(a.right+GAP),left=(a.left-GAP)-z.left,side=Math.max(right,left);
+      if(side>=Math.min(MIN_W,w)){
+        const sw=Math.min(w,side),x=right>=left?a.right+GAP:a.left-GAP-sw;
+        const y=Math.max(z.top,Math.min(a.top-24,z.bottom-tall));
+        return {x,y,w:sw,maxH:z.bottom-y};
       }
-      const y=a?a.top-24:(h&&h.width?Math.max(h.top,0)+16:24);
-      return clampPos({x,y});
+      const below=z.bottom-(a.bottom+GAP),above=(a.top-GAP)-z.top;
+      const x=Math.max(z.left,Math.min(a.left+a.width/2-w/2,z.right-w));
+      return below>=above?{x,y:a.bottom+GAP,w,maxH:below}:{x,y:z.top,w,maxH:above};
     }
     function clampPos(p){
       const v=viewport(),el=win(),r=el&&el.getBoundingClientRect?el.getBoundingClientRect():{width:Math.min(WIN_W,v.w),height:200};
@@ -462,7 +472,8 @@
     }
     function clampWindow(){
       const el=win();if(!el||!el.style||narrow())return;
-      if(!st.pos)st.pos=initialPos();
+      if(!st.pos){const p=initialPos();st.box={w:p.w,maxH:p.maxH};st.pos={x:Math.round(p.x),y:Math.round(p.y)}}
+      if(st.box){el.style.width=Math.floor(st.box.w)+'px';el.style.maxHeight=Math.max(160,Math.floor(st.box.maxH))+'px'}
       st.pos=clampPos(st.pos);el.style.left=st.pos.x+'px';el.style.top=st.pos.y+'px';
     }
     function moveBy(dx,dy){if(narrow()||!st.pos)return;st.pos=clampPos({x:st.pos.x+dx,y:st.pos.y+dy});const el=win();if(el){el.style.left=st.pos.x+'px';el.style.top=st.pos.y+'px'}}
@@ -979,7 +990,7 @@ p.bcp-hint{display:flex}
 .bcp-sr{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 @media (max-width:720px){
   .bcp-scrim{display:block;position:fixed;inset:0;pointer-events:auto;background:var(--set-veil,rgba(0,0,0,.5))}
-  .bcp-win{left:8px!important;right:8px;top:auto!important;bottom:8px;width:auto;max-height:min(88vh,calc(100vh - 16px));border-radius:var(--set-r-xl,16px)}
+  .bcp-win{left:8px!important;right:8px;top:auto!important;bottom:8px;width:auto!important;max-height:min(88vh,calc(100vh - 16px))!important;border-radius:var(--set-r-xl,16px)}
   .bcp-head{cursor:default}.bcp-grip{display:none}
   .bcp-segs-5{grid-template-columns:repeat(auto-fit,minmax(88px,1fr))}
 }

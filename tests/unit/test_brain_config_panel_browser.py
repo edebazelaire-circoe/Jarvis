@@ -171,10 +171,12 @@ def test_the_header_drags_the_window_and_replacing_with_a_draft_asks(tmp_path):
         {"eval": left},
         {"drag": ".bcp-head .bcp-sub", "dx": 240, "dy": 60},
         {"eval": left},
-        # Rendue à sa place, à gauche : le nœud Voice reste libre pour le clic droit qui suit.
         {"drag": ".bcp-head .bcp-sub", "dx": -240, "dy": 0},
         {"eval": "window.__panel.setDraft('instructions','Brouillon en cours');1"},
-        {"click": '[data-arch-node="voice"] .arch-node-name', "button": "right"},
+        # Slice 04 de refonte-ui-settings : la fenêtre s'ouvre contre le nœud configuré et peut couvrir un voisin ; le
+        # menu de Voice s'ouvre au clavier (Maj+F10), comme le permet tout nœud.
+        {"eval": "document.querySelector('[data-arch-node=\"voice\"]').focus();1"},
+        {"key": "F10", "shift": True},
         {"key": "Enter"},
         {"wait": 200},
         {"eval": f"[document.querySelector('[data-bcp-confirm]').getAttribute('data-bcp-confirm'),window.__panel.brainId,document.querySelectorAll('.bcp-win').length,{ACTIVE}]"},
@@ -186,9 +188,9 @@ def test_the_header_drags_the_window_and_replacing_with_a_draft_asks(tmp_path):
     ])
     (x0, y0), (x1, y1) = out[4], out[6]
     # La fenêtre est presque aussi haute que la fenêtre du navigateur : verticalement, elle reste bornée à l'écran.
-    assert x1 - x0 == 240 and 8 <= y1 <= y0 + 60  # posée à gauche (Slice 07), elle se glisse vers la droite
-    assert out[12] == ["replace", "core", 1, "confirm-keep"]
-    brain, count, delegation = out[16]
+    assert x1 - x0 == 240 and 8 <= y1 <= y0 + 60  # posée à côté du nœud, elle se glisse vers la droite
+    assert out[13] == ["replace", "core", 1, "confirm-keep"]
+    brain, count, delegation = out[17]
     assert brain == "voice" and count == 1 and "Sans objet" in delegation and "onglet Sous-agents" in delegation
 
 

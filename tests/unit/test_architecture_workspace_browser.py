@@ -34,6 +34,8 @@ TRACE = [
      "message": "Disposition du graphe enregistrée", "data": {"revision": "3", "nodes": 6}},
     {"ts": "2026-10-24T12:32:15+00:00", "kind": "architecture.write.refused", "level": "warning",
      "message": "Écriture d'architecture refusée", "data": {"code": "connection_locked", "status": 423}},
+    {"ts": "2026-10-24T12:32:16+00:00", "kind": "architecture.layout.saved", "level": "info",
+     "message": "Disposition du graphe enregistrée", "data": {"revision": "4", "nodes": 0}},
     {"ts": "2026-10-24T12:32:18+00:00", "kind": "brain_config.saved", "level": "info",
      "message": "Configuration du cerveau core : delegation enregistré.", "data": {"brain_id": "core", "fields": ["delegation"]}},
 ]
@@ -59,6 +61,7 @@ REGIONS = """(()=>{const q=s=>document.querySelector(s),all=s=>[...document.quer
     locked:snap.connections.filter(c=>c.mutability==='required_locked'||c.mutability==='governed').map(c=>c.id),
     legendChannels:all('.arch-legend-ch li').length,channels:chans.size,
     journal:all('[data-arch-journal-entry]').map(e=>e.getAttribute('data-arch-journal-entry')),
+    journalText:all('[data-arch-journal-entry]').map(e=>e.textContent),
     voiceLink:(q('[data-arch-voice] [data-settings-open]')||{}).textContent||null,
     subagents:!!q('[data-arch-card=actions] [data-settings-open=subagents]')}})()"""
 
@@ -101,7 +104,10 @@ async def test_workspace_composes_the_reference_without_overflow_and_the_window_
         assert set(r["rules"]) <= set(r["locked"]) and r["rules"], r
         assert r["legendChannels"] == r["channels"], r
         # Le journal garde l'architecture et la configuration des cerveaux, plus récente d'abord, sans les lectures.
-        assert r["journal"] == ["brain_config.saved", "architecture.write.refused", "architecture.layout.saved"], r
+        assert r["journal"] == ["brain_config.saved", "architecture.layout.saved", "architecture.write.refused",
+                                "architecture.layout.saved"], r
+        # Une disposition vide est une réinitialisation : le journal le dit (même événement serveur qu'un déplacement).
+        assert "Disposition réinitialisée" in r["journalText"][1] and "réinitialisée" not in r["journalText"][3], r
         assert r["voiceLink"] and r["subagents"], r
         assert got(step, "overflow")["page"] == 0 and got(step, "overflow_panel")["page"] == 0, (width, got(step, "overflow"))
         p = got(step, "panel")
@@ -186,3 +192,29 @@ async def test_an_unreadable_journal_says_so_with_its_code(served):
     text = got(step, "error")
     assert "Journal verrouillé" in text and "trace_unreadable" in text, text
     assert got(step, "retry") is True
+
+
+#: Points d'entrée de la page encore atteignables (centre de l'élément) et recouvrement du nœud configuré.
+REACHABLE = """(()=>{const hit=sel=>{const e=document.querySelector(sel);if(!e)return 'absent';const r=e.getBoundingClientRect();
+    const top=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return !!top&&e.contains(top)};
+  const w=document.querySelector('.bcp-win').getBoundingClientRect(),
+    n=document.querySelector('[data-architecture-page] [data-arch-node=core]').getBoundingClientRect();
+  const ox=Math.max(0,Math.min(w.right,n.right)-Math.max(w.left,n.left)),oy=Math.max(0,Math.min(w.bottom,n.bottom)-Math.max(w.top,n.top));
+  return {back:hit('#settingsBack'),tab:hit('#modalTabs [aria-selected=true]'),rail:hit('#settingsCategories [data-category]'),
+    overlap:ox*oy,width:Math.round(w.width),height:Math.round(w.height),inViewport:w.left>=0&&w.top>=0&&w.right<=innerWidth&&w.bottom<=innerHeight,
+    gap:Math.round(Math.min(Math.abs(w.left-n.right),Math.abs(n.left-w.right),Math.abs(w.top-n.bottom),Math.abs(n.top-w.bottom)))}})()"""
+
+
+async def test_the_brain_window_opens_beside_its_node_and_leaves_the_settings_chrome_reachable(served):
+    sizes = [(1672, 941), (1254, 1254), (1280, 800)]
+    out = await drive(served.url, [{"width": w, "height": h, "actions": [
+        *VIEWS["architecture"], *OPEN_CORE, eval_("new Promise(r=>setTimeout(()=>r(1),300))"), eval_(REACHABLE, "reach")]}
+        for w, h in sizes])
+    assert out["console"] == [], out["console"]
+    for size, step in zip(sizes, out["steps"]):
+        assert all(a["ok"] for a in step["actions"] if a.get("a") == "wait"), size
+        r = got(step, "reach")
+        assert r["back"] is True and r["tab"] is True and r["rail"] is True, (size, r)
+        assert r["overlap"] == 0 and r["inViewport"], (size, r)
+        assert r["gap"] <= 40, ("la fenêtre s'ouvre près du nœud", size, r)
+        assert r["width"] >= 340 and r["height"] >= 300, ("assez grande pour être utile", size, r)

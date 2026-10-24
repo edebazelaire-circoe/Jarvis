@@ -400,6 +400,12 @@
       if(kind.startsWith('architecture.layout'))return 'Disposition';
       return kind.startsWith('brain_config')?'Cerveau':'Architecture';
     }
+    /* Le serveur écrit le même message pour un déplacement et une réinitialisation (`architecture.layout.saved`) ; une
+       disposition enregistrée sans aucun nœud (`data.nodes === 0`) est une réinitialisation : on le dit. */
+    function journalMessage(e){
+      if(e.kind==='architecture.layout.saved'&&e.data&&e.data.nodes===0)return 'Disposition réinitialisée : disposition automatique';
+      return e.message||e.kind;
+    }
     function journalTime(ts){
       const d=new Date(ts);
       if(!ts||Number.isNaN(d.getTime()))return '—';
@@ -418,7 +424,7 @@
           <table class="set-table"><thead><tr><th scope="col">Heure</th><th scope="col">Module</th><th scope="col">Événement</th></tr></thead><tbody>
           ${j.entries.map(e=>{const [tone,word]=LEVEL[e.level]||['info',''];return `<tr data-arch-journal-entry="${esc(e.kind)}"><td class="set-num arch-journal-time">${esc(journalTime(e.ts))}</td>
             <td><span class="set-dot set-dot-${tone} arch-journal-src">${esc(journalSource(e))}</span></td>
-            <td>${word?`<span class="arch-sr">${word} : </span>`:''}${esc(e.message||e.kind)}</td></tr>`}).join('')}</tbody></table></div></div>
+            <td>${word?`<span class="arch-sr">${word} : </span>`:''}${esc(journalMessage(e))}</td></tr>`}).join('')}</tbody></table></div></div>
           ${j.phase==='error'?`<p class="arch-hint arch-bad">Actualisation impossible : ${esc(j.error.message)} <code>${esc(j.error.code)}</code></p>`:''}`;
       const aside=j.phase==='none'?'':`${j.phase==='loading'&&j.entries.length?'<span class="arch-spin" aria-hidden="true"></span>':''}<button type="button" class="set-btn set-btn-ghost set-btn-sm" data-arch-act="journal-reload"${j.phase==='loading'?' disabled':''}>${glyph('refresh')}Actualiser</button>`;
       return card('journal','Journal d’architecture','journal',body,aside,'arch-journal');

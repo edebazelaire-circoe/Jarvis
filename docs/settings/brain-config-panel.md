@@ -22,6 +22,7 @@ const win = JarvisBrainConfigPanel.open(panelsHost, {
   brainId: nodeId,                // identifiant du nœud du graphe (voice, luna, core, tool_brain)
   field,                          // facultatif : champ à montrer (« delegation » depuis une liaison gouvernée)
   returnFocus: JarvisBrainConfigPanel.canvasReturnFocus(canvasHost, nodeId, detail), // facultatif
+  zone: () => ({left, top, right, bottom}), // facultatif : où la fenêtre s'ouvre (§ 6), sinon l'écran
   anchor: () => canvasHost.querySelector(`[data-arch-node="${nodeId}"]`),            // facultatif : hauteur initiale
   nodeLabel: id => label,         // facultatif : nom des pairs dans le résumé des connexions
   onFocusConnection: id => view.select('connection', id),  // « Voir sur le graphe »
@@ -142,9 +143,13 @@ nœud configuré porte un cadre pointillé lumineux sur le canevas tant que la f
   Slice), le bouton « Configurer… » de l'inspecteur, sinon le nœud. Sans `returnFocus`, l'élément actif à
   l'ouverture.
 - Glisser par l'en-tête, ou le bouton de prise + flèches (pas de 16 px) ; la fenêtre reste dans l'écran. Position
-  initiale : contre le bord droit de l'hôte (colonne de l'inspecteur), à la hauteur de l'ancre ; si l'ancre (le nœud)
-  tomberait dessous, contre le bord gauche de l'écran, sinon du côté qui a le plus de place (Slice 07 : la fenêtre ne
-  couvre pas le cerveau qu'elle configure).
+  initiale (refonte-ui-settings, Slice 04, remplace la règle de la Slice 07) : dans la **zone** `opts.zone`
+  (rectangle ou fonction ; sans elle, l'écran), du côté du nœud configuré qui a le plus de place, à 16 px de lui,
+  à la hauteur de l'ancre ; elle s'y rétrécit jusqu'à 340 px plutôt que de passer dessus ou dessous (repli quand
+  aucun côté n'a 340 px). Elle ne recouvre jamais le nœud ; sa hauteur maximale est la place restante dans la zone
+  (le corps défile). Dans les Réglages, `architecturePanelZone()` (`control_center.html`) donne la zone : sous
+  `#modalTabs` + 8 px, de `#settingsCategories` + 16 px (rail à gauche) jusqu'au bord droit de l'overlay, pour que
+  « Toutes les catégories », l'onglet actif et le rail restent atteignables.
 - Sous 720 px : panneau en bas d'écran sur toute la largeur, voile derrière (un clic ferme, avec garde), pas de
   glisser, aucun défilement horizontal.
 - États qui durent : lecture et enregistrement montrent un compteur de secondes et une échéance (`timeoutMs`) ; à

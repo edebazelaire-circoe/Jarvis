@@ -65,7 +65,7 @@ calculée depuis ce que sert le runtime ; un élément de la maquette sans donn�
 | **Règles d'architecture** | une ligne par liaison `required_locked` (sa `locked_reason`) puis `governed` (son but et le cerveau qui la règle) ; la liste défile au-delà de ~5 lignes ; une règle sélectionne sa liaison | snapshot |
 | **Actions rapides** | Relire l'architecture ; Réinitialiser la disposition (deux temps : « Confirmer », inerte avec sa raison sans position enregistrée) ; Rôles des sous-agents (si `subagentsTarget`) ; attentes et notes de disposition | adaptateur |
 | **Canevas** | toute la largeur, au plus trois colonnes de modules ; l'inspecteur flotte au bord opposé à l'élément choisi et n'existe que s'il y a une sélection ; sous 860 px de large, il passe sous le canevas | snapshot, disposition |
-| **Journal d'architecture** | heure locale, module (cerveau nommé, liaison `A → B`, « Disposition », sinon la famille), message ; plus récent d'abord ; « Actualiser » ; relu après chaque écriture, relecture ou enregistrement de disposition | `loadJournal` |
+| **Journal d'architecture** | heure locale, module (cerveau nommé, liaison `A → B`, « Disposition », sinon la famille), message (une `architecture.layout.saved` à zéro nœud se lit « Disposition réinitialisée ») ; plus récent d'abord ; « Actualiser » ; relu après chaque écriture, relecture ou enregistrement de disposition | `loadJournal` |
 | **Légende des liaisons** | les **canaux présents** dans le graphe (couleur), puis la mutabilité (trait) et l'attente | snapshot |
 
 Écartés de la maquette, faute de donnée ou d'action réelle : latence moyenne et requêtes par minute (aucune mesure
