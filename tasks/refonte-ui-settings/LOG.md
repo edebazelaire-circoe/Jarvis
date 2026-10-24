@@ -24,6 +24,36 @@ Décisions :
 
 **État : READY** (01–04 dispatchables ; 05/06 conditionnés par I-001 ; 07 après 02–06).
 
+## Slice 01 — fondation visuelle (2026-10-24)
+
+Ligne de base AVANT modification (worktree `rui`, HEAD `58b38817`) : `test_personalization_profiles` +
+`test_agent_behavior` + `test_control_center_shell_layers` 37 verts ; `test_personalization_page_browser` +
+`test_settings_shell_browser` 13 verts ; `test_wake_word_settings_browser` 20 verts. Aucun échec préexistant.
+
+Livré :
+- Jetons `--set-*` consolidés sur `:root` (`control_center.html`) ; `--set-ink*`, `--set-hair*`, `--set-font`,
+  `--set-mono`, `--set-field-bg` montés de `.settings-shell` à valeur égale (captures avant/après des six vues
+  identiques à l'octet près, sauf Sous-agents dont la politique se lisait encore : attente ajoutée à `VIEWS`).
+- Primitives `.set-*` hors shell + fragments/liaisons `JarvisSettingsUI` ; grilles par requêtes de conteneur
+  (`.set-page`) ; rangs `.set-table` / `.set-float` au registre de la coque.
+- Outillage : `tests/unit/settings_visual.py` (fenêtres, vues, `stub`, `freeze`, `capture_steps`, `OVERFLOW`) ;
+  harnais partagé étendu (`stubs` par étape via CDP `Fetch`, `freeze`, `script`, JPEG, `deviceScaleFactor`) ;
+  galerie `tests/unit/_settings_primitives_gallery.js`.
+- Doc : `docs/settings/visual-foundation.md` (niveau 3), renvois dans `settings-shell.md` § 5–6 et `INDEX.md`.
+- Preuves : `slices/01-settings-visual-foundation/evidence/` (5 avant, 5 galerie après).
+
+Après : mêmes lots verts (37, 13, 20) ; nouveaux `test_settings_visual_foundation_js.py` (3) et
+`test_settings_visual_foundation_browser.py` (11) verts ; `test_architecture_agents_settings_browser` +
+`test_memory_settings_browser` + `test_brain_config_panel_browser` 24/25 dans un lot chargé, le test
+`..._survives_a_footer_save_of_behavior` (attente de fermeture de `.bcp-win`, 5 s) vert seul puis fichier entier vert
+(9/9) : instabilité sous charge, sans lien avec le CSS partagé.
+
+Notes pour les Slices suivantes :
+- S02 : les classes `.perso-*` (carte, interrupteur, segmenté, fil d'Ariane, titre) ont leur promotion `.set-*` ;
+  migrer puis supprimer les doublons. `.set-perso .set-hub-close{z-index:3}` → `--set-z-chrome`.
+- S03 : `.set-page` est un bloc conteneur pour `position:fixed` ; monter `.bcp-layer` hors de `.set-page`.
+- S06 : Memory Center hors overlay ; `stub()` permet un état déterministe sans Core (`core_unconfigured` sinon).
+
 ## LOG Drive d'origine
 # Execution log
 

@@ -8,7 +8,10 @@
    Aucun micro n'est ouvert : la page n'en demande jamais un ici.
 
    Usage : node _wake_word_settings_browser.mjs <url> <chrome.exe> <planJSON>
-   Plan : une liste d'etapes `{width,height,reducedMotion,forcedColors,actions:[...]}`.
+   Plan : une liste d'etapes `{width,height,deviceScaleFactor,reducedMotion,forcedColors,stubs,actions:[...]}`.
+   `stubs` (fixtures deterministes, refonte-ui-settings Slice 01) : `[{path,method?,status?,json}]` ; une requete
+   de la page dont le chemin (sans requete) et la methode correspondent recoit `json` sans toucher le serveur,
+   les autres passent. Aide Python : `tests/unit/settings_visual.py`.
    Chaque action peut porter un `id` repris dans sa reponse.
    Sortie : `{"steps":[{"actions":[...]}],"requests":[...],"console":[...]}`.
 
@@ -18,10 +21,12 @@
      {"a":"click","selector":"..."}                     (vrai clic souris, au centre)
      {"a":"key","key":"Tab","shift":false,"ctrl":false} (vraie frappe clavier) -> {focused}
      {"a":"type","selector":"...","text":"1.5"}         (selectionne puis insere le texte)
-     {"a":"shot","path":"...png"}
+     {"a":"shot","path":"...png"}                       (`.jpg` : JPEG qualite 82, plus leger pour les preuves)
+     {"a":"script","path":"...js","then":"expr"}        (evalue un fichier de fixture puis `then` ; plan court)
+     {"a":"freeze"}                                     (animations a leur etat final, transitions et caret coupes)
      {"a":"theme","id":"cosmos"}                        (API de theme de la page, sans persister) */
 import {spawn} from 'node:child_process';
-import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {disposeChromeOnExit,killChrome,assertSafeTarget} from './_cdp_profile.mjs';
@@ -40,6 +45,7 @@ const chrome=spawn(CHROME,[
 disposeChromeOnExit(chrome,profile);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const requests=[];
+let stubs=[],fetching=false;
 const consoleErrors=[];
 
 try{
@@ -57,6 +63,8 @@ try{
     if(msg.method==='Network.requestWillBeSent'){
       const r=msg.params.request;
       requests.push({method:r.method,path:new URL(r.url).pathname,body:r.postData||null});
+    }else if(msg.method==='Fetch.requestPaused'){
+      fulfil(msg.params).catch(error=>consoleErrors.push('stub: '+error.message));
     }else if(msg.method==='Runtime.exceptionThrown'){
       const d=msg.params.exceptionDetails;
       consoleErrors.push('exception: '+(d.exception&&d.exception.description||d.text));
@@ -75,6 +83,15 @@ try{
   await send('Page.enable');
   await send('Runtime.enable');
   await send('Network.enable');
+  /* Une requete arretee par `Fetch` : la fixture du plan si elle correspond, sinon la requete continue. */
+  async function fulfil({requestId,request}){
+    const path=new URL(request.url).pathname;
+    const hit=stubs.find(s=>s.path===path&&(!s.method||s.method.toUpperCase()===request.method));
+    if(!hit)return send('Fetch.continueRequest',{requestId});
+    return send('Fetch.fulfillRequest',{requestId,responseCode:hit.status||200,
+      responseHeaders:[{name:'Content-Type',value:'application/json; charset=utf-8'}],
+      body:Buffer.from(JSON.stringify(hit.json===undefined?null:hit.json)).toString('base64')});
+  }
 
   const steps=[];
   for(const step of plan){
@@ -82,7 +99,10 @@ try{
       ...(step.reducedMotion?[{name:'prefers-reduced-motion',value:'reduce'}]:[]),
       ...(step.forcedColors?[{name:'forced-colors',value:'active'}]:[])]});
     await send('Emulation.setDeviceMetricsOverride',
-      {width:step.width||1440,height:step.height||900,deviceScaleFactor:1,mobile:false});
+      {width:step.width||1440,height:step.height||900,deviceScaleFactor:step.deviceScaleFactor||1,mobile:false});
+    stubs=Array.isArray(step.stubs)?step.stubs:[];
+    if(stubs.length){await send('Fetch.enable',{patterns:stubs.map(s=>({urlPattern:'*'+s.path+'*',requestStage:'Request'}))});fetching=true}
+    else if(fetching){await send('Fetch.disable');fetching=false}
     await send('Page.navigate',{url:URL_});
     await sleep(step.settleMs||1100);
     const out={actions:[]};
@@ -136,8 +156,16 @@ try{
       }
       case 'theme':
         return {a:'theme',value:await evaluate(`window.JarvisThemeAPI.activate(${JSON.stringify(action.id)},{persist:false})`)};
+      case 'script':
+        return {a:'script',value:await evaluate(readFileSync(action.path,'utf8')+';\n'+(action.then||'undefined'))};
+      case 'freeze':
+        return {a:'freeze',value:await evaluate(`(()=>{const s=document.createElement('style');s.dataset.visualFreeze='';
+          s.textContent='*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;'
+            +'transition:none!important;caret-color:transparent!important;scroll-behavior:auto!important}';
+          document.head.append(s);return true})()`)};
       case 'shot':{
-        const {data}=await send('Page.captureScreenshot',{format:'png'});
+        const jpeg=/\.jpe?g$/i.test(action.path);
+        const {data}=await send('Page.captureScreenshot',jpeg?{format:'jpeg',quality:82}:{format:'png'});
         writeFileSync(action.path,Buffer.from(data,'base64'));
         return {a:'shot',path:action.path};
       }
