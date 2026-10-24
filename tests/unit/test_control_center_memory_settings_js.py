@@ -85,7 +85,7 @@ for(const section of {SECTIONS_JS}){{
   const host=fakeHost();await M.create(host,{{fetch:fetchFn,store,section,mode:modes[section]}}).load();
   seen[section]=[...new Set(paths(host.innerHTML))];html[section]=host.innerHTML;  // un groupe radio = un champ
 }}
-for(const mode of ['center','diagnostics']){{const host=fakeHost();await M.create(host,{{fetch:fetchFn,store,mode}}).load();
+for(const mode of ['diagnostics']){{const host=fakeHost();await M.create(host,{{fetch:fetchFn,store,mode}}).load();
   seen[mode]=paths(host.innerHTML);html[mode]=host.innerHTML}}
 out({{seen,html,calls:calls.filter(c=>c[0]==='/api/settings').length,fields:MEM.schema.sections.flatMap(s=>s.fields.map(f=>[f.path,f.surface.section]))}});""")
     rendered = [path for section in SURFACE_SECTIONS for path in out["seen"][section]]
@@ -93,7 +93,7 @@ out({{seen,html,calls:calls.filter(c=>c[0]==='/api/settings').length,fields:MEM.
     assert len(rendered) == len(set(rendered))
     for path, section in out["fields"]:
         assert path in out["seen"][section], (path, section)
-    assert out["seen"]["center"] == [] and out["seen"]["diagnostics"] == []  # ni l'un ni l'autre n'édite
+    assert out["seen"]["diagnostics"] == []  # n'édite rien
     assert all(out["seen"][s] for s in SURFACE_SECTIONS)
     assert out["calls"] == 1  # une seule lecture pour l'état partagé
     every = "".join(out["html"].values())
@@ -104,7 +104,7 @@ out({{seen,html,calls:calls.filter(c=>c[0]==='/api/settings').length,fields:MEM.
     assert "Accès par agent" in out["html"]["knowledge_sources"]  # résumé des loadouts, lecture seule
     # Le délai brut et le sidecar ne sont jamais sur la page ordinaire.
     assert "mem_recall_timeout_ms" not in out["html"]["recall"] and "tencent." not in "".join(out["seen"]["recall"])
-    assert "Ouvrir le Memory Center" in out["html"]["center"]
+    assert "Ouvrir le Memory Center" in out["html"]["recall"] and 'data-mem-center-tab="candidates"' in out["html"]["recall"]
     for section in SURFACE_SECTIONS:  # ligne d'état courte + lien profond, jamais le détail des étages
         assert "data-mem-diagnostics" in out["html"][section] and "État des étages mémoire" not in out["html"][section]
     assert "État des étages mémoire" in out["html"]["diagnostics"]
@@ -257,6 +257,9 @@ PAGE_LIFECYCLE = r"""
 globalThis.window=globalThis;
 require(UI_PATH);require(MODULE_PATH);
 const pending=[];
+/* Le Memory Center (module à part, Slice 06) : un double qui lit comme lui par `fetch` et se laisse détruire. */
+window.JarvisMemoryCenter={takeTab:()=>null,create(host,o){let dead=false;host.innerHTML='<div class="mcw"></div>';
+  return {load:()=>globalThis.fetch('/api/memory/status').then(()=>{if(!dead)host.innerHTML='dessiné'}),destroy(){dead=true},tab:o.tab}}};
 globalThis.fetch=(path)=>new Promise(resolve=>pending.push({path,resolve}));
 const errors=[];console.error=(c,e)=>errors.push(String(c));
 const SET={open:true,openGeneration:3,renderRevision:1};
@@ -277,7 +280,7 @@ const reply=body=>({ok:true,status:200,headers:{get:()=>null},text:async()=>JSON
     entry.destroy(host);                                   // le shell quitte la section (`destroyRegisteredSection`)
     for(const p of pending)p.resolve(reply({memory:MEM}));  // réponse tardive
     await new Promise(r=>setTimeout(r,20));
-    seen[spec.id]={save:entry.save,reads,mount:host.innerHTML,inner:host.inner.innerHTML,loaded:!!store.memory};
+    seen[spec.id]={save:entry.save,reads,mount:host.innerHTML,inner:host.inner.innerHTML,loaded:!!(store&&store.memory)};
   }
   /* L'état est partagé le temps d'une ouverture : une nouvelle ouverture le relit. */
   const a=memorySettingsStore(),b=memorySettingsStore();SET.openGeneration++;const c=memorySettingsStore();
@@ -311,8 +314,10 @@ def test_leaving_a_memory_section_destroys_its_view_and_ignores_the_late_respons
     result = json.loads(done.stdout)
     seen = result["seen"]
     assert list(seen) == ["recall", "knowledge_sources", "memory_center", "memory_advanced"]
+    center = seen.pop("memory_center")  # l'atelier : son module, sa lecture, rien dessiné après destruction
+    assert center["save"] == "readonly" and center["reads"] == 1 and center["mount"] == '<div class="mcw"></div>', center
     for section, item in seen.items():
-        assert item["save"] == ("readonly" if section == "memory_center" else "self"), section
+        assert item["save"] == "self", section
         assert item["reads"] == 1 and item["mount"] == '<div id="memorySettingsMount"></div>', item
         assert item["inner"] == '<div class="empty">Chargement…</div>', item  # rien dessiné après destruction
         assert item["loaded"] is True  # l'état partagé, lui, garde la lecture pour la section suivante

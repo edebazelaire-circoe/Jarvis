@@ -15,6 +15,9 @@ Core. Ce que ce fichier prouve :
   la page le dit (« Core injoignable ») sans inventer un chiffre ; recherche sémantique sans clé : indisponible, dit ;
 - l'interrupteur se pilote au clavier ; le brouillon survit à un passage par un autre onglet ; « Enregistrer la
   mémoire » envoie le correctif mémoire seul, et la valeur se relit après rechargement ;
+- le Memory Center vit dans son onglet (une seule maison) : statistiques vivantes, pagination, filtres, note en
+  boîte de dialogue fermée par Échap, décisions confirmées puis optimistes (refus : la carte revient avec sa raison),
+  test de rappel au clavier, Core muet dit sans chiffre ; Sessions & Boards y mène ;
 - aucun onglet ne déborde en largeur (maquettes 1254×1254 et 1672×941, 1280×800, 1920×1080, 1366×768, 125 %).
 
 Se saute si Chrome ou node manque.
@@ -50,7 +53,7 @@ TOUR = """(async()=>{const pause=ms=>new Promise(r=>setTimeout(r,ms)),q=s=>docum
   for(const id of %s){selectTab(id);await pause(400);
     out.sections[id]={category:SET.category,section:SET.section,footer:!document.querySelector('.set-foot').hidden,
       fields:[...new Set([...document.querySelectorAll('#modalContent [data-mem]')].map(e=>e.dataset.mem))],
-      link:!!q('#modalContent [data-mem-diagnostics]'),center:!!q('#modalContent [data-mem-center]'),
+      link:!!q('#modalContent [data-mem-diagnostics],#modalContent .mcw [data-act=diagnostics]'),center:!!q('#modalContent .mcw'),
       legs:!!q('#modalContent .mem-legs[aria-label]')}}
   out.alias={};for(const id of ['memory','semantic_retrieval','consolidation']){selectTab(id);await pause(250);
     out.alias[id]=[SET.category,SET.section,window.JarvisSettingsRegistry.page.resolve(id).source]}
@@ -91,7 +94,7 @@ async def test_tabs_destinations_aliases_and_links(served):
     for section in SECTIONS:
         assert sections[section]["section"] == section and not sections[section]["footer"], section
         assert sections[section]["link"] and not sections[section]["legs"], section
-    assert sections["memory_center"]["fields"] == []
+    assert sections["memory_center"]["fields"] == [] and sections["memory_center"]["center"]  # l'atelier, dans son onglet
     assert tour["alias"] == {"memory": ["memory_knowledge", "recall", "alias"],
                              "semantic_retrieval": ["memory_knowledge", "recall", "alias"],
                              "consolidation": ["memory_knowledge", "recall", "alias"]}
@@ -218,64 +221,112 @@ async def test_no_memory_tab_overflows(served, width, height):
         assert row["page"] <= 0 and row["content"] <= 1 and row["main"] <= 0 and row["wide"] == [], row
 
 
-#: Le Memory Center sans Core (fixture isolée) n'affiche pas Santé des index : son état est répondu dans la page, et
-#: les avertissements de la console sont retenus pour vérifier qu'aucune action n'est perdue en route.
-MC_STUB = """(()=>{window.__warn=[];const w=console.warn.bind(console);console.warn=(...a)=>{window.__warn.push(a.map(String).join(' '));w(...a)};
-  const real=window.fetch;window.fetch=(u,o)=>String(u).split('?')[0]==='/api/memory/status'
-    ?Promise.resolve(new Response(JSON.stringify({available:false,reason_code:'memory_disabled'}),{status:200,headers:{'Content-Type':'application/json'}}))
-    :real(u,o);return true})()"""
+# --- Memory Center dans les Réglages (refonte-ui-settings, Slice 06) ---------------------------------------------------
+
+CENTER = [click("#modalTabs [data-section=memory_center]"),
+          wait("!!document.querySelector('.mcw .mc-table tbody tr')&&!/…/.test(document.querySelector('.mc-stats').textContent)", 10000)]
+HERO = r"""[...document.querySelectorAll('.mc-stat')].map(s=>s.querySelector('strong').textContent+' '+s.querySelector('span').textContent)"""
+ROWS = "document.querySelectorAll('.mc-table tbody tr').length"
+MEM_CALLS = "window.__memCalls.map(c=>c[0]+' '+c[1])"
 
 
-async def test_the_memory_center_settings_button_opens_recall(served):
-    """QA Slice 09 (N1, mutation Q1) et QA Slice 05 : le bouton « Ouvrir les réglages mémoire » du Memory Center est le
-    seul appelant de l'alias `memory`. Vrai clic : les Réglages s'ouvrent sur Mémoire & connaissances › Rappel, et le
-    gestionnaire Sessions & Boards, qui héberge le Memory Center, ne journalise plus `workspace.unknown_action`."""
-    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
-        eval_(MC_STUB), *OPEN,
-        click("#modalTabs [data-section=memory_center]"),
-        wait("!!document.querySelector('[data-mem-center]:not([disabled])')"),
-        click("[data-mem-center]"),
-        wait("document.getElementById('workspaceManager').classList.contains('mc-on')&&!!document.getElementById('mc-tab-health')"),
-        click("#mc-tab-health"),
-        wait("!!document.querySelector('#memoryCenterMount [data-act=settings]')", 8000),
-        click("#memoryCenterMount [data-act=settings]"),
-        wait("SET.open&&SET.section==='recall'&&!!document.querySelector('#memSection_recall [data-mem]')", 8000),
-        eval_("[SET.category,SET.section,document.getElementById('workspaceManager').hidden,"
-              "window.__warn.filter(l=>/unknown_action/.test(l))]", "opened"),
+async def test_the_memory_center_lives_in_settings_with_live_data_paging_filters_and_a_note_dialog(served):
+    out = await drive(served.url, [{"width": 1254, "height": 1254, "actions": [
+        *stub(), *OPEN, *CENTER,
+        eval_(HERO, "hero"), eval_(ROWS, "rows"),
+        eval_("document.querySelector('.mc-foot').textContent.replace(/\\s+/g,' ').trim()", "foot"),
+        click(".mc-pages [aria-label='Page suivante']"),
+        wait("/Notes 11–20 sur 23/.test(document.querySelector('.mc-foot').textContent)", 8000),
+        eval_("(()=>{const s=document.getElementById('mcLevel');s.value='L3';s.dispatchEvent(new Event('change',{bubbles:true}));return true})()"),
+        wait("[...document.querySelectorAll('.mc-table tbody .mc-lvl')].every(e=>e.textContent==='L3')&&document.querySelectorAll('.mc-table tbody tr').length>0", 8000),
+        eval_(MEM_CALLS, "calls"),
+        # Une note : la boîte de dialogue montre le contenu canonique ; Échap la ferme, pas les Réglages.
+        click(".mc-table tbody tr:first-child .mc-notebtn"),
+        wait("document.getElementById('mcNoteDialog').open&&/Canonique/.test(document.getElementById('mcNoteDialog').textContent)", 8000),
+        key("Escape"),
+        eval_("[document.getElementById('mcNoteDialog').open,SET.open,SET.section]", "after_escape"),
     ]}])
-    category, section, hidden, unknown = got(out["steps"][0], "opened")
-    assert [category, section, hidden] == ["memory_knowledge", "recall", True]
-    assert unknown == []
+    step = out["steps"][0]
+    assert got(step, "hero") == ["23 Notes mémoire", "4 Candidats en attente", "2 Sources actives (Wiki, Skills)",
+                                 "Prêt Index de rappel (dérivé)"]
+    assert got(step, "rows") == 10 and got(step, "foot").startswith("Notes 1–10 sur 23")
+    calls = got(step, "calls")
+    assert "GET /notes?limit=11&offset=10" in calls and any(c.startswith("GET /notes?limit=11&offset=0&level=L3") for c in calls)
+    assert got(step, "after_escape") == [False, True, "memory_center"]
     assert out["console"] == [], out["console"]
 
 
-async def test_a_memory_center_form_sent_with_enter_is_not_a_workspace_action(served):
-    """QA Slice 10 (N1, mutation Q1 de la passe de finitions) : Sessions & Boards ignore aussi les ENVOIS de formulaire
-    du Memory Center qu'il héberge (`foreign(event)` de l'écoute `submit`, `control_center_workspace.js`), pas seulement
-    ses clics, alors même que le Memory Center redessine son hôte (formulaire détaché) avant que l'événement n'y
-    arrive. Vraie frappe Entrée dans « Test de rappel » puis dans la recherche des Notes : le Memory Center lance son
-    rappel et sa recherche, et rien n'est journalisé comme `workspace.unknown_action`."""
+async def test_candidate_decisions_confirm_then_apply_optimistically_or_come_back_with_the_reason(served):
+    plan = []
+    for refuse in (False, True):
+        plan.append({"width": 1440, "height": 900, "actions": [
+            *stub(refuse=refuse, delay=400), *OPEN, *CENTER,
+            click(".mc-rail [data-act=cand-accept][data-id=c1]"),
+            wait("!!document.querySelector('.mc-rail [data-act=decide][data-id=c1]')"),
+            eval_("[document.activeElement&&document.activeElement.dataset.act,window.__memCalls.filter(c=>c[0]==='POST').length]", "asking"),
+            key("Enter"),
+            eval_("[!!document.querySelector('.mc-rail [data-cand=c1]'),document.querySelector('.mc-stat strong+span')&&"
+                  "document.querySelectorAll('.mc-stat')[1].querySelector('strong').textContent]", "optimistic"),
+            wait("window.__memCalls.some(c=>c[0]==='POST')&&!document.querySelector('.mc-loading')", 8000),
+            eval_("new Promise(r=>setTimeout(r,600))"),
+            eval_("[document.querySelectorAll('.mc-stat')[1].querySelector('strong').textContent,"
+                  "(document.querySelector('.mc-rail [data-cand=c1] .mc-cand-err')||{}).textContent||'']", "settled"),
+            eval_("window.__memCalls.filter(c=>c[0]==='POST').map(c=>[c[1],c[2]])", "posts"),
+        ]})
+    out = await drive(served.url, plan)
+    ok, refused = out["steps"]
+    assert got(ok, "asking") == ["decide", 0]  # confirmation d'abord, focus sur « Confirmer », rien d'envoyé
+    assert got(ok, "optimistic") == [False, "3"]  # la carte quitte la file avant la réponse
+    assert got(ok, "settled") == ["3", ""]
+    assert got(refused, "settled")[0] == "4" and "memory_conflict_revision" in got(refused, "settled")[1]
+    for step in (ok, refused):  # une seule écriture par décision, la route et la charge de Core
+        assert [(path, json.loads(body)) for path, body in got(step, "posts")] == [("/candidates/c1/decision", {"decision": "accept"})]
+    assert out["console"] == [], out["console"]
+
+
+async def test_recall_test_runs_with_enter_and_core_down_is_said_without_numbers(served):
+    out = await drive(served.url, [
+        {"width": 1440, "height": 900, "actions": [
+            *stub(), *OPEN, *CENTER,
+            click("#mc-tab-recall"), wait("!!document.getElementById('mcRecallQ')"),
+            type_in("#mcRecallQ", "outils favoris"), key("Enter"),
+            wait("!!document.querySelector('#mcRecallResult .mc-result')", 8000),
+            eval_("[document.querySelectorAll('#mcRecallResult .mc-result').length,/Pourquoi/.test(document.getElementById('mcRecallResult').textContent)]", "recall"),
+        ]},
+        {"width": 1440, "height": 900, "actions": [
+            *stub(down=True), *OPEN, click("#modalTabs [data-section=memory_center]"),
+            wait("/Injoignable/.test((document.querySelector('.mc-stats')||{}).textContent||'')", 10000),
+            eval_("new Promise(r=>setTimeout(r,500))"),
+            eval_("[document.querySelector('.mc-stats').textContent.replace(/\\s+/g,' ').trim(),"
+                  "document.querySelectorAll('.mcw .mc-error [data-act]').length,document.querySelector('.mcw').textContent.includes('core_unavailable')]", "down"),
+        ]},
+    ])
+    assert got(out["steps"][0], "recall") == [3, True]
+    stats, retries, code = got(out["steps"][1], "down")
+    assert not any(ch.isdigit() for ch in stats) and "Injoignable" in stats
+    assert retries >= 2 and code is True  # chaque carte dit l'erreur réelle et propose « Réessayer »
+    assert out["console"] == [], out["console"]
+
+
+async def test_entries_to_the_memory_center_and_its_links_back(served):
+    """Tuile « Candidats » de l'onglet Mémoire -> onglet Candidats ; bouton de Sessions & Boards -> le même onglet des
+    Réglages (une seule maison) ; « Modifier » des réglages essentiels -> onglet Mémoire."""
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
-        eval_(MC_STUB), *OPEN,
-        click("#modalTabs [data-section=memory_center]"),
-        wait("!!document.querySelector('[data-mem-center]:not([disabled])')"),
-        click("[data-mem-center]"),
-        wait("document.getElementById('workspaceManager').classList.contains('mc-on')&&!!document.getElementById('mc-tab-recall')"),
-        click("#mc-tab-recall"),
-        wait("!!document.getElementById('mcRecallQ')", 8000),
-        type_in("#mcRecallQ", "rendez-vous de demain"),
-        key("Enter"),
-        wait("!document.querySelector('#memoryCenterMount form[data-form=recall] button[disabled]')", 8000),
-        eval_("window.__warn.filter(l=>/unknown_action/.test(l))", "unknown"),
-        # Notes : même chose pour la recherche (`data-form=notes`).
-        click("#mc-tab-notes"),
-        wait("!!document.getElementById('mcQuery')", 8000),
-        type_in("#mcQuery", "rendez-vous"),
-        key("Enter"),
-        wait("!!document.getElementById('mcQuery')&&!/Chargement/.test(document.getElementById('memoryCenterMount').textContent)", 8000),
-        eval_("window.__warn.filter(l=>/unknown_action/.test(l))", "unknown_notes"),
+        *stub(), *OPEN,
+        wait("!/Lecture…/.test(document.getElementById('memSection_recall').textContent)", 8000),
+        click("#memSection_recall .mem-tile[data-mem-center-tab=candidates]"),
+        wait("SET.section==='memory_center'&&document.getElementById('mc-tab-candidates').getAttribute('aria-selected')==='true'", 8000),
+        eval_("SET.section", "tile"),
+        click("#mc-tab-notes"), wait("!!document.querySelector('.mcw [data-act=settings]')"),
+        click(".mcw [data-act=settings]"),
+        wait("SET.section==='recall'", 8000),
+        eval_("closeSettings();window.JarvisWorkspace.open();true"),
+        wait("!document.getElementById('workspaceManager').hidden"),
+        click("#wspMemoryCenter"),
+        wait("SET.open&&SET.section==='memory_center'&&!!document.querySelector('.mcw')", 8000),
+        eval_("[document.getElementById('workspaceManager').hidden,!!document.getElementById('memoryCenterMount')]", "workspace"),
     ]}])
-    assert got(out["steps"][0], "unknown") == []
-    assert got(out["steps"][0], "unknown_notes") == []
-    assert any(r["path"] == "/api/memory/recall-explain" for r in out["requests"]), out["requests"]
-    assert any(r["path"] == "/api/memory/search" for r in out["requests"]), out["requests"]
+    step = out["steps"][0]
+    assert got(step, "tile") == "memory_center"
+    assert got(step, "workspace") == [True, False]  # Sessions & Boards refermé, plus de seconde copie
+    assert out["console"] == [], out["console"]

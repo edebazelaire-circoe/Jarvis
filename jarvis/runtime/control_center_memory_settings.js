@@ -11,7 +11,7 @@
      Recherche sémantique, résumé du système, entrée du Memory Center avec ses compteurs réels, bandeau Avancé ;
    - `knowledge` : l'onglet « Connaissances » : sources (préférence ET disponibilité réelle), portées, loadouts ;
    - `fields` : les champs d'UNE section (`options.section`) en liste simple — Avancé › Mémoire (`memory_advanced`) ;
-   - `center` : l'entrée du Memory Center ;
+   (le Memory Center a sa propre section et son module, `control_center_memory.js`, depuis la Slice 06) ;
    - `diagnostics` : l'état détaillé des étages et des valeurs coupées (partie « Mémoire » d'Avancé › Diagnostics).
    Le brouillon vit dans l'état partagé : il survit au passage d'une section mémoire à l'autre (une règle de
    compatibilité peut ramener un champ d'une autre section), et « Enregistrer la mémoire » envoie tout le brouillon.
@@ -354,12 +354,6 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
         body:statusLine(groups.flatMap(g=>legsOf(legs,g.s.id)))+body+(loadouts&&loadouts.section===opts.section?loadoutsHtml():'')
           +restartHtml()+messageHtml()+elsewhereHtml()+actionsHtml()});
     }
-    function centerHtml(){
-      const center=!!(root.JarvisMemoryCenter&&typeof root.JarvisMemoryCenter.open==='function');
-      return ui.section({id:'memSection_center',title:opts.label||'Memory Center',description:opts.description||'',
-        body:statusLine([])+ui.actions(`<button type="button" class="action primary" data-mem-center${center?'':' disabled aria-disabled="true"'}>Ouvrir le Memory Center</button>`)
-          +`<p class="hint">${center?'Notes, candidats à décider, santé des index, connaissances et test de rappel. Les Réglages se ferment à l’ouverture.':'Le Memory Center n’est pas encore disponible dans cette version.'}</p>`});
-    }
     /* Partie « Mémoire » des diagnostics : chaque étage, ce qui le dégrade et comment le réparer, les combinaisons
        coupées à la lecture, et les valeurs imposées par l'environnement. Lecture seule. */
     function diagnosticsHtml(){
@@ -625,7 +619,7 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
     function render(){
       if(dead)return;
       if(!st.memory){host.innerHTML='<div class="empty">Chargement…</div>';return}
-      const body={memory:memoryHtml,knowledge:knowledgeHtml,center:centerHtml,diagnostics:diagnosticsHtml}[mode]||fieldsHtml;
+      const body={memory:memoryHtml,knowledge:knowledgeHtml,diagnostics:diagnosticsHtml}[mode]||fieldsHtml;
       const draw=()=>{host.innerHTML=`<div class="mem-settings">${body()}</div>`;bind()};
       if(typeof ui.keepFocus==='function')ui.keepFocus(host,draw);else draw();
     }
@@ -648,7 +642,6 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
       const on=(sel,fn)=>host.querySelectorAll(sel).forEach(el=>el.addEventListener('click',()=>fn(el)));
       on('[data-mem-save]',()=>submit());
       on('[data-mem-reset]',()=>{if(!dirty()||st.busy)return;st.draft={};st.message=null;render()});
-      on('[data-mem-center]',()=>{if(root.JarvisMemoryCenter&&root.JarvisMemoryCenter.open)root.JarvisMemoryCenter.open()});
       on('[data-mem-diagnostics]',()=>{if(opts.openDiagnostics)opts.openDiagnostics()});
       on('[data-mem-open]',el=>{if(opts.open)opts.open(el.dataset.memOpen)});
       /* Curseurs : la valeur affichée suit le pouce pendant le geste ; le brouillon change au relâchement (`change`). */
@@ -660,7 +653,7 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
       }));
       on('[data-mem-center-tab]',el=>{
         if(opts.openCenter)return opts.openCenter(el.dataset.memCenterTab);
-        if(root.JarvisMemoryCenter&&root.JarvisMemoryCenter.open)root.JarvisMemoryCenter.open();
+        if(root.JarvisMemoryCenter&&root.JarvisMemoryCenter.open)root.JarvisMemoryCenter.open(el.dataset.memCenterTab);
       });
       on('[data-mem-focus]',el=>{const card=host.querySelector('#'+el.dataset.memFocus);if(!card)return;
         if(card.scrollIntoView)card.scrollIntoView({block:'nearest',behavior:'smooth'});if(ui.landFocus)ui.landFocus(card);else card.focus()});

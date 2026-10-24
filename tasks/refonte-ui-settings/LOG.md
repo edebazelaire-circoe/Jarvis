@@ -69,6 +69,41 @@ Décisions :
   7 passés, 3 échecs **préexistants** (mêmes 3 échecs sur la copie de `3ed0e5af` : ajout/liaison OpenAI et réponse
   tardive des Connexions, sans lien avec la mémoire).
 
+## Slice 06 — Memory Center dans les Réglages (agent d'implémentation, worktree `rmem`)
+
+- 2026-10-24 : capture « avant » (`evidence/avant-1254x1254.png`, `avant-1280x800.png`) : Memory Center monté dans
+  Sessions & Boards, liste + panneau de détail, onglet Santé des index au premier plan.
+- 2026-10-24 : décision de maison (I-001, S05 de la tâche mémoire) : **une seule maison**, l'onglet Memory Center des
+  Réglages (`memory_center`, vue `workbench` → `mountMemoryCenter`). `#memoryCenterMount`, la vue « étendue » de
+  Sessions & Boards et leur CSS (`.wsp.mc-on`, anciennes règles `.mc-*` de la page) sont retirés ; le bouton
+  « Memory Center » de Sessions & Boards reste et ouvre cet onglet (`JarvisMemoryCenter.open`). Le bouton Réglages
+  du Memory Center ouvre `recall` directement : l'alias `memory` n'a plus d'appelant de code, il reste servi pour les
+  liens enregistrés (appelant = `docs/legacy/settings-tab-aliases.md`).
+- 2026-10-24 : `control_center_memory.js` réécrit (atelier, maquette 05) : bandeau + 4 statistiques réelles (notes
+  « 200+ » au-delà d'une page, candidats en attente, sources actives nommées, état de l'index) ; onglets Notes /
+  Candidats / Connaissances / Test de rappel ; table dense paginée par 10 (`limit=11`), recherche (dérivée), filtres
+  appliqués au changement, note dans un `<dialog>` (Échap la ferme sans fermer les Réglages) ; rail candidats (3 +
+  « Voir les N »), test de rappel, santé des index ; réglages essentiels en lecture seule avec lien vers l'onglet
+  Mémoire (contrat « pas de doublon modifiable ») ; santé détaillée vers Avancé › Diagnostics.
+  Décisions de candidat : confirmation dans la carte puis envoi optimiste (la carte quitte la file ; refus → elle
+  revient avec code réel, `memory_center_decision_refused` journalisé). Aucun « taux de rappel », aucune rétention en
+  %, aucune case de sélection multiple (pas d'action groupée côté Core).
+- 2026-10-24 : la vue `center` de `JarvisMemorySettings` (bouton qui fermait les Réglages) est retirée.
+- 2026-10-24 : tests : `test_control_center_memory_js.py` réécrit (10, node) ; `test_memory_settings_browser.py` :
+  4 tests navigateur de l'atelier (données vivantes, pagination, filtre, dialogue + Échap ; décisions confirmées puis
+  optimistes, refus remis ; test de rappel à la touche Entrée, Core muet sans chiffre ; entrées tuile / Sessions &
+  Boards / « Modifier ») remplacent les 2 anciens tests Sessions & Boards ; `test_memory_settings_endpoints`,
+  `test_control_center_memory_settings_js`, `test_control_center_settings_registry_js` adaptés.
+- 2026-10-24 : captures « après » : `evidence/apres-notes-1254x1254.png`, `apres-notes-1672x941.png`,
+  `apres-notes-1280x800.png`, `apres-bas-1254x1254.png` (réglages essentiels, test de rappel, santé),
+  `apres-candidats-1254x1254.png` (confirmation + détail), `apres-degrade-1254x1254.png` (Core muet).
+- 2026-10-24 : tests lancés : rapides mémoire/registre/couches 79 passés ; `test_memory_settings_browser` 15 passés ;
+  `test_settings_accessibility_browser` 17 passés ; balayage des 82 fichiers non navigateur `control_center|settings|
+  memory|workspace` : 2681 passés, 8 échecs dont 7 **préexistants** (identiques sur la copie de `3ed0e5af` :
+  `test_control_center_mcp_api` ×6, `test_barehands_tools_settings_js` ×1 — `role="radiogroup"` de la page
+  Personnalisation reprise en S2) et 1 instable sous charge (`test_memory_context` budget de temps : 38/38 passés
+  seul).
+
 ## LOG Drive d'origine
 # Execution log
 

@@ -164,7 +164,7 @@ Prompts et › Scène constellation) sont devenus des sections (`docs/settings/v
 range ses outils d'opérateur en cinq groupes : Architecture & compatibilité, Prompts & instructions,
 Runtime & CLI, Diagnostics, Labs & outils de test. Ce guide écrit encore parfois « Réglages → onglet »
 (ancien nom de la section). Depuis la Slice 09, les anciens identifiants d'onglet ne sont plus des alias (sauf
-`memory`, Memory Center › Réglages) : `docs/legacy/settings-tab-aliases.md`.
+`memory`, `semantic_retrieval` et `consolidation`, vers l'onglet Mémoire) : `docs/legacy/settings-tab-aliases.md`.
 
 Un principe la traverse : **la page ne connaît aucun réglage**. Le serveur
 décrit ce qui existe — les piles vocales, leurs champs, les CLI, leurs modes,
@@ -1630,7 +1630,7 @@ It is safe to delete `<memory>/.jarvis/index.sqlite3`; the next rebuild recreate
 
 1. Lexical (FTS5): stop JARVIS, run `python -m jarvis reindex` (prints the number of documents indexed), or just delete `<memory>/.jarvis/index.sqlite3`. Without a manual step, Core also resynchronizes it from the Markdown files at every start (a background thread; while it runs, turns are `degraded` with `index_syncing`, 10 to 25 s for about 2 000 notes).
 2. Semantic: delete `<memory>/.jarvis/semantic.sqlite3` (or change the embedding model). The next Core start recreates it and re-embeds the canonical notes in the background; the leg reports `semantic_unavailable` until it completes and recall stays lexical. Re-embedding 5 000 notes takes about a minute, and with the `openai` provider it costs embedding calls.
-3. Check in the Memory Center, tab "Santé des index", or `GET /v1/memory/status`: each leg returns to `ok`. Nothing canonical changes in any of these steps.
+3. Check in Settings › Mémoire & connaissances › Memory Center, card "Santé des index", or `GET /v1/memory/status`: each leg returns to `ok`. Nothing canonical changes in any of these steps.
 
 #### Recipe: back up and restore the memory
 
@@ -1638,7 +1638,7 @@ Back up `<data_root>/memory` as a folder, with JARVIS stopped or at rest. Keep t
 
 1. Copy the folder (for example `robocopy "<data_root>\memory" "<backup>\memory" /E /XD .jarvis`).
 2. On the second PC or data root, set `JARVIS_DATA_ROOT` to the new root ([local-data.md](local-data.md)) and copy the folder to `<new data_root>/memory` before the first Core start. Do not copy `.jarvis/`, nor any SQLite `-wal` or `.bak`: they are not part of the memory.
-3. Start Core: the indexes rebuild from the Markdown files (recipe above). Open the Memory Center and check the note count and a recall test. If notes are listed but a recall returns nothing, wait for `index_syncing` to clear.
+3. Start Core: the indexes rebuild from the Markdown files (recipe above). Open the Memory Center (Settings › Mémoire & connaissances › Memory Center) and check the note count and a recall test. If notes are listed but a recall returns nothing, wait for `index_syncing` to clear.
 4. If the target root already holds notes, copy into a scratch folder and compare first; a restore is a copy, never a silent merge.
 
 #### Sidecar outage behaviour

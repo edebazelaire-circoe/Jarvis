@@ -270,8 +270,49 @@ Section `memory_center` · Memory Center (`save: 'readonly'`) : voir « Memory C
 `tests/unit/test_memory_settings_surface.py`, `tests/unit/test_control_center_settings_registry_js.py`
 (alias), `tests/unit/test_memory_settings_browser.py` (vrai Chrome, faux Core `_memory_center_fixture.py`).
 
-## Memory Center (Slice 12)
+## Memory Center (Slice 12 ; refonte-ui-settings, Slice 06)
 
-Guide d usage et decisions UX. Ouverture : bouton "Ouvrir le Memory Center" de la section Centre memoire (Memoire & connaissances), ou bouton "Memory Center" de Sessions & Boards (`JarvisMemoryCenter.open`, `control_center_memory.js`, monte dans `#memoryCenterMount`, il remplace les onglets du workspace tant qu il est ouvert ; Echap ferme d abord une confirmation, puis la vue). Cinq onglets : **Notes** (liste canonique, recherche = index derive, detail avec abstraction L0-L3, retention, type et portee sur des lignes separees, provenance, version, conflits, corps), **Candidats** (propositions non rappelees ; accepter/rejeter apres confirmation via `POST /api/memory/candidates/{id}/decision`, seule ecriture, relayee par `memory_relay.py`), **Sante des index** (`/api/memory/status`, chaque etage degrade explique avec son effet), **Connaissances** (Wiki/graphe/Skills et loadouts, lecture seule) et **Test de rappel** (`recall-explain`, "pourquoi rappelee", rien n est ecrit). Decisions : chaque zone porte une pastille Canonique / Derive / Proposition ; aucune action de reconstruction n est proposee (aucune route Core ne l expose). Les assets Wiki/Skills ne sont pas listes un a un : Core n expose que leur etat. Test : `tests/unit/test_control_center_memory_js.py`.
+**Maison unique : Reglages › Memoire & connaissances › onglet Memory Center** (section `memory_center`,
+`save: 'readonly'`, maquette `tasks/refonte-ui-settings/references/ui/05-memory-center.png`). Module
+`jarvis/runtime/control_center_memory.js` (`JarvisMemoryCenter.create(host, {tab, open, openDiagnostics})`, monte
+par `mountMemoryCenter` dans `control_center.html`, CSS injectee `.mcw` / `.mc-*`, pictogrammes de
+`JarvisMemorySettings.icon`). Plus de seconde copie : `#memoryCenterMount` et la vue « etendue » de Sessions & Boards
+sont retires ; le bouton « Memory Center » de Sessions & Boards (`JarvisMemoryCenter.open(tab)`) ferme le
+gestionnaire et ouvre cet onglet (`openSettingsTab('memory_center')`). Les tuiles de l onglet Memoire ouvrent
+l onglet interne demande (Notes, Candidats, Test de rappel).
 
-Le Memory Center est monte dans le gestionnaire Sessions & Boards mais repond lui-meme a ses `data-act` et `data-form` : le gestionnaire ignore les clics et envois qui viennent de `[data-memory-center]` (passe de finitions avant la Slice 10). Avant, chacun y etait aussi traite comme une action du gestionnaire, et le bouton "Ouvrir les reglages memoire" journalisait `workspace.unknown_action {"name":"settings"}`. Ce bouton est le seul appelant de l alias `memory` : il ouvre Memoire & connaissances > Rappel (`test_memory_settings_browser.py::test_the_memory_center_settings_button_opens_recall`).
+Composition (deux colonnes au-dela de 860 px de large, requete de conteneur ; une colonne en dessous, le rail
+passe sous la surface de travail) :
+
+| Zone | Contenu | Donnees |
+| --- | --- | --- |
+| Bandeau | identite + 4 statistiques : notes (« 200+ » au-dela d une page de 200), candidats en attente, sources de connaissances actives (nommees), index de rappel (Pret / En synchro / Indisponible / Injoignable) | `/api/memory/notes?limit=200`, `/api/memory/candidates?state=proposed`, `/api/memory/status` |
+| Onglets internes | Notes, Candidats (pastille du nombre en attente), Connaissances, Test de rappel ; fleches, Debut, Fin | — |
+| Notes (surface principale) | table dense : contenu (titre + extrait), niveau L0-L3, type, portee, retention (classe), date ; recherche (index lexical, pastille Derive), filtres niveau / retention / type / remplacees appliques des qu ils changent ; pagination de 10 (`limit=11` pour savoir s il y a une page suivante ; « sur N » seulement sans filtre et sous 200) ; une ligne ouvre la note dans un `<dialog>` (contenu canonique, dimensions, provenance, liens ; Echap la ferme sans fermer les Reglages) | `/api/memory/notes`, `/api/memory/search`, `/api/memory/notes/{id}` |
+| Reglages essentiels | rappel, souvenirs par tour, recherche semantique, consolidation : **projections en lecture seule** de l etat enregistre, bouton « Modifier » vers l onglet Memoire | section `memory` de `/api/settings` |
+| Rail : candidats | les 3 premiers candidats proposes, Accepter / Rejeter, « Voir les N candidats » | `/api/memory/candidates` |
+| Rail : test de rappel | phrase, « Tester » (Entree), resultats dans l ordre rendu avec score et barre relative au meilleur | `/api/memory/recall-explain` |
+| Rail : sante des index | une tuile par etage reel (lexical, semantique, Tencent, wiki, skills… : ce que Core declare) ; lien « Detail dans Avance › Diagnostics » | `/api/memory/status` |
+| Onglet Candidats | file complete filtrable par etat, detail (corps, portee, retention, provenance, conflits) a la demande | `/api/memory/candidates/{id}` |
+| Onglet Connaissances | sources declarees par Core et regles d acces par agent, lecture seule ; « Modifier » ouvre l onglet Connaissances | `/api/memory/status`, `/api/settings` |
+| Onglet Test de rappel | le meme test avec « pourquoi », rang par etage, source, budget, durees, codes de degradation | `/api/memory/recall-explain` |
+
+**Decisions de candidat.** Seule ecriture : `POST /api/memory/candidates/{id}/decision`. Deux temps : « Accepter » ou
+« Rejeter » ouvre une confirmation dans la carte (focus sur « Confirmer ») ; la confirmation est **optimiste** : la
+carte quitte la file et les compteurs tout de suite ; un refus de Core (404, 409 `memory_conflict_revision`, 403, 503)
+la remet a sa place avec la raison reelle (`role="alert"`, journal `memory_center_decision_refused`). Les protections
+de revision et de concurrence restent celles de Core. Echap ferme d abord la note ouverte, puis une confirmation, avant
+de laisser le shell fermer les Reglages.
+
+**Etats.** Chaque carte charge seule : chargement (spinner, arrete par `prefers-reduced-motion`), vide explicite,
+erreur avec la raison reelle et « Réessayer ». Core muet : statistiques « — » / « Injoignable », jamais un chiffre.
+
+**Ecarts voulus a la maquette** (aucune valeur de maquette n est codee) : pas de « taux de rappel » (Core n en
+fournit pas : remplace par l etat de l index), pas de « connaissances cles » comptees (remplace par les sources
+actives), retention affichee en classe (Long terme, Eternelle…) et non en pourcentage, pas de cases a cocher de
+selection multiple (aucune action groupee n existe), reglages essentiels non modifiables sur place (une seule place
+editable par reglage), tuile Tencent seulement si Core declare l etage. Canonique / Derive / Proposition : chaque zone
+porte sa pastille ; aucun bouton de reconstruction d index (aucune route Core).
+
+Tests : `tests/unit/test_control_center_memory_js.py` (node) et `tests/unit/test_memory_settings_browser.py` (vrai
+Chrome, faux Core `tests/unit/_memory_center_fixture.py`).

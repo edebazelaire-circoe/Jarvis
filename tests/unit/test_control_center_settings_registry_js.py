@@ -55,7 +55,7 @@ ALIASES = {
 #: Appelant de chaque alias, chemin depuis la racine du dépôt : un module de la page, ou le document durable qui
 #: publie l'ancien identifiant (`docs/legacy/settings-tab-aliases.md`).
 ALIAS_CALLERS = {
-    "memory": ("jarvis/runtime/control_center_memory.js", "root.selectTab('memory')"),
+    "memory": ("docs/legacy/settings-tab-aliases.md", "| `memory` | `memory_knowledge` / `recall` |"),
     "semantic_retrieval": ("docs/legacy/settings-tab-aliases.md", "| `semantic_retrieval` | `memory_knowledge` / `recall` |"),
     "consolidation": ("docs/legacy/settings-tab-aliases.md", "| `consolidation` | `memory_knowledge` / `recall` |"),
     "main_agent": ("docs/legacy/settings-tab-aliases.md", "| `main_agent` | alias →"),
