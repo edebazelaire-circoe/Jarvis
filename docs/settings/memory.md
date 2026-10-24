@@ -169,7 +169,8 @@ Code: `jarvis/runtime/memory_relay.py`, registered in `jarvis/runtime/control_ce
 - `memory.tencent.service_id` (identifier, empty: no `x-tdai-service-id` header) and `memory.tencent.allow_private`
   (default false) feed `register_retriever` and the mirror sink at Core start.
 - Hooks served for Slices 11 and 12: `control_center_memory_settings.js` (`#memorySettingsMount`) and
-  `control_center_memory.js` (`#memoryCenterMount`).
+  `control_center_memory.js` (mounted since refonte-ui-settings Slice 06 in the Memory Center tab of the Settings,
+  `mountMemoryCenter`; see « Memory Center » below).
 
 ## Interface (Slice 11)
 

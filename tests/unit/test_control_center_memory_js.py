@@ -119,9 +119,12 @@ def test_a_refused_decision_puts_the_card_back_with_its_real_reason(tmp_path):
 overrides['/api/memory/candidates/c1/decision']=Object.assign(new Error('deja decide'),{code:'memory_conflict_revision'});
 const v=MC.create(host,{fetch:fetchFn});await v.load();
 v.act('cand-accept',{id:'c1'});await v.decide();
-process.stdout.write(JSON.stringify({html:host.innerHTML,confirm:v.state.cands.confirm,items:v.state.cands.items.length}));""")
+const reads=calls.filter(c=>c[0].startsWith('/api/memory/candidates?')).length;
+process.stdout.write(JSON.stringify({html:host.innerHTML,confirm:v.state.cands.confirm,items:v.state.cands.items.length,reads}));""")
+    assert out["reads"] == 2  # la file est relue après le refus
     assert "Décision refusée" in out["html"] and "memory_conflict_revision" in out["html"] and 'role="alert"' in out["html"]
     assert out["confirm"] is None and out["items"] == 1 and "Accepter" in out["html"]
+    assert "déjà été décidé" in out["html"] and "la file a été relue" in out["html"]
 
 
 def test_health_is_derived_and_explains_a_syncing_index(tmp_path):

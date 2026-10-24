@@ -1747,17 +1747,9 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
   if(el.open)el.open.addEventListener('click',()=>{root.hidden?openView():closeView()});
   el.close.addEventListener('click',closeView);
   el.refresh.addEventListener('click',()=>manager.act('refresh'));
-  /* Le Memory Center est monté dans cette vue mais répond lui-même à ses `data-act` et `data-form`
-     (`control_center_memory.js`) : ses clics et envois ne sont pas des actions de cette vue (sinon
-     `workspace.unknown_action`, par exemple `settings` pour son bouton Réglages). L'appartenance se lit sur le
-     chemin de l'événement, figé à son envoi : le Memory Center redessine son hôte dans sa propre écoute (un envoi
-     de « Test de rappel » ou de notes), si bien que la cible est déjà détachée quand l'événement arrive ici et que
-     `closest` ne retrouverait plus son hôte. */
-  const foreign=event=>(typeof event.composedPath==='function'?event.composedPath():[])
-    .some(node=>!!(node&&node.nodeType===1&&node.hasAttribute('data-memory-center')));
   root.addEventListener('click',event=>{
     const target=event.target.closest&&event.target.closest('[data-act]');
-    if(!target||target.disabled||foreign(event)||!root.contains(target))return;
+    if(!target||target.disabled||!root.contains(target))return;
     const data={...target.dataset};
     if(data.act==='memory-delete-confirm'){const box=q('#wspConfirmRecursive');data.recursive=!!(box&&box.checked)}
     if(OPENERS.has(data.act))V.opener=describe(target);
@@ -1771,7 +1763,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
   });
   root.addEventListener('submit',event=>{
     const form=event.target.closest('form[data-form]');
-    if(!form||foreign(event))return;
+    if(!form)return;
     event.preventDefault();
     /* Envoyé : les listes changées sont maintenant l'état du gestionnaire. */
     for(const field of form.querySelectorAll('select[data-dirty]'))delete field.dataset.dirty;

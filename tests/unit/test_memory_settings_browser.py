@@ -267,10 +267,12 @@ async def test_candidate_decisions_confirm_then_apply_optimistically_or_come_bac
             key("Enter"),
             eval_("[!!document.querySelector('.mc-rail [data-cand=c1]'),document.querySelector('.mc-stat strong+span')&&"
                   "document.querySelectorAll('.mc-stat')[1].querySelector('strong').textContent]", "optimistic"),
-            wait("window.__memCalls.some(c=>c[0]==='POST')&&!document.querySelector('.mc-loading')", 8000),
-            eval_("new Promise(r=>setTimeout(r,600))"),
+            # Réponse reçue : la carte a quitté la file (succès) ou l'avis de refus est là ; un refus relit ensuite la file.
+            wait("window.__memCalls.some(c=>c[0]==='POST')&&(!!document.querySelector('.mc-cand-notice')||!document.querySelector('.mc-rail [data-cand=c1]'))", 8000),
+            eval_("new Promise(r=>setTimeout(r,1200))"),
+            wait("/^[0-9]+$/.test(document.querySelectorAll('.mc-stat')[1].querySelector('strong').textContent)", 8000),
             eval_("[document.querySelectorAll('.mc-stat')[1].querySelector('strong').textContent,"
-                  "(document.querySelector('.mc-rail [data-cand=c1] .mc-cand-err')||{}).textContent||'']", "settled"),
+                  "(document.querySelector('.mc-rail .mc-cand-notice')||{}).textContent||'']", "settled"),
             eval_("window.__memCalls.filter(c=>c[0]==='POST').map(c=>[c[1],c[2]])", "posts"),
         ]})
     out = await drive(served.url, plan)
@@ -278,7 +280,8 @@ async def test_candidate_decisions_confirm_then_apply_optimistically_or_come_bac
     assert got(ok, "asking") == ["decide", 0]  # confirmation d'abord, focus sur « Confirmer », rien d'envoyé
     assert got(ok, "optimistic") == [False, "3"]  # la carte quitte la file avant la réponse
     assert got(ok, "settled") == ["3", ""]
-    assert got(refused, "settled")[0] == "4" and "memory_conflict_revision" in got(refused, "settled")[1]
+    count, notice = got(refused, "settled")  # file relue : la carte et le compteur reviennent, raison en français + code
+    assert count == "4" and "déjà été décidé" in notice and "memory_conflict_revision" in notice
     for step in (ok, refused):  # une seule écriture par décision, la route et la charge de Core
         assert [(path, json.loads(body)) for path, body in got(step, "posts")] == [("/candidates/c1/decision", {"decision": "accept"})]
     assert out["console"] == [], out["console"]

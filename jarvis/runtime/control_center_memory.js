@@ -24,10 +24,18 @@
   const SOURCES=Object.freeze({turn:'Tour',session:'Session',artifact:'Artefact',agent:'Agent',user:'Utilisateur',import:'Import',note:'Note'});
   const CAND_STATES=Object.freeze({proposed:'À décider',accepted:'Accepté',rejected:'Rejeté',superseded_by_newer:'Remplacé par un plus récent'});
   const LEG_LABEL=Object.freeze({store:'Notes Markdown',lexical:'Lexical',semantic:'Sémantique',tencent:'Tencent',
-    'knowledge:wiki':'Wiki','knowledge:codegraph':'Graphe de code','knowledge:skills':'Skills'});
-  const LEG_ICON=Object.freeze({store:'doc',lexical:'doc',semantic:'nodes',tencent:'cloud','knowledge:wiki':'book','knowledge:codegraph':'code','knowledge:skills':'cube'});
+    'knowledge:wiki':'Wiki','knowledge:codegraph':'Graphe de code','knowledge:skill':'Skills'});
+  const LEG_ICON=Object.freeze({store:'doc',lexical:'doc',semantic:'nodes',tencent:'cloud','knowledge:wiki':'book','knowledge:codegraph':'code','knowledge:skill':'cube'});
   const STATUS=Object.freeze({ok:['Actif','mc-ok'],disabled:['Désactivé','mc-off'],unavailable:['Indisponible','mc-bad'],degraded:['Dégradé','mc-warn']});
   const DEGRADED=Object.freeze({index_syncing:'Index en synchronisation',recall_timeout:'Délai de rappel dépassé',semantic_unavailable:'Étage sémantique indisponible'});
+  /* Raison d'un refus de décision, en français ; le code brut reste affiché en détail technique. */
+  const DECISION_REFUSAL=Object.freeze({
+    memory_conflict_revision:'ce candidat a déjà été décidé ou a changé entre-temps',
+    memory_not_found:'ce candidat n’existe plus',
+    memory_scope_denied:'cette décision n’est pas autorisée pour cet acteur',
+    memory_unavailable:'la mémoire n’est pas disponible côté Core',
+    core_unavailable:'Core ne répond pas',
+    invalid_request:'la demande a été refusée comme invalide'});
   const PAGE_SIZE=10,COUNT_LIMIT=200,RAIL_CANDS=3;
   const STYLE_ID='jarvisMemoryCenterStyle';
   const STYLE=`
@@ -157,6 +165,7 @@
 .mc-spin{width:14px;height:14px;flex:none;border-radius:50%;border:2px solid color-mix(in srgb,var(--accent) 25%,transparent);border-top-color:var(--accent);animation:mcSpin .8s linear infinite}
 @keyframes mcSpin{to{transform:rotate(360deg)}}
 .mc-empty{margin:0;padding:14px;border:1px dashed var(--mc-hair);border-radius:10px;color:var(--mc-ink-2);font-size:12.5px;text-align:center}
+.mc-error code{font-size:11.5px;color:var(--mc-ink-2)}
 .mc-error{display:grid;gap:8px;justify-items:start;padding:12px 14px;border:1px solid color-mix(in srgb,var(--danger) 40%,transparent);border-radius:10px;background:rgba(255,101,119,.06);font-size:12.5px}
 .mc-note{display:grid;gap:4px 0;margin:0;padding:0}
 .mc-note dt{color:var(--mc-ink-3);font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;margin-top:8px}
@@ -199,7 +208,7 @@
       count:{status:'idle',notes:null,capped:false},
       notes:{status:'idle',items:[],q:'',hits:null,level:'',retention:'',kind:'',superseded:false,page:0,more:false,error:''},
       note:{id:null,status:'idle',data:null,error:''},
-      cands:{status:'idle',items:[],available:true,filter:'proposed',error:'',confirm:null,pending:{},errors:{},open:null,detail:{}},
+      cands:{status:'idle',items:[],available:true,filter:'proposed',error:'',confirm:null,pending:{},errors:{},notice:null,open:null,detail:{}},
       settings:{status:'idle',memory:null,error:''},
       recall:{q:'',max:6,status:'idle',data:null,error:''}};
     let dead=false;
@@ -264,7 +273,7 @@
         render();
       }
     }
-    function askDecision(id,decision){const c=st.cands;c.confirm={id,decision};delete c.errors[id];st.focus=`[data-act="decide"][data-id="${id}"]`;render()}
+    function askDecision(id,decision){const c=st.cands;c.confirm={id,decision};c.notice=null;delete c.errors[id];st.focus=`[data-act="decide"][data-id="${id}"]`;render()}
     function cancelDecision(){const c=st.cands,k=c.confirm;c.confirm=null;st.focus=k?`[data-act="cand-${k.decision}"][data-id="${k.id}"]`:null;render()}
     /* Optimiste : la carte quitte la file (et les compteurs) avant la réponse ; un refus la remet, avec sa raison. */
     async function decide(){
@@ -280,9 +289,13 @@
         if(k.decision==='accept'){if(st.count.status==='ready'&&!st.count.capped)st.count.notes++;if(st.notes.status!=='idle')loadNotes()}
       }catch(e){
         delete c.pending[k.id];
-        c.errors[k.id]=`Décision refusée : ${e.message||'erreur'}${e.code?' ('+e.code+')':''}. Rien n’a été modifié.`;
-        say(c.errors[k.id]);st.focus=`[data-act="cand-${k.decision}"][data-id="${k.id}"]`;
+        const why=DECISION_REFUSAL[e.code]||e.message||'raison inconnue';
+        c.notice={title:cand?cand.title:k.id,text:`Décision refusée : ${why}. Rien n’a été modifié ; la file a été relue.`,
+          code:[e.code,e.status?'HTTP '+e.status:'',e.code&&DECISION_REFUSAL[e.code]?e.message:''].filter(Boolean).join(' · ')};
+        say(c.notice.text);
         if(root.console)root.console.warn('memory_center_decision_refused',{candidate:k.id,code:e.code||'',status:e.status||0});
+        /* La carte est peut-être périmée (décidée ailleurs) : on relit la file et les compteurs, source de vérité. */
+        render();await loadCands();loadCount();return;
       }
       render();
     }
@@ -410,10 +423,12 @@
       if(c.status==='loading'||c.status==='idle')return busy('Lecture des candidats…');
       if(c.status==='error')return errBox(c.error,'reload-cands');
       if(!c.available)return '<p class="mc-empty">La consolidation n’est pas branchée dans cette installation : aucune proposition à relire.</p>';
+      const notice=c.notice?`<div class="mc-error mc-cand-notice" role="alert"><span>${esc(c.notice.text)}</span>${c.notice.code?`<code>${esc(c.notice.code)}</code>`:''}</div>`:'';
+      if(notice&&!c.items.length)return notice+'<p class="mc-empty">Aucun candidat à décider.</p>';
       const list=c.items.filter(x=>!(c.filter==='proposed'&&c.pending[x.id]&&!c.errors[x.id])||full);
       const shown=full?c.items:list.filter(x=>!c.pending[x.id]).slice(0,RAIL_CANDS);
-      if(!shown.length)return `<p class="mc-empty">${c.filter==='proposed'?'Aucun candidat à décider. La consolidation en propose quand elle repère un souvenir durable.':'Aucun candidat dans cet état.'}</p>`;
-      return `<ul class="mc-cands">${shown.map(x=>candCard(x,full)).join('')}</ul>`;
+      if(!shown.length)return notice+`<p class="mc-empty">${c.filter==='proposed'?'Aucun candidat à décider. La consolidation en propose quand elle repère un souvenir durable.':'Aucun candidat dans cet état.'}</p>`;
+      return notice+`<ul class="mc-cands">${shown.map(x=>candCard(x,full)).join('')}</ul>`;
     }
     function candsRail(){
       const n=proposedCount();
@@ -552,7 +567,7 @@
       const doc=host.ownerDocument,active=doc&&doc.activeElement;
       const keep=active&&host.contains&&host.contains(active)?(active.id?'#'+active.id:active.dataset&&active.dataset.act?`[data-act="${active.dataset.act}"]${active.dataset.id?`[data-id="${active.dataset.id}"]`:''}${active.dataset.tab?`[data-tab="${active.dataset.tab}"]`:''}`:null):null;
       const dlg=dialogEl(),wasOpen=!!(dlg&&dlg.open);
-      host.innerHTML=`<div class="mcw" data-memory-center="1">${heroHtml()}${tabsHtml()}
+      host.innerHTML=`<div class="mcw">${heroHtml()}${tabsHtml()}
         <div id="mcPanel" role="tabpanel" aria-labelledby="mc-tab-${st.tab}">${panelHtml()}</div>
         <dialog class="mc-dialog" id="mcNoteDialog" aria-labelledby="mcNoteTitle"><div class="mc-dialog-in">
           <button type="button" class="mc-iconbtn mc-dialog-x" data-act="close-note" aria-label="Fermer la note">${icon('close')}</button>${noteDialogBody()}</div></dialog>

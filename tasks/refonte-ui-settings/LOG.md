@@ -104,6 +104,31 @@ Décisions :
   Personnalisation reprise en S2) et 1 instable sous charge (`test_memory_context` budget de temps : 38/38 passés
   seul).
 
+## Retouches après QA des Slices 05/06 (2026-10-24)
+
+- B1 : Core publie l'étage `knowledge:skill` (singulier, `AssetKind.SKILL`) ; l'interface cherchait `knowledge:skills`
+  (clé des étages DÉDUITS des réglages, `memory_relay.py`). Carte Skills de l'onglet Connaissances : étage Core
+  explicite par source (`SOURCES`) ; libellés et icônes du Memory Center sur `knowledge:skill`. Le faux Core
+  `_memory_center_fixture.py` dérive désormais ses étages de connaissance de `AssetKind` ; l'assertion « Skills :
+  Actif » du test navigateur couvre la vraie clé.
+- B2 : `memory_advanced` (Avancé › Architecture & compatibilité › Mémoire) attendu par
+  `test_settings_shell_browser` et `test_advanced_settings_browser` ; tableau des groupes de
+  `docs/settings/navigation-registry.md` à jour.
+- N1 : pastille Tencent de l'onglet Connaissances : Désactivé (préférence) / Actif / Indisponible ou En panne (activé,
+  état Core non ok) / « Activé · état inconnu » (Core muet).
+- N2 : refus d'une décision de candidat : avis en français (« ce candidat a déjà été décidé ou a changé
+  entre-temps »…), code brut en détail technique, puis relecture de la file et des compteurs.
+- N3 : filtre mort `foreign` / `data-memory-center` retiré de `control_center_workspace.js` (et l'attribut du
+  Memory Center) ; `docs/settings/memory.md` ne cite plus `#memoryCenterMount` ; aides et remèdes mémoire
+  (`memory_settings.py`, `memory_relay.py`, `docs/OPERATIONS.md`, `docs/memory-tencent.md`) disent
+  « Réglages › Plugins & MCP › Fournisseurs », la vraie destination du bouton.
+- Tests : `test_memory_settings_browser` 15 passés ; `test_settings_shell_browser` + `test_advanced_settings_browser`
+  17 passés ; `test_settings_accessibility_browser` 17 passés ; rapides (`test_control_center_memory_js`,
+  `test_control_center_settings_registry_js`, `test_control_center_memory_settings_js`, `test_memory_settings_surface`,
+  `test_memory_settings_endpoints`, `test_memory_settings`, `test_control_center_shell_layers`) 252 passés ; tests du
+  module Sessions & Boards (`test_boards_hud_js`, `test_presentation_artifacts_docs`, `test_workspace_presentations_js`,
+  `test_workspace_rail_model_js`) 69 passés.
+
 ## LOG Drive d'origine
 # Execution log
 
