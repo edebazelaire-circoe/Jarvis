@@ -54,6 +54,8 @@ def test_behavior_metadata_matches_the_live_consumer():
     fields = {field["id"]: field for field in payload["fields"]}
 
     assert payload["values"] == {"response_verbosity": "inherit", "politeness_formality": "inherit"}
+    assert payload["custom_instructions"]["value"] == ""
+    assert payload["custom_instructions"]["max_length"] == agent_behavior.CUSTOM_INSTRUCTIONS_MAX
     assert [option["id"] for option in fields["response_verbosity"]["options"]] == [
         "inherit", "concise", "balanced", "detailed",
     ]
@@ -178,3 +180,26 @@ def test_invalid_delegation_mode_does_not_mutate_settings():
         agent_routing.apply_delegation_mode(settings, "fan-out")
     assert invalid.value.code == "agent_settings_invalid_delegation_mode"
     assert settings == before
+
+
+def test_custom_instructions_are_bounded_stored_only_when_set_and_composed_once():
+    settings: dict = {}
+    agent_behavior.apply(settings, {"custom_instructions": "  Donne des exemples concrets.  "})
+    assert settings["agent_behavior"]["custom_instructions"] == "Donne des exemples concrets."
+    text = agent_behavior.prompt_instruction(settings)
+    assert text.count("[Préférences de réponse JARVIS]") == 1
+    assert text.endswith("Donne des exemples concrets.")
+
+    agent_behavior.apply(settings, {"custom_instructions": ""})
+    assert settings["agent_behavior"] == {"response_verbosity": "inherit", "politeness_formality": "inherit"}
+    assert agent_behavior.prompt_instruction(settings) == ""
+
+    before = deepcopy(settings)
+    for bad in ("x" * (agent_behavior.CUSTOM_INSTRUCTIONS_MAX + 1), 42):
+        with pytest.raises(agent_behavior.AgentBehaviorError) as invalid:
+            agent_behavior.apply(settings, {"custom_instructions": bad})
+        assert invalid.value.code == "agent_settings_invalid_custom_instructions"
+    assert settings == before
+    # Un texte trop long écrit à la main se lit comme absent, sans toucher au fichier.
+    damaged = {"agent_behavior": {"custom_instructions": "x" * 5000}}
+    assert agent_behavior.load(damaged).custom_instructions == ""

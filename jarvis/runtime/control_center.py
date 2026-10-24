@@ -73,6 +73,7 @@ from jarvis.domain.interaction_mode import (
     DEFAULT_INTERACTION_MODE, INTERACTION_MODE_DERIVED, INTERACTION_MODE_DERIVED_MESSAGE, InteractionMode,
 )
 from jarvis.runtime import wake_word_settings
+from jarvis.runtime import personalization_profiles
 from jarvis.runtime.interaction_mode_view import CoreInteractionModeView
 from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
 from jarvis.runtime import mcp_catalog
@@ -748,6 +749,8 @@ SCENE_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/"
 # jarvis-settings-ui-reorganization) : logique pure + bloc navigateur.
 WAKE_WORD_SCRIPT_FILE = "control_center_wake_word.js"
 WAKE_WORD_SCRIPT_MARKER = "/*__CONTROL_CENTER_WAKE_WORD_JS__*/"
+PERSONALIZATION_SCRIPT_FILE = "control_center_personalization.js"
+PERSONALIZATION_SCRIPT_MARKER = "/*__CONTROL_CENTER_PERSONALIZATION_JS__*/"
 #: Chronologie de conversation plein écran (Slice 05) : logique pure testée par
 #: node et branchement navigateur, insérés comme les scripts ci-dessus.
 TIMELINE_SCRIPT_FILE = "control_center_timeline.js"
@@ -1568,6 +1571,8 @@ class ControlCenter:
             # nommé (409 `interaction_mode_derived`) plutôt qu'un 405.
             web.get("/api/interaction-mode", self.get_interaction_mode),
             web.post("/api/interaction-mode", self.save_interaction_mode),
+            web.get("/api/personalization/profiles", self.get_personalization_profiles),
+            web.post("/api/personalization/profiles", self.save_personalization_profiles),
             web.get("/api/wake-word", self.get_wake_word),
             web.post("/api/wake-word", self.save_wake_word),
             web.get("/api/barehands", self.get_barehands),
@@ -2697,6 +2702,9 @@ class ControlCenter:
         )
         html = html.replace(
             WAKE_WORD_SCRIPT_MARKER, page.with_name(WAKE_WORD_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            PERSONALIZATION_SCRIPT_MARKER, page.with_name(PERSONALIZATION_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
             TIMELINE_SCRIPT_MARKER, page.with_name(TIMELINE_SCRIPT_FILE).read_text(encoding="utf-8")
@@ -4032,6 +4040,55 @@ class ControlCenter:
     async def get_settings(self, request: web.Request) -> web.Response:
         del request
         return web.json_response(self._settings_payload(self._settings()))
+
+    # ------------------------------------------- profils de personnalisation
+
+    async def get_personalization_profiles(self, request: web.Request) -> web.Response:
+        """Les profils de la page Personnalisation ; lire n'écrit rien (profil implicite tant qu'aucun n'est créé)."""
+
+        del request
+        return web.json_response(personalization_profiles.describe(self._settings()))
+
+    async def save_personalization_profiles(self, request: web.Request) -> web.Response:
+        """`{action: select|create|delete, id?, name?, accent?}` : une action, écrite atomiquement avec les réglages.
+
+        Choisir un profil recopie ses préférences de réponse (à chaud) et ses voix (au prochain démarrage de
+        Voice : `voice_restart`) dans les réglages. La réponse porte les profils et les réglages relus.
+        """
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        payload = payload if isinstance(payload, dict) else {}
+        action = payload.get("action")
+        current = self._settings()
+        voice_restart = False
+        try:
+            if action == "select":
+                voice_restart = personalization_profiles.select(current, payload.get("id"))
+            elif action == "create":
+                personalization_profiles.create(current, payload.get("name"), payload.get("accent"))
+            elif action == "delete":
+                personalization_profiles.delete(current, payload.get("id"))
+            else:
+                raise personalization_profiles.ProfileError(
+                    "personalization_profile_invalid_action", "Action de profil inconnue.")
+            from jarvis.runtime.prompt_overrides import prompt_override_document
+            prompt_override_document(current)
+        except (personalization_profiles.ProfileError, agent_behavior.AgentBehaviorError) as exc:
+            self.journal.emit("settings.personalization.rejected", f"Action de profil refusée : {exc.code}",
+                              level="warning", data={"code": exc.code, "action": str(action)[:16]})
+            raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
+        self._mirror_legacy(current)
+        self._write_settings(current)
+        self._apply_agent_settings(current)
+        profiles = personalization_profiles.describe(current)
+        self.journal.emit("settings.personalization.saved", f"Profil de personnalisation : {action}",
+                          data={"action": action, "active": profiles["active"], "count": len(profiles["profiles"]),
+                                "voice_restart": voice_restart})
+        return web.json_response({"profiles": profiles, "voice_restart": voice_restart,
+                                  "settings": self._settings_payload(current)})
 
     # ------------------------------------------------ mot d'éveil (réglages)
 

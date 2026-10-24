@@ -33,6 +33,9 @@ teinte de la catégorie (`SETTINGS_HUE`, partagée avec le rail).
 - × ou Échap ferme le hub (`closeSettingsHub`, fondu inverse de 160 ms, sans animation en mouvement réduit) ; le
   focus revient à l'élément d'ouverture (l'ancre de la roue). Flèches entre les cartes ; Tab reste dans le hub.
 - Le hub ne charge ni n'écrit aucun réglage et ne touche pas `SET.open`.
+- Refonte page par page : une catégorie qui a sa propre page l'ouvre à la place du shell (`data-view=perso` pour
+  Personnalisation, [`personalization-page.md`](personalization-page.md)) ; ses lignes « Réglages détaillés » ouvrent
+  le shell sur une section.
 
 ## 1. Ce que le shell possède
 

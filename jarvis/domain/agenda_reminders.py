@@ -81,20 +81,20 @@ FIELDS: tuple[dict[str, Any], ...] = (
              "à propos des rendez-vous. Agit à chaud.",
      "default": True},
     {"key": "lead_minutes", "type": "text", "label": "Rappels avant l'heure (minutes)",
-     "help": "Combien de minutes avant un rendez-vous JARVIS te le rappelle, séparées par des virgules : "
+     "help": "Combien de minutes avant un rendez-vous JARVIS vous le rappelle, séparées par des virgules : "
              "« 30, 10 » = un rappel à 30 minutes puis un à 10. Jusqu'à 4 valeurs, de 1 à 1440. "
              "Vide = aucun rappel avant l'heure.",
      "default": ", ".join(str(m) for m in DEFAULT_LEAD_MINUTES)},
     {"key": "morning_time", "type": "text", "label": "Rappel du matin (heure)",
-     "help": "Heure (HH:MM) à laquelle JARVIS te rappelle, le matin même, les rendez-vous d'avant midi "
+     "help": "Heure (HH:MM) à laquelle JARVIS vous rappelle, le matin même, les rendez-vous d'avant midi "
              "pas encore commencés. Vide = pas de rappel du matin.",
      "default": DEFAULT_MORNING_TIME},
     {"key": "evening_time", "type": "text", "label": "Rappel de la veille au soir (heure)",
-     "help": "Heure (HH:MM) à laquelle JARVIS te prévient, la veille, des rendez-vous du lendemain matin "
+     "help": "Heure (HH:MM) à laquelle JARVIS vous prévient, la veille, des rendez-vous du lendemain matin "
              "(avant midi). Vide = pas de rappel la veille.",
      "default": DEFAULT_EVENING_TIME},
     {"key": "late_minutes", "type": "number", "label": "Rappel « rendez-vous en cours / manqué » (minutes après l'heure)",
-     "help": "Combien de minutes après le début JARVIS te dit que le rendez-vous est en cours, si tu ne lui as "
+     "help": "Combien de minutes après le début JARVIS vous dit que le rendez-vous est en cours, si vous ne lui avez "
              "pas parlé depuis le dernier rappel. 0 = jamais.",
      "minimum": 0, "maximum": 120, "step": 1, "default": DEFAULT_LATE_MINUTES},
     {"key": "refresh_minutes", "type": "number", "label": "Relecture de l'agenda (minutes)",

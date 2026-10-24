@@ -10,6 +10,7 @@
 | [`navigation-registry.md`](navigation-registry.md) | six catégories figées, registre des sections, groupes d'Avancé, seule table d'alias (`memory`, `main_agent`, `subagent_models`) |
 | [`settings-shell.md`](settings-shell.md) | shell plein écran : rail, entrées, focus, Échap, piège de Tab, montage et destruction des sections, liens internes, primitives et aides de focus (`keepFocus`, `landFocus`) |
 | [`voice-audio.md`](voice-audio.md) | Personnalisation : sections, destination de chaque option (`surface` servie) |
+| [`personalization-page.md`](personalization-page.md) | page Personnalisation ouverte par le hub : grille modulaire, réglages réels écrits par chaque carte, profils, instructions personnalisées |
 | [`architecture-agents.md`](architecture-agents.md) | Architecture & Agents (deux onglets : Architecture, Sous-agents), montage serveur, destinations ; Runtime & CLI et Work Methods apprises sous Avancé (remplace `agents-models.md`) |
 | [`memory.md`](memory.md) | Mémoire & Connaissances : schéma, précédence env/fichier/défaut, destination de chaque champ |
 | [`interface-interactions.md`](interface-interactions.md) | Thème & scène, Raccourcis (seul éditeur), Bare Hands ; Bare Hands · essais sous Avancé |

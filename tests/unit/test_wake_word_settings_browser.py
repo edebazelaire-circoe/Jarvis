@@ -125,11 +125,13 @@ def click(selector: str) -> dict:
 
 
 def open_settings() -> list:
-    """Le bouton Réglages ouvre le hub (2026-10-23) : la carte Personnalisation, puis sa section Conversation (ce que
-    le bouton ouvrait directement avant le hub)."""
+    """Le bouton Réglages ouvre le hub (2026-10-23) : la carte Personnalisation ouvre sa page, dont la ligne
+    « Conversation » des réglages détaillés ouvre le shell sur cette section (ce que le bouton ouvrait avant le hub)."""
     return [click("#openSettings"),
             wait("!!document.querySelector('#settingsHubGrid [data-hub-category=voice_audio]')"),
             click("#settingsHubGrid [data-hub-category=voice_audio]"),
+            wait("!!document.querySelector('#settingsPerso [data-perso-open=conversation]')", 10000),
+            click("#settingsPerso [data-perso-open=conversation]"),
             wait("!!document.querySelector('#modalTabs [data-section=conversation]')"),
             # La porte des cibles (comme un lien interne) : le focus reste sur la catégorie, comme avant le hub.
             eval_("(openSettingsTab('conversation'),0)"),
