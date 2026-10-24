@@ -206,7 +206,20 @@ Fragments HTML purs aux classes `.set-*` (styles dans `control_center.html`). To
 | `keepFocus(host, draw)` | redessiner `host` (`draw()`) sans perdre le focus | le contrôle focalisé (même `id`, sinon même premier attribut `data-*`) le reprend, s'il n'est pas désactivé |
 | `landFocus(el, {scroll})` | porter le focus après un saut | marque `data-settings-landed` : contour visible même après un clic |
 
+Depuis la Slice 01 de `refonte-ui-settings`, le même module fabrique aussi les primitives de la fondation visuelle
+(panneau verre, médaillon, statistique, ligne, pastille, bouton, liste, curseur, interrupteur, zone de texte,
+onglets, choix en cartes, tableau dense, panneau flottant) et leurs liaisons DOM : voir
+[`visual-foundation.md`](visual-foundation.md).
+
 ## 6. Langage visuel
+
+Contrat détaillé (jetons `--set-*`, primitives, grilles, empilement, où le CSS propre à une page est permis,
+fixtures et captures) : [`visual-foundation.md`](visual-foundation.md). Résumé :
+
+- Verre sombre retenu, liserés cyan/bleu fins ; lueur plus vive réservée à l'élément actif ou à l'appel principal ;
+  violet en accent secondaire. Médaillons d'icône ronds au liseré néon. Rythme d'espacement de 12 à 20 px.
+- Les jetons `--set-ink*`, `--set-hair*`, `--set-font`, `--set-mono` et `--set-field-bg` sont sur `:root` (mêmes
+  valeurs qu'avant sur `.settings-shell`) : hub, pages pleine fenêtre, shell et Memory Center les partagent.
 
 - Plein écran, sans cadre flottant : voile sombre `rgba(2,6,10,.80)` et flou de 22 px sur le fond Jarvis (26 px,
   voile plus léger, sous Cosmos : `control_center_work.js`).

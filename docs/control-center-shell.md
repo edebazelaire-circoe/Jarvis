@@ -263,6 +263,8 @@ value.
 | `.overlay` (60) | `control_center_wake_word.js` | `:is(#wakeWordSettings,#wakeWordDiagnostics) ` | settings and diagnostics tooltip |
 | `.overlay` (60) | `control_center.html` | `.set-perso ` | Personnalisation page: its close button stays over the scrolling grid |
 | `.overlay` (60) | `control_center.html` | `.perso-` | Personnalisation page: the profile popover floats over the grid |
+| `.overlay` (60) / `.wsp` (55) | `control_center.html` | `.set-table` | shared Settings dense-table shell: sticky header (`--set-z-sticky`), see `docs/settings/visual-foundation.md` |
+| `.overlay` (60) / `.wsp` (55) | `control_center.html` | `.set-float` | shared Settings floating panel (`--set-z-float`) and short popover (`--set-z-popover`) above a page's grid, see `docs/settings/visual-foundation.md` |
 | `#dossierView` (55) | `control_center_dossier.js` | `#dossierView` | its organisation and context drawers (narrow screens) above the reading pane, whose excerpt is masked (QA S07) |
 | `.overlay` (60) | `control_center_architecture_settings.js` | `.arch-` | Settings › Architecture & Agents canvas internals: edge labels 2, dragged node 3, link-creation band 4, node context menu 5 |
 | `.overlay` (60) | `control_center_brain_config_panel.js` | `.bcp-` | brain configuration window layer (`.bcp-layer`, 60), mounted inside the Architecture section of the settings overlay, above its canvas |

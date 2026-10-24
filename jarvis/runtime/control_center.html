@@ -974,9 +974,29 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-back{flex:none;display:inline-flex;align-items:center;gap:6px;align-self:flex-start;margin-top:8px;padding:7px 12px 7px 8px;border-radius:999px;border:1px solid var(--set-hair-2);background:rgba(3,8,12,.5);color:var(--set-ink-2);font-size:13px;cursor:pointer}
 .set-back svg{width:16px;height:16px;stroke-width:2}
 .set-back:hover{color:var(--set-ink);border-color:rgba(151,191,209,.4)}
-.settings-shell{--set-font:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;--set-mono:ui-monospace,SFMono-Regular,Consolas,monospace;
-  --set-ink:var(--text);--set-ink-2:#a9c2cf;--set-ink-3:#8aa5b3;--set-hair:rgba(151,191,209,.13);--set-hair-2:rgba(151,191,209,.2);
-  --set-field-bg:rgba(3,9,13,.72);--set-pad:clamp(20px,3.6vw,56px);--set-hue:var(--accent);
+/* Jetons visuels des Réglages (refonte-ui-settings Slice 01 ; contrat : docs/settings/visual-foundation.md). Définis une
+   seule fois, sur `:root`, pour que le hub, les pages pleine fenêtre (`.set-view`), le shell, le Memory Center et la
+   feuille d'un module (Architecture, Sous-agents) lisent les mêmes valeurs. Les jetons `--set-ink*`, `--set-hair*`,
+   `--set-font`, `--set-mono` et `--set-field-bg` vivaient sur `.settings-shell` : mêmes valeurs, portée élargie. Un
+   composant partagé ne code aucune couleur, rayon ni espacement en dur : il lit ces jetons. Une page change une
+   teinte en posant `--set-tone` (ou une classe `.set-tone-*`) sur un ancêtre, jamais en réécrivant une primitive. */
+:root{--set-font:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;--set-mono:ui-monospace,SFMono-Regular,Consolas,monospace;
+  --set-ink:var(--text);--set-ink-2:#a9c2cf;--set-ink-3:#8aa5b3;--set-ink-label:#dbe7ee;
+  --set-hair:rgba(151,191,209,.13);--set-hair-2:rgba(151,191,209,.2);--set-hair-3:rgba(151,191,209,.3);--set-hair-4:rgba(151,191,209,.48);
+  --set-field-bg:rgba(3,9,13,.72);--set-glass:rgba(7,13,20,.84);--set-glass-2:rgba(5,10,15,.8);--set-glass-sunken:rgba(3,8,12,.45);
+  --set-glass-float:rgba(6,12,18,.95);--set-blur:16px;--set-veil:rgba(2,6,10,.8);
+  --set-blue:#5aa8ff;--set-cyan:var(--accent);--set-violet:#a98bff;--set-magenta:#e070ff;--set-teal:var(--role-accent-teal);--set-amber:var(--role-accent-amber);
+  --set-ok:var(--ok);--set-warn:var(--warn);--set-bad:var(--danger);--set-off:#6f8794;
+  --set-accent:var(--set-blue);--set-accent-2:var(--set-violet);--set-tone:var(--set-accent);
+  --set-edge:34%;--set-edge-hot:72%;--set-glow:0 0 18px -6px;--set-glow-hot:0 0 26px -6px;--set-lift:0 18px 40px -26px;
+  --set-focus:var(--accent);--set-focus-w:2px;--set-focus-offset:2px;--set-disabled:.7;
+  --set-r-xs:6px;--set-r-sm:10px;--set-r-md:12px;--set-r-lg:14px;--set-r-xl:18px;--set-r-pill:999px;
+  --set-sp-1:4px;--set-sp-2:8px;--set-sp-3:12px;--set-sp-4:16px;--set-sp-5:20px;--set-sp-6:24px;--set-sp-8:32px;
+  --set-gap:clamp(14px,1.4vw,20px);--set-panel-pad:clamp(16px,1.6vw,24px);--set-view-pad:clamp(16px,4vw,64px);--set-view-max:1480px;
+  --set-control-h:40px;--set-control-h-sm:32px;
+  --set-fs-display:clamp(30px,3.4vw,48px);--set-fs-title:18px;--set-fs-body:14px;--set-fs-label:13.5px;--set-fs-small:12.5px;--set-fs-micro:11.5px;--set-fs-stat:26px;
+  --set-z-raised:1;--set-z-sticky:2;--set-z-float:20;--set-z-popover:30;--set-z-chrome:40}
+.settings-shell{--set-pad:clamp(20px,3.6vw,56px);--set-hue:var(--accent);
   position:absolute;inset:0;display:grid;grid-template-columns:clamp(256px,22vw,332px) minmax(0,1fr);
   font:14px/1.5 var(--set-font);color:var(--set-ink);letter-spacing:0}
 .settings-shell :is(code,kbd,samp,pre){font-family:var(--set-mono)}
@@ -1091,6 +1111,209 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-advanced[open]>summary{border-bottom:1px solid var(--set-hair)}
 .set-advanced-body{display:grid;gap:16px;padding:14px}
 .set-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+/* ---------- Réglages : fondation visuelle partagée (refonte-ui-settings Slice 01) ----------
+   Contrat : docs/settings/visual-foundation.md. Primitives de présentation seulement : aucune ne porte d'état métier ;
+   le contrôleur de la page reste la source de vérité (valeur, désactivé, en cours). Toutes lisent les jetons `--set-*`
+   de `:root` et la teinte héritée `--set-tone`. Fabriquées par `JarvisSettingsUI` (control_center_settings_ui.js) ou
+   écrites à la main avec les mêmes classes. Hors portée de `.settings-shell` : utilisables dans le hub, une page
+   pleine fenêtre (`.set-view`), le shell et le Memory Center. */
+.set-tone-blue{--set-tone:var(--set-blue)}.set-tone-cyan{--set-tone:var(--set-cyan)}.set-tone-violet{--set-tone:var(--set-violet)}
+.set-tone-magenta{--set-tone:var(--set-magenta)}.set-tone-teal{--set-tone:var(--set-teal)}.set-tone-amber{--set-tone:var(--set-amber)}
+.set-tone-ok{--set-tone:var(--set-ok)}.set-tone-warn{--set-tone:var(--set-warn)}.set-tone-bad{--set-tone:var(--set-bad)}.set-tone-off{--set-tone:var(--set-off)}
+/* Vue pleine fenêtre (page Réglages hors shell, ex. Personnalisation) : seule à défiler, jamais en largeur. `.set-page`
+   centre la composition et devient le conteneur des requêtes de la grille (voir `.set-grid`). */
+/* Anneau de focus de base, à spécificité nulle (comme celui du shell) : une primitive peut le préciser, jamais le
+   retirer. Couvre les vues pleine fenêtre et le panneau flottant, hors `.settings-shell` qui a déjà le sien. */
+:where(.set-view,.set-float,.set-page) :focus-visible{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:var(--set-focus-offset)}
+.set-view{position:absolute;inset:0;overflow-x:hidden;overflow-y:auto;padding:clamp(76px,9vh,96px) var(--set-view-pad) clamp(24px,5vh,48px);font:var(--set-fs-body)/1.5 var(--set-font);color:var(--set-ink)}
+.set-page{container:set-page/inline-size;max-width:var(--set-view-max);margin:0 auto;min-width:0}
+/* En-tête de page : fil d'Ariane, grand titre léger, chapeau, filet. */
+.set-page-head{position:relative;display:flex;justify-content:space-between;align-items:flex-start;gap:var(--set-sp-6);flex-wrap:wrap;margin-bottom:clamp(18px,3vh,30px)}
+.set-crumb{display:flex;align-items:center;gap:10px;margin:0 0 6px;font-size:12px;letter-spacing:.3em;text-transform:uppercase;color:var(--set-ink-2)}
+.set-title{margin:0;font-size:var(--set-fs-display);font-weight:300;letter-spacing:-.01em;line-height:1.1;text-wrap:balance}
+.set-lead{margin:10px 0 0;max-width:62ch;font-size:15px;line-height:1.55;color:var(--set-ink-2)}
+.set-rule{display:block;width:64px;height:2px;margin-top:18px;border-radius:2px;background:linear-gradient(90deg,var(--set-cyan),transparent)}
+/* Grilles. `.set-grid` : 12 colonnes à gouttière constante, enfants placés par `.set-span-N` ; 2 colonnes quand le
+   conteneur `.set-page` passe sous 1080 px (span ≤ 6 → une colonne, > 6 → toute la rangée), 1 colonne sous 640 px.
+   `.set-grid-auto` : 3/2/1 colonnes sans requête, chaque colonne au moins `--set-col-min`. `.set-workbench` : surface
+   de travail + rail (Memory Center). Les enfants ont `min-width:0` : un contenu large défile dans son propre
+   conteneur (`.set-table-scroll`, `.set-tabs`), jamais la page. */
+.set-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:var(--set-gap);align-items:stretch;min-width:0}
+.set-grid>*,.set-grid-auto>*,.set-workbench>*,.set-stack>*{min-width:0}
+.set-span-2{grid-column:span 2}.set-span-3{grid-column:span 3}.set-span-4{grid-column:span 4}.set-span-5{grid-column:span 5}
+.set-span-6{grid-column:span 6}.set-span-7{grid-column:span 7}.set-span-8{grid-column:span 8}.set-span-9{grid-column:span 9}.set-span-12{grid-column:1/-1}
+@container set-page (max-width:1080px){
+  .set-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .set-grid>:is(.set-span-2,.set-span-3,.set-span-4,.set-span-5,.set-span-6){grid-column:span 1}
+  .set-grid>:is(.set-span-7,.set-span-8,.set-span-9,.set-span-12){grid-column:1/-1}
+  .set-workbench{grid-template-columns:minmax(0,1fr)}}
+@container set-page (max-width:640px){.set-grid{grid-template-columns:minmax(0,1fr)}.set-grid>[class*=set-span-]{grid-column:1/-1}}
+.set-grid-auto{--set-col-min:300px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,var(--set-col-min)),1fr));gap:var(--set-gap);min-width:0}
+.set-workbench{--set-rail-w:clamp(300px,28%,400px);display:grid;grid-template-columns:minmax(0,1fr) var(--set-rail-w);gap:var(--set-gap);align-items:start;min-width:0}
+.set-stack{display:flex;flex-direction:column;gap:var(--set-gap);min-width:0}
+/* Panneau verre : la carte des maquettes. `.set-panel-hot` (actif, appel principal) : bord et lueur plus vifs ;
+   `.set-panel-quiet` (secondaire, « Avancé & diagnostic ») : ni teinte ni lueur ; `.set-inset` : groupe enfoncé. */
+.set-panel{position:relative;min-width:0;display:flex;flex-direction:column;gap:var(--set-sp-4);padding:var(--set-panel-pad);border-radius:var(--set-r-xl);border:1px solid color-mix(in srgb,var(--set-tone) var(--set-edge),var(--set-hair));background:linear-gradient(160deg,color-mix(in srgb,var(--set-tone) 9%,var(--set-glass)),var(--set-glass-2) 55%);box-shadow:0 0 0 1px rgba(0,0,0,.25),var(--set-lift) color-mix(in srgb,var(--set-tone) 70%,transparent),inset 0 1px 0 rgba(255,255,255,.05);color:var(--set-ink)}
+.set-panel-hot{border-color:color-mix(in srgb,var(--set-tone) var(--set-edge-hot),transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--set-tone) 22%,transparent),var(--set-glow-hot) var(--set-tone),inset 0 1px 0 rgba(255,255,255,.07)}
+.set-panel-quiet{border-color:var(--set-hair-2);background:var(--set-glass-2);box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+.set-panel-head{display:flex;align-items:center;gap:14px;min-width:0}
+.set-panel-titles{flex:1;min-width:0}
+.set-panel-title{margin:0;font-size:var(--set-fs-title);font-weight:600;line-height:1.25;color:var(--set-ink)}
+.set-panel-desc{margin:2px 0 0;font-size:13px;line-height:1.45;color:var(--set-ink-2)}
+.set-panel-aside{flex:none;align-self:flex-start;display:flex;align-items:center;gap:var(--set-sp-2)}
+.set-panel-body{display:flex;flex-direction:column;gap:var(--set-sp-4);flex:1;min-width:0}
+.set-inset{display:grid;gap:var(--set-sp-2);padding:var(--set-sp-3);border-radius:var(--set-r-lg);border:1px solid var(--set-hair);background:var(--set-glass-sunken)}
+/* Médaillon d'icône : cercle, liseré néon, lueur intérieure douce. Le SVG de l'appelant hérite de la teinte. */
+.set-medallion{--set-medallion:46px;flex:none;display:grid;place-items:center;width:var(--set-medallion);height:var(--set-medallion);border-radius:50%;color:var(--set-tone);background:radial-gradient(circle at 50% 35%,color-mix(in srgb,var(--set-tone) 24%,rgba(3,8,12,.7)),rgba(3,8,12,.9));border:1px solid color-mix(in srgb,var(--set-tone) 55%,transparent);box-shadow:var(--set-glow) var(--set-tone),inset 0 0 10px color-mix(in srgb,var(--set-tone) 22%,transparent)}
+.set-medallion-sm{--set-medallion:34px}.set-medallion-lg{--set-medallion:60px}
+.set-medallion svg,.set-stat-icon svg,.set-row-icon svg,.set-btn svg,.set-tab svg,.set-choice-icon svg{width:50%;height:50%;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+/* Tuile de statistique : valeur en chiffres tabulaires, libellé atténué ; `.set-stat-stack` met l'icône au-dessus. */
+.set-stat{display:flex;align-items:center;gap:var(--set-sp-3);min-width:0;padding:var(--set-sp-3) 14px;border-radius:var(--set-r-lg);border:1px solid color-mix(in srgb,var(--set-tone) 26%,var(--set-hair));background:var(--set-glass-sunken)}
+.set-stat-stack{flex-direction:column;align-items:flex-start;gap:6px}
+.set-stat-icon{flex:none;display:grid;place-items:center;width:30px;height:30px;color:var(--set-tone)}
+.set-stat-icon svg{width:100%;height:100%}
+.set-stat-text{display:flex;flex-direction:column;min-width:0}
+.set-stat-value{font-size:var(--set-fs-stat);font-weight:500;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--set-ink)}
+.set-stat-label{font-size:var(--set-fs-small);line-height:1.3;color:var(--set-ink-2)}
+/* Ligne libellé + contrôle : icône facultative, texte qui se replie, contrôle en bout de ligne. `.set-row-plain` :
+   sans cadre (rangées de curseurs). `.set-rows` : une pile de lignes. */
+.set-rows{display:grid;gap:var(--set-sp-2);min-width:0}
+.set-row{display:flex;align-items:center;gap:14px;min-width:0;padding:var(--set-sp-3) 14px;border-radius:var(--set-r-lg);border:1px solid var(--set-hair-2);background:var(--set-glass-sunken)}
+.set-row-plain{padding:6px 0;border:0;background:none}
+.set-row-icon{flex:none;display:grid;place-items:center;width:36px;height:36px;border-radius:var(--set-r-sm);color:var(--set-tone);border:1px solid var(--set-hair-2);background:rgba(3,8,12,.5)}
+.set-row-text{flex:1;min-width:0;display:flex;flex-direction:column}
+.set-row-label{font-size:14px;font-weight:600;line-height:1.35;color:var(--set-ink)}
+.set-row-hint{margin:2px 0 0;font-size:var(--set-fs-small);line-height:1.4;color:var(--set-ink-3)}
+.set-row-control{flex:none;display:flex;align-items:center;gap:var(--set-sp-2);min-width:0}
+.set-row-wide .set-row-text{flex:0 1 var(--set-row-label-w,30%)}.set-row-wide .set-row-control{flex:1 1 0}.set-row-wide .set-row-control>*{flex:1;min-width:0}
+/* Pastille d'état : toujours un mot à côté du point (jamais la couleur seule). */
+.set-dot{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--set-ink-2)}
+.set-dot::before{content:"";flex:none;width:8px;height:8px;border-radius:50%;background:var(--set-tone);box-shadow:0 0 8px -1px var(--set-tone)}
+.set-dot-ok{--set-tone:var(--set-ok)}.set-dot-warn{--set-tone:var(--set-warn)}.set-dot-bad{--set-tone:var(--set-bad)}.set-dot-info{--set-tone:var(--set-cyan)}
+.set-dot-off{--set-tone:var(--set-off)}.set-dot-off::before{box-shadow:none}
+.set-badge-accent{color:var(--set-tone);border-color:color-mix(in srgb,var(--set-tone) 45%,transparent);background:color-mix(in srgb,var(--set-tone) 10%,transparent)}
+/* Boutons néon. Défaut : verre à liseré ; `-primary` : rempli et lumineux ; `-ghost` : sans cadre ; `-danger` ;
+   `-icon` : carré ; `-sm`. États : survol, focus visible, pressé, désactivé (`disabled`/`aria-disabled`), en cours
+   (`aria-busy=true` : anneau qui tourne, figé sous mouvement réduit). */
+.set-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:var(--set-sp-2);min-height:var(--set-control-h);padding:0 var(--set-sp-4);border-radius:var(--set-r-md);border:1px solid var(--set-hair-3);background:rgba(3,8,12,.6);color:var(--set-ink);font:inherit;font-size:var(--set-fs-body);font-weight:500;line-height:1.2;white-space:nowrap;cursor:pointer;transition:border-color var(--shell-dur-fast),background-color var(--shell-dur-fast),box-shadow var(--shell-dur-fast),transform var(--shell-dur-fast)}
+.set-btn svg{width:16px;height:16px;flex:none}
+.set-btn:hover{border-color:color-mix(in srgb,var(--set-tone) 60%,transparent);background:color-mix(in srgb,var(--set-tone) 10%,rgba(3,8,12,.6))}
+.set-btn:active{transform:translateY(1px)}
+.set-btn:focus-visible{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:var(--set-focus-offset)}
+.set-btn-primary{border-color:color-mix(in srgb,var(--set-tone) 85%,transparent);background:linear-gradient(180deg,color-mix(in srgb,var(--set-tone) 48%,transparent),color-mix(in srgb,var(--set-tone) 26%,transparent));box-shadow:var(--set-glow) var(--set-tone),inset 0 1px 0 rgba(255,255,255,.12);color:#fff}
+.set-btn-primary:hover{border-color:var(--set-tone);background:linear-gradient(180deg,color-mix(in srgb,var(--set-tone) 60%,transparent),color-mix(in srgb,var(--set-tone) 34%,transparent));box-shadow:var(--set-glow-hot) var(--set-tone),inset 0 1px 0 rgba(255,255,255,.14)}
+.set-btn-ghost{border-color:transparent;background:none}
+.set-btn-danger{--set-tone:var(--set-bad)}
+.set-btn-sm{min-height:var(--set-control-h-sm);padding:0 var(--set-sp-3);font-size:13px;border-radius:var(--set-r-sm)}
+.set-btn-icon{width:var(--set-control-h);padding:0}.set-btn-icon.set-btn-sm{width:var(--set-control-h-sm)}
+.set-btn:is(:disabled,[aria-disabled=true]){opacity:var(--set-disabled);cursor:not-allowed;box-shadow:none;transform:none}
+.set-btn[aria-busy=true]{cursor:progress;color:transparent}
+.set-btn[aria-busy=true]::after{content:"";position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;border:2px solid color-mix(in srgb,var(--set-ink) 30%,transparent);border-top-color:var(--set-ink);animation:set-spin .8s linear infinite}
+@keyframes set-spin{to{transform:rotate(360deg)}}
+/* Champs : saisie, liste, zone de texte. Même base ; la liste dessine son chevron, la zone de texte son compteur. */
+:is(.set-input,.set-select>select,.set-textarea>textarea){box-sizing:border-box;width:100%;min-height:var(--set-control-h);padding:9px 12px;border-radius:var(--set-r-md);border:1px solid var(--set-hair-3);background:var(--set-field-bg);color:var(--set-ink);font:inherit;font-size:var(--set-fs-body);color-scheme:dark;transition:border-color var(--shell-dur-fast),box-shadow var(--shell-dur-fast)}
+:is(.set-input,.set-select>select,.set-textarea>textarea):hover{border-color:var(--set-hair-4)}
+:is(.set-input,.set-select>select,.set-textarea>textarea):focus-visible{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:1px;border-color:var(--set-tone)}
+:is(.set-input,.set-select>select,.set-textarea>textarea):disabled{opacity:var(--set-disabled);cursor:not-allowed}
+:is(.set-input,.set-select>select,.set-textarea>textarea)[aria-invalid=true]{border-color:var(--set-bad)}
+.set-select{position:relative;display:block;min-width:0}
+.set-select>select{appearance:none;padding-right:38px;cursor:pointer;text-overflow:ellipsis}
+.set-select::after{content:"";position:absolute;right:16px;top:50%;width:7px;height:7px;margin-top:-6px;border-right:1.6px solid var(--set-ink-2);border-bottom:1.6px solid var(--set-ink-2);transform:rotate(45deg);pointer-events:none}
+.set-textarea{position:relative;display:block;min-width:0}
+.set-textarea>textarea{min-height:112px;resize:vertical;line-height:1.5;padding-bottom:28px}
+.set-textarea-count{position:absolute;right:12px;bottom:8px;font-size:var(--set-fs-micro);font-variant-numeric:tabular-nums;color:var(--set-ink-3);pointer-events:none}
+.set-textarea[data-over] .set-textarea-count{color:var(--set-bad)}
+/* Curseur : piste remplie jusqu'à la valeur (`--set-range-fill`, posé par `JarvisSettingsUI.range` puis `bindRange`),
+   pouce lumineux ; valeur lue à droite, bornes nommées dessous. */
+.set-range-field{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px var(--set-sp-3);min-width:0}
+.set-range{--set-range-fill:50%;-webkit-appearance:none;appearance:none;width:100%;height:22px;margin:0;background:transparent;cursor:pointer}
+.set-range::-webkit-slider-runnable-track{height:6px;border-radius:var(--set-r-pill);background:linear-gradient(90deg,color-mix(in srgb,var(--set-tone) 55%,transparent),var(--set-tone)) 0 0/var(--set-range-fill) 100% no-repeat,rgba(151,191,209,.16)}
+.set-range::-moz-range-track{height:6px;border-radius:var(--set-r-pill);background:rgba(151,191,209,.16)}
+.set-range::-moz-range-progress{height:6px;border-radius:var(--set-r-pill);background:linear-gradient(90deg,color-mix(in srgb,var(--set-tone) 55%,transparent),var(--set-tone))}
+.set-range::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;margin-top:-6px;border-radius:50%;border:2px solid var(--set-tone);background:radial-gradient(circle,#fff 0 30%,color-mix(in srgb,var(--set-tone) 45%,#fff) 34%);box-shadow:0 0 12px -1px var(--set-tone)}
+.set-range::-moz-range-thumb{width:14px;height:14px;border-radius:50%;border:2px solid var(--set-tone);background:#fff;box-shadow:0 0 12px -1px var(--set-tone)}
+.set-range:focus-visible{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:var(--set-focus-offset);border-radius:var(--set-r-pill)}
+.set-range:disabled{opacity:var(--set-disabled);cursor:not-allowed}
+.set-range-value{min-width:4ch;text-align:right;font-size:var(--set-fs-body);font-weight:600;font-variant-numeric:tabular-nums;color:var(--set-ink)}
+.set-range-bare{grid-template-columns:minmax(0,1fr)}
+.set-range-inline{grid-template-columns:auto minmax(0,1fr) auto}.set-range-inline.set-range-valued{grid-template-columns:auto minmax(0,1fr) auto auto}
+.set-range-end{min-width:var(--set-range-end-w,auto);font-size:var(--set-fs-small);color:var(--set-ink-3);white-space:nowrap}
+.set-range-end:last-of-type{text-align:right}
+.set-range-ends{grid-column:1;display:flex;justify-content:space-between;gap:var(--set-sp-3);font-size:12px;color:var(--set-ink-3)}
+/* Interrupteur (`button[role=switch]`, état dans `aria-checked`) ; texte d'état facultatif à côté. Généralise
+   `.mcpp-switch` (Plugins & MCP) et `.perso-switch` (Personnalisation), qui peuvent y migrer. */
+.set-switch{flex:none;display:inline-flex;align-items:center;gap:10px;min-height:28px;padding:0;border:0;border-radius:var(--set-r-pill);background:none;color:var(--set-ink-2);font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.set-switch-track{position:relative;flex:none;width:46px;height:26px;border-radius:var(--set-r-pill);border:1px solid var(--set-hair-4);background:rgba(3,8,12,.7);transition:background-color var(--shell-dur),border-color var(--shell-dur),box-shadow var(--shell-dur)}
+.set-switch-track::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--set-ink-2);transition:transform var(--shell-dur),background-color var(--shell-dur)}
+.set-switch:hover .set-switch-track{border-color:color-mix(in srgb,var(--set-tone) 70%,transparent)}
+.set-switch[aria-checked=true]{color:var(--set-tone)}
+.set-switch[aria-checked=true] .set-switch-track{background:color-mix(in srgb,var(--set-tone) 55%,transparent);border-color:var(--set-tone);box-shadow:0 0 14px -4px var(--set-tone)}
+.set-switch[aria-checked=true] .set-switch-track::after{transform:translateX(20px);background:#fff}
+.set-switch:focus-visible{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:var(--set-focus-offset)}
+.set-switch:is(:disabled,[aria-disabled=true]){opacity:var(--set-disabled);cursor:not-allowed}
+.set-switch[aria-busy=true]{cursor:progress}.set-switch[aria-busy=true] .set-switch-track::after{opacity:.5}
+/* Onglets internes d'une page (grands, icône + libellé ; `.set-tabs-fill` : largeurs égales) et contrôle segmenté.
+   La rangée passe à la ligne quand la largeur manque ; `.set-tabs-scroll` la fait défiler en interne (marge pour
+   la lueur et l'anneau de focus), jamais la page. */
+.set-tabs{display:flex;flex-wrap:wrap;gap:var(--set-sp-3);min-width:0}
+.set-tabs-scroll{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin;padding:4px 4px 14px;margin:-4px -4px -14px}
+.set-tabs-fill>.set-tab{flex:1 1 0}
+.set-tab{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:var(--set-sp-3);min-height:46px;padding:0 22px;border-radius:var(--set-r-md);border:1px solid var(--set-hair-2);background:var(--set-glass-sunken);color:var(--set-ink-2);font:inherit;font-size:15px;font-weight:500;white-space:nowrap;cursor:pointer;transition:border-color var(--shell-dur-fast),background-color var(--shell-dur-fast),color var(--shell-dur-fast),box-shadow var(--shell-dur-fast)}
+.set-tab svg{width:20px;height:20px;flex:none}
+.set-tab:hover{color:var(--set-ink);border-color:color-mix(in srgb,var(--set-tone) 45%,transparent)}
+.set-tab[aria-selected=true]{color:#fff;border-color:var(--set-tone);background:linear-gradient(180deg,color-mix(in srgb,var(--set-tone) 40%,transparent),color-mix(in srgb,var(--set-tone) 18%,transparent));box-shadow:var(--set-glow) var(--set-tone),inset 0 0 0 1px color-mix(in srgb,var(--set-tone) 40%,transparent)}
+.set-tab:focus-visible{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:var(--set-focus-offset)}
+.set-tab:disabled{opacity:var(--set-disabled);cursor:not-allowed}
+.set-seg{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:4px;margin:0;padding:4px;min-width:0;border-radius:var(--set-r-lg);border:1px solid var(--set-hair-2);background:var(--set-glass-sunken)}
+.set-seg-opt{position:relative;display:block;min-width:0}
+.set-seg-opt input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer}
+.set-seg-opt span{display:block;padding:8px 10px;border-radius:var(--set-r-sm);text-align:center;font-size:13px;color:var(--set-ink-2);transition:background-color var(--shell-dur-fast),color var(--shell-dur-fast),box-shadow var(--shell-dur-fast)}
+.set-seg-opt input:hover+span{color:var(--set-ink);background:rgba(151,191,209,.08)}
+.set-seg-opt input:checked+span{color:#fff;background:linear-gradient(135deg,color-mix(in srgb,var(--set-tone) 55%,transparent),color-mix(in srgb,var(--set-tone) 28%,transparent));box-shadow:0 0 16px -6px var(--set-tone),inset 0 0 0 1px color-mix(in srgb,var(--set-tone) 70%,transparent)}
+.set-seg-opt input:focus-visible+span{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:1px}
+.set-seg-opt input:disabled+span{opacity:var(--set-disabled)}
+/* Choix en cartes (profil de rappel, mode de consolidation, préférences rapides) : un groupe de boutons radio. */
+.set-choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr));gap:var(--set-sp-3);margin:0;padding:0;border:0;min-width:0}
+.set-choice{position:relative;display:flex;gap:var(--set-sp-3);align-items:flex-start;min-width:0;padding:var(--set-sp-3) 14px;border-radius:var(--set-r-lg);border:1px solid var(--set-hair-2);background:var(--set-glass-sunken);cursor:pointer;transition:border-color var(--shell-dur-fast),box-shadow var(--shell-dur-fast),background-color var(--shell-dur-fast)}
+.set-choice input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer}
+.set-choice-icon{flex:none;width:22px;height:22px;color:var(--set-tone)}
+.set-choice-icon svg{width:100%;height:100%}
+.set-choice-text{display:flex;flex-direction:column;min-width:0}
+.set-choice-title{font-size:14.5px;font-weight:600;color:var(--set-ink)}
+.set-choice-desc{font-size:var(--set-fs-small);line-height:1.4;color:var(--set-ink-2)}
+.set-choice:hover{border-color:color-mix(in srgb,var(--set-tone) 55%,transparent)}
+.set-choice:has(input:checked){border-color:var(--set-tone);background:color-mix(in srgb,var(--set-tone) 14%,var(--set-glass-sunken));box-shadow:var(--set-glow) var(--set-tone),inset 0 0 0 1px color-mix(in srgb,var(--set-tone) 40%,transparent)}
+.set-choice:has(input:focus-visible){outline:var(--set-focus-w) solid var(--set-focus);outline-offset:var(--set-focus-offset)}
+.set-choice:has(input:disabled){opacity:var(--set-disabled);cursor:not-allowed}
+/* Coquille de tableau dense : cadre, défilement propre (`.set-table-scroll`, seul à défiler en largeur), en-tête
+   collant, lignes survolables, pied (pagination, compte). Les colonnes et leur contenu appartiennent à la page. */
+.set-table-shell{display:flex;flex-direction:column;min-width:0;border-radius:var(--set-r-lg);border:1px solid var(--set-hair-2);background:var(--set-glass-sunken);overflow:hidden}
+.set-table-scroll{min-width:0;max-height:var(--set-table-max-h,none);overflow:auto;scrollbar-width:thin;border-radius:inherit}
+.set-table-scroll:focus-visible{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:calc(-1 * var(--set-focus-w))}
+.set-table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;color:var(--set-ink)}
+.set-table th{position:sticky;top:0;z-index:var(--set-z-sticky);padding:10px 12px;border-bottom:1px solid var(--set-hair-2);background:var(--set-glass-float);text-align:left;font-size:var(--set-fs-small);font-weight:600;color:var(--set-ink-2);white-space:nowrap}
+.set-table td{padding:10px 12px;border-bottom:1px solid var(--set-hair);vertical-align:middle}
+.set-table tbody tr:last-child td{border-bottom:0}
+.set-table tbody tr:hover td{background:rgba(151,191,209,.05)}
+.set-table tbody tr[aria-selected=true] td{background:color-mix(in srgb,var(--set-tone) 10%,transparent)}
+.set-table .set-num{text-align:right;font-variant-numeric:tabular-nums}
+.set-table-foot{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:var(--set-sp-3);padding:10px 12px;border-top:1px solid var(--set-hair);font-size:var(--set-fs-small);color:var(--set-ink-3)}
+/* Panneau flottant (configuration d'un nœud, menu d'un profil) : position absolue dans son conteneur, au rang
+   `--set-z-float` (menu court : `.set-float-popover`, `--set-z-popover`). Rangs internes à l'overlay ; l'ouverture,
+   Échap, le clic extérieur et le retour du focus au déclencheur passent par `JarvisSettingsUI.openFloat`. */
+.set-float{position:absolute;z-index:var(--set-z-float);display:flex;flex-direction:column;gap:var(--set-sp-3);width:min(var(--set-float-w,380px),calc(100vw - 32px));max-height:min(var(--set-float-max-h,70vh),calc(100vh - 32px));overflow:auto;padding:var(--set-sp-4);border-radius:var(--set-r-xl);border:1px solid color-mix(in srgb,var(--set-tone) 45%,var(--set-hair-2));background:var(--set-glass-float);backdrop-filter:blur(var(--set-blur));box-shadow:0 24px 60px -20px rgba(0,0,0,.8),0 0 0 1px rgba(0,0,0,.3),0 0 30px -14px var(--set-tone);animation:set-float-in var(--shell-dur) var(--shell-ease)}
+.set-float[hidden]{display:none}
+.set-float-popover{z-index:var(--set-z-popover)}
+.set-float-head{display:flex;align-items:center;gap:var(--set-sp-3)}
+.set-float-titles{flex:1;min-width:0}
+.set-float-eyebrow{margin:0;font-size:12px;color:var(--set-ink-2)}
+.set-float-title{margin:0;font-size:var(--set-fs-title);font-weight:600}
+.set-float-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:10px}
+@keyframes set-float-in{from{opacity:0;transform:translateY(4px)}}
+@media(prefers-reduced-motion:reduce){.set-btn[aria-busy=true]::after{animation:none;border-top-color:color-mix(in srgb,var(--set-ink) 30%,transparent);border-color:var(--set-ink)}.set-float{animation:none}.set-btn:active{transform:none}}
+@media(forced-colors:active){:is(.set-panel,.set-stat,.set-row,.set-tab,.set-choice,.set-float,.set-table-shell,.set-switch-track){border-color:CanvasText}
+  :is(.set-tab[aria-selected=true],.set-switch[aria-checked=true] .set-switch-track,.set-choice:has(input:checked)){outline:2px solid Highlight}
+  .set-dot::before{forced-color-adjust:none}}
 @media(max-height:700px) and (min-width:901px){
   .set-rail{padding-top:20px}.set-rail-title{margin-bottom:14px}
   .set-cat{padding:8px 10px}
