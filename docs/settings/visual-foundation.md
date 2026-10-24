@@ -62,8 +62,8 @@ l'appelant.
 | Bouton néon | `.set-btn` (+ `-primary`, `-ghost`, `-danger`, `-sm`, `-icon`) | `button({id,label,variant,size,icon,iconOnly,tone,disabled,busy,data,describedBy})` | survol, pressé, focus, `disabled`, `aria-busy=true` (anneau tournant, figé sous mouvement réduit) |
 | Liste déroulante | `.set-select` > `select` | `select({id,options,value,label,labelledBy,describedBy,disabled})` | native, chevron dessiné |
 | Saisie | `.set-input` | — | `aria-invalid=true` : bord rouge |
-| Curseur | `.set-range-field` (+ `-inline`, `-bare`) > `input.set-range`, `.set-range-value`, `.set-range-ends`/`.set-range-end` | `range({id,min,max,step,value,label,labelledBy,minLabel,maxLabel,inlineEnds,showValue,format,decimals,suffix,disabled})` | remplissage `--set-range-fill` dès le premier rendu ; `aria-valuetext` ; `--set-range-end-w` aligne les pistes d'une pile de curseurs à bornes en ligne |
-| Interrupteur | `button.set-switch[role=switch]` > `.set-switch-track` (+ `.set-switch-text`) | `toggle({id,checked,label,labelledBy,describedBy,stateText,tone,disabled,busy})` | `aria-checked` ; désactivé inerte |
+| Curseur | `.set-range-field` (+ `-inline`, `-bare`) > `input.set-range`, `.set-range-value`, `.set-range-ends`/`.set-range-end` | `range({id,min,max,step,value,label,labelledBy,minLabel,maxLabel,inlineEnds,showValue,format,decimals,suffix,disabled})` | remplissage `--set-range-fill` dès le premier rendu ; `aria-valuetext` ; `--set-range-end-w` aligne les pistes d'une pile de curseurs à bornes en ligne ; désactivé : teinte neutre, sans lueur |
+| Interrupteur | `button.set-switch[role=switch]` > `.set-switch-track` (+ `.set-switch-text`) | `toggle({id,checked,label,labelledBy,describedBy,stateText,tone,disabled,busy})` | `aria-checked` ; désactivé inerte, teinte neutre et piste pointillée |
 | Zone de texte + compteur | `.set-textarea` > `textarea` + `.set-textarea-count` | `textarea({id,value,maxLength,placeholder,label,labelledBy,describedBy,rows})` | compteur lié par `aria-describedby` ; `[data-over]` au plafond |
 | Onglets internes | `.set-tabs` (+ `-fill`, `-scroll`) > `.set-tab` | `tabs({id,label,items,selected,fill,scroll})` | `role=tablist`, tabulation itinérante, flèches/Début/Fin |
 | Segmenté | `.set-seg` > `label.set-seg-opt` > `input[type=radio]` + `span` | — | groupe radio natif |
@@ -81,8 +81,9 @@ Chacune ne touche qu'aux éléments donnés et rend sa fonction de détachement 
 - `bindCounter(textarea)` / `syncCounter` : compteur `n/max`, `data-over`.
 - `bindToggle(button,onChange)` / `setToggle(button,checked)` : bascule **l'affichage** et appelle `onChange(next)` ;
   le contrôleur repose l'état réel par `setToggle` après un refus ou un échec.
-- `bindTabs(list,onSelect)` / `setTab(list,id,{focus})` : clic, flèches, Début, Fin.
-- `openFloat(panel,{trigger,initialFocus,onClose})` → `close(reason)` : focus dans le panneau, `aria-expanded` sur le
+- `wireTabs(list,onSelect)` / `setTab(list,id,{focus})` : clic, flèches, Début, Fin.
+- `openFloat(panel,{trigger,initialFocus,onClose})` → `close(reason)` (idempotent : rouvrir un panneau déjà ouvert
+  rend le même `close`, sans doubler les écouteurs) : focus dans le panneau, `aria-expanded` sur le
   déclencheur ; Échap (consommé : les Réglages ne se ferment pas), `[data-set-float-close]` ou un clic extérieur
   ferment et rendent le focus au déclencheur (`reason` : `escape`, `button`, `outside`, `api`).
 - `bindAll(host)` : tous les curseurs et compteurs d'un rendu neuf.
@@ -104,9 +105,10 @@ Chacune ne touche qu'aux éléments donnés et rend sa fonction de détachement 
 - `.set-grid` : 12 colonnes. Requêtes de **conteneur** sur `.set-page` : sous 1080 px de large, 2 colonnes
   (`.set-span-2…6` → une colonne, `.set-span-7…12` → la rangée) ; sous 640 px, une colonne. Sans ancêtre
   `.set-page`, la grille ne se replie pas (elle se resserre sans déborder).
-- **Attention :** `.set-page` (`container-type:inline-size`) est un bloc conteneur pour ses descendants
-  `position:fixed`. Une couche qui doit couvrir la fenêtre (fenêtre d'un cerveau, `.bcp-layer`) se monte hors de
-  `.set-page`, ou on n'utilise pas `.set-page` autour d'elle.
+- `.set-page` (`container-type:inline-size`) n'est **pas** un bloc conteneur pour ses descendants `position:fixed`
+  (vérifié dans Chrome : un enfant fixe se place sur la fenêtre). Une couche plein écran (`.bcp-layer`) peut donc
+  vivre dedans. Seul bloc conteneur préexistant à surveiller : `.overlay` sous le thème Cosmos (`backdrop-filter`).
+  Un panneau `.set-float` (absolu) se place par rapport à son ancêtre positionné le plus proche.
 - `.set-grid-auto` : 3/2/1 colonnes sans requête (chaque colonne ≥ `--set-col-min`, 300 px par défaut).
 - `.set-workbench` : surface de travail + rail (`--set-rail-w`), une colonne sous 1080 px de conteneur.
 - Mesuré sans débordement horizontal (page, vue, panneaux) à 1672×941, 1254×1254, 1280×800, 125 % de zoom de

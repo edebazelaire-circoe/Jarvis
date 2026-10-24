@@ -1120,11 +1120,11 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-tone-blue{--set-tone:var(--set-blue)}.set-tone-cyan{--set-tone:var(--set-cyan)}.set-tone-violet{--set-tone:var(--set-violet)}
 .set-tone-magenta{--set-tone:var(--set-magenta)}.set-tone-teal{--set-tone:var(--set-teal)}.set-tone-amber{--set-tone:var(--set-amber)}
 .set-tone-ok{--set-tone:var(--set-ok)}.set-tone-warn{--set-tone:var(--set-warn)}.set-tone-bad{--set-tone:var(--set-bad)}.set-tone-off{--set-tone:var(--set-off)}
-/* Vue pleine fenêtre (page Réglages hors shell, ex. Personnalisation) : seule à défiler, jamais en largeur. `.set-page`
-   centre la composition et devient le conteneur des requêtes de la grille (voir `.set-grid`). */
 /* Anneau de focus de base, à spécificité nulle (comme celui du shell) : une primitive peut le préciser, jamais le
    retirer. Couvre les vues pleine fenêtre et le panneau flottant, hors `.settings-shell` qui a déjà le sien. */
 :where(.set-view,.set-float,.set-page) :focus-visible{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:var(--set-focus-offset)}
+/* Vue pleine fenêtre (page Réglages hors shell, ex. Personnalisation) : seule à défiler, jamais en largeur. `.set-page`
+   centre la composition et devient le conteneur des requêtes de la grille (voir `.set-grid`). */
 .set-view{position:absolute;inset:0;overflow-x:hidden;overflow-y:auto;padding:clamp(76px,9vh,96px) var(--set-view-pad) clamp(24px,5vh,48px);font:var(--set-fs-body)/1.5 var(--set-font);color:var(--set-ink)}
 .set-page{container:set-page/inline-size;max-width:var(--set-view-max);margin:0 auto;min-width:0}
 /* En-tête de page : fil d'Ariane, grand titre léger, chapeau, filet. */
@@ -1233,7 +1233,9 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-range::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;margin-top:-6px;border-radius:50%;border:2px solid var(--set-tone);background:radial-gradient(circle,#fff 0 30%,color-mix(in srgb,var(--set-tone) 45%,#fff) 34%);box-shadow:0 0 12px -1px var(--set-tone)}
 .set-range::-moz-range-thumb{width:14px;height:14px;border-radius:50%;border:2px solid var(--set-tone);background:#fff;box-shadow:0 0 12px -1px var(--set-tone)}
 .set-range:focus-visible{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:var(--set-focus-offset);border-radius:var(--set-r-pill)}
-.set-range:disabled{opacity:var(--set-disabled);cursor:not-allowed}
+.set-range:disabled{--set-tone:var(--set-off);opacity:var(--set-disabled);cursor:not-allowed}
+.set-range:disabled::-webkit-slider-thumb{box-shadow:none;background:var(--set-off)}
+.set-range:disabled::-moz-range-thumb{box-shadow:none;background:var(--set-off)}
 .set-range-value{min-width:4ch;text-align:right;font-size:var(--set-fs-body);font-weight:600;font-variant-numeric:tabular-nums;color:var(--set-ink)}
 .set-range-bare{grid-template-columns:minmax(0,1fr)}
 .set-range-inline{grid-template-columns:auto minmax(0,1fr) auto}.set-range-inline.set-range-valued{grid-template-columns:auto minmax(0,1fr) auto auto}
@@ -1250,7 +1252,10 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-switch[aria-checked=true] .set-switch-track{background:color-mix(in srgb,var(--set-tone) 55%,transparent);border-color:var(--set-tone);box-shadow:0 0 14px -4px var(--set-tone)}
 .set-switch[aria-checked=true] .set-switch-track::after{transform:translateX(20px);background:#fff}
 .set-switch:focus-visible{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:var(--set-focus-offset)}
+/* Désactivé : teinte neutre, sans lueur — « indisponible » ne se confond pas avec « activé » (l'« en cours » garde sa teinte). */
 .set-switch:is(:disabled,[aria-disabled=true]){opacity:var(--set-disabled);cursor:not-allowed}
+.set-switch:is(:disabled,[aria-disabled=true]):not([aria-busy=true]){--set-tone:var(--set-off)}
+.set-switch:is(:disabled,[aria-disabled=true]):not([aria-busy=true]) .set-switch-track{box-shadow:none;border-style:dashed}
 .set-switch[aria-busy=true]{cursor:progress}.set-switch[aria-busy=true] .set-switch-track::after{opacity:.5}
 /* Onglets internes d'une page (grands, icône + libellé ; `.set-tabs-fill` : largeurs égales) et contrôle segmenté.
    La rangée passe à la ligne quand la largeur manque ; `.set-tabs-scroll` la fait défiler en interne (marge pour

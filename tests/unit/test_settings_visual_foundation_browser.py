@@ -186,3 +186,35 @@ async def test_stub_fixture_answers_the_page_without_the_server(served):
     ])
     assert got(out["steps"][0], "stubbed") == {"status": 200, "body": {"notes": 3, "label": "fixture"}}
     assert got(out["steps"][1], "real")["status"] == 404  # sans fixture, le vrai serveur ne connaît pas la route
+
+
+#: Liaisons détachées : plus aucune réaction ; `openFloat` deux fois sur le même panneau = un seul jeu d'écouteurs.
+DETACH = """(()=>{const UI=window.JarvisSettingsUI,host=document.createElement('div');document.body.append(host);
+  host.innerHTML=UI.range({id:'dtR',label:'r',min:0,max:10,value:5,suffix:' u'})+UI.textarea({id:'dtT',label:'t',maxLength:9})
+    +UI.tabs({id:'dtTabs',label:'o',items:[{id:'a',label:'A'},{id:'b',label:'B'}]})+UI.toggle({id:'dtS',label:'s'})
+    +UI.button({id:'dtOpen',label:'Ouvrir'})+UI.float({id:'dtF',title:'F',body:'<button type=button id=dtIn>x</button>'});
+  const q=s=>host.querySelector(s),r=q('#dtR'),t=q('#dtT'),list=q('#dtTabs'),sw=q('#dtS'),panel=q('#dtF');
+  let selected=0,toggled=0,closed=0;
+  const offAll=UI.bindAll(host),offTabs=UI.wireTabs(list,()=>selected++),offSwitch=UI.bindToggle(sw,()=>toggled++),offRange=UI.bindRange(r);
+  offAll();offTabs();offSwitch();offRange();
+  r.value='9';r.dispatchEvent(new Event('input'));t.value='abcdef';t.dispatchEvent(new Event('input'));
+  q('#dtTabs-b').click();q('#dtTabs-a').dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}));sw.click();
+  const after={out:q('#dtR-value').textContent,count:q('#dtT-count').textContent,selected,toggled,
+    tab:list.querySelector('[aria-selected=true]').id,checked:sw.getAttribute('aria-checked')};
+  const opts={trigger:q('#dtOpen'),onClose:()=>closed++};
+  const c1=UI.openFloat(panel,opts),c2=UI.openFloat(panel,opts);
+  panel.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+  const once={same:c1===c2,closed,hidden:panel.hidden};
+  panel.hidden=false;panel.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+  document.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
+  const detached={closed,again:c1()};host.remove();return {after,once,detached}})()"""
+
+
+async def test_detached_bindings_no_longer_react_and_open_float_is_idempotent(served):
+    out = await drive(served.url, [{"width": 1280, "height": 800, "actions": [
+        wait("!!window.JarvisSettingsUI"), eval_(DETACH, "detach")]}])
+    assert out["console"] == [], out["console"]
+    seen = got(out["steps"][0], "detach")
+    assert seen["after"] == {"out": "5 u", "count": "0/9", "selected": 0, "toggled": 0, "tab": "dtTabs-a", "checked": "false"}, seen
+    assert seen["once"] == {"same": True, "closed": 1, "hidden": True}, seen  # un seul Échap traité, une seule fermeture
+    assert seen["detached"] == {"closed": 1, "again": False}, seen  # fermé : plus d'écouteur, `close` sans effet

@@ -73,7 +73,7 @@
     overlay.append(view);
     UI.bindAll(view);
     view.querySelectorAll('.set-switch').forEach(b=>UI.bindToggle(b));
-    UI.bindTabs(view.querySelector('#galTabs'));
+    UI.wireTabs(view.querySelector('#galTabs'));
     const trigger=view.querySelector('#galOpenFloat'),panel=view.querySelector('#galFloat');
     Object.assign(panel.style,{right:'0',bottom:'calc(100% + 8px)'});
     trigger.setAttribute('aria-haspopup','dialog');trigger.setAttribute('aria-controls','galFloat');trigger.setAttribute('aria-expanded','false');

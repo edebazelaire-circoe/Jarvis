@@ -29,7 +29,7 @@
    Fondation visuelle (refonte-ui-settings, Slice 01 ; contrat `docs/settings/visual-foundation.md`) : fragments
    des primitives partagées (`medallion`, `panel`, `stat`, `row`, `dot`, `button`, `select`, `range`, `toggle`,
    `textarea`, `tabs`, `choices`, `table`, `float`) et liaisons DOM qui ne touchent qu'aux éléments donnés et
-   rendent leur détachement (`bindRange`, `bindCounter`, `bindToggle`, `bindTabs`, `openFloat`, `bindAll`). Ni
+   rendent leur détachement (`bindRange`, `bindCounter`, `bindToggle`, `wireTabs`, `openFloat`, `bindAll`). Ni
    valeur, ni plage, ni catalogue de réglage : tout vient de l'appelant. */
 (function(root){
   'use strict';
@@ -249,7 +249,7 @@
       +(max?`<span class="set-textarea-count" id="${key}-count" data-max="${max}">${text.length}/${max}</span>`:'')+'</div>';
   }
 
-  /* Onglets internes : `role=tablist`, tabulation itinérante (un seul onglet focalisable) ; `bindTabs` gère les
+  /* Onglets internes : `role=tablist`, tabulation itinérante (un seul onglet focalisable) ; `wireTabs` gère les
      flèches, Début, Fin et le clic. `items` : [{id,label,icon,controls,disabled}]. */
   function tabs({id,label,items=[],selected,fill=false,scroll=false}={}){
     const key=idAttr(id);
@@ -339,7 +339,7 @@
     if(focus)tab.focus();
     return true;
   }
-  function bindTabs(list,onSelect){
+  function wireTabs(list,onSelect){
     const pick=(tab,focus)=>{if(tab&&setTab(list,tab.dataset.setTab,{focus})&&onSelect)onSelect(tab.dataset.setTab)};
     const click=event=>{const tab=event.target.closest('[role=tab]');if(tab&&list.contains(tab))pick(tab,false)};
     const keydown=event=>{
@@ -354,12 +354,15 @@
   }
   /* Ouvre `panel` (un `.set-float`) : focus sur `initialFocus` ou le premier contrôle, `aria-expanded` sur le
      déclencheur ; Échap (consommé : le shell ne se ferme pas), le bouton `[data-set-float-close]` ou un clic hors du
-     panneau et du déclencheur le referment et rendent le focus au déclencheur. Rend `close(reason)`. */
+     panneau et du déclencheur le referment et rendent le focus au déclencheur. Rend `close(reason)` ; idempotent :
+     un panneau déjà ouvert rend le même `close` sans doubler ses écouteurs. */
+  const OPEN_FLOATS=new WeakMap();
   function openFloat(panel,{trigger,initialFocus,onClose}={}){
+    if(OPEN_FLOATS.has(panel))return OPEN_FLOATS.get(panel);
     const doc=panel.ownerDocument;
     let open=true;
     const close=(reason='api',{focus=true}={})=>{
-      if(!open)return false;open=false;
+      if(!open)return false;open=false;OPEN_FLOATS.delete(panel);
       panel.hidden=true;panel.removeEventListener('keydown',keydown);panel.removeEventListener('click',click);
       doc.removeEventListener('pointerdown',outside,true);
       if(trigger){trigger.setAttribute('aria-expanded','false');if(focus&&typeof trigger.focus==='function')trigger.focus({preventScroll:true})}
@@ -369,6 +372,7 @@
     const keydown=event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close('escape')}};
     const click=event=>{if(event.target.closest('[data-set-float-close]'))close('button')};
     const outside=event=>{if(!panel.contains(event.target)&&!(trigger&&trigger.contains(event.target)))close('outside',{focus:false})};
+    OPEN_FLOATS.set(panel,close);
     panel.hidden=false;
     if(trigger)trigger.setAttribute('aria-expanded','true');
     panel.addEventListener('keydown',keydown);panel.addEventListener('click',click);
@@ -387,7 +391,7 @@
 
   const api=Object.freeze({esc,APPLIES_LABELS,BADGE_KINDS,NOTICE_KINDS,TONES,DOT_KINDS,intro,section,field,badge,appliesBadge,notice,advanced,actions,keepFocus,landFocus,
     medallion,panel,stat,row,dot,button,select,range,toggle,textarea,tabs,choices,table,float,
-    syncRange,bindRange,syncCounter,bindCounter,setToggle,bindToggle,setTab,bindTabs,openFloat,bindAll});
+    syncRange,bindRange,syncCounter,bindCounter,setToggle,bindToggle,setTab,wireTabs,openFloat,bindAll});
   root.JarvisSettingsUI=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof window!=='undefined'?window:globalThis);

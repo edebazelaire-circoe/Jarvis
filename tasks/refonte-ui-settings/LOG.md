@@ -51,8 +51,22 @@ Après : mêmes lots verts (37, 13, 20) ; nouveaux `test_settings_visual_foundat
 Notes pour les Slices suivantes :
 - S02 : les classes `.perso-*` (carte, interrupteur, segmenté, fil d'Ariane, titre) ont leur promotion `.set-*` ;
   migrer puis supprimer les doublons. `.set-perso .set-hub-close{z-index:3}` → `--set-z-chrome`.
-- S03 : `.set-page` est un bloc conteneur pour `position:fixed` ; monter `.bcp-layer` hors de `.set-page`.
+- S03 : `.set-page` n'est PAS un bloc conteneur pour `position:fixed` (rectifié par la QA, cf. « S1 fix ») ; `.bcp-layer` peut y vivre. Seul bloc conteneur préexistant : `.overlay` sous Cosmos (`backdrop-filter`).
 - S06 : Memory Center hors overlay ; `stub()` permet un état déterministe sans Core (`core_unconfigured` sinon).
+
+## Slice 01 — reprise après QA (2026-10-24)
+
+- B1 : `bindTabs` renommé `wireTabs` (le garde-fou `test_no_legacy_tab_machinery_is_left_in_the_repository` interdit
+  la sous-chaîne `bindTab`) ; doc, galerie et tests suivent. Garde-fou inchangé.
+- N1 : doc et consigne S03 rectifiées : `.set-page` (`container-type:inline-size`) n'est pas un bloc conteneur des
+  `position:fixed` ; seul bloc conteneur préexistant : `.overlay` sous Cosmos (`backdrop-filter`).
+- N2 : `openFloat` idempotent (même `close`, pas d'écouteurs doublés) ; test de détachement (bindAll, wireTabs,
+  bindToggle, bindRange, close).
+- N3 : interrupteur et curseur désactivés en teinte neutre, sans lueur (piste pointillée) ; captures galerie refaites.
+- N4 : commentaire `.set-view`/`.set-page` replacé au-dessus de sa règle.
+Tests : `test_control_center_settings_registry_js` + `test_settings_visual_foundation_js` + `test_control_center_shell_layers`
+35 verts ; `test_settings_visual_foundation_browser` 12 + `_js` 3 = 15 verts ; `test_settings_shell_browser` +
+`test_personalization_page_browser` 13 verts.
 
 ## LOG Drive d'origine
 # Execution log
