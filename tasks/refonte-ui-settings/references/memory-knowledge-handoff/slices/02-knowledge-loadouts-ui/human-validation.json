@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-MEM-002",
+      "description": "Confirm a user can understand source availability and edit agent knowledge access without seeing raw loadout JSON."
+    }
+  ]
+}
