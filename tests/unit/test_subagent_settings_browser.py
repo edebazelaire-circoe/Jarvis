@@ -7,7 +7,8 @@ prouve :
 
 - un candidat se réordonne au clavier seul (Entrée sur Monter, Alt + flèches), le focus suit le candidat ;
 - le repli se bascule à l'Espace, Tab atteint « Enregistrer pour ce rôle », l'écriture ne vise que ce rôle ;
-- la vue d'ensemble s'ouvre au clavier et donne le focus à son titre ;
+- (refonte-ui-settings, Slice 03) les actions « … » d'une ligne se déplient et se replient au clavier, l'en-tête
+  d'une colonne de la matrice ouvre les modèles du rôle ; le tableau de bord tient les sept rôles sans débordement ;
 - un candidat indisponible diffère par le trait et le texte, pas seulement la couleur ;
 - à 390 px, aucun défilement horizontal ; `prefers-reduced-motion` coupe les transitions.
 
@@ -26,6 +27,8 @@ import subprocess
 import pytest
 
 from jarvis.runtime.control_center import ControlCenter
+from tests.unit.settings_visual import VIEWPORTS, VIEWS, capture_steps, stub
+from tests.unit.test_wake_word_settings_browser import drive, eval_, got, key, served  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
@@ -154,29 +157,78 @@ def test_saving_from_the_keyboard_writes_only_the_selected_role(tmp_path):
     assert out[7] is True and "ce rôle seul" in out[8]
 
 
-def test_overview_opens_from_the_keyboard_and_unavailability_is_not_color_only(tmp_path):
+ACTIVE = ("(()=>{const a=document.activeElement;if(!a)return null;return a.id||a.getAttribute('data-sar-menu-act')"
+          "||(a.hasAttribute('data-sar-more')&&'more:'+a.getAttribute('data-sar-more'))||a.tagName})()")
+MENU = "(()=>{const m=document.querySelector('[data-sar-menu]');return m?m.getAttribute('data-sar-menu'):null})()"
+
+
+def test_role_actions_and_matrix_reach_the_models_from_the_keyboard_and_unavailability_is_not_color_only(tmp_path):
+    """Refonte Slice 03 : « … » d'une ligne (divulgation, Échap rend le focus), en-tête de la matrice → Modèles."""
     page = build_page(tmp_path)
     shots = shots_dir(tmp_path)
     style = ("(()=>{const li=document.querySelector('.sar-cand.unavailable');const s=getComputedStyle(li);"
-             "return [s.borderTopStyle,li.textContent.includes('Indisponible')]})()")
+             "const mx=document.querySelector('.sar-mx-on.unavailable .sar-mx-pos');"
+             "return [s.borderTopStyle,li.textContent.includes('Indisponible'),getComputedStyle(mx).borderTopStyle,"
+             "mx.parentElement.textContent.includes('indisponible')]})()")
     steps = [
         {"eval": "window.__ready.then(()=>1)"},
         {"eval": style},
-        {"eval": "document.querySelector('[data-sar-overview]').focus();1"},
-        {"key": "Enter"},
-        {"eval": "document.activeElement&&document.activeElement.id"},
-        {"eval": "document.querySelectorAll('.sar-ov-row').length"},
-        {"shot": str(shots / "s06-desktop-overview.png")},
+        # Tab depuis la ligne choisie atteint son « … » ; Entrée déplie, le focus entre dans la liste d'actions.
+        {"eval": "document.querySelector('[data-sar-role=\"qa\"]').focus();1"},
+        {"key": "Tab"}, {"eval": ACTIVE},
+        {"key": "Enter"}, {"eval": MENU}, {"eval": ACTIVE},
+        {"key": "ArrowDown"}, {"eval": ACTIVE},
+        {"shot": str(shots / "s03-row-actions.png")},
+        # Échap replie sans fermer quoi que ce soit d'autre et rend le focus au bouton « … ».
+        {"key": "Escape"}, {"eval": MENU}, {"eval": ACTIVE},
+        # « Régler les modèles » mène au titre de la section Modèles du rôle.
+        {"key": "Enter"}, {"key": "ArrowDown"}, {"key": "Enter"}, {"eval": MENU}, {"eval": ACTIVE},
+        # En-tête de colonne de la matrice : la fiche d'un autre rôle s'ouvre sur ses modèles.
+        {"eval": "document.querySelector('[data-sar-route-goto=\"coder\"]').focus();1"},
+        {"key": "Enter"}, {"eval": ACTIVE},
+        {"eval": "document.querySelector('.sar-row.selected').getAttribute('data-sar-row')"},
+        {"eval": "document.querySelectorAll('.sar-row').length"},
     ]
-    out = run_plan(tmp_path, page, steps)
-    assert out[1] == ["dashed", True]
-    assert out[4] == "sar-title" and out[5] == 7
+    out = run_plan(tmp_path, page, steps, width=1672, height=941)
+    assert out[1] == ["dashed", True, "dashed", True]
+    assert out[4] == "more:qa"
+    assert out[6] == "qa" and out[7] == "fiche"
+    assert out[9] == "models"
+    assert out[12] is None and out[13] == "more:qa"
+    assert out[17] is None and out[18] == "sar-models-qa"
+    assert out[21] == "sar-models-coder" and out[22] == "coder" and out[23] == 7
+
+
+def test_full_registry_board_at_reference_size_without_page_overflow(tmp_path):
+    """Les sept rôles du registre servi et l'instantané figé : aucun rôle écarté, aucun débordement de page ; la
+    matrice seule défile en largeur si elle n'a pas la place."""
+    page = build_page(tmp_path)
+    shots = shots_dir(tmp_path)
+    measure = ("(()=>{const q=s=>document.querySelector(s);const rows=[...document.querySelectorAll('.sar-row')];"
+               "return {page:document.documentElement.scrollWidth-innerWidth,rows:rows.length,"
+               "panels:[...document.querySelectorAll('.sar-board .set-panel')].map(p=>p.id),"
+               "heads:[...document.querySelectorAll('.sar-rows-head .sar-h')].map(h=>h.textContent).filter(Boolean),"
+               "brains:/Brains/.test(document.body.textContent),"
+               "rowH:Math.round(Math.max(...rows.map(r=>r.getBoundingClientRect().height)))}})()")
+    steps = [
+        {"eval": "window.__ready.then(()=>1)"},
+        {"eval": measure},
+        {"eval": "scrollTo(0,0);1"},
+        {"shot": str(shots / "s03-board-1672.png")},
+    ]
+    out = run_plan(tmp_path, page, steps, width=1672, height=941)
+    m = out[1]
+    assert m["page"] <= 0 and m["rows"] == 7 and m["brains"] is False, m
+    assert m["panels"] == ["sar-p-overview", "sar-p-policy", "sar-p-roles", "sar-p-matrix", "sar-p-rules"], m
+    assert m["heads"] == ["Rôle", "Modèle préféré", "Source", "Repli", "Outils", "Conditions d’usage"], m
+    assert m["rowH"] < 110, m  # densité : une ligne de rôle tient sur une rangée
 
 
 def test_narrow_width_has_no_horizontal_scroll_and_reduced_motion_stops_transitions(tmp_path):
     page = build_page(tmp_path)
     shots = shots_dir(tmp_path)
-    overflow = ("(()=>{const h=document.getElementById('host');const wide=[...h.querySelectorAll('*')].filter(e=>e.getBoundingClientRect().right>innerWidth+1)"
+    # Le contenu d'un conteneur qui défile seul (la matrice) est rogné par lui : il ne compte pas comme débordement.
+    overflow = ("(()=>{const h=document.getElementById('host');const wide=[...h.querySelectorAll('*')].filter(e=>e.getBoundingClientRect().right>innerWidth+1&&!e.parentElement.closest('.set-table-scroll'))"
                 ".map(e=>e.className||e.tagName).slice(0,5);return [document.documentElement.scrollWidth<=innerWidth,wide]})()")
     steps = [
         {"eval": "window.__ready.then(()=>1)"},
@@ -184,9 +236,10 @@ def test_narrow_width_has_no_horizontal_scroll_and_reduced_motion_stops_transiti
         {"eval": "document.querySelector('.sar-route').scrollIntoView();1"},
         {"shot": str(shots / "s06-narrow-qa-models.png")},
         {"eval": "getComputedStyle(document.querySelector('.sar-op')).transitionDuration"},
-        {"eval": "window.__view.showOverview(true);1"},
+        {"eval": "document.getElementById('sar-p-matrix').scrollIntoView();1"},
         {"eval": overflow},
-        {"shot": str(shots / "s06-narrow-overview.png")},
+        {"shot": str(shots / "s03-narrow-matrix.png")},
+        {"eval": "(()=>{const s=document.querySelector('.sar-matrix-shell .set-table-scroll');return s.scrollWidth>=s.clientWidth}" + ")()"},
     ]
     out = run_plan(tmp_path, page, steps, width=390, height=844, reduced=True)
     assert out[1] == [True, []], out[1]
@@ -219,3 +272,44 @@ def test_changing_harness_then_adding_works_in_the_browser(tmp_path):
     assert out[2] == [False, "", False]       # retour sur Claude : « Modèle par défaut du CLI » choisi
     assert out[5] == ["claude:petit", "claude:"]
     assert out[6] == ["1", "dashed", "not-allowed"]
+
+
+# --- Dans le vrai shell des Réglages (refonte-ui-settings, Slice 03) ------------------------------------------------
+# Control Center isolé (fixture `served` : runtime temporaire, jamais le JARVIS vivant) ; la politique des rôles est
+# l'instantané figé, servi à la page par `stub` : la capture montre des listes réelles de plusieurs candidats.
+
+
+SHELL_MEASURE = """(()=>{const h=document.querySelector('[data-subagent-settings-host]');
+  return {rows:h.querySelectorAll('.sar-row').length,panels:[...h.querySelectorAll('.set-panel')].map(p=>p.id),
+    brains:[...document.querySelectorAll('#modalTabs [role=tab]')].map(t=>t.textContent.trim()),
+    open:document.getElementById('overlay').classList.contains('open')}})()"""
+
+
+async def test_board_in_the_settings_shell_captures_and_keeps_escape_inside_the_row_actions(served, tmp_path):
+    fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    shots = Path(os.environ.get("JARVIS_BROWSER_SHOTS") or tmp_path)
+    shots.mkdir(parents=True, exist_ok=True)
+    names = ["wide", "narrow"]
+    menu = [eval_("document.querySelector('[data-sar-more=\"qa\"]').click(),1"),
+            eval_("new Promise(r=>setTimeout(()=>r(1),120))"),
+            eval_("document.activeElement&&document.activeElement.getAttribute('data-sar-menu-act')", "menu_focus"),
+            key("Escape"), eval_("new Promise(r=>setTimeout(()=>r(1),120))"),
+            eval_("[!!document.querySelector('[data-sar-menu]'),document.getElementById('overlay').classList.contains('open'),"
+                  "document.activeElement&&document.activeElement.getAttribute('data-sar-more')]", "after_escape")]
+    steps = capture_steps(VIEWS["subagents"], shots, "s03-after", viewports=names, ext="jpg",
+                          stubs=[stub("/api/subagent-role-routing", fixture)], extra=[eval_(SHELL_MEASURE, "measure")])
+    steps[0]["actions"] += menu
+    out = await drive(served.url, steps)
+    assert out["console"] == [], out["console"]
+    for name, step in zip(names, out["steps"]):
+        assert all(a["ok"] for a in step["actions"] if a.get("a") == "wait"), name
+        assert got(step, "overflow")["page"] == 0 and max(got(step, "overflow")["containers"].values()) == 0, name
+        m = got(step, "measure")
+        assert m["rows"] == len(fixture["roles"]) and m["open"], m
+        assert m["panels"] == ["sar-p-overview", "sar-p-policy", "sar-p-roles", "sar-p-matrix", "sar-p-rules"], m
+        assert m["brains"] == ["Architecture", "Sous-agents"], m  # pas d'onglet « Brains »
+        width, height = VIEWPORTS[name]
+        assert (shots / f"s03-after-{width}x{height}.jpg").stat().st_size > 10_000
+    first = out["steps"][0]
+    assert got(first, "menu_focus") == "fiche"
+    assert got(first, "after_escape") == [False, True, "qa"]  # Échap replie les actions, les Réglages restent ouverts

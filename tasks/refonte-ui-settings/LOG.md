@@ -74,3 +74,32 @@ Tests : `test_control_center_settings_registry_js` + `test_settings_visual_found
 Reserved for implementation agents. Record durable execution notes here as work is performed.
 
 - 2026-10-24 : agent 0 — S01 APPROUVÉE après reprise (`af1ff5dd`) : QA initiale B1 (garde-fou `bindTab`) corrigé et revérifié par agent 0 (`test_control_center_settings_registry_js.py` 20/20), N1–N4 corrigés. Dispatch : S02 (worktree `r02`, branche `task/refonte-ui-settings-s02`) et S03 (worktree `r03`, branche `task/refonte-ui-settings-s03`) depuis `af1ff5dd` ; S04 après libération d'un créneau (≤ 3 agents, S05/S06 en cours sur `rmem`).
+
+## Slice 03 — Sous-agents en tableau de bord (2026-10-24)
+
+Ligne de base AVANT modification (worktree `r03`, HEAD `10f69d41`) : `test_control_center_subagents_settings_js` +
+`test_subagent_role_routing_ui_js` + `test_control_center_settings_registry_js` 72 verts ; `test_subagent_settings_browser`
++ `test_architecture_agents_settings_browser` 13/14 dans un lot, `test_two_tabs_destinations_and_legacy_ids` rouge sous
+charge puis vert seul (instabilité de minutage préexistante, sans lien).
+
+Livré (`control_center_subagents_settings.js` seul côté produit ; `control_center.html` non touché) :
+- Vue `roles` recomposée en tableau de bord `.sar-board` sur les primitives de la Slice 01 : Vue d'ensemble (4 tuiles
+  mesurées) | Politique de délégation (états lus + renvois), lignes des rôles (modèle préféré, source, repli, outils,
+  conditions, actions « … »), Matrice de routage (modèles du catalogue × rôles, rang) | Règles globales (registre +
+  instantané), puis la fiche du rôle (inchangée sur le fond, en deux colonnes : mission/capacités/instructions | modèles).
+- « Vue d'ensemble du routage » retirée : la matrice est la même projection en lecture seule (`showOverview` →
+  `gotoModels`, `openMenu`). Projections du routage gardées (`guarded`) : une erreur reste locale.
+- Écartés de la maquette (doc § 1 de `docs/settings/architecture-agents.md`) : onglet Brains, 98 %, Priorité, « Ajouter un
+  sous-agent », interrupteurs de politique, coût/délai/créativité/collaboration, logos, pictogrammes d'outils.
+- Doc : `docs/settings/architecture-agents.md` (table donnée → écran, écarts), `docs/subagent-roles.md` § 8.
+- Preuves : `slices/03-architecture-agents-subagents-ui/evidence/` (2 avant, 5 après ; instantané figé servi par `stub`).
+
+Après : node 89 verts (`subagents_settings_js`, `routing_ui_js`, `scene_task_graph_js`, `settings_registry_js`,
+`visual_foundation_js`) ; Python rôles 104 verts (`subagent_role_routing`, `_families`, `subagent_roles`,
+`architecture_settings_mount`) ; navigateur : `subagent_settings_browser` + `architecture_agents_settings_browser` 16,
+`architecture_settings_browser` + `brain_config_panel_browser` 20, `settings_visual_foundation_browser` 12,
+`settings_accessibility_browser` 17, tous verts.
+
+Notes : règles `.sar-side`/`.sar-summary` de `control_center.html` devenues inutiles pour la vue `roles` (laissées pour ne
+pas croiser S04 ; à retirer en S07). Constat pour la fondation : `.settings-shell .content h3` (15 px, marge 30 px) écrase
+`.set-panel-title` dans `#modalContent` ; la Slice 03 le neutralise dans son `STYLE`, une correction partagée serait mieux.

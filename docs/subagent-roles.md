@@ -488,10 +488,14 @@ Tests : `tests/unit/test_control_center_subagents_settings_js.py` (node, sur la 
 autre donnée, aucune liste recopiée : libellés, capacités, méthodes, libellés de relation
 (`relation_labels`) et jetons viennent de la route.
 
-**Ce que montre l'écran.**
+**Ce que montre l'écran.** Depuis la Slice 03 de `refonte-ui-settings` (2026-10-24), une seule page en tableau de
+bord (`.sar-board`, panneaux de la fondation visuelle) : synthèse, politique de délégation, lignes des rôles, matrice
+de routage, règles globales, puis la fiche du rôle choisi. Correspondance de chaque chiffre avec sa source et écarts
+voulus avec la maquette : [settings/architecture-agents.md](settings/architecture-agents.md) § 1, « Onglet Sous-agents ».
 
-- Une liste des rôles (icône, badge, libellé, marqueur, étiquettes `modifié`, `non enregistré`,
-  `surcharge écartée`, `Désactivé`), parcourable aux flèches haut/bas, Début et Fin ;
+- Des lignes de rôles (icône, badge, libellé, description, étiquettes `modifié`, `non enregistré`,
+  `surcharge écartée`, `Désactivé` ; modèle préféré, source, repli, outils, conditions d'usage ; actions « … »),
+  parcourables aux flèches haut/bas, Début et Fin ;
 - la fiche du rôle choisi : description, mission, quand l'employer, marqueur `[profil] [id]`, alias,
   disponibilité (`enabled`, `offered_to_brain`, `offered_to_subagents`), capacités (lance des agents,
   Mission Owner, réponse imposée `constrained_output`, outils, savoirs `loadout_role`, skills, profil),
@@ -604,11 +608,16 @@ Un refus du serveur est un résultat `{ok:false,status,code,reason,snapshot}` ; 
   (confirmé en deux temps, actif seulement si `restorable`). Une liste vide n'est pas envoyable : l'écran
   dit de restaurer. La note `compatibility.note` est la seule trace d'Auto/Dupliqué, avec un renvoi vers
   Avancé & diagnostic › Runtime & CLI (`data-settings-open="runtime_cli"`) ; aucun sélecteur ici.
-- **Liste des rôles** : chaque ligne projette le premier candidat (ou « liste vide »), le nombre d'autres et
-  « hérité » / « réglé » ; étiquette « routage non enregistré » pour un brouillon.
-- **Vue d'ensemble du routage** (bouton au-dessus de la liste) : projection en **lecture seule** du même
-  instantané, rôle par rôle (candidats dans l'ordre, repli, provenance), « Régler » ouvre la fiche sur sa
-  section Modèles. Aucun second éditeur.
+- **Lignes des rôles** : chaque ligne projette le premier candidat (brouillon compris ; sans liste, « Modèle du
+  CLI » quand l'aperçu dit `cli_default`, sinon « Liste vide »), le nombre d'autres, la source « Réglé » /
+  « Hérité » et le repli (deuxième candidat, sinon la liste générale quand le repli s'applique) ; étiquette
+  « routage non enregistré » pour un brouillon. Les actions « … » (divulgation, Échap la replie) ouvrent la fiche,
+  ses modèles ou ses instructions.
+- **Matrice de routage** (remplace la « vue d'ensemble du routage ») : projection en **lecture seule** du même
+  instantané, modèles du catalogue servi × rôles, rang de chaque modèle dans la liste du rôle, candidats
+  indisponibles en trait pointillé ; l'en-tête d'une colonne ouvre la fiche sur sa section Modèles
+  (`gotoModels`). Aucun second éditeur. Une projection qui lève reste locale (même code
+  `subagent_settings_routing_render_failed`).
 
 Écritures : un PUT ou un DELETE ne vise que le rôle édité, avec `base_revision` = révision de l'instantané
 affiché ; le brouillon d'un autre rôle n'est jamais touché. Succès : l'instantané renvoyé remplace l'écran.
@@ -627,8 +636,9 @@ candidates et promotion restent dans Avancé (lien seulement). Tests :
 
 **Accessibilité et largeur.** La fiche n'est pas une région live : une région courte, hors du rendu, annonce
 seulement les notices. En couleurs forcées, la sélection est marquée par une bordure épaisse `Highlight` et
-un soulignement, pas par la couleur. Sous 900 px, une seule colonne : choisir un rôle amène la fiche à l'écran,
-focus sur son titre, avec « Revenir à la liste des rôles ». La barre d'onglets des Réglages ramène l'onglet actif
+un soulignement, pas par la couleur. La fiche est sous le tableau de bord : choisir un rôle (clic, Entrée) l'amène
+à l'écran, focus sur son titre, avec « Revenir à la liste des rôles ». Les lignes passent en cartes sous 1000 px de
+panneau ; seule la matrice défile en largeur. La barre d'onglets des Réglages ramène l'onglet actif
 dans la vue. Le pied des Réglages est masqué dans cette section (`save: 'self'`), qui porte ses propres
 notices. Les couleurs du CSS `.sar-*` sont des jetons du thème (`--text`, `--muted`, `--solid`, `--line`,
 `--accent`, `--role-accent-*`).

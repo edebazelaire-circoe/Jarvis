@@ -37,7 +37,7 @@ d'onglet « Brains » : un cerveau se configure dans sa fenêtre flottante.
 | Section | Contenu | Enregistrement |
 | --- | --- | --- |
 | `architecture` · Architecture | le graphe réel (`GET /api/architecture`) : nœuds de l'architecture vocale effective, liaisons typées, verrouillées, basculables ou gouvernées ; bandeau en lecture seule de l'architecture vocale avec lien vers Avancé ; disposition des nœuds (`/api/architecture/layout`) ; fenêtre d'un cerveau (`/api/brains/{id}/config`) | chaque geste s'enregistre (`save: 'self'`) |
-| `subagents` · Sous-agents | les sept rôles du registre : identité, mission, capacités, Work Methods (lecture seule), instructions éditables, instances en cours ; **modèles du rôle** : candidats harness + modèle ordonnés, repli automatique, provenance, restauration de l'héritage (`/api/subagent-role-routing`) | la section s'enregistre (`save: 'self'`) |
+| `subagents` · Sous-agents | tableau de bord (synthèse, politique de délégation, lignes des rôles, matrice de routage, règles globales) puis la fiche du rôle : identité, mission, capacités, Work Methods (lecture seule), instructions éditables, instances en cours ; **modèles du rôle** : candidats harness + modèle ordonnés, repli automatique, provenance, restauration de l'héritage (`/api/subagent-role-routing`) | la section s'enregistre (`save: 'self'`) |
 
 **Pourquoi des sections.** Le registre a déjà la notion d'entrée d'une catégorie, dessinée par le shell comme une liste
 d'onglets, avec ses règles (activation manuelle, focus, `destroy` à la sortie, alias). Deux sections enregistrées sont
@@ -79,6 +79,38 @@ Le module des sous-agents (vue `roles`) reçoit `routing: JarvisSubagentSettings
 d'un rôle porte ses modèles (§ 10 de [`../subagent-roles.md`](../subagent-roles.md)). Écritures : instructions par la voie
 des prompts (`subagent_role.<id>`), politique d'un rôle par `PUT` / `DELETE /api/subagent-role-routing/{role_id}`, une
 seule à la fois, révisée. Brouillons dans `SET.subagentDrafts`, d'un onglet à l'autre.
+
+**Tableau de bord (refonte-ui-settings, Slice 03, 2026-10-24).** La vue `roles` est une page `.sar-board` composée des
+primitives de [`visual-foundation.md`](visual-foundation.md) (`.set-page`, `.set-grid`, `.set-panel`, `.set-stat`,
+`.set-row`, `.set-dot`, `.set-table`), CSS propre au module dans son `STYLE` injecté (`#jarvisSubagentSettingsStyle`),
+aucune règle ajoutée à `control_center.html`. Ordre : Vue d'ensemble | Politique de délégation, Sous-agents (lignes),
+Matrice de routage | Règles globales, puis la fiche du rôle choisi (seul endroit où l'on écrit). Sous 1080 px de page,
+chaque paire passe sur toute la rangée ; sous 1000 px de panneau, les lignes deviennent des cartes.
+
+Correspondance donnée vivante → écran (rien n'est écrit en dur depuis la maquette) :
+
+| Élément | Source | Calcul |
+| --- | --- | --- |
+| Sous-agents actifs | `GET /api/subagent-roles` | rôles `enabled` ; détail : « sur N rôle(s) du registre » |
+| Fournisseurs IA disponibles | instantané `/api/subagent-role-routing`, `harnesses[]` | fournisseurs (`provider`) dont au moins un harness est disponible / tous ; détail : modèles disponibles des harness disponibles |
+| Outils déclarés | registre, `tools` des rôles actifs | outils distincts ; détail : le plus partagé et son nombre de rôles |
+| Rôles lançables | instantané, `roles[].preview.outcome` | `selected` + `cli_default` / rôles routés ; détail : répartition, refus |
+| Routage par profil | `compatibility.profiles_enabled` | « Auto » / « Dupliqué », renvoi vers Avancé › Runtime & CLI (`data-settings-open="runtime_cli"`) |
+| Politique propre à un rôle | `roles[].explicit` | réglés / hérités |
+| Repli automatique | `allow_general_fallback` effectif (brouillon compris) | rôles concernés / rôles routés ; l'interrupteur reste dans la fiche |
+| Quand Core délègue | — | renvoi vers l'onglet Architecture (fenêtre du cerveau Core), aucune valeur recopiée |
+| Lignes des rôles | registre + instantané | modèle préféré = 1er candidat (« Modèle du CLI » si aperçu `cli_default` sans liste), source réglé/hérité, repli = 2e candidat ou liste générale, outils (3 + « +N »), conditions = `when_relevant` |
+| Matrice de routage | instantané | lignes = modèles du catalogue servi puis candidats hors catalogue (libellé du serveur), « Sans liste : modèle du CLI » ; colonnes = rôles routés ; case = rang dans la liste du rôle |
+| Règles globales | registre (`application`, `execution_gate`, `mission_path`, `instructions_max_chars`) + instantané (`store`, `catalog`, `revision`, `applies`) | prise d'effet, consigne de passage à l'exécution, dossier de mission, borne des instructions, état de la politique |
+
+Écarts voulus avec la maquette `02-architecture-agents-subagents.png` : pas d'onglet « Brains » (décision de la tâche) ;
+les sept rôles du registre, pas les cinq de l'image ; pas de « taux de bonne délégation » (98 %), aucune mesure
+serveur ; pas de colonne « Priorité » (concept absent du registre) : la colonne « Source » (réglé / hérité) prend sa
+place ; pas de bouton « Ajouter un sous-agent » (le registre est du code) ; politique de délégation en états lus et
+renvois, pas en interrupteurs (chaque réglage a déjà son seul écrivain) ; outils en puces texte, sans pictogramme
+inventé par outil ; pas de limite de coût, délai, créativité ni « collaboration entre agents » (réglages inexistants) ;
+pas de logos de fournisseurs (aucune image servie). Actions « … » : divulgation (Ouvrir la fiche, Régler les modèles,
+Modifier les instructions), Échap la replie sans fermer les Réglages.
 
 ### Ce qui n'apparaît pas sur la page
 
