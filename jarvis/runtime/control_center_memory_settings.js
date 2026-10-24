@@ -63,6 +63,7 @@
      (`--set-*`, `--shell-*`, `--accent`, `--ok`…) : la fondation visuelle partagée (Slice 01) les redéfinit. */
   const STYLE_ID='jarvisMemorySettingsStyle';
   const STYLE=`
+.mem-page,.mem-card{--set-tone:var(--mem-hue)}
 .mem-page{--mem-hue:var(--accent);--mem-violet:var(--role-accent-violet,#b9a2ff);--mem-line:color-mix(in srgb,var(--mem-hue) 22%,var(--set-hair-2,#1b3442));
   --mem-glass:var(--shell-glass-strong,rgba(4,10,15,.8));--mem-ink-2:var(--set-ink-2,#a9c2cf);--mem-ink-3:var(--set-ink-3,#8aa5b3);--mem-hair:var(--set-hair-2,#24414f);--mem-r:14px;
   container-type:inline-size;display:grid;gap:16px;min-width:0;color:var(--set-ink,var(--text));font-size:13.5px;line-height:1.5}
@@ -72,67 +73,41 @@
 .mem-grid{display:grid;gap:16px;grid-template-columns:minmax(0,1fr);align-items:start}
 @container (min-width:720px){.mem-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
 .mem-col{display:grid;gap:16px;align-content:start;min-width:0}
-.mem-card{position:relative;display:grid;gap:14px;min-width:0;padding:18px 20px;border:1px solid var(--mem-line);border-radius:var(--mem-r);
-  background:radial-gradient(120% 90% at 0% 0%,color-mix(in srgb,var(--mem-hue) 7%,transparent),transparent 55%),var(--mem-glass);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.035),0 10px 30px rgba(0,0,0,.18)}
+/* Panneaux (.set-panel), médaillons, interrupteurs, curseurs, cartes de choix, pastilles et boutons : primitives de la
+   fondation (Slice 07 de refonte-ui-settings) ; les classes .mem-* ne gardent que la composition et servent d'accroches. */
+.mem-card{display:grid;gap:14px}
 .mem-card:focus-visible,.mem-card[data-settings-landed]:focus{outline:2px solid var(--accent);outline-offset:3px}
 .mem-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:center}
-.mem-medal{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;color:var(--mem-hue);
-  border:1.5px solid color-mix(in srgb,var(--mem-hue) 65%,transparent);
-  background:radial-gradient(circle at 50% 40%,color-mix(in srgb,var(--mem-hue) 20%,transparent),transparent 72%);
-  box-shadow:0 0 18px color-mix(in srgb,var(--mem-hue) 26%,transparent),inset 0 0 12px color-mix(in srgb,var(--mem-hue) 14%,transparent)}
-.mem-medal .mem-ico{width:24px;height:24px}
+.mem-medal .mem-ico{width:50%;height:50%}
 .mem-head-2{grid-template-columns:auto minmax(0,1fr)}
-.mem-medal.sm{width:38px;height:38px}.mem-medal.sm .mem-ico{width:19px;height:19px}
 .mem-title{margin:0;font-size:18px;font-weight:600;line-height:1.25;letter-spacing:-.005em}
 .mem-sub{margin:2px 0 0;color:var(--mem-ink-2);font-size:13px}
 .mem-text{margin:0;color:var(--mem-ink-2);max-width:62ch}
 .mem-label{margin:0;font-size:13px;font-weight:600;color:var(--set-ink,var(--text))}
 .mem-hint{margin:0;color:var(--mem-ink-3);font-size:12px}
 .mem-hint.warn{color:var(--warn)}.mem-hint.bad{color:var(--danger)}
-.mem-switch{display:inline-flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--mem-ink-3);white-space:nowrap;cursor:pointer}
-.mem-switch-text.on{color:var(--ok)}
-input.mem-toggle{appearance:none;-webkit-appearance:none;position:relative;flex:none;width:46px;height:26px;margin:0;border-radius:999px;cursor:pointer;color:var(--set-ink,var(--text));
-  border:1px solid var(--mem-hair);background:rgba(113,144,160,.18);transition:background-color var(--shell-dur,.18s),border-color var(--shell-dur,.18s)}
-input.mem-toggle::before{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#d6e7ef;
-  box-shadow:0 1px 3px rgba(0,0,0,.4);transition:transform var(--shell-dur,.18s) var(--shell-ease,ease)}
-input.mem-toggle:checked{background:color-mix(in srgb,var(--mem-hue) 70%,#0b4a6b);border-color:color-mix(in srgb,var(--mem-hue) 80%,transparent);
-  box-shadow:0 0 12px color-mix(in srgb,var(--mem-hue) 40%,transparent)}
-input.mem-toggle:checked::before{transform:translateX(20px);background:#fff}
-input.mem-toggle:disabled{cursor:not-allowed}
 .mem-meter{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:6px 14px;align-items:center;padding:14px 16px;border:1px solid var(--mem-line);border-radius:12px;background:rgba(3,9,13,.5)}
 .mem-meter>.mem-ico{width:26px;height:26px;color:var(--mem-hue)}
 .mem-meter .mem-label{font-weight:500}
-.mem-meter .mem-range,.mem-meter .mem-hint{grid-column:1/-1}
+.mem-meter .set-range,.mem-meter .mem-hint{grid-column:1/-1}
 .mem-out{font-size:24px;font-weight:600;line-height:1;color:var(--set-ink,var(--text));font-variant-numeric:tabular-nums;white-space:nowrap}
 .mem-out small{font-size:15px;font-weight:500;color:var(--mem-ink-2)}
 .mem-out.sm{font-size:13px;padding:3px 9px;border:1px solid var(--mem-line);border-radius:8px}
-input.mem-range{--fill:50%;appearance:none;-webkit-appearance:none;width:100%;height:22px;margin:0;background:transparent;cursor:pointer}
-input.mem-range::-webkit-slider-runnable-track{height:6px;border-radius:999px;background:linear-gradient(90deg,var(--mem-hue) var(--fill),rgba(113,144,160,.22) var(--fill))}
-input.mem-range::-moz-range-track{height:6px;border-radius:999px;background:linear-gradient(90deg,var(--mem-hue) var(--fill),rgba(113,144,160,.22) var(--fill))}
-input.mem-range::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;margin-top:-6px;border-radius:50%;background:#e9f8ff;border:3px solid var(--mem-hue);box-shadow:0 0 10px color-mix(in srgb,var(--mem-hue) 60%,transparent)}
-input.mem-range::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#e9f8ff;border:3px solid var(--mem-hue)}
-input.mem-range:disabled{cursor:not-allowed;opacity:.6}
-.mem-range-ends{display:flex;justify-content:space-between;gap:10px;color:var(--mem-ink-3);font-size:12px}
 .mem-pair{display:grid;gap:18px 22px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));align-items:start}
 .mem-slider{display:grid;gap:6px;min-width:0}
 .mem-slider-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:42px}
-.mem-modes{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin:0;padding:0;border:0;min-width:0}
+.mem-modes{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
 .mem-modes legend{padding:0;margin:0 0 10px;font-size:13px;font-weight:600}
-.mem-mode{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 12px;align-items:center;padding:12px 34px 12px 14px;border:1px solid var(--mem-line);
-  border-radius:12px;background:rgba(3,9,13,.45);cursor:pointer;transition:border-color var(--shell-dur,.18s),box-shadow var(--shell-dur,.18s)}
-.mem-mode input{appearance:none;-webkit-appearance:none;position:absolute;top:12px;right:12px;width:16px;height:16px;margin:0;border:2px solid currentColor;border-radius:50%;color:var(--set-ink,var(--text));background:transparent;cursor:inherit}
+/* Carte de choix de la fondation, avec son témoin radio visible au coin (lisible désactivé, contraste ≥ 4,5:1). */
+.mem-mode{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 12px;align-items:center;padding-right:34px}
+.mem-mode input{appearance:none;-webkit-appearance:none;inset:auto;top:12px;right:12px;width:16px;height:16px;opacity:1;border:2px solid currentColor;border-radius:50%;color:var(--set-ink,var(--text));background:transparent;cursor:inherit}
 .mem-mode input:checked{border-color:var(--mem-hue);background:radial-gradient(circle,var(--mem-hue) 0 3px,transparent 4px)}
 .mem-mode input:focus-visible{outline:none}
 .mem-mode .mem-ico{grid-row:1/3;width:26px;height:26px;color:var(--mem-ink-2)}
 .mem-mode strong{font-size:14px;font-weight:600}
 .mem-mode span{font-size:12px;color:var(--mem-ink-2)}
-.mem-mode:hover{border-color:color-mix(in srgb,var(--mem-hue) 45%,transparent)}
-.mem-mode:has(input:checked){border-color:var(--mem-hue);background:color-mix(in srgb,var(--mem-hue) 10%,rgba(3,9,13,.5));
-  box-shadow:0 0 0 1px color-mix(in srgb,var(--mem-hue) 50%,transparent),0 0 18px color-mix(in srgb,var(--mem-hue) 26%,transparent)}
 .mem-mode:has(input:checked) .mem-ico{color:var(--mem-hue)}
-.mem-mode:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
-.mem-mode:has(input:disabled){cursor:not-allowed;border-style:dashed}
+.mem-mode:has(input:disabled){opacity:1;border-style:dashed}
 .mem-mode:has(input:disabled) strong{color:var(--mem-ink-2)}
 .mem-select{display:flex;align-items:center;gap:12px;padding:0 14px;border:1px solid var(--mem-line);border-radius:12px;background:rgba(3,9,13,.5)}
 .mem-select>.mem-ico{color:var(--mem-hue)}
@@ -145,11 +120,8 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
 .mem-inline .mem-medal{color:var(--mem-ink-2);border-color:var(--mem-hair);box-shadow:none;background:none}
 .mem-inline .mem-hint{grid-column:2/-1}
 .mem-secretline{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12.5px;color:var(--mem-ink-2)}
-.mem-pill{display:inline-flex;align-items:center;gap:6px;padding:1px 9px;border:1px solid var(--mem-hair);border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;color:var(--mem-ink-2)}
-.mem-dot{width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor;flex:none}
-.mem-tone-ok{color:var(--ok)}.mem-tone-info{color:var(--accent)}.mem-tone-warn{color:var(--warn)}.mem-tone-bad{color:var(--danger)}.mem-tone-off{color:var(--mem-ink-3)}
-.mem-pill.mem-tone-ok{border-color:color-mix(in srgb,var(--ok) 40%,transparent)}.mem-pill.mem-tone-bad{border-color:color-mix(in srgb,var(--danger) 40%,transparent)}
-.mem-pill.mem-tone-warn{border-color:color-mix(in srgb,var(--warn) 40%,transparent)}.mem-pill.mem-tone-info{border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
+.mem-pill{white-space:nowrap}
+.mem-tone-bad{color:var(--danger)}
 .mem-rows{display:grid;gap:8px;margin:0;padding:0;list-style:none}
 .mem-row{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(0,1.1fr) auto;gap:12px;align-items:center;width:100%;min-height:46px;padding:8px 12px;
   border:1px solid var(--mem-hair);border-radius:10px;background:rgba(3,9,13,.4);color:inherit;font:inherit;text-align:left;cursor:pointer}
@@ -158,9 +130,7 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
 .mem-row-k{font-weight:500}
 .mem-row-v{display:inline-flex;align-items:center;gap:8px;min-width:0;font-size:12.5px}
 .mem-row-v span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mem-cta{--mem-hue:var(--mem-violet);border-color:color-mix(in srgb,var(--mem-violet) 60%,transparent);
-  background:radial-gradient(120% 120% at 0% 0%,color-mix(in srgb,var(--mem-violet) 15%,transparent),transparent 60%),var(--mem-glass);
-  box-shadow:0 0 0 1px color-mix(in srgb,var(--mem-violet) 18%,transparent),0 0 26px color-mix(in srgb,var(--mem-violet) 18%,transparent)}
+.mem-cta{--mem-hue:var(--mem-violet)}
 .mem-cta-open{display:grid;place-items:center;width:38px;height:38px;border:1px solid transparent;border-radius:50%;background:none;color:var(--set-ink,var(--text));cursor:pointer}
 .mem-cta-open:hover{border-color:var(--mem-violet)}
 .mem-tiles{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(118px,1fr))}
@@ -172,14 +142,11 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
 .mem-tile-top .mem-ico:last-child{width:16px;height:16px;color:var(--mem-ink-2)}
 .mem-tile strong{font-size:13.5px;font-weight:600}
 .mem-tile small{font-size:12px;color:var(--mem-ink-2)}
-.mem-adv{grid-template-columns:auto minmax(0,1fr);align-items:center;gap:14px 18px;--mem-hue:var(--mem-ink-3);border-color:var(--mem-hair);background:var(--mem-glass)}
+.mem-adv{grid-template-columns:auto minmax(0,1fr);align-items:center;gap:14px 18px;--mem-hue:var(--mem-ink-3)}
 .mem-adv-note{display:flex;align-items:center;gap:10px;color:var(--mem-ink-2);font-size:12.5px;grid-column:1/-1}
 .mem-adv-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;grid-column:1/-1}
 @container (min-width:820px){.mem-adv{grid-template-columns:auto minmax(0,.9fr) minmax(0,1.3fr) auto}
   .mem-adv-note{grid-column:auto;padding-left:18px;border-left:1px dashed var(--mem-hair)}.mem-adv-actions{grid-column:auto;flex-direction:column;align-items:flex-end}}
-.mem-btn{display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:7px 14px;border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);border-radius:10px;
-  background:rgba(3,9,13,.5);color:var(--set-ink,var(--text));font:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
-.mem-btn:hover{border-color:var(--accent);box-shadow:0 0 12px color-mix(in srgb,var(--accent) 24%,transparent)}
 .mem-btn .mem-ico{width:16px;height:16px}
 .mem-savebar{position:relative;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 16px;padding:10px 16px;
   border:1px solid var(--mem-hair);border-radius:12px;background:color-mix(in srgb,var(--solid,#070d13) 92%,transparent);backdrop-filter:blur(14px)}
@@ -390,27 +357,28 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
       const f=field(path);if(!f)return '';
       const id=idOf(path),v=!!current(path),why=blocked(f);
       const dis=locked(f)||(!v&&why)?' disabled':'';
-      return `<label class="mem-switch" for="${id}"><span class="mem-switch-text${v?' on':''}" aria-hidden="true">${v?'Activé':'Désactivé'}</span>`
-        +`<input type="checkbox" role="switch" class="mem-toggle" id="${id}" data-mem="${esc(path)}"${v?' checked':''}${dis} aria-label="${esc(f.label)}" aria-describedby="${id}-hint"></label>`;
+      /* Primitive partagée (Slice 07) : bouton `role=switch`, état dans `aria-checked`, mot d'état à côté. */
+      return ui.toggle({id,checked:v,label:f.label,describedBy:`${id}-hint`,stateText:{on:'Activé',off:'Désactivé'},disabled:!!dis,data:{mem:path}});
     }
     const fill=(f,v)=>Math.max(0,Math.min(100,((Number(v)-f.min)/((f.max-f.min)||1))*100)).toFixed(1)+'%';
     const percent=v=>Math.round(Number(v)*100)+' %';
     function rangeInput(f,format){
       const id=idOf(f.path),v=current(f.path),step=f.type==='float'?'0.05':'1';
-      return `<input type="range" class="mem-range" id="${id}" data-mem="${esc(f.path)}" data-mem-range min="${esc(f.min)}" max="${esc(f.max)}" step="${step}" value="${esc(v)}"`
-        +` style="--fill:${fill(f,v)}" aria-label="${esc(f.label)}" aria-valuetext="${esc(format(v))}" aria-describedby="${id}-hint"${locked(f)?' disabled':''}>`;
+      return `<input type="range" class="set-range" id="${id}" data-mem="${esc(f.path)}" data-mem-range min="${esc(f.min)}" max="${esc(f.max)}" step="${step}" value="${esc(v)}"`
+        +` style="--set-range-fill:${fill(f,v)}" aria-label="${esc(f.label)}" aria-valuetext="${esc(format(v))}" aria-describedby="${id}-hint"${locked(f)?' disabled':''}>`;
     }
     function slider(path,format,ends,shown){
       const f=field(path);if(!f)return '';
       return `<div class="mem-slider"><div class="mem-slider-head"><label class="mem-label" for="${idOf(path)}">${esc(f.label)}</label>`
         +`<output class="mem-out sm" for="${idOf(path)}" data-mem-out="${esc(path)}">${esc(format(current(path)))}</output></div>`
-        +rangeInput(f,format)+`<div class="mem-range-ends" aria-hidden="true"><span>${esc(ends[0])}</span><span>${esc(ends[1])}</span></div>${hintOf(f,shown)}</div>`;
+        +rangeInput(f,format)+`<div class="set-range-ends" aria-hidden="true"><span>${esc(ends[0])}</span><span>${esc(ends[1])}</span></div>${hintOf(f,shown)}</div>`;
     }
     function head(iconName,title,sub,trailing,id){
-      return `<div class="mem-head"><span class="mem-medal">${icon(iconName)}</span><div><h3 class="mem-title"${id?` id="${id}"`:''}>${esc(title)}</h3>`
+      return `<div class="mem-head"><span class="set-medallion mem-medal">${icon(iconName)}</span><div><h3 class="mem-title"${id?` id="${id}"`:''}>${esc(title)}</h3>`
         +`${sub?`<p class="mem-sub">${esc(sub)}</p>`:''}</div>${trailing||'<span></span>'}</div>`;
     }
-    function pill(tone,text){return `<span class="mem-pill mem-tone-${tone}"><span class="mem-dot" aria-hidden="true"></span>${esc(text)}</span>`}
+    /* Pastille d'état : la primitive `.set-dot` (Slice 07) ; `mem-pill` reste l'accroche des tests. */
+    function pill(tone,text){return ui.dot(tone,text).replace('class="set-dot','class="mem-pill set-dot')}
     const savedLegs=()=>st.memory.status.legs||{};
 
     function recallCard(){
@@ -419,7 +387,7 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
       const meter=max?`<div class="mem-meter">${icon('db')}<label class="mem-label" for="${idOf(max.path)}">${esc(max.label)}</label>`
         +`<output class="mem-out" for="${idOf(max.path)}" data-mem-out="${esc(max.path)}" data-mem-max="${esc(max.max)}">${esc(current(max.path))} <small>/ ${esc(max.max)}</small></output>`
         +rangeInput(max,v=>`${v} sur ${max.max}`)+hintOf(max)+'</div>':'';
-      return `<section class="mem-card" id="memCardRecall" tabindex="-1" aria-labelledby="memRecallTitle">
+      return `<section class="set-panel mem-card" id="memCardRecall" tabindex="-1" aria-labelledby="memRecallTitle">
         ${head('brain','Rappel','Injection de souvenirs contextuels',toggle('recall.enabled'),'memRecallTitle')}
         ${has('recall.enabled')?hintOf(field('recall.enabled')):''}
         <p class="mem-text">JARVIS récupère les souvenirs pertinents pour enrichir chaque réponse avec votre contexte. La recherche par mots
@@ -432,13 +400,13 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
     const MODE_ART={auto:['gear','Analyse et enregistre automatiquement au-dessus du seuil.'],manual:['user','Vous validez chaque candidat dans le Memory Center.']};
     function consolidationCard(){
       const mode=field('consolidation.mode');
-      const modes=mode?`<fieldset class="mem-modes" aria-describedby="${idOf(mode.path)}-hint"><legend>${esc(mode.label)}</legend>${mode.options.map(o=>{
+      const modes=mode?`<fieldset class="set-choices mem-modes" aria-describedby="${idOf(mode.path)}-hint"><legend>${esc(mode.label)}</legend>${mode.options.map(o=>{
         const id=`${idOf(mode.path)}_${o.id}`,on=current(mode.path)===o.id,b=blockedOption(mode,o),off=(b&&!on)||locked(mode);
         const [ico,text]=MODE_ART[o.id]||['gear',''];
-        return `<label class="mem-mode" for="${id}"><input type="radio" name="${idOf(mode.path)}" id="${id}" value="${esc(o.id)}" data-mem="${esc(mode.path)}"${on?' checked':''}${off?' disabled':''}>`
+        return `<label class="set-choice mem-mode" for="${id}"><input type="radio" name="${idOf(mode.path)}" id="${id}" value="${esc(o.id)}" data-mem="${esc(mode.path)}"${on?' checked':''}${off?' disabled':''}>`
           +`${icon(ico)}<strong>${esc(o.label)}</strong><span>${esc(b&&!on?`Indisponible : ${b}.`:text)}</span></label>`}).join('')}</fieldset>${hintOf(mode)}`:'';
       const auto=current('consolidation.mode')==='auto';
-      return `<section class="mem-card" id="memCardConsolidation" tabindex="-1" aria-labelledby="memConsTitle">
+      return `<section class="set-panel mem-card" id="memCardConsolidation" tabindex="-1" aria-labelledby="memConsTitle">
         ${head('db','Consolidation','Gestion et enrichissement de la mémoire','','memConsTitle')}
         <p class="mem-text">La consolidation repère dans vos échanges ce qui mérite d’être retenu et en fait des <strong>candidats</strong> :
           des propositions, pas encore des souvenirs. Un candidat devient une note de la mémoire quand vous l’acceptez${auto?', ou automatiquement au-dessus du seuil de confiance':''}.</p>
@@ -458,8 +426,8 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
         +` <button type="button" class="mem-linkish" data-mem-open="providers">Plugins & MCP › Fournisseurs</button></p>`:'';
       const leg=savedLegs().semantic;
       const degraded=leg&&leg.status==='unavailable'?`<p class="mem-hint bad" role="status">${esc(leg.reason)} ${esc(leg.how_to_fix||'')}</p>`:'';
-      const privRow=priv?`<div class="mem-inline"><span class="mem-medal sm">${icon('shield')}</span><div><p class="mem-label">${esc(priv.label)}</p></div>${toggle(priv.path)}${hintOf(priv,true)}</div>`:'';
-      return `<section class="mem-card" id="memCardSemantic" tabindex="-1" aria-labelledby="memSemTitle">
+      const privRow=priv?`<div class="mem-inline"><span class="set-medallion set-medallion-sm mem-medal sm">${icon('shield')}</span><div><p class="mem-label">${esc(priv.label)}</p></div>${toggle(priv.path)}${hintOf(priv,true)}</div>`:'';
+      return `<section class="set-panel mem-card" id="memCardSemantic" tabindex="-1" aria-labelledby="memSemTitle">
         ${head('search','Recherche sémantique','Retrouver un souvenir par son sens',toggle('semantic.enabled'),'memSemTitle')}
         ${has('semantic.enabled')?hintOf(field('semantic.enabled')):''}
         <p class="mem-text">Trouve aussi les souvenirs qui disent la même chose avec d’autres mots. Facultative : sans elle, le rappel par mots
@@ -485,9 +453,9 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
       const out=[eff('semantic.enabled')&&eff('semantic.allow_private')?'fournisseur d’embeddings':'',eff('tencent.enabled')&&eff('tencent.allow_private')?'sidecar Tencent':''].filter(Boolean);
       const priv=out.length?['warn','Envoyée au '+out.join(' et au ')]:['ok','Reste sur ce PC'];
       const row=(ico,label,[tone,text],attr)=>`<li><button type="button" class="mem-row" ${attr}>${icon(ico)}<span class="mem-row-k">${esc(label)}</span>`
-        +`<span class="mem-row-v mem-tone-${tone}"><span class="mem-dot" aria-hidden="true"></span><span>${esc(text)}</span></span>${icon('chevron')}</button></li>`;
-      return `<section class="mem-card" aria-labelledby="memSumTitle">
-        <div class="mem-head mem-head-2"><span class="mem-medal sm">${icon('doc')}</span><h3 class="mem-title" id="memSumTitle">Résumé du système mémoire</h3></div>
+        +`<span class="mem-row-v">${pill(tone,text)}</span>${icon('chevron')}</button></li>`;
+      return `<section class="set-panel mem-card" aria-labelledby="memSumTitle">
+        <div class="mem-head mem-head-2"><span class="set-medallion set-medallion-sm mem-medal sm">${icon('doc')}</span><h3 class="mem-title" id="memSumTitle">Résumé du système mémoire</h3></div>
         <ul class="mem-rows">
           ${row('db','Mémoire canonique',canon,'data-mem-center-tab="notes"')}
           ${row('brain','Rappel',recall,'data-mem-focus="memCardRecall"')}
@@ -509,8 +477,8 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
       const tile=(tab,ico,title,sub)=>`<button type="button" class="mem-tile" data-mem-center-tab="${tab}"><span class="mem-tile-top">${icon(ico)}${icon('chevron')}</span><strong>${esc(title)}</strong><small>${esc(sub)}</small></button>`;
       const err=st.live&&st.live.state==='ready'&&!(st.live.core&&st.live.core.ok)
         ?`<p class="mem-hint warn" role="status">Compteurs indisponibles : ${esc(st.live.core&&st.live.core.error||'Core ne répond pas')}. <button type="button" class="mem-linkish" data-mem-live-retry>Réessayer</button></p>`:'';
-      return `<section class="mem-card mem-cta" aria-labelledby="memCtaTitle">
-        <div class="mem-head"><span class="mem-medal">${icon('nodes')}</span><div><h3 class="mem-title" id="memCtaTitle">Ouvrir le Memory Center</h3>
+      return `<section class="set-panel set-panel-hot mem-card mem-cta" aria-labelledby="memCtaTitle">
+        <div class="mem-head"><span class="set-medallion mem-medal">${icon('nodes')}</span><div><h3 class="mem-title" id="memCtaTitle">Ouvrir le Memory Center</h3>
           <p class="mem-sub">Explorez vos notes, décidez des candidats et testez le rappel dans un espace dédié.</p></div>
           <button type="button" class="mem-cta-open" data-mem-center-tab="notes" aria-label="Ouvrir le Memory Center">${icon('chevron')}</button></div>
         <div class="mem-tiles">${tile('notes','doc','Notes',liveCount('notes','notes'))}${tile('candidates','star','Candidats',liveCount('cands','en attente'))}
@@ -520,12 +488,12 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
 
     function advancedBand(){
       const n=problems();
-      return `<section class="mem-card mem-adv" aria-labelledby="memAdvTitle">
-        <span class="mem-medal">${icon('wrench')}</span>
+      return `<section class="set-panel set-panel-quiet mem-card mem-adv" aria-labelledby="memAdvTitle">
+        <span class="set-medallion mem-medal">${icon('wrench')}</span>
         <div><h3 class="mem-title" id="memAdvTitle">Avancé &amp; diagnostic</h3><p class="mem-sub">Réglages d’opérateur et diagnostics.</p></div>
         <p class="mem-adv-note">${icon('lock')}<span>Le délai du rappel, le sidecar Tencent et l’état détaillé des index sont réglés dans le mode avancé.
           ${n?`<strong class="mem-tone-bad">${n} point${n>1?'s':''} à vérifier.</strong>`:''}</span></p>
-        <div class="mem-adv-actions"><button type="button" class="mem-btn" data-mem-open="memory_advanced">Ouvrir les paramètres avancés ${icon('chevron')}</button>
+        <div class="mem-adv-actions"><button type="button" class="set-btn set-btn-sm mem-btn" data-mem-open="memory_advanced">Ouvrir les paramètres avancés ${icon('chevron')}</button>
           <button type="button" class="mem-linkish" data-mem-diagnostics>Voir le diagnostic mémoire</button></div>
       </section>`;
     }
@@ -579,8 +547,8 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
     function knowledgeHtml(){
       const cards=SOURCES.filter(([,p])=>has(p)).map(([kind,path,legKey,ico,text])=>{
         const f=field(path),[tone,label,why]=sourceState(legKey,path);
-        return `<section class="mem-card mem-source" aria-labelledby="memSrc_${kind}">
-          <div class="mem-head"><span class="mem-medal">${icon(ico)}</span><div><h3 class="mem-title" id="memSrc_${kind}">${esc(f.label)}</h3><p class="mem-sub">${esc(text)}</p></div></div>
+        return `<section class="set-panel mem-card mem-source" aria-labelledby="memSrc_${kind}">
+          <div class="mem-head"><span class="set-medallion mem-medal">${icon(ico)}</span><div><h3 class="mem-title" id="memSrc_${kind}">${esc(f.label)}</h3><p class="mem-sub">${esc(text)}</p></div></div>
           ${why?`<p class="mem-hint${tone==='bad'?' bad':tone==='warn'?' warn':''}">${esc(why)}</p>`:''}
           <div class="mem-source-foot">${pill(tone,label)}${toggle(path)}</div>${hintOf(f)}</section>`;
       }).join('');
@@ -594,16 +562,16 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
         <p class="mem-text">Les connaissances enrichissent les réponses du cerveau sans jamais devenir de la mémoire canonique.
           Chaque source dit ce que vous avez choisi et ce que Core peut réellement fournir.</p>${live}
         <div class="mem-sources">${cards}</div>
-        <section class="mem-card" aria-labelledby="memScopesTitle">${head('folder','Portées de la mémoire','Qui peut lire quoi','','memScopesTitle')}
+        <section class="set-panel mem-card" aria-labelledby="memScopesTitle">${head('folder','Portées de la mémoire','Qui peut lire quoi','','memScopesTitle')}
           <ul class="mem-scopes"><li><strong>Privée</strong><span>Vous seul et le cerveau principal. Jamais envoyée à un fournisseur sans votre accord.</span></li>
             <li><strong>Partagée</strong><span>Ce que les agents peuvent lire pour vous aider.</span></li>
             <li><strong>Projet</strong><span>Rattachée à un projet ; lue par les agents qui travaillent dessus.</span></li></ul></section>
-        <section class="mem-card" aria-labelledby="memLoadTitle" data-mem-loadouts>${head('users','Accès par agent','Ce que chaque agent peut lire','','memLoadTitle')}
+        <section class="set-panel mem-card" aria-labelledby="memLoadTitle" data-mem-loadouts>${head('users','Accès par agent','Ce que chaque agent peut lire','','memLoadTitle')}
           ${loadouts}<p class="mem-hint">Lecture seule ici ; les règles se définissent dans le fichier de réglages.</p></section>
-        <section class="mem-card mem-adv" aria-labelledby="memExtTitle"><span class="mem-medal">${icon('cloud')}</span>
+        <section class="set-panel set-panel-quiet mem-card mem-adv" aria-labelledby="memExtTitle"><span class="set-medallion mem-medal">${icon('cloud')}</span>
           <div><h3 class="mem-title" id="memExtTitle">Source externe</h3><p class="mem-sub">Sidecar Tencent : réglage d’opérateur.</p></div>
           <p class="mem-adv-note">${icon('lock')}<span>Son adresse, son identifiant et son état vivent dans Avancé &amp; diagnostic ${pill(...tencentState())}</span></p>
-          <div class="mem-adv-actions"><button type="button" class="mem-btn" data-mem-open="memory_advanced">Ouvrir les paramètres avancés ${icon('chevron')}</button>
+          <div class="mem-adv-actions"><button type="button" class="set-btn set-btn-sm mem-btn" data-mem-open="memory_advanced">Ouvrir les paramètres avancés ${icon('chevron')}</button>
             <button type="button" class="mem-linkish" data-mem-diagnostics>Voir le diagnostic mémoire</button></div></section>
         ${saveBar()}</div>`;
     }
@@ -635,13 +603,14 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
       if(typeof ui.keepFocus==='function')ui.keepFocus(host,draw);else draw();
     }
     function coerce(el,f){
-      if(f.type==='bool')return el.checked;
+      if(f.type==='bool')return el.tagName==='BUTTON'?el.getAttribute('aria-checked')==='true':!!el.checked;
       if(f.type==='int'||f.type==='float'){if(el.value.trim()==='')return stored(f.path);const n=Number(el.value);return f.type==='int'?Math.trunc(n):n}
       return f.type==='text'||f.type==='id'?el.value.trim():el.value;
     }
     function set(p,v){if(v===stored(p))delete st.draft[p];else st.draft[p]=v}
     function bind(){
-      host.querySelectorAll('[data-mem]').forEach(el=>el.addEventListener('change',()=>{
+      host.querySelectorAll('[data-mem]').forEach(el=>{const sw=el.tagName==='BUTTON';el.addEventListener(sw?'click':'change',()=>{
+        if(sw){if(el.disabled)return;ui.setToggle(el,el.getAttribute('aria-checked')!=='true')}
         const f=field(el.dataset.mem);set(f.path,coerce(el,f));
         st.message=null;st.restart=false;
         /* Un choix qui rend un autre réglage incohérent le ramène à l'état sûr (même dans une autre section). */
@@ -649,7 +618,7 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
         if(!current('semantic.enabled')&&current('consolidation.mode')==='auto')set('consolidation.mode','manual');
         if(!String(current('tencent.url')||'').trim()&&current('tencent.enabled'))set('tencent.enabled',false);
         const id=el.id;render();const again=id&&host.querySelector('#'+id);if(again&&again.focus&&!(again.ownerDocument&&again===again.ownerDocument.activeElement))again.focus();
-      }));
+      })});
       const on=(sel,fn)=>host.querySelectorAll(sel).forEach(el=>el.addEventListener('click',()=>fn(el)));
       on('[data-mem-save]',()=>submit());
       on('[data-mem-reset]',()=>{if(!dirty()||st.busy)return;st.draft={};st.message=null;render()});
@@ -658,7 +627,7 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
       /* Curseurs : la valeur affichée suit le pouce pendant le geste ; le brouillon change au relâchement (`change`). */
       host.querySelectorAll('[data-mem-range]').forEach(el=>el.addEventListener('input',()=>{
         const f=field(el.dataset.mem),out=host.querySelector(`[data-mem-out="${el.dataset.mem}"]`);
-        el.style.setProperty('--fill',fill(f,el.value));
+        el.style.setProperty('--set-range-fill',fill(f,el.value));
         const text=f.type==='float'?percent(el.value):String(el.value);el.setAttribute('aria-valuetext',text);
         if(out)out.innerHTML=out.dataset.memMax?`${esc(el.value)} <small>/ ${esc(out.dataset.memMax)}</small>`:esc(text);
       }));

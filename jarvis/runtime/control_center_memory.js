@@ -46,19 +46,16 @@
 .mcw *{box-sizing:border-box}
 .mcw .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .mcw .mem-ico{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
-.mc-card{position:relative;display:grid;gap:12px;align-content:start;min-width:0;container-type:inline-size;padding:16px 18px;border:1px solid var(--mc-line);border-radius:14px;
-  background:radial-gradient(120% 90% at 0% 0%,color-mix(in srgb,var(--mc-hue) 6%,transparent),transparent 55%),var(--mc-glass);box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+.mcw .set-medallion .mem-ico{width:50%;height:50%}
+/* Panneaux, médaillons, onglets, boutons, badges, pastilles et champs : primitives .set-* de la fondation (Slice 07 de
+   refonte-ui-settings) ; les classes .mc-* ne gardent que la mise en page propre à l'atelier et servent d'accroches. */
+.mc-card{display:grid;gap:12px;align-content:start;container-type:inline-size}
 .mc-cardhead{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center}
 .mc-cardhead h3{margin:0;font-size:16px;font-weight:600;line-height:1.25}
 .mc-cardhead p{margin:2px 0 0;color:var(--mc-ink-2);font-size:12.5px}
-.mc-medal{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:var(--mc-hue);border:1.5px solid color-mix(in srgb,var(--mc-hue) 60%,transparent);
-  background:radial-gradient(circle at 50% 40%,color-mix(in srgb,var(--mc-hue) 18%,transparent),transparent 72%);box-shadow:0 0 14px color-mix(in srgb,var(--mc-hue) 22%,transparent)}
-.mc-medal .mem-ico{width:21px;height:21px}
-.mc-hero{grid-template-columns:minmax(0,1fr);align-items:center;gap:16px;padding:18px 20px;border-color:color-mix(in srgb,var(--mc-hue) 45%,transparent);
-  background:radial-gradient(90% 140% at 0% 50%,color-mix(in srgb,var(--mc-hue) 14%,transparent),transparent 60%),var(--mc-glass);
-  box-shadow:0 0 0 1px color-mix(in srgb,var(--mc-hue) 12%,transparent),0 0 30px color-mix(in srgb,var(--mc-hue) 12%,transparent)}
+.mc-hero{grid-template-columns:minmax(0,1fr);align-items:center;gap:16px}
 .mc-hero-id{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:center}
-.mc-hero-id .mc-medal{width:64px;height:64px}.mc-hero-id .mc-medal .mem-ico{width:30px;height:30px}
+.mc-hero-id .mc-medal{--set-medallion:60px}
 .mc-hero h2{margin:0;font-size:24px;font-weight:600;letter-spacing:-.01em;line-height:1.15}
 .mc-hero-id p{margin:4px 0 0;color:var(--mc-ink-2);max-width:56ch}
 .mc-stats{display:grid;gap:10px;grid-template-columns:repeat(2,minmax(0,1fr));margin:0;padding:0;list-style:none}
@@ -69,15 +66,10 @@
 .mc-stat span{font-size:12px;color:var(--mc-ink-2)}
 @container (min-width:620px){.mc-stats{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @container (min-width:860px){.mc-hero{grid-template-columns:minmax(0,.9fr) minmax(0,1.4fr)}}
-.mc-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
-.mc-tab{display:flex;align-items:center;justify-content:center;gap:10px;min-height:42px;padding:6px 10px;border:1px solid var(--mc-hair);border-radius:10px;
-  background:rgba(3,9,13,.45);color:var(--mc-ink-2);font:inherit;font-size:13.5px;cursor:pointer;white-space:nowrap;overflow:hidden}
-.mc-tab:hover{border-color:color-mix(in srgb,var(--mc-violet) 50%,transparent);color:var(--set-ink,var(--text))}
-.mc-tab[aria-selected=true]{color:var(--set-ink,var(--text));border-color:var(--mc-violet);background:color-mix(in srgb,var(--mc-violet) 16%,rgba(3,9,13,.5));
-  box-shadow:0 0 0 1px color-mix(in srgb,var(--mc-violet) 35%,transparent),0 0 16px color-mix(in srgb,var(--mc-violet) 25%,transparent)}
-.mc-tab[aria-selected=true] .mem-ico{color:var(--mc-violet)}
+.mc-tabs{--set-tone:var(--set-violet)}
+.mc-tab{min-height:42px;padding:0 10px;font-size:14px;overflow:hidden}
 .mc-tab-n{display:inline-grid;place-items:center;min-width:22px;height:20px;padding:0 6px;border-radius:999px;background:color-mix(in srgb,var(--mc-violet) 30%,transparent);font-size:11.5px;font-weight:600;color:var(--set-ink,var(--text))}
-@container (max-width:560px){.mc-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container (max-width:560px){.mc-tabs>.mc-tab{flex:1 1 calc(50% - var(--set-sp-3))}}
 .mc-work{display:grid;gap:14px;grid-template-columns:minmax(0,1fr);align-items:start}
 .mc-main,.mc-rail{display:grid;gap:14px;align-content:start;min-width:0}
 @container (min-width:860px){.mc-work.with-rail{grid-template-columns:minmax(0,1.9fr) minmax(260px,1fr)}}
@@ -86,17 +78,11 @@
 .mc-search .mem-ico{width:16px;height:16px;color:var(--mc-ink-3)}
 .mc-search input{flex:1;min-width:0;height:100%;border:0;background:transparent;color:inherit;font:inherit}
 .mc-search input:focus-visible{outline:none}.mc-search:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
-.mc-select{height:36px;max-width:100%;padding:0 8px;border:1px solid var(--mc-hair);border-radius:9px;background:rgba(3,9,13,.5);color:inherit;font:inherit;font-size:12.5px}
+.mc-select{width:auto;max-width:100%;min-height:36px;padding:6px 10px;font-size:12.5px}
 .mc-select option{background:#08121a}
 .mc-check{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--mc-ink-2)}
-.mc-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:34px;padding:5px 12px;border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);border-radius:9px;
-  background:rgba(3,9,13,.5);color:var(--set-ink,var(--text));font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap}
-.mc-btn:hover{border-color:var(--accent);box-shadow:0 0 10px color-mix(in srgb,var(--accent) 22%,transparent)}
-.mc-btn:disabled,.mc-btn[aria-disabled=true]{opacity:.6;cursor:not-allowed;box-shadow:none}
-.mc-btn .mem-ico{width:15px;height:15px}
-.mc-btn.primary{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,rgba(3,9,13,.5));font-weight:600}
-.mc-btn.ok{border-color:color-mix(in srgb,var(--ok) 55%,transparent);color:var(--ok)}
-.mc-btn.bad{border-color:color-mix(in srgb,var(--danger) 55%,transparent);color:var(--danger)}
+.mc-btn svg{width:15px;height:15px}
+.mc-btn.ok{color:var(--set-ok)}.mc-btn.bad{color:var(--set-bad)}
 .mc-link{padding:0;border:0;background:none;color:var(--accent);font:inherit;font-size:12.5px;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 .mc-tablewrap{min-width:0;overflow-x:auto;container-type:inline-size}
 .mc-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12.5px}
@@ -122,10 +108,8 @@
 .mc-page{display:inline-grid;place-items:center;min-width:34px;height:32px;padding:0 8px;border:1px solid var(--mc-hair);border-radius:8px;background:rgba(3,9,13,.45);color:inherit;font:inherit;cursor:pointer}
 .mc-page[aria-current=page]{border-color:var(--accent);color:var(--set-ink,var(--text));background:color-mix(in srgb,var(--accent) 18%,transparent);font-weight:600}
 .mc-page:disabled{opacity:.45;cursor:not-allowed}
-.mc-chip{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border:1px solid var(--mc-hair);border-radius:999px;font-size:11.5px;font-weight:600;color:var(--mc-ink-2);white-space:nowrap}
-.mc-chip.canon{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent)}
+.mc-chip{gap:5px}
 .mc-chip.derived{color:var(--role-accent-sky,#74c6ff);border-color:color-mix(in srgb,var(--role-accent-sky,#74c6ff) 40%,transparent)}
-.mc-chip.prop{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
 .mc-count{display:inline-grid;place-items:center;min-width:26px;height:24px;padding:0 7px;border-radius:999px;background:color-mix(in srgb,var(--mc-violet) 30%,transparent);color:var(--set-ink,var(--text));font-weight:700;font-size:12px}
 .mc-cands{display:grid;gap:8px;margin:0;padding:0;list-style:none}
 .mc-cand{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 10px;align-items:center;padding:10px 12px;border:1px solid var(--mc-hair);border-radius:10px;background:rgba(3,9,13,.45)}
@@ -141,7 +125,7 @@
 @container (min-width:860px){.mc-cand.full{grid-template-columns:minmax(0,1fr) auto}.mc-cand.full .mc-cand-a{grid-auto-flow:column}}
 .mc-recallform{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}
 .mc-recallform label{grid-column:1/-1;font-size:12.5px;font-weight:600}
-.mc-input{height:38px;min-width:0;padding:0 10px;border:1px solid var(--mc-hair);border-radius:9px;background:rgba(3,9,13,.5);color:inherit;font:inherit}
+.mc-input{min-height:38px;min-width:0;padding:6px 10px}
 .mc-results{display:grid;gap:6px;margin:0;padding:0;list-style:none}
 .mc-result{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 10px;align-items:center;padding:7px 2px;border-bottom:1px solid var(--mc-hair-1)}
 .mc-result .mc-notebtn strong{-webkit-line-clamp:2}
@@ -152,9 +136,7 @@
 .mc-legs{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));margin:0;padding:0;list-style:none}
 .mc-leg{display:grid;justify-items:center;gap:4px;padding:10px 6px;border:1px solid var(--mc-hair);border-radius:10px;background:rgba(3,9,13,.45);text-align:center;font-size:12px}
 .mc-leg .mem-ico{width:20px;height:20px;color:var(--mc-hue)}
-.mc-state{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600}
-.mc-dot{width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 7px currentColor;flex:none}
-.mc-ok{color:var(--ok)}.mc-off{color:var(--mc-ink-3)}.mc-bad{color:var(--danger)}.mc-warn{color:var(--warn)}.mc-info{color:var(--accent)}
+.mc-state{font-size:12px;font-weight:600}
 .mc-essentials{display:grid;gap:10px;grid-template-columns:repeat(2,minmax(0,1fr))}
 @container (min-width:700px){.mc-essentials{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .mc-ess{display:grid;gap:6px;align-content:start;padding:12px;border:1px solid var(--mc-hair);border-radius:10px;background:rgba(3,9,13,.45)}
@@ -320,9 +302,12 @@
 
     /* ------------------------------------------------------------ rendu */
     const busy=text=>`<div class="mc-loading" role="status"><span class="mc-spin" aria-hidden="true"></span>${esc(text||'Chargement…')}</div>`;
-    const errBox=(msg,retry)=>`<div class="mc-error" role="alert"><span>${esc(msg)}</span>${retry?`<button type="button" class="mc-btn" data-act="${retry}">${icon('refresh')}Réessayer</button>`:''}</div>`;
+    const errBox=(msg,retry)=>`<div class="mc-error" role="alert"><span>${esc(msg)}</span>${retry?`<button type="button" class="set-btn set-btn-sm mc-btn" data-act="${retry}">${icon('refresh')}Réessayer</button>`:''}</div>`;
     const lvl=l=>`<span class="mc-lvl mc-lvl-${esc(l)}" title="${esc(label(LEVELS,l))}">${esc(l)}</span>`;
-    const state=(status)=>{const [txt,cls]=STATUS[status]||[status||'—','mc-off'];return `<span class="mc-state ${cls}"><span class="mc-dot" aria-hidden="true"></span>${esc(txt)}</span>`};
+    /* Pastille d'état : la primitive `.set-dot` (Slice 07) ; `mc-state` reste l'accroche de la mise en page. */
+    const DOT={'mc-ok':'ok','mc-off':'off','mc-bad':'bad','mc-warn':'warn','mc-info':'info'};
+    const dot=(cls,txt)=>`<span class="mc-state set-dot set-dot-${DOT[cls]||'off'}">${esc(txt)}</span>`;
+    const state=(status)=>{const [txt,cls]=STATUS[status]||[status||'—','mc-off'];return dot(cls,txt)};
     const legs=()=>st.live.status==='ready'&&st.live.data&&st.live.data.available!==false?st.live.data.legs||{}:null;
 
     function heroHtml(){
@@ -339,8 +324,8 @@
       else if(live.data){index=live.data.index_ready===false?'En synchro':'Prêt';idxCls=' sm'}
       const stat=(ico,value,text,cls)=>`<li class="mc-stat">${icon(ico)}<strong class="${cls||''}">${esc(value)}</strong><span>${esc(text)}</span></li>`;
       const why=live.status==='error'?`<p class="mc-why" role="status" style="grid-column:1/-1">État vivant indisponible : ${esc(live.error)}. <button type="button" class="mc-link" data-act="reload-live">Réessayer</button></p>`:'';
-      return `<section class="mc-card mc-hero" aria-labelledby="mcHeroTitle">
-        <div class="mc-hero-id"><span class="mc-medal">${icon('db')}</span><div><h2 id="mcHeroTitle">Memory Center</h2>
+      return `<section class="set-panel set-panel-hot mc-card mc-hero" aria-labelledby="mcHeroTitle">
+        <div class="mc-hero-id"><span class="set-medallion mc-medal">${icon('db')}</span><div><h2 id="mcHeroTitle">Memory Center</h2>
           <p>Inspectez les notes canoniques, décidez des candidats de la consolidation et testez le rappel.</p></div></div>
         <ul class="mc-stats" aria-label="Résumé de la mémoire">${stat('doc',notes,'Notes mémoire')}${stat('users',pending,'Candidats en attente')}
           ${stat('layers',sources,srcSub)}${stat('bars',index,'Index de rappel (dérivé)',idxCls)}</ul>${why}</section>`;
@@ -348,8 +333,8 @@
 
     function tabsHtml(){
       const n=proposedCount();
-      return `<div class="mc-tabs" role="tablist" aria-label="Vues du Memory Center">${TABS.map(([k,l,ico])=>
-        `<button type="button" role="tab" class="mc-tab" id="mc-tab-${k}" data-act="tab" data-tab="${k}" aria-selected="${st.tab===k}" aria-controls="mcPanel" tabindex="${st.tab===k?0:-1}">${icon(ico)}<span>${esc(l)}</span>${k==='candidates'&&n?`<span class="mc-tab-n" aria-label="${n} en attente">${n}</span>`:''}</button>`).join('')}</div>`;
+      return `<div class="set-tabs set-tabs-fill mc-tabs" role="tablist" aria-label="Vues du Memory Center">${TABS.map(([k,l,ico])=>
+        `<button type="button" role="tab" class="set-tab mc-tab" id="mc-tab-${k}" data-act="tab" data-tab="${k}" aria-selected="${st.tab===k}" aria-controls="mcPanel" tabindex="${st.tab===k?0:-1}">${icon(ico)}<span>${esc(l)}</span>${k==='candidates'&&n?`<span class="mc-tab-n" aria-label="${n} en attente">${n}</span>`:''}</button>`).join('')}</div>`;
     }
 
     function notesTable(){
@@ -385,30 +370,30 @@
     const opt=(map,value,all)=>`<option value="">${all}</option>${Object.entries(map).map(([k,v])=>`<option value="${esc(k)}"${value===k?' selected':''}>${esc(k.startsWith('L')&&k.length===2?k+' · '+v:v)}</option>`).join('')}`;
     function notesCard(){
       const n=st.notes;
-      return `<section class="mc-card" aria-labelledby="mcNotesTitle">
-        <div class="mc-cardhead"><span class="mc-medal">${icon('doc')}</span><div><h3 id="mcNotesTitle">Notes mémoire</h3>
-          <p>${n.hits?'<span class="mc-chip derived">Dérivé</span> Résultats de l’index lexical ; ouvrir une note affiche son contenu canonique.':'<span class="mc-chip canon">Canonique</span> Notes Markdown retenues par JARVIS.'}</p></div><span></span></div>
+      return `<section class="set-panel mc-card" aria-labelledby="mcNotesTitle">
+        <div class="mc-cardhead"><span class="set-medallion mc-medal">${icon('doc')}</span><div><h3 id="mcNotesTitle">Notes mémoire</h3>
+          <p>${n.hits?'<span class="set-badge mc-chip derived">Dérivé</span> Résultats de l’index lexical ; ouvrir une note affiche son contenu canonique.':'<span class="set-badge set-badge-ok mc-chip canon">Canonique</span> Notes Markdown retenues par JARVIS.'}</p></div><span></span></div>
         <form class="mc-filters" data-form="notes" role="search" aria-label="Rechercher et filtrer les notes">
           <label class="mc-search">${icon('search')}<span class="sr">Rechercher une note</span><input id="mcQuery" type="search" value="${esc(n.q)}" placeholder="Rechercher une note…" autocomplete="off"></label>
-          <label><span class="sr">Niveau</span><select class="mc-select" id="mcLevel" data-filter>${opt(LEVELS,n.level,'Tous les niveaux')}</select></label>
-          <label><span class="sr">Rétention</span><select class="mc-select" id="mcRetention" data-filter>${opt(RETENTIONS,n.retention,'Toutes rétentions')}</select></label>
-          ${n.q.trim()?'':`<label><span class="sr">Type</span><select class="mc-select" id="mcKind" data-filter>${opt(KINDS,n.kind,'Tous les types')}</select></label>
+          <label><span class="sr">Niveau</span><select class="set-input mc-select" id="mcLevel" data-filter>${opt(LEVELS,n.level,'Tous les niveaux')}</select></label>
+          <label><span class="sr">Rétention</span><select class="set-input mc-select" id="mcRetention" data-filter>${opt(RETENTIONS,n.retention,'Toutes rétentions')}</select></label>
+          ${n.q.trim()?'':`<label><span class="sr">Type</span><select class="set-input mc-select" id="mcKind" data-filter>${opt(KINDS,n.kind,'Tous les types')}</select></label>
           <label class="mc-check"><input id="mcSuper" type="checkbox" data-filter${n.superseded?' checked':''}> Remplacées</label>`}
-          <button type="submit" class="mc-btn">Rechercher</button></form>
+          <button type="submit" class="set-btn set-btn-sm mc-btn">Rechercher</button></form>
         ${notesTable()}${notesFoot()}</section>`;
     }
 
     function candCard(x,full){
       const c=st.cands,pending=c.pending[x.id],confirm=c.confirm&&c.confirm.id===x.id?c.confirm:null,err=c.errors[x.id];
-      const meta=`<span class="mc-chip prop">Proposition</span>${lvl(x.level)}<span>${esc(label(KINDS,x.kind))}</span><span>confiance ${esc(Math.round(Number(x.confidence)*100))} %</span>${x.conflicts&&x.conflicts.length?`<span class="mc-warn">${x.conflicts.length} conflit(s)</span>`:''}`;
+      const meta=`<span class="set-badge set-badge-warn mc-chip prop">Proposition</span>${lvl(x.level)}<span>${esc(label(KINDS,x.kind))}</span><span>confiance ${esc(Math.round(Number(x.confidence)*100))} %</span>${x.conflicts&&x.conflicts.length?`<span class="mc-warn">${x.conflicts.length} conflit(s)</span>`:''}`;
       const acts=x.state==='proposed'?`<div class="mc-cand-a">${pending?busy(pending==='accept'?'Acceptation…':'Rejet…')
-        :`<button type="button" class="mc-btn ok" data-act="cand-accept" data-id="${esc(x.id)}" aria-label="Accepter « ${esc(x.title)} »">${icon('check')}Accepter</button>
-          <button type="button" class="mc-btn bad" data-act="cand-reject" data-id="${esc(x.id)}" aria-label="Rejeter « ${esc(x.title)} »">${icon('close')}Rejeter</button>`}</div>`
-        :`<div class="mc-cand-a"><span class="mc-chip">${esc(label(CAND_STATES,x.state))}</span></div>`;
+        :`<button type="button" class="set-btn set-btn-sm set-tone-ok mc-btn ok" data-act="cand-accept" data-id="${esc(x.id)}" aria-label="Accepter « ${esc(x.title)} »">${icon('check')}Accepter</button>
+          <button type="button" class="set-btn set-btn-sm set-btn-danger mc-btn bad" data-act="cand-reject" data-id="${esc(x.id)}" aria-label="Rejeter « ${esc(x.title)} »">${icon('close')}Rejeter</button>`}</div>`
+        :`<div class="mc-cand-a"><span class="set-badge mc-chip">${esc(label(CAND_STATES,x.state))}</span></div>`;
       const ask=confirm?`<div class="mc-cand-confirm" role="group" aria-label="Confirmer la décision">
           <p>${confirm.decision==='accept'?`Créer une note canonique « ${esc(x.title)} » ? Elle pourra être rappelée par le cerveau.`:'Rejeter ce candidat ? Aucune note n’est créée.'}</p>
-          <button type="button" class="mc-btn ${confirm.decision==='accept'?'primary':'bad'}" data-act="decide" data-id="${esc(x.id)}">${confirm.decision==='accept'?'Confirmer l’acceptation':'Confirmer le rejet'}</button>
-          <button type="button" class="mc-btn" data-act="cancel" data-id="${esc(x.id)}">Annuler</button></div>`:'';
+          <button type="button" class="set-btn set-btn-sm ${confirm.decision==='accept'?'set-btn-primary mc-btn primary':'set-btn-danger mc-btn bad'}" data-act="decide" data-id="${esc(x.id)}">${confirm.decision==='accept'?'Confirmer l’acceptation':'Confirmer le rejet'}</button>
+          <button type="button" class="set-btn set-btn-sm mc-btn" data-act="cancel" data-id="${esc(x.id)}">Annuler</button></div>`:'';
       const d=full&&c.open===x.id?c.detail[x.id]:null;
       const detail=full&&c.open===x.id?`<div class="mc-cand-body">${!d?busy():d.error?errBox(d.error):`<pre>${esc(d.body)}</pre>
           <dl class="mc-kv"><dt>Portée</dt><dd>${esc(d.scope)}</dd><dt>Rétention</dt><dd>${esc(label(RETENTIONS,d.retention))}</dd>
@@ -432,26 +417,26 @@
     }
     function candsRail(){
       const n=proposedCount();
-      return `<section class="mc-card" aria-labelledby="mcCandTitle">
-        <div class="mc-cardhead"><span class="mc-medal">${icon('users')}</span><div><h3 id="mcCandTitle">Candidats de consolidation</h3>
+      return `<section class="set-panel mc-card" aria-labelledby="mcCandTitle">
+        <div class="mc-cardhead"><span class="set-medallion mc-medal">${icon('users')}</span><div><h3 id="mcCandTitle">Candidats de consolidation</h3>
           <p>Propositions, pas encore des souvenirs : seule une acceptation crée une note.</p></div>${n?`<span class="mc-count" aria-label="${n} en attente">${n}</span>`:'<span></span>'}</div>
-        ${candsBody(false)}${n>RAIL_CANDS?`<button type="button" class="mc-btn" data-act="tab" data-tab="candidates">Voir les ${n} candidats ${icon('chevron')}</button>`:''}</section>`;
+        ${candsBody(false)}${n>RAIL_CANDS?`<button type="button" class="set-btn set-btn-sm mc-btn" data-act="tab" data-tab="candidates">Voir les ${n} candidats ${icon('chevron')}</button>`:''}</section>`;
     }
     function candsView(){
       const c=st.cands;
-      return `<section class="mc-card" aria-labelledby="mcCandAllTitle">
-        <div class="mc-cardhead"><span class="mc-medal">${icon('users')}</span><div><h3 id="mcCandAllTitle">Candidats de consolidation</h3>
+      return `<section class="set-panel mc-card" aria-labelledby="mcCandAllTitle">
+        <div class="mc-cardhead"><span class="set-medallion mc-medal">${icon('users')}</span><div><h3 id="mcCandAllTitle">Candidats de consolidation</h3>
           <p>Relisez chaque proposition, sa provenance et ses conflits avant de décider.</p></div>
-          <label><span class="sr">État</span><select class="mc-select" id="mcCandState">${Object.entries(CAND_STATES).map(([k,v])=>`<option value="${k}"${c.filter===k?' selected':''}>${esc(v)}</option>`).join('')}</select></label></div>
+          <label><span class="sr">État</span><select class="set-input mc-select" id="mcCandState">${Object.entries(CAND_STATES).map(([k,v])=>`<option value="${k}"${c.filter===k?' selected':''}>${esc(v)}</option>`).join('')}</select></label></div>
         ${candsBody(true)}</section>`;
     }
 
     function recallForm(compact){
       const r=st.recall;
       return `<form class="mc-recallform" data-form="recall"><label for="mcRecallQ">Phrase à tester</label>
-        <input class="mc-input" id="mcRecallQ" type="text" value="${esc(r.q)}" placeholder="Ce que vous diriez à JARVIS" autocomplete="off">
-        <button type="submit" class="mc-btn primary"${r.status==='loading'?' disabled':''}>${icon('play')}Tester</button>
-        ${compact?'':`<label class="mc-check" style="grid-column:1/-1">Souvenirs au plus <input class="mc-input" id="mcRecallMax" type="number" min="1" max="10" value="${esc(r.max)}" style="width:72px;height:32px"></label>`}</form>`;
+        <input class="set-input mc-input" id="mcRecallQ" type="text" value="${esc(r.q)}" placeholder="Ce que vous diriez à JARVIS" autocomplete="off">
+        <button type="submit" class="set-btn set-btn-sm set-btn-primary mc-btn primary"${r.status==='loading'?' disabled':''}>${icon('play')}Tester</button>
+        ${compact?'':`<label class="mc-check" style="grid-column:1/-1">Souvenirs au plus <input class="set-input mc-input" id="mcRecallMax" type="number" min="1" max="10" value="${esc(r.max)}" style="width:72px;height:32px"></label>`}</form>`;
     }
     function recallResults(full){
       const r=st.recall;
@@ -459,7 +444,7 @@
       if(r.status==='error')return errBox(r.error);
       if(!r.data)return full?'<p class="mc-empty">Saisissez une phrase : vous verrez ce que le cerveau recevrait, dans l’ordre, avec les scores. Rien n’est écrit ni injecté.</p>':'';
       const d=r.data,items=d.items||[],top=Math.max(...items.map(i=>Number(i.score)||0),0)||1;
-      const deg=(d.degraded||[]).map(c=>`<span class="mc-chip prop" title="${esc(c)}">${esc(label(DEGRADED,c))}</span>`).join('');
+      const deg=(d.degraded||[]).map(c=>`<span class="set-badge set-badge-warn mc-chip prop" title="${esc(c)}">${esc(label(DEGRADED,c))}</span>`).join('');
       const t=Object.entries(d.timings_ms||{}).map(([k,v])=>`${esc(k)} ${esc(Math.round(v))} ms`).join(' · ');
       const list=items.length?`<ol class="mc-results">${items.map(i=>`<li class="mc-result">${lvl(i.level)}
           <button type="button" class="mc-notebtn" data-act="note" data-id="${esc(i.id)}"><strong>${esc(i.title||i.id)}</strong></button>
@@ -467,12 +452,12 @@
           ${full?`<p class="mc-why"><strong>Pourquoi :</strong> ${esc(i.why||'—')}${i.rank_sources&&Object.keys(i.rank_sources).length?` · rang ${Object.entries(i.rank_sources).map(([k,v])=>`${esc(k)} ${esc(v)}`).join(', ')}`:''} · source <code>${esc(i.source)}</code></p>`:''}</li>`).join('')}</ol>`
         :`<p class="mc-empty">Rien ne serait rappelé pour cette phrase.${deg?' Un étage dégradé peut l’expliquer.':''}</p>`;
       return `<div id="mcRecallResult" tabindex="-1" class="mc-row2" style="display:grid;gap:8px">
-        <p class="mc-why" style="margin:0"><span class="mc-chip derived">Aperçu dérivé</span> Résultats (${items.length} souvenir${items.length>1?'s':''} rappelé${items.length>1?'s':''}), score de rang relatif au meilleur.${full?` Budget : ${esc(d.budget.max_items)} éléments de ${esc(d.budget.item_chars)} caractères.`:''}</p>
+        <p class="mc-why" style="margin:0"><span class="set-badge mc-chip derived">Aperçu dérivé</span> Résultats (${items.length} souvenir${items.length>1?'s':''} rappelé${items.length>1?'s':''}), score de rang relatif au meilleur.${full?` Budget : ${esc(d.budget.max_items)} éléments de ${esc(d.budget.item_chars)} caractères.`:''}</p>
         ${deg?`<p class="mc-row2" style="margin:0">${deg}</p>`:''}${full&&t?`<p class="mc-why" style="margin:0">Durées : ${t}</p>`:''}${list}</div>`;
     }
     function recallCard(full){
-      return `<section class="mc-card" aria-labelledby="mcRecallTitle">
-        <div class="mc-cardhead"><span class="mc-medal">${icon('bars')}</span><div><h3 id="mcRecallTitle">Test de rappel</h3>
+      return `<section class="set-panel mc-card" aria-labelledby="mcRecallTitle">
+        <div class="mc-cardhead"><span class="set-medallion mc-medal">${icon('bars')}</span><div><h3 id="mcRecallTitle">Test de rappel</h3>
           <p>Ce que JARVIS retrouverait pour une phrase. Rien n’est écrit ni injecté.</p></div><span></span></div>
         ${recallForm(!full)}${recallResults(full)}</section>`;
     }
@@ -487,9 +472,9 @@
         body=`${live.data.index_ready===false?'<p class="mc-why mc-warn" role="status" style="margin:0">Index en synchronisation : les tours se passent de rappel jusqu’à la fin ; les notes sont intactes.</p>':''}
           <ul class="mc-legs">${list.map(([n,l])=>`<li class="mc-leg" title="${esc(l.reason||'')}">${icon(LEG_ICON[n]||'layers')}<span>${esc(label(LEG_LABEL,n))}</span>${state(l.status)}</li>`).join('')}</ul>`;
       }
-      return `<section class="mc-card" aria-labelledby="mcHealthTitle">
-        <div class="mc-cardhead"><span class="mc-medal">${icon('db')}</span><div><h3 id="mcHealthTitle">Santé des index</h3>
-          <p><span class="mc-chip derived">Dérivé</span> Index jetables, reconstruits depuis les notes.</p></div><span></span></div>
+      return `<section class="set-panel mc-card" aria-labelledby="mcHealthTitle">
+        <div class="mc-cardhead"><span class="set-medallion mc-medal">${icon('db')}</span><div><h3 id="mcHealthTitle">Santé des index</h3>
+          <p><span class="set-badge mc-chip derived">Dérivé</span> Index jetables, reconstruits depuis les notes.</p></div><span></span></div>
         ${body}<button type="button" class="mc-link" data-act="diagnostics">Détail dans Avancé › Diagnostics</button></section>`;
     }
 
@@ -502,16 +487,16 @@
         const modeField=(s.memory.schema.sections||[]).flatMap(x=>x.fields).find(f=>f.path==='consolidation.mode');
         const mode=eff('consolidation.mode'),modeLabel=modeField?(modeField.options.find(o=>o.id===mode)||{label:mode}).label:mode;
         const tile=(ico,title,text,value,on)=>`<div class="mc-ess"><span class="mc-ess-h">${icon(ico)}${esc(title)}</span><p>${esc(text)}</p>
-          <span class="mc-state ${on?'mc-ok':'mc-off'}"><span class="mc-dot" aria-hidden="true"></span>${esc(value)}</span></div>`;
+          ${dot(on?'mc-ok':'mc-off',value)}</div>`;
         body=`<div class="mc-essentials">${tile('brain','Rappel','Utilise la mémoire pertinente en conversation.',eff('recall.enabled')?'Activé':'Désactivé',!!eff('recall.enabled'))}
           ${tile('layers','Souvenirs par tour','Limite des souvenirs injectés par réponse.',`${eff('recall.max_items')} au plus`,true)}
           ${tile('search','Recherche sémantique','Recherche par le sens (embeddings).',eff('semantic.enabled')?'Activée':'Désactivée',!!eff('semantic.enabled'))}
           ${tile('gear','Consolidation',mode==='auto'?'Accepte seule au-dessus du seuil.':'Vous validez les candidats.',modeLabel,true)}</div>`;
       }
-      return `<section class="mc-card" aria-labelledby="mcEssTitle">
-        <div class="mc-cardhead"><span class="mc-medal">${icon('gear')}</span><div><h3 id="mcEssTitle">Réglages essentiels</h3>
+      return `<section class="set-panel mc-card" aria-labelledby="mcEssTitle">
+        <div class="mc-cardhead"><span class="set-medallion mc-medal">${icon('gear')}</span><div><h3 id="mcEssTitle">Réglages essentiels</h3>
           <p>État enregistré ; ces réglages se modifient dans l’onglet Mémoire.</p></div>
-          <button type="button" class="mc-btn" data-act="settings">Modifier ${icon('chevron')}</button></div>${body}</section>`;
+          <button type="button" class="set-btn set-btn-sm mc-btn" data-act="settings">Modifier ${icon('chevron')}</button></div>${body}</section>`;
     }
 
     function knowledgeView(){
@@ -528,10 +513,10 @@
       const loads=rules==null?(s.status==='error'?errBox(s.error,'reload-settings'):busy())
         :rules.length?`<dl class="mc-kv">${rules.map(([a,r])=>`<dt><code>${esc(a)}</code></dt><dd>${(r.memory_scopes||[]).length} portée(s) mémoire${r.wiki===false?', sans wiki':''}${r.codegraph===false?', sans graphe':''}${r.skills===false?', sans skills':''}</dd>`).join('')}</dl>`
         :'<p class="mc-empty">Aucune règle personnalisée : les préréglages par agent s’appliquent.</p>';
-      return `<section class="mc-card" aria-labelledby="mcKnowTitle">
-        <div class="mc-cardhead"><span class="mc-medal">${icon('layers')}</span><div><h3 id="mcKnowTitle">Connaissances</h3>
-          <p><span class="mc-chip derived">Importé ou dérivé</span> Wiki, graphe de code et Skills enrichissent le cerveau sans être de la mémoire canonique. Lecture seule.</p></div>
-          <button type="button" class="mc-btn" data-act="knowledge-settings">Modifier ${icon('chevron')}</button></div>
+      return `<section class="set-panel mc-card" aria-labelledby="mcKnowTitle">
+        <div class="mc-cardhead"><span class="set-medallion mc-medal">${icon('layers')}</span><div><h3 id="mcKnowTitle">Connaissances</h3>
+          <p><span class="set-badge mc-chip derived">Importé ou dérivé</span> Wiki, graphe de code et Skills enrichissent le cerveau sans être de la mémoire canonique. Lecture seule.</p></div>
+          <button type="button" class="set-btn set-btn-sm mc-btn" data-act="knowledge-settings">Modifier ${icon('chevron')}</button></div>
         ${sources}<h4 class="mc-why" style="margin:4px 0 0;font-weight:600;color:inherit">Accès par agent</h4>${loads}</section>`;
     }
 
@@ -544,7 +529,7 @@
       const link=id=>`<button type="button" class="mc-link" data-act="note" data-id="${esc(id)}">${esc(id)}</button>`;
       const rel=[n.contradicts&&n.contradicts.length?`Contredit ${n.contradicts.map(link).join(' ')}`:'',n.supersedes&&n.supersedes.length?`Remplace ${n.supersedes.map(link).join(' ')}`:'',n.superseded_by?`Remplacée par ${link(n.superseded_by)}`:''].filter(Boolean).join(' · ');
       return `<h3 id="mcNoteTitle">${esc(n.title)}</h3>
-        <p class="mc-row2"><span class="mc-chip canon">Canonique</span><span class="mc-chip">Révision ${esc(n.revision)}</span>${n.superseded_by?'<span class="mc-chip prop">Remplacée</span>':''}</p>
+        <p class="mc-row2"><span class="set-badge set-badge-ok mc-chip canon">Canonique</span><span class="set-badge mc-chip">Révision ${esc(n.revision)}</span>${n.superseded_by?'<span class="set-badge set-badge-warn mc-chip prop">Remplacée</span>':''}</p>
         <dl class="mc-kv" aria-label="Dimensions de la mémoire"><dt>Abstraction</dt><dd>${lvl(n.level)} ${esc(label(LEVELS,n.level))}</dd>
           <dt>Rétention</dt><dd>${esc(label(RETENTIONS,n.retention))}</dd><dt>Type</dt><dd>${esc(label(KINDS,n.kind))}</dd><dt>Portée</dt><dd><code>${esc(n.scope)}</code></dd>
           <dt>Modifiée</dt><dd>${day(n.updated_at)} ${hour(n.updated_at)}</dd><dt>Confiance</dt><dd>${n.confidence==null?'—':esc(Math.round(n.confidence*100)+' %')}</dd>

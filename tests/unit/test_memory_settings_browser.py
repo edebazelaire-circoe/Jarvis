@@ -160,16 +160,43 @@ async def test_the_recall_switch_works_from_the_keyboard(served):
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         *OPEN, eval_("(document.getElementById('mem_recall_enabled').focus(),document.activeElement.id)", "focused"),
         key(" "),
-        eval_("[document.getElementById('mem_recall_enabled').checked,document.activeElement.id,"
+        eval_("[document.getElementById('mem_recall_enabled').getAttribute('aria-checked')==='true',document.activeElement.id,"
               "document.querySelector('.mem-savebar').classList.contains('dirty')]", "after"),
         key(" "),
-        eval_("[document.getElementById('mem_recall_enabled').checked,document.querySelector('.mem-savebar').classList.contains('dirty')]", "back"),
+        eval_("[document.getElementById('mem_recall_enabled').getAttribute('aria-checked')==='true',"
+              "document.querySelector('.mem-savebar').classList.contains('dirty')]", "back"),
+        # Primitive de la fondation (Slice 07) : bouton `role=switch` de `JarvisSettingsUI.toggle`.
+        eval_("(e=>[e.tagName,e.getAttribute('role'),e.classList.contains('set-switch')])(document.getElementById('mem_recall_enabled'))", "kind"),
     ]}])
     step = out["steps"][0]
     assert got(step, "focused") == "mem_recall_enabled"
     assert got(step, "after") == [False, "mem_recall_enabled", True]  # le focus reste sur l'interrupteur redessiné
     assert got(step, "back") == [True, False]
+    assert got(step, "kind") == ["BUTTON", "switch", True]
     assert out["console"] == [], out["console"]
+
+
+TENCENT = """(()=>{const c=document.querySelector('section[aria-labelledby=memExtTitle]');
+  return c?c.querySelector('.mem-pill').textContent.trim():null})()"""
+
+
+async def test_the_tencent_badge_says_preference_and_real_state(served):
+    """Pastille du sidecar Tencent (onglet Connaissances, retouche N1 des Slices 05/06) : Désactivé (préférence) ;
+    activé, l'état publié par Core (Actif, En panne) ; Core muet : « Activé · état inconnu », jamais « Actif »."""
+    def visit(**config) -> dict:
+        return {"width": 1440, "height": 900, "actions": [
+            *stub(**config), *OPEN, click("#modalTabs [data-section=knowledge_sources]"),
+            wait("!!document.querySelector('section[aria-labelledby=memExtTitle] .mem-pill')"
+                 "&&!/Lecture…/.test(document.getElementById('modalContent').textContent)", 8000),
+            eval_(TENCENT, "badge")]}
+
+    off = await drive(served.url, [visit()])
+    served.settings_file.write_text(json.dumps({"memory": {"tencent": {"enabled": True, "url": "http://127.0.0.1:9"}}}),
+                                    encoding="utf-8")
+    on = await drive(served.url, [visit(tencent="ok"), visit(tencent="degraded"), visit(down=True)])
+    assert got(off["steps"][0], "badge") == "Désactivé"
+    assert [got(step, "badge") for step in on["steps"]] == ["Actif", "En panne", "Activé · état inconnu"]
+    assert off["console"] == [] and on["console"] == [], (off["console"], on["console"])
 
 
 #: « Enregistrer la mémoire » est `aria-disabled` (pas `disabled`, qui ferait perdre le focus) tant qu'il ne sert à rien.

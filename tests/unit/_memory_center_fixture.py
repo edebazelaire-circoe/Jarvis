@@ -9,7 +9,8 @@ Réglages du faux Core (avant `MEMORY_STUB`, par `window.__memStub = {...}`) :
 - `notes` : nombre de notes (défaut 23) ; `cands` : nombre de candidats proposés (défaut 4) ;
 - `down` : `true` -> toutes les routes mémoire répondent 503 `core_unavailable` (état dégradé) ;
 - `refuse` : `true` -> une décision de candidat répond 409 `memory_conflict_revision` ;
-- `delay` : délai (ms) des réponses, pour voir les états de chargement.
+- `delay` : délai (ms) des réponses, pour voir les états de chargement ;
+- `tencent` : état publié de l'étage Tencent (`ok`, `degraded`, `unavailable`…) ; absent -> `disabled`.
 Chaque requête mémoire est notée dans `window.__memCalls` (`[méthode, chemin+requête, corps]`).
 """
 
@@ -60,7 +61,8 @@ MEMORY_STUB = r"""(()=>{
     if(path==='/status')return later(json({available:true,index_ready:true,recall_enabled:true,legs:{
       store:{status:'ok',reason_code:null,reason:''},lexical:{status:'ok',reason_code:null,reason:''},
       semantic:{status:'disabled',reason_code:'semantic_disabled',reason:'Recherche sémantique : désactivée dans les réglages.'},
-      tencent:{status:'disabled',reason_code:'tencent_disabled',reason:'Sidecar Tencent : désactivé.'},
+      tencent:cfg.tencent?{status:cfg.tencent,reason_code:cfg.tencent==='ok'?null:'tencent_'+cfg.tencent,reason:''}
+        :{status:'disabled',reason_code:'tencent_disabled',reason:'Sidecar Tencent : désactivé.'},
       ...__KNOWLEDGE_LEGS__}}));
     if(path==='/notes'){
       let list=notes.filter(n=>(!q.get('level')||n.level===q.get('level'))&&(!q.get('kind')||n.kind===q.get('kind'))&&(!q.get('retention')||n.retention===q.get('retention')));
