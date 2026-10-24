@@ -218,6 +218,58 @@ Après : `test_personalization_page_browser` 7 verts ; `test_personalization_pro
 - S02 : tests manquants (refus → restauration, échéance 15 s, brouillon d'instructions préservé, piège Tab) ; commentaire `control_center.html:871` (1080 → 1240 px) ; course possible `control_center_personalization.js:220` ; aides des rappels tronquées sans info-bulle ; espace vide en bas de « Réglages détaillés ».
 - S03 : une cellule `guarded` n'affiche pas le code d'erreur.
 - S05/S06 : test automatisé de la pastille Tencent (N1) ; valeurs navigateur préexistantes (`max=10` du test de rappel alors que Core accepte 50, libellés `LEVELS`/`RETENTIONS`/`KINDS`) ; `memoryCenterTab` non consommé si l'ouverture échoue.
+## Slice 04 — Architecture (2026-10-24)
+
+Ligne de base AVANT modification (worktree `r04`, HEAD `10f69d41`) : tests Python `*architecture*` / `*brain_config*`
++ registre + couches du shell 180 verts ; `test_architecture_settings_browser` + `test_brain_config_panel_browser`
+20 verts ; `test_architecture_agents_settings_browser` + `test_settings_visual_foundation_browser` 21 verts. Aucun
+échec préexistant.
+
+Livré :
+- Canevas (`control_center_architecture_settings.js`) : bandeau de trois cartes `.set-panel` (État du système, Règles
+  d'architecture, Actions rapides) calculées depuis le snapshot ; canevas en pleine largeur (au plus 3 colonnes),
+  inspecteur flottant au bord opposé à l'élément choisi (absent sans sélection, sous le canevas en colonne unique) ;
+  liaisons colorées par canal avec lueur (jetons `--set-*`), mutabilité toujours dite par le trait ; nœuds à médaillon
+  lumineux, nœud configuré marqué (cadre pointillé) ; journal d'architecture (`adapter.loadJournal`, `GET /api/trace`
+  filtré `architecture.*` / `brain_config.*`, sans `*.read`) avec états chargement/vide/erreur/indisponible ; légende
+  des canaux présents + mutabilité ; « Réinitialiser la disposition » en deux temps (`positions: {}`, aucune liaison
+  écrite). Le focus et les défilements (canevas, règles, journal) survivent aux rendus ; le journal ne remplace que sa
+  carte.
+- Fenêtre du cerveau (`control_center_brain_config_panel.js`) : verre flottant de la fondation, surtitre
+  « Configuration », médaillon, `.set-select`, `.set-btn`/`-primary`, segments à la teinte du nœud ; événements
+  `brain-config:shown` / `brain-config:closed`. Champs, brouillon, PATCH successifs inchangés.
+- `control_center.html` : une seule ligne (`subagentsTarget:'subagents'` au montage du canevas).
+- Doc : `docs/settings/architecture-tab.md` § 3 (composition, sémantique visuelle, éléments écartés),
+  `docs/settings/brain-config-panel.md` § 1 et § 5.
+- Tests : nouveau `test_architecture_workspace_browser.py` (4) ; `test_architecture_settings_browser.py` : colonnes
+  attendues à 1100 px = 3 (le canevas n'est plus partagé avec l'inspecteur), cas 800 px = 2 ajouté.
+- Preuves : `slices/04-architecture-agents-architecture-ui/evidence/` (2 avant, 6 après, JPEG).
+
+Écartés de la maquette (aucune donnée ni action réelle) : latence moyenne, requêtes/min, presets charger/sauvegarder,
+puces de responsabilités des nœuds, filtre « Tous les modules » et pause du journal, curseur continu de délégation
+(le contrat a 5 niveaux).
+
+Après : 180 + 20 (+4 cas de colonnes) verts ; `test_architecture_workspace_browser` 4 ; `test_architecture_agents_settings_browser`
+9 ; `test_settings_visual_foundation_browser` 12 ; panneau/registre/shell/montage 72. Instabilité vue une fois (focus
+perdu sur une règle par la relecture du journal) : corrigée (`renderJournal`, clés de focus), test ajouté.
+
+Risques de fusion : `control_center.html` touché d'une ligne (montage du canevas) ; les deux modules et leurs docs
+sont propres à la Slice 04.
+
+## Slice 04 — reprise avant fusion (2026-10-24)
+
+- Bloquant QA : avec 3 colonnes, la fenêtre du cerveau s'ouvrait au bord gauche (y = 8) sur « Toutes les
+  catégories », l'onglet, le titre et le rail. Nouvelle position initiale (`initialPos`, option `zone`) : côté du nœud
+  qui a le plus de place, à 16 px, rétrécie jusqu'à 340 px, jamais sur le nœud, hauteur bornée à la zone ; zone
+  donnée par `architecturePanelZone()` (`control_center.html` : sous `#modalTabs` + 8, à droite de
+  `#settingsCategories` + 16). Mode feuille sous 720 px et glisser inchangés.
+- Test ajouté (`test_architecture_workspace_browser`) : à 1672×941, 1254×1254, 1280×800, `#settingsBack`, l'onglet actif
+  et le rail restent atteignables (`elementFromPoint`), fenêtre près du nœud, sans le couvrir, ≥ 340×300.
+  `test_brain_config_panel_browser` : le menu de Voice s'ouvre au clavier (la fenêtre, contre Core, couvre Voice).
+- Mineur : le serveur journalise la réinitialisation comme un déplacement (`architecture.layout.saved`) ; sans changer
+  le contrat, le journal de la page lit `data.nodes === 0` comme « Disposition réinitialisée ».
+- Tests : panneau navigateur 8, espace de travail 5, canevas statique + js + couches du shell + panneau js 81,
+  `test_architecture_agents_settings_browser` + autres 59 verts. Captures `apres-fenetre-*` refaites.
 
 ## LOG Drive d'origine
 # Execution log

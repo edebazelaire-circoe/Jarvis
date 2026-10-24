@@ -22,6 +22,7 @@ const win = JarvisBrainConfigPanel.open(panelsHost, {
   brainId: nodeId,                // identifiant du nœud du graphe (voice, luna, core, tool_brain)
   field,                          // facultatif : champ à montrer (« delegation » depuis une liaison gouvernée)
   returnFocus: JarvisBrainConfigPanel.canvasReturnFocus(canvasHost, nodeId, detail), // facultatif
+  zone: () => ({left, top, right, bottom}), // facultatif : où la fenêtre s'ouvre (§ 6), sinon l'écran
   anchor: () => canvasHost.querySelector(`[data-arch-node="${nodeId}"]`),            // facultatif : hauteur initiale
   nodeLabel: id => label,         // facultatif : nom des pairs dans le résumé des connexions
   onFocusConnection: id => view.select('connection', id),  // « Voir sur le graphe »
@@ -42,7 +43,8 @@ win.destroy();   // démonte sans condition (changement de page)
 - Le contrôleur expose aussi `show`, `apply`, `discard`, `setDraft(field, value)`, `reload`, `confirm(bool)`,
   `moveBy(dx, dy)`, `state`, `brainId`, `dirty`, `element`.
 - Événements sur l'hôte (bouillonnent) : `brain-config:saved` (même `detail` que `onSaved`), `brain-config:reread`
-  (même `detail` que `onReread`).
+  (même `detail` que `onReread`), `brain-config:shown` (`{brainId}`, à chaque cerveau montré) et
+  `brain-config:closed` (`{brainId}`, à la fermeture ou au démontage) : le canevas y marque le nœud configuré.
 - `onSaved` reçoit toujours la configuration **relue** : une réponse `ok` sans `config` fait relire la fenêtre avant
   de prévenir l'hôte. Après une issue inconnue (délai dépassé, réseau), la fenêtre relit puis appelle `onReread` :
   l'écriture a pu passer, l'hôte s'aligne sur ce qui a été relu (la page des Réglages y aligne son brouillon
@@ -119,7 +121,17 @@ champ a son propre propriétaire, sa propre prise d'effet et ses propres refus.
   retiré, et un message le dit à côté du champ.
 - Des instructions plus longues que `max_length` bloquent « Appliquer » et le disent.
 
-## 5. Accessibilité, focus, mouvement
+## 5. Apparence (refonte-ui-settings, Slice 04)
+
+Verre flottant de la fondation visuelle (`--set-glass-float`, `--set-r-xl`, bord `--set-edge-hot` et lueur
+`--set-glow-hot` à la teinte du nœud `--bcp-accent`, même formule que le canevas). En-tête : surtitre
+« Configuration », grand titre, médaillon lumineux, sous-titre (identifiant, type, processus). Listes :
+primitive `.set-select` ; boutons : `.set-btn` (Annuler), `.set-btn-primary` (Appliquer), `.set-btn-sm`
+(« Voir sur le graphe », confirmation, Relire). La délégation reste un contrôle segmenté de **cinq niveaux** (le
+curseur continu de la maquette n'existe pas dans le contrat) à la teinte du nœud ; mission en encart enfoncé. Le
+nœud configuré porte un cadre pointillé lumineux sur le canevas tant que la fenêtre est ouverte.
+
+## 6. Accessibilité, focus, mouvement
 
 - `role="dialog"`, `aria-modal="false"` (le graphe reste utilisable à la souris), titre et sous-titre reliés.
 - À l'ouverture, le focus va sur le titre (ou sur le contrôle de `field`). Tab et Maj+Tab tournent dans la fenêtre
@@ -131,9 +143,13 @@ champ a son propre propriétaire, sa propre prise d'effet et ses propres refus.
   Slice), le bouton « Configurer… » de l'inspecteur, sinon le nœud. Sans `returnFocus`, l'élément actif à
   l'ouverture.
 - Glisser par l'en-tête, ou le bouton de prise + flèches (pas de 16 px) ; la fenêtre reste dans l'écran. Position
-  initiale : contre le bord droit de l'hôte (colonne de l'inspecteur), à la hauteur de l'ancre ; si l'ancre (le nœud)
-  tomberait dessous, contre le bord gauche de l'écran, sinon du côté qui a le plus de place (Slice 07 : la fenêtre ne
-  couvre pas le cerveau qu'elle configure).
+  initiale (refonte-ui-settings, Slice 04, remplace la règle de la Slice 07) : dans la **zone** `opts.zone`
+  (rectangle ou fonction ; sans elle, l'écran), du côté du nœud configuré qui a le plus de place, à 16 px de lui,
+  à la hauteur de l'ancre ; elle s'y rétrécit jusqu'à 340 px plutôt que de passer dessus ou dessous (repli quand
+  aucun côté n'a 340 px). Elle ne recouvre jamais le nœud ; sa hauteur maximale est la place restante dans la zone
+  (le corps défile). Dans les Réglages, `architecturePanelZone()` (`control_center.html`) donne la zone : sous
+  `#modalTabs` + 8 px, de `#settingsCategories` + 16 px (rail à gauche) jusqu'au bord droit de l'overlay, pour que
+  « Toutes les catégories », l'onglet actif et le rail restent atteignables.
 - Sous 720 px : panneau en bas d'écran sur toute la largeur, voile derrière (un clic ferme, avec garde), pas de
   glisser, aucun défilement horizontal.
 - États qui durent : lecture et enregistrement montrent un compteur de secondes et une échéance (`timeoutMs`) ; à

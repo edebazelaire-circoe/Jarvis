@@ -5671,6 +5671,16 @@ function syncCoreCliDraft(config){
   SET.clis=null;  // le CLI actif a pu changer : Runtime & CLI refait sa détection
   console.info('architecture_settings.core_cli_synced',{provider,model:model||'(défaut)'});
 }
+/* Zone d'ouverture de la fenêtre d'un cerveau (refonte-ui-settings, Slice 04) : sous les onglets de la page et à droite
+   du rail des catégories, pour que « Toutes les catégories », l'onglet actif et le rail restent atteignables. Rail
+   empilé au-dessus du contenu (fenêtre étroite) : il est déjà au-dessus des onglets, seule la limite haute compte. */
+function architecturePanelZone(){
+  const shown=el=>el&&el.getClientRects().length?el.getBoundingClientRect():null;
+  const ov=shown(document.getElementById('overlay'))||{left:0,top:0,right:innerWidth,bottom:innerHeight};
+  const tabs=shown(document.getElementById('modalTabs')),rail=shown(document.getElementById('settingsCategories'));
+  const beside=rail&&tabs&&rail.right<=tabs.left;
+  return {left:beside?rail.right+16:ov.left,top:tabs?tabs.bottom+8:ov.top,right:ov.right,bottom:ov.bottom};
+}
 function mountArchitectureSettings(host,context){
   const A=window.JarvisArchitectureSettings,P=window.JarvisBrainConfigPanel;
   if(!A||!P){
@@ -5693,11 +5703,12 @@ function mountArchitectureSettings(host,context){
     event.preventDefault();ARCH.panel.close();
   });
   const nodeLabel=id=>{const n=ARCH.view&&((ARCH.view.state.snapshot||{}).nodes||[]).find(x=>x.id===id);return n?n.label:id};
-  ARCH.view=A.mount(canvas,{adapter:A.createHttpAdapter(),onConfigureBrain:(nodeId,detail)=>{
+  ARCH.view=A.mount(canvas,{adapter:A.createHttpAdapter(),subagentsTarget:'subagents',onConfigureBrain:(nodeId,detail)=>{
     if(!context.isCurrent())return;
     ARCH.panel=P.open(panels,{adapter:panelAdapter,brainId:nodeId,field:detail&&detail.field,
       returnFocus:P.canvasReturnFocus(canvas,nodeId,detail||{}),
       anchor:()=>canvas.querySelector(`[data-arch-node="${CSS.escape(nodeId)}"]`),
+      zone:architecturePanelZone,
       nodeLabel,
       onFocusConnection:id=>{if(ARCH.view)ARCH.view.select('connection',id)},
       onSaved:saved=>{
