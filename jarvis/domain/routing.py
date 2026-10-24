@@ -333,6 +333,9 @@ class RoutingDecision:
     # (`explicit` = politique du rôle, `inherited:<profil>` = politique du profil). Vides hors rôle.
     role_id: str = ""
     provenance: str = ""
+    # Couche par rôle, CLI Claude : `model` est la famille demandée (`model_family`) ; ceci est l'identifiant
+    # enregistré dont elle vient quand il diffère (`claude-sonnet-4-5` -> `sonnet`). Vide sinon.
+    saved_model: str = ""
 
     @property
     def ref(self) -> CandidateRef:
@@ -354,6 +357,8 @@ class RoutingDecision:
         if self.role_id:
             payload["role_id"] = self.role_id
             payload["provenance"] = self.provenance
+        if self.saved_model:
+            payload["saved_model"] = self.saved_model
         return payload
 
 

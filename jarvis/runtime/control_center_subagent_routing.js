@@ -35,7 +35,9 @@
     const x=obj(c);
     return {agent:str(x.agent),model:str(x.model),position:Number.isInteger(x.position)?x.position:i,label:str(x.label),
       available:x.available!==false,unavailable_reason:str(x.unavailable_reason),
-      selectable:x.selectable!==false,selectable_reason:str(x.selectable_reason)};
+      selectable:x.selectable!==false,selectable_reason:str(x.selectable_reason),
+      /* Identifiant enregistré que le serveur sert par sa famille (CLI Claude, HV-ARCH-007) ; vide sinon. */
+      saved_model:str(x.saved_model)};
   }
   const ROLE_FIELDS=['role_id','provenance','explicit','candidates','allow_general_fallback','fallback','preview'];
   function normalizeRole(r){

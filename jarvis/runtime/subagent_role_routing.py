@@ -34,7 +34,7 @@ from threading import RLock
 from typing import Any, Mapping, Sequence
 
 from jarvis.adapters.file_replace import replace_with_retry
-from jarvis.domain import role_routing, routing
+from jarvis.domain import model_family, role_routing, routing
 from jarvis.domain.role_routing import RolePolicy, RoleRoutingDocument
 from jarvis.domain.routing import CandidateRef, ModelCandidate, NoEligibleCandidateError, RoutingError, RoutingPolicy
 from jarvis.domain.subagent_roles import ROLES, ROLE_ALIASES, SubagentRole
@@ -195,7 +195,10 @@ class RoleRoutingStore:
         fallback = payload.get("allow_general_fallback", True)
         if not isinstance(fallback, bool):
             raise RoutingError(BAD_PAYLOAD_CODE, "« allow_general_fallback » doit être vrai ou faux.")
-        candidates = agent_routing.parse_candidates(payload["candidates"], role.id, owner="le rôle")
+        # Le CLI Claude se règle par famille (`model_family`) : un identifiant reçu (`claude-sonnet-4-5`) est
+        # enregistré comme sa famille (`sonnet`), qui est ce que l'outil `Agent` reçoit vraiment.
+        candidates = model_family.normalize_refs(
+            agent_routing.parse_candidates(payload["candidates"], role.id, owner="le rôle"))
         if candidates and not any(ref.agent == HOST_AGENT for ref in candidates):
             # Sans candidat sur le CLI hôte, le hook ne pourrait jamais servir ce rôle : chaque lancement
             # serait refusé, même en Dupliqué. Refusé à l'écriture plutôt qu'au premier appel.
@@ -268,7 +271,10 @@ def _now() -> str:
 # -------------------------------------------------------------- description
 
 
-def _candidate_view(ref: CandidateRef, position: int, known: Mapping[tuple[str, str], ModelCandidate]) -> dict[str, Any]:
+def _candidate_view(saved: CandidateRef, position: int, known: Mapping[tuple[str, str], ModelCandidate]) -> dict[str, Any]:
+    # Affiché par famille pour le CLI Claude ; l'identifiant enregistré reste dit (`saved_model`) tant que
+    # l'utilisateur ne réenregistre pas : rien n'est réécrit à la lecture.
+    ref = model_family.normalize_ref(saved)
     item = known.get((ref.agent, ref.model))
     available = bool(item and item.available)
     reason = "" if available else (
@@ -284,7 +290,21 @@ def _candidate_view(ref: CandidateRef, position: int, known: Mapping[tuple[str, 
         "unavailable_reason": reason,
         "selectable": selectable,
         "selectable_reason": "" if selectable else (reason or HOST_ONLY_REASON),
+        **({"saved_model": saved.model} if saved.model != ref.model else {}),
     }
+
+
+def _candidate_views(refs: Sequence[CandidateRef], known: Mapping[tuple[str, str], ModelCandidate]) -> list[dict[str, Any]]:
+    """Les vues d'une liste ordonnée, une par candidat **affiché** : deux identifiants d'une même famille n'en font qu'un."""
+    views: list[dict[str, Any]] = []
+    seen: set[CandidateRef] = set()
+    for ref in refs:
+        shown = model_family.normalize_ref(ref)
+        if shown in seen:
+            continue
+        seen.add(shown)
+        views.append(_candidate_view(ref, len(views), known))
+    return views
 
 
 def _preview(role: SubagentRole, document: RoleRoutingDocument, profiles: RoutingPolicy,
@@ -323,14 +343,11 @@ def describe_role(role: SubagentRole, document: RoleRoutingDocument, profiles: R
         "binding_reason": effective.binding_reason,
         "restorable": effective.explicit,
         "allow_general_fallback": effective.allow_general_fallback,
-        "candidates": [_candidate_view(ref, index, known) for index, ref in enumerate(effective.candidates)],
+        "candidates": _candidate_views(effective.candidates, known),
         "fallback": {
             "enabled": effective.allow_general_fallback and fallback_applicable,
             "profile": routing.GENERAL_PROFILE,
-            "candidates": [
-                _candidate_view(ref, index, known)
-                for index, ref in enumerate(general.candidates if general is not None and general.enabled else ())
-            ],
+            "candidates": _candidate_views(general.candidates if general is not None and general.enabled else (), known),
         },
         "preview": _preview(role, document, profiles, host),
     }
@@ -374,6 +391,12 @@ def describe(
 
 def enrich(candidates: Sequence[ModelCandidate], profiles: RoutingPolicy, document: RoleRoutingDocument,
            *, unavailable_reasons_by_agent: Mapping[str, str] | None = None) -> list[ModelCandidate]:
-    """`agent_routing.with_saved` étendu aux listes de rôle."""
-    return agent_routing.with_saved(candidates, profiles, unavailable_reasons_by_agent=unavailable_reasons_by_agent,
-                                    extra_refs=document.refs())
+    """`agent_routing.with_saved` étendu aux listes de rôle, le CLI Claude regroupé par famille (`model_family`).
+
+    Les listes enregistrées sont lues par famille : un ancien `claude-sonnet-4-5` retrouve la famille `sonnet` du
+    catalogue au lieu d'apparaître comme un candidat disparu.
+    """
+    saved = [ref for entry in profiles.profiles for ref in entry.candidates] + list(document.refs())
+    return agent_routing.with_saved(model_family.collapse_candidates(candidates), routing.RoutingPolicy(enabled=profiles.enabled),
+                                    unavailable_reasons_by_agent=unavailable_reasons_by_agent,
+                                    extra_refs=model_family.normalize_refs(saved))

@@ -594,7 +594,10 @@ Un refus du serveur est un résultat `{ok:false,status,code,reason,snapshot}` ; 
   candidats harness + modèle (position, libellé servi, « Disponible » ou « Indisponible : raison », « Non
   lançable comme sous-agent : `selectable_reason` » quand le serveur dit `selectable: false`) ; Monter,
   Descendre, Retirer, et Alt + flèches haut/bas sur une ligne ; l'ajout choisit un harness puis un modèle
-  parmi `harnesses` (indisponibles et doublons visibles mais désactivés, avec la raison) ; l'interrupteur
+  parmi `harnesses` (indisponibles et doublons visibles mais désactivés, avec la raison) — pour Claude Code, une
+  entrée par **famille** (« Sonnet (version courante du CLI) »), jamais un identifiant de version qui ne serait
+  pas celui lancé (HV-ARCH-007, § 10) ; un ancien réglage par identifiant affiche sa famille et « Enregistré sous
+  `claude-…` » (`saved_model`, `data-sar-saved-model`) jusqu'à la prochaine modification du rôle ; l'interrupteur
   **Repli automatique sur la liste générale** (`allow_general_fallback`, seule commande globale réelle, la
   liste `general` est citée) ; l'aperçu servi (`preview` : candidat retenu et raison, candidats écartés,
   `cli_default`, `refused`) ; Enregistrer pour ce rôle, Annuler mes changements, Restaurer l'héritage
@@ -744,9 +747,34 @@ ni lue ni effacée, pourvu qu'elle soit un objet.
    routé par `code`, comme `PROFILE_RULE` l'enseigne), à défaut le `default_profile` du rôle (`[coder]` seul ->
    `code`, auparavant `general`).
 
-Ce que le hook écrit dans `model` de l'outil `Agent` est la **famille** du modèle retenu (`haiku`, `sonnet`,
-`opus`, `fable` : seules valeurs que l'outil accepte, constat de la Slice 08 sur le vrai CLI) ;
-`agent.routing.decided` porte l'identifiant du catalogue (`model`) et la valeur écrite (`agent_model`).
+**Un rôle se règle par famille sur le CLI Claude** (`jarvis/domain/model_family.py`). Ce que le hook écrit dans
+`model` de l'outil `Agent` est une **famille** (`sonnet`, `opus`, `haiku`, `fable` : seules valeurs que l'outil
+accepte, constat de la Slice 08 sur le vrai CLI), que le CLI résout vers **la version courante de cette famille**.
+Décision du Human du 2026-10-24 (HV-ARCH-007) : c'est le comportement voulu — « Sonnet » veut dire la version
+courante de Sonnet dans le CLI, aujourd'hui Sonnet 5.5 (`claude-sonnet-5-5`). En conséquence :
+
+- **candidats** : pour l'agent `claude`, la lecture de l'onglet (`harnesses`, `candidates`, `fallback`) sert une
+  entrée par famille que le catalogue connaît (`model_family.collapse_candidates`), libellée
+  « Sonnet (version courante du CLI) » ; plusieurs identifiants d'une même famille (`claude-sonnet-4-5`,
+  `claude-sonnet-5-5`) ne sont plus des choix distincts. Une famille est disponible si l'un de ses identifiants
+  l'est. Le numéro de version n'est pas affiché : il dépend du CLI installé, pas du catalogue du fournisseur,
+  et rien ici ne le connaît de façon fiable. Le choix « Modèle par défaut du CLI » (`model: ""`) et un
+  identifiant Claude sans famille reconnue restent tels quels ;
+- **écriture** : `PUT` enregistre chaque candidat Claude par sa famille (`claude-sonnet-4-5` reçu -> `sonnet`
+  écrit), doublons de famille retirés ;
+- **compatibilité** : une politique déjà enregistrée avec un identifiant complet fonctionne toujours et se lit
+  par sa famille (`model_family.normalize_ref`), en mémoire seulement : le fichier n'est pas réécrit tant que
+  l'utilisateur ne réenregistre pas le rôle. La vue d'un tel candidat porte `saved_model` (l'identifiant
+  enregistré) et la page le dit (« Enregistré sous … : le CLI lance la version courante de cette famille »).
+  Les listes par profil héritées (et le repli `general`) sont lues par famille de la même manière ;
+- **résolution** (`role_routing.resolve_for_role`) : candidats regroupés par famille, listes lues par famille ;
+  `RoutingDecision.model` est la famille demandée, `saved_model` l'identifiant enregistré dont elle vient
+  quand il diffère ;
+- **trace** : `agent.routing.decided` porte `model` (famille pour un rôle), `model_family` et `agent_model` (la
+  valeur écrite dans l'outil) et, s'il existe, `saved_model` ; le message dit « modèle Sonnet (version courante
+  du CLI), enregistré « claude-sonnet-4-5 » ». Sans rôle annoncé (routage par profil), `model` reste
+  l'identifiant du catalogue et `agent_model` / `model_family` la famille écrite ;
+- **autres CLI** (Codex…) : identifiants inchangés, aucune famille déduite.
 
 Le profil retenu fixe toujours les capacités exigées (`[code]` exige `code`). Sans rôle annoncé, rien ne
 change. `agent.routing.decided` porte en plus `role_id` et `provenance` (`explicit` | `inherited:<profil>`) à
@@ -768,7 +796,8 @@ d'un autre CLI que Claude (seul hôte de l'outil `Agent`), avec `selectable_reas
 (`delegation_mode`, `profiles_enabled`), `harnesses` (catalogue, `agent_routing.group_by_harness`) et `roles[]`
 dans l'ordre du registre : `role_id`, `marker`, `name`, `aliases`, `default_profile`, `provenance`, `explicit`,
 `inherited_profile`, `binding` + `binding_reason`, `restorable`, `allow_general_fallback`, `candidates[]`
-(`agent`, `model`, `position`, `label`, `available`, `unavailable_reason`, `selectable`, `selectable_reason`),
+(`agent`, `model`, `position`, `label`, `available`, `unavailable_reason`, `selectable`, `selectable_reason`,
+et `saved_model` pour un ancien identifiant Claude lu par sa famille),
 `fallback` (`enabled`, `profile`, `candidates[]`) et `preview` (`selected` | `cli_default` | `refused`).
 
 **Écritures.** `PUT /api/subagent-role-routing/{role_id}` `{"base_revision", "candidates",

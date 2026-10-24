@@ -341,3 +341,35 @@ process.stdout.write(JSON.stringify({phase:v.state.phase,html:host.innerHTML,err
     assert "Cette section n’a pas pu afficher la politique servie : piège" in out["html"]
     assert 'data-sar-text="coder"' in out["html"]  # l'éditeur d'instructions reste
     assert "subagent_settings_routing_render_failed" in [e[0] for e in out["errors"]]
+
+
+def test_claude_models_are_offered_by_family_and_a_legacy_id_says_where_it_comes_from(tmp_path):
+    """HV-ARCH-007 (2026-10-24) : la VRAIE lecture du serveur, sur un catalogue Claude à plusieurs versions et une
+    politique enregistrée par identifiant complet, rendue par la page : un choix par famille, aucune version
+    trompeuse, et l'identifiant d'origine dit sans être réécrit."""
+    from jarvis.domain import routing as routing_domain
+    from jarvis.runtime import agent_routing, subagent_role_routing as store_module
+
+    claude = {"id": "claude", "label": "Claude Code", "model_provider": "anthropic",
+              "capabilities": [routing_domain.CODE, routing_domain.SEMANTIC], "available": True, "error": ""}
+    catalogue = {"anthropic": [{"id": f"claude-{name}", "label": f"Claude {name}", "roles": ("text",)}
+                               for name in ("sonnet-4-5", "sonnet-5-5", "haiku-4-5")]}
+    data_root = tmp_path / "rt"
+    data_root.mkdir()
+    (data_root / store_module.STORE_FILE).write_text(json.dumps({"schema_version": 1, "revision": 2, "roles": {
+        "qa": {"candidates": [{"agent": "claude", "model": "claude-sonnet-4-5"}], "allow_general_fallback": False}}}),
+        encoding="utf-8")
+    policy = agent_routing.load_policy({})
+    document = store_module.load_document(data_root)
+    snapshot = json.loads(json.dumps(store_module.describe(
+        document, policy, store_module.enrich(agent_routing.build_candidates([claude], catalogue), policy, document))))
+    out = run(tmp_path, """
+const v=await open(R.createFixtureAdapter(DATA.routing));v.select('qa');
+const opts=[...host.innerHTML.matchAll(/<option value="([^"]*)"[^>]*>([^<]*)</g)].map(m=>[m[1],m[2]]);
+process.stdout.write(JSON.stringify({html:host.innerHTML,opts,draft:v.state.routeDrafts,errors}));""", routing=snapshot)
+    models = [value for value, _label in out["opts"] if value not in ("claude",)]
+    assert "sonnet" in models and "haiku" in models
+    assert not any(value.startswith("claude-") for value in models), models
+    assert "Claude Code · Sonnet (version courante du CLI)" in out["html"]
+    assert "data-sar-saved-model" in out["html"] and "<code>claude-sonnet-4-5</code>" in out["html"]
+    assert out["draft"] == {} and out["errors"] == []

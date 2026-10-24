@@ -100,19 +100,25 @@ Où regarder : la réponse de JARVIS ; la liaison Core → Sous-agents ; le Cent
 
 ## HV-ARCH-007 — Essai réel : modèle d'un rôle (votre JARVIS)
 
-1. Sous-agents › Contrôle qualité › Modèles du rôle : mettez un seul candidat, par exemple Claude Code · un modèle
-   Haiku de la liste, enregistrez.
+Décision du 2026-10-24 : un rôle se règle par **famille** (Sonnet, Opus, Haiku, Fable), et une famille veut dire sa
+version courante dans le CLI (aujourd'hui Sonnet = Sonnet 5.5). L'onglet le montre ainsi.
+
+1. Sous-agents › Contrôle qualité › Modèles du rôle : ouvrez la liste « Modèle » de Claude Code. Mettez un seul
+   candidat, Claude Code · Sonnet (version courante du CLI), enregistrez.
 2. Demandez à JARVIS de faire relire quelque chose par un sous-agent de contrôle qualité.
 
 Résultat attendu :
+- [ ] La liste propose une entrée par famille (« Sonnet (version courante du CLI) », « Haiku (version courante du
+  CLI) »…), sans identifiant de version comme `claude-sonnet-4-5`.
 - [ ] Le sous-agent démarre et rend son résultat (avant la Slice 08, un rôle réglé ne démarrait plus du tout).
-- [ ] Il tourne sur la **famille** choisie (Haiku). Attention : l'outil Agent du CLI n'accepte qu'une famille
-  (haiku, sonnet, opus, fable) ; le CLI choisit la version courante de cette famille, qui peut différer de la version
-  exacte affichée dans la liste. Dites si cela vous convient.
+- [ ] Il tourne sur Sonnet dans sa version courante, soit Sonnet 5.5 aujourd'hui.
+- [ ] Un rôle réglé avant cette décision avec un identifiant complet s'affiche par sa famille, avec la mention
+  « Enregistré sous `claude-…` », et marche toujours ; rien n'est réécrit tant que vous ne modifiez pas le rôle.
 - [ ] Les autres rôles n'ont pas changé ; « Restaurer » remet l'héritage.
 
-Où regarder : le détail du sous-agent dans le Centre d'état ; `runtime/trace.jsonl` du dépôt principal (`agent.routing.decided` : `model`,
-`agent_model`) si vous voulez la preuve.
+Où regarder : le détail du sous-agent dans le Centre d'état ; `runtime/trace.jsonl` du dépôt principal
+(`agent.routing.decided` : `model_family` = `sonnet`, `agent_model`, et `saved_model` pour un ancien réglage) si vous
+voulez la preuve.
 
 ## HV-ARCH-008 — Essai réel : couper la délégation de la voix (votre JARVIS)
 
@@ -128,6 +134,7 @@ Résultat attendu :
 
 ## Points ouverts à trancher (produit)
 
-- Version exacte ou famille pour le modèle d'un rôle (HV-ARCH-007).
+- ~~Version exacte ou famille pour le modèle d'un rôle (HV-ARCH-007).~~ Tranchée le 2026-10-24 : la famille, dans sa
+  version courante du CLI (« Oui utilise Sonnet 5.5 quand tu utilises Sonnet »).
 - I-001 S01-1 : faut-il marquer « relance de la voix attendue » sur une liaison vocale quand Voice tourne sur une
   configuration différente pour une autre raison (contredit le contrat actuel) ?
