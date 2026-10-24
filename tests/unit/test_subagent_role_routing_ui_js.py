@@ -251,30 +251,70 @@ process.stdout.write(JSON.stringify({html:host.innerHTML}));""", routing=fixture
     assert "Non lançable comme sous-agent : Seul le CLI hôte lance des sous-agents." in out["html"]
 
 
-def test_the_overview_is_a_read_only_projection_of_the_same_snapshot(tmp_path):
+def panel(html: str, panel_id: str) -> str:
+    """Le HTML d'un panneau du tableau de bord (refonte-ui-settings, Slice 03), jusqu'au panneau suivant."""
+    start = html.index(f'id="{panel_id}"')
+    end = html.find('<section class="set-panel ', start)
+    return html[start:end if end > 0 else len(html)]
+
+
+def test_the_routing_matrix_is_a_read_only_projection_of_the_same_snapshot(tmp_path):
+    """Refonte Slice 03 : la matrice remplace l'ancienne « vue d'ensemble du routage » (même projection, lecture
+    seule) ; les brouillons y paraissent, chaque en-tête de colonne mène aux modèles du rôle."""
     out = run(tmp_path, """
 const opened=[];const v=await open(R.createFixtureAdapter(DATA.routing),{openTab:t=>opened.push(t)});
-v.select('coder');v.moveCandidate('coder',0,1);v.showOverview(true);const html=host.innerHTML;
-process.stdout.write(JSON.stringify({html,opened}));""")
+v.select('coder');v.addCandidate('coder',{agent:'claude',model:'grand'});v.moveCandidate('coder',1,-1);const html=host.innerHTML;
+process.stdout.write(JSON.stringify({html,opened,errors}));""")
     html = out["html"]
-    pane = html[html.index('class="sar-detail-pane"'):]
-    assert "Vue d’ensemble du routage" in pane and 'aria-pressed="true"' in html
-    for entry in routing_fixture()["roles"]:
-        assert f'data-sar-route-goto="{entry["role_id"]}"' in pane
-    assert "data-sar-cand-op" not in pane and "<select" not in pane and "data-sar-route-save" not in pane
-    assert "1. claude:disparu" in pane  # le libellé servi, tel quel and "Repli général activé" in pane
-    # Note de compatibilité lue dans le payload, lien vers Avancé ; aucun sélecteur Auto/Dupliqué.
-    assert routing_fixture()["compatibility"]["note"].replace("'", "&#39;") in pane
-    assert 'data-settings-open="runtime_cli"' in pane
+    matrix = panel(html, "sar-p-matrix")
+    fixture = routing_fixture()
+    for entry in fixture["roles"]:
+        assert f'data-sar-route-goto="{entry["role_id"]}"' in matrix
+    assert "data-sar-cand-op" not in matrix and "<select" not in matrix and "data-sar-route-save" not in matrix
+    # Une ligne par modèle du catalogue servi, libellé du serveur quand une liste le cite (« claude:disparu »).
+    assert "claude:disparu" in matrix and "Codex CLI · GPT O" in matrix and "Claude Code · Petit" in matrix
+    assert matrix.count('<tr') == 1 + sum(len(h["models"]) for h in fixture["harnesses"])
+    # Le brouillon de coder (grand passé premier) se lit au rang 1, petit au rang 2 ; qa garde disparu indisponible.
+    assert "rang 1 sur 2" in matrix and "rang 2 sur 2" in matrix and "rang 1 sur 3, indisponible" in matrix
+    assert out["errors"] == []
+
+
+def test_the_board_metrics_policy_and_rules_are_read_from_the_served_data(tmp_path):
+    out = run(tmp_path, """
+const v=await open(R.createFixtureAdapter(DATA.routing));
+process.stdout.write(JSON.stringify({html:host.innerHTML,errors}));""")
+    html = out["html"]
+    fixture = routing_fixture()
+    overview, policy, rules = panel(html, "sar-p-overview"), panel(html, "sar-p-policy"), panel(html, "sar-p-rules")
+    # Synthèse : rôles du registre, fournisseurs du catalogue, outils déclarés, rôles lançables selon l'aperçu.
+    assert '<strong class="set-stat-value">7</strong>' in overview
+    providers = {h["provider"] for h in fixture["harnesses"]}
+    up = {h["provider"] for h in fixture["harnesses"] if h["available"]}
+    assert f'<strong class="set-stat-value">{len(up)}/{len(providers)}</strong>' in overview
+    ready = sum(1 for r in fixture["roles"] if r["preview"]["outcome"] in ("selected", "cli_default"))
+    assert f'<strong class="set-stat-value">{ready}/{len(fixture["roles"])}</strong>' in overview
+    assert "%" not in overview  # aucun taux inventé
+    # Politique : mode servi (Dupliqué), comptes réglé/hérité, renvois vers les seuls endroits qui écrivent.
+    explicit = sum(1 for r in fixture["roles"] if r["explicit"])
+    assert "Dupliqué" in policy and f"<strong>{explicit}</strong> réglé(s)" in policy
+    assert 'data-settings-open="runtime_cli"' in policy and 'data-settings-open="architecture"' in policy
+    assert "<select" not in policy and 'role="switch"' not in policy
+    # Règles : prise d'effet, consigne de passage à l'exécution, dossier de mission, borne des instructions, état.
+    roles = roles_payload(tmp_path)
+    assert "Prochain lancement" in rules and re.search(r"<strong>8\W?192</strong> caractères", rules)
+    assert roles["mission_path"].replace("<", "&lt;").replace(">", "&gt;") in rules
+    assert f"Révision {fixture['revision']}" in rules and "Lisible" in rules
+    assert out["errors"] == []
 
 
 def test_no_brains_tab_personality_or_delegation_mode_selector(tmp_path):
     out = run(tmp_path, """
 const v=await open(R.createFixtureAdapter(DATA.routing));const pages=[];
-for(const r of DATA.roles.roles){v.select(r.id);pages.push(host.innerHTML)}v.showOverview(true);pages.push(host.innerHTML);
+for(const r of DATA.roles.roles){v.select(r.id);pages.push(host.innerHTML)}
 process.stdout.write(JSON.stringify({all:pages.join('')}));""")
     text = out["all"]
-    for word in ("Brains", "créativité", "personnalité", "politesse", "humour", "verbosité", "data-delegation-mode"):
+    for word in ("Brains", "créativité", "personnalité", "politesse", "humour", "verbosité", "data-delegation-mode",
+                 "Ajouter un sous-agent", "Priorité"):
         assert word not in text, word
     assert not re.search(r"<select[^>]*(auto|dupli)", text, re.I)
 
@@ -312,7 +352,8 @@ def test_without_a_routing_adapter_the_view_is_unchanged(tmp_path):
 const v=M.create(host,{fetch:reply,openTab:()=>{},...quiet});await v.load();
 process.stdout.write(JSON.stringify({html:host.innerHTML,phase:v.state.route.phase}));""")
     assert out["phase"] == "off" and "data-sar-open-models" in out["html"]
-    assert "Modèles du rôle" not in out["html"] and "data-sar-overview" not in out["html"]
+    assert "Modèles du rôle" not in out["html"] and 'id="sar-p-matrix"' in out["html"]
+    assert "Routage par rôle non servi sur cette page." in out["html"]
 
 
 def test_changing_harness_then_adding_picks_the_first_available_model(tmp_path):

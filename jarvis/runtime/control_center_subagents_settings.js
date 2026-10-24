@@ -26,8 +26,9 @@
    Modèles du rôle (jarvis-architecture-agents-settings-editor, Slice 06) : quand la page passe un adaptateur
    `options.routing` (`JarvisSubagentRouting.createHttpAdapter()`, monté par la Slice 07), la fiche porte la
    liste ordonnée des candidats harness + modèle du rôle, le repli automatique (`allow_general_fallback`), la
-   provenance (hérité du profil / réglé pour ce rôle), la restauration de l'héritage et l'aperçu servi ; une vue
-   d'ensemble en lecture seule projette le même instantané. Chaque écriture ne vise qu'UN rôle ; l'écran affiche
+   provenance (hérité du profil / réglé pour ce rôle), la restauration de l'héritage et l'aperçu servi ; la matrice
+   de routage du tableau de bord projette le même instantané en lecture seule (refonte-ui-settings, Slice 03 : la vue
+   `roles` est un tableau de bord, voir `docs/settings/architecture-agents.md` § 1). Chaque écriture ne vise qu'UN rôle ; l'écran affiche
    l'instantané renvoyé, garde le brouillon sur un refus, relit sur un 409 ou une issue inconnue. Sans adaptateur,
    la vue renvoie vers Avancé › Runtime & CLI (profils hérités). Le style propre à cette composition est
    injecté une fois (`#jarvisSubagentSettingsStyle`), jetons du thème seulement. */
@@ -81,6 +82,19 @@
     route:'<circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M8.4 6H15a3 3 0 0 1 0 6H9a3 3 0 0 0 0 6h6.6"/>',
     inherit:'<path d="M6 4v9a4 4 0 0 0 4 4h8"/><path d="m14 13 4 4-4 4"/>',pin:'<path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>',
     grid:'<rect x="4" y="4" width="6.5" height="6.5" rx="1.2"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.2"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.2"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.2"/>',
+    /* Tableau de bord (refonte-ui-settings, Slice 03) : médaillons des panneaux et tuiles de synthèse. */
+    team:'<circle cx="12" cy="7.5" r="2.8"/><circle cx="5.5" cy="10" r="2.2"/><circle cx="18.5" cy="10" r="2.2"/><path d="M7.5 19.5a4.5 4.5 0 0 1 9 0"/><path d="M2.8 18a3.2 3.2 0 0 1 4.6-2.6M21.2 18a3.2 3.2 0 0 0-4.6-2.6"/>',
+    layers:'<path d="m12 3.5 8.5 4.5-8.5 4.5L3.5 8z"/><path d="m3.5 12 8.5 4.5 8.5-4.5"/><path d="m3.5 16 8.5 4.5 8.5-4.5"/>',
+    cloud:'<path d="M7 18.5h10.5a4 4 0 0 0 .6-7.95A6 6 0 0 0 6.6 9.2 4.7 4.7 0 0 0 7 18.5z"/>',
+    tool:'<path d="M14.7 6.3a4 4 0 0 0-5.2 5.2L4 17l3 3 5.5-5.5a4 4 0 0 0 5.2-5.2l-2.6 2.6-2.4-.6-.6-2.4z"/>',
+    pulse:'<path d="M3 12h4l2.5-6 5 12 2.5-6H21"/>',
+    target:'<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/>',
+    rules:'<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/>',
+    matrix:'<circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="19" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M12 7.2v4.3M12 11.5 5.9 17.2M12 11.5l6.1 5.7"/>',
+    more:'<circle cx="5.5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18.5" cy="12" r="1.3"/>',
+    cpu:'<rect x="6.5" y="6.5" width="11" height="11" rx="2"/><path d="M9.5 3v3.5M14.5 3v3.5M9.5 17.5V21M14.5 17.5V21M3 9.5h3.5M3 14.5h3.5M17.5 9.5H21M17.5 14.5H21"/>',
+    open:'<path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+    edit:'<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
   };
   const op=(name,cls)=>`<svg class="sar-op-g${cls?' '+cls:''}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${OPS[name]||''}</svg>`;
   const PREVIEW_REASON={preferred:'premier choix de la liste',fallback:'repli dans la liste du rôle',general_fallback:'repli sur la liste générale'};
@@ -130,7 +144,9 @@
          par rôle `{candidates:[{agent,model}], allow_general_fallback}`, partageable avec la page comme `drafts`. */
       route:{phase:routing?'loading':'off',error:null,snap:null,stale:null,startedAt:now()},
       routeDrafts:opts.routeDrafts&&typeof opts.routeDrafts==='object'?opts.routeDrafts:{},
-      routeSave:null,routeNotice:{},routeConfirmRestore:null,routeAdd:{},overview:false,
+      routeSave:null,routeNotice:{},routeConfirmRestore:null,routeAdd:{},
+      /* Slice 03 (refonte) : rôle dont les actions « … » sont dépliées, au plus un. */
+      menu:null,
       startedAt:now(),destroyed:false,
     };
     let ticker=null,routePromise=null;
@@ -209,20 +225,213 @@
       if(!role.enabled)return chip('Désactivé','bad','Le hook ne reconnaît pas ce rôle : son marqueur reste dans le libellé.');
       return '';
     }
-    /* Ligne « candidat préféré » d'un rôle dans la liste : projection de l'instantané (ou du brouillon), lecture seule. */
+    /* --- Tableau de bord (refonte-ui-settings, Slice 03) ------------------------------------------------------
+       Une seule page : synthèse et politique de délégation, lignes des rôles, matrice de routage et règles globales,
+       puis la fiche du rôle choisi (où vivent les écritures). Chaque chiffre, ligne et case se lit dans le registre
+       (`/api/subagent-roles`) ou dans l'instantané de routage ; ce que le serveur ne mesure pas n'est pas affiché
+       (aucun « taux de bonne délégation », aucune priorité inventée, aucun ajout de rôle : le registre est du code).
+       Composition sur les primitives `.set-*` (Slice 01), écrites ici en classes : la vue tourne aussi sans
+       `JarvisSettingsUI` (tests node, page de démonstration). */
+    const routed=()=>st.route.phase!=='off';
+    /* Une projection du routage qui lève (instantané inattendu) reste locale : la cellule ou le panneau le dit, le
+       reste du tableau de bord et la fiche restent utilisables. Même code que la section Modèles de la fiche. */
+    function guarded(where,fn,roleId){
+      try{return fn()}
+      catch(e){
+        logError('subagent_settings_routing_render_failed',e,{where,role_id:roleId||null});
+        return `<span class="sar-item-route bad" role="note">${op('warn')}<span class="sar-item-route-l">Affichage impossible : ${esc(e&&e.message||e)}</span></span>`;
+      }
+    }
+    /* Libellé d'un candidat dans une cellule : jamais la couleur seule (pictogramme et mot « indisponible »). La
+       balise reste ouverte : l'appelant ajoute ce qui suit puis la ferme. */
+    function refCell(cls,v,glyph){
+      return `<span class="${cls}${v.available?'':' bad'}" title="${esc(v.label)}${v.available?'':' : '+esc(v.unavailable_reason||'indisponible')}">${v.available?op(glyph):op('warn')}<span class="sar-item-route-l">${esc(v.label)}</span>${v.available?'':'<span class="sar-item-flag">indisponible</span>'}`;
+    }
+    /* Cellule « modèle préféré » : le premier candidat (brouillon compris), sinon ce que dit l'aperçu servi. */
     function preferredLine(role){
-      if(st.route.phase==='off'||!snap())return '';
-      const r=routeOf(role.id);if(!r)return '';
+      if(!routed())return '';
+      if(!snap())return st.route.phase==='error'?`<span class="sar-item-route bad">${op('warn')}<span class="sar-item-route-l">Politique illisible</span></span>`
+        :'<span class="sar-item-route muted"><span class="sar-item-route-l">Lecture…</span></span>';
+      const r=routeOf(role.id);if(!r)return '<span class="sar-item-route muted"><span class="sar-item-route-l">Non routé</span></span>';
       const d=routeEffective(role.id),first=d.candidates[0];
-      if(!first)return `<span class="sar-item-route bad">${op('warn')}liste vide</span>`;
-      const v=candView(role.id,first),more=d.candidates.length-1;
-      return `<span class="sar-item-route${v.available?'':' bad'}">${v.available?op('route'):op('warn')}<span class="sar-item-route-l">${esc(v.label)}${v.available?'':' (indisponible)'}</span>${more>0?`<span class="sar-item-more">+${more}</span>`:''}<span class="sar-item-prov">${r.explicit?'réglé':'hérité'}</span></span>`;
+      if(!first)return r.preview&&r.preview.outcome==='cli_default'&&!routeDirty(role.id)
+        ?`<span class="sar-item-route muted" title="${esc(r.preview.detail||'')}">${op('cpu')}<span class="sar-item-route-l">Modèle du CLI</span></span>`
+        :`<span class="sar-item-route bad">${op('warn')}<span class="sar-item-route-l">Liste vide</span></span>`;
+      const more=d.candidates.length-1;
+      return refCell('sar-item-route',candView(role.id,first),'route')+(more>0?`<span class="sar-item-more" title="${more} autre(s) candidat(s) dans la liste">+${more}</span>`:'')+'</span>';
+    }
+    /* Cellule « repli » : le deuxième candidat, sinon la liste générale si le repli s'applique, sinon rien. */
+    function fallbackLine(role){
+      if(!routed()||!snap())return '';
+      const r=routeOf(role.id);if(!r)return '';
+      const d=routeEffective(role.id),second=d.candidates[1];
+      if(second)return refCell('sar-item-fb',candView(role.id,second),'inherit')+'</span>';
+      const moot=!r.explicit&&r.inherited_profile===r.fallback.profile&&!routeDirty(role.id);
+      return d.allow_general_fallback&&!moot
+        ?`<span class="sar-item-fb muted">${op('inherit')}<span class="sar-item-route-l">Liste « ${esc(r.fallback.profile)} »</span></span>`
+        :'<span class="sar-item-fb muted"><span class="sar-item-route-l">Aucun repli</span></span>';
+    }
+    function sourceChip(role){
+      if(!routed()||!snap())return '';
+      const r=routeOf(role.id);if(!r)return '';
+      return r.explicit?`<span class="sar-src explicit">${op('pin')}Réglé</span>`
+        :`<span class="sar-src inherited" title="Hérité du profil « ${esc(r.inherited_profile)} »">${op('inherit')}Hérité<span class="sar-sr"> du profil ${esc(r.inherited_profile)}</span></span>`;
+    }
+    const TOOLS_SHOWN=3;
+    function toolsCell(role){
+      const t=role.tools||[];
+      if(!t.length)return '<span class="sar-quiet">aucun</span>';
+      const rest=t.slice(TOOLS_SHOWN);
+      return `<ul class="sar-tools" aria-label="Outils de ${esc(role.name)}">${t.slice(0,TOOLS_SHOWN).map(x=>`<li class="sar-tool-chip">${esc(x)}</li>`).join('')}`
+        +(rest.length?`<li class="sar-tool-chip more" title="${esc(rest.join(', '))}"><span aria-hidden="true">+${rest.length}</span><span class="sar-sr">et ${esc(rest.join(', '))}</span></li>`:'')+'</ul>';
+    }
+    function cell(key,label,body){return `<div class="sar-cell sar-c-${key}"><span class="sar-cell-k">${esc(label)}</span>${body}</div>`}
+    /* Actions secondaires d'un rôle (« … ») : une divulgation, pas un menu ARIA ; chaque action mène à la fiche. */
+    function moreMenu(role){
+      const id=esc(role.id),open=st.menu===role.id,sel=role.id===st.selected;
+      const items=[['fiche','open','Ouvrir la fiche'],routed()&&routeOf(role.id)?['models','route','Régler les modèles']:null,['instructions','edit','Modifier les instructions']].filter(Boolean);
+      return `<button type="button" class="sar-more" data-sar-more="${id}" aria-expanded="${open?'true':'false'}" aria-controls="sar-menu-${id}" aria-label="Actions du rôle ${esc(role.name)}" title="Actions du rôle"${sel||open?'':' tabindex="-1"'}>${op('more')}</button>`
+        +(open?`<ul class="sar-menu" id="sar-menu-${id}" aria-label="Actions du rôle ${esc(role.name)}" data-sar-menu="${id}">${items.map(([act,glyph,label])=>
+          `<li><button type="button" class="sar-menu-item" data-sar-menu-act="${act}" data-sar-menu-role="${id}">${op(glyph)}<span>${esc(label)}</span></button></li>`).join('')}</ul>`:'');
     }
     function listItem(role){
-      const sel=role.id===st.selected&&!st.overview;
+      const sel=role.id===st.selected,id=esc(role.id);
       const tags=[availability(role),role.modified?chip('modifié','warn'):'',isDirty(role)?chip('non enregistré','warn'):'',routeDirty(role.id)?chip('routage non enregistré','warn'):'',role.conflict?chip('surcharge écartée','bad'):''].join('');
-      return `<li><button type="button" class="sar-item${sel?' selected':''}${role.enabled?'':' off'}" data-sar-role="${esc(role.id)}" aria-current="${sel?'true':'false'}" tabindex="${sel||(st.overview&&role.id===st.selected)?'0':'-1'}" style="${accentStyle(accentOf(role))}">
-        ${identity(role,'sm')}<span class="sar-item-text"><span class="sar-item-name">${esc(role.name)}</span><span class="sar-item-meta"><code>[${esc(role.marker||role.id)}]</code>${tags}</span>${preferredLine(role)}</span></button></li>`;
+      const route=routed()?cell('model','Modèle préféré',guarded('preferred',()=>preferredLine(role),role.id))+cell('source','Source',guarded('source',()=>sourceChip(role),role.id))
+        +cell('fallback','Repli',guarded('fallback',()=>fallbackLine(role),role.id)):'';
+      return `<li class="sar-row${sel?' selected':''}${role.enabled?'':' off'}${st.menu===role.id?' menu-open':''}" style="${accentStyle(accentOf(role))}" data-sar-row="${id}">
+        <div class="sar-cell sar-c-role"><button type="button" class="sar-item${sel?' selected':''}${role.enabled?'':' off'}" data-sar-role="${id}" aria-current="${sel?'true':'false'}" tabindex="${sel?'0':'-1'}"${role.when_relevant?` aria-describedby="sar-when-${id}"`:''}>
+          ${identity(role,'sm')}<span class="sar-item-text"><span class="sar-item-name">${esc(role.name)}</span><span class="sar-item-desc">${esc(role.description)}</span>${tags?`<span class="sar-item-meta">${tags}</span>`:''}</span></button></div>
+        ${route}${cell('tools','Outils',toolsCell(role))}
+        ${cell('when','Conditions d’usage',role.when_relevant?`<span class="sar-when" id="sar-when-${id}" title="${esc(role.when_relevant)}">${esc(role.when_relevant)}</span>`:'<span class="sar-quiet">non précisées</span>')}
+        <div class="sar-cell sar-c-more">${moreMenu(role)}</div></li>`;
+    }
+    function rolesHeadHtml(){
+      const h=(key,label)=>`<span class="sar-h sar-c-${key}">${esc(label)}</span>`;
+      return `<div class="sar-rows-head${routed()?'':' noroute'}" aria-hidden="true">${h('role','Rôle')}${routed()?h('model','Modèle préféré')+h('source','Source')+h('fallback','Repli'):''}${h('tools','Outils')}${h('when','Conditions d’usage')}<span class="sar-h sar-c-more"></span></div>`;
+    }
+
+    /* Panneau verre (`.set-panel`, Slice 01) écrit en classes, médaillon et teinte compris. */
+    function panelHtml({id,title,desc,glyph,tone,aside='',body='',cls=''}){
+      return `<section class="set-panel sar-panel${tone?' set-tone-'+tone:''}${cls?' '+cls:''}" id="${id}" aria-labelledby="${id}-title">
+        <header class="set-panel-head"><span class="set-medallion" aria-hidden="true">${op(glyph)}</span><div class="set-panel-titles"><h3 class="set-panel-title" id="${id}-title">${esc(title)}</h3>${desc?`<p class="set-panel-desc">${esc(desc)}</p>`:''}</div>${aside?`<div class="set-panel-aside">${aside}</div>`:''}</header>
+        <div class="set-panel-body">${body}</div></section>`;
+    }
+    /* Tuile `.set-stat` ; `sub` : une ligne de détail mesurée (jamais un texte de maquette). */
+    function statHtml({value,label,glyph,tone,sub,key}){
+      return `<div class="set-stat sar-stat${tone?' set-tone-'+tone:''}" data-sar-stat="${key}"><span class="set-stat-icon" aria-hidden="true">${op(glyph)}</span><span class="set-stat-text"><strong class="set-stat-value">${esc(value)}</strong><span class="set-stat-label">${esc(label)}</span>${sub?`<span class="sar-stat-sub">${esc(sub)}</span>`:''}</span></div>`;
+    }
+    function dotHtml(kind,text){return `<span class="set-dot set-dot-${kind}">${esc(text)}</span>`}
+    /* `hintHtml` : aide déjà composée (un chemin en `<code>`), sinon `hint` est échappé. */
+    function ruleRow(key,glyph,label,hint,control,hintHtml){
+      const help=hintHtml||(hint?esc(hint):'');
+      return `<div class="set-row sar-rule" data-sar-rule="${key}"><span class="set-row-icon" aria-hidden="true">${op(glyph)}</span><div class="set-row-text"><span class="set-row-label" id="sar-rule-${key}-label">${esc(label)}</span>${help?`<p class="set-row-hint">${help}</p>`:''}</div>${control?`<div class="set-row-control">${control}</div>`:''}</div>`;
+    }
+    function linkBtn(target,label,glyph){
+      return opts.openTab?`<button type="button" class="set-btn set-btn-ghost set-btn-sm" data-settings-open="${esc(target)}">${glyph?op(glyph):''}<span>${esc(label)}</span></button>`:'';
+    }
+    /* Chiffres de synthèse, tous mesurés : registre (rôles, outils) et instantané de routage (fournisseurs, modèles du
+       catalogue, rôles lançables d'après l'aperçu servi). Sans instantané, la tuile le dit au lieu d'inventer un chiffre. */
+    function metricsHtml(){
+      const all=roles(),active=all.filter(r=>r.enabled),uses=new Map();
+      active.forEach(r=>new Set(r.tools||[]).forEach(t=>uses.set(t,(uses.get(t)||0)+1)));
+      const top=[...uses].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]))[0];
+      const s=snap(),none=routed()?(st.route.phase==='error'&&!s?'politique illisible':'lecture de la politique…'):'routage non servi ici';
+      let prov={value:'—',label:'Fournisseurs IA',sub:none},ready={value:'—',label:'Rôles lançables',sub:none};
+      if(s){
+        const by=new Map();s.harnesses.forEach(h=>{const k=h.provider||h.id;by.set(k,by.get(k)===true||h.available)});
+        const on=[...by.values()].filter(Boolean).length,models=s.harnesses.filter(h=>h.available).reduce((n,h)=>n+h.models.filter(m=>m.available).length,0);
+        prov={value:`${on}/${by.size}`,label:'Fournisseurs IA disponibles',tone:on<by.size?'warn':'',sub:`${models} modèle(s) disponible(s) au catalogue`};
+        const rs=s.roles.filter(r=>roleById(r.role_id)),out=k=>rs.filter(r=>r.preview&&r.preview.outcome===k).length;
+        const ok=out('selected')+out('cli_default'),refused=out('refused');
+        ready={value:`${ok}/${rs.length}`,label:'Rôles lançables',tone:ok<rs.length?'warn':'ok',
+          sub:[out('selected')?`${out('selected')} par leur liste`:'',out('cli_default')?`${out('cli_default')} par le modèle du CLI`:'',refused?`${refused} refusé(s)`:''].filter(Boolean).join(' · ')||'aperçu vide'};
+      }
+      return `<div class="sar-stats">${[
+        statHtml({key:'roles',value:String(active.length),label:'Sous-agents actifs',glyph:'team',tone:'violet',sub:`sur ${all.length} rôle(s) du registre`}),
+        statHtml({key:'providers',glyph:'cloud',...prov,tone:prov.tone||'blue'}),
+        statHtml({key:'tools',value:String(uses.size),label:'Outils déclarés',glyph:'tool',tone:'teal',sub:top?`le plus partagé : ${top[0]} (${top[1]} rôle(s))`:'aucun outil déclaré'}),
+        statHtml({key:'ready',glyph:'pulse',...ready,tone:ready.tone||'cyan'}),
+      ].join('')}</div>`;
+    }
+    function policyHtml(){
+      if(!routed())return `<p class="hint">Le routage par rôle n’est pas servi sur cette page. ${linkBtn('runtime_cli','Avancé › Runtime & CLI','open')}</p>`;
+      const s=snap();
+      if(!s)return st.route.phase==='error'
+        ?`<div class="notice bad">Politique des rôles illisible : ${esc(st.route.error&&st.route.error.message)}${codeLine(st.route.error&&st.route.error.code)}</div><div class="sar-actions"><button type="button" class="action" data-sar-route-retry>Réessayer</button></div>`
+        :waitingHtml('Lecture de la politique des rôles…',st.route.startedAt||st.startedAt);
+      const rs=s.roles.filter(r=>roleById(r.role_id)),explicit=rs.filter(r=>r.explicit).length;
+      const fb=rs.filter(r=>routeEffective(r.role_id).allow_general_fallback).length,auto=s.compatibility.profiles_enabled;
+      return `<div class="set-rows">
+        ${ruleRow('profiles','layers','Routage par profil',auto?'Auto : un rôle qui hérite suit la politique de son profil.':'Dupliqué : un rôle qui hérite garde le modèle de son CLI.',dotHtml(auto?'ok':'off',auto?'Auto':'Dupliqué')+linkBtn('runtime_cli','Changer'))}
+        ${ruleRow('explicit','pin','Politique propre à un rôle','Réglée dans la fiche du rôle, elle s’applique quel que soit le mode.',`<span class="sar-count"><strong>${explicit}</strong> réglé(s) · <strong>${rs.length-explicit}</strong> hérité(s)</span>`)}
+        ${ruleRow('fallback','inherit','Repli automatique','Liste du rôle épuisée : JARVIS tente la liste générale.',dotHtml(fb?'ok':'off',`${fb} rôle(s) sur ${rs.length}`))}
+        ${ruleRow('core','route','Quand Core délègue','Tendance de délégation réglée dans la fenêtre du cerveau Core.',linkBtn('architecture','Architecture','open')||'<span class="sar-quiet">onglet Architecture</span>')}
+      </div>`;
+    }
+    function rulesHtml(){
+      const p=st.payload||{},rows=[];
+      if(p.application)rows.push(ruleRow('applies','pulse','Prise d’effet',p.application==='next_invocation'?'Au prochain sous-agent lancé ; aucun agent en cours n’est modifié.':'',dotHtml('info',p.application==='next_invocation'?'Prochain lancement':String(p.application))));
+      if(p.execution_gate)rows.push(ruleRow('gate','ok','Passage à l’exécution',p.execution_gate,'<span class="set-badge set-badge-accent">Consigne du cerveau</span>'));
+      if(p.mission_path)rows.push(ruleRow('mission','layers','Dossier d’une mission','','',`<code class="sar-path">${esc(p.mission_path)}</code>, sous la Mémoire du Board du contexte de tour.`));
+      rows.push(ruleRow('max','edit','Instructions d’un rôle','Taille maximale d’une surcharge, vérifiée par le serveur.',`<span class="sar-count"><strong>${fmt(maxChars())}</strong> caractères</span>`));
+      const s=snap();
+      if(s){
+        const bad=s.store.status!=='ok',partial=s.catalog.status!=='ok';
+        rows.push(ruleRow('state','rules','Politique de routage',bad?`Fichier illisible : ${s.store.reason||s.store.status}`:partial?`Catalogue incomplet : ${s.catalog.reason||s.catalog.status}`:`Révision ${s.revision||'?'} ; s’applique ${s.applies==='live'?'au prochain lancement':s.applies||''}.`,
+          dotHtml(bad?'bad':partial?'warn':'ok',bad?'Illisible':partial?'Incomplète':'Lisible')));
+      }
+      return `<div class="set-rows">${rows.join('')}</div>`;
+    }
+    /* Matrice de routage : quel modèle sert quel rôle, et à quel rang. Lignes = candidats harness + modèle des listes
+       servies (brouillons compris) ; colonnes = rôles routés du registre ; une ligne de plus pour les rôles laissés au
+       modèle du CLI. Lecture seule : l'en-tête d'une colonne mène aux modèles du rôle. */
+    function matrixHtml(){
+      if(!routed())return '<p class="hint">Routage par rôle non servi sur cette page.</p>';
+      const s=snap();
+      if(!s)return st.route.phase==='error'?'<p class="hint">Politique des rôles illisible : la matrice ne peut pas être dressée.</p>':waitingHtml('Lecture de la politique des rôles…',st.route.startedAt||st.startedAt);
+      const cols=roles().filter(role=>routeOf(role.id));
+      if(!cols.length)return '<p class="hint">Aucun rôle routé.</p>';
+      const refs=[],seen=new Set(),key=c=>c.agent+'\u0000'+c.model;
+      const cliDefault=role=>{const r=routeOf(role.id);return !routeEffective(role.id).candidates.length&&!!r.preview&&r.preview.outcome==='cli_default'};
+      /* Le catalogue servi d'abord (un modèle que personne n'emploie reste une ligne vide, c'est une information),
+         puis tout candidat hors catalogue encore inscrit dans une liste. */
+      const served=new Map();cols.forEach(role=>routeOf(role.id).candidates.forEach(c=>{if(!served.has(key(c)))served.set(key(c),candView(role.id,c))}));
+      s.harnesses.forEach(h=>h.models.forEach(m=>{const ref={agent:h.id,model:m.model};if(!seen.has(key(ref))){seen.add(key(ref));
+        const d=Routing.describeRef(s,ref),known=served.get(key(ref));
+        refs.push({...ref,v:known||{label:d.label,available:d.available,unavailable_reason:d.unavailable_reason}})}}));
+      cols.forEach(role=>routeEffective(role.id).candidates.forEach(c=>{if(!seen.has(key(c))){seen.add(key(c));refs.push({agent:c.agent,model:c.model,v:candView(role.id,c)})}}));
+      const cliRow=cols.some(cliDefault);
+      if(!refs.length&&!cliRow)return '<p class="hint">Aucune liste de candidats : chaque rôle attend qu’on règle ses modèles.</p>';
+      const off='<td class="sar-mx-off"><span class="sar-mx-dot" aria-hidden="true"></span><span class="sar-sr">non</span></td>';
+      const head=cols.map(role=>`<th scope="col" style="${accentStyle(accentOf(role))}"><button type="button" class="sar-mx-role" data-sar-route-goto="${esc(role.id)}" title="Régler les modèles : ${esc(role.name)}">${identity(role,'xs')}<span class="sar-sr">${esc(role.name)}</span></button></th>`).join('');
+      const mark=(role,ref)=>{
+        const d=routeEffective(role.id),i=d.candidates.findIndex(c=>Routing.sameRef(c,ref));
+        if(i<0)return off;
+        const v=candView(role.id,ref),what=`rang ${i+1} sur ${d.candidates.length}${v.available?'':', indisponible'}`;
+        return `<td class="sar-mx-on${i===0?' first':''}${v.available?'':' unavailable'}" style="${accentStyle(accentOf(role))}"><span class="sar-mx-pos" title="${esc(what)}" aria-hidden="true">${i+1}</span><span class="sar-sr">${esc(what)}</span></td>`;
+      };
+      const body=refs.map(ref=>`<tr${ref.v.available?'':' class="unavailable"'}><th scope="row"><span class="sar-mx-label">${ref.v.available?'':op('warn')}<span>${esc(ref.v.label)}</span>${ref.v.available?'':'<span class="sar-item-flag">indisponible</span>'}</span></th>${cols.map(role=>mark(role,ref)).join('')}</tr>`).join('')
+        +(cliRow?`<tr class="sar-mx-cli"><th scope="row"><span class="sar-mx-label">${op('cpu')}<span>Sans liste : modèle du CLI</span></span></th>${cols.map(role=>cliDefault(role)
+          ?`<td class="sar-mx-on first" style="${accentStyle(accentOf(role))}"><span class="sar-mx-pos cli" title="Le CLI garde son propre modèle" aria-hidden="true"></span><span class="sar-sr">oui</span></td>`:off).join('')}</tr>`:'');
+      return `<div class="set-table-shell sar-matrix-shell"><div class="set-table-scroll" role="region" tabindex="0" aria-label="Matrice de routage : modèles par rôle">
+        <table class="set-table sar-matrix"><thead><tr><th scope="col">Modèle</th>${head}</tr></thead><tbody>${body}</tbody></table></div></div>
+        <p class="hint sar-mx-legend"><span class="sar-mx-pos sample" aria-hidden="true">1</span>rang dans la liste du rôle (1 = préféré) ; cercle pointillé : candidat indisponible.</p>`;
+    }
+    function boardHtml(){
+      const all=roles(),sel=roleById(st.selected);
+      const rolesAside=`<span class="set-badge set-badge-accent">${all.length} rôle(s) · registre du code</span>`;
+      return `<div class="sar sar-board set-page" data-subagent-settings="1"><div class="set-grid sar-grid">
+        ${panelHtml({id:'sar-p-overview',title:'Vue d’ensemble',desc:'JARVIS confie chaque tâche déléguée au rôle adapté ; un rôle lance le premier candidat lançable de sa liste.',glyph:'matrix',tone:'blue',cls:'set-span-7',body:summaryHtml()+guarded('metrics',metricsHtml)})}
+        ${panelHtml({id:'sar-p-policy',title:'Politique de délégation',desc:'Comment un rôle trouve son modèle. Chaque réglage vit à un seul endroit, indiqué en bout de ligne.',glyph:'target',tone:'cyan',cls:'set-span-5',body:guarded('policy',policyHtml)})}
+        ${panelHtml({id:'sar-p-roles',title:'Sous-agents',desc:'Rôle, modèle préféré, repli, outils et conditions d’usage de chaque sous-agent. Choisissez un rôle pour ouvrir sa fiche.',glyph:'team',tone:'violet',cls:'set-span-12 sar-roles',aside:rolesAside,
+          body:`${rolesHeadHtml()}<ul class="sar-list sar-rows${routed()?'':' noroute'}" role="list" aria-label="Rôles de sous-agent" data-sar-list>${all.map(listItem).join('')}</ul>
+            <p class="hint sar-rows-help">Flèches haut et bas pour parcourir les rôles, Entrée ouvre la fiche, Tab atteint les actions « … ».</p>${instancesHtml()}
+            ${!routed()?`<p class="hint sar-models">Les modèles des sous-agents se règlent dans ${opts.openTab?'<button type="button" class="sar-link" data-sar-open-models>Avancé &amp; diagnostic › Runtime &amp; CLI</button>':'Avancé &amp; diagnostic › Runtime &amp; CLI'}.</p>`:''}`})}
+        ${panelHtml({id:'sar-p-matrix',title:'Matrice de routage',desc:'Quel modèle sert quel rôle, et à quel rang. Un rôle en tête de colonne ouvre ses modèles.',glyph:'route',tone:'teal',cls:'set-span-7',body:guarded('matrix',matrixHtml)})}
+        ${panelHtml({id:'sar-p-rules',title:'Règles globales',desc:'Ce qui vaut pour tous les sous-agents, lu dans le registre et la politique.',glyph:'rules',tone:'amber',cls:'set-span-5',body:guarded('rules',rulesHtml)})}
+        <div class="sar-detail-pane set-span-12" role="region" aria-label="Fiche du rôle${sel?' '+esc(sel.name):''}">${detailHtml(sel)}</div>
+      </div></div>`;
     }
     function yesNo(value,yes,no){return `<span class="sar-yn ${value?'yes':'no'}">${esc(value?yes:no)}</span>`}
     function facts(rows){return `<dl class="sar-facts">${rows.filter(Boolean).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${v}</dd>`).join('')}</dl>`}
@@ -502,36 +711,9 @@
         <p class="hint">${r.explicit||dirty?'S’applique au prochain sous-agent lancé avec ce rôle ; aucun agent en cours n’est modifié.':''}</p>
         ${compatHtml()}</section>`;
     }
-    /* Vue d'ensemble : projection en lecture seule du même instantané (rôle -> candidats dans l'ordre). Aucun
-       contrôle d'édition : « Régler » ouvre la fiche du rôle sur sa section Modèles. */
-    function overviewHtml(){
-      let body;
-      if(st.route.phase==='loading'&&!snap())body=waitingHtml('Lecture de la politique des rôles…',st.route.startedAt||st.startedAt);
-      else if(!snap())body=`<div class="notice bad">Politique des rôles illisible : ${esc(st.route.error&&st.route.error.message)}${codeLine(st.route.error&&st.route.error.code)}</div><div class="sar-actions"><button type="button" class="action" data-sar-route-retry>Réessayer</button></div>`;
-      else{
-        const rows=roles().map(role=>{
-          const r=routeOf(role.id);
-          if(!r)return `<li class="sar-ov-row" style="${accentStyle(accentOf(role))}">${identity(role,'sm')}<span class="sar-ov-name">${esc(role.name)}</span><span class="hint sar-ov-chain">Aucune politique servie (rôle inactif).</span></li>`;
-          const d=routeEffective(role.id),dirty=routeDirty(role.id);
-          const chain=d.candidates.map((c,i)=>{const v=candView(role.id,c);return `<li class="sar-ov-c${v.available?'':' unavailable'}">${v.available?op('ok'):op('warn')}<span>${i+1}. ${esc(v.label)}</span>${v.available?'':`<span class="sar-sr"> (indisponible)</span>`}</li>`}).join('');
-          return `<li class="sar-ov-row" style="${accentStyle(accentOf(role))}" data-sar-ov-role="${esc(role.id)}">${identity(role,'sm')}
-            <span class="sar-ov-name">${esc(role.name)}<span class="sar-ov-prov">${provenanceChip(r)}${dirty?chip('non enregistré','warn'):''}</span></span>
-            <ol class="sar-ov-chain" aria-label="Candidats de ${esc(role.name)}">${chain||'<li class="hint">liste vide</li>'}</ol>
-            <span class="sar-ov-fb">${d.allow_general_fallback?op('ok'):op('remove')}Repli général ${d.allow_general_fallback?'activé':'désactivé'}</span>
-            <button type="button" class="action small" data-sar-route-goto="${esc(role.id)}">Régler<span class="sar-sr"> ${esc(role.name)}</span></button></li>`;
-        }).join('');
-        body=`${snapshotStateHtml()}<ul class="sar-ov-list" aria-label="Routage des rôles">${rows}</ul>${compatHtml()}`;
-      }
-      return `<article class="sar-detail sar-ov" aria-labelledby="sar-title">
-        <button type="button" class="action sar-back" data-sar-back>Revenir à la liste des rôles</button>
-        <header class="sar-head"><span class="sar-ident sar-lg" style="${accentStyle('slate')}"><span class="sar-tile">${op('grid','sar-glyph')}</span></span><div>
-          <h3 id="sar-title" class="sar-title" tabindex="-1">Vue d’ensemble du routage</h3>
-          <p class="sar-desc">Pour chaque rôle, les candidats harness + modèle dans l’ordre de préférence, tels que le serveur les sert. Lecture seule : chaque rôle se règle dans sa fiche.</p></div></header>
-        ${body}</article>`;
-    }
-
+    /* Fiche du rôle choisi, sous le tableau de bord : deux colonnes quand la place le permet (mission, capacités,
+       méthodes, consigne et instructions à gauche ; modèles du rôle à droite), une seule sinon, dans l'ordre du DOM. */
     function detailHtml(role){
-      if(st.overview)return overviewHtml();
       if(!role)return '<div class="empty">Choisissez un rôle dans la liste.</div>';
       const token=accentOf(role);
       const marker=`[${role.default_profile||'general'}] [${role.marker||role.id}]`;
@@ -545,17 +727,19 @@
         ?`<div class="notice bad"><strong>Rôle désactivé.</strong> Le hook ne le reconnaît pas : un sous-agent qui l'annonce garde le marqueur dans son libellé et suit seulement sa consigne.</div>`
         :(!role.offered_to_brain?`<div class="notice info">Actif pour le hook, mais <strong>pas encore proposé au cerveau</strong> : seul un agent qui lance des agents peut le demander.</div>`:'');
       const missing=role.missing&&role.missing.length?`<div class="notice">Fiche incomplète : la réponse du serveur ne donne pas ${role.missing.map(k=>`<code>${esc(k)}</code>`).join(', ')}. Ces champs s'affichent vides.</div>`:'';
+      const models=safeModelsHtml(role);
       return `<article class="sar-detail" style="${accentStyle(token)}" aria-labelledby="sar-title">
         <button type="button" class="action sar-back" data-sar-back>Revenir à la liste des rôles</button>
-        <header class="sar-head">${identity(role,'lg')}<div><h3 id="sar-title" class="sar-title" tabindex="-1">${esc(role.name)}</h3>
+        <header class="sar-head">${identity(role,'lg')}<div><p class="sar-eyebrow">Fiche du rôle</p><h3 id="sar-title" class="sar-title" tabindex="-1">${esc(role.name)}</h3>
           <p class="sar-desc">${esc(role.description||'')}</p>
           <div class="sar-tags">${role.enabled?chip('Actif','ok'):chip('Désactivé','bad')}${role.offered_to_brain?chip('Proposé au cerveau','ok'):chip('Pas proposé au cerveau')}${role.offered_to_subagents?chip('Proposé aux agents','ok'):chip('Pas proposé aux agents')}</div></div></header>
         ${state}${missing}
-        <section class="sar-block" aria-labelledby="sar-mission"><h4 id="sar-mission">Mission</h4><p class="sar-prose">${esc(role.mission||'')}</p>
+        <div class="sar-detail-cols${models?'':' single'}">
+        <div class="sar-col-a"><section class="sar-block" aria-labelledby="sar-mission"><h4 id="sar-mission">Mission</h4><p class="sar-prose">${esc(role.mission||'')}</p>
           ${role.when_relevant?`<p class="hint"><strong>Quand l'employer :</strong> ${esc(role.when_relevant)}</p>`:''}
-          ${facts([['Marqueur',`<code>${esc(marker)}</code>`],['Alias',aliases],['Identifiant',`<code>${esc(role.id)}</code>`]])}</section>
-        ${safeModelsHtml(role)}
-        <section class="sar-block" aria-labelledby="sar-caps"><h4 id="sar-caps">Capacités ${chip('lecture seule')}</h4>
+          ${facts([['Marqueur',`<code>${esc(marker)}</code>`],['Alias',aliases],['Identifiant',`<code>${esc(role.id)}</code>`]])}</section></div>
+        ${models?`<div class="sar-col-s">${models}</div>`:''}
+        <div class="sar-col-b"><section class="sar-block" aria-labelledby="sar-caps"><h4 id="sar-caps">Capacités ${chip('lecture seule')}</h4>
           ${facts([
             ['Lance des agents',yesNo(role.can_spawn,'Oui','Non')],
             ['Mission Owner',yesNo(role.can_own_mission,'Peut porter une mission','Ne porte pas de mission')],
@@ -568,7 +752,8 @@
           ${methods.length&&!role.default_work_method?'<p class="hint">Aucune n’est apposée par défaut ; un Mission Owner pourra en choisir une.</p>':''}</section>
         ${role.can_own_mission?`<p class="hint" data-sar-learned-link>Approches observées de ce rôle et promotion en Work Method : ${opts.openTab?'<button type="button" class="sar-link" data-sar-open-learned>Avancé &amp; diagnostic › Work Methods apprises</button>':'Avancé &amp; diagnostic › Work Methods apprises'}.</p>`:''}
         <section class="sar-block" aria-labelledby="sar-compose"><h4 id="sar-compose">Consigne transmise au sous-agent</h4>${compositionHtml(role)}</section>
-        ${editorHtml(role)}
+        ${editorHtml(role)}</div>
+        </div>
       </article>`;
     }
 
@@ -634,16 +819,8 @@
         tick();return;
       }
       if(!roleById(st.selected))st.selected=roles()[0].id;
-      const scrollEl=host.querySelector('.sar-detail-pane'),scroll=scrollEl?scrollEl.scrollTop:0;
-      host.innerHTML=`<div class="sar" data-subagent-settings="1">
-        <div class="sar-side">${summaryHtml()}
-          ${st.route.phase==='off'?'':`<button type="button" class="sar-ov-toggle${st.overview?' selected':''}" data-sar-overview aria-pressed="${st.overview?'true':'false'}">${op('grid')}<span>Vue d’ensemble du routage</span></button>`}
-          <ul class="sar-list" role="list" aria-label="Rôles de sous-agent" data-sar-list>${roles().map(listItem).join('')}</ul>
-          <p class="hint">Flèches haut et bas pour parcourir les rôles.</p>
-          ${instancesHtml()}
-          ${st.route.phase==='off'?`<p class="hint sar-models">Les modèles des sous-agents se règlent dans ${opts.openTab?'<button type="button" class="sar-link" data-sar-open-models>Avancé &amp; diagnostic › Runtime &amp; CLI</button>':'Avancé &amp; diagnostic › Runtime &amp; CLI'}.</p>`:''}</div>
-        <div class="sar-detail-pane" role="region" aria-label="Fiche du rôle">${detailHtml(roleById(st.selected))}</div></div>`;
-      const pane=host.querySelector('.sar-detail-pane');if(pane&&scroll)pane.scrollTop=scroll;
+      if(st.menu&&!roleById(st.menu))st.menu=null;
+      host.innerHTML=boardHtml();
       bind();tick();
     }
 
@@ -657,11 +834,11 @@
       if(!waiting&&ticker!=null){clearTimer(ticker);ticker=null}
     }
 
-    const oneColumn=()=>!!(root.matchMedia&&root.matchMedia('(max-width: 900px)').matches);
     function select(id,focus){
       if(!roleById(id))return;
-      st.selected=id;st.overview=false;st.confirmReset=null;st.confirmPromote=null;st.routeConfirmRestore=null;render();
-      if(focus==='detail'&&oneColumn()){
+      st.selected=id;st.menu=null;st.confirmReset=null;st.confirmPromote=null;st.routeConfirmRestore=null;render();
+      /* La fiche est sous le tableau de bord : l'ouvrir la fait venir à l'écran et lui donne le focus. */
+      if(focus==='detail'){
         const title=host.querySelector('#sar-title'),card=host.querySelector('.sar-detail');
         if(card&&card.scrollIntoView)card.scrollIntoView({block:'start'});
         if(title&&title.focus)title.focus({preventScroll:true});
@@ -710,6 +887,7 @@
       const inst=host.querySelector('[data-sar-instances]');if(inst)inst.addEventListener('toggle',()=>{st.instancesOpen=inst.open});
       host.querySelectorAll('[data-sar-reread]').forEach(b=>b.addEventListener('click',()=>reread(b.dataset.sarReread)));
       bindRouting();
+      bindBoard();
       const back=host.querySelector('[data-sar-back]');if(back)back.addEventListener('click',()=>{const b=host.querySelector(`[data-sar-role="${cssId(st.selected)}"]`);if(b){if(b.scrollIntoView)b.scrollIntoView({block:'center'});b.focus()}});
       const models=host.querySelector('[data-sar-open-models]');if(models)models.addEventListener('click',()=>opts.openTab('runtime_cli'));
       const learned=host.querySelector('[data-sar-open-learned]');if(learned)learned.addEventListener('click',()=>opts.openTab('work_methods'));
@@ -731,6 +909,68 @@
     /* Un id de rôle vient du serveur : échappé avant d'entrer dans un sélecteur. */
     const cssId=v=>root.CSS&&typeof root.CSS.escape==='function'?root.CSS.escape(String(v)):String(v).replace(/[^a-zA-Z0-9_-]/g,c=>'\\'+c);
     function focusSel(sel){const el=host.querySelector&&host.querySelector(sel);if(el&&el.focus){el.focus();return true}return false}
+
+    /* --- Tableau de bord : actions « … » d'un rôle et renvois vers la fiche (Slice 03) ------------------------- */
+    /* Ouvre la fiche du rôle sur sa section Modèles (en-tête de matrice, action « Régler les modèles »). */
+    function gotoModels(id){
+      if(!roleById(id))return false;
+      select(id);
+      const h=host.querySelector&&host.querySelector(`#sar-models-${cssId(id)}`);
+      if(!h)return false;
+      if(h.scrollIntoView)h.scrollIntoView({block:'start'});if(h.focus)h.focus({preventScroll:true});
+      return true;
+    }
+    function gotoInstructions(id){
+      if(!roleById(id))return false;
+      st.openEditor[id]=true;select(id);
+      const area=host.querySelector&&host.querySelector(`[data-sar-text="${cssId(id)}"]`);
+      if(!area)return false;
+      if(area.scrollIntoView)area.scrollIntoView({block:'center'});if(area.focus)area.focus({preventScroll:true});
+      return true;
+    }
+    /* Une seule divulgation ouverte ; la fermer rend le focus à son bouton « … ». */
+    function openMenu(id,on,focus){
+      if(id!=null&&!roleById(id))return false;
+      st.menu=on===false||id==null?null:id;render();
+      if(focus&&st.menu)focusSel(`[data-sar-menu="${cssId(st.menu)}"] [data-sar-menu-act]`);
+      else if(focus&&id!=null)focusSel(`[data-sar-more="${cssId(id)}"]`);
+      return true;
+    }
+    function menuAct(act,id){
+      st.menu=null;
+      logInfo('subagent_settings.role_action',{role_id:id,action:act});
+      if(act==='models'&&gotoModels(id))return;
+      if(act==='instructions'&&gotoInstructions(id))return;
+      select(id,'detail');
+    }
+    /* Clic hors de la divulgation ouverte : elle se ferme, sans voler le focus de ce qui a été cliqué. Pas de nouveau
+       rendu ici : remplacer le DOM entre `pointerdown` et `click` avalerait le clic visé (une autre ligne, un bouton). */
+    const doc0=host.ownerDocument;
+    const outside=ev=>{
+      if(!st.menu||st.destroyed||!host.querySelector)return;
+      const t=ev.target,inMenu=t&&t.closest&&t.closest('[data-sar-menu],[data-sar-more]');
+      if(inMenu)return;
+      const id=st.menu;st.menu=null;
+      const menu=host.querySelector(`[data-sar-menu="${cssId(id)}"]`),more=host.querySelector(`[data-sar-more="${cssId(id)}"]`);
+      if(menu)menu.remove();if(more)more.setAttribute('aria-expanded','false');
+      const row=more&&more.closest&&more.closest('.sar-row');if(row)row.classList.remove('menu-open');
+    };
+    if(doc0&&doc0.addEventListener)doc0.addEventListener('pointerdown',outside,true);
+    function bindBoard(){
+      if(!host.querySelectorAll)return;
+      host.querySelectorAll('[data-sar-more]').forEach(b=>b.addEventListener('click',()=>{
+        const id=b.dataset.sarMore;openMenu(id,st.menu!==id,true);
+      }));
+      host.querySelectorAll('[data-sar-menu]').forEach(menu=>menu.addEventListener('keydown',ev=>{
+        const items=[...menu.querySelectorAll('[data-sar-menu-act]')],i=items.indexOf(ev.target&&ev.target.closest?ev.target.closest('[data-sar-menu-act]'):null);
+        /* Échap consommée : la divulgation se ferme, les Réglages restent ouverts. */
+        if(ev.key==='Escape'){ev.preventDefault();ev.stopPropagation();openMenu(menu.dataset.sarMenu,false,true);return}
+        const next={ArrowDown:i+1,ArrowUp:i-1,Home:0,End:items.length-1}[ev.key];
+        if(next===undefined||!items.length)return;
+        ev.preventDefault();items[(next+items.length)%items.length].focus();
+      }));
+      host.querySelectorAll('[data-sar-menu-act]').forEach(b=>b.addEventListener('click',()=>menuAct(b.dataset.sarMenuAct,b.dataset.sarMenuRole)));
+    }
     /* Après un déplacement, le focus suit le candidat déplacé (même commande, sinon une autre de sa ligne). */
     function focusCandidate(id,i,prefer){
       const at=k=>`[data-sar-cand-role="${cssId(id)}"][data-sar-cand-i="${i}"][data-sar-cand-op="${k}"]:not(:disabled)`;
@@ -770,11 +1010,7 @@
       }));
       host.querySelectorAll('[data-sar-route-reread]').forEach(b=>b.addEventListener('click',()=>rereadRouting(b.dataset.sarRouteReread==='*'?st.selected:b.dataset.sarRouteReread)));
       host.querySelectorAll('[data-sar-route-retry]').forEach(b=>b.addEventListener('click',()=>{routePromise=loadRouting()}));
-      const ov=host.querySelector('[data-sar-overview]');if(ov)ov.addEventListener('click',()=>showOverview(!st.overview,true));
-      host.querySelectorAll('[data-sar-route-goto]').forEach(b=>b.addEventListener('click',()=>{
-        const id=b.dataset.sarRouteGoto;select(id);
-        const h=host.querySelector(`#sar-models-${cssId(id)}`);if(h){if(h.scrollIntoView)h.scrollIntoView({block:'start'});if(h.focus)h.focus({preventScroll:true})}
-      }));
+      host.querySelectorAll('[data-sar-route-goto]').forEach(b=>b.addEventListener('click',()=>gotoModels(b.dataset.sarRouteGoto)));
       host.querySelectorAll('[data-settings-open]').forEach(b=>b.addEventListener('click',()=>{if(opts.openTab)opts.openTab(b.dataset.settingsOpen)}));
     }
 
@@ -970,11 +1206,6 @@
     }
     function setFallback(id,on){return editRoute(id,d=>{d.allow_general_fallback=!!on})}
     function discardRoute(id){delete st.routeDrafts[id];delete st.routeNotice[id];st.routeConfirmRestore=null;render()}
-    function showOverview(on,focus){
-      st.overview=!!on;render();
-      if(focus&&st.overview){if(oneColumn()){const c=host.querySelector('.sar-detail');if(c&&c.scrollIntoView)c.scrollIntoView({block:'start'})}focusSel('#sar-title')}
-      else if(focus)focusSel('[data-sar-overview]');
-    }
     function setRouteNotice(id,n){st.routeNotice[id]=n;announce(n.text)}
     /* Seul un instantané complet remplace l'écran ; un instantané dégradé ou vide ne l'efface jamais. */
     function applySnapshot(raw){
@@ -1079,50 +1310,174 @@
       const el=doc.createElement('style');el.id=STYLE_ID;el.textContent=STYLE;doc.head.appendChild(el);
     }
 
-    function destroy(){st.destroyed=true;if(ticker!=null){clearTimer(ticker);ticker=null}}
+    function destroy(){
+      st.destroyed=true;if(ticker!=null){clearTimer(ticker);ticker=null}
+      if(doc0&&doc0.removeEventListener)doc0.removeEventListener('pointerdown',outside,true);
+    }
     function hasUnsaved(){return roles().some(isDirty)||roles().some(r=>routeDirty(r.id))}
 
     host.setAttribute&&host.setAttribute('data-subagent-settings-host','1');
     render();
     ensureStyle();
     return {view,load,loadTasks,loadCandidates,promote,render,save,reset,reread,select,destroy,hasUnsaved,resolveMarker,
-      loadRouting,moveCandidate,removeCandidate,addCandidate,setFallback,discardRoute,saveRoute,restoreRoute,rereadRouting,showOverview,routeReady:()=>routePromise||Promise.resolve(),state:st};
+      loadRouting,moveCandidate,removeCandidate,addCandidate,setFallback,discardRoute,saveRoute,restoreRoute,rereadRouting,gotoModels,openMenu,routeReady:()=>routePromise||Promise.resolve(),state:st};
   }
 
 
-  /* Composition néon/verre de la Slice 06, posée par-dessus les règles `.sar-*` de `control_center.html` (qui
-     restent la base : liste, fiche, éditeur). Jetons du thème seulement (`--set-*`, `--shell-*`, `--accent`,
-     `--ok`, `--warn`, `--danger`, `--role-accent-*`) : aucune couleur écrite ici (test). */
+  /* Composition néon/verre, posée par-dessus les règles `.sar-*` de `control_center.html` (base de la fiche et de
+     l'éditeur). Slice 06 : fiche, candidats, interrupteur, aperçu. Slice 03 de `refonte-ui-settings` : tableau de bord
+     (panneaux `.set-panel`, tuiles `.set-stat`, lignes `.set-row` de la fondation visuelle), lignes des rôles, matrice,
+     divulgation « … ». Jetons du thème seulement (`--set-*`, `--shell-*`, `--accent`, `--ok`, `--warn`, `--danger`,
+     `--role-accent-*`) : aucune couleur écrite ici (test). */
   const STYLE=`
-.sar{--sar-ink:var(--set-ink,var(--text));--sar-ink-2:var(--set-ink-2,var(--muted));--sar-hair:var(--set-hair-2,var(--line));
-  --sar-glass:var(--shell-glass-strong,var(--solid));--sar-r:12px;grid-template-columns:minmax(250px,320px) minmax(0,1fr);gap:22px}
+.sar{--sar-ink:var(--set-ink,var(--text));--sar-ink-2:var(--set-ink-2,var(--muted));--sar-ink-3:var(--set-ink-3,var(--muted));--sar-hair:var(--set-hair-2,var(--line));
+  --sar-glass:var(--shell-glass-strong,var(--solid));--sar-r:12px}
 .sar *{box-sizing:border-box}
 .sar-sr{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
 .sar-op-g{width:15px;height:15px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .sar-glyph.sar-op-g{width:26px;height:26px}
 .sar-h-g{width:15px;height:15px;color:var(--sar-accent)}
-.sar-side{gap:8px;padding-right:4px}
-.sar-list{gap:6px}
-.sar-item{position:relative;align-items:flex-start;padding:10px 12px;border:1px solid var(--sar-hair);border-radius:var(--sar-r);
-  background:linear-gradient(105deg,color-mix(in srgb,var(--sar-accent) 7%,transparent),transparent 62%),var(--sar-glass);
-  box-shadow:inset 0 1px 0 color-mix(in srgb,var(--sar-ink) 5%,transparent)}
-.sar-item:hover{background:linear-gradient(105deg,color-mix(in srgb,var(--sar-accent) 13%,transparent),transparent 70%),var(--sar-glass);border-color:color-mix(in srgb,var(--sar-accent) 30%,var(--sar-hair))}
-.sar-item.selected{background:linear-gradient(105deg,color-mix(in srgb,var(--sar-accent) 20%,transparent),color-mix(in srgb,var(--sar-accent) 4%,transparent) 75%),var(--sar-glass);
-  border-color:color-mix(in srgb,var(--sar-accent) 62%,transparent);
-  box-shadow:0 10px 26px -16px color-mix(in srgb,var(--sar-accent) 70%,transparent),inset 0 1px 0 color-mix(in srgb,var(--sar-accent) 28%,transparent)}
-.sar-item-name{font-weight:600}
-.sar-item-route{display:flex;align-items:center;gap:6px;min-width:0;margin-top:2px;font-size:11.5px;color:var(--sar-ink)}
-.sar-item-route .sar-op-g{width:13px;height:13px;color:var(--sar-accent)}
-.sar-item-route.bad,.sar-item-route.bad .sar-op-g{color:var(--warn)}
+.sar-quiet{color:var(--sar-ink-3);font-size:12px}
+/* --- Tableau de bord --------------------------------------------------------------------------------------- */
+.sar.sar-board{display:block;height:auto;min-height:0}
+.sar-grid{align-items:stretch}
+/* Sous 1080 px de page, les paires (synthèse | politique, matrice | règles) passent chacune sur toute la rangée :
+   une demi-colonne vide à côté d'un panneau ne sert à rien ici. */
+@container set-page (max-width:1080px){.sar-grid>.set-panel{grid-column:1/-1}}
+.sar-board .set-panel-head h3.set-panel-title{margin:0;font-size:var(--set-fs-title);font-weight:600;letter-spacing:0;text-transform:none;color:var(--set-ink)}
+.sar-board .set-panel-desc{max-width:72ch}
+.sar-board .set-panel-body{gap:var(--set-sp-3)}
+.sar-board .sar-summary{margin:0;font-size:var(--set-fs-micro);color:var(--sar-ink-3)}
+#sar-p-overview .set-panel-body{flex:1}
+.sar-panel{container:sarpanel/inline-size}
+.sar-stats{flex:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:1fr;gap:var(--set-sp-3)}
+.sar-stats .set-stat{align-items:center;padding:16px}
+.sar-stats .set-stat-icon{width:30px;height:30px}
+.sar-stat-sub{margin-top:6px;font-size:var(--set-fs-micro,11.5px);line-height:1.35;color:var(--sar-ink-3)}
+.sar-board .set-rows{display:flex;flex-direction:column;gap:var(--set-sp-2)}
+.sar-rule{padding:9px 12px;gap:12px}
+.sar-rule .set-row-icon{width:32px;height:32px}
+.sar-rule .set-row-label{font-size:13.5px}
+.sar-rule[data-sar-rule="gate"] .set-row-hint{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.sar-rule .set-row-control{max-width:55%;flex-wrap:wrap;justify-content:flex-end}
+.sar-count{font-size:12.5px;color:var(--sar-ink-2);white-space:nowrap}.sar-count strong{color:var(--sar-ink);font-weight:600;font-variant-numeric:tabular-nums}
+.sar-path{font-size:11.5px;overflow-wrap:anywhere;color:var(--sar-ink-2)}
+/* Lignes des rôles : même gabarit de colonnes pour l'en-tête et chaque ligne. */
+.sar-roles{container:sarroles sarpanel/inline-size}
+.sar-rows-head,.sar-row{--sar-cols:minmax(210px,1.6fr) minmax(170px,1.35fr) minmax(88px,.5fr) minmax(130px,1fr) minmax(140px,1fr) minmax(160px,1.3fr) 36px;
+  display:grid;grid-template-columns:var(--sar-cols);align-items:center;column-gap:14px}
+.sar-rows-head.noroute,.sar-rows.noroute .sar-row{--sar-cols:minmax(220px,1.6fr) minmax(150px,1fr) minmax(200px,1.6fr) 36px}
+.sar-rows-head{padding:0 14px 2px;font-size:var(--set-fs-micro);font-weight:600;color:var(--sar-ink-3)}
+.sar-rows{gap:8px}
+.sar-row{position:relative;padding:10px 12px 10px 10px;border:1px solid color-mix(in srgb,var(--sar-accent) 26%,var(--sar-hair));border-radius:var(--set-r-lg,14px);
+  background:linear-gradient(100deg,color-mix(in srgb,var(--sar-accent) 11%,transparent),transparent 46%),var(--set-glass-sunken,var(--sar-glass));
+  transition:border-color var(--shell-dur-fast,.15s),box-shadow var(--shell-dur-fast,.15s)}
+.sar-row:hover{border-color:color-mix(in srgb,var(--sar-accent) 48%,var(--sar-hair))}
+.sar-row.selected{border-color:color-mix(in srgb,var(--sar-accent) 72%,transparent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--sar-accent) 30%,transparent),0 0 24px -8px var(--sar-accent),inset 0 1px 0 color-mix(in srgb,var(--sar-accent) 22%,transparent)}
+.sar-row.menu-open{z-index:var(--set-z-popover,30)}
+.sar-row.off{border-style:dashed}
+.sar-cell{min-width:0;display:flex;flex-direction:column;gap:4px;font-size:12.5px}
+.sar-cell-k{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.sar-board .sar-item{display:flex;align-items:center;gap:12px;width:100%;padding:4px 6px 4px 2px;border:0;border-radius:var(--set-r-sm,10px);background:none;box-shadow:none;color:var(--sar-ink)}
+.sar-board .sar-item:hover,.sar-board .sar-item.selected{background:none;border-color:transparent;box-shadow:none}
+.sar-board .sar-item .sar-sm .sar-tile{width:40px;height:40px;border-radius:50%;box-shadow:0 0 14px -4px var(--sar-accent)}
+.sar-board .sar-item .sar-sm .sar-glyph{width:20px;height:20px}
+.sar-board .sar-item-name{font-size:14px;font-weight:600}
+.sar-item-desc{font-size:12px;line-height:1.35;color:var(--sar-ink-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.sar-board .sar-item-meta{margin-top:2px}
+.sar-item-route,.sar-item-fb{display:flex;align-items:center;gap:7px;min-width:0;min-height:34px;padding:6px 10px;border-radius:var(--set-r-md,12px);
+  border:1px solid var(--set-hair-3,var(--sar-hair));background:var(--set-field-bg,transparent);font-size:12.5px;color:var(--sar-ink)}
+.sar-item-route .sar-op-g,.sar-item-fb .sar-op-g{width:14px;height:14px;color:var(--sar-accent)}
+.sar-item-route.muted,.sar-item-fb.muted{border-style:dashed;background:none;color:var(--sar-ink-2)}
+.sar-item-route.muted .sar-op-g,.sar-item-fb.muted .sar-op-g{color:var(--sar-ink-2)}
+.sar-item-route.bad,.sar-item-fb.bad{border-style:dashed;border-color:color-mix(in srgb,var(--warn) 60%,transparent);color:var(--warn)}
+.sar-item-route.bad .sar-op-g,.sar-item-fb.bad .sar-op-g{color:var(--warn)}
 .sar-item-route-l{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sar-item-more{flex:none;font-size:10.5px;color:var(--sar-ink-2);border:1px solid var(--sar-hair);border-radius:999px;padding:0 6px}
-.sar-item-prov{flex:none;margin-left:auto;font-size:10.5px;color:var(--sar-ink-2)}
-.sar-ov-toggle{display:flex;align-items:center;gap:9px;width:100%;min-height:38px;padding:8px 12px;border-radius:var(--sar-r);border:1px dashed color-mix(in srgb,var(--accent) 38%,var(--sar-hair));
-  background:color-mix(in srgb,var(--accent) 5%,transparent);color:var(--sar-ink);font:inherit;font-size:13px;cursor:pointer;text-align:left}
-.sar-ov-toggle .sar-op-g{color:var(--accent)}
-.sar-ov-toggle:hover{background:color-mix(in srgb,var(--accent) 10%,transparent)}
-.sar-ov-toggle.selected{border-style:solid;border-color:color-mix(in srgb,var(--accent) 62%,transparent);background:color-mix(in srgb,var(--accent) 13%,transparent)}
-.sar-detail{max-width:860px}
+.sar-item-flag{flex:none;font-size:10.5px;letter-spacing:.02em}
+.sar-item-more{flex:none;margin-left:auto;font-size:11px;font-variant-numeric:tabular-nums;color:var(--sar-ink-2);border:1px solid var(--sar-hair);border-radius:999px;padding:0 7px}
+.sar-src{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;max-width:100%;padding:5px 10px;border-radius:var(--set-r-sm,10px);border:1px solid var(--sar-hair);font-size:12px;white-space:nowrap}
+.sar-src .sar-op-g{width:13px;height:13px}
+.sar-src.explicit{color:var(--sar-ink);border-color:color-mix(in srgb,var(--sar-accent) 64%,transparent);background:color-mix(in srgb,var(--sar-accent) 14%,transparent)}
+.sar-src.explicit .sar-op-g{color:var(--sar-accent)}
+.sar-src.inherited{border-style:dashed;color:var(--sar-ink-2)}
+.sar-tools{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px}
+.sar-tool-chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 7px;border-radius:var(--set-r-xs,6px);border:1px solid var(--sar-hair);
+  background:var(--set-glass-sunken,transparent);font:11px/1.3 var(--set-mono,ui-monospace,monospace);color:var(--sar-ink)}
+.sar-tool-chip.more{font-family:inherit;color:var(--sar-accent);border-color:color-mix(in srgb,var(--sar-accent) 45%,transparent)}
+.sar-when{font-size:12px;line-height:1.4;color:var(--sar-ink-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.sar-c-more{position:relative;align-items:flex-end}
+.sar-more{display:grid;place-items:center;width:34px;height:34px;padding:0;border-radius:var(--set-r-md,12px);border:1px solid var(--sar-hair);background:none;color:var(--sar-ink-2);cursor:pointer;
+  transition:border-color var(--shell-dur-fast,.15s),color var(--shell-dur-fast,.15s),background-color var(--shell-dur-fast,.15s)}
+.sar-more .sar-op-g{width:18px;height:18px}
+.sar-more:hover,.sar-more[aria-expanded="true"]{color:var(--sar-ink);border-color:color-mix(in srgb,var(--sar-accent) 60%,transparent);background:color-mix(in srgb,var(--sar-accent) 12%,transparent)}
+.sar-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:var(--set-z-popover,30);min-width:230px;margin:0;padding:6px;list-style:none;border-radius:var(--set-r-md,12px);
+  border:1px solid color-mix(in srgb,var(--sar-accent) 40%,var(--sar-hair));background:var(--set-glass-float,var(--solid));
+  box-shadow:0 18px 42px -16px color-mix(in srgb,var(--bg,black) 90%,transparent),0 0 22px -12px var(--sar-accent)}
+.sar-menu-item{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border:0;border-radius:var(--set-r-sm,10px);background:none;color:var(--sar-ink);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.sar-menu-item .sar-op-g{color:var(--sar-accent)}
+.sar-menu-item:hover,.sar-menu-item:focus-visible{background:color-mix(in srgb,var(--sar-accent) 14%,transparent)}
+.sar-rows-help{margin:2px 0 0}
+.sar-board .sar-instances{margin-top:2px}
+@container sarpanel (max-width:400px){
+  .sar-stats{grid-template-columns:minmax(0,1fr)}
+  .sar-rule{flex-wrap:wrap}
+  .sar-rule .set-row-control{max-width:none;width:100%;justify-content:flex-start;padding-left:44px}
+  .sar-matrix tbody th{max-width:150px}
+}
+@container sarroles (max-width:1000px){
+  .sar-rows-head{display:none}
+  /* Carte compacte : identité sur toute la largeur, puis modèle | source | repli, puis outils | conditions. */
+  .sar-row{grid-template-columns:minmax(0,1.25fr) minmax(0,.6fr) minmax(0,1fr);row-gap:10px;align-items:start}
+  .sar-rows.noroute .sar-row{grid-template-columns:minmax(0,1fr) minmax(0,1.6fr)}
+  .sar-c-role{grid-column:1/-1;padding-right:44px}.sar-c-when{grid-column:span 2}
+  .sar-rows.noroute .sar-c-when{grid-column:auto}
+  .sar-c-more{position:absolute;top:10px;right:10px}
+  .sar-cell-k{position:static;width:auto;height:auto;clip-path:none;font-size:11px;font-weight:600;color:var(--sar-ink-3)}
+}
+@container sarroles (max-width:640px){
+  .sar-row{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .sar-c-when{grid-column:1/-1}
+}
+@container sarroles (max-width:520px){
+  .sar-row,.sar-rows.noroute .sar-row{grid-template-columns:minmax(0,1fr)}
+}
+/* Matrice de routage : défile seule en largeur, nom du modèle collé à gauche. */
+.sar-matrix th,.sar-matrix td{text-align:center}
+.sar-matrix thead th{padding:8px 6px}
+.sar-matrix thead th:first-child,.sar-matrix tbody th{position:sticky;left:0;text-align:left}
+.sar-matrix thead th:first-child{z-index:calc(var(--set-z-sticky,2) + 1)}
+.sar-matrix tbody th{top:auto;z-index:var(--set-z-raised,1);padding:8px 12px;font-size:12.5px;font-weight:500;color:var(--sar-ink);background:var(--set-glass-float,var(--solid));max-width:230px}
+.sar-matrix tbody td{padding:7px 6px}
+.sar-mx-label{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%}
+.sar-mx-label>span:not(.sar-item-flag){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sar-mx-label .sar-op-g{width:13px;height:13px;color:var(--sar-ink-2)}
+.sar-matrix tr.unavailable th{color:var(--warn)}.sar-matrix tr.unavailable .sar-mx-label .sar-op-g{color:var(--warn)}
+.sar-mx-role{display:inline-grid;place-items:center;padding:3px;border:1px solid transparent;border-radius:var(--set-r-sm,10px);background:none;cursor:pointer;color:inherit}
+.sar-mx-role:hover{border-color:color-mix(in srgb,var(--sar-accent) 55%,transparent);background:color-mix(in srgb,var(--sar-accent) 10%,transparent)}
+.sar-xs{gap:3px}.sar-xs .sar-tile{width:28px;height:28px;border-radius:50%}.sar-xs .sar-glyph{width:16px;height:16px}.sar-xs .sar-badge{font-size:8.5px}
+.sar-mx-pos{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;
+  color:var(--sar-accent);border:1.5px solid var(--sar-accent);background:color-mix(in srgb,var(--sar-accent) 12%,transparent)}
+.sar-mx-on.first .sar-mx-pos{color:var(--set-ink);background:color-mix(in srgb,var(--sar-accent) 55%,transparent);box-shadow:0 0 12px -2px var(--sar-accent)}
+.sar-mx-on.unavailable .sar-mx-pos{border-style:dashed;background:none;box-shadow:none;color:var(--warn);border-color:var(--warn)}
+.sar-mx-pos.cli{width:14px;height:14px}
+.sar-mx-dot{display:inline-block;width:9px;height:9px;border-radius:50%;border:1px solid var(--sar-hair)}
+.sar-mx-legend{display:flex;align-items:center;gap:8px;margin:0}
+.sar-mx-pos.sample{--sar-accent:var(--set-cyan,var(--accent));width:18px;height:18px;font-size:10px;flex:none}
+/* Fiche du rôle choisi. */
+.sar-board .sar-detail-pane{overflow:visible;padding:0;border:0}
+.sar-board .sar-detail{max-width:none;padding:var(--set-panel-pad,20px);border-radius:var(--set-r-xl,18px);
+  border:1px solid color-mix(in srgb,var(--sar-accent) 36%,var(--set-hair,var(--sar-hair)));
+  background:linear-gradient(160deg,color-mix(in srgb,var(--sar-accent) 8%,var(--set-glass,var(--sar-glass))),var(--set-glass-2,var(--sar-glass)) 55%)}
+.sar-board .sar-back{display:inline-flex;margin-bottom:12px}
+.sar-eyebrow{margin:0 0 2px;font-size:var(--set-fs-micro,11.5px);font-weight:600;color:var(--sar-accent)}
+.sar-board .sar-head h3.sar-title{margin:0 0 6px;font-size:22px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--sar-ink)}
+.sar-detail-cols{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);grid-template-areas:"a s" "b s";grid-template-rows:auto 1fr;column-gap:28px}
+.sar-detail-cols.single{grid-template-columns:minmax(0,1fr);grid-template-areas:"a" "b"}
+.sar-col-a{grid-area:a;min-width:0}.sar-col-b{grid-area:b;min-width:0}.sar-col-s{grid-area:s;min-width:0}
+@container sarpane (max-width:900px){
+  .sar-detail-cols{grid-template-columns:minmax(0,1fr);grid-template-areas:"a" "s" "b";grid-template-rows:auto}
+}
 .sar-head{padding:16px 18px;margin-bottom:4px;border:1px solid color-mix(in srgb,var(--sar-accent) 32%,var(--sar-hair));border-radius:calc(var(--sar-r) + 2px);
   background:radial-gradient(120% 140% at 0% 0%,color-mix(in srgb,var(--sar-accent) 16%,transparent),transparent 58%),var(--sar-glass);
   box-shadow:0 18px 40px -28px color-mix(in srgb,var(--sar-accent) 60%,transparent)}
@@ -1184,35 +1539,19 @@
 .sar-preview .hint{grid-column:1/-1;margin:2px 0 0}
 .sar-skip{margin:4px 0 0;padding-left:16px;font-size:11.5px;color:var(--sar-ink-2)}
 .sar-compat{margin:14px 0 0;padding-top:10px;border-top:1px dashed var(--sar-hair)}
-.sar-ov-list{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:6px}
-.sar-ov-row{display:grid;grid-template-columns:auto minmax(150px,.8fr) minmax(0,1.6fr) auto auto;align-items:center;gap:8px 14px;padding:10px 12px;border:1px solid var(--sar-hair);border-radius:var(--sar-r);
-  background:linear-gradient(105deg,color-mix(in srgb,var(--sar-accent) 9%,transparent),transparent 55%),var(--sar-glass)}
-.sar-ov-name{display:grid;gap:4px;font-size:13px;font-weight:600;min-width:0}
-.sar-ov-prov{display:flex;flex-wrap:wrap;gap:4px;font-weight:400}
-.sar-ov-chain{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:5px;min-width:0}
-.sar-ov-c{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;border:1px solid var(--sar-hair);font-size:11.5px;max-width:100%}
-.sar-ov-c span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sar-ov-c .sar-op-g{width:12px;height:12px;color:var(--ok)}
-.sar-ov-c:first-child{border-color:color-mix(in srgb,var(--sar-accent) 55%,transparent);color:var(--sar-ink)}
-.sar-ov-c.unavailable{border-style:dashed;color:var(--warn)}.sar-ov-c.unavailable .sar-op-g{color:var(--warn)}
-.sar-ov-fb{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--sar-ink-2);white-space:nowrap}
-.sar-ov-fb .sar-op-g{width:12px;height:12px}
 @container sarpane (max-width:620px){
   .sar-add{grid-template-columns:minmax(0,1fr)}
-  .sar-ov-row{grid-template-columns:auto minmax(0,1fr)}
-  .sar-ov-chain,.sar-ov-fb{grid-column:1/-1}
-  .sar-ov-row .action{grid-column:1/-1;justify-self:start}
   .sar-cand{grid-template-columns:24px minmax(0,1fr)}
   .sar-cand-ops{grid-column:2;justify-content:flex-start}
   .sar-fallback .hint{margin-left:0}
 }
 .sar-detail-pane{container:sarpane/inline-size}
-@media(max-width:900px){.sar{grid-template-columns:minmax(0,1fr);gap:16px}}
 @media(prefers-reduced-motion:reduce){.sar *{transition:none!important}}
 @media(forced-colors:active){
   .sar-switch-track,.sar-switch-knob{forced-color-adjust:none;border-color:CanvasText}.sar-switch-knob{background:CanvasText}
   .sar-switch input:checked+.sar-switch-track{background:Highlight;border-color:Highlight}
-  .sar-ov-toggle.selected{border:3px solid Highlight}
+  .sar-row{border-color:CanvasText}.sar-row.selected{outline:3px solid Highlight}
+  .sar-mx-pos{forced-color-adjust:none;border-color:CanvasText;color:CanvasText;background:Canvas}
 }
 `;
 
