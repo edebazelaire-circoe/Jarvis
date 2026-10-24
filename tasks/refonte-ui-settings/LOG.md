@@ -68,6 +68,37 @@ Tests : `test_control_center_settings_registry_js` + `test_settings_visual_found
 35 verts ; `test_settings_visual_foundation_browser` 12 + `_js` 3 = 15 verts ; `test_settings_shell_browser` +
 `test_personalization_page_browser` 13 verts.
 
+## Slice 02 — Personnalisation (2026-10-24)
+
+Ligne de base AVANT modification (worktree `r02`, HEAD `10f69d41`) : `test_personalization_profiles` +
+`test_agent_behavior` + `test_control_center_settings_registry_js` 45 verts ; `test_personalization_page_browser` +
+`test_settings_visual_foundation_browser` 16 verts ; `test_settings_shell_browser` 9 verts. `test_wake_word_settings_browser`
+non relancé avant (seul LOG.md diffère de `af1ff5dd`, 20 verts en S01). Aucun échec préexistant.
+
+Livré :
+- Page migrée sur les primitives partagées : `.set-view` > `.set-page`, `.set-page-head`, `panel`, `row`, `range`,
+  `toggle`, `textarea`, `.set-choice`, `float` + `openFloat`, `medallion`. CSS `.perso-*` doublon supprimé (carte,
+  interrupteur, segmenté, préréglage, avatar, mini-bouton, select, erreur) ; restent la composition (colonnes, curseurs
+  à crans, profils). `control_center.html` : bloc `.perso-*` réécrit (≈ 60 règles de moins), en-tête de la section.
+- Composition de la maquette 01 : 3 colonnes (Voix + Réglages détaillés | Personnalité + Préférences rapides |
+  Proactivité & rappels), profil actif en haut à droite, panneau flottant des profils ; 2 colonnes sous 1240 px de
+  page, 1 sous 640. À 1672×941 toute la grille tient dans la fenêtre.
+- Verbosité et formalité en curseurs à crans fidèles aux choix fermés du serveur, « Hériter » en bouton à part ;
+  préréglages en groupe radio ; échéance de 15 s sur lecture et enregistrements (relecture après échéance) ; un texte
+  d'instructions en cours de frappe survit au rendu d'une autre carte.
+- Écarts de maquette sans donnée (documentés `docs/settings/personalization-page.md` § 2) : Écouter, volume, débit,
+  Ton général, Humour, Comportement global (technicité, domaines), Technique/Créatif, 4 interrupteurs de proactivité,
+  descriptions de voix, profils prédéfinis. Aucun réglage serveur ajouté, aucun schéma touché.
+- Tests : `test_personalization_page_browser.py` étendu (7 tests : colonnes 3/2/1, grille visible à 1672×941,
+  garde-fou anti-doublons `.perso-*`, curseurs souris/clavier/Hériter, panneau flottant focus/Échap/clic extérieur,
+  états erreur/chargement/désactivé, captures).
+- Preuves : `slices/02-personnalisation-ui/evidence/` (2 avant, 6 après/états, JPEG).
+
+Après : `test_personalization_page_browser` 7 verts ; `test_personalization_profiles` + `test_agent_behavior` +
+`test_control_center_settings_registry_js` + `test_settings_visual_foundation_js` + `test_control_center_shell_layers`
+60 verts ; `test_settings_visual_foundation_browser` + `test_settings_shell_browser` 21 verts ;
+`test_wake_word_settings_browser` 20 verts.
+
 ## LOG Drive d'origine
 # Execution log
 
