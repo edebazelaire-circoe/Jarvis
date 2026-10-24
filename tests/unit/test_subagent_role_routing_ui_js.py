@@ -382,6 +382,8 @@ process.stdout.write(JSON.stringify({phase:v.state.phase,html:host.innerHTML,err
     assert "Cette section n’a pas pu afficher la politique servie : piège" in out["html"]
     assert 'data-sar-text="coder"' in out["html"]  # l'éditeur d'instructions reste
     assert "subagent_settings_routing_render_failed" in [e[0] for e in out["errors"]]
+    # Une cellule gardée du tableau (`guarded`) dit la raison ET le code stable (lot de finitions S03, Slice 07).
+    assert "Affichage impossible : piège <code>subagent_settings_routing_render_failed</code>" in out["html"]
 
 
 def test_claude_models_are_offered_by_family_and_a_legacy_id_says_where_it_comes_from(tmp_path):

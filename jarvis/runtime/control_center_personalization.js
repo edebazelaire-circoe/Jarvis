@@ -67,7 +67,7 @@
   const svg=(name,cls='')=>`<svg${cls?` class="${cls}"`:''} viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICON[name]||ICON.details}</svg>`;
   const AVATAR='<svg viewBox="0 0 40 40" aria-hidden="true" focusable="false"><circle cx="20" cy="15" r="7"/><path d="M7 36c1.5-7.5 6.6-11 13-11s11.5 3.5 13 11"/></svg>';
 
-  const P={open:false,data:null,profiles:null,error:'',menu:false,creating:false,busy:false,textTimer:null,generation:0,closeMenu:null,unbind:null};
+  const P={open:false,data:null,profiles:null,error:'',menu:false,creating:false,busy:false,textTimer:null,textSaving:false,generation:0,closeMenu:null,unbind:null};
   const root=()=>document.getElementById('settingsPerso');
   const grid=()=>document.getElementById('persoGrid');
   const isOpen=()=>P.open&&overlay.classList.contains('open')&&(overlay.dataset||{}).view==='perso';
@@ -208,13 +208,18 @@
       return UI.bindRange(input,{format:v=>traitText(field,v),onInput:(_v,text)=>{const hint=document.getElementById(`${input.id}-hint`);if(hint)hint.textContent=text}});
     });
     const area=document.getElementById('persoInstructions');if(area)off.push(UI.bindCounter(area));
+    /* Les aides des rappels sont coupées à deux lignes : le texte entier en info-bulle (les lecteurs d'écran le lisent
+       déjà en entier par `aria-describedby`). */
+    host.querySelectorAll('.perso-agenda .set-row-hint,.perso-master .set-row-hint').forEach(h=>{h.title=h.textContent.trim()});
     P.unbind=()=>{off.forEach(fn=>fn());P.unbind=null};
   }
   function render(){
     const host=grid();if(!host)return;
     renderProfile();
-    /* Un texte en cours de frappe (pas encore enregistré) survit au rendu d'une autre carte. */
-    const typing=document.getElementById('persoInstructions'),draft=typing&&P.textTimer?typing.value:null;
+    /* Un texte en cours de frappe ou en cours d'envoi survit au rendu d'une autre carte (sinon l'ancienne valeur revenait
+       dans le champ pendant l'envoi, puis repartait au serveur à la sortie du champ). Un refus, lui, remet la valeur
+       enregistrée : `save` lève `textSaving` avant de redessiner. */
+    const typing=document.getElementById('persoInstructions'),draft=typing&&(P.textTimer||P.textSaving)?typing.value:null;
     UI.keepFocus(root(),()=>{
       if(P.unbind)P.unbind();
       if(P.error){
@@ -298,10 +303,11 @@
     for(const f of (data.agenda_reminders&&data.agenda_reminders.fields)||[])SET.draft.agenda_reminders[f.key]=data.agenda_reminders[f.key];
   }
   async function save(cardId,payload,{rerender=false}={}){
-    const generation=P.generation;
+    const generation=P.generation,text=!!(payload.cli&&payload.cli.behavior&&'custom_instructions' in payload.cli.behavior);
     status(cardId,'Enregistrement…','busy');
+    if(text)P.textSaving=true;
     try{
-      const data=await withDeadline(api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),'Enregistrement');
+      const data=await withDeadline(api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),'Enregistrement').finally(()=>{if(text)P.textSaving=false});
       if(generation!==P.generation)return;
       P.data=data;patchShellDraft(data);
       if(P.profiles)await refreshProfiles(generation);

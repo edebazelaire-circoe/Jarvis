@@ -124,7 +124,17 @@ Chacune ne touche qu'aux éléments donnés et rend sa fonction de détachement 
   bouton), coder une couleur, un rayon ou une ombre que donne un jeton. Un besoin récurrent devient une primitive ici.
 - La page Personnalisation a migré sur ces primitives (Slice 02, 2026-10-24) : ses doublons (`.perso-card`,
   `.perso-switch`, `.perso-seg`…) sont supprimés ; il ne reste sous `.perso-` que sa composition.
-  `.mcpp-switch` (Plugins & MCP) peut migrer vers `.set-switch`.
+- Mémoire et Memory Center ont migré à la Slice 07 : panneaux `.set-panel` (`-hot` pour l'appel au Memory Center,
+  `-quiet` pour la bande Avancé), médaillons, interrupteurs (`JarvisSettingsUI.toggle`), curseurs `.set-range`, cartes
+  de mode `.set-choice` (seul écart voulu : le témoin radio reste visible au coin, pour l'état désactivé lisible),
+  pastilles `.set-dot`, badges `.set-badge`, boutons `.set-btn`, onglets internes `.set-tabs-fill`, champs
+  `.set-input`. Les classes `.mem-*` / `.mc-*` restantes sont la composition et des accroches de tests.
+- Reste hors fondation, volontairement : `.mcpp-switch` (Plugins & MCP). Cette vue garde le style compact de la console
+  MCP (hors maquettes) et son contrat de feuille est épinglé par `test_control_center_mcp_plugins_js.py` ; la migrer
+  serait une refonte de Plugins & MCP, pas une convergence.
+- Titres de panneau : les règles héritées `.content h3` et `.settings-shell .content h3` (titres de section des
+  anciennes pages) excluent `.set-panel-title` et `.set-float-title` (Slice 07). Un panneau monté dans `#modalContent`
+  garde la typographie de la fondation sans contournement local.
 
 ## 8. Fixtures et captures
 
@@ -134,7 +144,11 @@ Outillage : `tests/unit/settings_visual.py` (aide Python) sur le harnais CDP par
 - Fenêtres : `VIEWPORTS` = `wide` 1672×941 (maquettes 01-03), `square` 1254×1254 (04-05), `narrow` 1280×800 ;
   `zoomed(size)` donne la fenêtre CSS à 125 %. `REFERENCE_VIEWPORT[vue]` dit la fenêtre de chaque vue.
 - Vues : `VIEWS` ouvre `hub`, `perso`, `subagents`, `architecture`, `memory`, `memory_center` depuis la page servie
-  par la fixture `served` (Control Center isolé, runtime temporaire, jamais le JARVIS vivant).
+  par la fixture `served` (Control Center isolé, runtime temporaire, jamais le JARVIS vivant). `memory_center` ouvre
+  l'onglet Memory Center de Mémoire & Connaissances (sa seule maison depuis la Slice 06).
+- Captures finales des cinq vues (Slice 07) : `tests/unit/test_settings_page_layout_browser.py`
+  (`test_final_captures_of_the_five_views_have_no_horizontal_overflow`, une session de navigateur par vue : le plan
+  passe en argument au harnais, de longueur bornée sous Windows).
 - Fixtures déterministes : `stub(path, json, method=, status=)` dans l'étape (`stubs`) : la requête de la page reçoit
   ce JSON, le serveur n'est pas appelé. La donnée de démonstration vit dans le test, jamais dans un composant.
 - Figer : `freeze()` met les animations à leur état final, coupe transitions et caret.

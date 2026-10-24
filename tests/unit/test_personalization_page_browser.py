@@ -279,3 +279,68 @@ async def test_captures_de_la_maquette(served, tmp_path):
     for (w, _h), step in zip(sizes, out["steps"]):
         overflow = got(step, "overflow")
         assert overflow["page"] == 0 and not any(overflow["containers"].values()), (w, overflow)
+
+
+#: `api` de la page remplacé en place (déclaration de fonction du `<script>`, lue par le module à chaque appel) :
+#: un envoi qui ne répond jamais, ou seulement l'envoi des instructions retardé de 2,5 s.
+SILENT_POST = "(()=>{const real=window.api;window.api=(p,o)=>o&&o.method==='POST'?new Promise(()=>{}):real(p,o);return 1})()"
+SLOW_TEXT = """(()=>{const real=window.api;window.api=(p,o)=>o&&o.method==='POST'&&String(o.body).includes('custom_instructions')
+  ?new Promise(r=>setTimeout(r,2500)).then(()=>real(p,o)):real(p,o);return 1})()"""
+#: Les contrôles que le piège de Tab de la page parcourt (même filtre que `control_center_personalization.js`).
+TAB_ENDS = """(()=>{const page=document.getElementById('settingsPerso');
+  const items=[...page.querySelectorAll('button,select,textarea,input,[tabindex]:not([tabindex="-1"])')]
+    .filter(el=>!el.disabled&&el.offsetParent!==null&&!(el.type==='radio'&&!el.checked&&page.querySelector(`input[name="${el.name}"]:checked`)));
+  window.__ends=[items[0],items[items.length-1]];return items.length})()"""
+
+
+async def test_refus_echeance_brouillon_en_vol_et_piege_tab(served):
+    """Lot de finitions S02 repris en Slice 07 : un refus remet la valeur enregistrée ; un envoi sans réponse se clôt à
+    l'échéance et la page relit les réglages ; un texte d'instructions en cours d'envoi survit au rendu d'une autre
+    carte (course corrigée) ; Tab et Maj+Tab bouclent dans la page."""
+    refused = stub("/api/settings", {"error": "Refusé par le serveur (test)."}, method="POST", status=400)
+    out = await drive(served.url, [
+        {"width": 1440, "height": 900, "stubs": [refused], "actions": [
+            *OPEN_PAGE,
+            eval_("document.getElementById('persoTrait_response_verbosity').value", "before"),
+            _set("#persoTrait_response_verbosity", "0"),
+            wait("document.querySelector('[data-card-status=persona]').dataset.kind==='error'"),
+            eval_("[document.getElementById('persoTrait_response_verbosity').value,document.querySelector('[data-card-status=persona]').textContent]", "refused"),
+        ]},
+        {"width": 1440, "height": 900, "actions": [
+            *OPEN_PAGE, eval_(SILENT_POST),
+            _set("#persoVoice", "alloy"),
+            wait("document.querySelector('[data-card-status=voice]').dataset.kind==='busy'"),
+            wait("/Valeurs relues/.test(document.querySelector('[data-card-status=voice]').textContent)", 20000),
+            eval_("[document.querySelector('[data-card-status=voice]').textContent,document.getElementById('persoVoice').value]", "late"),
+        ]},
+        {"width": 1440, "height": 900, "actions": [
+            *OPEN_PAGE, eval_(SLOW_TEXT),
+            type_in("#persoInstructions", "Texte en cours d'envoi."),
+            eval_("(document.getElementById('persoInstructions').blur(),1)"),
+            click("[data-perso-preset=concise]"),
+            wait("document.querySelector('[data-card-status=presets]').dataset.kind==='ok'"),
+            eval_("document.getElementById('persoInstructions').value", "during"),
+            wait("document.querySelector('[data-card-status=persona]').dataset.kind==='ok'", 8000),
+            eval_("document.getElementById('persoInstructions').value", "after"),
+        ]},
+        {"width": 1440, "height": 900, "actions": [
+            *OPEN_PAGE, eval_(TAB_ENDS, "count"),
+            eval_("(window.__ends[1].focus(),1)"), key("Tab"),
+            eval_("document.activeElement===window.__ends[0]", "wrap_forward"),
+            key("Tab", shift=True),
+            eval_("document.activeElement===window.__ends[1]", "wrap_back"),
+        ]},
+    ])
+    steps = out["steps"]
+    for step in steps:
+        assert all(a["ok"] for a in step["actions"] if a.get("a") == "wait"), [a for a in step["actions"] if a.get("a") == "wait" and not a["ok"]]
+    value, text = got(steps[0], "refused")
+    assert value == got(steps[0], "before") and "Refusé par le serveur (test)." in text, (value, text)
+    late, voice = got(steps[1], "late")
+    assert "pas de réponse du Control Center après 15 s" in late and voice != "alloy", (late, voice)
+    assert got(steps[2], "during") == "Texte en cours d'envoi.", "le texte en vol survit au rendu des préférences rapides"
+    assert got(steps[2], "after") == "Texte en cours d'envoi."
+    assert served.stored()["agent_behavior"]["custom_instructions"] == "Texte en cours d'envoi."
+    assert got(steps[3], "count") > 10 and got(steps[3], "wrap_forward") is True and got(steps[3], "wrap_back") is True
+    # Seuls les refus voulus du test parlent en console (avertissements journalisés de la page).
+    assert all("personalization" in m.get("text", str(m)) for m in out["console"]), out["console"]

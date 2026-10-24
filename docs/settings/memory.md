@@ -181,7 +181,14 @@ Historique : un onglet **Memoire** des Reglages, monte dans `#memorySettingsMoun
 
 La categorie `memory_knowledge` (« Memoire & connaissances ») a **trois onglets**, maquette
 `tasks/refonte-ui-settings/references/ui/04-memory-settings.png` : **Memoire** (section `recall`),
-**Connaissances** (`knowledge_sources`) et **Memory Center** (`memory_center`). Les reglages d operateur vivent dans
+**Connaissances** (`knowledge_sources`) et **Memory Center** (`memory_center`). Depuis la Slice 07 de
+refonte-ui-settings, elle s ouvre **en page pleine** (`page` au registre, `settings-shell.md` § 1 bis) : × en haut a
+gauche, fil d Ariane « JARVIS › Parametres », grand titre, phrase, onglets de page `.set-tab`, sans rail ; pas d avatar
+(aucune donnee de profil reelle). Controles : primitives de la fondation (`visual-foundation.md`) — panneaux
+`.set-panel`, medaillons `.set-medallion`, interrupteurs `JarvisSettingsUI.toggle` (bouton `role=switch`, etat dans
+`aria-checked`, liaison au clic), curseurs `.set-range`, cartes de mode `.set-choice` (temoin radio garde visible au
+coin, contraste des etats desactives), pastilles `.set-dot`, boutons `.set-btn` ; les classes `.mem-*` ne gardent que
+la composition et servent d accroches aux tests. Les reglages d operateur vivent dans
 **Avance & diagnostic › Memoire** (`memory_advanced`, groupe Architecture & compatibilite). Enregistrement :
 `MEMORY_SECTIONS` et `installMemorySettingsSections` dans `control_center.html` ; Avance & diagnostic porte aussi la
 partie **Memoire** de la section `diagnostics` (`registerSettingsDiagnostic`).
@@ -277,7 +284,10 @@ Section `memory_center` · Memory Center (`save: 'readonly'`) : voir « Memory C
 `save: 'readonly'`, maquette `tasks/refonte-ui-settings/references/ui/05-memory-center.png`). Module
 `jarvis/runtime/control_center_memory.js` (`JarvisMemoryCenter.create(host, {tab, open, openDiagnostics})`, monte
 par `mountMemoryCenter` dans `control_center.html`, CSS injectee `.mcw` / `.mc-*`, pictogrammes de
-`JarvisMemorySettings.icon`). Plus de seconde copie : `#memoryCenterMount` et la vue « etendue » de Sessions & Boards
+`JarvisMemorySettings.icon`). Panneaux, medaillons, onglets internes (`.set-tabs-fill`, teinte violette), boutons,
+badges, pastilles et champs sont les primitives `.set-*` (Slice 07 de refonte-ui-settings) ; `.mc-*` ne garde que la
+mise en page de l atelier. L onglet interne demande par une tuile (`memoryCenterTab`) est consomme par le montage
+suivant, reussi ou non, et oublie si l ouverture echoue : il ne resurgit jamais plus tard. Plus de seconde copie : `#memoryCenterMount` et la vue « etendue » de Sessions & Boards
 sont retires ; le bouton « Memory Center » de Sessions & Boards (`JarvisMemoryCenter.open(tab)`) ferme le
 gestionnaire et ouvre cet onglet (`openSettingsTab('memory_center')`). Les tuiles de l onglet Memoire ouvrent
 l onglet interne demande (Notes, Candidats, Test de rappel).

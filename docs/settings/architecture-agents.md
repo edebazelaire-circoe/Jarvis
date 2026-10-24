@@ -34,6 +34,11 @@ La catégorie `agents_models` (id inchangé, libellé « Architecture & Agents �
 par le shell comme ses deux onglets internes (`#modalTabs`, onglets ARIA à activation manuelle). Il n'y a pas
 d'onglet « Brains » : un cerveau se configure dans sa fenêtre flottante.
 
+Depuis la Slice 07 de refonte-ui-settings, la catégorie s'ouvre **en page pleine** (`page` au registre,
+[`settings-shell.md`](settings-shell.md) § 1 bis), comme la maquette 02 : × en haut à gauche, fil d'Ariane
+« JARVIS › Paramètres », grand titre, phrase, puis les deux onglets en onglets de page (`.set-tab`, pictogramme +
+libellé), sans rail des catégories. Pas d'avatar en haut à droite : aucune donnée de profil réelle ici.
+
 | Section | Contenu | Enregistrement |
 | --- | --- | --- |
 | `architecture` · Architecture | le graphe réel (`GET /api/architecture`) : nœuds de l'architecture vocale effective, liaisons typées, verrouillées, basculables ou gouvernées ; bandeau en lecture seule de l'architecture vocale avec lien vers Avancé ; disposition des nœuds (`/api/architecture/layout`) ; fenêtre d'un cerveau (`/api/brains/{id}/config`) | chaque geste s'enregistre (`save: 'self'`) |
@@ -60,9 +65,10 @@ autorisées sont inchangées), aucune seconde navigation. Le registre garde ses 
   (Runtime & CLI, Comportement), qui envoie toujours `cli.agent` et `cli.settings`, réécrirait l'ancien CLI.
 - **Liens internes** : les boutons `data-settings-open` du canevas (« Changer dans Avancé › Architecture vocale » →
   `architecture_compat`) et de la fenêtre (« Ouvrir Sous-agents » → `subagents`) passent par `context.open`.
-- **Placement initial** de la fenêtre : contre le bord droit du canevas si le nœud configuré reste libre, sinon contre le
-  bord gauche de l'écran (sur le rail des catégories), sinon du côté qui a le plus de place ; elle ne couvre pas le nœud
-  (mesuré à 1440 × 900 dans le test navigateur).
+- **Placement initial** de la fenêtre : du côté du nœud qui a le plus de place, dans la zone de la page sous ses onglets
+  et sous le × (`architecturePanelZone`, page pleine depuis la Slice 07 de refonte-ui-settings) ; elle ne couvre ni le
+  nœud, ni le fil d'Ariane, ni le titre, ni l'onglet actif (`test_architecture_workspace_browser.py`, à 1672 × 941,
+  1254 × 1254 et 1280 × 800).
 - **Démontage** : `destroy` de la section (changement d'onglet, de catégorie, fermeture des Réglages) appelle
   `destroy()` de la fenêtre (sa couche est `position: fixed` : elle survivrait à la section sinon) puis du canevas.
   Un brouillon non appliqué de la fenêtre est alors perdu (limite connue : le shell n'interroge pas `isDirty`).

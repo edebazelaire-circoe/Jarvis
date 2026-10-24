@@ -194,18 +194,20 @@ async def test_an_unreadable_journal_says_so_with_its_code(served):
     assert got(step, "retry") is True
 
 
-#: Points d'entrée de la page encore atteignables (centre de l'élément) et recouvrement du nœud configuré.
+#: Points d'entrée de la page encore atteignables (centre de l'élément) et recouvrement du nœud configuré. La page est
+#: pleine depuis la Slice 07 (fil d'Ariane, ×, titre, onglets ; le rail n'est plus dessiné).
 REACHABLE = """(()=>{const hit=sel=>{const e=document.querySelector(sel);if(!e)return 'absent';const r=e.getBoundingClientRect();
     const top=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return !!top&&e.contains(top)};
   const w=document.querySelector('.bcp-win').getBoundingClientRect(),
     n=document.querySelector('[data-architecture-page] [data-arch-node=core]').getBoundingClientRect();
   const ox=Math.max(0,Math.min(w.right,n.right)-Math.max(w.left,n.left)),oy=Math.max(0,Math.min(w.bottom,n.bottom)-Math.max(w.top,n.top));
-  return {back:hit('#settingsBack'),tab:hit('#modalTabs [aria-selected=true]'),rail:hit('#settingsCategories [data-category]'),
+  return {crumb:hit('#settingsCrumbHub'),close:hit('#closeModal'),tab:hit('#modalTabs [aria-selected=true]'),
+    title:hit('#settingsCategoryTitle'),rail:!!document.getElementById('settingsCategories').getClientRects().length,
     overlap:ox*oy,width:Math.round(w.width),height:Math.round(w.height),inViewport:w.left>=0&&w.top>=0&&w.right<=innerWidth&&w.bottom<=innerHeight,
     gap:Math.round(Math.min(Math.abs(w.left-n.right),Math.abs(n.left-w.right),Math.abs(w.top-n.bottom),Math.abs(n.top-w.bottom)))}})()"""
 
 
-async def test_the_brain_window_opens_beside_its_node_and_leaves_the_settings_chrome_reachable(served):
+async def test_the_brain_window_opens_beside_its_node_and_leaves_the_page_chrome_reachable(served):
     sizes = [(1672, 941), (1254, 1254), (1280, 800)]
     out = await drive(served.url, [{"width": w, "height": h, "actions": [
         *VIEWS["architecture"], *OPEN_CORE, eval_("new Promise(r=>setTimeout(()=>r(1),300))"), eval_(REACHABLE, "reach")]}
@@ -214,7 +216,9 @@ async def test_the_brain_window_opens_beside_its_node_and_leaves_the_settings_ch
     for size, step in zip(sizes, out["steps"]):
         assert all(a["ok"] for a in step["actions"] if a.get("a") == "wait"), size
         r = got(step, "reach")
-        assert r["back"] is True and r["tab"] is True and r["rail"] is True, (size, r)
+        # Page pleine (Slice 07) : le fil d'Ariane, le titre, le × et l'onglet actif restent atteignables ; pas de rail.
+        assert r["crumb"] is True and r["close"] is True and r["tab"] is True and r["title"] is True, (size, r)
+        assert r["rail"] is False, (size, r)
         assert r["overlap"] == 0 and r["inViewport"], (size, r)
         assert r["gap"] <= 40, ("la fenêtre s'ouvre près du nœud", size, r)
         assert r["width"] >= 340 and r["height"] >= 300, ("assez grande pour être utile", size, r)

@@ -68,7 +68,7 @@ def shot(path: Path | str) -> dict:
 
 #: Débordement horizontal de la page et de chaque conteneur visible des Réglages (en pixels, 0 = aucun).
 OVERFLOW = """(()=>{const over=e=>e?Math.max(0,e.scrollWidth-e.clientWidth):0;
-  const roots=['#settingsHub','#settingsPerso','#settingsShell','#settingsMain','#modalContent','#memoryCenterMount']
+  const roots=['#settingsHub','#settingsPerso','#settingsShell','#settingsMain','#modalContent']
     .map(s=>document.querySelector(s)).filter(e=>e&&e.getClientRects().length&&getComputedStyle(e).display!=='none');
   return {page:Math.max(0,document.documentElement.scrollWidth-innerWidth),
     containers:Object.fromEntries(roots.map(e=>[e.id,over(e)]))}})()"""
@@ -91,11 +91,10 @@ VIEWS: dict[str, list[dict]] = {
                      wait("!!document.querySelector('[data-architecture-page] [data-arch-node=core]')", 15000)],
     "memory": [*_SHELL, click("#settingsCategories [data-category=memory_knowledge]"),
                wait("!!document.querySelector('#memSection_recall [data-mem]')", 10000)],
+    # Une seule maison depuis la Slice 06 : l'onglet Memory Center de Mémoire & Connaissances (page pleine, Slice 07).
     "memory_center": [*_SHELL, click("#settingsCategories [data-category=memory_knowledge]"),
                       click("#modalTabs [data-section=memory_center]"),
-                      wait("!!document.querySelector('[data-mem-center]:not([disabled])')", 10000),
-                      click("[data-mem-center]"),
-                      wait("document.getElementById('workspaceManager').classList.contains('mc-on')", 10000)],
+                      wait("!!document.querySelector('#modalContent .mcw .mc-stats')", 10000)],
 }
 
 

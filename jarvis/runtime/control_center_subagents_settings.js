@@ -239,7 +239,8 @@
       try{return fn()}
       catch(e){
         logError('subagent_settings_routing_render_failed',e,{where,role_id:roleId||null});
-        return `<span class="sar-item-route bad" role="note">${op('warn')}<span class="sar-item-route-l">Affichage impossible : ${esc(e&&e.message||e)}</span></span>`;
+        /* Le code stable se lit avec la raison (Slice 07) : celui de l'erreur s'il en porte un, sinon celui du journal. */
+        return `<span class="sar-item-route bad" role="note">${op('warn')}<span class="sar-item-route-l">Affichage impossible : ${esc(e&&e.message||e)} <code>${esc(e&&e.code||'subagent_settings_routing_render_failed')}</code></span></span>`;
       }
     }
     /* Libellé d'un candidat dans une cellule : jamais la couleur seule (pictogramme et mot « indisponible »). La
@@ -1344,10 +1345,10 @@
 /* Sous 1080 px de page, les paires (synthèse | politique, matrice | règles) passent chacune sur toute la rangée :
    une demi-colonne vide à côté d'un panneau ne sert à rien ici. */
 @container set-page (max-width:1080px){.sar-grid>.set-panel{grid-column:1/-1}}
-.sar-board .set-panel-head h3.set-panel-title{margin:0;font-size:var(--set-fs-title);font-weight:600;letter-spacing:0;text-transform:none;color:var(--set-ink)}
 .sar-board .set-panel-desc{max-width:72ch}
 .sar-board .set-panel-body{gap:var(--set-sp-3)}
-.sar-board .sar-summary{margin:0;font-size:var(--set-fs-micro);color:var(--sar-ink-3)}
+/* Résumé du registre (tableau de bord et état « aucun rôle ») : les règles .sar-side et .sar-summary de la page sont retirées (Slice 07). */
+.sar-summary{margin:0;font-size:var(--set-fs-micro);color:var(--sar-ink-3,var(--set-ink-3))}
 #sar-p-overview .set-panel-body{flex:1}
 .sar-panel{container:sarpanel/inline-size}
 .sar-stats{flex:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:1fr;gap:var(--set-sp-3)}

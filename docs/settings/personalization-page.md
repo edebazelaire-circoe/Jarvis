@@ -22,7 +22,9 @@ des profils. Les anciennes classes doublons (`.perso-card`, `.perso-switch`, `.p
 `.perso-avatar`, `.perso-mini`…) sont supprimées ; un test le vérifie.
 
 - En-tête : × en haut à gauche (ferme tout), fil d'Ariane « JARVIS › Paramètres » (le bouton « Paramètres » ramène
-  au hub), titre, phrase, filet. En haut à droite, aligné sur le bord droit de la grille : le **profil actif**
+  au hub), titre, phrase, filet. Même en-tête, mêmes primitives (`.set-crumb button` compris) que les catégories en
+  page pleine du shell, Architecture & Agents et Mémoire & Connaissances ([`settings-shell.md`](settings-shell.md)
+  § 1 bis). En haut à droite, aligné sur le bord droit de la grille : le **profil actif**
   (médaillon à la teinte du profil, nom, chevron). Aucune citation ni slogan.
 - Grille `.set-grid.perso-grid` de trois colonnes `.set-stack.set-span-4` ; le dernier panneau de chaque colonne
   s'étire, les bas s'alignent (enveloppe rectangulaire) :
@@ -57,7 +59,11 @@ sans réponse → message + Réessayer ; enregistrement sans réponse → messag
 Équilibrée — Détaillée ; Ton et formalité : Direct — Courtois — Formel). Bornes et cran courant affichés,
 `aria-valuetext` = libellé du cran. « Hériter » (aucune consigne) est un bouton à part (icône ↺) ; en « Hériter », le
 curseur est neutre au cran médian et le libellé dit « Hériter » ; choisir un cran (souris, flèches, ou clic sur le cran
-médian) écrit ce cran. Un texte d'instructions en cours de frappe survit au rendu déclenché par un autre contrôle.
+médian) écrit ce cran. Un texte d'instructions en cours de frappe **ou en cours d'envoi** survit au rendu déclenché par
+un autre contrôle (avant la Slice 07, l'ancienne valeur revenait pendant l'envoi puis repartait au serveur à la sortie
+du champ) ; un refus de l'envoi, lui, remet la valeur enregistrée. Les aides des rappels sont coupées à deux lignes :
+le texte entier est en info-bulle (`title`), et lu en entier par `aria-describedby`. Les tuiles des Réglages détaillés
+occupent la hauteur que la colonne donne à leur panneau (jusqu'à 64 px chacune) : plus de vide en bas du panneau.
 
 **Écarts assumés avec la maquette** (aucune donnée côté runtime, rien n'est simulé) : bouton « Écouter », volume et
 débit de la voix (Voice ne sait pas les appliquer) ; curseurs « Ton général » et « Humour » (aucun réglage) ; carte

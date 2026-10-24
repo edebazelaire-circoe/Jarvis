@@ -35,7 +35,8 @@ teinte de la catégorie (`SETTINGS_HUE`, partagée avec le rail).
 - Le hub ne charge ni n'écrit aucun réglage et ne touche pas `SET.open`.
 - Refonte page par page : une catégorie qui a sa propre page l'ouvre à la place du shell (`data-view=perso` pour
   Personnalisation, [`personalization-page.md`](personalization-page.md)) ; ses lignes « Réglages détaillés » ouvrent
-  le shell sur une section.
+  le shell sur une section. Architecture & Agents et Mémoire & Connaissances s'ouvrent dans le shell, **en page
+  pleine** (§ 1 bis).
 
 ## 1. Ce que le shell possède
 
@@ -66,6 +67,44 @@ Les identifiants historiques (`overlay`, `modalTitle`, `modalTabs`, `modalConten
 `renderTabs` (navigation), `renderTab` (monte la section active) et `selectTab` (ouvre une cible) restent : ce sont
 les points d'appel du shell et des modules, ils ne concernent plus d'onglet.
 
+## 1 bis. Catégories en page pleine (refonte-ui-settings, Slice 07)
+
+Une catégorie qui porte `page: {lead}` au registre ([`navigation-registry.md`](navigation-registry.md)) —
+aujourd'hui `agents_models` (Architecture & Agents) et `memory_knowledge` (Mémoire & Connaissances) — s'ouvre dans le
+même shell, mais présentée comme la page Personnalisation et les maquettes 02 à 05 : `renderTabs` pose
+`#settingsShell[data-layout=page]` (sinon `rail`). Un seul mécanisme : mêmes fonctions, mêmes identifiants, même
+emplacement, même brouillon ; seule la présentation change.
+
+```
+#settingsShell[data-layout=page]   (aria-labelledby = #settingsCategoryTitle)
+└─ main#settingsMain               SEULE zone qui défile (en-tête compris), jamais en largeur ; contenu centré à --set-view-max
+   ├─ .set-head
+   │  ├─ #closeModal.set-hub-close  × rond en haut à gauche, fixe (même bouton, même nom accessible, même raccourci)
+   │  └─ #settingsIntro › .set-page-intro : nav.set-crumb « JARVIS › [Paramètres] » (#settingsCrumbHub → hub)
+   │                                       · h2.set-title#settingsCategoryTitle · p.set-lead (`page.lead`) · .set-rule
+   ├─ nav#modalTabs role=tablist : onglets de page button.set-tab [data-section] (pictogramme + libellé)
+   ├─ #modalContent : la section, sans défilement propre
+   └─ footer.set-foot : collé en bas, seulement pour une section `save:'footer'` (aucune aujourd'hui)
+```
+
+- Pas de rail : `aside.set-rail` et « Toutes les catégories » ne sont pas rendus (`display:none`) ; on change de
+  catégorie par « Paramètres » (le hub) ou par un lien. Pas d'avatar : aucune donnée de profil réelle derrière ces deux
+  pages (le profil actif reste propre à Personnalisation).
+- Les autres catégories (Personnalisation détaillée, Interface & Interactions, Plugins & MCP, Avancé & Diagnostics)
+  gardent le shell à rail ; un lien interne d'une page pleine vers l'une d'elles (« Ouvrir les paramètres avancés »)
+  rend le rail, et l'inverse.
+- Inchangés : liens profonds et alias (`memory`, `semantic_retrieval`, `consolidation`, `main_agent`,
+  `subagent_models`…), `openSettingsTab` / `openSettingsLink`, raccourcis `ui_settings` / `ui_close`, état d'onglet
+  (`SET.lastItem`), Échap (menu → fenêtre → page), clavier des onglets (activation manuelle).
+- Focus à l'ouverture : l'onglet de page ouvert (il n'y a pas de catégorie active à focaliser).
+- Fenêtre d'un cerveau (Architecture) : sa zone d'ouverture (`architecturePanelZone`) commence sous les onglets de la
+  page et sous le × ; elle ne couvre jamais le fil d'Ariane, le titre ni l'onglet actif.
+- Rangs : `.settings-shell[data-layout=page] ` est inscrit au registre des couches de `docs/control-center-shell.md`
+  (× `--set-z-chrome`, pied `--set-z-sticky`).
+- Tests : `tests/unit/test_settings_page_layout_browser.py` (mise en page, rail, focus, alias, défilement unique,
+  captures finales des cinq vues), `tests/unit/test_architecture_workspace_browser.py` (chrome de la page atteignable,
+  fenêtre du cerveau ouverte).
+
 ## 2. Emplacement et routage
 
 L'emplacement est `SET.category`, puis `SET.section` (une section enregistrée de cette catégorie, ou rien si la
@@ -88,7 +127,8 @@ session. Il n'y a plus d'onglet hérité (`SET.tab` et `TABS` retirés à la Sli
 
 ## 3. Clavier, focus, fermeture
 
-- À l'ouverture, l'élément d'ouverture est retenu et le focus va à la catégorie active. À la fermeture, il revient
+- À l'ouverture, l'élément d'ouverture est retenu et le focus va à la catégorie active (page pleine : à l'onglet de
+  page ouvert, § 1 bis). À la fermeture, il revient
   à l'élément d'ouverture s'il est encore dans la page (un bouton du popover « Plus d’outils » rend le focus à
   « Plus d’outils »), sinon au bouton Réglages. Il n'est jamais volé à un élément focalisé hors du shell.
 - Les deux listes (`#settingsCategories`, `#modalTabs`) sont des onglets ARIA à **activation manuelle** :

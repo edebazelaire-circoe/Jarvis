@@ -36,6 +36,12 @@ l'ancien système d'onglets (`TABS`, adaptateur `legacyTabFor`) n'existe plus : 
   inconnu part de la première ou de la dernière).
 - `notice` (facultatif) : avis montré sous l'intro de la catégorie. Seule `advanced_diagnostics`
   en porte un (outils d'opérateur, Slice 08).
+- `page` (facultatif, gelé, refonte-ui-settings Slice 07) : `{lead}`. La catégorie s'ouvre en **page pleine** (fil
+  d'Ariane, grand titre, `lead` en phrase d'introduction, onglets de page, sans rail) ; sans `page`, le shell à rail.
+  Portent `page` : `agents_models` et `memory_knowledge` (maquettes 02 à 05). Personnalisation (`voice_audio`) a sa
+  propre page hors shell ([`personalization-page.md`](personalization-page.md)) ; sa vue détaillée dans le shell garde
+  le rail. Présentation seulement : ni le routage, ni les alias, ni les sections ne changent
+  ([`settings-shell.md`](settings-shell.md) § 1 bis).
 
 ### Groupes déclarés (`CATEGORY_GROUPS`, Slice 08)
 
@@ -174,7 +180,8 @@ ont été retirés. `test_no_legacy_tab_machinery_is_left_in_the_repository` emp
 
 ## 6. Navigation du shell (Slice 02, simplifiée à la Slice 09)
 
-- `shellNavigation(registry)` → `{categories:[{id, label, description, notice, groups, items}]}` : `items` = sections
+- `shellNavigation(registry)` → `{categories:[{id, label, description, notice, page, groups, items}]}` (`page` : `null`
+  sans page pleine) : `items` = sections
   enregistrées, dans l'ordre du registre (`{kind:'section', id, label, save, advanced, group}`).
   `settingsNavigation()` de la page la rend.
 - `shellTarget(cible, nav, registry)` → `{category, item}` ou `null` : catégorie seule (`item: null`) ; section

@@ -26,8 +26,12 @@
     {id:'voice_audio',label:'Personnalisation',description:'Thème, apparence, voix et comportement général.'},
     /* `agents_models` : « Architecture & Agents » (jarvis-architecture-agents-settings-editor, D01 et C2) ; deux sections,
        Architecture et Sous-agents, qui sont ses deux onglets internes (`docs/settings/architecture-agents.md`). */
-    {id:'agents_models',label:'Architecture & Agents',description:'Architecture des cerveaux, délégation et modèles des sous-agents.'},
-    {id:'memory_knowledge',label:'Mémoire & Connaissances',description:'Mémoire, rappel et bases de connaissances.'},
+    /* `page` (refonte-ui-settings, Slice 07) : la catégorie s'ouvre en page pleine (fil d'Ariane, grand titre, `lead`,
+       onglets de page, sans rail), comme la page Personnalisation ; les autres gardent le shell à rail. */
+    {id:'agents_models',label:'Architecture & Agents',description:'Architecture des cerveaux, délégation et modèles des sous-agents.',
+      page:Object.freeze({lead:'Configurez l’architecture de JARVIS et ses sous-agents spécialisés pour orchestrer chaque tâche.'})},
+    {id:'memory_knowledge',label:'Mémoire & Connaissances',description:'Mémoire, rappel et bases de connaissances.',
+      page:Object.freeze({lead:'Configurez la mémoire de JARVIS, les sources de connaissances et l’accès des agents à ces informations.'})},
     {id:'interface_interactions',label:'Interface & Interactions',description:'Interface, modes d’interaction, entrées et sorties.'},
     {id:'connections',label:'Plugins & MCP',description:'Extensions, outils externes et connecteurs.'},
     {id:'advanced_diagnostics',label:'Avancé & Diagnostics',description:'Paramètres avancés, journaux et outils de diagnostic.',
@@ -178,7 +182,7 @@
      Ce que le shell dessine : pour chaque catégorie, ses sections enregistrées dans l'ordre du registre
      (`registry.sections`). Depuis la Slice 09 il n'y a plus d'onglet hérité ni de lien « encore dans ». */
   function shellNavigation(registry){
-    const categories=CATEGORIES.map(c=>({id:c.id,label:c.label,description:c.description,notice:c.notice||'',groups:groupsOf(c.id),
+    const categories=CATEGORIES.map(c=>({id:c.id,label:c.label,description:c.description,notice:c.notice||'',page:c.page||null,groups:groupsOf(c.id),
       items:(registry?registry.sections(c.id):[]).map(s=>({kind:'section',id:s.id,label:s.label,save:s.save,advanced:s.advanced,group:s.group}))}));
     return {categories};
   }

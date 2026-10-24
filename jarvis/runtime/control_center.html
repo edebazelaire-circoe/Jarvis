@@ -189,8 +189,6 @@ textarea{width:100%;min-height:80px;background:#071015;border:1px solid var(--li
 :root{--role-accent-violet:#b9a2ff;--role-accent-teal:#4fd6c8;--role-accent-sky:#74c6ff;--role-accent-amber:#ffc561;--role-accent-rose:#ff94b6;--role-accent-indigo:#98a3ff;--role-accent-lime:#b8e872;--role-accent-slate:#a3b6c4;--role-accent-orange:#ffa262;--role-accent-cyan:#62e4f1}
 #subagentSettingsMount{height:100%;min-height:0}
 .sar{--sar-accent:var(--role-accent-slate);display:grid;grid-template-columns:minmax(230px,300px) minmax(0,1fr);gap:26px;height:100%;min-height:0}
-.sar-side{min-width:0;display:flex;flex-direction:column;gap:10px;overflow:auto}
-.sar-summary{margin:0;font-size:12px;color:var(--muted);letter-spacing:.02em}
 .sar-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
 .sar-item{width:100%;display:flex;align-items:center;gap:11px;padding:8px 10px;border:1px solid transparent;border-radius:8px;background:none;color:var(--text);font:inherit;text-align:left;cursor:pointer;transition:background-color .15s,border-color .15s}
 .sar-item:hover{background:color-mix(in srgb,var(--muted) 8%,transparent)}
@@ -267,7 +265,7 @@ textarea{width:100%;min-height:80px;background:#071015;border:1px solid var(--li
   .sar-yn::before{forced-color-adjust:none;border:1px solid CanvasText}.sar-yn.yes::before{background:CanvasText}
 }
 .sar-inst{display:flex;align-items:center;gap:10px;padding:6px 4px}
-@media(max-width:900px){.sar{grid-template-columns:1fr;height:auto}.sar-side,.sar-detail-pane{overflow:visible;padding-right:0}.sar-back{display:inline-block}.sar-detail-pane{border-top:1px solid var(--line);padding-top:16px}}
+@media(max-width:900px){.sar{grid-template-columns:1fr;height:auto}.sar-detail-pane{overflow:visible;padding-right:0}.sar-back{display:inline-block}.sar-detail-pane{border-top:1px solid var(--line);padding-top:16px}}
 [hidden]{display:none!important}
 
 /* ---------- Panneau Agents ---------- */
@@ -836,12 +834,11 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
    et panneau flottant : primitives `.set-*` (docs/settings/visual-foundation.md). Ici seulement la composition propre
    à la page : trois colonnes dont l'enveloppe reste un rectangle, rangées de curseurs à crans, profil en haut à droite. */
 .set-view.set-perso{--set-view-max:1600px;padding-top:clamp(52px,7vh,72px)}
+/* Le × des pages pleines (Personnalisation, catégories `page` du shell) reste en place quand la page défile. */
 .set-perso .set-hub-close{position:fixed;z-index:var(--set-z-chrome)}
+.settings-shell[data-layout=page] .set-hub-close{position:fixed;z-index:var(--set-z-chrome)}
 .perso-head{margin-bottom:clamp(12px,2vh,20px);padding-left:clamp(0px,2.2vw,34px)}
 @media(max-width:900px){.set-view.set-perso{padding-top:84px}}
-.perso-crumb button{all:unset;cursor:pointer;letter-spacing:inherit;border-radius:var(--set-r-xs);padding:2px 4px;margin:-2px -4px}
-.perso-crumb button:hover{color:var(--set-ink)}
-.perso-crumb button:focus-visible{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:var(--set-focus-offset)}
 /* Profil actif (en haut à droite, bord droit de la grille) et son panneau flottant `.set-float`. */
 .perso-profile{position:relative;z-index:var(--set-z-popover);flex:none}
 .perso-profile-btn{display:flex;align-items:center;gap:12px;min-height:56px;padding:5px 16px 5px 5px;border-radius:var(--set-r-pill);border:1px solid color-mix(in srgb,var(--set-tone) 45%,transparent);background:linear-gradient(135deg,color-mix(in srgb,var(--set-tone) 14%,var(--set-glass)),var(--set-glass-2));box-shadow:var(--set-lift) color-mix(in srgb,var(--set-tone) 80%,transparent);color:var(--set-ink);font:inherit;cursor:pointer;transition:border-color var(--shell-dur),box-shadow var(--shell-dur)}
@@ -868,7 +865,7 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .perso-profile-create{display:flex;flex-wrap:wrap;gap:var(--set-sp-2);padding-top:var(--set-sp-3);border-top:1px solid var(--set-hair-2)}
 .perso-profile-create .set-input{flex:1 1 160px;min-width:0;width:auto}
 .perso-profile-create .perso-hint{flex-basis:100%}
-/* Trois colonnes (4 + 4 + 4) : le dernier panneau de chaque colonne s'étire, les bas s'alignent. Sous 1080 px de page,
+/* Trois colonnes (4 + 4 + 4) : le dernier panneau de chaque colonne s'étire, les bas s'alignent. Sous 1240 px de page,
    Voix | Personnalité puis Proactivité sur toute la largeur ; sous 640 px, une colonne (règles de `.set-grid`). */
 .perso-col>.set-panel:last-child{flex:1}
 @container set-page (max-width:1240px){.set-grid.perso-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.set-grid>.perso-col{grid-column:span 1}.set-grid>.perso-col-right{grid-column:1/-1}}
@@ -899,7 +896,9 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .perso-instructions .set-textarea>textarea{flex:1;min-height:84px}
 .set-choices.perso-presets{grid-template-columns:repeat(2,minmax(0,1fr))}
 .perso-presets>.set-choice{padding-block:10px}
-.perso-detail-list{list-style:none;margin:0;padding:0;grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr))}
+/* Les lignes des Réglages détaillés occupent la hauteur que la colonne leur donne (jusqu'à 64 px chacune) : plus de
+   vide en bas de la carte quand elle s'étire pour aligner les bas des colonnes (Slice 07). */
+.perso-detail-list{list-style:none;margin:0;padding:0;grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));flex:1;grid-auto-rows:minmax(44px,64px);align-content:start}
 .perso-detail-list>li{display:flex;min-width:0}
 .perso-detail{width:100%;font:inherit;color:inherit;text-align:left;cursor:pointer;transition:border-color var(--shell-dur-fast),background-color var(--shell-dur-fast)}
 .perso-detail:hover{border-color:color-mix(in srgb,var(--set-tone) 55%,transparent)}
@@ -1008,9 +1007,26 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-foot .status.error{color:var(--danger)}
 .set-foot .action.primary{padding:9px 18px;border-radius:9px;font-size:14px;font-weight:600}
 .set-empty{padding:28px 0;color:var(--set-ink-3)}
+/* Catégorie en page pleine (refonte-ui-settings Slice 07 ; `page` du registre : Architecture & Agents, Mémoire &
+   Connaissances) : même présentation que la page Personnalisation — × rond en haut à gauche, fil d'Ariane, grand titre,
+   phrase, onglets de page (`.set-tab`), sans rail. La colonne principale est la seule zone qui défile (en-tête compris),
+   jamais en largeur ; la composition est centrée à `--set-view-max` comme `.set-page`. Le pied Enregistrer, s'il sert,
+   colle en bas. */
+.settings-shell[data-layout=page]{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
+.settings-shell[data-layout=page] :is(.set-rail,.set-back){display:none}
+.settings-shell[data-layout=page] .set-main{overflow-x:hidden;overflow-y:auto;padding:clamp(52px,7vh,72px) var(--set-view-pad) 0}
+.settings-shell[data-layout=page] .set-main>*{width:100%;max-width:var(--set-view-max);margin-inline:auto}
+.settings-shell[data-layout=page] .set-head{display:block;padding:0 0 0 clamp(0px,2.2vw,34px);margin-bottom:clamp(18px,3vh,28px)}
+.settings-shell[data-layout=page] .set-head-text{display:block}
+.settings-shell[data-layout=page] .set-hub-close>:not(svg){display:none}
+.settings-shell[data-layout=page] .set-items{margin-top:0;margin-bottom:var(--set-gap);padding:4px;gap:var(--set-sp-3);flex-wrap:wrap;border:0;overflow:visible}
+.settings-shell[data-layout=page] .set-main>.set-body{flex:none;overflow:visible;min-height:0;padding:0 0 clamp(24px,5vh,48px)}
+.settings-shell[data-layout=page] .set-foot{position:sticky;bottom:0;z-index:var(--set-z-sticky);backdrop-filter:blur(var(--set-blur))}
+@media(max-width:900px){.settings-shell[data-layout=page] .set-main{padding-top:84px}}
 /* Contenu hérité : typographie de lecture (le contenu lui-même ne change pas). */
-.settings-shell .content h3{margin:30px 0 12px;font-size:15px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--set-ink)}
-.settings-shell .content h3:first-child{margin-top:0}
+/* Titres de primitive (`.set-panel-title`, `.set-float-title`) exclus : ils gardent la fondation (Slice 07). */
+.settings-shell .content h3:not(.set-panel-title,.set-float-title){margin:30px 0 12px;font-size:15px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--set-ink)}
+.settings-shell .content h3:not(.set-panel-title,.set-float-title):first-child{margin-top:0}
 .settings-shell .field>label{font-size:13.5px;color:var(--set-ink-2)}
 .settings-shell .hint{font-size:12.5px;color:var(--set-ink-3)}
 .settings-shell .field :is(input:not([type=checkbox]):not([type=radio]):not([type=range]),select),.settings-shell textarea{padding:9px 11px;border-color:var(--set-hair-2);border-radius:8px;background:var(--set-field-bg);font-size:14px}
@@ -1073,6 +1089,10 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-title{margin:0;font-size:var(--set-fs-display);font-weight:300;letter-spacing:-.01em;line-height:1.1;text-wrap:balance}
 .set-lead{margin:10px 0 0;max-width:62ch;font-size:15px;line-height:1.55;color:var(--set-ink-2)}
 .set-rule{display:block;width:64px;height:2px;margin-top:18px;border-radius:2px;background:linear-gradient(90deg,var(--set-cyan),transparent)}
+/* « Paramètres » du fil d'Ariane : un lien de retour au hub, au texte du fil. */
+.set-crumb button{all:unset;cursor:pointer;letter-spacing:inherit;border-radius:var(--set-r-xs);padding:2px 4px;margin:-2px -4px}
+.set-crumb button:hover{color:var(--set-ink)}
+.set-crumb button:focus-visible{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:var(--set-focus-offset)}
 /* Grilles. `.set-grid` : 12 colonnes à gouttière constante, enfants placés par `.set-span-N` ; 2 colonnes quand le
    conteneur `.set-page` passe sous 1080 px (span ≤ 6 → une colonne, > 6 → toute la rangée), 1 colonne sous 640 px.
    `.set-grid-auto` : 3/2/1 colonnes sans requête, chaque colonne au moins `--set-col-min`. `.set-workbench` : surface
@@ -1286,8 +1306,8 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
   .settings-shell :is(button,input,select,textarea):disabled,.settings-shell [aria-disabled=true]{opacity:1!important;color:GrayText;border-color:GrayText}
   .set-badge,.set-notice,.conn-card{border-color:CanvasText}}
 .content>section{max-width:760px}
-.content h3{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:26px 0 12px;font-weight:normal}
-.content h3:first-child{margin-top:0}
+.content h3:not(.set-panel-title,.set-float-title){font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:26px 0 12px;font-weight:normal}
+.content h3:not(.set-panel-title,.set-float-title):first-child{margin-top:0}
 .field{display:grid;gap:6px;margin-bottom:18px}
 .field>label{font-size:12px;color:var(--muted)}
 .field input,.field select{width:100%;background:#071015;border:1px solid var(--line);color:var(--text);padding:9px;border-radius:5px;font:inherit}
@@ -2838,7 +2858,7 @@ button.wsp-ename:hover{color:var(--accent)}
     <div class="set-page">
       <header class="set-page-head perso-head">
         <div>
-          <nav class="set-crumb perso-crumb" aria-label="Fil d’Ariane"><span>JARVIS</span><span aria-hidden="true">›</span><button type="button" id="persoCrumbHub">Paramètres</button></nav>
+          <nav class="set-crumb" aria-label="Fil d’Ariane"><span>JARVIS</span><span aria-hidden="true">›</span><button type="button" id="persoCrumbHub">Paramètres</button></nav>
           <h2 class="set-title" id="persoTitle">Personnalisation</h2>
           <p class="set-lead" id="persoLead">Définissez la personnalité, la voix et le comportement de JARVIS pour une expérience qui vous ressemble.</p>
           <span class="set-rule" aria-hidden="true"></span>
@@ -5671,15 +5691,18 @@ function syncCoreCliDraft(config){
   SET.clis=null;  // le CLI actif a pu changer : Runtime & CLI refait sa détection
   console.info('architecture_settings.core_cli_synced',{provider,model:model||'(défaut)'});
 }
-/* Zone d'ouverture de la fenêtre d'un cerveau (refonte-ui-settings, Slice 04) : sous les onglets de la page et à droite
-   du rail des catégories, pour que « Toutes les catégories », l'onglet actif et le rail restent atteignables. Rail
-   empilé au-dessus du contenu (fenêtre étroite) : il est déjà au-dessus des onglets, seule la limite haute compte. */
+/* Zone d'ouverture de la fenêtre d'un cerveau (refonte-ui-settings, Slice 04 ; page pleine depuis la Slice 07) : sous
+   les onglets de la page, pour que le fil d'Ariane, le titre et l'onglet actif restent atteignables, et jamais sur le ×
+   (fixe en haut à gauche) quand la page a défilé et que les onglets sont sortis de la vue. Shell à rail (une catégorie
+   sans `page`, ou une page future) : à droite du rail quand il est à côté du contenu. */
 function architecturePanelZone(){
   const shown=el=>el&&el.getClientRects().length?el.getBoundingClientRect():null;
   const ov=shown(document.getElementById('overlay'))||{left:0,top:0,right:innerWidth,bottom:innerHeight};
   const tabs=shown(document.getElementById('modalTabs')),rail=shown(document.getElementById('settingsCategories'));
+  const close=shown(document.getElementById('closeModal'));
   const beside=rail&&tabs&&rail.right<=tabs.left;
-  return {left:beside?rail.right+16:ov.left,top:tabs?tabs.bottom+8:ov.top,right:ov.right,bottom:ov.bottom};
+  const top=Math.max(ov.top,tabs?tabs.bottom+8:ov.top,close?close.bottom+8:ov.top);
+  return {left:beside?rail.right+16:ov.left,top,right:ov.right,bottom:ov.bottom};
 }
 function mountArchitectureSettings(host,context){
   const A=window.JarvisArchitectureSettings,P=window.JarvisBrainConfigPanel;
@@ -5880,6 +5903,16 @@ const SETTINGS_ICON={
 const SETTINGS_HUE={voice_audio:'#5aa8ff',agents_models:'var(--role-accent-violet)',memory_knowledge:'#3ddc97',
   interface_interactions:'var(--role-accent-amber)',connections:'#ff6fb5',advanced_diagnostics:'var(--role-accent-cyan)'};
 function settingsIcon(id){return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${SETTINGS_ICON[id]||SETTINGS_ICON.generic}</svg>`}
+/* Pictogrammes des onglets de page (Slice 07) : architecture (modules reliés), sous-agents (équipe), mémoire (cerveau),
+   connaissances (base), Memory Center (graphe de notes). Une section sans pictogramme n'en montre aucun. */
+const SETTINGS_SECTION_ICON={
+  architecture:'<path d="M12 3 4 7.5v9L12 21l8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/>',
+  subagents:'<circle cx="12" cy="7" r="2.6"/><circle cx="5.5" cy="10" r="2"/><circle cx="18.5" cy="10" r="2"/><path d="M7.5 20v-2.5a4.5 4.5 0 0 1 9 0V20M2.5 19v-1.5a3 3 0 0 1 4.3-2.7M21.5 19v-1.5a3 3 0 0 0-4.3-2.7"/>',
+  recall:SETTINGS_ICON.agents_models,
+  knowledge_sources:SETTINGS_ICON.memory_knowledge,
+  memory_center:'<circle cx="12" cy="5.5" r="2.2"/><circle cx="5.5" cy="18" r="2.2"/><circle cx="18.5" cy="18" r="2.2"/><path d="M10.9 7.4 6.6 16M13.1 7.4l4.3 8.6M7.7 18h8.6"/>',
+};
+function settingsSectionIcon(id){return SETTINGS_SECTION_ICON[id]?`<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${SETTINGS_SECTION_ICON[id]}</svg>`:''}
 /* Refus d'enregistrement de section (`register` du registre) : journalisés et montrés dans la catégorie visée. */
 const SETTINGS_REJECTED=[];
 /* Porte d'enregistrement des modules (Slices 03-08) : `R.page.register` derrière un filet qui journalise le
@@ -6025,12 +6058,14 @@ let memoryCenterTab=null;
 /* Memory Center (refonte-ui-settings, Slice 06) : l'atelier `JarvisMemoryCenter` monté dans son onglet ; ses liens
    passent par le lien interne des Réglages (`context.open`). Une vue par montage, détruite en quittant l'onglet. */
 function mountMemoryCenter(host,context){
+  /* L'onglet demandé est consommé par ce montage, réussi ou non : il ne resurgit jamais dans un montage ultérieur. */
+  const asked=memoryCenterTab;memoryCenterTab=null;
   const C=window.JarvisMemoryCenter;
   if(!C){
     host.innerHTML=context.ui.notice({kind:'bad',live:'assertive',title:'Memory Center indisponible.',
       body:'<span class="set-notice-text">Module absent de la page servie. <code>memory_center_module_missing</code></span>'});
     console.error('memory_center_module_missing');return null}
-  const tab=memoryCenterTab||C.takeTab();memoryCenterTab=null;
+  const tab=asked||C.takeTab();
   const view=C.create(host,{tab,open:target=>context.open(target),openDiagnostics:()=>openMemoryDiagnostics(context)});
   view.load().catch(e=>console.error('memory_center_load_failed',{error:String(e&&e.message||e)}));
   return view;
@@ -6042,7 +6077,7 @@ function memorySectionSpec(spec){
     mount(host,context){
       if(mode==='workbench'){view=mountMemoryCenter(host,context);return}
       view=mountMemorySettings(host,context,{mode:mode||'fields',section:spec.id,label:spec.label,description:spec.description,
-        openCenter:tab=>{memoryCenterTab=tab||null;context.open('memory_center')}})},
+        openCenter:tab=>{memoryCenterTab=tab||null;if(!context.open('memory_center'))memoryCenterTab=null}})},
     destroy(){if(view){view.destroy();view=null}},
   };
 }
@@ -6086,13 +6121,26 @@ function renderTabs(){
       +`<span class="set-cat-icon">${settingsIcon(c.id)}</span><span class="set-cat-label">${esc(c.label)}</span><span class="set-cat-desc">${esc(c.description)}</span></button>`}).join('');
   shell.style.setProperty('--set-hue',SETTINGS_HUE[cat.id]||'var(--accent)');
   shell.dataset.category=cat.id;
-  $('#settingsMain').setAttribute('aria-labelledby',`settingsCat-${cat.id}`);
-  $('#settingsIntro').innerHTML=`<span class="set-intro-icon" aria-hidden="true">${settingsIcon(cat.id)}</span>`+UI.intro({id:'settingsCategoryTitle',title:cat.label,description:cat.description,level:3});
+  /* Page pleine (Slice 07, `page` du registre) : fil d'Ariane, grand titre, phrase et onglets de page, sans rail ; le
+     bouton Fermer devient le × rond du hub et de Personnalisation, en haut à gauche. Sinon, le shell à rail. */
+  const page=!!cat.page,close=$('#closeModal');
+  shell.dataset.layout=page?'page':'rail';
+  close.classList.toggle('set-hub-close',page);close.classList.toggle('set-close',!page);
+  shell.setAttribute('aria-labelledby',page?'settingsCategoryTitle':'modalTitle');
+  $('#settingsMain').setAttribute('aria-labelledby',page?'settingsCategoryTitle':`settingsCat-${cat.id}`);
+  $('#settingsIntro').innerHTML=page
+    ?`<div class="set-page-intro"><nav class="set-crumb" aria-label="Fil d’Ariane"><span>JARVIS</span><span aria-hidden="true">›</span>`
+      +`<button type="button" id="settingsCrumbHub" data-settings-hub>Paramètres</button></nav>`
+      +`<h2 class="set-title" id="settingsCategoryTitle">${esc(cat.label)}</h2><p class="set-lead">${esc(cat.page.lead||cat.description)}</p>`
+      +'<span class="set-rule" aria-hidden="true"></span></div>'
+    :`<span class="set-intro-icon" aria-hidden="true">${settingsIcon(cat.id)}</span>`+UI.intro({id:'settingsCategoryTitle',title:cat.label,description:cat.description,level:3});
   /* Avis de catégorie déclaré par le registre (Avancé : outils d'opérateur). */
   if(cat.notice)$('#settingsIntro .set-intro').insertAdjacentHTML('beforeend',`<p class="set-intro-notice" id="settingsCategoryNotice">${esc(cat.notice)}</p>`);
   /* `data-section` : l'identifiant de l'entrée ; `.active` et `aria-selected` : l'entrée montrée. */
+  /* Page pleine : les entrées sont les onglets de page de la fondation (`.set-tab`, pictogramme + libellé). */
   const itemHtml=(i,group)=>{const on=i.id===SET.section;
-    return `<button type="button" role="tab" class="set-item${on?' active':''}" data-section="${esc(i.id)}"${group?` data-group="${esc(group)}" aria-describedby="settingsGroup-${esc(group)}"`:''} aria-selected="${on}" aria-controls="modalContent" tabindex="${on?0:-1}">${esc(i.label)}</button>`};
+    return `<button type="button" role="tab" class="${page?'set-tab':'set-item'}${on?' active':''}" data-section="${esc(i.id)}"${group?` data-group="${esc(group)}" aria-describedby="settingsGroup-${esc(group)}"`:''} aria-selected="${on}" aria-controls="modalContent" tabindex="${on?0:-1}">`
+      +(page?`${settingsSectionIcon(i.id)}<span>${esc(i.label)}</span>`:esc(i.label))+'</button>'};
   /* Catégorie à groupes déclarés (Avancé, Slice 08) : les entrées sous l'intitulé de leur groupe, dans l'ordre du
      registre ; un groupe sans section n'est pas dessiné. Les conteneurs sont `role=none` : la liste ne possède que
      des onglets ; l'intitulé (caché aux lecteurs d'écran, il y serait lu en double) décrit chaque onglet du groupe. */
@@ -6605,7 +6653,9 @@ function settingsRememberOpener(){
 }
 function settingsFocusIn(){
   if(typeof document==='undefined')return;
-  const target=document.querySelector('#settingsCategories [aria-selected=true]')||document.getElementById('closeModal');
+  /* Page pleine (sans rail) : l'onglet de page ouvert ; shell à rail : la catégorie active. */
+  const shell=document.getElementById('settingsShell'),page=!!(shell&&shell.dataset&&shell.dataset.layout==='page');
+  const target=document.querySelector(page?'#modalTabs [aria-selected=true]':'#settingsCategories [aria-selected=true]')||document.getElementById('closeModal');
   if(target)target.focus({preventScroll:true});
 }
 function settingsFocusOut(){
@@ -6716,6 +6766,8 @@ $('#settingsHubGrid').addEventListener('click',event=>{
 });
 $('#settingsHubClose').addEventListener('click',closeSettingsHub);
 $('#settingsBack').addEventListener('click',backToSettingsHub);
+/* « Paramètres » du fil d'Ariane d'une page pleine (dessiné par `renderTabs`) : même retour au hub. */
+$('#settingsIntro').addEventListener('click',event=>{if(event.target.closest&&event.target.closest('[data-settings-hub]'))backToSettingsHub()});
 /* Flèches entre les cartes (ordre de lecture) ; Échap ferme ; Tab reste dans le hub (aria-modal). */
 $('#settingsHub').addEventListener('keydown',event=>{
   const cards=[...document.querySelectorAll('#settingsHubGrid .set-hub-card')];
