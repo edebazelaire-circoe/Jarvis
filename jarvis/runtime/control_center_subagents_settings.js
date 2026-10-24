@@ -373,6 +373,11 @@
       if(v.selectable===null)return `<span class="sar-av ok">${op('ok')}Disponible</span><span class="sar-av muted">Lançable : vérifié par le serveur à l’enregistrement</span>`;
       return `<span class="sar-av ok">${op('ok')}Disponible</span>`;
     }
+    /* Un ancien réglage par identifiant complet est servi par sa famille : l'écran dit d'où il vient,
+       sans le réécrire (HV-ARCH-007 : la famille tourne dans sa version courante du CLI). */
+    function savedModelHtml(v){
+      return v.saved_model?`<span class="sar-av muted" data-sar-saved-model>Enregistré sous <code>${esc(v.saved_model)}</code> : le CLI lance la version courante de cette famille ; il sera enregistré par famille à la prochaine modification de ce rôle.</span>`:'';
+    }
     function provenanceChip(r){
       if(!r)return '';
       return r.explicit?`<span class="sar-prov explicit">${op('pin')}Réglé pour ce rôle</span>`
@@ -420,7 +425,7 @@
       const btn=(kind,glyph,label,dis)=>`<button type="button" class="sar-op" data-sar-cand-op="${kind}" data-sar-cand-role="${esc(id)}" data-sar-cand-i="${i}" aria-label="${esc(label)}" title="${esc(label)}"${dis||!writable?' disabled':''}>${op(glyph)}</button>`;
       return `<li class="sar-cand${v.available?'':' unavailable'}${v.selectable===false?' blocked':''}" data-sar-cand="${i}">
         <span class="sar-cand-pos" aria-hidden="true">${i+1}</span>
-        <span class="sar-cand-main"><span class="sar-cand-name"><span class="sar-sr">Position ${i+1} sur ${count} : </span>${esc(name)}</span><span class="sar-cand-state">${availabilityHtml(v)}</span></span>
+        <span class="sar-cand-main"><span class="sar-cand-name"><span class="sar-sr">Position ${i+1} sur ${count} : </span>${esc(name)}</span><span class="sar-cand-state">${availabilityHtml(v)}${savedModelHtml(v)}</span></span>
         <span class="sar-cand-ops" role="group" aria-label="Déplacer ou retirer ${esc(name)}"${off?' aria-disabled="true"':''}>
           ${btn('up','up',`Monter ${name}`,i===0)}${btn('down','down',`Descendre ${name}`,i===count-1)}${btn('remove','remove',`Retirer ${name}`,false)}</span></li>`;
     }

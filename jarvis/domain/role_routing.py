@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
-from jarvis.domain import routing
+from jarvis.domain import model_family, routing
 from jarvis.domain.routing import (
     CandidateRef,
     ModelCandidate,
@@ -189,36 +189,45 @@ def resolve_for_role(
     """
     profile = routing.profile_spec(announced_profile or role.default_profile).id
     explicit = document.for_role(role.id)
+    # Sur le CLI Claude, un rôle se règle par famille (`model_family`) : les candidats sont regroupés par famille
+    # et chaque liste enregistrée est lue par famille, un ancien identifiant (`claude-sonnet-4-5`) compris.
+    families = model_family.collapse_candidates(list(candidates))
+    by_family = _by_family(profiles)
+    general_saved = _refs_of(profiles, routing.GENERAL_PROFILE)
     if explicit is None:
-        decision = routing.resolve(RoutingIntent(profile=profile, source=source), profiles, candidates)
-        return replace(decision, role_id=role.id, provenance=inherited(profile))
+        decision = routing.resolve(RoutingIntent(profile=profile, source=source), by_family, families)
+        return replace(decision, role_id=role.id, provenance=inherited(profile),
+                       saved_model=_saved_model(decision, _refs_of(profiles, profile), general_saved))
 
+    refs = model_family.normalize_refs(explicit.candidates)
     required = frozenset(routing.profile_spec(profile).requires)
-    chosen, verdicts = routing.first_eligible(explicit.candidates, candidates, required)
+    chosen, verdicts = routing.first_eligible(refs, families, required)
     if chosen is not None:
-        preferred = chosen == explicit.candidates[0]
+        preferred = chosen == refs[0]
         return RoutingDecision(
             profile=profile, agent=chosen.agent, model=chosen.model,
             reason=routing.REASON_PREFERRED if preferred else routing.REASON_FALLBACK,
             considered=verdicts,
-            fallback_from=None if preferred else explicit.candidates[0],
+            fallback_from=None if preferred else refs[0],
             fallback_code="" if preferred else verdicts[0].code,
             source=source, role_id=role.id, provenance=PROVENANCE_EXPLICIT,
+            saved_model=_saved_model(chosen, explicit.candidates),
         )
     all_verdicts = list(verdicts)
     if explicit.allow_general_fallback:
         # Repli = la liste du profil général, comme pour un profil. L'interrupteur Auto/Dupliqué ne
         # l'éteint pas : le repli a été demandé pour ce rôle, explicitement.
-        general = profiles.for_profile(routing.GENERAL_PROFILE)
+        general = by_family.for_profile(routing.GENERAL_PROFILE)
         if general is not None and general.enabled and general.candidates:
-            chosen, more = routing.first_eligible(general.candidates, candidates, required)
+            chosen, more = routing.first_eligible(general.candidates, families, required)
             all_verdicts.extend(more)
             if chosen is not None:
                 return RoutingDecision(
                     profile=profile, agent=chosen.agent, model=chosen.model,
                     reason=routing.REASON_GENERAL_FALLBACK, considered=tuple(all_verdicts),
-                    fallback_from=explicit.candidates[0], fallback_code=verdicts[0].code if verdicts else "",
+                    fallback_from=refs[0], fallback_code=verdicts[0].code if verdicts else "",
                     source=source, role_id=role.id, provenance=PROVENANCE_EXPLICIT,
+                    saved_model=_saved_model(chosen, general_saved),
                 )
     if not profiles.enabled:
         # Dupliqué : un catalogue périmé (tous les candidats Claude dits indisponibles) ne doit pas
@@ -226,10 +235,36 @@ def resolve_for_role(
         # décision porte les verdicts pour la trace. En Auto, le refus des profils est conservé.
         return RoutingDecision(
             profile=profile, agent="", model=routing.DEFAULT_MODEL, reason=REASON_ROLE_PASSTHROUGH,
-            considered=tuple(all_verdicts), fallback_from=explicit.candidates[0],
+            considered=tuple(all_verdicts), fallback_from=refs[0],
             fallback_code=verdicts[0].code if verdicts else "", source=source,
             role_id=role.id, provenance=PROVENANCE_EXPLICIT,
         )
     raise NoEligibleCandidateError(
         f"Aucun candidat autorisé n'est utilisable pour le rôle « {role.name} ».", tuple(all_verdicts),
     )
+
+
+def _by_family(profiles: RoutingPolicy) -> RoutingPolicy:
+    """La politique par profil lue par famille pour le CLI Claude (en mémoire : rien n'est réécrit)."""
+    return replace(profiles, profiles=tuple(
+        replace(entry, candidates=model_family.normalize_refs(entry.candidates)) for entry in profiles.profiles))
+
+
+def _refs_of(profiles: RoutingPolicy, profile: str) -> tuple[CandidateRef, ...]:
+    entry = profiles.for_profile(profile)
+    return tuple(entry.candidates) if entry is not None else ()
+
+
+def _saved_model(chosen: CandidateRef | RoutingDecision, *lists: tuple[CandidateRef, ...]) -> str:
+    """L'identifiant enregistré dont vient la famille retenue, s'il en diffère (`claude-sonnet-4-5`), sinon `""`.
+
+    Le premier membre de la famille dans l'ordre des listes consultées : c'est lui que la lecture par famille a pris.
+    """
+    target = CandidateRef(agent=chosen.agent, model=chosen.model)
+    if not target.model:
+        return ""
+    for refs in lists:
+        for ref in refs:
+            if model_family.normalize_ref(ref) == target:
+                return "" if ref.model == target.model else ref.model
+    return ""

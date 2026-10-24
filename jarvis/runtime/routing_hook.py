@@ -35,7 +35,7 @@ import sys
 from typing import Any, Mapping, Sequence
 
 from jarvis.domain import (
-    agent_markers, agent_orchestration, delivery_quality, relation_runtime, role_routing, routing,
+    agent_markers, agent_orchestration, delivery_quality, model_family, relation_runtime, role_routing, routing,
 )
 from jarvis.domain.agent_charter import sign_brief
 from jarvis.domain.brain_config import DelegationTendency
@@ -323,8 +323,9 @@ def _output(decision: str, reason: str, updated: dict[str, Any] | None = None) -
 #: catalogue. Constat de la Slice 08 (CLI 2.1.309, bac à sable) : un `updatedInput` portant `claude-haiku-4-5`
 #: est refusé par le CLI (« failed schema validation … expected one of sonnet|opus|haiku|fable ») et le sous-agent
 #: ne part pas du tout.
-AGENT_TOOL_MODELS = ("sonnet", "opus", "haiku", "fable")
-_AGENT_TOOL_FAMILY = re.compile(r"^claude-(?:[a-z0-9.\-]*-)?(sonnet|opus|haiku|fable)(?:-|$)")
+#: Décision du Human du 2026-10-24 (HV-ARCH-007) : une famille vaut sa version courante dans le CLI (Sonnet = Sonnet 5.5
+#: aujourd'hui). La règle de lecture vit dans `jarvis.domain.model_family`, partagée avec l'onglet Sous-agents.
+AGENT_TOOL_MODELS = model_family.FAMILIES
 
 
 def agent_tool_model(model: str) -> str:
@@ -335,10 +336,17 @@ def agent_tool_model(model: str) -> str:
     Une famille reste telle quelle ; un autre identifiant est rendu inchangé (rien n'est deviné pour lui)."""
 
     value = str(model or "").strip()
-    if value in AGENT_TOOL_MODELS:
-        return value
-    match = _AGENT_TOOL_FAMILY.match(value.lower())
-    return match.group(1) if match else value
+    return model_family.family_of(value) or value
+
+
+def _model_phrase(decision: RoutingDecision) -> str:
+    """Le modèle dit honnêtement : la famille et « version courante du CLI » pour Claude, l'id enregistré à côté."""
+    applied = agent_tool_model(decision.model)
+    if applied not in AGENT_TOOL_MODELS:
+        return decision.model
+    phrase = model_family.family_label(applied)
+    saved = decision.saved_model or (decision.model if decision.model != applied else "")
+    return f"{phrase}, enregistré « {saved} »" if saved else phrase
 
 
 def decide(
@@ -393,7 +401,7 @@ def decide(
     return (
         _output(
             "allow",
-            f"{_scope(role, decision, profile)} : modèle imposé par les réglages de JARVIS ({decision.model}).",
+            f"{_scope(role, decision, profile)} : modèle imposé par les réglages de JARVIS ({_model_phrase(decision)}).",
             {"model": applied_model},
         ),
         decision,
@@ -1038,6 +1046,10 @@ def _log(
         if decision.model:
             # Ce que l'outil `Agent` reçoit vraiment : la famille du modèle choisi (`agent_tool_model`).
             data["agent_model"] = agent_tool_model(decision.model)
+            if data["agent_model"] in AGENT_TOOL_MODELS:
+                # La famille demandée, que le CLI résout vers sa version courante (HV-ARCH-007) ; l'identifiant
+                # enregistré dont elle vient reste dans `saved_model` (rôle) ou `model` (profil).
+                data["model_family"] = data["agent_model"]
     message = (
         f"Sous-agent « {strip_profile(tool_input.get('description') or '') or 'sans description'} » : "
         f"profil {data.get('profile', routing.GENERAL_PROFILE)}"
@@ -1047,7 +1059,7 @@ def _log(
     if decision is not None and decision.reason == role_routing.REASON_ROLE_PASSTHROUGH:
         message += ", aucun candidat du rôle utilisable : le CLI garde la main (Dupliqué)"
     if decision is not None and decision.model:
-        message += f", modèle {decision.model}"
+        message += f", modèle {_model_phrase(decision)}"
     try:
         passthrough = decision is not None and decision.reason == role_routing.REASON_ROLE_PASSTHROUGH
         level = "warning" if applied == "deny" or passthrough else "info"
