@@ -101,7 +101,8 @@ async def test_categories_keyboard_shortcuts_escape_and_focus_return(served):
     entered = got(step, "entered")
     assert entered["selected"] == "advanced_diagnostics" and entered["focus"] == "settingsCat-advanced_diagnostics"
     # Slice 08 : entrées rangées par groupe déclaré ; « Prompts » et « Scène constellation » sont des sections.
-    assert entered["items"] == ["Architecture & compatibilité", "Prompts", "Runtime & CLI", "Diagnostics",
+    # refonte-ui-settings Slice 05 : « Mémoire » (délai brut du rappel, sidecar Tencent) dans Architecture & compatibilité.
+    assert entered["items"] == ["Architecture & compatibilité", "Mémoire", "Prompts", "Runtime & CLI", "Diagnostics",
                                 "Scène constellation", "Work Methods apprises", "Bare Hands · essais"]
     assert got(step, "next")["selected"] == "voice_audio"  # Ctrl+→ en boucle après la sixième
     assert got(step, "prev")["selected"] == "connections"  # Ctrl+← deux fois : Avancé, puis Plugins & MCP

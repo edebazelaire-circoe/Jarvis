@@ -44,7 +44,7 @@ Une catégorie peut déclarer des groupes, gelés dans le registre comme les cat
 
 | Ordre | ID de groupe | Libellé | Sections (ordre) |
 | --- | --- | --- | --- |
-| 1 | `architecture_compat` | Architecture & compatibilité | `architecture_compat` |
+| 1 | `architecture_compat` | Architecture & compatibilité | `architecture_compat`, `memory_advanced` (Mémoire, refonte-ui-settings S05) |
 | 2 | `prompts` | Prompts & instructions | `prompts` |
 | 3 | `runtime_cli` | Runtime & CLI | `runtime_cli` |
 | 4 | `diagnostics` | Diagnostics | `diagnostics` |

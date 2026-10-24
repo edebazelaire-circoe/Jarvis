@@ -93,7 +93,7 @@ def _status_from_settings(state: Mapping[str, Any]) -> dict[str, Any]:
         legs["semantic"] = _leg(
             CapabilityStatus.UNAVAILABLE, "semantic_no_key",
             "Recherche sémantique activée mais aucune clé du fournisseur d'embeddings.",
-            fix="Ajouter la clé dans Réglages › Connexions ; le rappel lexical continue.")
+            fix="Ajouter la clé dans Réglages › Plugins & MCP › Fournisseurs ; le rappel lexical continue.")
     else:
         legs["semantic"] = _leg(CapabilityStatus.OK)
     if not value["tencent.enabled"]:

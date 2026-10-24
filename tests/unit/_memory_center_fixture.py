@@ -15,6 +15,16 @@ Chaque requête mémoire est notée dans `window.__memCalls` (`[méthode, chemin
 
 from __future__ import annotations
 
+import json
+
+from jarvis.domain.knowledge import AssetKind
+
+#: Étages de connaissance tels que Core les publie (`knowledge:<AssetKind>`, `memory_wiring.register_knowledge`) :
+#: dérivés de l'énumération, pour qu'un écart de clé côté interface ne puisse pas passer. Le graphe de code n'a pas
+#: de fournisseur monté, comme dans une installation sans dépôt branché : Core ne le déclare pas.
+KNOWLEDGE_LEGS = {f"knowledge:{kind.value}": {"status": "ok", "reason_code": None, "reason": ""}
+                  for kind in AssetKind if kind is not AssetKind.CODEGRAPH}
+
 MEMORY_STUB = r"""(()=>{
   const cfg=Object.assign({notes:23,cands:4,down:false,refuse:false,delay:30},window.__memStub||{});
   window.__memCalls=[];
@@ -51,7 +61,7 @@ MEMORY_STUB = r"""(()=>{
       store:{status:'ok',reason_code:null,reason:''},lexical:{status:'ok',reason_code:null,reason:''},
       semantic:{status:'disabled',reason_code:'semantic_disabled',reason:'Recherche sémantique : désactivée dans les réglages.'},
       tencent:{status:'disabled',reason_code:'tencent_disabled',reason:'Sidecar Tencent : désactivé.'},
-      'knowledge:wiki':{status:'ok',reason_code:null,reason:''},'knowledge:skills':{status:'ok',reason_code:null,reason:''}}}));
+      ...__KNOWLEDGE_LEGS__}}));
     if(path==='/notes'){
       let list=notes.filter(n=>(!q.get('level')||n.level===q.get('level'))&&(!q.get('kind')||n.kind===q.get('kind'))&&(!q.get('retention')||n.retention===q.get('retention')));
       const limit=+(q.get('limit')||50),offset=+(q.get('offset')||0);
@@ -77,4 +87,4 @@ MEMORY_STUB = r"""(()=>{
       return later(json({scopes:['private','shared'],degraded:[],timings_ms:{lexical:11.6},budget:{max_items:max,timeout_ms:400,item_chars:400,total_chars:6000},items}))}
     return later(refuse(404,'not_found','unrouted '+path));
   };
-  return true})()"""
+  return true})()""".replace("__KNOWLEDGE_LEGS__", json.dumps(KNOWLEDGE_LEGS))

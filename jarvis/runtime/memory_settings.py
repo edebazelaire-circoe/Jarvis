@@ -214,7 +214,7 @@ _FIELDS: tuple[_Field, ...] = (
     _Field("semantic", "enabled", "bool", "Recherche sémantique active",
            "Ajoute une recherche par sens ; exige un fournisseur d'embeddings."),
     _Field("semantic", "provider", "enum", "Fournisseur d'embeddings",
-           "Fournisseur des embeddings ; la clé se règle dans Réglages › Connexions.",
+           "Fournisseur des embeddings ; la clé se règle dans Réglages › Plugins & MCP › Fournisseurs.",
            options=tuple((str(item), _OPTION_LABELS[item]) for item in EmbeddingProviderId)),
     _Field("semantic", "allow_private", "bool", "Autoriser la mémoire privée au fournisseur",
            "Envoie aussi la mémoire privée au fournisseur distant."),
@@ -227,7 +227,7 @@ _FIELDS: tuple[_Field, ...] = (
            "Candidats proposés au plus par passe de consolidation.", low=1, high=MAX_CANDIDATES_PER_RUN),
     _Field("tencent", "enabled", "bool", "Sidecar actif", "Source optionnelle ; exige une URL."),
     _Field("tencent", "url", "text", "URL du sidecar",
-           "http(s) sans identifiants ; le jeton se règle dans Réglages › Connexions."),
+           "http(s) sans identifiants ; le jeton se règle dans Réglages › Plugins & MCP › Fournisseurs."),
     _Field("tencent", "service_id", "id", "Identifiant d'instance",
            "Identifiant court de l'instance du sidecar (pas un secret) ; vide : aucun en-tête."),
     _Field("tencent", "allow_private", "bool", "Autoriser les scopes privés (Tencent)",
@@ -310,7 +310,7 @@ def _check_url(spec: _Field, value: str) -> str:
     if "?" in value or "#" in value:
         raise MemorySettingsError(
             "memory_settings_secret_refused",
-            f"{spec.path} ne porte ni paramètres ni fragment ; le jeton se règle dans Réglages › Connexions.", spec.path,
+            f"{spec.path} ne porte ni paramètres ni fragment ; le jeton se règle dans Réglages › Plugins & MCP › Fournisseurs.", spec.path,
         )
     try:
         parsed = urlparse(value)
@@ -320,7 +320,7 @@ def _check_url(spec: _Field, value: str) -> str:
     if parsed.username is not None or parsed.password is not None:
         raise MemorySettingsError(
             "memory_settings_secret_refused",
-            f"{spec.path} ne porte aucun identifiant ; le jeton se règle dans Réglages › Connexions.", spec.path,
+            f"{spec.path} ne porte aucun identifiant ; le jeton se règle dans Réglages › Plugins & MCP › Fournisseurs.", spec.path,
         )
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         raise MemorySettingsError("memory_settings_bad_url", f"{spec.path} doit être une URL http(s).", spec.path)
@@ -597,7 +597,7 @@ def _scan_payload(payload: Mapping[str, Any]) -> None:
             if isinstance(node, Mapping) and _looks_secret(name):
                 raise MemorySettingsError(
                     "memory_settings_secret_refused",
-                    f"{where} : un secret se règle dans Réglages › Connexions, jamais ici.", where,
+                    f"{where} : un secret se règle dans Réglages › Plugins & MCP › Fournisseurs, jamais ici.", where,
                 )
             stack.append((value, f"{where}.", depth + 1))
 

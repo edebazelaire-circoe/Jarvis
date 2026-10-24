@@ -24,7 +24,7 @@
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const STATUS={ok:['Actif','ok'],disabled:['Désactivé','info'],unavailable:['Indisponible','bad']};
   const LEG_LABEL={lexical:'Recherche par mots',recall:'Rappel dans le tour',semantic:'Recherche sémantique',tencent:'Sidecar Tencent',
-    'knowledge:wiki':'Wiki','knowledge:codegraph':'Graphe de code','knowledge:skills':'Skills'};
+    'knowledge:wiki':'Wiki','knowledge:codegraph':'Graphe de code','knowledge:skills':'Skills','knowledge:skill':'Skills'};
   const SECRET_HINT={semantic:'Clé du fournisseur',tencent:'Jeton du sidecar'};
   const own=(o,k)=>Object.prototype.hasOwnProperty.call(o,k);
 
@@ -548,26 +548,37 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
     /* ---------------------------------------------------------------- onglet « Connaissances »
        Préférence (réglage) ET disponibilité réelle (`/api/memory/status` de Core) : une source activée n'est
        « Active » que si Core la déclare saine ; sans fournisseur monté (graphe de code), elle est « Indisponible ». */
+    /* [identifiant de carte, réglage, étage publié par Core (`knowledge:<AssetKind>` : `skill` au singulier), icône, texte]. */
     const SOURCES=Object.freeze([
-      ['wiki','knowledge.wiki_enabled','book','Pages du wiki proposées au cerveau comme connaissances.'],
-      ['codegraph','knowledge.codegraph_enabled','code','Structure du code d’un dépôt, quand un fournisseur de dépôt est monté.'],
-      ['skills','knowledge.skills_enabled','cube','Skills et loadouts disponibles pour les agents.'],
+      ['wiki','knowledge.wiki_enabled','knowledge:wiki','book','Pages du wiki proposées au cerveau comme connaissances.'],
+      ['codegraph','knowledge.codegraph_enabled','knowledge:codegraph','code','Structure du code d’un dépôt, quand un fournisseur de dépôt est monté.'],
+      ['skills','knowledge.skills_enabled','knowledge:skill','cube','Skills et loadouts disponibles pour les agents.'],
     ]);
-    function sourceState(kind,path){
+    function sourceState(legKey,path){
       if(!current(path))return ['off','Désactivé',''];
       const core=liveStatus();
       if(!st.live||st.live.state==='loading')return ['info','Lecture…',''];
       if(!core||!core.ok)return ['warn','État inconnu',`Activé dans les réglages ; état réel inconnu : ${core&&core.error||'Core ne répond pas'}.`];
       if(core.data.available===false)return ['bad','Indisponible',`La mémoire n’est pas disponible côté Core (${core.data.reason_code||'raison inconnue'}).`];
-      const leg=(core.data.legs||{})['knowledge:'+kind];
+      const leg=(core.data.legs||{})[legKey];
       if(!leg)return ['bad','Indisponible','Aucun fournisseur monté par Core pour cette source.'];
       if(leg.status==='ok')return own(st.draft,path)?['info','Activé (à enregistrer)','']:['ok','Actif',''];
       if(leg.status==='disabled')return ['off','Désactivé côté Core',leg.reason||''];
       return ['bad','Indisponible',`${leg.reason||''}${leg.reason_code?` (${leg.reason_code})`:''}`];
     }
+    /* Sidecar Tencent : Désactivé (préférence) ; activé, son état réel vient de Core (Actif / Indisponible / inconnu). */
+    function tencentState(){
+      if(!effOf('tencent.enabled').value)return ['off','Désactivé'];
+      const core=liveStatus();
+      if(!st.live||st.live.state==='loading')return ['info','Lecture…'];
+      if(!core||!core.ok||core.data.available===false)return ['warn','Activé · état inconnu'];
+      const leg=(core.data.legs||{}).tencent;
+      if(!leg)return ['bad','Indisponible'];
+      return leg.status==='ok'?['ok','Actif']:leg.status==='disabled'?['off','Désactivé côté Core']:['bad',leg.status==='degraded'?'En panne':'Indisponible'];
+    }
     function knowledgeHtml(){
-      const cards=SOURCES.filter(([,p])=>has(p)).map(([kind,path,ico,text])=>{
-        const f=field(path),[tone,label,why]=sourceState(kind,path);
+      const cards=SOURCES.filter(([,p])=>has(p)).map(([kind,path,legKey,ico,text])=>{
+        const f=field(path),[tone,label,why]=sourceState(legKey,path);
         return `<section class="mem-card mem-source" aria-labelledby="memSrc_${kind}">
           <div class="mem-head"><span class="mem-medal">${icon(ico)}</span><div><h3 class="mem-title" id="memSrc_${kind}">${esc(f.label)}</h3><p class="mem-sub">${esc(text)}</p></div></div>
           ${why?`<p class="mem-hint${tone==='bad'?' bad':tone==='warn'?' warn':''}">${esc(why)}</p>`:''}
@@ -591,7 +602,7 @@ input.mem-range:disabled{cursor:not-allowed;opacity:.6}
           ${loadouts}<p class="mem-hint">Lecture seule ici ; les règles se définissent dans le fichier de réglages.</p></section>
         <section class="mem-card mem-adv" aria-labelledby="memExtTitle"><span class="mem-medal">${icon('cloud')}</span>
           <div><h3 class="mem-title" id="memExtTitle">Source externe</h3><p class="mem-sub">Sidecar Tencent : réglage d’opérateur.</p></div>
-          <p class="mem-adv-note">${icon('lock')}<span>Son adresse, son identifiant et son état vivent dans Avancé &amp; diagnostic ${pill(savedLegs().tencent&&savedLegs().tencent.status==='ok'?'ok':'off',savedLegs().tencent&&savedLegs().tencent.status==='ok'?'Activé':'Désactivé')}</span></p>
+          <p class="mem-adv-note">${icon('lock')}<span>Son adresse, son identifiant et son état vivent dans Avancé &amp; diagnostic ${pill(...tencentState())}</span></p>
           <div class="mem-adv-actions"><button type="button" class="mem-btn" data-mem-open="memory_advanced">Ouvrir les paramètres avancés ${icon('chevron')}</button>
             <button type="button" class="mem-linkish" data-mem-diagnostics>Voir le diagnostic mémoire</button></div></section>
         ${saveBar()}</div>`;

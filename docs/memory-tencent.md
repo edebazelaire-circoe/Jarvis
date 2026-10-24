@@ -135,7 +135,7 @@ from the canonical store. A hit that does not resolve is dropped; the leg return
 - Headers: `Authorization: Bearer <token>` and, when `service_id` is configured, `x-tdai-service-id`.
 - URL: `https`, or `http` on loopback only (`127.0.0.1`, `localhost`, `::1`); no credentials, query or
   fragment. Anything else is refused at registration and the leg never calls out.
-- The token is `credentials.secret_for(settings, "tencent")` (Réglages › Connexions, env `JARVIS_TENCENT_TOKEN`),
+- The token is `credentials.secret_for(settings, "tencent")` (Réglages › Plugins & MCP › Fournisseurs, env `JARVIS_TENCENT_TOKEN`),
   read on every call. It is sent as `Authorization: Bearer` and appears in no status, error, log line
   or ledger (test `test_the_token_never_appears_...`). Errors carry our own sentence (`sidecar answered
   HTTP 401`), never the response body or the URL. A token an HTTP header cannot carry (non-ASCII, blank
