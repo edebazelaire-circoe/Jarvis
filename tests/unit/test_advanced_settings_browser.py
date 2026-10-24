@@ -36,7 +36,9 @@ GROUPS = [
 ]
 #: Entrées d'Avancé dans l'ordre affiché, avec leur groupe.
 ENTRIES = [
-    ("architecture_compat", "architecture_compat"), ("prompts", "prompts"), ("runtime_cli", "runtime_cli"),
+    # refonte-ui-settings Slice 05 : Mémoire (réglages d'opérateur de la mémoire) rejoint Architecture & compatibilité.
+    ("architecture_compat", "architecture_compat"), ("memory_advanced", "architecture_compat"), ("prompts", "prompts"),
+    ("runtime_cli", "runtime_cli"),
     ("diagnostics", "diagnostics"), ("scene_gate", "labs"), ("work_methods", "labs"), ("barehands_lab", "labs"),
 ]
 OPEN = [
@@ -259,7 +261,7 @@ KEYBOARD = [
     wait("SET.category==='advanced_diagnostics'"),
     eval_("document.querySelector('#modalTabs [aria-selected=true]').focus();true"),
     key("Home"),
-    *[a for _ in range(6) for a in (eval_("document.activeElement.dataset.section||document.activeElement.tagName", "seen"), key("ArrowRight"))],
+    *[a for _ in range(len(ENTRIES) - 1) for a in (eval_("document.activeElement.dataset.section||document.activeElement.tagName", "seen"), key("ArrowRight"))],
     eval_("document.activeElement.dataset.section||document.activeElement.tagName", "seen"),
     key("Enter"),
     wait("SET.section==='barehands_lab'"),

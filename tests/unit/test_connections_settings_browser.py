@@ -93,10 +93,10 @@ async def test_category_cards_alias_environment_fallback_and_links(served, clean
         click("#modalContent [data-settings-focus]"),
         wait("SET.section==='providers'&&document.activeElement&&document.activeElement.id==='connection_anthropic_title'"),
         eval_("[SET.category,SET.section,document.activeElement.id]", "agent_link"),
-        # Mémoire › Sources de connaissances : « Connexions » ouvre la section.
-        eval_("selectTab('knowledge_sources')"),
-        wait("!!document.querySelector('#modalContent [data-mem-open]')", 8000),
-        click("#modalContent [data-mem-open]"),
+        # Mémoire › carte Recherche sémantique (refonte-ui-settings S05) : « Plugins & MCP › Fournisseurs » ouvre la section.
+        eval_("selectTab('recall')"),
+        wait("!!document.querySelector('#modalContent [data-mem-open=providers]')", 8000),
+        click("#modalContent [data-mem-open=providers]"),
         wait("SET.section==='providers'"),
         eval_("[SET.category,SET.section,document.activeElement&&document.activeElement.tagName]", "memory_link"),
     ]}])

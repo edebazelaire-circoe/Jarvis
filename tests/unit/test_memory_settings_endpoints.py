@@ -198,5 +198,7 @@ async def test_the_page_carries_both_hooks(control):
     assert "JarvisMemorySettings" in html and "JarvisMemoryCenter" in html
     # Depuis jarvis-settings-ui-reorganization Slice 05, chaque section mémoire crée son point de montage (`mountId`).
     assert "MOUNT_ID='memorySettingsMount'" in html and "installMemorySettingsSections();" in html
-    assert 'id="memoryCenterMount"' in html
+    # refonte-ui-settings Slice 06 : le Memory Center vit dans son onglet des Réglages, plus de point de montage dans
+    # Sessions & Boards ; le bouton de Sessions & Boards y mène.
+    assert 'id="memoryCenterMount"' not in html and "mode:'workbench'" in html and 'id="wspMemoryCenter"' in html
     assert "__CONTROL_CENTER_MEMORY" not in html

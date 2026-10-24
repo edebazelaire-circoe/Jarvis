@@ -64,10 +64,10 @@ async def test_internal_links_followed_with_the_mouse_land_with_a_visible_outlin
         click("#modalContent [data-mem-diagnostics]"),
         wait("document.activeElement&&document.activeElement.id==='diagnostic_memory'", 8000),
         eval_(FOCUS, "memory"),
-        # Mémoire › « Connexions » (sans cible) : l'entrée ouverte de la liste des sections.
-        eval_("selectTab('knowledge_sources');true"),
-        wait("!!document.querySelector('#modalContent [data-mem-open]')", 8000),
-        click("#modalContent [data-mem-open]"),
+        # Mémoire › « Plugins & MCP › Fournisseurs » (sans cible) : l'entrée ouverte de la liste des sections.
+        eval_("selectTab('recall');true"),
+        wait("!!document.querySelector('#modalContent [data-mem-open=providers]')", 8000),
+        click("#modalContent [data-mem-open=providers]"),
         wait("SET.section==='providers'"),
         eval_(FOCUS, "entry"),
         # Runtime & CLI : le champ de la commande (`.field input:focus{outline:none}` hérité) garde le contour du shell

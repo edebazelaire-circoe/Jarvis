@@ -1,0 +1,19 @@
+{
+  "slice_id": "04-memory-advanced-diagnostics",
+  "title": "04 — Memory advanced diagnostics",
+  "task_type": null,
+  "task_type_blocker": "Workspace Task Type vocabulary is not exposed during task creation. Slice 00 must resolve a valid existing Task Type before dispatch; do not invent one.",
+  "frontend": true,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ],
+  "agent_routing": "Use a Claude Work Agent for frontend implementation/review where supported by the host."
+}

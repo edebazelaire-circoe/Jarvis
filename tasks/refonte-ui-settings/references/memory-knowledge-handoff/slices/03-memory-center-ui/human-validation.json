@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-MEM-003",
+      "description": "Confirm Notes, candidate review and recall testing remain clear and canonical-vs-derived state is understandable."
+    }
+  ]
+}

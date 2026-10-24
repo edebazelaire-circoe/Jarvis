@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-MEM-004",
+      "description": "Confirm low-level memory/Tencent/index controls are discoverable in Advanced but absent from the ordinary page."
+    }
+  ]
+}
