@@ -1,7 +1,8 @@
 # Réglages : la page Personnalisation
 
 **Statut :** contrat de surface (niveau 3 : routes serveur + tests navigateur).
-**Introduit :** refonte des Réglages page par page, 2026-10-23 (première page : Personnalisation).
+**Introduit :** refonte des Réglages page par page, 2026-10-23 (première page : Personnalisation) ; maquette 01 et
+primitives partagées : Slice 02 de refonte-ui-settings, 2026-10-24.
 **S'appuie sur :** [`settings-shell.md`](settings-shell.md) (hub, shell), [`voice-audio.md`](voice-audio.md) (sections
 détaillées de `voice_audio`), [`architecture-agents.md`](architecture-agents.md) (préférences de réponse).
 
@@ -11,35 +12,61 @@ Les liens internes et la roue (« Réglages de la voix ») ouvrent toujours le s
 
 ## 1. Composition
 
+Maquette : `tasks/refonte-ui-settings/references/ui/01-personnalisation.png` (1672×941). Depuis la Slice 02 de
+refonte-ui-settings (2026-10-24), la page se compose des primitives partagées ([`visual-foundation.md`](visual-foundation.md)) :
+vue `.set-view.set-perso` > `.set-page`, en-tête `.set-page-head` (`.set-crumb`, `.set-title`, `.set-lead`, `.set-rule`),
+panneaux `JarvisSettingsUI.panel`, lignes `.set-row`, curseurs `range`, interrupteur `toggle`, zone de texte `textarea`,
+choix `.set-choice`, panneau flottant `float` + `openFloat`, avatar `medallion`. Le CSS propre à la page (préfixe
+`.perso-`, `control_center.html`) ne porte que la composition : colonnes, rangées des curseurs à crans, bouton et liste
+des profils. Les anciennes classes doublons (`.perso-card`, `.perso-switch`, `.perso-seg`, `.perso-preset`,
+`.perso-avatar`, `.perso-mini`…) sont supprimées ; un test le vérifie.
+
 - En-tête : × en haut à gauche (ferme tout), fil d'Ariane « JARVIS › Paramètres » (le bouton « Paramètres » ramène
   au hub), titre, phrase, filet. En haut à droite, aligné sur le bord droit de la grille : le **profil actif**
-  (avatar rond à anneau de sa teinte, nom, chevron). Aucune citation ni slogan.
-- Grille `.perso-grid` de 12 colonnes à gouttière constante, spans entiers, cartes étirées à la hauteur de leur
-  rangée : l'enveloppe est un rectangle.
+  (médaillon à la teinte du profil, nom, chevron). Aucune citation ni slogan.
+- Grille `.set-grid.perso-grid` de trois colonnes `.set-stack.set-span-4` ; le dernier panneau de chaque colonne
+  s'étire, les bas s'alignent (enveloppe rectangulaire) :
 
-  | Rangée | Cartes (span) |
+  | Colonne | Panneaux |
   | --- | --- |
-  | 1 | Voix (5) · Proactivité & rappels (7) |
-  | 2 | Personnalité (5) · Préférences rapides (3) · Réglages détaillés (4) |
+  | gauche | Voix · Réglages détaillés |
+  | centre | Personnalité · Préférences rapides |
+  | droite | Proactivité & rappels |
 
-  Sous 1100 px : deux colonnes (Voix | Proactivité ; Personnalité pleine largeur ; Préférences | Détails) ; sous
-  720 px : une colonne. Jamais de défilement horizontal.
+  Page (`.set-page`, 1600 px au plus ici) sous 1240 px : deux colonnes (gauche | centre, puis Proactivité sur toute la
+  largeur, ses lignes en deux colonnes quand la place le permet) ; sous 640 px : une colonne. Jamais de défilement
+  horizontal. À 1672×941, toute la grille tient dans la fenêtre.
 
-## 2. Ce que chaque carte écrit
+## 2. Ce que chaque panneau écrit
 
 Rien n'est affiché qui ne soit appliqué. Chaque contrôle s'enregistre dès qu'il change (charge **partielle** de
-`POST /api/settings`, jamais le brouillon du shell) ; la carte dit « Enregistrement… », « Enregistré. » ou le refus
-du serveur, et un refus remet la valeur enregistrée.
+`POST /api/settings`, jamais le brouillon du shell) ; le panneau dit « Enregistrement… », « Enregistré. » ou le refus
+du serveur, et un refus remet la valeur enregistrée. Toute attente a une échéance de 15 s (`DEADLINE_MS`) : lecture
+sans réponse → message + Réessayer ; enregistrement sans réponse → message, puis la page **relit** les réglages
+(l'écriture a pu avoir lieu) et le dit.
 
-| Carte | Réglage | Application |
+| Panneau | Réglage | Application |
 | --- | --- | --- |
 | Voix | `voice.settings.<pile en service>.voice` (catalogue `voice.stacks`), `…transcription_language` | prochain démarrage de Voice (badge) |
-| Personnalité | `cli.behavior.response_verbosity`, `cli.behavior.politeness_formality` (choix fermés `cli.behavior.fields`), `cli.behavior.custom_instructions` (texte ≤ 1000 car., enregistré 1,2 s après la frappe ou à la sortie du champ) | à chaud |
-| Préférences rapides | Concis, Détaillé, Équilibré, Formel : chacun écrit un couple verbosité + formalité existant, rien d'autre ; le préréglage qui correspond aux valeurs en vigueur est `aria-pressed=true` | à chaud |
-| Proactivité & rappels | `agenda_reminders.*` (interrupteur général, puis délais et heures ; éteint, les champs sont désactivés) | à chaud |
-| Réglages détaillés | aucun : une ligne par section enregistrée de `voice_audio` (registre), sauf `agent_behavior` que la page remplace ; un clic ouvre le shell sur la section | — |
+| Personnalité | `cli.behavior.response_verbosity`, `cli.behavior.politeness_formality` (choix fermés `cli.behavior.fields`) en curseurs à crans ; `cli.behavior.custom_instructions` (texte ≤ 1000 car., compteur, enregistré 1,2 s après la frappe ou à la sortie du champ) | à chaud |
+| Préférences rapides | Concis, Détaillé, Équilibré, Formel : groupe radio `.set-choice` ; chacun écrit un couple verbosité + formalité existant, rien d'autre ; le préréglage qui correspond aux valeurs en vigueur est coché (aucun sinon) | à chaud |
+| Proactivité & rappels | `agenda_reminders.*` : interrupteur général (`.set-switch`, « Activés / Coupés »), puis une ligne par délai ou heure ; éteint, les champs sont désactivés | à chaud |
+| Réglages détaillés | aucun : une tuile par section enregistrée de `voice_audio` (registre), sauf `agent_behavior` que la page remplace ; un clic ouvre le shell sur la section | — |
 
-Volume, débit de parole et aperçu de la voix ne sont pas affichés : Voice ne sait pas encore les appliquer.
+**Curseurs à crans.** Un cran = une option du serveur, dans l'ordre servi, « Hériter » exclu (Longueur : Concise —
+Équilibrée — Détaillée ; Ton et formalité : Direct — Courtois — Formel). Bornes et cran courant affichés,
+`aria-valuetext` = libellé du cran. « Hériter » (aucune consigne) est un bouton à part (icône ↺) ; en « Hériter », le
+curseur est neutre au cran médian et le libellé dit « Hériter » ; choisir un cran (souris, flèches, ou clic sur le cran
+médian) écrit ce cran. Un texte d'instructions en cours de frappe survit au rendu déclenché par un autre contrôle.
+
+**Écarts assumés avec la maquette** (aucune donnée côté runtime, rien n'est simulé) : bouton « Écouter », volume et
+débit de la voix (Voice ne sait pas les appliquer) ; curseurs « Ton général » et « Humour » (aucun réglage) ; carte
+« Comportement global » (Style de réponse = la longueur déjà présente ; Niveau de technicité et Domaines de focus
+n'existent pas) : sa place accueille les **Réglages détaillés** ; préréglages « Technique » et « Créatif » (aucun couple
+de choix fermés ne les rend fidèlement) remplacés par Équilibré et Formel ; interrupteurs « Suggestions proactives »,
+« Automatisations contextuelles », « Analyse du contexte », « Mode discret » (aucune capacité) : la proactivité réelle
+est celle des rappels d'agenda ; descriptions de voix (« Claire, naturelle… ») : le catalogue ne donne que des noms ;
+profils prédéfinis (Décontracté, Efficace, Analytique) : seuls existent les profils créés par l'utilisateur.
 
 **Instructions personnalisées** (`jarvis/runtime/agent_behavior.py`) : stockées sous `agent_behavior.custom_instructions`
 seulement si non vides (le bloc garde sinon sa forme à deux champs) ; ajoutées une fois au bloc
@@ -60,19 +87,25 @@ SQLite ni migration).
 - Sans bloc : un profil implicite « Jarvis Classique » ; lire n'écrit rien. Bloc abîmé : lecture tolérante.
 - Refus : 400 et code stable dans `X-Jarvis-Error-Code` (`personalization_profile_unknown`, `_invalid_name`,
   `_duplicate`, `_limit`, `_invalid_accent`, `_active`, `_invalid_action`).
-- Panneau flottant au clic sur le profil actif (au-dessus de la grille, sans changer sa géométrie) : liste
-  (`aria-current` sur l'actif, coche), supprimer (profils inactifs), « Créer un profil » (champ de nom en place).
+- Panneau flottant `.set-float` (`role=dialog`, ouvert par `openFloat`) au clic sur le profil actif, au-dessus de la
+  grille sans changer sa géométrie : liste (`aria-current` sur l'actif, coche), supprimer (profils inactifs), « Créer
+  un profil » (champ de nom en place). Le bouton et le panneau sont créés une fois puis mis à jour en place.
 
 ## 4. Clavier et focus
 
-Tab boucle dans la page (aria-modal). Échap replie d'abord le panneau des profils (focus rendu au bouton du profil),
-puis ferme les Réglages. Flèches haut/bas entre les profils du panneau. Raccourcis `ui_settings` / `ui_close` : comme
+Tab boucle dans la page (aria-modal). À l'ouverture du panneau des profils, le focus va sur le profil actif ; Échap
+le replie d'abord (focus rendu au bouton du profil, `aria-expanded` à jour), puis ferme les Réglages ; un clic hors du
+panneau le replie sans voler le focus. Flèches haut/bas entre les profils du panneau ; flèches gauche/droite sur un
+curseur à crans. Raccourcis `ui_settings` / `ui_close` : comme
 sur le hub. Focus visible sur chaque contrôle ; mouvement réduit respecté.
 
 ## 5. Tests
 
-- `tests/unit/test_personalization_page_browser.py` : vrai Chrome ; enveloppe rectangulaire et pas de débordement de
-  420 à 1920 px, aucune citation, profil en haut à droite ; chaque contrôle écrit le vrai réglage (charges
-  partielles) ; profils créés, choisis, supprimés ; Échap, fil d'Ariane, ligne des réglages détaillés.
+- `tests/unit/test_personalization_page_browser.py` : vrai Chrome ; enveloppe rectangulaire, colonnes (3/2/1) et pas
+  de débordement de 420 à 1920 px, grille entière visible à 1672×941, aucune citation, profil en haut à droite, plus
+  aucun doublon `.perso-*` des primitives ; chaque contrôle écrit le vrai réglage (charges partielles) ; curseurs à
+  crans (souris, clavier, « Hériter ») ; profils créés, choisis, supprimés ; panneau flottant (focus, Échap, clic
+  extérieur), fil d'Ariane, tuile des réglages détaillés ; états erreur, chargement, désactivé ; captures (preuves
+  `tasks/refonte-ui-settings/slices/02-personnalisation-ui/evidence/` avec `JARVIS_BROWSER_SHOTS`).
 - `tests/unit/test_personalization_profiles.py` : module et route des profils.
 - `tests/unit/test_agent_behavior.py` : instructions personnalisées (bornes, forme stockée, composition).

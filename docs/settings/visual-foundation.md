@@ -122,8 +122,8 @@ Chacune ne touche qu'aux éléments donnés et rend sa fonction de détachement 
   `.arch-`, `.bcp-`, `.sar-`, `.mem-`, `.mc-`).
 - Interdit dans une page : redéfinir l'apparence d'une primitive (verre, liseré, onglet, interrupteur, curseur,
   bouton), coder une couleur, un rayon ou une ombre que donne un jeton. Un besoin récurrent devient une primitive ici.
-- Transitoire : la page Personnalisation a ses propres classes (`.perso-card`, `.perso-switch`, `.perso-seg`,
-  `.perso-crumb`…) dont les primitives ci-dessus sont la promotion ; la Slice 02 y migre et supprime les doublons.
+- La page Personnalisation a migré sur ces primitives (Slice 02, 2026-10-24) : ses doublons (`.perso-card`,
+  `.perso-switch`, `.perso-seg`…) sont supprimés ; il ne reste sous `.perso-` que sa composition.
   `.mcpp-switch` (Plugins & MCP) peut migrer vers `.set-switch`.
 
 ## 8. Fixtures et captures
