@@ -58,7 +58,7 @@ l'appelant.
 | Médaillon d'icône | `.set-medallion` (+ `-sm`, `-lg`) | `medallion({icon,tone,size})` | `aria-hidden` |
 | Tuile de statistique | `.set-stat` (+ `-stack`), `.set-stat-icon/-value/-label` | `stat({value,label,icon,tone,stack})` | libellé obligatoire |
 | Ligne libellé + contrôle | `.set-rows` > `.set-row` (+ `-plain`, `-wide`), `.set-row-icon/-text/-label/-hint/-control` | `row({id,label,hint,icon,tone,control,plain,wide})` | `<id>-label` et `<id>-hint` à référencer par le contrôle |
-| Pastille d'état | `.set-dot` (+ `-ok`, `-warn`, `-bad`, `-info`, `-off`) ; badges `.set-badge*` du shell, `+ .set-badge-accent` | `dot(kind,text)`, `badge(kind,text)` | toujours un mot |
+| Pastille d'état | `.set-dot` (+ `-ok`, `-warn`, `-bad`, `-info`, `-off`) ; badges `.set-badge*` du shell, `+ .set-badge-accent` | `dot(kind,text,{className})`, `badge(kind,text)` | toujours un mot (texte vide : erreur ; un état absent s'affiche « — » chez l'appelant) ; `className` : accroche ajoutée devant `set-dot` |
 | Bouton néon | `.set-btn` (+ `-primary`, `-ghost`, `-danger`, `-sm`, `-icon`) | `button({id,label,variant,size,icon,iconOnly,tone,disabled,busy,data,describedBy})` | survol, pressé, focus, `disabled`, `aria-busy=true` (anneau tournant, figé sous mouvement réduit) |
 | Liste déroulante | `.set-select` > `select` | `select({id,options,value,label,labelledBy,describedBy,disabled})` | native, chevron dessiné |
 | Saisie | `.set-input` | — | `aria-invalid=true` : bord rouge |
@@ -128,7 +128,12 @@ Chacune ne touche qu'aux éléments donnés et rend sa fonction de détachement 
   `-quiet` pour la bande Avancé), médaillons, interrupteurs (`JarvisSettingsUI.toggle`), curseurs `.set-range`, cartes
   de mode `.set-choice` (seul écart voulu : le témoin radio reste visible au coin, pour l'état désactivé lisible),
   pastilles `.set-dot`, badges `.set-badge`, boutons `.set-btn`, onglets internes `.set-tabs-fill`, champs
-  `.set-input`. Les classes `.mem-*` / `.mc-*` restantes sont la composition et des accroches de tests.
+  `.set-input`. Les classes `.mem-*` / `.mc-*` restantes sont la composition et des accroches de tests. Reprise QA :
+  les filtres du Memory Center sont des `.set-select` (chevron), le compteur de conflits d'un candidat un
+  `.set-badge-warn` ; la case « Remplacées » reste une case native (aucune primitive de case : l'interrupteur est un
+  `button[role=switch]`, hors du formulaire de filtres) ; jetons morts `--mc-glass`, `--mem-glass`, `--mem-r` retirés ;
+  colonnes Portée et Rétention du tableau des notes masquées sous 640 px de conteneur (et non 720), pour qu'elles se
+  voient à 1254 px comme sur la maquette.
 - Reste hors fondation, volontairement : `.mcpp-switch` (Plugins & MCP). Cette vue garde le style compact de la console
   MCP (hors maquettes) et son contrat de feuille est épinglé par `test_control_center_mcp_plugins_js.py` ; la migrer
   serait une refonte de Plugins & MCP, pas une convergence.

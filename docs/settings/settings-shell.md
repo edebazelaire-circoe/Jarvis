@@ -96,7 +96,9 @@ emplacement, même brouillon ; seule la présentation change.
 - Inchangés : liens profonds et alias (`memory`, `semantic_retrieval`, `consolidation`, `main_agent`,
   `subagent_models`…), `openSettingsTab` / `openSettingsLink`, raccourcis `ui_settings` / `ui_close`, état d'onglet
   (`SET.lastItem`), Échap (menu → fenêtre → page), clavier des onglets (activation manuelle).
-- Focus à l'ouverture : l'onglet de page ouvert (il n'y a pas de catégorie active à focaliser).
+- Focus à l'ouverture : l'onglet de page ouvert (il n'y a pas de catégorie active à focaliser) ; de même quand on
+  arrive du rail d'une autre catégorie (§ 3). L'avis de catégorie (`notice` du registre) se pose dans
+  `.set-page-intro` comme dans `.set-intro`.
 - Fenêtre d'un cerveau (Architecture) : sa zone d'ouverture (`architecturePanelZone`) commence sous les onglets de la
   page et sous le × ; elle ne couvre jamais le fil d'Ariane, le titre ni l'onglet actif.
 - Défilement : l'en-tête et les onglets restent en place, seul le contenu défile. Une page entière qui défilait a été
@@ -136,7 +138,11 @@ session. Il n'y a plus d'onglet hérité (`SET.tab` et `TABS` retirés à la Sli
 - Les deux listes (`#settingsCategories`, `#modalTabs`) sont des onglets ARIA à **activation manuelle** :
   flèches (les deux axes), Début, Fin déplacent le focus sans rien charger ; Entrée, Espace ou un clic ouvre.
   Une catégorie charge des données : la parcourir au clavier ne doit pas déclencher six chargements.
-- Après chaque rendu de la navigation, le focus revient sur l'entrée active de la liste qui l'avait. Changer de
+- Après chaque rendu de la navigation, le focus revient sur l'entrée active de la liste qui l'avait. Exception : le
+  rail choisit une catégorie en page pleine (§ 1 bis), qui masque le rail ; le focus va alors à l'onglet de page actif
+  (à défaut le premier, puis « Paramètres » du fil d'Ariane), jamais sur `body` (reprise QA de la Slice 07). La
+  consigne clavier du dialogue (`#settingsHelp`, son `aria-describedby`) suit la disposition : flèches haut et bas
+  dans les catégories à rail, gauche et droite dans les onglets d'une page pleine. Changer de
   section ou de catégorie alors que le focus est dans le contenu (un bouton de la section, puis Ctrl+→) le porte à
   l'entrée ouverte, arrivée marquée (`landFocus`, contour visible) : le contenu est remplacé, il ne tombe jamais sur
   `body` (passe de finitions avant la Slice 10).

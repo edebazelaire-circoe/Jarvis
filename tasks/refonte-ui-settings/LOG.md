@@ -326,6 +326,28 @@ Suite finale (venv du dépôt principal, depuis `rui`) :
   `slices/07-settings-visual-integration-qa/evidence/reel/`.
 - Captures finales et paquet Human : `slices/07-settings-visual-integration-qa/evidence/`, `HUMAN-VALIDATION.md`.
 
+## Slice 07 — reprise QA (2026-10-25, worktree `rui`)
+
+Trois rapports QA de S07 ; un bloquant, huit finitions, trois écarts à déclarer.
+- **Bloquant corrigé** : rail → catégorie en page pleine, le focus tombait sur `body` (le rail masqué recevait le
+  focus). `renderTabs` vise l'onglet de page actif (garde : premier onglet, puis « Paramètres »). Test ajouté dans
+  `test_settings_page_layout_browser.py`.
+- **Finitions faites** : conflits d'un candidat en `.set-badge-warn` (et `.mc-why.mc-warn` recoloré) ; `pill()` Mémoire
+  « — » sur texte vide, option `className` ajoutée à `JarvisSettingsUI.dot` (plus de `.replace` de chaîne) + tests node ;
+  avis de catégorie posé dans `.set-page-intro, .set-intro` avec garde ; `#settingsHelp` suit la disposition ;
+  `textSaving` compteur ; jetons morts `--mc-glass`, `--mem-glass`, `--mem-r` retirés (grep : aucun consommateur) ;
+  colonnes Portée/Rétention visibles dès 640 px de conteneur ; filtres du Memory Center en `.set-select`.
+- **Laissés, dit** : case « Remplacées » native (pas de primitive de case ; l'interrupteur est un bouton hors
+  formulaire) ; pas de test de chevauchement de deux envois du texte (minutage non déterministe avec le faux envoi lent).
+- **Déclarés** (`HUMAN-VALIDATION.md` § 3, liés à la décision n° 2) : Mémoire à 1254, fenêtre du cerveau sur les cartes,
+  Sous-agents en 2×2.
+- Captures Memory Center et Mémoire régénérées (`evidence/`), docs `settings-shell.md` § 1 bis et § 3,
+  `visual-foundation.md` § 3 et § 7.
+- Tests (venv du dépôt principal, depuis `rui`, lots séparés) : rapides JS (6 fichiers) 121 + 2 nouveaux verts ;
+  `test_settings_page_layout_browser` 3 ; `test_memory_settings_browser` + `test_personalization_page_browser` 24 ;
+  `test_settings_shell_browser` 9 ; `test_settings_accessibility_browser` 16 + 1 rouge sous charge
+  (`test_changing_category_from_the_content…`, harnais sorti en code 1) vert seul ; `test_architecture_workspace_browser` 5.
+
 ## LOG Drive d'origine
 # Execution log
 
