@@ -74,11 +74,19 @@ try{
       await sleep(120);out.push(null);continue;
     }
     if(step.drag){
-      const p=await center(step.drag);
-      await mouse('mouseMoved',p.x,p.y);await mouse('mousePressed',p.x,p.y,'left',1);
-      for(let i=1;i<=8;i+=1)await mouse('mouseMoved',p.x+step.dx*i/8,p.y+step.dy*i/8,'left',1);
-      await mouse('mouseReleased',p.x+step.dx,p.y+step.dy,'left',0);
+      /* `button: 'right'` : clic droit maintenu (déplacement de la vue du graphe). */
+      const p=await center(step.drag),b=step.button||'left',bs=b==='right'?2:1;
+      await mouse('mouseMoved',p.x,p.y);await mouse('mousePressed',p.x,p.y,b,bs);
+      for(let i=1;i<=8;i+=1)await mouse('mouseMoved',p.x+step.dx*i/8,p.y+step.dy*i/8,b,bs);
+      await mouse('mouseReleased',p.x+step.dx,p.y+step.dy,b,0);
       await sleep(150);out.push(null);continue;
+    }
+    if(step.wheel){
+      /* Cran de molette au-dessus d'un élément (point exact `at` [x, y] facultatif). */
+      const p=step.at?{x:step.at[0],y:step.at[1]}:await center(step.wheel);
+      await mouse('mouseMoved',p.x,p.y);
+      await send('Input.dispatchMouseEvent',{type:'mouseWheel',x:p.x,y:p.y,deltaX:0,deltaY:step.deltaY||-100,pointerType:'mouse'});
+      await sleep(150);out.push(p);continue;
     }
     if(step.shot){
       const r=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});

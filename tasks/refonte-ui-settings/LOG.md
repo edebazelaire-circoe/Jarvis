@@ -385,3 +385,44 @@ pas croiser S04 ; à retirer en S07). Constat pour la fondation : `.settings-she
 `.set-panel-title` dans `#modalContent` ; la Slice 03 le neutralise dans son `STYLE`, une correction partagée serait mieux.
 
 - 2026-10-24 : agent 0 — S04 APPROUVÉE après reprise (placement de la fenêtre du cerveau, `457d916a`), fusionnée (`9f29d4b3`) ; contrôle 37 verts. Décision de mise en page pour S07 (maquettes > shell à rail) : les trois catégories des maquettes (Personnalisation, Architecture & Agents, Mémoire & connaissances) s'ouvrent en page pleine comme Personnalisation (fil d'Ariane JARVIS › Paramètres, grand titre, phrase, onglets de page, × en haut à gauche, retour au hub par « Paramètres »), sans rail ; les trois autres catégories gardent le shell. Liens profonds, alias, raccourcis et onglets inchangés. Dispatch S07 dans `rui`.
+
+## Retours Human du 25/10 — hub, fond, icônes, défilement unique, × et ←, page Architecture (2026-10-25)
+
+Worktree `rui`, branche `task/refonte-ui-settings`, depuis `393b3f8f`. Aucun schéma ni migration touchés ; le JARVIS
+vivant n'a été ni lancé ni arrêté (captures dans un Control Center isolé en processus, runtime et données au
+scratchpad, port libre, arrêté à la fin du script).
+
+Livré :
+1. Hub : phrase « Personnalisez votre assistant… » et son `aria-describedby` retirés (le dialogue reste nommé par
+   son titre) ; grande icône d'engrenage (`SETTINGS_ICON.settings`) devant « Paramètres » ; en-tête + cartes centrés
+   verticalement (marges haute et basse égales).
+2. Fond : voile et flou de `.overlay`, `[data-view=hub]`, `[data-view=perso]` nettement allégés (flou 22/18 px → 7/6 px,
+   voile .80 → .52) ; ombre portée sur les grands titres pour la lisibilité.
+3. Icône de la catégorie devant le titre de chaque page (Personnalisation, Architecture & Agents, Mémoire &
+   Connaissances : `.set-title-row` > `.set-title-icon`, source unique `settingsIcon`) ; le shell à rail avait déjà la
+   sienne.
+4. Une seule zone de défilement par page : `#settingsMain` en page pleine (l'en-tête et les onglets défilent avec le
+   contenu ; annule l'en-tête fixe de S07 `05f2411b`), `#settingsPerso` pour Personnalisation (déjà le cas).
+5. Graphe Architecture : vue = translation + échelle (`transform`), molette = zoom autour du pointeur (0,3×–3×),
+   boutons − / % / + / Recentrer (clavier), clic droit maintenu = déplacement de vue au-delà de 4 px ; un clic droit
+   immobile ouvre toujours le menu du cerveau, un clic droit qui a déplacé la vue n'ouvre aucun menu. Glisser un nœud
+   (clic gauche) intact, divisé par le zoom.
+6. × et ← ronds fixes en haut à gauche sur toutes les pages (Personnalisation, page pleine ET shell à rail) ; hub :
+   × seul. Supprimés : pastille « Toutes les catégories », bouton « Fermer · Échap », bouton « Paramètres » du fil
+   d'Ariane (le fil reste en texte) — un seul contrôle de retour au hub.
+7. Page Architecture : section `fill` (nouveau champ booléen du registre) ; même défilement unique, contenu à la
+   hauteur restante de l'écran (rien à faire défiler, 320/360 px minimum). Barre flottante en haut à droite : Relire
+   (message court), Gestion (Sauvegarder / Charger une architecture en JSON, Réinitialiser la disposition), État
+   (pastille de santé), Légende (+ commandes). Supprimés pour de vrai : cartes État/Règles/Actions rapides, journal
+   d'architecture (`loadJournal`, carte, CSS, tests), lien « Rôles des sous-agents », option `subagentsTarget`.
+   Gardé : l'inspecteur flottant (seul éditeur d'une liaison ou d'un nœud). Sauvegarde/chargement : aucune notion
+   serveur d'architecture enregistrée → fichier JSON relu et réappliqué par les routes existantes (bascules, créations,
+   suppressions permises, disposition), aucune route ni migration ajoutée.
+
+Tests (Python du dépôt principal) : lot unitaire Réglages 386 verts ; navigateur : `settings_shell` +
+`settings_page_layout` 13, `settings_accessibility` + `settings_visual_foundation` 29, `personalization_page` 9,
+`architecture_workspace` + `architecture_settings` 19, `brain_config_panel` + `architecture_agents_settings` 17,
+`memory_settings` + `subagent_settings` 23, `interface_settings` + `advanced_settings` 22, `wake_word_settings` 20,
+`jarvis_wheel` + `global_launcher` 10, `status_centre` 30 — tous verts. Rouges déjà présents sur `393b3f8f` (vérifié
+dans un worktree détaché, supprimé ensuite) : `connections_settings_browser` 3 (`.conn-add>summary` absent) et
+`settings_message_destinations_browser` 1 (catégories inconnues dans des messages de `jarvis/app.py`).

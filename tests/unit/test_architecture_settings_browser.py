@@ -122,15 +122,14 @@ def test_tab_reaches_nodes_then_links_enter_inspects_and_escape_returns(tmp_path
     snap = json.loads(FIXTURE.read_text(encoding="utf-8"))
     page = build_page(tmp_path, snap)
     n_nodes, n_links = len(snap["nodes"]), len(snap["connections"])
-    # Point de départ : le bouton « Changer dans Avancé » du bandeau (avant « Relire »).
-    steps = [{"eval": "document.querySelector('[data-settings-open]').focus();document.querySelector('[data-settings-open]').getAttribute('data-settings-open')"},
-             {"key": "Tab"}]  # -> Relire
-    order = []
+    # Point de départ : rien de focalisé ; le graphe vient en premier dans la page (la barre d'outils flotte par-dessus
+    # et suit le canevas dans l'ordre du Tab, retours Human du 25/10).
+    steps = [{"eval": "document.activeElement&&document.activeElement.blur&&document.activeElement.blur();'start'"}]
     for _ in range(n_nodes * 3 + n_links):
         steps += [{"key": "Tab"}, {"eval": FOCUSED}]
     out = run_plan(tmp_path, page, steps)
-    assert out[0] == "architecture_compat"
-    order = [v for v in out[3::2]]
+    assert out[0] == "start"
+    order = [v for v in out[2::2]]
     nodes = [n["id"] for n in snap["nodes"]]
     links = [c["id"] for c in snap["connections"]]
     visited_nodes = [v for v in order if v in nodes]
@@ -189,6 +188,52 @@ def test_shift_f10_and_right_click_open_the_brain_menu_and_configure_emits_the_e
     assert out[12] == "tool_brain"
     # Un endpoint n'est pas un cerveau : le clic droit n'ouvre aucun menu.
     assert out[14] is True
+
+
+#: Point de l'écran sous lequel se trouve un repère fixe du monde (coin haut-gauche du nœud core) et état de la vue.
+VIEW = """(()=>{const c=document.querySelector('[data-arch-canvas]'),n=document.querySelector('[data-arch-node="core"]').getBoundingClientRect();
+  return {z:window.__view.state.view.z,level:document.querySelector('[data-arch-zoom-level]').textContent,x:n.left,y:n.top,w:n.width,
+    vx:window.__view.state.view.x,vy:window.__view.state.view.y,scroll:c.scrollLeft+c.scrollTop,menu:!!document.querySelector('.arch-menu')}})()"""
+
+
+def test_wheel_zooms_around_the_pointer_buttons_zoom_and_a_right_drag_pans_without_a_menu(tmp_path):
+    """Retours Human du 25/10 : molette = zoom centré sur le point sous le curseur ; boutons + / − / recentrer ;
+    clic droit maintenu = déplacement de la vue, sans menu contextuel ; clic droit immobile = menu du cerveau."""
+    page = build_page(tmp_path, json.loads(FIXTURE.read_text(encoding="utf-8")))
+    shots = shots_dir(tmp_path)
+    out = run_plan(tmp_path, page, [
+        {"eval": VIEW},
+        {"wheel": '[data-arch-node="core"] .arch-node-name', "deltaY": -240},
+        {"eval": VIEW},
+        {"eval": "document.querySelector('[data-arch-zoom=\"in\"]').focus();1"},
+        {"key": "Enter"},
+        {"eval": VIEW},
+        {"shot": str(shots / "architecture-zoom.png")},
+        {"drag": '[data-arch-canvas]', "dx": -160, "dy": -90, "button": "right"},
+        {"wait": 200},
+        {"eval": VIEW},
+        {"eval": WRITES},
+        {"click": '[data-arch-zoom="fit"]'},
+        {"eval": VIEW},
+        # Le menu contextuel qui suit un déplacement est ignoré pendant 600 ms (Windows l'envoie au relâchement).
+        {"wait": 700},
+        {"click": '[data-arch-node="core"] .arch-node-name', "button": "right"},
+        {"eval": VIEW},
+    ])
+    v0, at, v1, v2, v3, writes, v4, v5 = out[0], out[1], out[2], out[5], out[9], out[10], out[12], out[15]
+    assert v0["z"] == 1 and v0["level"] == "100 %"
+    assert v1["z"] > 1.2, ("la molette vers soi zoome", v1)
+    # Le point sous le curseur reste sous le curseur (à 2 px près) : sa position relative au nœud est conservée.
+    rx0, ry0 = (at["x"] - v0["x"]) / v0["z"], (at["y"] - v0["y"]) / v0["z"]
+    rx1, ry1 = (at["x"] - v1["x"]) / v1["z"], (at["y"] - v1["y"]) / v1["z"]
+    assert abs(rx0 - rx1) < 2 and abs(ry0 - ry1) < 2, (at, v0, v1)
+    assert abs(v1["w"] / v0["w"] - v1["z"]) < 0.02, "le nœud est dessiné à l'échelle du zoom"
+    assert v2["z"] > v1["z"] and v2["level"].endswith("%"), "le bouton + (clavier) zoome aussi"
+    assert abs(v3["x"] - v2["x"] + 160) < 2 and abs(v3["y"] - v2["y"] + 90) < 2 and not v3["menu"], ("le clic droit maintenu déplace la vue", v2, v3)
+    assert v3["scroll"] == 0, "le canevas ne défile pas : la vue se déplace"
+    assert writes == [], "zoom et déplacement de vue n'écrivent rien"
+    assert v4["z"] <= 1, "recentrer : tout le graphe dans la vue, jamais au-delà de 100 %"
+    assert v5["menu"] is True, "un clic droit immobile ouvre toujours le menu du cerveau"
 
 
 def test_dragging_a_node_saves_layout_only_and_moves_its_links(tmp_path):

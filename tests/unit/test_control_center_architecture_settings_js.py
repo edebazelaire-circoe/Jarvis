@@ -59,8 +59,15 @@ def run_node(tmp_path: Path, source: str, snapshot: dict | None = None):
 def test_the_snapshot_drives_every_node_link_banner_and_legend(tmp_path):
     out = run_node(tmp_path, """
 const a=A.createFixtureAdapter(SNAP);const v=A.mount(host,{adapter:a,...quiet});await v.ready;
-out({html:host.innerHTML,errors,infos,attrs:host.attrs,listeners:Object.keys(host.listeners)});""")
+const closed=host.innerHTML;v.togglePanel('state');const state=host.innerHTML;v.togglePanel('legend');const legend=host.innerHTML;
+out({closed,html:state+legend,errors,infos,attrs:host.attrs,listeners:Object.keys(host.listeners)});""")
     html = out["html"]
+    # Retours Human du 25/10 : l'état et la légende ne sont plus des cartes autour du graphe, mais des panneaux de la
+    # barre d'outils, fermés au départ ; ni règles, ni actions rapides, ni journal.
+    closed = out["closed"]
+    for gone in ("data-arch-card", "arch-rule", "arch-quick", "journal", "Journal", "data-settings-open=\"subagents\""):
+        assert gone not in closed, gone
+    assert "data-arch-pop-panel" not in closed and 'data-arch-tools' in closed and 'data-arch-zoom="in"' in closed
     assert out["errors"] == [] and out["infos"][0][0] == "architecture_settings.loaded"
     for node in fixture()["nodes"]:
         assert f'data-arch-node="{node["id"]}"' in html and node["label"] in html
@@ -70,8 +77,8 @@ out({html:host.innerHTML,errors,infos,attrs:host.attrs,listeners:Object.keys(hos
     assert 'data-settings-open="architecture_compat"' in html and "Duplex" in html and "lecture seule" in html
     assert "Légende des liaisons" in html and "effective au prochain démarrage de Core" in html
     # Seuls les cerveaux ont le bouton « … » (équivalent tactile du clic droit).
-    assert html.count("data-arch-menu-btn=") == sum(1 for n in fixture()["nodes"] if n["kind"] == "brain")
-    assert {"click", "contextmenu", "keydown", "pointerdown"} <= set(out["listeners"])
+    assert closed.count("data-arch-menu-btn=") == sum(1 for n in fixture()["nodes"] if n["kind"] == "brain")
+    assert {"click", "contextmenu", "keydown", "pointerdown", "wheel", "change"} <= set(out["listeners"])
 
 
 def test_no_topology_is_hard_coded_a_future_brain_renders_and_colors_are_tokens(tmp_path):
@@ -409,3 +416,133 @@ click('data-arch-create','0');await new Promise(r=>setTimeout(r,20));
 out({html,writes:writes(a)});""", snap)
     assert 'data-arch-create="0"' in out["html"] and 'data-arch-port-source="core/a%3Ab%3Ec"' in out["html"]
     assert out["writes"][0][1]["source"] == {"node": "core", "port": "a:b>c"}
+
+
+#: Événement de pointeur factice sur le canevas (`closest` rend le canevas ou le nœud demandé).
+POINTER = """const canvas={classList:{add(){},remove(){}}};
+const target=node=>({closest:sel=>sel==='[data-arch-canvas]'?canvas:sel==='[data-arch-node]'&&node?{getAttribute:()=>node}:null});
+const fire=(type,e)=>{let prevented=false;const ev={pointerId:1,preventDefault(){prevented=true},...e};host.listeners[type].forEach(f=>f(ev));return prevented};"""
+
+
+def test_zoom_is_bounded_anchored_under_the_pointer_and_drawn_on_the_world(tmp_path):
+    """Retours Human du 25/10 : zoom borné 0,3×–3×, autour du point sous le curseur ; affichage seulement."""
+    out = run_node(tmp_path, """
+const Z=A.ZOOM;const a=A.createFixtureAdapter(SNAP);const v=A.mount(host,{adapter:a,...quiet});await v.ready;
+const first=v.state.view.z;
+const big=v.zoomTo(10),html3=host.innerHTML;const small=v.zoomTo(0.01);const nan=A.clampZoom('x');
+v.zoomTo(1);const stepIn=v.zoomBy(Z.STEP);
+const click=attr=>host.listeners.click[0]({target:{closest:sel=>sel==='[data-arch-zoom]'?{getAttribute:()=>attr}:null},detail:1});
+v.zoomTo(1);click('in');const afterIn=v.state.view.z;click('out');click('out');const afterOut=v.state.view.z;click('fit');const fit=v.state.view.z;
+const wheelIn=A.wheelFactor({deltaY:-100,deltaMode:0}),wheelOut=A.wheelFactor({deltaY:100,deltaMode:0}),lines=A.wheelFactor({deltaY:3,deltaMode:1});
+const anchor=A.zoomAnchor({x:0,y:0,z:1},2,100,40),anchor2=A.zoomAnchor({x:30,y:10,z:2},1,130,50);
+const wheel=host.listeners.wheel[0];let prevented=false;
+v.zoomTo(1);wheel({target:{closest:sel=>sel==='[data-arch-canvas]'?{}:null},deltaY:-200,deltaMode:0,clientX:10,clientY:10,preventDefault(){prevented=true}});
+out({Z,first,big,small,nan,stepIn,afterIn,afterOut,fit,wheelIn,wheelOut,lines,anchor,anchor2,prevented,wheelZ:v.state.view.z,html3,writes:writes(a)});""")
+    z = out["Z"]
+    assert z["MIN"] == 0.3 and z["MAX"] == 3 and out["first"] == 1
+    assert out["big"] == 3 and out["small"] == 0.3 and out["nan"] == 1, "zoom borné à 0,3×–3×"
+    assert "scale(3)" in out["html3"] and ">300 %<" in out["html3"], "le monde est mis à l'échelle, la valeur dite"
+    assert abs(out["stepIn"] - z["STEP"]) < 1e-9 and abs(out["afterIn"] - z["STEP"]) < 1e-9
+    assert abs(out["afterOut"] - 1 / z["STEP"]) < 1e-9 and out["fit"] == 1, "« Recentrer » ne dépasse jamais 100 %"
+    assert out["wheelIn"] > 1 > out["wheelOut"] and out["lines"] < 1
+    # Le point du monde sous le curseur reste sous le curseur : (px - x) / z identique avant et après.
+    assert out["anchor"] == {"x": -100, "y": -40, "z": 2} and out["anchor2"] == {"x": 80, "y": 30, "z": 1}
+    assert out["prevented"] and out["wheelZ"] > 1, "la molette sur le canevas zoome au lieu de faire défiler"
+    assert out["writes"] == [], "zoomer n'écrit rien"
+
+
+def test_right_drag_pans_the_view_and_suppresses_the_context_menu_but_a_still_right_click_opens_it(tmp_path):
+    out = run_node(tmp_path, """
+const a=A.createFixtureAdapter(SNAP);const v=A.mount(host,{adapter:a,...quiet});await v.ready;
+""" + POINTER + """
+fire('pointerdown',{button:2,clientX:200,clientY:200,target:target('core')});
+const v0=[v.state.view.x,v.state.view.y];
+fire('pointermove',{clientX:202,clientY:201,target:target('core')});const tiny=[v.state.view.x,v.state.view.y];
+fire('pointermove',{clientX:150,clientY:170,target:target('core')});const panned=[v.state.view.x,v.state.view.y];
+fire('pointerup',{button:2,clientX:150,clientY:170,target:target('core')});
+const blocked=fire('contextmenu',{clientX:150,clientY:170,target:target('core')});const menuAfterPan=v.state.menu;
+fire('pointerdown',{button:2,clientX:300,clientY:300,target:target('core')});fire('pointermove',{clientX:301,clientY:302,target:target('core')});
+fire('pointerup',{button:2,clientX:301,clientY:302,target:target('core')});
+const opened=fire('contextmenu',{clientX:301,clientY:302,target:target('core')});const menu=v.state.menu&&v.state.menu.nodeId;
+out({v0,tiny,panned,blocked,menuAfterPan,opened,menu,writes:writes(a),moved:v.state.moved});""")
+    assert out["v0"] == [0, 0] and out["tiny"] == [0, 0], "sous le seuil, la vue ne bouge pas"
+    assert out["panned"] == [-50, -30], "la vue suit le pointeur (clic droit maintenu)"
+    assert out["blocked"] is True and out["menuAfterPan"] is None, "après un déplacement, ni menu du cerveau ni menu du navigateur"
+    assert out["opened"] is True and out["menu"] == "core", "un clic droit immobile ouvre toujours le menu du cerveau"
+    assert out["writes"] == [] and out["moved"] == {}, "déplacer la vue n'écrit rien et ne bouge aucun nœud"
+
+
+def test_a_left_drag_still_moves_a_node_scaled_by_the_zoom(tmp_path):
+    out = run_node(tmp_path, """
+const a=A.createFixtureAdapter(SNAP);const v=A.mount(host,{adapter:a,...quiet});await v.ready;
+""" + POINTER + """
+const start={...v.state.layout.positions.core||{x:0,y:0}};v.zoomTo(2);
+const el={getAttribute:()=> 'core',classList:{add(){},remove(){}},setPointerCapture(){}};
+const t={closest:sel=>sel==='[data-arch-node]'?el:sel==='[data-arch-canvas]'?canvas:null};
+const before=v.state.moved.core||null;
+fire('pointerdown',{button:0,clientX:100,clientY:100,target:t});fire('pointermove',{clientX:140,clientY:120,target:t});
+const after=v.state.moved.core;fire('pointerup',{button:0,clientX:140,clientY:120,target:t});await new Promise(r=>setTimeout(r,20));
+out({before,after,saves:a.calls.filter(c=>c[0]==='saveLayout').length});""")
+    assert out["before"] is None and out["after"] is not None
+    assert out["saves"] == 1, "glisser un nœud enregistre toujours la disposition"
+
+
+def test_toolbar_panels_toggle_close_on_escape_and_the_state_button_carries_the_health_dot(tmp_path):
+    snap = fixture()
+    snap["nodes"][3]["state"] = "unavailable"
+    out = run_node(tmp_path, """
+const a=A.createFixtureAdapter(SNAP);const v=A.mount(host,{adapter:a,...quiet});await v.ready;
+const closed=host.innerHTML;const opened=v.togglePanel('manage');const manage=host.innerHTML;
+const swapped=v.togglePanel('state');const state=host.innerHTML;const again=v.togglePanel('state');
+v.togglePanel('legend');let prevented=false;
+host.listeners.keydown[0]({key:'Escape',target:{closest:()=>null,getAttribute:()=>null,hasAttribute:()=>false},preventDefault(){prevented=true}});
+out({closed,opened,manage,swapped,state,again,afterEscape:v.state.pop,prevented});""", snap)
+    assert 'data-arch-tool-dot="bad"' in out["closed"], "la pastille du bouton État dit la santé d'un coup d'œil"
+    assert 'data-arch-act="reload"' in out["closed"] and out["closed"].count('data-arch-pop="') == 3
+    assert out["opened"] == "manage" and 'data-arch-pop-panel="manage"' in out["manage"]
+    for action in ('data-arch-act="export"', 'data-arch-act="import"', 'data-arch-import', 'data-arch-act="layout-reset"'):
+        assert action in out["manage"], action
+    assert 'aria-expanded="true"' in out["manage"]
+    assert out["swapped"] == "state" and 'data-arch-health="bad"' in out["state"] and "Architecture vocale" in out["state"]
+    assert out["again"] is None, "un second clic referme le panneau"
+    assert out["afterEscape"] is None and out["prevented"] is True, "Échap ferme le panneau ouvert"
+
+
+def test_reload_says_its_result_in_a_short_message(tmp_path):
+    out = run_node(tmp_path, """
+const a=A.createFixtureAdapter(SNAP);const v=A.mount(host,{adapter:a,...quiet});await v.ready;
+const ok=await v.reload();const toast=v.state.toast,html=host.innerHTML;
+out({ok,toast,html,loads:a.calls.filter(c=>c[0]==='load').length});""")
+    assert out["ok"] is True and out["loads"] == 2
+    assert out["toast"]["tone"] == "ok" and out["toast"]["text"].startswith("Architecture relue : 6 modules, 6 liaisons")
+    assert 'data-arch-toast="ok"' in out["html"]
+
+
+def test_export_then_import_reapplies_only_what_the_runtime_allows(tmp_path):
+    """« Gestion » : aucune notion d'architecture enregistrée côté serveur, donc un fichier JSON relu et réappliqué
+    par les routes existantes (bascules, créations, suppressions permises, disposition)."""
+    out = run_node(tmp_path, f"""
+const a=A.createFixtureAdapter(SNAP);const v=A.mount(host,{{adapter:a,...quiet}});await v.ready;
+v.moveNode('core',420,40);await v.saveLayout();
+const doc=v.exportDocument();
+await v.toggle('{TOGGLE}');v.moveNode('core',40,40);await v.saveLayout();
+const before=writes(a).length;
+const file=clone(doc);file.connections.find(c=>c.id==='{LOCKED}').enabled=false;
+file.connections.push({{id:'fantome',source:{{node:'x',port:'y'}},target:{{node:'z',port:'w'}},enabled:true}});
+const plan=v.planImport(file);
+const res=await v.importArchitecture(file);
+const applied=writes(a).slice(before);
+const again=await v.importArchitecture(file);
+const bad=await v.importArchitecture({{format:'autre'}});const badToast=v.state.toast;
+out({{doc,plan,res,applied,again,bad,badToast,enabled:v.state.snapshot.connections.find(c=>c.id==='{TOGGLE}').enabled,core:v.state.layout.positions.core,toast:host.innerHTML}});""")
+    d = out["doc"]
+    assert d["format"] == "jarvis.architecture" and d["version"] == 1 and d["revision"] == "t-17"
+    assert {c["id"] for c in d["connections"]} == {c["id"] for c in fixture()["connections"]}
+    assert d["layout"]["positions"]["core"] == {"x": 420, "y": 40}
+    assert [op["kind"] for op in out["plan"]["ops"]] == ["toggle"]
+    assert set(out["plan"]["skipped"]) == {LOCKED, "fantome"}, "verrouillée et inconnue : ignorées, jamais forcées"
+    assert out["res"]["applied"] == 1 and out["res"]["layout"] is True and out["res"]["refused"] == 0
+    assert [c[0] for c in out["applied"]] == ["setConnection", "saveLayout"], out["applied"]
+    assert out["enabled"] is True and out["core"] == {"x": 420, "y": 40}
+    assert out["again"]["applied"] == 0 and out["again"]["layout"] is False, "un second chargement ne change plus rien"
+    assert out["bad"] is None and out["badToast"]["code"] == "architecture_import_invalid"

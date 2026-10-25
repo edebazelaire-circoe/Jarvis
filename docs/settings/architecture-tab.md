@@ -15,7 +15,6 @@ identifiant de nœud, et n'affiche jamais un état qu'il n'a pas reçu du serveu
 const view = JarvisArchitectureSettings.mount(host, {
   adapter,                              // obligatoire, § 2
   onConfigureBrain: (nodeId, detail) => {},   // fenêtre du cerveau (Slice 05)
-  subagentsTarget: 'subagents',         // facultatif : onglet des rôles (action rapide « Rôles des sous-agents »)
   timeoutMs: 15000,                     // échéance de chaque appel d'adaptateur
 });
 await view.ready;                       // première lecture terminée (succès ou erreur affichée)
@@ -24,13 +23,18 @@ view.destroy();                         // retire les écouteurs, arrête le com
 
 Le style est injecté une fois dans `<head>` (`#jarvisArchitectureSettingsStyle`) ; il n'utilise que les jetons du
 thème (`--set-*`, `--role-accent-*`, `--shell-dur*`) et compose les primitives de la fondation visuelle
-([visual-foundation.md](visual-foundation.md) : `.set-panel`, `.set-medallion`, `.set-stat`, `.set-dot`, `.set-btn`,
-`.set-switch`, `.set-table-*`). Le CSS propre au module ne porte que la composition et le graphe (préfixe `.arch-`).
+([visual-foundation.md](visual-foundation.md) : `.set-stat`, `.set-dot`, `.set-btn`, `.set-switch`). Le CSS propre
+au module ne porte que la composition (canevas, barre d'outils, panneaux, zoom, messages) et le graphe (préfixe
+`.arch-`).
 
 Le contrôleur expose aussi, pour les tests et l'intégration : `load`, `loadLayout`, `select(type, id)`,
 `toggle(id)`, `remove(id)`, `create({source, target})`, `setActivation(nodeId, active)`, `moveNode(id, x, y)`,
-`saveLayout()`, `resetLayout()`, `loadJournal()`, `setConfiguring(nodeId|null)`, `openMenu(nodeId)`, `closeMenu()`,
-`menuAction(action)`, `configure(nodeId, detail)`, `state`.
+`saveLayout()`, `resetLayout()`, `setConfiguring(nodeId|null)`, `openMenu(nodeId)`, `closeMenu()`,
+`menuAction(action)`, `configure(nodeId, detail)`, `zoomTo(z, at?)`, `zoomBy(facteur, at?)`, `panBy(dx, dy)`,
+`fitView()`, `togglePanel('manage'|'state'|'legend')`, `closePanel()`, `reload()` (relecture avec message),
+`exportDocument()`, `exportArchitecture()`, `planImport(doc)`, `importArchitecture(doc)`, `state`. Le module exporte
+aussi `ZOOM` (`MIN` 0,3, `MAX` 3, `STEP` 1,2, `PAN_THRESHOLD` 4 px), `EXPORT_FORMAT`, `clampZoom`, `zoomAnchor`,
+`wheelFactor` (fonctions pures, testées sous node).
 
 ## 2. Adaptateur
 
@@ -43,35 +47,50 @@ Le contrôleur expose aussi, pour les tests et l'intégration : `load`, `loadLay
 | `loadLayout()` | `{revision, positions}` |
 | `saveLayout({base_revision, positions})` | `{ok:true, layout}` ou `{ok:false, status, code, reason, layout?}` |
 | `setNodeActivation(id, {base_revision, active})` | facultatif, hors contrat 11 : sans lui, aucune entrée Activer/Désactiver |
-| `loadJournal()` | facultatif : entrées `{ts, kind, level, message, data}` du journal du Control Center ; sans lui, la carte Journal dit qu'il est indisponible |
 
 Résultat d'écriture : `{ok:true, snapshot}` ou `{ok:false, status, code, reason, snapshot?}`. Un échec de transport
 lève (`architecture_timeout`, `architecture_unreachable`) : l'issue est inconnue.
 
-Fournis : `createHttpAdapter({fetch, base='/api/architecture', trace='/api/trace', timeoutMs})` (routes du contrat 11 ;
-`loadJournal` lit `GET /api/trace?limit=500` et ne garde que les `architecture.*` et `brain_config.*`, sans les
-lectures `*.read`, 40 au plus) et `createFixtureAdapter(snapshot, {layout, latencyMs, journal})`, qui simule le serveur
-(révisions, `423`, `422`, `409`, `pending` des liaisons `core_restart`, création depuis `creatable` ; `loadJournal`
-seulement si `journal` est donné) pour les tests et la démonstration seulement.
+Fournis : `createHttpAdapter({fetch, base='/api/architecture', timeoutMs})` (routes du contrat 11) et
+`createFixtureAdapter(snapshot, {layout, latencyMs})`, qui simule le serveur (révisions, `423`, `422`, `409`, `pending`
+des liaisons `core_restart`, création depuis `creatable`) pour les tests et la démonstration seulement. Le journal
+d'architecture (`loadJournal`, `GET /api/trace`) a été retiré avec sa carte (retours Human du 25/10).
 
-## 3. Composition (refonte-ui-settings, Slice 04)
+## 3. Composition (graphe plein espace, retours Human du 25/10)
 
-Maquette : `tasks/refonte-ui-settings/references/ui/03-architecture-agents-architecture.png`. Chaque région est
-calculée depuis ce que sert le runtime ; un élément de la maquette sans donnée n'est pas rendu.
+La page Architecture est le graphe : la section porte `fill: true` au registre
+([navigation-registry.md](navigation-registry.md)) ; sous l'en-tête de la page (fil d'Ariane, icône et titre, phrase,
+onglets), le canevas prend **toute la largeur et toute la hauteur restantes** de la fenêtre et suit son
+redimensionnement. Même modèle de défilement que les autres pages ([settings-shell.md](settings-shell.md) § 1 bis) :
+une seule zone qui défile, l'en-tête avec le contenu ; ici le contenu est simplement à la taille de l'écran, il n'y a
+donc rien à faire défiler (sur un très petit écran, la hauteur minimale du graphe, 320 px, fait revenir le défilement
+normal). Les cartes qui entouraient le graphe (État, Règles, Actions rapides, Journal, Légende) sont supprimées.
 
 | Région | Contenu | Source |
 | --- | --- | --- |
-| **État du système** | phrase d'état (tous actifs / n inactifs / n indisponibles, avec leurs noms, pastille + mot), modules actifs `a / n`, liaisons actives `e / m`, changements en attente, architecture vocale effective (lecture seule, lien vers Avancé), révision du snapshot | snapshot |
-| **Règles d'architecture** | une ligne par liaison `required_locked` (sa `locked_reason`) puis `governed` (son but et le cerveau qui la règle) ; la liste défile au-delà de ~5 lignes ; une règle sélectionne sa liaison | snapshot |
-| **Actions rapides** | Relire l'architecture ; Réinitialiser la disposition (deux temps : « Confirmer », inerte avec sa raison sans position enregistrée) ; Rôles des sous-agents (si `subagentsTarget`) ; attentes et notes de disposition | adaptateur |
-| **Canevas** | toute la largeur, au plus trois colonnes de modules ; l'inspecteur flotte au bord opposé à l'élément choisi et n'existe que s'il y a une sélection ; sous 860 px de large, il passe sous le canevas | snapshot, disposition |
-| **Journal d'architecture** | heure locale, module (cerveau nommé, liaison `A → B`, « Disposition », sinon la famille), message (une `architecture.layout.saved` à zéro nœud se lit « Disposition réinitialisée ») ; plus récent d'abord ; « Actualiser » ; relu après chaque écriture, relecture ou enregistrement de disposition | `loadJournal` |
-| **Légende des liaisons** | les **canaux présents** dans le graphe (couleur), puis la mutabilité (trait) et l'attente | snapshot |
+| **Canevas** | tout l'espace ; il ne défile pas : la vue est une translation puis une échelle du monde (`transform`), ajustée au canevas à l'ouverture et au redimensionnement tant qu'elle n'a pas été réglée à la main ; au plus trois colonnes de modules | snapshot, disposition |
+| **Barre d'outils** (en haut à droite, par-dessus) | **Relire** (relit le snapshot ; le résultat s'affiche dans un message court) · **Gestion** · **État** (pastille de couleur : vert tous actifs, ambre inactifs, rouge losange indisponibles) · **Légende** ; chacun des trois derniers ouvre un petit panneau ancré sous la barre, fermé au clic dehors, par Échap (focus rendu au bouton) ou par un second clic | snapshot, adaptateur |
+| **Panneau Gestion** | « Sauvegarder cette architecture » (fichier JSON téléchargé) ; « Charger une architecture… » (fichier JSON) ; « Réinitialiser la disposition » (deux temps, inerte avec sa raison sans position enregistrée) | adaptateur |
+| **Panneau État** | phrase d'état (tous actifs / n inactifs / n indisponibles, avec leurs noms), modules actifs `a / n`, liaisons actives `e / m`, changements en attente, architecture vocale effective (lecture seule, lien vers Avancé), révision du snapshot | snapshot |
+| **Panneau Légende** | les **canaux présents** (couleur), la mutabilité (trait), l'attente, puis les commandes souris et clavier | snapshot |
+| **Zoom** (en bas à droite) | − · niveau en % · + · Recentrer (tout le graphe dans la vue, jamais au-delà de 100 %) | vue |
+| **Messages** (en bas à gauche) | refus et avis généraux, attentes, notes de disposition, retour court d'une action (Relire, sauvegarde, chargement) avec un × | état local |
+| **Inspecteur** | gardé : seul éditeur d'une liaison (bascule, suppression) ou d'un nœud (liaisons possibles, Configurer…) ; flotte au bord opposé à l'élément choisi, sous la barre et au-dessus du zoom, seulement s'il y a une sélection | snapshot |
 
-Écartés de la maquette, faute de donnée ou d'action réelle : latence moyenne et requêtes par minute (aucune mesure
-servie), « Charger un preset » / « Sauvegarder comme preset » (aucun préréglage d'architecture), puces de
-responsabilités des nœuds (le snapshot n'en décrit pas), filtre « Tous les modules » et pause du journal, curseur
-continu de délégation (le contrat a cinq niveaux, voir [brain-config-panel.md](brain-config-panel.md)).
+**Sauvegarder / charger une architecture.** Le serveur n'a aucune notion d'architecture enregistrée (ni profil, ni
+préréglage, ni export) : aucune route ni migration n'a été ajoutée. Le fichier (`format: "jarvis.architecture"`,
+`version: 1`) garde la révision lue, l'architecture vocale (pour information), chaque liaison (`id`, source, cible,
+canal, mutabilité, état voulu, `pending` compris) et la disposition. Le charger réapplique, par les routes existantes et
+avec la révision courante : les bascules des liaisons `toggleable` dont l'état diffère, la suppression des liaisons
+`creatable_removable` absentes du fichier, la création des liaisons du fichier que `creatable` permet, puis la
+disposition des modules connus (`saveLayout`). Ce qui est verrouillé, gouverné ou inconnu du runtime est ignoré et
+compté ; un refus du serveur est compté et dit. Les réglages des cerveaux n'en font pas partie (fenêtre du cerveau).
+
+Écartés, faute de donnée ou d'action réelle : latence moyenne et requêtes par minute (aucune mesure servie), puces de
+responsabilités des nœuds (le snapshot n'en décrit pas), curseur continu de délégation (le contrat a cinq niveaux, voir
+[brain-config-panel.md](brain-config-panel.md)). Retirés le 25/10 (« le reste ne sert à rien ») : la carte des règles
+d'architecture, les actions rapides (dont le lien « Rôles des sous-agents », doublon de l'onglet Sous-agents) et le
+journal d'architecture.
 
 ### 3.1 Sémantique visuelle du graphe
 
@@ -86,6 +105,12 @@ continu de délégation (le contrat a cinq niveaux, voir [brain-config-panel.md]
   lumineux autour du nœud tant que sa fenêtre est ouverte (`brain-config:shown` / `brain-config:closed`).
 - **Disposition** : glisser ou Maj+flèches ne change que les coordonnées ; « Réinitialiser la disposition » enregistre
   `positions: {}` (la disposition automatique reprend) et n'écrit aucune liaison.
+- **Vue** (affichage seulement, rien n'est écrit) : molette sur le canevas = zoom autour du point sous le pointeur
+  (borné à 0,3×–3×) ; boutons + / − (pas de 1,2) et Recentrer ; **clic droit maintenu** = déplacement de la vue, qui ne
+  commence qu'au-delà de 4 px : un clic droit immobile ouvre toujours le menu du cerveau, un clic droit qui a déplacé
+  la vue n'ouvre ni ce menu ni celui du navigateur (le menu contextuel qui suit le relâchement est ignoré 600 ms).
+  Glisser un nœud au clic gauche reste intact (déplacement divisé par le zoom). Un module ou une liaison focalisé au
+  clavier hors de la vue y est ramené.
 
 ## 4. Comportement
 
@@ -114,24 +139,24 @@ continu de délégation (le contrat a cinq niveaux, voir [brain-config-panel.md]
 
 ## 5. Accessibilité et événements
 
-- Tab : cartes du bandeau (lien de l'architecture vocale, règles, actions), puis les modules, puis les libellés de
-  liaisons, puis l'inspecteur, le journal et la légende. Entrée sur un module ou un libellé ouvre l'inspecteur et y
-  place le focus ; Entrée sur une règle sélectionne sa liaison et met le focus sur son libellé ; Échap ferme le menu,
+- Tab : les modules, puis les libellés de liaisons, puis la barre d'outils (Relire, Gestion, État, Légende ; le
+  panneau ouvert suit son bouton), le zoom, les messages et l'inspecteur. Les boutons de panneau portent
+  `aria-expanded` et `aria-controls` ; la pastille d'État a son équivalent texte. Entrée sur un module ou un libellé
+  ouvre l'inspecteur et y place le focus ; Échap ferme le menu, puis le panneau ouvert (focus rendu à son bouton),
   annule une création, puis désélectionne en rendant le focus à l'élément d'origine (les Réglages restent ouverts).
 - Menu d'un cerveau : clic droit, touche Menu ou Maj+F10, ou le bouton « … » du nœud (tactile). Flèches, Début/Fin,
   Échap. Entrées : Configurer… (si `configurable`), Inspecter, Activer/Désactiver (seulement si
   `activation.mutable` et `adapter.setNodeActivation`), sinon la raison du verrou.
 - Les états de liaison ne reposent pas sur la couleur : trait (plein épais + gaine, plein, pointillé atténué, tirets
   mixtes, points), pictogramme (cadenas, interrupteur, prise, lien sortant) et texte. La couleur ne dit que le canal,
-  aussi écrit dans le libellé. Le niveau d'une entrée du journal est lu (« avertissement », « erreur ») en plus de sa
-  pastille.
+  aussi écrit dans le libellé.
 - `prefers-reduced-motion` : transitions et pulsation des ports coupées, rotation d'attente ralentie.
 - **`architecture:configure-brain`** : `CustomEvent` émis sur l'hôte (bouillonne), `detail = {nodeId, field, source}`
   avec `source` ∈ `menu | inspector | governed`, `field` le champ gouverneur (`delegation`…) et `opener` (`node` | `button` pour le menu, sinon `null`) : la fenêtre du cerveau y rend le focus ; `onConfigureBrain`
   reçoit les mêmes valeurs.
-- Bandeau de l'architecture vocale effective, lecture seule, avec `data-settings-open="<settings_target>"`
+- Ligne de l'architecture vocale effective (panneau État), lecture seule, avec `data-settings-open="<settings_target>"`
   (`architecture_compat`), pris en charge par le lien interne des Réglages.
-- Journal : `console.info('architecture_settings.loaded' | 'write_ok' | 'layout_saved' | 'journal_loaded' | 'configure_brain')`,
+- Journal console : `console.info('architecture_settings.loaded' | 'write_ok' | 'layout_saved' | 'exported' | 'imported' | 'configure_brain')`,
   `console.error(code, …)` et `obsClientLog` quand la page l'expose.
 
 ## 6. Écarts au contrat 11 (à valider par agent 0 / Slice 01)
@@ -143,7 +168,8 @@ continu de délégation (le contrat a cinq niveaux, voir [brain-config-panel.md]
 
 Tests : `tests/unit/test_control_center_architecture_settings_js.py` (node),
 `tests/unit/test_architecture_settings_browser.py` (Chrome sans tête sur une page statique, harnais
-`_architecture_settings_browser.mjs`) et `tests/unit/test_architecture_workspace_browser.py` (vrai Control Center
-isolé : composition, débordement à 1672×941, 1254×1254, 1280×800 et 1000×800 fenêtre ouverte, règles et inspecteur
-flottant, réinitialisation de la disposition, journal illisible). Fixtures : `tests/fixtures/architecture_snapshot_fixture_ui.json` (UI) et les snapshots réels de la Slice 01
+`_architecture_settings_browser.mjs` : molette, boutons de zoom, clic droit maintenu) et
+`tests/unit/test_architecture_workspace_browser.py` (vrai Control Center isolé : graphe à la taille de l'écran, barre
+d'outils et panneaux, débordement à 1672×941, 1254×1254, 1280×800 et 1000×800 fenêtre ouverte, relecture avec message,
+réinitialisation de la disposition). Fixtures : `tests/fixtures/architecture_snapshot_fixture_ui.json` (UI) et les snapshots réels de la Slice 01
 (`architecture_snapshot_duplex.json`, `architecture_snapshot_simple.json`), copiés tels quels.

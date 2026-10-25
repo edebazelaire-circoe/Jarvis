@@ -13,14 +13,19 @@
      loadLayout()                                   -> {revision, positions}
      saveLayout({base_revision, positions})         -> {ok:true, layout} | {ok:false, status, code, reason, layout?}
      setNodeActivation(id, {base_revision, active}) -> résultat d'écriture   (FACULTATIF, hors contrat 11)
-     loadJournal()                                  -> [{ts, kind, level, message, data}]  (FACULTATIF, lecture seule)
 
    Résultat d'écriture : `{ok:true, snapshot}` ou `{ok:false, status, code, reason, snapshot?}`. Un échec de
    transport lève une erreur `.code` (`architecture_timeout`, `architecture_unreachable`) : l'issue est alors
    inconnue, et la vue est relue de force. Après CHAQUE écriture, l'écran affiche le snapshot renvoyé par le
    serveur, jamais un état supposé ; un refus sans snapshot déclenche une relecture ; `409` aussi.
 
-   Glisser un nœud ne change que la disposition (`saveLayout`, révisée) ; aucune mutation de topologie.
+   Glisser un nœud ne change que la disposition (`saveLayout`, révisée) ; aucune mutation de topologie. Zoom et
+   déplacement de la vue (molette, boutons, clic droit maintenu) ne changent que l'affichage, rien n'est écrit.
+
+   Page (retours Human du 25/10) : le graphe occupe toute la place ; par-dessus, en haut à droite, quatre boutons
+   (Relire, Gestion, État, Légende) dont les trois derniers ouvrent un petit panneau ancré ; en bas à droite le zoom.
+   « Gestion » sauvegarde et charge une architecture en fichier JSON par les seules routes ci-dessus : le serveur n'a
+   aucune notion d'architecture enregistrée.
 
    Montage : `JarvisArchitectureSettings.mount(host, {adapter, onConfigureBrain, timeoutMs})`, qui rend un
    contrôleur (`destroy()` démonte). « Configurer… » appelle `onConfigureBrain(nodeId, detail)` (fenêtre de la
@@ -34,7 +39,17 @@
   /* ROW laisse ~100 px entre deux rangs : deux libellés de liaisons opposées et leurs pointes y tiennent. */
   const NODE_W=208,NODE_H=136,COL=340,ROW=236,PAD=28,LAYOUT_STEP=16,BEND_STEP=60,LABEL_H=26;
   /* Au plus trois colonnes de modules : au-delà, les rangs se replient (lecture de gauche à droite conservée). */
-  const MAX_COLS=3,JOURNAL_MAX=40,JOURNAL_DEBOUNCE_MS=300,JOURNAL_TRACE_LIMIT=500;
+  const MAX_COLS=3;
+  /* Zoom de la vue : bornes, pas des boutons, seuil (px) au-delà duquel un clic droit devient un déplacement de vue. */
+  const ZOOM_MIN=0.3,ZOOM_MAX=3,ZOOM_STEP=1.2,PAN_THRESHOLD=4;
+  /* Fichier d'architecture (« Gestion ») : format reconnu à l'import. */
+  const EXPORT_FORMAT='jarvis.architecture';
+  const clampZoom=z=>{const v=Number(z);return Math.min(ZOOM_MAX,Math.max(ZOOM_MIN,Number.isFinite(v)&&v>0?v:1))};
+  /* Vue = translation (x, y, pixels du canevas) puis échelle z. Zoom autour d'un point `px, py` du canevas : rend la
+     vue {x, y, z} où le point du monde qui était sous le curseur y reste. */
+  const zoomAnchor=(view,z1,px,py)=>{const k=z1/view.z;return {x:px-(px-view.x)*k,y:py-(py-view.y)*k,z:z1}};
+  /* Facteur de zoom d'un cran de molette (lignes et pages ramenées en pixels) : vers soi = zoom avant. */
+  const wheelFactor=ev=>{const unit=ev&&ev.deltaMode===1?16:ev&&ev.deltaMode===2?400:1;return Math.exp(-(Number(ev&&ev.deltaY)||0)*unit*0.0015)};
   const UNKNOWN_OUTCOME=new Set(['architecture_timeout','architecture_unreachable']);
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const own=(o,k)=>!!o&&Object.prototype.hasOwnProperty.call(o,k);
@@ -79,13 +94,15 @@
     close:'<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
     voice:'<path d="M4 12h1.5M7.5 8.5v7M11 5.5v13M14.5 8v8M18 10.5v3M20 12h.5"/>',
     pulse:'<path d="M3 12h4l2.5-6 4 12 2.5-6H21"/>',
-    shield:'<path d="M12 3.5 5 6v5.5c0 4.2 3 7.6 7 9 4-1.4 7-4.8 7-9V6Z"/><path d="m9 12 2.2 2.2L15.5 10"/>',
-    gear:'<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/>',
-    journal:'<rect x="5" y="3.5" width="14" height="17" rx="2"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4"/>',
     link:'<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7L11.5 6.8"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5"/>',
     layers:'<path d="m12 4 8.5 4.5L12 13 3.5 8.5Z"/><path d="m3.5 12.5 8.5 4.5 8.5-4.5M3.5 16.5 12 21l8.5-4.5"/>',
     reset:'<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/>',
     chevron:'<path d="m9 6 6 6-6 6"/>',
+    plus:'<path d="M12 5v14M5 12h14"/>',
+    minus:'<path d="M5 12h14"/>',
+    fit:'<path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/><circle cx="12" cy="12" r="2.5"/>',
+    download:'<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+    upload:'<path d="M12 15V4M7 9l5-5 5 5M5 20h14"/>',
   };
   const glyph=(name,cls)=>`<svg class="${cls||'arch-g'}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${G[name]||G.node}</svg>`;
   const MUT_GLYPH={required_locked:'lock',toggleable:'on',creatable_removable:'plug',governed:'governed'};
@@ -225,9 +242,6 @@
     const adapter=opts.adapter;
     if(!adapter||typeof adapter.load!=='function')throw codedError('architecture_adapter_missing','Adaptateur d’architecture absent ou incomplet.');
     const timeoutMs=Number(opts.timeoutMs)>0?Number(opts.timeoutMs):DEFAULT_TIMEOUT_MS;
-    /* Onglet des rôles de sous-agents (lien interne des Réglages, `data-settings-open`) : donné par l'hôte, sinon
-       l'action rapide n'est pas proposée. */
-    const subagentsTarget=typeof opts.subagentsTarget==='string'?opts.subagentsTarget:'';
     const now=typeof opts.now==='function'?opts.now:()=>Date.now();
     const setTimer=opts.setInterval||((fn,ms)=>root.setInterval?root.setInterval(fn,ms):null);
     const clearTimer=opts.clearInterval||(id=>{if(id!=null&&root.clearInterval)root.clearInterval(id)});
@@ -246,9 +260,12 @@
       confirmReset:false,       // « Réinitialiser la disposition » attend sa confirmation
       configuring:null,         // cerveau dont la fenêtre de configuration est ouverte (événements brain-config:*)
       labelPos:{},              // abscisse du libellé de chaque liaison (côté de l'inspecteur flottant)
-      journal:{phase:typeof adapter.loadJournal==='function'?'idle':'none',entries:[],error:null,since:now()},
+      view:{x:0,y:0,z:1,touched:false}, // vue du graphe : translation et zoom (affichage seulement) ; `touched` = réglée à la main
+      pop:null,                 // panneau ouvert depuis la barre d'outils : 'manage' | 'state' | 'legend'
+      toast:null,               // retour court d'une action de la barre (relecture, sauvegarde, chargement)
+      importing:false,          // chargement d'un fichier d'architecture en cours
     };
-    let ticker=null,layoutTimer=null,journalTimer=null,drag=null,suppressClickUntil=0;
+    let ticker=null,layoutTimer=null,drag=null,pan=null,suppressClickUntil=0,suppressMenuUntil=0;
 
     const nodes=()=>(st.snapshot&&st.snapshot.nodes)||[];
     const connections=()=>(st.snapshot&&st.snapshot.connections)||[];
@@ -284,10 +301,11 @@
     }
 
     /* --- rendu ------------------------------------------------------------- */
-    /* Composition (refonte-ui-settings, Slice 04) : trois cartes en tête (état, règles, actions), le canevas en
-       pleine largeur avec l'inspecteur flottant à son bord, puis le journal et la légende. Chaque carte est
-       calculée depuis le snapshot, la disposition ou le journal servis : aucune valeur n'est écrite ici. Les cartes
-       sont des panneaux `.set-panel` de la fondation visuelle (docs/settings/visual-foundation.md). */
+    /* Composition (retours Human du 25/10) : le canevas occupe toute la place ; par-dessus, en haut à droite, la barre
+       Relire · Gestion · État · Légende (un panneau ancré par bouton, fermé au clic dehors et par Échap) ; en bas à
+       droite le zoom ; en bas à gauche les messages (refus, disposition, retour d'une action). L'inspecteur d'un
+       élément sélectionné reste un panneau flottant. Tout est calculé depuis le snapshot, la disposition servie ou
+       l'état local de la vue : aucune valeur n'est écrite ici. */
     const elapsed=since=>Math.max(0,Math.floor((now()-since)/1000));
     function waitingHtml(label,since){
       return `<span class="arch-wait" role="status"><span class="arch-spin" aria-hidden="true"></span><span>${esc(label)}</span>
@@ -298,13 +316,6 @@
       if(!n)return '';
       const f=n.followup?`<p data-arch-followup>${esc(n.followup.text)}</p>${n.followup.hint?`<p class="arch-hint">${esc(n.followup.hint)}</p>`:''}${codeLine(n.followup.code)}`:'';
       return `<div class="arch-notice ${esc(n.tone||'')}" role="${n.tone==='bad'?'alert':'status'}" data-arch-notice>${glyph(n.tone==='bad'?'close':n.tone==='ok'?'on':'clock','arch-g arch-notice-g')}<div><p>${esc(n.text)}</p>${n.hint?`<p class="arch-hint">${esc(n.hint)}</p>`:''}${codeLine(n.code)}${f}</div></div>`;
-    }
-    /* Carte de la fondation : médaillon, titre, aside facultatif, corps. */
-    function card(key,title,icon,body,aside,cls){
-      return `<section class="set-panel set-tone-blue arch-card${cls?' '+cls:''}" aria-labelledby="${uid}-${key}" data-arch-card="${key}">
-        <div class="set-panel-head"><span class="set-medallion set-medallion-sm" aria-hidden="true">${glyph(icon)}</span>
-          <div class="set-panel-titles"><h3 class="set-panel-title" id="${uid}-${key}">${esc(title)}</h3></div>${aside?`<div class="set-panel-aside">${aside}</div>`:''}</div>
-        <div class="set-panel-body">${body}</div></section>`;
     }
     function revisionHtml(){
       const r=st.snapshot&&st.snapshot.revision;
@@ -317,35 +328,26 @@
         <strong class="arch-voice-v">${esc(va.label)}</strong><span class="arch-tag">${glyph('lock','arch-g arch-g-sm')}lecture seule</span>
         <button type="button" class="arch-linkbtn" data-settings-open="${esc(va.settings_target)}">Changer dans Avancé › Architecture vocale</button>${revisionHtml()}</div>`;
     }
-    /* État du système : modules actifs, liaisons actives, changements en attente, tous lus dans le snapshot. */
-    function stateCard(){
-      const ns=nodes(),cs=connections();
-      const down=ns.filter(n=>n.state==='unavailable'),idle=ns.filter(n=>n.state!=='active'&&n.state!=='unavailable');
+    /* Santé du système lue dans le snapshot : [ton, phrase] ; le ton colore aussi la pastille du bouton État. */
+    function healthOf(){
+      const ns=nodes(),down=ns.filter(n=>n.state==='unavailable'),idle=ns.filter(n=>n.state!=='active'&&n.state!=='unavailable');
       const names=list=>list.map(n=>n.label).join(', ');
       const plural=(n,one,many)=>n>1?many:one;
-      const [kind,text]=down.length?['bad',`${down.length} ${plural(down.length,'module indisponible','modules indisponibles')} : ${names(down)}`]
+      return down.length?['bad',`${down.length} ${plural(down.length,'module indisponible','modules indisponibles')} : ${names(down)}`]
         :idle.length?['off',`${idle.length} ${plural(idle.length,'module inactif','modules inactifs')} : ${names(idle)}`]
         :['ok','Tous les modules sont actifs'];
-      const pending=cs.filter(c=>c.pending).length;
+    }
+    const HEALTH_WORD={ok:'tout est actif',off:'modules inactifs',bad:'modules indisponibles'};
+    /* État du système : modules actifs, liaisons actives, changements en attente, architecture vocale. */
+    function statePanel(){
+      const ns=nodes(),cs=connections(),[kind,text]=healthOf();
+      const active=ns.filter(n=>n.state==='active').length,pending=cs.filter(c=>c.pending).length;
       const stat=(icon,value,label)=>`<div class="set-stat set-stat-stack arch-stat"><span class="set-stat-icon" aria-hidden="true">${glyph(icon)}</span><span class="set-stat-text"><span class="set-stat-value">${value}</span><span class="set-stat-label">${esc(label)}</span></span></div>`;
-      return card('state','État du système','pulse',`<p class="set-dot set-dot-${kind} arch-health" data-arch-health="${kind}">${esc(text)}</p>
-        <div class="arch-stats">${stat('layers',`${ns.length-down.length-idle.length}<span class="arch-of"> / ${ns.length}</span>`,'Modules actifs')}
+      return `<p class="set-dot set-dot-${kind} arch-health" data-arch-health="${kind}">${esc(text)}</p>
+        <div class="arch-stats">${stat('layers',`${active}<span class="arch-of"> / ${ns.length}</span>`,'Modules actifs')}
           ${stat('link',`${cs.filter(c=>c.enabled).length}<span class="arch-of"> / ${cs.length}</span>`,'Liaisons actives')}
           ${stat('clock',String(pending),pending>1?'Changements en attente':'Changement en attente')}</div>
-        ${voiceRow()}`,'','arch-card-state');
-    }
-    /* Règles d'architecture : les liaisons obligatoires et gouvernées que déclare le runtime, avec sa raison. */
-    function rulesCard(){
-      const cs=connections(),pair=c=>`${nodeLabel(c.source.node)} → ${nodeLabel(c.target.node)}`;
-      const rules=[...cs.filter(c=>c.mutability==='required_locked').map(c=>({c,icon:'lock',text:c.locked_reason||`${pair(c)} est obligatoire.`})),
-        ...cs.filter(c=>c.mutability==='governed').map(c=>{const gb=c.governed_by||{};
-          return {c,icon:'governed',text:`${c.purpose||pair(c)} : suit le réglage ${gb.node?'de '+nodeLabel(gb.node):'d’un cerveau'}.`}})];
-      /* Toutes les règles, dans une liste qui défile si elle dépasse la hauteur des cartes voisines ; une règle
-         sélectionne sa liaison sur le graphe (et l'inspecteur dit le reste). */
-      const body=rules.length?`<ul class="arch-rules" data-arch-scroll="rules">${rules.map(r=>`<li><button type="button" class="arch-rule" data-arch-focus-conn="${esc(r.c.id)}" title="${esc(`${r.text} (${pair(r.c)}, ${channelLabel(r.c.channel)}). Voir cette liaison sur le graphe.`)}">
-          <span class="arch-rule-g">${glyph(r.icon,'arch-g arch-g-sm')}</span><span class="arch-rule-text">${esc(r.text)}<span class="arch-sr"> — ${esc(pair(r.c))}, ${esc(channelLabel(r.c.channel))}</span></span></button></li>`).join('')}</ul>`
-        :'<p class="arch-hint">Le runtime ne déclare aucune liaison obligatoire ni gouvernée.</p>';
-      return card('rules','Règles d’architecture','shield',body,rules.length?`<span class="arch-tag" title="Liaisons obligatoires ou gouvernées">${rules.length}</span>`:'','arch-card-rules');
+        ${voiceRow()}`;
     }
     function statusLine(){
       const bits=[];
@@ -364,70 +366,60 @@
       if(!Object.keys(st.layout.positions).length&&!Object.keys(st.moved).length)return 'Aucune position enregistrée : la disposition automatique est déjà utilisée.';
       return '';
     }
-    /* Actions rapides : seulement des gestes réels (relire, revenir à la disposition automatique, rôles). */
-    function actionsCard(){
-      const blocked=resetBlocked(),confirming=st.confirmReset&&!blocked;
-      const busy=st.reloading||st.write;
-      const body=`<div class="arch-quick">
-          <button type="button" class="set-btn arch-quick-btn" data-arch-act="reload"${busy?' disabled':''}>${glyph('refresh')}<span>Relire l’architecture</span></button>
-          <button type="button" class="set-btn arch-quick-btn${confirming?' set-btn-danger':''}" data-arch-act="layout-reset"${blocked?` disabled title="${esc(blocked)}"`:''}>${glyph('reset')}<span>${confirming?'Confirmer : disposition automatique':'Réinitialiser la disposition'}</span></button>
-          ${confirming?'<button type="button" class="set-btn set-btn-ghost set-btn-sm" data-arch-act="layout-reset-cancel">Annuler</button>':''}
-          ${subagentsTarget?`<button type="button" class="set-btn arch-quick-btn" data-settings-open="${esc(subagentsTarget)}">${glyph('pool')}<span>Rôles des sous-agents</span>${glyph('chevron','arch-g arch-quick-end')}</button>`:''}</div>
-        ${confirming?'<p class="arch-hint">Les positions enregistrées sont oubliées ; l’architecture elle-même ne change pas.</p>':''}${statusLine()}`;
-      return card('actions','Actions rapides','gear',body,'','arch-card-actions');
+    /* Gestion de l'architecture : sauvegarder (fichier JSON), charger un fichier, revenir à la disposition automatique. */
+    function managePanel(){
+      const blocked=resetBlocked(),confirming=st.confirmReset&&!blocked,busy=!!(st.write||st.importing||st.reloading);
+      return `<div class="arch-pop-actions">
+          <button type="button" class="set-btn arch-pop-btn" data-arch-act="export">${glyph('download')}<span>Sauvegarder cette architecture</span></button>
+          <button type="button" class="set-btn arch-pop-btn" data-arch-act="import"${busy?' aria-disabled="true"':''}>${glyph('upload')}<span>Charger une architecture…</span></button>
+          <input type="file" accept="application/json,.json" data-arch-import hidden>
+          <button type="button" class="set-btn arch-pop-btn${confirming?' set-btn-danger':''}" data-arch-act="layout-reset"${blocked?` disabled title="${esc(blocked)}"`:''}>${glyph('reset')}<span>${confirming?'Confirmer : disposition automatique':'Réinitialiser la disposition'}</span></button>
+          ${confirming?'<button type="button" class="set-btn set-btn-ghost set-btn-sm" data-arch-act="layout-reset-cancel">Annuler</button>':''}</div>
+        ${confirming?'<p class="arch-hint">Les positions enregistrées sont oubliées ; l’architecture elle-même ne change pas.</p>':''}
+        <p class="arch-hint">Le fichier garde les liaisons (actives, désactivées, ajoutées) et la disposition du graphe ; pas les réglages des cerveaux. Charger n’applique que ce que le runtime permet.</p>`;
     }
-    function legendHtml(){
+    function legendPanel(){
       const present=new Set(connections().map(c=>CHANNEL[c.channel]?c.channel:'other'));
       const chans=Object.keys(CHANNEL).concat(['other']).filter(ch=>present.has(ch));
       const line=(cls)=>`<svg class="arch-legend-line" viewBox="0 0 44 10" aria-hidden="true"><line x1="2" y1="5" x2="36" y2="5" class="arch-edge ${cls}"/><path d="M35 1.5 42 5 35 8.5z" class="arch-mk ${cls}"/></svg>`;
       const item=(cls,g,label,hint,stroke)=>`<li${stroke?` title="${esc(stroke)}"`:''}>${line(cls)}${g?glyph(g,'arch-g arch-g-sm'):''}<span><strong>${esc(label)}</strong>${hint?` <span class="arch-legend-hint">${esc(hint)}</span>`:''}</span></li>`;
       const channels=chans.length?`<h4>Canaux</h4><ul class="arch-legend-ch">${chans.map(ch=>item(`ch-${ch} on`,'',CHANNEL_LEGEND[ch]||ch,'')).join('')}</ul>`:'';
-      return card('legend','Légende des liaisons','link',`${channels}<h4>Mutabilité</h4><ul>
+      return `<div class="arch-legend">${channels}<h4>Mutabilité</h4><ul>
         ${item('m-required_locked on','lock','Obligatoire','non modifiable','Trait plein épais, cadenas')}
         ${item('m-toggleable on','on','Modifiable, active','','Trait plein, interrupteur allumé')}
         ${item('m-toggleable off','off','Modifiable, désactivée','','Pointillé atténué, interrupteur éteint')}
         ${item('m-creatable_removable on','plug','Supprimable','','Tirets mixtes, prise')}
         ${item('m-governed on','governed','Gouvernée','par la fenêtre du cerveau','Points')}
         <li class="arch-legend-wide">${glyph('clock','arch-g arch-g-sm')}<span><strong>En attente</strong> <span class="arch-legend-hint">enregistrée, effective au prochain démarrage de Core ou de la voix</span></span></li>
-      </ul><p class="arch-hint">Flèche = sens du flux ; le libellé donne le canal.</p>`,'','arch-legend');
+      </ul><p class="arch-hint">Flèche = sens du flux ; le libellé donne le canal.</p>
+      <h4>Commandes</h4><p class="arch-hint arch-keys">Molette : zoom autour du pointeur ; clic droit maintenu : déplacer la vue ; clic droit ou « … » sur un cerveau : ses actions. Clavier : Tab parcourt les modules puis les liaisons, Entrée inspecte, Maj+F10 ouvre les actions d’un cerveau, Maj+flèches déplace un module (disposition seulement).</p></div>`;
     }
-    /* Source affichée d'un événement du journal : le cerveau ou la liaison qu'il nomme, sinon sa famille. */
-    function journalSource(e){
-      const d=e.data&&typeof e.data==='object'?e.data:{};
-      if(d.brain_id)return nodeLabel(String(d.brain_id));
-      if(d.connection_id){const c=connById(String(d.connection_id));return c?`${nodeLabel(c.source.node)} → ${nodeLabel(c.target.node)}`:'Liaison'}
-      const kind=String(e.kind||'');
-      if(kind.startsWith('architecture.layout'))return 'Disposition';
-      return kind.startsWith('brain_config')?'Cerveau':'Architecture';
+    const POPS={manage:['Gestion de l’architecture','layers',managePanel],state:['État du système','pulse',statePanel],legend:['Légende des liaisons','link',legendPanel]};
+    /* Barre d'outils flottante (en haut à droite du graphe) et le panneau ancré du bouton ouvert. */
+    function toolsHtml(){
+      const busy=!!(st.reloading||st.write||st.importing),[kind]=healthOf();
+      const tool=(id,label,extra)=>`<button type="button" class="arch-tool" data-arch-pop="${id}" aria-expanded="${st.pop===id?'true':'false'}" aria-controls="${uid}-pop"${extra&&extra.title?` title="${esc(extra.title)}"`:''}>${glyph(POPS[id][1])}<span>${esc(label)}</span>${extra&&extra.html||''}${glyph('chevron','arch-g arch-g-sm arch-tool-caret')}</button>`;
+      const pop=st.pop&&POPS[st.pop];
+      return `<div class="arch-tools" role="group" aria-label="Outils de l’architecture" data-arch-tools>
+          <button type="button" class="arch-tool" data-arch-act="reload"${busy?' aria-disabled="true"':''} title="Relire l’architecture servie par le runtime">${glyph('refresh')}<span>Relire</span></button>
+          ${tool('manage','Gestion')}
+          ${tool('state','État',{title:healthOf()[1],html:`<span class="arch-tool-dot ${kind}" data-arch-tool-dot="${kind}" aria-hidden="true"></span><span class="arch-sr"> : ${HEALTH_WORD[kind]}</span>`})}
+          ${tool('legend','Légende')}</div>
+        ${pop?`<section class="arch-pop" id="${uid}-pop" role="dialog" aria-labelledby="${uid}-pop-title" data-arch-pop-panel="${st.pop}">
+          <h3 class="arch-pop-title" id="${uid}-pop-title">${glyph(pop[1])}${esc(pop[0])}</h3>${pop[2]()}</section>`:''}`;
     }
-    /* Le serveur écrit le même message pour un déplacement et une réinitialisation (`architecture.layout.saved`) ; une
-       disposition enregistrée sans aucun nœud (`data.nodes === 0`) est une réinitialisation : on le dit. */
-    function journalMessage(e){
-      if(e.kind==='architecture.layout.saved'&&e.data&&e.data.nodes===0)return 'Disposition réinitialisée : disposition automatique';
-      return e.message||e.kind;
+    const zoomText=()=>Math.round(st.view.z*100)+' %';
+    function zoomHtml(){
+      return `<div class="arch-zoombar" role="group" aria-label="Zoom du graphe">
+          <button type="button" class="arch-zoom-btn" data-arch-zoom="out" aria-label="Zoom arrière" title="Zoom arrière (molette)">${glyph('minus')}</button>
+          <output class="arch-zoom-level" data-arch-zoom-level aria-live="polite">${zoomText()}</output>
+          <button type="button" class="arch-zoom-btn" data-arch-zoom="in" aria-label="Zoom avant" title="Zoom avant (molette)">${glyph('plus')}</button>
+          <button type="button" class="arch-zoom-btn" data-arch-zoom="fit" aria-label="Recentrer : tout le graphe dans la vue" title="Recentrer">${glyph('fit')}</button></div>`;
     }
-    function journalTime(ts){
-      const d=new Date(ts);
-      if(!ts||Number.isNaN(d.getTime()))return '—';
-      try{return d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch(_e){return d.toISOString().slice(11,19)}
-    }
-    /* Journal d'architecture : événements `architecture.*` et `brain_config.*` du journal du Control Center (via
-       `adapter.loadJournal`, facultatif). Sans source, un état vide honnête ; jamais d'entrée inventée. */
-    function journalCard(){
-      const j=st.journal,LEVEL={warning:['warn','avertissement'],error:['bad','erreur']};
-      let body;
-      if(j.phase==='none')body='<p class="arch-hint arch-journal-empty">Le journal du serveur n’est pas disponible sur cette page : rien n’est affiché plutôt que des événements inventés.</p>';
-      else if((j.phase==='loading'||j.phase==='idle')&&!j.entries.length)body=`<div class="arch-journal-empty">${waitingHtml('Lecture du journal…',j.since)}</div>`;
-      else if(j.phase==='error'&&!j.entries.length)body=`<div class="arch-notice bad" role="alert" data-arch-journal-error>${glyph('close','arch-g arch-notice-g')}<div><p>Journal illisible : ${esc(j.error.message)}</p>${codeLine(j.error.code)}</div></div>`;
-      else if(!j.entries.length)body='<p class="arch-hint arch-journal-empty">Aucun événement d’architecture ni de configuration de cerveau dans les dernières entrées du journal.</p>';
-      else body=`<div class="set-table-shell arch-journal-table"><div class="set-table-scroll" data-arch-scroll="journal" tabindex="0" role="region" aria-label="Événements du journal d’architecture">
-          <table class="set-table"><thead><tr><th scope="col">Heure</th><th scope="col">Module</th><th scope="col">Événement</th></tr></thead><tbody>
-          ${j.entries.map(e=>{const [tone,word]=LEVEL[e.level]||['info',''];return `<tr data-arch-journal-entry="${esc(e.kind)}"><td class="set-num arch-journal-time">${esc(journalTime(e.ts))}</td>
-            <td><span class="set-dot set-dot-${tone} arch-journal-src">${esc(journalSource(e))}</span></td>
-            <td>${word?`<span class="arch-sr">${word} : </span>`:''}${esc(journalMessage(e))}</td></tr>`}).join('')}</tbody></table></div></div>
-          ${j.phase==='error'?`<p class="arch-hint arch-bad">Actualisation impossible : ${esc(j.error.message)} <code>${esc(j.error.code)}</code></p>`:''}`;
-      const aside=j.phase==='none'?'':`${j.phase==='loading'&&j.entries.length?'<span class="arch-spin" aria-hidden="true"></span>':''}<button type="button" class="set-btn set-btn-ghost set-btn-sm" data-arch-act="journal-reload"${j.phase==='loading'?' disabled':''}>${glyph('refresh')}Actualiser</button>`;
-      return card('journal','Journal d’architecture','journal',body,aside,'arch-journal');
+    function toastHtml(){
+      const t=st.toast;if(!t)return '';
+      return `<div class="arch-notice arch-toast ${esc(t.tone)}" role="${t.tone==='bad'?'alert':'status'}" data-arch-toast="${esc(t.tone)}">${glyph(t.tone==='bad'?'close':'on','arch-g arch-notice-g')}<div><p>${esc(t.text)}</p>${codeLine(t.code)}</div>
+        <button type="button" class="arch-icon-btn" data-arch-act="toast-close" aria-label="Fermer ce message">${glyph('close','arch-g')}</button></div>`;
     }
     function stateChip(n){
       const [text,tone]=STATE[n.state]||[n.state,'off'];
@@ -590,10 +582,8 @@
     function frame(body){return `<div class="arch" data-architecture-settings="1">${body}<div class="arch-sr" aria-live="polite" data-arch-live>${esc(st.live||'')}</div></div>`}
 
     function html(){
-      const skelCard=(key,title,icon)=>card(key,title,icon,'<span class="arch-skel w1"></span><span class="arch-skel w2"></span>','','arch-card-skel');
-      const skelTop=`<div class="arch-top" aria-hidden="true">${skelCard('state','État du système','pulse')}${skelCard('rules','Règles d’architecture','shield')}${skelCard('actions','Actions rapides','gear')}</div>`;
-      if(st.phase==='loading')return frame(`${skelTop}
-        <div class="arch-main"><div class="arch-canvas arch-canvas-skel" aria-busy="true"><div class="arch-centered">${waitingHtml('Lecture de l’architecture du runtime…',st.startedAt)}</div></div></div>`);
+      const centered=(inner,attrs)=>frame(`<div class="arch-main"><div class="arch-canvas arch-canvas-skel"${attrs||''}><div class="arch-centered">${inner}</div></div></div>`);
+      if(st.phase==='loading')return centered(waitingHtml('Lecture de l’architecture du runtime…',st.startedAt),' aria-busy="true"');
       if(st.phase==='error'){
         const e=st.error||{},unreachable=e.code==='architecture_unreachable'||e.code==='architecture_timeout';
         return frame(`<div class="arch-main"><div class="arch-canvas arch-canvas-skel"><div class="arch-centered arch-error" role="alert">
@@ -604,35 +594,33 @@
       const snap=st.snapshot;
       const warn=[snap.versionMismatch?`Version de contrat inattendue (${esc(String(snap.schema_version))}) : affichage au mieux, vérifiez que la page et le serveur sont à jour.`:'',
         snap.dropped?`${snap.dropped} élément(s) du snapshot écarté(s) : nœud sans identifiant ou liaison vers un module absent.`:''].filter(Boolean);
-      const top=`<div class="arch-top">${stateCard()}${rulesCard()}${actionsCard()}</div>${warn.map(t=>`<div class="arch-notice warn">${glyph('clock','arch-g arch-notice-g')}<div><p>${t}</p></div></div>`).join('')}${generalNotice()}`;
-      const bottom=`<div class="arch-bottom">${journalCard()}${legendHtml()}</div>`;
-      if(!nodes().length)return frame(top+`<div class="arch-main"><div class="arch-canvas arch-canvas-skel"><div class="arch-centered"><h3>Aucun module dans l’architecture</h3><p class="arch-hint">Le runtime n’a déclaré aucun nœud. Rien n’est inventé ici : relisez quand Core sera démarré.</p>
-        <div class="arch-actions"><button type="button" class="set-btn set-btn-sm arch-btn" data-arch-act="reload">${glyph('refresh','arch-g')}Relire</button></div></div></div></div>`+bottom);
+      const notes=warn.map(t=>`<div class="arch-notice warn">${glyph('clock','arch-g arch-notice-g')}<div><p>${t}</p></div></div>`).join('')+generalNotice()+statusLine()+toastHtml();
+      const overlay=`${toolsHtml()}${zoomHtml()}${notes?`<div class="arch-notes" data-arch-notes>${notes}</div>`:''}`;
+      if(!nodes().length)return frame(`<div class="arch-main"><div class="arch-canvas arch-canvas-skel"><div class="arch-centered"><h3>Aucun module dans l’architecture</h3><p class="arch-hint">Le runtime n’a déclaré aucun nœud. Rien n’est inventé ici : relisez quand Core sera démarré.</p>
+        <div class="arch-actions"><button type="button" class="set-btn set-btn-sm arch-btn" data-arch-act="reload">${glyph('refresh','arch-g')}Relire</button></div></div></div>${overlay}</div>`);
       const e=edgesHtml();
       const linking=st.linking?`<div class="arch-linking" role="status">${glyph('plug','arch-g')}Choisissez un port d’arrivée en surbrillance pour ${esc(nodeLabel(st.linking.node))} · ${esc(st.linking.port)}. <button type="button" class="arch-linkbtn" data-arch-act="link-cancel">Annuler (Échap)</button></div>`:'';
-      return frame(top+`<div class="arch-main">
-        <div class="arch-canvas" data-arch-canvas data-arch-scroll="canvas" role="group" aria-label="Graphe d’architecture : ${nodes().length} modules, ${connections().length} liaisons">${linking}
-          <div class="arch-world" data-arch-world style="width:${e.w}px;height:${e.h}px">
+      return frame(`<div class="arch-main">
+        <div class="arch-canvas" data-arch-canvas role="group" aria-label="Graphe d’architecture : ${nodes().length} modules, ${connections().length} liaisons">
+          <div class="arch-world" data-arch-world style="width:${e.w}px;height:${e.h}px;transform:${viewTransform()}">
             <div data-arch-edges>${e.svg}</div>${nodes().map(nodeHtml).join('')}<div class="arch-labels" data-arch-labels>${e.labels}</div>${menuHtml()}</div></div>
-        ${inspectorHtml()}</div>
-        <p class="arch-hint arch-keys">Clavier : Tab parcourt les modules puis les liaisons, Entrée inspecte, Maj+F10 ouvre les actions d’un cerveau, Maj+flèches déplace un module (disposition seulement).</p>${bottom}`);
+        ${linking}${overlay}${inspectorHtml()}</div>`);
     }
 
     /* Le focus survit au rendu : même élément (nœud, libellé, action) retrouvé par ses attributs. */
     function focusKey(){
       const a=doc&&doc.activeElement;
       if(!a||!host.contains||!host.contains(a)||!a.getAttribute)return null;
-      for(const k of ['data-arch-node','data-arch-conn','data-arch-menu-btn','data-arch-port-source','data-arch-port-target'])if(a.hasAttribute(k))return `[${k}="${cssEsc(a.getAttribute(k))}"]`;
+      for(const k of ['data-arch-node','data-arch-conn','data-arch-menu-btn','data-arch-port-source','data-arch-port-target','data-arch-pop','data-arch-zoom'])if(a.hasAttribute(k))return `[${k}="${cssEsc(a.getAttribute(k))}"]`;
       if(a.hasAttribute('data-arch-act'))return `[data-arch-act="${cssEsc(a.getAttribute('data-arch-act'))}"]`;
-      /* Règle du bandeau ou liste de l'inspecteur (même attribut) ; liens internes des Réglages ; journal. */
-      if(a.hasAttribute('data-arch-focus-conn')){const id=cssEsc(a.getAttribute('data-arch-focus-conn'));
-        return a.classList&&a.classList.contains('arch-rule')?`.arch-rule[data-arch-focus-conn="${id}"]`:`.arch-inspector [data-arch-focus-conn="${id}"]`}
+      /* Liste de l'inspecteur ; liens internes des Réglages. */
+      if(a.hasAttribute('data-arch-focus-conn'))return `.arch-inspector [data-arch-focus-conn="${cssEsc(a.getAttribute('data-arch-focus-conn'))}"]`;
       if(a.hasAttribute('data-settings-open'))return `[data-settings-open="${cssEsc(a.getAttribute('data-settings-open'))}"]`;
       if(a.hasAttribute('data-arch-scroll'))return `[data-arch-scroll="${cssEsc(a.getAttribute('data-arch-scroll'))}"]`;
       return null;
     }
     const cssEsc=v=>String(v).replace(/["\\]/g,'\\$&');
-    /* Les régions qui défilent gardent leur position d'un rendu à l'autre (canevas, règles, journal). */
+    /* Les régions qui défilent gardent leur position d'un rendu à l'autre (canevas, inspecteur). */
     function scrolls(){
       const out={};
       if(host.querySelectorAll)for(const el of host.querySelectorAll('[data-arch-scroll]'))out[el.getAttribute('data-arch-scroll')]=[el.scrollLeft,el.scrollTop];
@@ -651,21 +639,10 @@
       if(key&&host.querySelector){const el=host.querySelector(key);if(el&&el.focus)el.focus({preventScroll:true})}
       syncTicker();
     }
-    /* Le journal se relit seul : seule sa carte est remplacée (le graphe, le focus et les défilements restent). */
-    function renderJournal(){
-      const old=host.querySelector&&host.querySelector('[data-arch-card="journal"]');
-      if(!old||!doc||!doc.createElement)return render();
-      const key=old.contains(doc.activeElement)?focusKey():null,saved=scrolls();
-      const tmp=doc.createElement('div');tmp.innerHTML=journalCard();
-      const next=tmp.firstElementChild;if(!next)return render();
-      old.replaceWith(next);restoreScrolls(saved);
-      if(key){const el=host.querySelector(key);if(el&&el.focus)el.focus({preventScroll:true})}
-      syncTicker();
-    }
     function focus(sel){if(!host.querySelector)return;const el=host.querySelector(sel);if(el&&el.focus)el.focus()}
     function announce(text){st.live=text;const el=host.querySelector&&host.querySelector('[data-arch-live]');if(el)el.textContent=text}
     function syncTicker(){
-      const waiting=st.phase==='loading'||st.reloading||st.write||st.layoutSave||st.journal.phase==='loading';
+      const waiting=st.phase==='loading'||st.reloading||st.write||st.layoutSave;
       if(waiting&&ticker==null)ticker=setTimer(tick,1000);
       if(!waiting&&ticker!=null){clearTimer(ticker);ticker=null}
     }
@@ -693,8 +670,8 @@
         if(st.destroyed)return;
         applySnapshot(snap);st.phase='ready';st.error=null;
         logInfo('architecture_settings.loaded',{revision:snap.revision,nodes:snap.nodes.length,connections:snap.connections.length,ms:now()-started});
-        if(first)await loadLayout(true);
-        scheduleJournal();
+        if(first){await loadLayout(true);render();if(!st.view.touched)fitView(true)}
+        return true;
       }catch(e){
         if(st.destroyed)return;
         const code=e&&e.code||'architecture_load_failed';
@@ -706,6 +683,7 @@
           if(st.notice)st.notice={...st.notice,tone:'bad',followup};
           else st.notice={tone:'bad',...followup};
         }
+        return false;
       }finally{st.reloading=null;render()}
     }
     function applySnapshot(snap){
@@ -774,7 +752,7 @@
         announce(st.notice.text);
         st.write=null;await load();
         return null;
-      }finally{st.write=null;render();scheduleJournal()}
+      }finally{st.write=null;render()}
     }
     function toggle(id){
       const c=connById(id);
@@ -848,36 +826,161 @@
       }catch(e){
         const code=e&&e.code||'layout_save_failed';logError(code,e,{phase:'layout_save'});
         st.layoutNotice={tone:'bad',code,text:'Disposition non enregistrée : '+String(e&&e.message||e)};return null;
-      }finally{st.layoutSave=null;render();scheduleJournal()}
+      }finally{st.layoutSave=null;render()}
     }
     function resetLayout(){return saveLayout(true)}
     function scheduleLayoutSave(){if(layoutTimer!=null)clearTimeout(layoutTimer);layoutTimer=setTimeout(()=>{layoutTimer=null;saveLayout()},650)}
 
-    /* --- journal (lecture seule) ------------------------------------------------- */
-    /* Les rafales (écriture + relecture) ne lisent le journal qu'une fois. */
-    function scheduleJournal(){
-      if(typeof adapter.loadJournal!=='function'||st.destroyed)return;
-      if(journalTimer!=null)clearTimeout(journalTimer);
-      journalTimer=setTimeout(()=>{journalTimer=null;loadJournal()},JOURNAL_DEBOUNCE_MS);
+    /* --- vue : zoom et déplacement (affichage seulement) -------------------------------------------------- */
+    const q=sel=>host.querySelector?host.querySelector(sel):null;
+    const r1=v=>Math.round(v*10)/10;
+    function viewTransform(){const v=st.view;return `translate(${r1(v.x)}px,${r1(v.y)}px) scale(${v.z})`}
+    /* Applique la vue au monde sans redessiner (le focus et les panneaux restent) ; sans DOM (tests) : rien à faire. */
+    function applyView(){
+      const world=q('[data-arch-world]');if(!world||!world.style){if(st.snapshot&&st.phase==='ready')render();return}
+      world.style.transform=viewTransform();
+      const level=q('[data-arch-zoom-level]');if(level)level.textContent=zoomText();
     }
-    async function loadJournal(){
-      if(typeof adapter.loadJournal!=='function'||st.destroyed)return null;
-      st.journal={...st.journal,phase:'loading',since:now(),error:null};renderJournal();
+    /* Taille du canevas et du monde (0 sans DOM). */
+    function sizes(){
+      const canvas=q('[data-arch-canvas]'),world=q('[data-arch-world]');
+      return {cw:canvas&&canvas.clientWidth||0,ch:canvas&&canvas.clientHeight||0,w:world&&parseFloat(world.style.width)||0,h:world&&parseFloat(world.style.height)||0,canvas};
+    }
+    /* Zoom à `z` (borné) autour d'un point de l'écran `at` ({x, y} client ; défaut : centre du canevas). Rend le zoom. */
+    function zoomTo(z,at){
+      const z1=clampZoom(z);
+      if(z1===st.view.z)return z1;
+      const s=sizes(),c=s.canvas&&s.canvas.getBoundingClientRect?s.canvas.getBoundingClientRect():null;
+      const px=c&&at&&Number.isFinite(at.x)?at.x-c.left-(s.canvas.clientLeft||0):s.cw/2,py=c&&at&&Number.isFinite(at.y)?at.y-c.top-(s.canvas.clientTop||0):s.ch/2;
+      st.view={...zoomAnchor(st.view,z1,px,py),touched:true};
+      applyView();
+      if(st.menu)closeMenu(false);
+      return z1;
+    }
+    const zoomBy=(factor,at)=>zoomTo(st.view.z*factor,at);
+    function panBy(dx,dy){st.view={...st.view,x:st.view.x+dx,y:st.view.y+dy,touched:true};applyView()}
+    /* « Recentrer » : tout le graphe dans la vue (jamais au-delà de 100 %), centré. `quiet` : sans annonce (ouverture,
+       redimensionnement tant que la vue n'a pas été réglée à la main). */
+    function fitView(quiet){
+      const s=sizes();
+      if(!s.cw||!s.ch||!s.w||!s.h){st.view={x:0,y:0,z:1,touched:false};applyView();return 1}
+      const z=clampZoom(Math.min(1,(s.cw-32)/s.w,(s.ch-32)/s.h));
+      st.view={x:(s.cw-s.w*z)/2,y:(s.ch-s.h*z)/2,z,touched:false};
+      applyView();
+      if(quiet!==true)announce(`Vue recentrée, zoom ${zoomText()}`);
+      return z;
+    }
+    /* Un module ou une liaison focalisé au clavier hors de la vue y est ramené (le canevas ne défile pas). */
+    function revealFocused(el){
+      const canvas=q('[data-arch-canvas]');if(!canvas||!el||!el.getBoundingClientRect)return;
+      canvas.scrollLeft=0;canvas.scrollTop=0;
+      const c=canvas.getBoundingClientRect(),r=el.getBoundingClientRect(),m=16;
+      const dx=r.left<c.left+m?c.left+m-r.left:r.right>c.right-m?c.right-m-r.right:0;
+      const dy=r.top<c.top+m?c.top+m-r.top:r.bottom>c.bottom-m?c.bottom-m-r.bottom:0;
+      if(dx||dy)panBy(dx,dy);
+    }
+
+    /* --- barre d'outils : panneaux, relecture, fichier d'architecture -------------------------------------- */
+    function togglePanel(id,force){
+      const next=force===false||(!force&&st.pop===id)?null:(POPS[id]?id:null);
+      if(next===st.pop)return st.pop;
+      st.pop=next;st.confirmReset=false;render();return st.pop;
+    }
+    function closePanel(returnFocus){
+      const id=st.pop;if(!id)return;
+      st.pop=null;st.confirmReset=false;render();
+      if(returnFocus)focus(`[data-arch-pop="${id}"]`);
+    }
+    async function reloadWithFeedback(){
+      if(st.reloading||st.write||st.importing)return null;
+      st.toast=null;
+      const ok=await load();
+      if(st.destroyed)return ok;
+      if(ok){const s=st.snapshot;st.toast={tone:'ok',text:`Architecture relue : ${s.nodes.length} modules, ${s.connections.length} liaisons${s.revision?' (révision '+s.revision+')':''}.`};announce(st.toast.text);render()}
+      return ok;
+    }
+    /* Fichier d'architecture : ce que le runtime laisse changer (liaisons) et la disposition. */
+    function exportDocument(){
+      const snap=st.snapshot;if(!snap)return null;
+      return {format:EXPORT_FORMAT,version:1,exported_at:new Date(now()).toISOString(),revision:snap.revision??null,
+        voice_architecture:snap.voice_architecture&&snap.voice_architecture.label||null,
+        connections:connections().map(c=>({id:c.id,source:{node:c.source.node,port:c.source.port},target:{node:c.target.node,port:c.target.port},
+          channel:c.channel,mutability:c.mutability,enabled:effectiveEnabled(c)})),
+        layout:{positions:{...st.layout.positions,...st.moved}}};
+    }
+    function exportArchitecture(){
+      const d=exportDocument();if(!d)return null;
+      const name=`jarvis-architecture-${d.exported_at.slice(0,19).replace(/[:T]/g,'-')}.json`;
       try{
-        const raw=await withDeadline(adapter.loadJournal(),timeoutMs,'lecture du journal');
-        if(st.destroyed)return null;
-        const entries=(Array.isArray(raw)?raw:[]).filter(e=>e&&typeof e==='object'&&e.kind)
-          .map(e=>({ts:e.ts,kind:String(e.kind),level:String(e.level||'info'),message:String(e.message||''),data:e.data&&typeof e.data==='object'?e.data:{}}))
-          .sort((a,b)=>String(b.ts||'').localeCompare(String(a.ts||''))).slice(0,JOURNAL_MAX);
-        st.journal={phase:'ok',entries,error:null,since:0};
-        logInfo('architecture_settings.journal_loaded',{entries:entries.length});
-        return entries;
+        if(!doc||!root.Blob||!root.URL||!root.URL.createObjectURL)throw codedError('architecture_export_unsupported','Téléchargement indisponible dans cette page.');
+        const url=root.URL.createObjectURL(new root.Blob([JSON.stringify(d,null,2)],{type:'application/json'}));
+        const a=doc.createElement('a');a.href=url;a.download=name;a.hidden=true;doc.body.appendChild(a);a.click();a.remove();
+        setTimeout(()=>root.URL.revokeObjectURL(url),1000);
+        st.toast={tone:'ok',text:`Architecture sauvegardée dans ${name}.`};
+        logInfo('architecture_settings.exported',{connections:d.connections.length,positions:Object.keys(d.layout.positions).length});
       }catch(e){
-        if(st.destroyed)return null;
-        const code=e&&e.code||'architecture_journal_failed';logError(code,e,{phase:'journal'});
-        st.journal={...st.journal,phase:'error',error:{code,message:String(e&&e.message||e)}};
-        return null;
-      }finally{if(!st.destroyed)renderJournal()}
+        const code=e&&e.code||'architecture_export_failed';logError(code,e);
+        st.toast={tone:'bad',code,text:'Sauvegarde impossible : '+String(e&&e.message||e)};
+      }
+      announce(st.toast.text);render();
+      return d;
+    }
+    /* Ce qu'un fichier changerait : bascules, créations et suppressions permises, positions des modules connus ;
+       ce que le runtime verrouille, gouverne ou ne connaît pas est ignoré (compté). Lève `architecture_import_invalid`. */
+    function planImport(d){
+      if(!d||typeof d!=='object'||d.format!==EXPORT_FORMAT||!Array.isArray(d.connections))
+        throw codedError('architecture_import_invalid','Ce fichier n’est pas une architecture JARVIS sauvegardée depuis cette page.');
+      const wanted=new Map(d.connections.filter(c=>c&&typeof c.id==='string').map(c=>[c.id,c]));
+      const ops=[],skipped=[];
+      for(const c of connections()){
+        const w=wanted.get(c.id);
+        if(!w){if(c.mutability==='creatable_removable')ops.push({kind:'remove',id:c.id});continue}
+        if(typeof w.enabled==='boolean'&&w.enabled!==effectiveEnabled(c)){if(c.mutability==='toggleable')ops.push({kind:'toggle',id:c.id});else skipped.push(c.id)}
+      }
+      const creatable=(st.snapshot&&st.snapshot.creatable)||[];
+      for(const w of wanted.values()){
+        if(connById(w.id))continue;
+        const o=w.source&&w.target&&creatable.find(o=>o.source.node===w.source.node&&o.source.port===w.source.port&&o.target.node===w.target.node&&o.target.port===w.target.port);
+        if(o)ops.push({kind:'create',option:o});else skipped.push(w.id);
+      }
+      const positions={};
+      for(const [id,p] of Object.entries(d.layout&&d.layout.positions||{}))
+        if(nodeById(id)&&p&&Number.isFinite(+p.x)&&Number.isFinite(+p.y))positions[id]={x:Math.max(0,Math.round(+p.x)),y:Math.max(0,Math.round(+p.y))};
+      return {ops,skipped,positions};
+    }
+    async function importArchitecture(d){
+      if(st.importing||st.write)return null;
+      let plan;
+      try{plan=planImport(d)}
+      catch(e){logError(e.code||'architecture_import_invalid',e);st.toast={tone:'bad',code:e.code||'architecture_import_invalid',text:e.message};announce(e.message);render();return null}
+      st.importing=true;st.pop=null;st.toast=null;render();
+      let applied=0,refused=0,layout=false;
+      try{
+        for(const op of plan.ops){
+          const r=op.kind==='toggle'?await toggle(op.id):op.kind==='remove'?await remove(op.id):await create({source:op.option.source,target:op.option.target});
+          if(r&&r.ok===true)applied++;else refused++;
+        }
+        const same=Object.entries(plan.positions).every(([id,p])=>{const o=posOf(id);return o.x===p.x&&o.y===p.y});
+        if(Object.keys(plan.positions).length&&!same&&typeof adapter.saveLayout==='function'&&st.layout.phase==='ok'){
+          st.moved={...plan.positions};const r=await saveLayout();layout=!!(r&&r.ok===true);if(!layout)refused++;
+        }
+      }finally{st.importing=false}
+      const parts=[];
+      if(applied)parts.push(`${applied} changement${applied>1?'s':''} appliqué${applied>1?'s':''}`);
+      if(layout)parts.push('disposition rétablie');
+      if(refused)parts.push(`${refused} refusé${refused>1?'s':''} par le serveur`);
+      if(plan.skipped.length)parts.push(`${plan.skipped.length} ignoré${plan.skipped.length>1?'s':''} (verrouillé, gouverné ou absent du runtime)`);
+      st.toast={tone:refused?'bad':'ok',text:parts.length?`Architecture chargée : ${parts.join(', ')}.`:'Rien à changer : l’architecture correspond déjà à ce fichier.'};
+      logInfo('architecture_settings.imported',{applied,refused,skipped:plan.skipped.length,layout});
+      announce(st.toast.text);render();
+      return {applied,refused,skipped:plan.skipped,layout};
+    }
+    function readImportFile(input){
+      const file=input&&input.files&&input.files[0];if(!file)return;
+      const done=text=>{input.value='';let d;
+        try{d=JSON.parse(text)}catch(e){const err=codedError('architecture_import_unreadable','Fichier illisible : JSON invalide.');logError(err.code,e);st.toast={tone:'bad',code:err.code,text:err.message};render();return}
+        importArchitecture(d)};
+      Promise.resolve().then(()=>file.text()).then(done,e=>{logError('architecture_import_unreadable',e);st.toast={tone:'bad',code:'architecture_import_unreadable',text:'Fichier illisible : '+String(e&&e.message||e)};render()});
     }
     /* La fenêtre d'un cerveau (control_center_brain_config_panel.js) annonce son ouverture et sa fermeture par
        `brain-config:shown` / `brain-config:closed` (bouillonnent jusqu'au document) : le nœud configuré est marqué. */
@@ -939,6 +1042,10 @@
       const t=ev.target;let el;
       if((el=closest(t,'[data-arch-menu]')))return menuAction(el.getAttribute('data-arch-menu'));
       if(st.menu&&!closest(t,'.arch-menu'))closeMenu(false);
+      if((el=closest(t,'[data-arch-pop]')))return togglePanel(el.getAttribute('data-arch-pop'));
+      if((el=closest(t,'[data-arch-zoom]'))){const z=el.getAttribute('data-arch-zoom');
+        if(z==='fit')return fitView();
+        zoomBy(z==='in'?ZOOM_STEP:1/ZOOM_STEP);announce(`Zoom ${zoomText()}`);return}
       if((el=closest(t,'[data-arch-menu-btn]'))){ev.stopPropagation&&ev.stopPropagation();return openMenu(el.getAttribute('data-arch-menu-btn'),null,'button')}
       if((el=closest(t,'[data-arch-port-source]'))){const [node,port]=portKey(el.getAttribute('data-arch-port-source'));st.linking={node,port};render();focus('[data-arch-port-target]');return}
       if((el=closest(t,'[data-arch-port-target]'))){const [node,port]=portKey(el.getAttribute('data-arch-port-target'));const L=st.linking;
@@ -947,11 +1054,13 @@
       if((el=closest(t,'[data-arch-focus-conn]'))){const id=el.getAttribute('data-arch-focus-conn');select('connection',id);focus(`.arch-label[data-arch-conn="${cssEsc(id)}"]`);return}
       if((el=closest(t,'[data-arch-act]'))){
         const act=el.getAttribute('data-arch-act'),id=el.getAttribute('data-arch-id');
-        if(act==='reload')return load();
+        if(act==='reload')return el.getAttribute('aria-disabled')==='true'?null:reloadWithFeedback();
+        if(act==='toast-close'){st.toast=null;render();return}
+        if(act==='export')return exportArchitecture();
+        if(act==='import'){if(el.getAttribute('aria-disabled')==='true')return;const input=q('[data-arch-import]');if(input&&input.click)input.click();return}
         if(act==='layout-retry')return loadLayout(false);
         if(act==='layout-reset'){if(st.confirmReset)return resetLayout();st.confirmReset=true;render();focus('[data-arch-act="layout-reset"]');return}
         if(act==='layout-reset-cancel'){st.confirmReset=false;render();focus('[data-arch-act="layout-reset"]');return}
-        if(act==='journal-reload')return loadJournal();
         if(act==='toggle')return toggle(id);
         if(act==='remove'){if(st.confirmRemove===id)return remove(id);st.confirmRemove=id;render();return}
         if(act==='remove-cancel'){st.confirmRemove=null;render();return}
@@ -966,14 +1075,16 @@
       if((el=closest(t,'[data-arch-node]')))return select('node',el.getAttribute('data-arch-node'));
     }
     function onContextMenu(ev){
+      /* Un clic droit qui a déplacé la vue n'ouvre aucun menu (ni celui du cerveau, ni celui du navigateur). */
+      if((pan&&pan.moved)||Date.now()<suppressMenuUntil){suppressMenuUntil=0;ev.preventDefault&&ev.preventDefault();return}
       if(closest(ev.target,'.arch-menu')){ev.preventDefault&&ev.preventDefault();return}
       const el=closest(ev.target,'[data-arch-node]');
       const n=el&&nodeById(el.getAttribute('data-arch-node'));
       if(!n||n.kind!=='brain'){if(st.menu)closeMenu(false);return}
       ev.preventDefault&&ev.preventDefault();
       const world=host.querySelector&&host.querySelector('[data-arch-world]');
-      const r=world&&world.getBoundingClientRect?world.getBoundingClientRect():null;
-      openMenu(n.id,r?{x:ev.clientX-r.left,y:ev.clientY-r.top}:null);
+      const r=world&&world.getBoundingClientRect?world.getBoundingClientRect():null,z=st.view.z;
+      openMenu(n.id,r?{x:(ev.clientX-r.left)/z,y:(ev.clientY-r.top)/z}:null);
     }
     function onKeyDown(ev){
       const t=ev.target,k=ev.key;
@@ -988,6 +1099,7 @@
       }
       if(k==='Escape'){
         if(st.menu){ev.preventDefault();closeMenu(true);return}
+        if(st.pop){ev.preventDefault();closePanel(true);return}
         if(st.linking){ev.preventDefault();const L=st.linking;st.linking=null;render();focus(`[data-arch-node="${cssEsc(L.node)}"]`);return}
         if(st.selected){ev.preventDefault();const s=st.selected;select(null);focus(s.type==='node'?`[data-arch-node="${cssEsc(s.id)}"]`:`.arch-label[data-arch-conn="${cssEsc(s.id)}"]`);return}
         return;
@@ -1001,6 +1113,12 @@
       if(dir&&ev.shiftKey){ev.preventDefault();const p=posOf(id);moveNode(id,p.x+dir[0]*LAYOUT_STEP,p.y+dir[1]*LAYOUT_STEP);announce(`${nodeLabel(id)} déplacé`);scheduleLayoutSave()}
     }
     function onPointerDown(ev){
+      /* Clic droit maintenu sur le canevas : déplacement de la vue, qui ne commence qu'au-delà de PAN_THRESHOLD. */
+      if(ev.button===2){
+        const canvas=closest(ev.target,'[data-arch-canvas]');
+        if(canvas&&!closest(ev.target,'.arch-menu'))pan={canvas,x:ev.clientX,y:ev.clientY,vx:st.view.x,vy:st.view.y,moved:false,pointer:ev.pointerId};
+        return;
+      }
       if(ev.button!==0)return;
       const el=closest(ev.target,'[data-arch-node]');
       if(!el||closest(ev.target,'button'))return;
@@ -1008,8 +1126,18 @@
       drag={id,el,startX:ev.clientX,startY:ev.clientY,x:p.x,y:p.y,moved:false,pointer:ev.pointerId};
     }
     function onPointerMove(ev){
+      if(pan&&ev.pointerId===pan.pointer){
+        const dx=ev.clientX-pan.x,dy=ev.clientY-pan.y;
+        if(!pan.moved&&Math.hypot(dx,dy)<PAN_THRESHOLD)return;
+        if(!pan.moved){pan.moved=true;if(st.menu)closeMenu(false);
+          try{pan.canvas.setPointerCapture&&pan.canvas.setPointerCapture(ev.pointerId)}catch(_e){/* intentionnel : sans capture, le déplacement suit tant que le pointeur reste sur le canevas */}
+          pan.canvas.classList&&pan.canvas.classList.add('panning')}
+        ev.preventDefault&&ev.preventDefault();
+        st.view={...st.view,x:pan.vx+dx,y:pan.vy+dy,touched:true};applyView();
+        return;
+      }
       if(!drag||ev.pointerId!==drag.pointer)return;
-      const dx=ev.clientX-drag.startX,dy=ev.clientY-drag.startY;
+      const dx=(ev.clientX-drag.startX)/st.view.z,dy=(ev.clientY-drag.startY)/st.view.z;
       if(!drag.moved&&Math.hypot(dx,dy)<4)return;
       if(!drag.moved){drag.moved=true;try{drag.el.setPointerCapture&&drag.el.setPointerCapture(ev.pointerId)}catch(_e){/* intentionnel : capture refusée, le glisser marche tant que le pointeur reste sur la page */}
         drag.el.classList&&drag.el.classList.add('dragging')}
@@ -1017,11 +1145,25 @@
       moveNode(drag.id,drag.x+dx,drag.y+dy);
     }
     function onPointerUp(ev){
+      if(pan&&ev.pointerId===pan.pointer){
+        const p=pan;pan=null;
+        /* Le menu contextuel arrive après le relâchement (Windows) : il est ignoré s'il suit un déplacement. */
+        if(p.moved){suppressMenuUntil=Date.now()+600;p.canvas.classList&&p.canvas.classList.remove('panning')}
+        return;
+      }
       if(!drag||ev.pointerId!==drag.pointer)return;
       const d=drag;drag=null;
       if(d.moved){d.el.classList&&d.el.classList.remove('dragging');suppressClickUntil=Date.now()+400;announce(`${nodeLabel(d.id)} déplacé`);saveLayout()}
     }
 
+    /* Molette sur le canevas : zoom autour du pointeur (la page ne défile pas sous le graphe). */
+    function onWheel(ev){
+      if(!closest(ev.target,'[data-arch-canvas]')||closest(ev.target,'.arch-menu'))return;
+      ev.preventDefault&&ev.preventDefault();
+      zoomBy(wheelFactor(ev),{x:ev.clientX,y:ev.clientY});
+    }
+    function onFocusIn(ev){const t=ev.target;if(t&&t.hasAttribute&&(t.hasAttribute('data-arch-node')||t.hasAttribute('data-arch-conn'))&&closest(t,'[data-arch-canvas]'))revealFocused(t)}
+    function onChange(ev){if(ev.target&&ev.target.hasAttribute&&ev.target.hasAttribute('data-arch-import'))readImportFile(ev.target)}
     function ensureStyle(){
       if(!doc||!doc.head||doc.getElementById(STYLE_ID))return;
       const s=doc.createElement('style');s.id=STYLE_ID;s.textContent=STYLE;doc.head.appendChild(s);
@@ -1030,34 +1172,40 @@
       st.destroyed=true;
       if(ticker!=null){clearTimer(ticker);ticker=null}
       if(layoutTimer!=null){clearTimeout(layoutTimer);layoutTimer=null}
-      if(journalTimer!=null){clearTimeout(journalTimer);journalTimer=null}
       while(offs.length)offs.pop()();
       host.innerHTML='';
     }
 
     ensureStyle();
     /* Redimensionnement : la disposition automatique suit le nombre de colonnes qui tiennent (les positions
-       enregistrées ne bougent pas). Rien pendant un glisser. */
+       enregistrées ne bougent pas) ; tant que la vue n'a pas été réglée à la main, le graphe reste ajusté au canevas
+       (il suit la fenêtre). Rien pendant un glisser. */
     let fitCols=null;
     if(typeof root.ResizeObserver==='function'){
       const ro=new root.ResizeObserver(()=>{
-        if(st.destroyed||drag||!st.snapshot)return;
-        const cols=columnsFit();if(cols===fitCols)return;
-        fitCols=cols;auto=autoLayout(st.snapshot,cols);render();
+        if(st.destroyed||drag||pan||!st.snapshot)return;
+        const cols=columnsFit();
+        if(cols!==fitCols){fitCols=cols;auto=autoLayout(st.snapshot,cols);render()}
+        if(!st.view.touched)fitView(true);
       });
       ro.observe(host);offs.push(()=>ro.disconnect());
     }
-    /* Un clic hors de l'onglet ferme le menu contextuel. */
+    /* Un clic hors de l'onglet ferme le menu contextuel ; un clic hors du panneau de la barre (et de son bouton) le ferme. */
     if(doc&&doc.addEventListener){
-      const outside=ev=>{if(st.menu&&host.contains&&!host.contains(ev.target))closeMenu(false)};
+      const outside=ev=>{
+        if(st.menu&&host.contains&&!host.contains(ev.target))closeMenu(false);
+        if(st.pop&&!closest(ev.target,'.arch-pop')&&!closest(ev.target,'[data-arch-pop]'))closePanel(false);
+      };
       doc.addEventListener('pointerdown',outside,true);offs.push(()=>doc.removeEventListener('pointerdown',outside,true));
       const panel=ev=>setConfiguring(ev.type==='brain-config:shown'&&ev.detail?ev.detail.brainId:null);
       for(const t of ['brain-config:shown','brain-config:closed']){doc.addEventListener(t,panel);offs.push(()=>doc.removeEventListener(t,panel))}
     }
-    offs.push(on('click',onClick),on('contextmenu',onContextMenu),on('keydown',onKeyDown),on('pointerdown',onPointerDown),on('pointermove',onPointerMove),on('pointerup',onPointerUp),on('pointercancel',onPointerUp));
+    offs.push(on('click',onClick),on('contextmenu',onContextMenu),on('keydown',onKeyDown),on('pointerdown',onPointerDown),on('pointermove',onPointerMove),on('pointerup',onPointerUp),on('pointercancel',onPointerUp),on('change',onChange),on('focusin',onFocusIn));
+    if(host.addEventListener){host.addEventListener('wheel',onWheel,{passive:false});offs.push(()=>host.removeEventListener&&host.removeEventListener('wheel',onWheel,{passive:false}))}
     host.setAttribute&&host.setAttribute('data-architecture-settings-host','1');
     const ready=load();
-    return {ready,load,loadLayout,loadJournal,render,select,toggle,remove,create,setActivation,moveNode,saveLayout,resetLayout,setConfiguring,openMenu,closeMenu,menuAction,configure,destroy,state:st};
+    return {ready,load,loadLayout,render,select,toggle,remove,create,setActivation,moveNode,saveLayout,resetLayout,setConfiguring,openMenu,closeMenu,menuAction,configure,
+      zoomTo,zoomBy,panBy,fitView,togglePanel,closePanel,reload:reloadWithFeedback,exportDocument,exportArchitecture,planImport,importArchitecture,destroy,state:st};
   }
 
   /* --- adaptateurs ----------------------------------------------------------- */
@@ -1115,9 +1263,6 @@
         if(base_revision!==layout.revision)return {ok:false,status:409,code:'layout_revision_stale',reason:'Disposition modifiée ailleurs.',layout:clone(layout)};
         layout={revision:'l-'+(ln++),positions:clone(positions)};return {ok:true,layout:clone(layout)};
       },
-      /* Journal facultatif (`options.journal`, entrées du journal du Control Center) : sans lui, l'adaptateur
-         n'en propose pas et la carte Journal dit qu'il est indisponible. */
-      ...(Array.isArray(o.journal)?{async loadJournal(){calls.push(['loadJournal']);await delay();return clone(o.journal)}}:{}),
     };
   }
 
@@ -1125,7 +1270,6 @@
      résultats `{ok:false,…}` ; seuls les échecs de transport lèvent (issue inconnue). */
   function createHttpAdapter(options){
     const o=options||{},base=o.base||'/api/architecture',timeoutMs=Number(o.timeoutMs)>0?Number(o.timeoutMs):DEFAULT_TIMEOUT_MS;
-    const trace=o.trace||'/api/trace';
     const fetchImpl=o.fetch||(root.fetch&&root.fetch.bind(root));
     const call=(path,init)=>request(base+path,init);
     async function request(url,init){
@@ -1154,24 +1298,19 @@
       async loadLayout(){const x=await call('/layout',{method:'GET'});if(!x.ok)throw codedError(x.code||'layout_load_failed',x.reason,{status:x.status});return x.body.layout||x.body},
       async saveLayout(b){const x=await call('/layout',{method:'PUT',body:json(b)});
         return x.ok?{ok:true,layout:x.body.layout||x.body}:{ok:false,status:x.status,code:x.code||'layout_save_refused',reason:x.reason,layout:x.body&&x.body.layout||null}},
-      /* Journal du Control Center (`GET /api/trace`, fin du fichier, plus ancien d'abord) : seuls les événements
-         `architecture.*` et `brain_config.*` sont gardés, sans les simples lectures (`*.read`). */
-      async loadJournal(){const x=await request(trace+'?limit='+JOURNAL_TRACE_LIMIT,{method:'GET'});
-        if(!x.ok)throw codedError(x.code||'architecture_journal_failed',x.reason,{status:x.status});
-        const list=Array.isArray(x.body)?x.body:[];
-        return list.filter(e=>e&&/^(architecture|brain_config)\./.test(String(e.kind||''))&&!/\.read$/.test(String(e.kind))).slice(-JOURNAL_MAX)},
     };
   }
 
   const STYLE=`
-/* Onglet Architecture (refonte-ui-settings, Slice 04). Jetons et primitives de la fondation visuelle seulement
-   (--set-*, .set-panel, .set-btn, .set-stat, .set-dot, .set-switch, .set-table-*) ; ce qui suit ne porte que la
-   composition de la page et le graphe (nœuds, liaisons, libellés, ports, inspecteur, menu). */
+/* Onglet Architecture (refonte-ui-settings, Slice 04 ; graphe plein espace depuis les retours Human du 25/10). Jetons et
+   primitives de la fondation visuelle seulement (--set-*, .set-btn, .set-stat, .set-dot, .set-switch) ; ce qui suit ne
+   porte que la composition (canevas, barre d'outils et ses panneaux, zoom, messages) et le graphe (nœuds, liaisons,
+   libellés, ports, inspecteur, menu). */
 .arch{--arch-ink:var(--set-ink);--arch-ink-2:var(--set-ink-2);--arch-ink-3:var(--set-ink-3);--arch-hair:var(--set-hair-2);
   --arch-glass:var(--set-glass-float);--arch-r:var(--set-r-lg);
   --ch-audio:var(--set-cyan);--ch-request:var(--set-blue);--ch-response:var(--set-magenta);--ch-speech:var(--set-magenta);
   --ch-tool_call:var(--set-teal);--ch-event:var(--set-violet);--ch-other:var(--set-off);
-  container-type:inline-size;display:grid;gap:var(--set-gap);min-width:0;color:var(--arch-ink);font-size:13px;line-height:1.5}
+  container-type:inline-size;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr);min-width:0;color:var(--arch-ink);font-size:13px;line-height:1.5}
 .arch *{box-sizing:border-box}
 .arch code{font-family:var(--set-mono);font-size:11.5px;color:var(--arch-ink-2)}
 .arch-g{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
@@ -1183,15 +1322,28 @@
 .ch-audio{--ch:var(--ch-audio)}.ch-request{--ch:var(--ch-request)}.ch-response{--ch:var(--ch-response)}.ch-speech{--ch:var(--ch-speech)}
 .ch-tool_call{--ch:var(--ch-tool_call)}.ch-event{--ch:var(--ch-event)}.ch-other{--ch:var(--ch-other)}
 
-/* --- bandeau : état, règles, actions ------------------------------------------------------------------------ */
-.arch-top{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--set-gap);align-items:stretch}
-.arch-top>*,.arch-bottom>*{min-width:0}
-@container (max-width:1020px){.arch-top{grid-template-columns:repeat(2,minmax(0,1fr))}.arch-top>.arch-card-actions{grid-column:1/-1}}
-@container (max-width:640px){.arch-top{grid-template-columns:minmax(0,1fr)}}
-.arch-card{gap:var(--set-sp-3);padding:var(--set-sp-4) var(--set-sp-5)}
-.arch-card .set-panel-title{font-size:16px}
-.arch-card .set-panel-body{gap:var(--set-sp-3)}
-.arch-card-skel .set-panel-body{gap:var(--set-sp-2)}
+/* --- barre d'outils flottante (en haut à droite du graphe) et ses panneaux ancrés ------------------------------ */
+.arch-tools{position:absolute;top:12px;right:12px;z-index:5;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;max-width:calc(100% - 24px)}
+.arch-tool{position:relative;display:inline-flex;align-items:center;gap:7px;height:36px;padding:0 12px;border-radius:var(--set-r-pill);border:1px solid var(--set-hair-3);
+  background:var(--set-glass-float);backdrop-filter:blur(var(--set-blur));color:var(--arch-ink);font:inherit;font-size:13px;font-weight:500;cursor:pointer;
+  box-shadow:0 10px 26px -16px rgba(0,0,0,.9);transition:border-color var(--shell-dur-fast),background-color var(--shell-dur-fast)}
+.arch-tool:hover,.arch-tool[aria-expanded=true]{border-color:color-mix(in srgb,var(--set-cyan) 60%,transparent);background:color-mix(in srgb,var(--set-cyan) 10%,var(--set-glass-float))}
+.arch-tool[aria-disabled=true]{opacity:var(--set-disabled);cursor:progress}
+.arch-tool-caret{transform:rotate(90deg);opacity:.7;transition:transform var(--shell-dur-fast)}
+.arch-tool[aria-expanded=true] .arch-tool-caret{transform:rotate(-90deg)}
+.arch-tool-dot{width:9px;height:9px;flex:none;border-radius:50%;background:var(--set-ok);box-shadow:0 0 8px var(--set-ok)}
+.arch-tool-dot.off{background:var(--set-warn);box-shadow:0 0 8px var(--set-warn)}
+.arch-tool-dot.bad{background:var(--set-bad);box-shadow:0 0 8px var(--set-bad);border-radius:2px;transform:rotate(45deg)}
+.arch-pop{position:absolute;top:56px;right:12px;z-index:var(--set-z-popover);display:grid;gap:var(--set-sp-3);align-content:start;width:min(400px,calc(100% - 24px));
+  max-height:calc(100% - 128px);overflow:auto;overscroll-behavior:contain;padding:var(--set-sp-4);border-radius:var(--set-r-lg);
+  border:1px solid color-mix(in srgb,var(--set-cyan) 40%,var(--set-hair-2));background:var(--set-glass-float);backdrop-filter:blur(var(--set-blur));
+  box-shadow:0 24px 60px -20px rgba(0,0,0,.85),0 0 30px -16px var(--set-cyan);animation:set-float-in var(--shell-dur) var(--shell-ease)}
+.arch-pop-title{display:flex;align-items:center;gap:8px;margin:0;font-size:15px;font-weight:600}
+.arch-pop-title>.arch-g{color:var(--set-cyan)}
+.arch-pop-actions{display:flex;flex-wrap:wrap;gap:var(--set-sp-2)}
+.arch-pop-btn{flex:1 1 100%;justify-content:flex-start;min-width:0}
+.arch-pop-btn[aria-disabled=true]{opacity:var(--set-disabled);cursor:progress}
+.arch-pop .arch-hint{margin:0}
 .arch-rev{display:inline-flex;gap:4px;min-width:0;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .arch-rev code{overflow:hidden;text-overflow:ellipsis;max-width:16ch}
 .arch-health{margin:0;color:var(--arch-ink);font-size:var(--set-fs-body);font-weight:500}
@@ -1204,21 +1356,19 @@
 .arch-voice{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding-top:var(--set-sp-3);border-top:1px solid var(--set-hair);font-size:var(--set-fs-small)}
 .arch-voice>.arch-g{color:var(--set-cyan)}
 .arch-voice-k{color:var(--arch-ink-2)}.arch-voice-v{font-weight:600}
-.arch-rules{margin:0 -8px;padding:0 0 10px;list-style:none;display:grid;gap:2px;max-height:184px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;
-  -webkit-mask-image:linear-gradient(to bottom,black calc(100% - 22px),transparent);mask-image:linear-gradient(to bottom,black calc(100% - 22px),transparent)}
-.arch-rule{display:flex;align-items:flex-start;gap:10px;width:100%;padding:6px 8px;border:1px solid transparent;border-radius:var(--set-r-sm);background:none;
-  color:var(--arch-ink);font:inherit;font-size:13px;line-height:1.4;text-align:left;cursor:pointer;transition:background-color var(--shell-dur-fast),border-color var(--shell-dur-fast)}
-.arch-rule:hover{border-color:var(--set-hair-2);background:var(--set-glass-sunken)}
-.arch-rule-g{display:grid;place-items:center;flex:none;width:20px;height:20px;margin-top:-1px;border-radius:50%;color:var(--set-ok);
-  border:1px solid color-mix(in srgb,var(--set-ok) 45%,transparent);background:color-mix(in srgb,var(--set-ok) 12%,transparent)}
-.arch-rule-text{min-width:0}
-.arch-quick{display:flex;flex-wrap:wrap;gap:var(--set-sp-2)}
-.arch-quick-btn{flex:1 1 100%;justify-content:flex-start;min-width:0}
-.arch-quick-btn>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
-.arch-quick-end{margin-left:auto;opacity:.7}
+/* Zoom (en bas à droite) et messages (en bas à gauche), par-dessus le graphe. */
+.arch-zoombar{position:absolute;right:12px;bottom:12px;z-index:5;display:flex;align-items:center;gap:2px;padding:3px;border-radius:var(--set-r-pill);
+  border:1px solid var(--set-hair-3);background:var(--set-glass-float);backdrop-filter:blur(var(--set-blur));box-shadow:0 10px 26px -16px rgba(0,0,0,.9)}
+.arch-zoom-btn{display:grid;place-items:center;width:32px;height:32px;border-radius:50%;border:1px solid transparent;background:none;color:var(--arch-ink);cursor:pointer}
+.arch-zoom-btn:hover{border-color:var(--set-hair-3);background:var(--set-hair)}
+.arch-zoom-level{min-width:48px;text-align:center;font-size:12px;font-variant-numeric:tabular-nums;color:var(--arch-ink-2)}
+.arch-notes{position:absolute;left:12px;bottom:12px;z-index:5;display:grid;gap:8px;width:min(560px,calc(100% - 220px));max-height:calc(100% - 80px);overflow:auto}
+.arch-notes>*{background:var(--set-glass-float);backdrop-filter:blur(var(--set-blur))}
+.arch-notes>.arch-status{padding:8px 12px;border-radius:var(--set-r-md);border:1px solid var(--arch-hair)}
+.arch-toast{align-items:center}.arch-toast>div{flex:1;min-width:0}
+@container (max-width:640px){.arch-notes{width:calc(100% - 24px);bottom:60px}.arch-tool>span:not(.arch-tool-dot):not(.arch-sr){display:none}}
 .arch-status{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
 .arch-layout-note{font-size:var(--set-fs-small);color:var(--arch-ink-2)}.arch-layout-note.bad{color:var(--set-bad)}.arch-layout-note.ok{color:var(--set-ok)}
-.arch-skel{display:block;height:12px;border-radius:6px;background:color-mix(in srgb,var(--arch-ink-3) 18%,transparent)}.arch-skel.w1{width:72%}.arch-skel.w2{width:48%}
 
 /* --- étiquettes, notices, attente -------------------------------------------------------------------------- */
 .arch-tag{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border:1px solid var(--arch-hair);border-radius:var(--set-r-pill);font-size:11px;color:var(--arch-ink-2);white-space:nowrap}
@@ -1243,8 +1393,10 @@
 @keyframes archSpin{to{transform:rotate(360deg)}}
 
 /* --- canevas ----------------------------------------------------------------------------------------------- */
-.arch-main{position:relative;display:grid;grid-template-columns:minmax(0,1fr);gap:var(--set-gap);align-items:start;min-width:0}
-.arch-canvas{position:relative;min-height:420px;max-height:min(74vh,760px);overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;
+/* Le canevas prend toute la hauteur que lui donne la page (section « fill » des Réglages ; ailleurs une hauteur par
+   défaut), 320 px au moins ; il ne défile pas : la vue se déplace (translation) et se zoome (échelle) sur le monde. */
+.arch-main{position:relative;min-width:0;height:min(78vh,820px);min-height:320px;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
+.arch-canvas{position:relative;min-height:320px;overflow:hidden;touch-action:none;
   border:1px solid color-mix(in srgb,var(--set-blue) 24%,var(--set-hair));border-radius:var(--set-r-xl);
   background:radial-gradient(circle at 1px 1px,color-mix(in srgb,var(--arch-ink-3) 20%,transparent) 1px,transparent 1.4px) 0 0/24px 24px,
     radial-gradient(90% 70% at 50% 0%,color-mix(in srgb,var(--set-blue) 9%,transparent),transparent 70%),var(--set-glass-sunken);
@@ -1253,7 +1405,8 @@
 .arch-centered{display:grid;justify-items:center;gap:8px;max-width:52ch;padding:32px;text-align:center}
 .arch-centered h3{margin:0;font-size:16px}
 .arch-error h3{color:var(--set-bad)}
-.arch-world{position:relative;min-width:100%;min-height:100%}
+.arch-canvas.panning{cursor:grabbing;user-select:none}
+.arch-world{position:absolute;left:0;top:0;transform-origin:0 0}
 .arch-edges{position:absolute;inset:0 auto auto 0;overflow:visible;pointer-events:none}
 .arch-edge{fill:none;stroke:var(--ch,var(--arch-ink-2));stroke-width:2;stroke-linecap:round}
 .arch-edge.on{filter:drop-shadow(0 0 3px color-mix(in srgb,var(--ch,transparent) 75%,transparent))}
@@ -1324,15 +1477,14 @@
 .arch-menu-item{display:flex;align-items:center;gap:9px;min-height:34px;padding:6px 10px;border:0;border-radius:7px;background:none;color:var(--arch-ink);font:inherit;text-align:left;cursor:pointer}
 .arch-menu-item:hover,.arch-menu-item:focus-visible{background:color-mix(in srgb,var(--set-cyan) 14%,transparent);outline:none}
 .arch-menu-note{display:flex;gap:6px;align-items:flex-start;margin:4px 0 0;padding:6px 10px 4px;border-top:1px solid var(--arch-hair);font-size:11.5px;color:var(--arch-ink-2);max-width:260px}
-.arch-linking{position:sticky;top:8px;left:8px;z-index:4;display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px;padding:6px 12px;border-radius:var(--set-r-pill);
+.arch-linking{position:absolute;top:12px;left:12px;z-index:6;display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px;max-width:calc(100% - 24px);padding:6px 12px;border-radius:var(--set-r-pill);
   border:1px solid var(--set-cyan);background:var(--set-glass-float);font-size:12px}
 
-/* Inspecteur : flotte au bord du canevas opposé à l'élément choisi ; passe sous le canevas en colonne unique. */
-.arch-inspector{position:absolute;top:12px;right:12px;z-index:var(--set-z-float);display:grid;gap:10px;align-content:start;width:min(340px,calc(100% - 24px));max-height:calc(100% - 24px);
+/* Inspecteur : flotte au bord du canevas opposé à l'élément choisi, sous la barre d'outils et au-dessus du zoom. */
+.arch-inspector{position:absolute;top:56px;right:12px;z-index:var(--set-z-float);display:grid;gap:10px;align-content:start;width:min(340px,calc(100% - 24px));max-height:calc(100% - 116px);
   overflow:auto;overscroll-behavior:contain;padding:16px;border-radius:var(--set-r-lg);border:1px solid color-mix(in srgb,var(--set-blue) 40%,var(--set-hair-2));
   background:var(--set-glass-float);backdrop-filter:blur(var(--set-blur));box-shadow:0 24px 60px -20px rgba(0,0,0,.85),0 0 30px -16px var(--set-blue)}
 .arch-inspector.dock-left{right:auto;left:12px}
-@container (max-width:860px){.arch-inspector{position:static;width:auto;max-height:none}}
 .arch-insp-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
 .arch-inspector h3{margin:0;font-size:15px;line-height:1.35}
 .arch-inspector h3:focus{outline:none}
@@ -1346,28 +1498,22 @@
 .arch-switch{border-radius:var(--set-r-md);padding:4px 8px 4px 4px}
 .arch-switch .arch-hint{font-weight:400}
 
-/* --- bas de page : journal et légende ---------------------------------------------------------------------- */
-.arch-bottom{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:var(--set-gap);align-items:start}
-@container (max-width:900px){.arch-bottom{grid-template-columns:minmax(0,1fr)}}
-.arch-journal-table{--set-table-max-h:244px}
-.arch-journal-table td{padding:7px 12px}
-.arch-journal-time{white-space:nowrap;color:var(--arch-ink-2)}
-.arch-journal-src{white-space:nowrap;color:var(--arch-ink);font-size:12.5px}
-.arch-journal-empty{margin:0;padding:var(--set-sp-3) 0}
+/* --- légende (panneau de la barre d'outils) ---------------------------------------------------------------- */
+.arch-legend{display:grid;gap:var(--set-sp-2)}
 .arch-legend h4{margin:0;font-size:12px;font-weight:600;color:var(--arch-ink-2)}
-.arch-legend ul{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px 16px}
+.arch-legend ul{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px 16px}
 .arch-legend .arch-legend-wide{grid-column:1/-1}
 .arch-legend-hint{color:var(--arch-ink-3)}
-.arch-keys{margin:calc(var(--set-gap) * -0.5) 4px 0}
 .arch-legend li{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--arch-ink-2)}
 .arch-legend li>.arch-g{color:var(--arch-ink)}
 .arch-legend strong{color:var(--arch-ink);font-weight:600}
 .arch-legend .arch-hint{margin:0}
 .arch-legend-line{--ch:var(--arch-ink-2);width:44px;height:10px;flex:none;overflow:visible}
 @media(prefers-reduced-motion:reduce){.arch *{transition:none!important}.arch-port.target{animation:none}.arch-spin{animation-duration:2.4s}}
-@media(forced-colors:active){.arch-node,.arch-label,.arch-inspector,.arch-canvas{border-color:CanvasText}.arch-edge{stroke:CanvasText;filter:none}}
+@media(forced-colors:active){.arch-node,.arch-label,.arch-inspector,.arch-canvas,.arch-tool,.arch-pop,.arch-zoombar{border-color:CanvasText}.arch-edge{stroke:CanvasText;filter:none}}
 `;
 
-  root.JarvisArchitectureSettings=Object.freeze({mount,createFixtureAdapter,createHttpAdapter,normalizeSnapshot,autoLayout,STYLE_ID});
+  root.JarvisArchitectureSettings=Object.freeze({mount,createFixtureAdapter,createHttpAdapter,normalizeSnapshot,autoLayout,STYLE_ID,
+    ZOOM:Object.freeze({MIN:ZOOM_MIN,MAX:ZOOM_MAX,STEP:ZOOM_STEP,PAN_THRESHOLD}),EXPORT_FORMAT,clampZoom,zoomAnchor,wheelFactor});
   if(typeof module==='object'&&module&&module.exports)module.exports=root.JarvisArchitectureSettings;
 })(typeof window!=='undefined'?window:globalThis);
