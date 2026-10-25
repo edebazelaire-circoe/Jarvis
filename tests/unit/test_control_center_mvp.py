@@ -144,7 +144,12 @@ def test_settings_window_is_a_full_screen_shell_closed_explicitly():
     shell = html[html.index('<div class="overlay" id="overlay">') :]
     shell = shell[: shell.index("<script>")]
     assert 'role="dialog" aria-modal="true" aria-labelledby="modalTitle"' in shell
-    assert 'id="closeModal" aria-label="Fermer les réglages"' in shell and "<kbd>Échap</kbd>" in shell
+    # Retours Human du 25/10 : × (fermer) et ← (retour au hub) ronds en haut à gauche, d'abord dans l'ordre du Tab.
+    assert 'class="set-hub-close" id="closeModal" aria-label="Fermer les réglages" aria-keyshortcuts="Escape"' in shell
+    assert 'class="set-hub-back" id="settingsBack" aria-label="Retour au menu des paramètres"' in shell
+    assert shell.index('id="closeModal"') < shell.index('id="settingsBack"') < shell.index('class="set-rail"')
+    assert "settingsHubLead" not in html and "Personnalisez votre assistant" not in html, "plus de phrase sous « Paramètres »"
+    assert 'id="persoBack"' in shell and "persoCrumbHub" not in html and "settingsCrumbHub" not in html
     assert 'id="settingsCategories" role="tablist"' in shell and 'id="modalStatus" role="status" aria-live="polite"' in shell
     keys = html[html.index("document.addEventListener('keydown',event=>{\n  if(!SET.open)return;") :]
     keys = keys[: keys.index("\n});")]

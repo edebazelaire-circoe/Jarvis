@@ -11,8 +11,10 @@ fichier prouve :
 - chaque contrôle écrit le vrai réglage (`agent_behavior`, `voice_stack_settings`, `agenda_reminders`) ; les curseurs à
   crans écrivent les choix fermés du serveur, au clavier aussi, et « Hériter » se rétablit ;
 - un profil se crée, se choisit (ses préférences et sa voix reviennent) et se supprime ;
-- clavier : le panneau des profils (`.set-float`) prend le focus, Échap le replie puis ferme ; clic extérieur ; le fil
-  d'Ariane ramène au hub ; une ligne des réglages détaillés ouvre sa section dans le shell ;
+- clavier : le panneau des profils (`.set-float`) prend le focus, Échap le replie puis ferme ; clic extérieur ; la
+  flèche ← ramène au hub ; une ligne des réglages détaillés ouvre sa section dans le shell ;
+- × et ← ronds en haut à gauche, fixes ; icône de la page devant son titre ; l'en-tête défile avec la page (retours
+  Human du 25/10) ;
 - états : lecture refusée (message du serveur + Réessayer), chargement (avec échéance), champs désactivés ; captures
   gardées dans `JARVIS_BROWSER_SHOTS` quand la variable est posée.
 
@@ -79,7 +81,7 @@ async def test_la_carte_ouvre_une_page_rectangulaire_sans_citation(served):
         expected = 3 if w >= 1366 else 2 if w >= 1000 else 1
         assert geo["columns"] == expected, (w, geo["columns"])
         if (w, h) == (1672, 941):  # la fenêtre de la maquette : toute la grille est visible sans défiler
-            assert geo["fits"], geo
+            assert geo["fits"], ("grille entière visible à 1672×941", geo["bottom"])
 
 
 def _set(selector: str, value: str) -> dict:
@@ -198,7 +200,7 @@ async def test_clavier_echap_fil_d_ariane_et_reglages_detailles(served):
             eval_("({open:overlay.classList.contains('open'),view:overlay.dataset.view||null})", "esc2"),
         ]},
         {"width": 1440, "height": 900, "actions": [
-            *OPEN_PAGE, click("#persoCrumbHub"),
+            *OPEN_PAGE, click("#persoBack"),
             eval_("({view:overlay.dataset.view,focus:document.activeElement.dataset.hubCategory||null})", "hub"),
         ]},
         {"width": 1440, "height": 900, "actions": [
@@ -344,3 +346,31 @@ async def test_refus_echeance_brouillon_en_vol_et_piege_tab(served):
     assert got(steps[3], "count") > 10 and got(steps[3], "wrap_forward") is True and got(steps[3], "wrap_back") is True
     # Seuls les refus voulus du test parlent en console (avertissements journalisés de la page).
     assert all("personalization" in m.get("text", str(m)) for m in out["console"]), out["console"]
+
+
+CHROME = """(()=>{const q=s=>document.querySelector(s),top=s=>Math.round(q(s).getBoundingClientRect().top),left=s=>Math.round(q(s).getBoundingClientRect().left);
+  const icon=q('#persoIcon'),page=q('#settingsPerso');
+  return {close:[left('#persoClose'),top('#persoClose')],back:[left('#persoBack'),top('#persoBack')],title:top('#persoTitle'),
+    backLabel:q('#persoBack').getAttribute('aria-label'),focus:document.activeElement.id,
+    icon:!!icon.querySelector('svg')&&!!(icon.compareDocumentPosition(q('#persoTitle'))&Node.DOCUMENT_POSITION_FOLLOWING),
+    crumbButtons:document.querySelectorAll('#settingsPerso .set-crumb button').length,scroll:page.scrollTop,room:page.scrollHeight-page.clientHeight}})()"""
+
+
+async def test_la_page_a_ses_deux_boutons_fixes_son_icone_et_un_en_tete_qui_defile(served):
+    out = await drive(served.url, [{"width": 1280, "height": 720, "actions": [
+        *OPEN_PAGE, eval_(CHROME, "top"),
+        eval_("(document.getElementById('settingsPerso').scrollTop=200,new Promise(r=>setTimeout(()=>r(1),100)))"),
+        eval_(CHROME, "scrolled"),
+        # Ordre du Tab : × puis ← en tête de la page.
+        eval_("document.getElementById('persoClose').focus(),1"), key("Tab"), eval_("document.activeElement.id", "tab"),
+    ]}])
+    assert out["console"] == [], out["console"]
+    step = out["steps"][0]
+    top, scrolled = got(step, "top"), got(step, "scrolled")
+    assert top["focus"] == "persoBack", "à l'ouverture, le focus va au ← du hub"
+    assert top["icon"] and top["crumbButtons"] == 0 and top["backLabel"] == "Retour au menu des paramètres", top
+    assert top["close"][0] < 60 and top["close"][1] < 60 and top["back"][1] == top["close"][1] and top["back"][0] > top["close"][0], top
+    assert top["room"] > 200 and scrolled["scroll"] == 200, scrolled
+    assert top["title"] - scrolled["title"] == 200, ("l'en-tête défile avec la page", top, scrolled)
+    assert scrolled["close"] == top["close"] and scrolled["back"] == top["back"], ("× et ← restent en place", top, scrolled)
+    assert got(step, "tab") == "persoBack"

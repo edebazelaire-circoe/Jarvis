@@ -665,13 +665,17 @@ def test_a_lost_status_says_the_pill_counts_are_unconfirmed(tmp_path):
 
 def test_settings_hub_opens_from_the_wheel_enters_a_category_and_closes_back(tmp_path):
     """Hub des Réglages (2026-10-23) : roue › Paramètres ouvre six cartes 3 × 2 de même taille, sans sous-menu ;
-    une carte ouvre sa catégorie, « Paramètres » (fil d'Ariane de la page) ramène au hub, Échap ferme et rend le focus à la roue."""
+    une carte ouvre sa catégorie, ← (en haut à gauche de la page) ramène au hub, Échap ferme et rend le focus à la roue.
+    Retours Human du 25/10 : plus de phrase sous « Paramètres », une grande icône devant, l'ensemble centré verticalement."""
     state = r"""(()=>{const o=document.getElementById('overlay');
       return {view:o.dataset.view||null,open:o.classList.contains('open'),submenu:!!document.querySelector('#toolWheel .tw-item'),
         cards:[...document.querySelectorAll('.set-hub-card')].map(c=>{const r=c.getBoundingClientRect();
           return {name:c.querySelector('.set-hub-name').textContent,desc:c.querySelector('.set-hub-desc').textContent,
             l:Math.round(r.left),t:Math.round(r.top),w:Math.round(r.width),h:Math.round(r.height)}}),
-        title:(document.getElementById('settingsHubTitle')||{}).textContent,
+        title:(document.getElementById('settingsHubTitle')||{}).textContent,lead:!!document.getElementById('settingsHubLead'),
+        icon:!!document.querySelector('#settingsHubIcon svg'),described:document.getElementById('settingsHub').getAttribute('aria-describedby'),
+        gapTop:Math.round(document.querySelector('.set-hub-head').getBoundingClientRect().top),
+        gapBottom:Math.round(innerHeight-document.querySelector('#settingsHubGrid').getBoundingClientRect().bottom),
         focus:document.activeElement&&document.activeElement.className,overflowX:document.documentElement.scrollWidth>innerWidth}})()"""
     step = _drive(tmp_path, [{"width": 1440, "height": 900, "actions": [
         ["click", "wheel", "#toolWheel .tw-anchor", 400],
@@ -680,14 +684,16 @@ def test_settings_hub_opens_from_the_wheel_enters_a_category_and_closes_back(tmp
         *_shot("settings-hub-1440x900"),
         ["click", "card", "[data-hub-category=agents_models]", 900],
         ["eval", "shell", "({view:document.getElementById('overlay').dataset.view,title:(document.getElementById('settingsCategoryTitle')||{}).textContent})", 100],
-        # Architecture & Agents s'ouvre en page pleine (refonte-ui-settings, Slice 07) : « Paramètres » du fil d'Ariane.
-        ["click", "back", "#settingsCrumbHub", 600],
+        # Architecture & Agents s'ouvre en page pleine (refonte-ui-settings, Slice 07) : ← en haut à gauche.
+        ["click", "back", "#settingsBack", 600],
         ["eval", "back", "document.getElementById('overlay').dataset.view", 100],
         ["key", "esc", "Escape", 500],
         ["eval", "closed", "({open:document.getElementById('overlay').classList.contains('open'),focus:document.activeElement&&document.activeElement.className})", 100],
     ]}])[0]
     hub = step["results"]["hub"]
     assert hub["view"] == "hub" and hub["open"] and not hub["submenu"] and hub["title"] == "Paramètres"
+    assert hub["lead"] is False and hub["described"] is None and hub["icon"] is True, hub
+    assert abs(hub["gapTop"] - hub["gapBottom"]) <= 40, ("titre et cartes centrés verticalement", hub["gapTop"], hub["gapBottom"])
     assert [c["name"] for c in hub["cards"]] == ["Personnalisation", "Architecture & Agents", "Mémoire & Connaissances",
                                                  "Interface & Interactions", "Plugins & MCP", "Avancé & Diagnostics"]
     assert all(c["desc"] for c in hub["cards"])

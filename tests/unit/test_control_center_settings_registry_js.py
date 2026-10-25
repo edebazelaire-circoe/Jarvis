@@ -554,3 +554,16 @@ def test_no_registered_section_declares_an_alias():
         for match in re.finditer(r"(registerSettingsSection\(\{|_SECTIONS?=\[?\{|_SECTION=\{)", text):
             window = text[match.start(): match.start() + 600]
             assert "aliases:[" not in window.split("mount")[0], (path.name, window[:120])
+
+
+def test_a_section_may_ask_to_fill_the_screen_height_and_the_shell_navigation_carries_it(tmp_path):
+    """Retours Human du 25/10 : `fill` (booléen) — la section prend la hauteur restante sous l'en-tête de la page
+    (Architecture) ; la navigation du shell le transmet, toute autre valeur est refusée."""
+    out = run(tmp_path, """
+const reg=R.createRegistry();
+reg.register({id:'architecture',category:'agents_models',label:'Architecture',mount:noop,save:'self',fill:true});
+reg.register({id:'subagents',category:'agents_models',label:'Sous-agents',mount:noop,save:'self'});
+const nav=R.shellNavigation(reg).categories.find(c=>c.id==='agents_models').items.map(i=>[i.id,i.fill]);
+out({nav,bad:codeOf(()=>reg.register({id:'x_fill',category:'agents_models',label:'X',mount:noop,save:'self',fill:'oui'}))});""")
+    assert out["nav"] == [["architecture", True], ["subagents", False]]
+    assert out["bad"][0] == "settings_section_invalid"

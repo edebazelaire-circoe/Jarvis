@@ -81,6 +81,8 @@ R.page.register({
   isDirty() { return false },   // optionnel ; interdit avec 'readonly'
   advanced: false,              // optionnel : badge « avancé »
   applies: 'next_voice_start',  // optionnel : 'immediate' | 'next_turn' | 'next_core_start' | 'next_voice_start'
+  fill: false,                  // optionnel (booléen) : en page pleine, la section prend la hauteur restante de l'écran
+                                // sous l'en-tête (Architecture, retours Human du 25/10) ; transmis par shellNavigation
 });
 ```
 

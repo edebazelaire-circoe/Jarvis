@@ -4,13 +4,16 @@ Contrat : `docs/settings/settings-shell.md` § « Catégories en page pleine » 
 (`page` du registre). Un VRAI Control Center isolé (fixture `served` : runtime temporaire, jamais le JARVIS vivant) sert
 la page ; le harnais CDP de `test_wake_word_settings_browser.py` clique, tape et mesure. Ce que ce fichier prouve :
 
-- Architecture & Agents et Mémoire & Connaissances s'ouvrent en page pleine, comme Personnalisation : × rond en haut à
-  gauche, fil d'Ariane « JARVIS › Paramètres », grand titre, phrase, onglets de page (`.set-tab`), sans rail ; le focus
-  va à l'onglet ouvert ; « Paramètres » ramène au hub, Échap ferme, le focus revient au bouton Réglages ;
-- les trois autres catégories gardent le shell à rail, et « Réglages détaillés » de Personnalisation l'ouvre toujours ;
+- Architecture & Agents et Mémoire & Connaissances s'ouvrent en page pleine, comme Personnalisation : × et ← ronds en
+  haut à gauche (retours Human du 25/10), fil d'Ariane « JARVIS › Paramètres » (texte), icône de la catégorie devant le
+  grand titre, phrase, onglets de page (`.set-tab`), sans rail ; le focus va à l'onglet ouvert ; ← ramène au hub,
+  Échap ferme, le focus revient au bouton Réglages ;
+- les trois autres catégories gardent le shell à rail (mêmes × et ← en haut à gauche), et « Réglages détaillés » de
+  Personnalisation l'ouvre toujours ;
 - liens profonds et alias (`memory`, `semantic_retrieval`, `main_agent`, `subagent_models`) mènent à la page pleine,
   sur le bon onglet ; un lien interne vers Avancé rend le rail ;
-- une seule zone défile par page (le contenu, sous l'en-tête et les onglets qui restent en place), jamais en largeur ;
+- une seule zone défile par page, et l'en-tête (fil d'Ariane, titre, onglets) défile avec le contenu ; seuls × et ←
+  restent en place ; jamais en largeur (retours Human du 25/10, qui annulent l'en-tête fixe de la Slice 07) ;
 - captures finales des cinq vues aux tailles des maquettes et à 1280×800 (`JARVIS_BROWSER_SHOTS=<dossier>` les garde,
   en JPEG), sans débordement horizontal ni message de console.
 
@@ -21,26 +24,31 @@ from __future__ import annotations
 
 from tests.unit._memory_center_fixture import MEMORY_STUB
 from tests.unit.settings_visual import OVERFLOW, VIEWS, freeze, shot, shots_dir
-from tests.unit.test_architecture_workspace_browser import JOURNAL, JOURNAL_READY
 from tests.unit.test_wake_word_settings_browser import click, drive, eval_, got, key, served, wait  # noqa: F401
 
 MEM = [eval_("window.__memStub={};true"), eval_(MEMORY_STUB)]
 HUB = [wait("!!document.getElementById('openSettings')"), click("#dockMore"), click("#openSettings"),
        wait("!!document.querySelector('#settingsHubGrid [data-hub-category]')")]
 
-#: Ce que montre la page ouverte : mise en page, rail, chrome de la page, onglets, focus et zones de défilement.
-LAYOUT = """(()=>{const q=s=>document.querySelector(s),shown=e=>!!e&&e.getClientRects().length>0;
-  const shell=q('#settingsShell'),close=q('#closeModal').getBoundingClientRect(),tabs=[...document.querySelectorAll('#modalTabs [role=tab]')];
+#: Ce que montre la page ouverte : mise en page, rail, chrome de la page, onglets, focus et zones de défilement. La mesure
+#: est posée une fois dans la page (`MEM`), puis appelée : le plan passe en argument au harnais, de longueur bornée.
+LAYOUT_DEF = """window.__layout=()=>{const q=s=>document.querySelector(s),shown=e=>!!e&&e.getClientRects().length>0;
+  const shell=q('#settingsShell'),close=q('#closeModal').getBoundingClientRect(),back=q('#settingsBack').getBoundingClientRect(),tabs=[...document.querySelectorAll('#modalTabs [role=tab]')];
   const scrollers=['#settingsShell','#settingsMain','#modalContent','.set-head'].filter(s=>{const e=q(s);if(!e)return false;
     const st=getComputedStyle(e);return /auto|scroll/.test(st.overflowY)&&e.scrollHeight>e.clientHeight+1});
+  const icon=q('#settingsIntro .set-title-row .set-title-icon'),title=q('#settingsCategoryTitle');
   return {view:q('#overlay').dataset.view,layout:shell.dataset.layout,category:SET.category,section:SET.section,
-    rail:shown(q('#settingsCategories')),back:shown(q('#settingsBack')),
+    rail:shown(q('#settingsCategories')),back:shown(q('#settingsBack')),backRound:q('#settingsBack').classList.contains('set-hub-back'),
+    backAt:[Math.round(back.left),Math.round(back.top)],backLabel:q('#settingsBack').getAttribute('aria-label'),
+    iconBeforeTitle:!!icon&&!!icon.querySelector('svg')&&!!title&&!!(icon.compareDocumentPosition(title)&Node.DOCUMENT_POSITION_FOLLOWING),
+    crumbButtons:document.querySelectorAll('#settingsIntro .set-crumb button').length,
     crumb:(q('#settingsIntro .set-crumb')||{}).textContent||null,title:(q('#settingsCategoryTitle')||{}).textContent||null,
     titleClass:(q('#settingsCategoryTitle')||{}).className||null,lead:(q('#settingsIntro .set-lead')||{}).textContent||null,
     closeRound:q('#closeModal').classList.contains('set-hub-close'),closeAt:[Math.round(close.left),Math.round(close.top)],
     tabs:tabs.map(t=>[t.dataset.section,t.className.split(' ')[0],t.getAttribute('aria-selected'),!!t.querySelector('svg')]),
     focus:document.activeElement&&(document.activeElement.dataset.section||document.activeElement.id||document.activeElement.tagName),
-    labelled:shell.getAttribute('aria-labelledby'),scrollers}})()"""
+    labelled:shell.getAttribute('aria-labelledby'),scrollers}};1"""
+LAYOUT = "__layout()"
 
 
 async def test_three_mockup_categories_open_as_full_pages_and_the_others_keep_the_rail(served):
@@ -49,10 +57,10 @@ async def test_three_mockup_categories_open_as_full_pages_and_the_others_keep_th
                 eval_("new Promise(r=>setTimeout(()=>r(1),300))"), eval_(LAYOUT, category)]
 
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
-        *MEM,
+        *MEM, eval_(LAYOUT_DEF),
         *enter("agents_models", "!!document.querySelector('[data-architecture-page] [data-arch-node=core]')"),
-        # « Paramètres » du fil d'Ariane : retour au hub, focus sur une carte.
-        click("#settingsCrumbHub"), wait("document.getElementById('overlay').dataset.view==='hub'"),
+        # ← en haut à gauche : retour au hub, focus sur une carte.
+        click("#settingsBack"), wait("document.getElementById('overlay').dataset.view==='hub'"),
         eval_("!!document.activeElement.closest('#settingsHubGrid')", "hub_focus"),
         click("#settingsHubGrid [data-hub-category=memory_knowledge]"),
         wait("!!document.querySelector('#memSection_recall [data-mem]')", 10000), eval_(LAYOUT, "memory_knowledge"),
@@ -87,20 +95,25 @@ async def test_three_mockup_categories_open_as_full_pages_and_the_others_keep_th
                                      ("memory_knowledge", "memory_knowledge", ["recall", "knowledge_sources", "memory_center"])]:
         page = got(step, name)
         assert page["layout"] == "page" and page["category"] == category, page
-        assert page["rail"] is False and page["back"] is False, ("pas de rail sur une page pleine", page)
+        assert page["rail"] is False, ("pas de rail sur une page pleine", page)
         assert page["crumb"].replace(" ", "") == "JARVIS›Paramètres" and page["titleClass"] == "set-title" and page["lead"], page
+        assert page["crumbButtons"] == 0, ("le fil d'Ariane est un texte : le retour au hub est la flèche ←", page)
+        assert page["iconBeforeTitle"], ("l'icône de la catégorie précède son titre", page)
         assert page["closeRound"] and page["closeAt"][0] < 60 and page["closeAt"][1] < 60, ("× rond en haut à gauche", page)
+        assert page["back"] and page["backRound"] and page["backLabel"] == "Retour au menu des paramètres", page
+        assert page["backAt"][1] == page["closeAt"][1] and 40 <= page["backAt"][0] - page["closeAt"][0] <= 70, ("← à côté du ×", page)
         assert [t[0] for t in page["tabs"]] == sections and all(t[1] == "set-tab" and t[3] for t in page["tabs"]), page
         assert page["focus"] == page["section"], ("le focus va à l'onglet ouvert", page)
         assert page["labelled"] == "settingsCategoryTitle", page
-        assert page["scrollers"] in ([], ["#modalContent"]), ("une seule zone défile : le contenu, sous l'en-tête", page)
+        assert page["scrollers"] in ([], ["#settingsMain"]), ("une seule zone défile : la page entière, en-tête compris", page)
     assert got(step, "hub_focus") is True
     kb = got(step, "keyboard_tab")
     assert kb["section"] == "knowledge_sources" and kb["focus"] == "knowledge_sources", kb
     assert got(step, "closed_focus") in ("openSettings", "dockMore"), got(step, "closed_focus")
 
     rail = got(step, "connections")
-    assert rail["layout"] == "rail" and rail["rail"] is True and rail["back"] is True and not rail["closeRound"], rail
+    assert rail["layout"] == "rail" and rail["rail"] is True and rail["back"] is True and rail["closeRound"] and rail["backRound"], rail
+    assert rail["closeAt"][0] < 60 and rail["closeAt"][1] < 60 and rail["backAt"][1] == rail["closeAt"][1], ("× et ← en haut à gauche", rail)
     detail = got(step, "detail")
     assert detail["layout"] == "rail" and detail["category"] == "voice_audio" and detail["rail"] is True, detail
     for name, section in [("alias_memory", "recall"), ("alias_semantic", "recall"), ("alias_subagents", "subagents"),
@@ -117,13 +130,13 @@ FINAL = {
     "sous-agents": (VIEWS["subagents"], [], [(1254, 1254), (1280, 800)]),
     # Menu du cerveau Core ouvert par script (un vrai clic ferait d'abord défiler la page jusqu'au nœud) : la capture
     # montre la page depuis son en-tête, comme la maquette, fenêtre du cerveau ouverte à côté de son nœud.
-    "architecture": ([*VIEWS["architecture"], JOURNAL_READY,
+    "architecture": ([*VIEWS["architecture"],
                       eval_("(document.querySelector('[data-architecture-page] [data-arch-menu-btn=core]').click(),1)"),
                       wait("!!document.querySelector('[data-arch-menu=configure]')"),
                       eval_("(document.querySelector('[data-arch-menu=configure]').click(),1)"),
                       wait("!!document.querySelector('.bcp-win [data-bcp-radio=delegation]')", 10000),
                       eval_("new Promise(r=>setTimeout(()=>r(1),300))")],
-                     [JOURNAL], [(1254, 1254), (1280, 800)]),
+                     [], [(1254, 1254), (1280, 800)]),
     "memoire": ([*MEM, *VIEWS["memory"]], [], [(1254, 1254), (1280, 800)]),
     "memory-center": ([*MEM, *VIEWS["memory_center"], wait("!!document.querySelector('#modalContent .mc-table, #modalContent .mc-empty')", 10000)],
                       [], [(1254, 1254), (1280, 800)]),
@@ -167,3 +180,34 @@ async def test_choosing_a_full_page_category_from_the_rail_keeps_the_focus_on_th
     mem = got(step, "memory")
     assert mem["layout"] == "page" and mem["inTabs"] and mem["focus"] == mem["section"], ("focus sur l'onglet de page actif", mem)
     assert "gauche et droite" in mem["help"], mem
+
+
+#: Position de l'en-tête et des boutons fixes, et défilement de la zone unique de la page.
+HEAD = """(()=>{const q=s=>document.querySelector(s),r=s=>{const e=q(s);return e?Math.round(e.getBoundingClientRect().top):null};
+  const main=q('#settingsMain');
+  return {title:r('#settingsCategoryTitle'),tabs:r('#modalTabs'),close:r('#closeModal'),back:r('#settingsBack'),
+    scroll:main.scrollTop,room:main.scrollHeight-main.clientHeight,body:getComputedStyle(q('#modalContent')).overflowY}})()"""
+
+
+async def test_the_whole_page_header_scrolls_with_the_content_and_only_the_two_buttons_stay(served):
+    """Retours Human du 25/10 : une seule zone de défilement par page, l'en-tête (fil d'Ariane, titre, onglets) défile
+    avec le contenu ; × et ← restent fixes. Architecture : contenu à la taille de l'écran, rien à faire défiler."""
+    out = await drive(served.url, [{"width": 1280, "height": 800, "actions": [
+        *MEM, *HUB, click("#settingsHubGrid [data-hub-category=memory_knowledge]"),
+        wait("!!document.querySelector('#memSection_recall [data-mem]')", 10000),
+        eval_("new Promise(r=>setTimeout(()=>r(1),300))"), eval_(HEAD, "top"),
+        eval_("(document.getElementById('settingsMain').scrollTop=260,new Promise(r=>setTimeout(()=>r(1),100)))"),
+        eval_(HEAD, "scrolled"),
+        eval_("(selectTab('architecture'),1)"),
+        wait("!!document.querySelector('[data-architecture-page] [data-arch-tools]')", 15000),
+        eval_("new Promise(r=>setTimeout(()=>r(1),400))"), eval_(HEAD, "arch"),
+    ]}])
+    step = out["steps"][0]
+    assert all(a["ok"] for a in step["actions"] if a.get("a") == "wait"), [a for a in step["actions"] if a.get("a") == "wait" and not a["ok"]]
+    assert out["console"] == [], out["console"]
+    top, scrolled, arch = got(step, "top"), got(step, "scrolled"), got(step, "arch")
+    assert top["room"] > 260, ("la page Mémoire a de quoi défiler à 1280×800", top)
+    assert top["body"] in ("visible", "auto") and scrolled["scroll"] == 260, scrolled
+    assert top["title"] - scrolled["title"] == 260 and top["tabs"] - scrolled["tabs"] == 260, ("l'en-tête défile avec la page", top, scrolled)
+    assert scrolled["close"] == top["close"] and scrolled["back"] == top["back"], ("× et ← restent en place", top, scrolled)
+    assert arch["room"] <= 1, ("Architecture : contenu à la taille de l'écran, rien à faire défiler", arch)

@@ -21,10 +21,12 @@ choix `.set-choice`, panneau flottant `float` + `openFloat`, avatar `medallion`.
 des profils. Les anciennes classes doublons (`.perso-card`, `.perso-switch`, `.perso-seg`, `.perso-preset`,
 `.perso-avatar`, `.perso-mini`…) sont supprimées ; un test le vérifie.
 
-- En-tête : × en haut à gauche (ferme tout), fil d'Ariane « JARVIS › Paramètres » (le bouton « Paramètres » ramène
-  au hub), titre, phrase, filet. Même en-tête, mêmes primitives (`.set-crumb button` compris) que les catégories en
-  page pleine du shell, Architecture & Agents et Mémoire & Connaissances ([`settings-shell.md`](settings-shell.md)
-  § 1 bis). En haut à droite, aligné sur le bord droit de la grille : le **profil actif**
+- En-tête (retours Human du 25/10) : × (`#persoClose`, ferme tout) et ← (`#persoBack`, « Retour au menu des
+  paramètres », ramène au hub ; focus à l'ouverture) ronds en haut à gauche, fixes ; puis fil d'Ariane « JARVIS ›
+  Paramètres » (texte), icône de la page devant le titre (`#persoIcon`, celle de la carte du hub, `settingsIcon`),
+  phrase, filet. La page (`#settingsPerso`) est la seule zone qui défile : l'en-tête défile avec la grille. Même
+  en-tête, mêmes primitives que les catégories en page pleine du shell, Architecture & Agents et Mémoire &
+  Connaissances ([`settings-shell.md`](settings-shell.md) § 1 bis). En haut à droite, aligné sur le bord droit de la grille : le **profil actif**
   (médaillon à la teinte du profil, nom, chevron). Aucune citation ni slogan.
 - Grille `.set-grid.perso-grid` de trois colonnes `.set-stack.set-span-4` ; le dernier panneau de chaque colonne
   s'étire, les bas s'alignent (enveloppe rectangulaire) :

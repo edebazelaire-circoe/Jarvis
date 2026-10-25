@@ -53,7 +53,8 @@ l'appelant.
 | Primitive | Classes | Fragment | États et accessibilité |
 | --- | --- | --- | --- |
 | Vue pleine fenêtre | `.set-view` > `.set-page` | — | seule à défiler ; `.set-page` est le conteneur des requêtes de grille |
-| En-tête de page | `.set-page-head`, `.set-crumb`, `.set-title`, `.set-lead`, `.set-rule` | — | titre léger `--set-fs-display` |
+| En-tête de page | `.set-page-head`, `.set-crumb`, `.set-title-row` > `.set-title-icon` + `.set-title`, `.set-lead`, `.set-rule` | — | titre léger `--set-fs-display` ; fil d'Ariane en texte ; icône de la catégorie (`settingsIcon`) à sa teinte, `aria-hidden` |
+| Boutons de page | `.set-hub-close` (×), `.set-hub-back` (←) | — | ronds, fixes en haut à gauche (`--set-z-chrome`), nom accessible en français, anneau de focus |
 | Panneau verre | `.set-panel` (+ `-hot`, `-quiet`), `.set-panel-head/-titles/-title/-desc/-aside/-body`, `.set-inset` | `panel({id,title,description,icon,tone,aside,body,variant,level})` | `section[aria-labelledby]` |
 | Médaillon d'icône | `.set-medallion` (+ `-sm`, `-lg`) | `medallion({icon,tone,size})` | `aria-hidden` |
 | Tuile de statistique | `.set-stat` (+ `-stack`), `.set-stat-icon/-value/-label` | `stat({value,label,icon,tone,stack})` | libellé obligatoire |

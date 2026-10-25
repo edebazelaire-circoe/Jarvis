@@ -148,8 +148,8 @@ nœud configuré porte un cadre pointillé lumineux sur le canevas tant que la f
   à la hauteur de l'ancre ; elle s'y rétrécit jusqu'à 340 px plutôt que de passer dessus ou dessous (repli quand
   aucun côté n'a 340 px). Elle ne recouvre jamais le nœud ; sa hauteur maximale est la place restante dans la zone
   (le corps défile). Dans les Réglages, `architecturePanelZone()` (`control_center.html`) donne la zone : sous
-  `#modalTabs` + 8 px, de `#settingsCategories` + 16 px (rail à gauche) jusqu'au bord droit de l'overlay, pour que
-  « Toutes les catégories », l'onglet actif et le rail restent atteignables.
+  `#modalTabs` + 8 px (et sous le × fixe), de `#settingsCategories` + 16 px (rail à gauche) jusqu'au bord droit de
+  l'overlay, pour que × et ←, l'onglet actif et le rail restent atteignables.
 - Sous 720 px : panneau en bas d'écran sur toute la largeur, voile derrière (un clic ferme, avec garde), pas de
   glisser, aucun défilement horizontal.
 - États qui durent : lecture et enregistrement montrent un compteur de secondes et une échéance (`timeoutMs`) ; à

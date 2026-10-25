@@ -87,7 +87,7 @@
   const SAVE_POLICIES=Object.freeze(['footer','self','readonly']);
   const APPLIES=Object.freeze(['immediate','next_turn','next_core_start','next_voice_start']);
   const ID=/^[a-z][a-z0-9_]{0,63}$/;
-  const KEYS=new Set(['id','category','label','description','order','group','mount','destroy','save','isDirty','advanced','applies']);
+  const KEYS=new Set(['id','category','label','description','order','group','mount','destroy','save','isDirty','advanced','applies','fill']);
 
   function fail(code,message){const error=new Error(message);error.code=code;error.name='SettingsRegistryError';return error}
   const own=(object,key)=>Object.prototype.hasOwnProperty.call(object,key);
@@ -127,6 +127,7 @@
     if(spec.isDirty!==undefined&&typeof spec.isDirty!=='function')throw fail(ERROR_CODES.invalid,`Section ${spec.id} : isDirty doit être une fonction.`);
     if(spec.save==='readonly'&&spec.isDirty)throw fail(ERROR_CODES.invalid,`Section ${spec.id} : une section en lecture seule n’a pas de brouillon.`);
     if(spec.advanced!==undefined&&typeof spec.advanced!=='boolean')throw fail(ERROR_CODES.invalid,`Section ${spec.id} : advanced booléen attendu.`);
+    if(spec.fill!==undefined&&typeof spec.fill!=='boolean')throw fail(ERROR_CODES.invalid,`Section ${spec.id} : fill booléen attendu.`);
     if(spec.applies!==undefined&&!APPLIES.includes(spec.applies))throw fail(ERROR_CODES.invalid,`Section ${spec.id} : applies attendu parmi ${APPLIES.join(', ')}.`);
   }
 
@@ -142,7 +143,7 @@
       const entry=Object.freeze({id,category:spec.category,label:spec.label,description:spec.description||'',
         order:spec.order===undefined?0:spec.order,group:spec.group||null,mount:spec.mount,destroy:spec.destroy||null,
         save:spec.save,isDirty:spec.isDirty||null,advanced:spec.advanced===true,applies:spec.applies||null,
-        seq:sections.size});
+        fill:spec.fill===true,seq:sections.size});
       sections.set(id,entry);
       return entry;
     }
@@ -183,7 +184,7 @@
      (`registry.sections`). Depuis la Slice 09 il n'y a plus d'onglet hérité ni de lien « encore dans ». */
   function shellNavigation(registry){
     const categories=CATEGORIES.map(c=>({id:c.id,label:c.label,description:c.description,notice:c.notice||'',page:c.page||null,groups:groupsOf(c.id),
-      items:(registry?registry.sections(c.id):[]).map(s=>({kind:'section',id:s.id,label:s.label,save:s.save,advanced:s.advanced,group:s.group}))}));
+      items:(registry?registry.sections(c.id):[]).map(s=>({kind:'section',id:s.id,label:s.label,save:s.save,advanced:s.advanced,group:s.group,fill:!!s.fill}))}));
     return {categories};
   }
 

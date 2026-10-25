@@ -17,9 +17,12 @@
 
 ## 0. Le hub (premier niveau, 2026-10-23)
 
-Sans cible, les Réglages s'ouvrent sur un **hub** : `#overlay` › `section#settingsHub` (role=dialog aria-modal),
-au-dessus de JARVIS flouté, assombri et désaturé (`.overlay[data-view=hub]`). En tête : « JARVIS », le titre
-« Paramètres », une phrase d'introduction, un filet ; un bouton × en haut à gauche (`#settingsHubClose`). Au centre,
+Sans cible, les Réglages s'ouvrent sur un **hub** : `#overlay` › `section#settingsHub` (role=dialog aria-modal,
+nommé par son titre), au-dessus de JARVIS légèrement flouté et assombri (`.overlay[data-view=hub]` ; voile et flou
+allégés le 25/10 pour que la scène se devine derrière). En tête : une grande icône d'engrenage
+(`#settingsHubIcon`, `SETTINGS_ICON.settings`, même trait que les cartes), « JARVIS », le titre « Paramètres », un
+filet ; plus de phrase d'introduction (retirée le 25/10, avec son `aria-describedby`). Un bouton × en haut à gauche
+(`#settingsHubClose`), seul chrome du hub. L'en-tête et la grille forment un bloc centré verticalement. Au centre,
 six cartes `button.set-hub-card [data-hub-category]` de mêmes dimensions (3 × 2, puis 2 colonnes sous 1100 px, une
 sous 640 px), dessinées depuis `JarvisSettingsRegistry.CATEGORIES` : pictogramme, libellé, description, flèche ;
 teinte de la catégorie (`SETTINGS_HUE`, partagée avec le rail).
@@ -28,7 +31,7 @@ teinte de la catégorie (`SETTINGS_HUE`, partagée avec le rail).
   `ui_settings`. Une cible précise (`openSettingsTab(cible)` : liens internes, « Réglages de la voix ») ouvre
   toujours directement le shell.
 - Une carte ouvre le shell sur sa catégorie (`enterSettingsCategory` → `openSettingsTab`), dans le même overlay ;
-  « Toutes les catégories » (`#settingsBack`, tête du shell) ramène au hub sans fermer l'overlay (le brouillon
+  la flèche ← (`#settingsBack`, en haut à gauche, à côté du ×) ramène au hub sans fermer l'overlay (le brouillon
   reste, `SET.dirty`).
 - × ou Échap ferme le hub (`closeSettingsHub`, fondu inverse de 160 ms, sans animation en mouvement réduit) ; le
   focus revient à l'élément d'ouverture (l'ancre de la roue). Flèches entre les cartes ; Tab reste dans le hub.
@@ -45,19 +48,21 @@ clavier, le nettoyage des sections et la mise en page. Une section possède ses 
 validation. Aucune valeur de réglage n'est écrite par le shell.
 
 ```
-#overlay (plein écran, voile + flou du fond Jarvis)
+#overlay (plein écran, voile + flou légers du fond Jarvis)
 └─ #settingsShell  role=dialog aria-modal
+   ├─ #closeModal.set-hub-close « Fermer les réglages » (×, Échap)  ┐ ronds, fixes en haut à gauche, premiers dans
+   ├─ #settingsBack.set-hub-back « Retour au menu des paramètres » (←) ┘ l'ordre du Tab ; dans les deux dispositions
    ├─ aside.set-rail
    │  ├─ h2#modalTitle « Paramètres »
    │  └─ nav#settingsCategories role=tablist (vertical ; horizontal sous 900 px)
    │       six button.set-cat role=tab [data-category] : pictogramme, libellé, description (registre)
    └─ main#settingsMain role=tabpanel
-      ├─ .set-head : #settingsBack « Toutes les catégories » · #settingsIntro (pictogramme + JarvisSettingsUI.intro + avis `notice` de la catégorie,
-      │              p#settingsCategoryNotice) · #closeModal « Fermer · Échap »
+      ├─ .set-head : #settingsIntro (pictogramme + JarvisSettingsUI.intro + avis `notice` de la catégorie,
+      │              p#settingsCategoryNotice)
       ├─ nav#modalTabs role=tablist : sections de la catégorie, button.set-item [data-section] ;
       │     catégorie à groupes (Avancé, Slice 08) : div.set-group role=none [data-settings-group] par groupe non
       │     vide, intitulé span.set-group-label (aria-hidden, monospace) qui décrit ses onglets (aria-describedby)
-      ├─ #modalContent.set-body.content : le contenu, SEUL à défiler
+      ├─ #modalContent.set-body.content : le contenu, SEUL à défiler (disposition à rail ; en page pleine, § 1 bis)
       └─ footer.set-foot : #modalStatus (role=status, aria-live=polite) · #modalSave « Enregistrer »
 ```
 
@@ -77,18 +82,18 @@ emplacement, même brouillon ; seule la présentation change.
 
 ```
 #settingsShell[data-layout=page]   (aria-labelledby = #settingsCategoryTitle)
-└─ main#settingsMain               en-tête et onglets en place ; contenu centré à --set-view-max
-   ├─ .set-head
-   │  ├─ #closeModal.set-hub-close  × rond en haut à gauche, fixe (même bouton, même nom accessible, même raccourci)
-   │  └─ #settingsIntro › .set-page-intro : nav.set-crumb « JARVIS › [Paramètres] » (#settingsCrumbHub → hub)
-   │                                       · h2.set-title#settingsCategoryTitle · p.set-lead (`page.lead`) · .set-rule
+├─ #closeModal (×) · #settingsBack (←)  ronds, fixes en haut à gauche : le seul chrome qui ne défile pas
+└─ main#settingsMain               LA zone qui défile (en-tête compris, jamais en largeur) ; centrée à --set-view-max
+   ├─ .set-head › #settingsIntro › .set-page-intro : p.set-crumb « JARVIS › Paramètres » (texte)
+   │     · .set-title-row (span.set-title-icon = icône de la carte du hub, `settingsIcon`) + h2.set-title#settingsCategoryTitle
+   │     · p.set-lead (`page.lead`) · .set-rule
    ├─ nav#modalTabs role=tablist : onglets de page button.set-tab [data-section] (pictogramme + libellé)
-   ├─ #modalContent : la section, SEULE zone qui défile (jamais en largeur), barre au bord de la fenêtre
+   ├─ #modalContent : la section ; `[data-fill]` (section `fill`) : elle prend la hauteur restante de l'écran
    └─ footer.set-foot : seulement pour une section `save:'footer'` (aucune aujourd'hui)
 ```
 
-- Pas de rail : `aside.set-rail` et « Toutes les catégories » ne sont pas rendus (`display:none`) ; on change de
-  catégorie par « Paramètres » (le hub) ou par un lien. Pas d'avatar : aucune donnée de profil réelle derrière ces deux
+- Pas de rail : `aside.set-rail` n'est pas rendu (`display:none`) ; on change de catégorie par ← (le hub) ou par un
+  lien. Le fil d'Ariane n'est plus un bouton : un seul contrôle de retour au hub, la flèche ←. Pas d'avatar : aucune donnée de profil réelle derrière ces deux
   pages (le profil actif reste propre à Personnalisation).
 - Les autres catégories (Personnalisation détaillée, Interface & Interactions, Plugins & MCP, Avancé & Diagnostics)
   gardent le shell à rail ; un lien interne d'une page pleine vers l'une d'elles (« Ouvrir les paramètres avancés »)
@@ -100,14 +105,18 @@ emplacement, même brouillon ; seule la présentation change.
   arrive du rail d'une autre catégorie (§ 3). L'avis de catégorie (`notice` du registre) se pose dans
   `.set-page-intro` comme dans `.set-intro`.
 - Fenêtre d'un cerveau (Architecture) : sa zone d'ouverture (`architecturePanelZone`) commence sous les onglets de la
-  page et sous le × ; elle ne couvre jamais le fil d'Ariane, le titre ni l'onglet actif.
-- Défilement : l'en-tête et les onglets restent en place, seul le contenu défile. Une page entière qui défilait a été
-  essayée puis écartée : la fenêtre d'un cerveau est fixe, et après défilement elle recouvrait le titre et les onglets.
+  page et sous le × ; elle ne couvre jamais le fil d'Ariane, le titre ni l'onglet actif à l'ouverture.
+- Défilement (retours Human du 25/10, qui annulent l'en-tête fixe de la Slice 07) : **une seule zone de défilement
+  par page**, `#settingsMain` ; le fil d'Ariane, le titre et les onglets défilent avec le contenu ; seuls × et ←
+  restent fixes. Section `fill` (Architecture) : même modèle, mais le contenu est dimensionné à la hauteur restante
+  sous l'en-tête (`#settingsShell[data-fill]`, posé par `renderTabs`), il n'y a donc rien à faire défiler ; aucune
+  règle n'interdit le défilement, qui revient sur un très petit écran (hauteur minimale du contenu 360 px). La
+  fenêtre d'un cerveau étant fixe, elle peut recouvrir l'en-tête si l'on fait défiler une page derrière elle.
 - Rangs : `.settings-shell[data-layout=page] ` est inscrit au registre des couches de `docs/control-center-shell.md`
-  (× `--set-z-chrome`).
-- Tests : `tests/unit/test_settings_page_layout_browser.py` (mise en page, rail, focus, alias, défilement unique,
-  captures finales des cinq vues), `tests/unit/test_architecture_workspace_browser.py` (chrome de la page atteignable,
-  fenêtre du cerveau ouverte).
+  (× et ← `--set-z-chrome`).
+- Tests : `tests/unit/test_settings_page_layout_browser.py` (mise en page, rail, × et ←, icône devant le titre, focus,
+  alias, défilement unique avec l'en-tête, Architecture à la taille de l'écran, captures finales des cinq vues),
+  `tests/unit/test_architecture_workspace_browser.py` (chrome de la page atteignable, fenêtre du cerveau ouverte).
 
 ## 2. Emplacement et routage
 

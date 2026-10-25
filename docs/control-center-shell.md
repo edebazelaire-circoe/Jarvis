@@ -261,9 +261,10 @@ value.
 | `#jvStudioExplorer` (9000) | `control_center_presentation_studio_explorer_core.js` | `#${HOST_ID} ` | Variantes internals |
 | `#jvStudioExplorer` (9000) | `control_center_presentation_studio_run.js` | `${H} ` | run overlay internals |
 | `.overlay` (60) | `control_center_wake_word.js` | `:is(#wakeWordSettings,#wakeWordDiagnostics) ` | settings and diagnostics tooltip |
-| `.overlay` (60) | `control_center.html` | `.set-perso ` | Personnalisation page: its close button stays over the scrolling grid |
+| `.overlay` (60) | `control_center.html` | `.set-perso ` | Personnalisation page: its close (×) and back (←) buttons stay over the scrolling page (`--set-z-chrome`) |
+| `.overlay` (60) | `control_center.html` | `.settings-shell>` | Settings shell (both layouts): its close (×) and back (←) buttons stay fixed top-left over the scrolling page (`--set-z-chrome`; human feedback 2026-10-25) |
 | `.overlay` (60) | `control_center.html` | `.perso-` | Personnalisation page: the profile popover floats over the grid |
-| `.overlay` (60) | `control_center.html` | `.settings-shell[data-layout=page] ` | Settings category opened as a full page (Architecture & Agents, Mémoire & Connaissances; refonte-ui-settings S07): its close button stays over the scrolling content (`--set-z-chrome`) |
+| `.overlay` (60) | `control_center.html` | `.settings-shell[data-layout=page] ` | Settings category opened as a full page (Architecture & Agents, Mémoire & Connaissances; refonte-ui-settings S07): the whole page scrolls under the fixed × and ← (human feedback 2026-10-25) |
 | `.overlay` (60) / `.wsp` (55) | `control_center.html` | `.set-table` | shared Settings dense-table shell: sticky header (`--set-z-sticky`), see `docs/settings/visual-foundation.md` |
 | `.overlay` (60) / `.wsp` (55) | `control_center.html` | `.set-float` | shared Settings floating panel (`--set-z-float`) and short popover (`--set-z-popover`) above a page's grid, see `docs/settings/visual-foundation.md` |
 | `.overlay` (60) | `control_center_subagents_settings.js` | `.sar-` | Sous-agents board: the row-actions disclosure (`.sar-row.menu-open`, `.sar-menu`, `--set-z-popover`) over the next rows, the routing matrix's sticky model column (`--set-z-raised`) and corner header (`--set-z-sticky` + 1) inside `.set-table-scroll` (refonte-ui-settings S03) |

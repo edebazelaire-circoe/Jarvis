@@ -401,7 +401,9 @@
     const page=root();if(page)page.scrollTop=0;
     console.info('[settings] personalization.opened',{});
     const loading=load();
-    const crumb=document.getElementById('persoCrumbHub');if(crumb)crumb.focus({preventScroll:true});
+    /* Icône devant le titre : celle de la carte du hub (`settingsIcon`, source unique du shell). Focus : le ← du hub. */
+    const icon=document.getElementById('persoIcon');if(icon&&!icon.firstChild&&typeof settingsIcon==='function')icon.innerHTML=settingsIcon(PAGE_ID);
+    const back=document.getElementById('persoBack');if(back)back.focus({preventScroll:true});
     return loading;
   }
   function leave(){
@@ -430,7 +432,7 @@
   function bind(){
     const page=root();if(!page||page.dataset.bound)return;page.dataset.bound='1';
     document.getElementById('persoClose').addEventListener('click',close);
-    document.getElementById('persoCrumbHub').addEventListener('click',backToHub);
+    document.getElementById('persoBack').addEventListener('click',backToHub);
     page.addEventListener('click',event=>{
       /* En « Hériter », cliquer le cran médian ne change pas la valeur (pas de `change`) : le clic choisit ce cran. */
       const range=event.target.closest('input[data-perso-trait]');

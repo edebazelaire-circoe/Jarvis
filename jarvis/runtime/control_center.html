@@ -783,29 +783,38 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
    tient les six catégories du registre ; la colonne principale tient l'intro de la catégorie,
    ses entrées (#modalTabs), le contenu (seul à défiler) et le pied Enregistrer. Texte courant
    en sans-serif ; la monospace reste aux identifiants, au code et aux diagnostics. */
-.overlay{position:fixed;inset:0;z-index:60;display:none;background:radial-gradient(120% 90% at 18% 0%,rgba(10,30,40,.55),transparent 60%),rgba(2,6,10,.80);backdrop-filter:blur(22px) saturate(1.12)}
+.overlay{position:fixed;inset:0;z-index:60;display:none;background:radial-gradient(120% 90% at 18% 0%,rgba(10,30,40,.3),transparent 60%),rgba(2,6,10,.52);backdrop-filter:blur(7px) saturate(1.05)}
+/* Fond des Réglages allégé (retours Human du 25/10) : voile et flou réduits, la scène JARVIS se devine derrière ; les
+   panneaux et cartes gardent leur verre (`--set-glass*`), les titres posés sur le fond une ombre portée. */
 .overlay.open{display:block;animation:set-fade var(--shell-dur) var(--shell-ease)}
 @keyframes set-fade{from{opacity:0}}
 /* Hub des Réglages (2026-10-23) : premier niveau, au-dessus de JARVIS flouté, assombri et désaturé. Le hub et le shell
    partagent l'overlay ; `data-view` dit lequel se montre. Animations courtes : fondu de l'overlay, cartes qui montent
    de quelques pixels, l'inverse à la fermeture (`.closing`). */
-.overlay[data-view=hub]{background:radial-gradient(90% 75% at 50% 45%,rgba(2,6,10,.35),rgba(2,6,10,.82) 100%),rgba(2,6,10,.5);backdrop-filter:blur(18px) saturate(.6) brightness(.85)}
+.overlay[data-view=hub]{background:radial-gradient(90% 75% at 50% 45%,rgba(2,6,10,.18),rgba(2,6,10,.6) 100%),rgba(2,6,10,.26);backdrop-filter:blur(6px) saturate(.8) brightness(.9)}
 .overlay[data-view=hub] .settings-shell,.overlay:not([data-view=hub]) .set-hub{display:none}
-.overlay[data-view=perso]{background:radial-gradient(90% 75% at 50% 40%,rgba(2,6,10,.3),rgba(2,6,10,.84) 100%),rgba(2,6,10,.5);backdrop-filter:blur(18px) saturate(.7) brightness(.85)}
+.overlay[data-view=perso]{background:radial-gradient(90% 75% at 50% 40%,rgba(2,6,10,.2),rgba(2,6,10,.62) 100%),rgba(2,6,10,.3);backdrop-filter:blur(6px) saturate(.85) brightness(.9)}
 .overlay[data-view=perso] .settings-shell,.overlay:not([data-view=perso]) .set-perso{display:none}
 .overlay.open.instant{animation:none}
 .overlay.closing{animation:set-fade-out 160ms var(--shell-ease) forwards}
 @keyframes set-fade-out{to{opacity:0}}
-.set-hub{position:absolute;inset:0;display:grid;grid-template-rows:auto auto;align-content:safe center;overflow:auto;padding:clamp(72px,9vh,96px) clamp(16px,6vw,96px) clamp(24px,5vh,56px);font:14px/1.5 "Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;color:var(--text)}
-.set-hub-close{position:absolute;top:clamp(14px,3vh,28px);left:clamp(14px,2.2vw,30px);width:44px;height:44px;display:grid;place-items:center;border-radius:50%;border:1px solid rgba(151,191,209,.32);background:rgba(4,10,15,.6);color:var(--text);cursor:pointer;transition:background-color var(--shell-dur-fast),border-color var(--shell-dur-fast)}
-.set-hub-close svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round}
-.set-hub-close:hover{background:rgba(151,191,209,.12);border-color:rgba(151,191,209,.55)}
-.set-hub-head{max-width:1240px;width:100%;margin:0 auto;padding-left:4px}
+.set-hub{position:absolute;inset:0;display:grid;grid-template-rows:auto auto;align-content:safe center;overflow:auto;padding:clamp(64px,8vh,88px) clamp(16px,6vw,96px);font:14px/1.5 "Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;color:var(--text)}
+/* × (fermer) et ← (retour au hub) : deux boutons ronds en haut à gauche, même style ; sur les pages, le seul chrome
+   fixe (ils restent en place quand la page défile). Le hub n'a que le ×. */
+:is(.set-hub-close,.set-hub-back){position:absolute;top:clamp(14px,3vh,28px);left:clamp(14px,2.2vw,30px);width:44px;height:44px;display:grid;place-items:center;border-radius:50%;border:1px solid rgba(151,191,209,.32);background:rgba(4,10,15,.6);color:var(--text);cursor:pointer;transition:background-color var(--shell-dur-fast),border-color var(--shell-dur-fast)}
+:is(.set-hub-close,.set-hub-back) svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.set-hub-back{left:calc(clamp(14px,2.2vw,30px) + 54px)}
+:is(.set-hub-close,.set-hub-back):focus-visible{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:var(--set-focus-offset)}
+:is(.set-hub-close,.set-hub-back):hover{background:rgba(151,191,209,.12);border-color:rgba(151,191,209,.55)}
+.set-hub-head{max-width:1240px;width:100%;margin:0 auto;padding-left:4px;display:flex;align-items:center;gap:clamp(14px,1.6vw,22px)}
+/* Grande icône devant « Paramètres » : l'engrenage de `SETTINGS_ICON.settings`, même trait que les cartes. */
+.set-hub-mark{flex:none;width:clamp(56px,5.6vw,78px);aspect-ratio:1;display:grid;place-items:center;border-radius:50%;color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,rgba(3,8,12,.6));border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);box-shadow:0 0 34px -12px var(--accent)}
+.set-hub-mark svg{width:52%;height:52%;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.set-hub-heading{min-width:0}
 .set-hub-brand{margin:0 0 6px;font-size:12px;letter-spacing:.32em;color:#a9c2cf}
-.set-hub-title{margin:0;font-size:clamp(34px,4.4vw,58px);font-weight:300;letter-spacing:-.01em;line-height:1.1}
-.set-hub-lead{margin:10px 0 0;max-width:420px;font-size:15px;line-height:1.55;color:#a9c2cf}
+.set-hub-title{margin:0;font-size:clamp(34px,4.4vw,58px);font-weight:300;letter-spacing:-.01em;line-height:1.1;text-shadow:0 2px 18px rgba(0,0,0,.55)}
 .set-hub-rule{display:block;width:64px;height:2px;margin-top:18px;border-radius:2px;background:linear-gradient(90deg,var(--accent),transparent)}
-.set-hub-grid{max-width:1240px;width:100%;margin:clamp(20px,4vh,44px) auto 0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:minmax(clamp(150px,21vh,210px),1fr);gap:clamp(14px,1.6vw,24px)}
+.set-hub-grid{max-width:1240px;width:100%;margin:clamp(18px,3.4vh,36px) auto 0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:minmax(clamp(150px,21vh,210px),1fr);gap:clamp(14px,1.6vw,24px)}
 @media(max-width:1100px){.set-hub-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:640px){.set-hub-grid{grid-template-columns:minmax(0,1fr);grid-auto-rows:minmax(132px,auto)}}
 .set-hub-card{--hue:var(--accent);position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;gap:6px;min-width:0;padding:22px 24px;border-radius:16px;border:1px solid color-mix(in srgb,var(--hue) 42%,transparent);background:linear-gradient(135deg,color-mix(in srgb,var(--hue) 13%,rgba(6,12,18,.82)),rgba(5,10,15,.78) 62%);box-shadow:0 0 0 1px rgba(0,0,0,.25),0 10px 30px -18px color-mix(in srgb,var(--hue) 70%,transparent),inset 0 1px 0 rgba(255,255,255,.04);color:var(--text);font:inherit;text-align:left;cursor:pointer;opacity:0;transform:translateY(10px) scale(.985);animation:set-hub-in 240ms var(--shell-ease) forwards;animation-delay:calc(var(--i,0) * 35ms);transition:border-color var(--shell-dur),box-shadow var(--shell-dur),transform var(--shell-dur)}
@@ -815,7 +824,7 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-hub-card:hover,.set-hub-card:focus-visible{border-color:color-mix(in srgb,var(--hue) 75%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--hue) 25%,transparent),0 14px 40px -14px color-mix(in srgb,var(--hue) 85%,transparent),inset 0 1px 0 rgba(255,255,255,.06);transform:translateY(-2px)}
 .set-hub-card:focus-visible{outline:2px solid var(--hue);outline-offset:3px}
 .set-hub-icon{position:absolute;top:22px;left:24px;width:52px;height:52px;display:grid;place-items:center;border-radius:50%;color:var(--hue);background:color-mix(in srgb,var(--hue) 14%,rgba(3,8,12,.6));border:1px solid color-mix(in srgb,var(--hue) 45%,transparent)}
-.set-hub-icon svg,.set-hub-art svg,.set-back svg{fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
+.set-hub-icon svg,.set-hub-art svg{fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
 .set-hub-icon svg{width:24px;height:24px;stroke-width:1.6}
 .set-hub-art{position:absolute;right:-18px;top:-14px;width:min(46%,170px);aspect-ratio:1;color:var(--hue);opacity:.12;pointer-events:none;transition:opacity var(--shell-dur)}
 .set-hub-art svg{width:100%;height:100%;stroke-width:.9}
@@ -833,12 +842,12 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
    docs/settings/personalization-page.md). Vue `.set-view` > `.set-page`, panneaux, lignes, curseurs, interrupteurs, choix
    et panneau flottant : primitives `.set-*` (docs/settings/visual-foundation.md). Ici seulement la composition propre
    à la page : trois colonnes dont l'enveloppe reste un rectangle, rangées de curseurs à crans, profil en haut à droite. */
-.set-view.set-perso{--set-view-max:1600px;padding-top:clamp(52px,7vh,72px)}
-/* Le × des pages pleines (Personnalisation, catégories `page` du shell) reste en place quand la page défile. */
-.set-perso .set-hub-close{position:fixed;z-index:var(--set-z-chrome)}
-.settings-shell[data-layout=page] .set-hub-close{position:fixed;z-index:var(--set-z-chrome)}
+.set-view.set-perso{--set-view-max:1600px;padding-top:clamp(76px,8vh,84px)}
+/* × et ← des pages (Personnalisation, toutes les catégories du shell) : fixes, seul chrome qui ne défile pas. */
+.set-perso :is(.set-hub-close,.set-hub-back){position:fixed;z-index:var(--set-z-chrome)}
+.settings-shell>:is(.set-hub-close,.set-hub-back){position:fixed;z-index:var(--set-z-chrome)}
 .perso-head{margin-bottom:clamp(12px,2vh,20px);padding-left:clamp(0px,2.2vw,34px)}
-@media(max-width:900px){.set-view.set-perso{padding-top:84px}}
+@media(max-width:900px){.set-view.set-perso{padding-top:88px}}
 /* Profil actif (en haut à droite, bord droit de la grille) et son panneau flottant `.set-float`. */
 .perso-profile{position:relative;z-index:var(--set-z-popover);flex:none}
 .perso-profile-btn{display:flex;align-items:center;gap:12px;min-height:56px;padding:5px 16px 5px 5px;border-radius:var(--set-r-pill);border:1px solid color-mix(in srgb,var(--set-tone) 45%,transparent);background:linear-gradient(135deg,color-mix(in srgb,var(--set-tone) 14%,var(--set-glass)),var(--set-glass-2));box-shadow:var(--set-lift) color-mix(in srgb,var(--set-tone) 80%,transparent);color:var(--set-ink);font:inherit;cursor:pointer;transition:border-color var(--shell-dur),box-shadow var(--shell-dur)}
@@ -910,9 +919,6 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .perso-agenda[data-off] .set-row-label{color:var(--set-ink-3)}
 @media(prefers-reduced-motion:reduce){.perso-caret{transition:none}}
 .set-head .set-head-text{flex:1 1 auto}
-.set-back{flex:none;display:inline-flex;align-items:center;gap:6px;align-self:flex-start;margin-top:8px;padding:7px 12px 7px 8px;border-radius:999px;border:1px solid var(--set-hair-2);background:rgba(3,8,12,.5);color:var(--set-ink-2);font-size:13px;cursor:pointer}
-.set-back svg{width:16px;height:16px;stroke-width:2}
-.set-back:hover{color:var(--set-ink);border-color:rgba(151,191,209,.4)}
 /* Jetons visuels des Réglages (refonte-ui-settings Slice 01 ; contrat : docs/settings/visual-foundation.md). Définis une
    seule fois, sur `:root`, pour que le hub, les pages pleine fenêtre (`.set-view`), le shell, le Memory Center et la
    feuille d'un module (Architecture, Sous-agents) lisent les mêmes valeurs. Les jetons `--set-ink*`, `--set-hair*`,
@@ -954,7 +960,7 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .settings-shell .routing-off{opacity:1}
 .settings-shell .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 /* Rail des catégories */
-.set-rail{display:flex;flex-direction:column;min-height:0;padding:30px 14px 18px 18px;border-right:1px solid var(--set-hair);background:rgba(3,8,12,.42);overflow:auto}
+.set-rail{display:flex;flex-direction:column;min-height:0;padding:clamp(70px,9vh,86px) 14px 18px 18px;border-right:1px solid var(--set-hair);background:rgba(3,8,12,.42);overflow:auto}
 .set-rail-title{margin:0 10px 22px;font-size:22px;font-weight:600;letter-spacing:-.01em;line-height:1.2}
 .set-cats{display:flex;flex-direction:column;gap:4px}
 .set-cat{display:grid;grid-template-columns:40px minmax(0,1fr);gap:4px 14px;align-items:center;width:100%;padding:11px 12px;border:1px solid transparent;border-radius:12px;background:none;color:var(--set-ink-2);text-align:left;cursor:pointer;transition:background-color var(--shell-dur-fast),border-color var(--shell-dur-fast)}
@@ -975,10 +981,6 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-intro{min-width:0}
 .set-intro-title{margin:0;font-size:26px;font-weight:600;letter-spacing:-.015em;line-height:1.2;text-wrap:balance}
 .set-intro-desc{margin:6px 0 0;max-width:68ch;font-size:14.5px;color:var(--set-ink-2)}
-.set-close{flex:none;display:inline-flex;align-items:center;gap:8px;padding:7px 10px 7px 9px;border:1px solid var(--set-hair-2);border-radius:10px;background:rgba(4,10,15,.6);color:var(--set-ink-2);font-size:13.5px;cursor:pointer;transition:color var(--shell-dur-fast),border-color var(--shell-dur-fast)}
-.set-close:hover{color:var(--set-ink);border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
-.set-close svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round}
-.set-close kbd{padding:1px 6px;border:1px solid var(--set-hair-2);border-radius:5px;font-size:11px;color:var(--set-ink-3)}
 .set-items{display:flex;gap:2px;margin:22px var(--set-pad) 0;border-bottom:1px solid var(--set-hair);overflow-x:auto;scrollbar-width:thin}
 .set-items:empty{display:none}
 .set-item{position:relative;flex:none;padding:9px 14px 12px;border:0;border-radius:8px 8px 0 0;background:none;color:var(--set-ink-3);font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap}
@@ -1008,21 +1010,27 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-foot .action.primary{padding:9px 18px;border-radius:9px;font-size:14px;font-weight:600}
 .set-empty{padding:28px 0;color:var(--set-ink-3)}
 /* Catégorie en page pleine (refonte-ui-settings Slice 07 ; `page` du registre : Architecture & Agents, Mémoire &
-   Connaissances) : même présentation que la page Personnalisation — × rond en haut à gauche, fil d'Ariane, grand titre,
-   phrase, onglets de page (`.set-tab`), sans rail. L'en-tête et les onglets restent en place ; le contenu est la seule
-   zone qui défile, jamais en largeur (la fenêtre flottante d'un cerveau, fixe, ne recouvre ainsi jamais le fil
-   d'Ariane, le titre ni les onglets). La composition est centrée à `--set-view-max` comme `.set-page`, la barre de
-   défilement reste au bord de la fenêtre. */
+   Connaissances) : même présentation que la page Personnalisation — × et ← ronds en haut à gauche, fil d'Ariane,
+   icône et grand titre, phrase, onglets de page (`.set-tab`), sans rail. Une seule zone de défilement par page
+   (retours Human du 25/10, qui annulent l'en-tête fixe de la Slice 07) : `.set-main` défile, l'en-tête et les onglets
+   montent avec le contenu, jamais en largeur ; seuls × et ← restent fixes. La composition est centrée à
+   `--set-view-max` comme `.set-page`, la barre de défilement reste au bord de la fenêtre. */
 .settings-shell[data-layout=page]{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
-.settings-shell[data-layout=page] :is(.set-rail,.set-back){display:none}
-.settings-shell[data-layout=page] .set-main{padding-top:clamp(52px,7vh,72px)}
+.settings-shell[data-layout=page] .set-rail{display:none}
+.settings-shell[data-layout=page] .set-main{padding-top:clamp(80px,9.5vh,92px);overflow-x:hidden;overflow-y:auto}
 .settings-shell[data-layout=page] .set-main>:is(.set-head,.set-items){width:calc(100% - 2 * var(--set-view-pad));max-width:var(--set-view-max);margin-inline:auto}
 .settings-shell[data-layout=page] .set-head{display:block;padding:0 0 0 clamp(0px,2.2vw,34px);margin-bottom:clamp(18px,3vh,28px)}
 .settings-shell[data-layout=page] .set-head-text{display:block}
-.settings-shell[data-layout=page] .set-hub-close>:not(svg){display:none}
 .settings-shell[data-layout=page] .set-items{margin-top:0;margin-bottom:var(--set-gap);padding:4px;gap:var(--set-sp-3);flex-wrap:wrap;border:0;overflow:visible}
-.settings-shell[data-layout=page] .set-main>.set-body{padding:4px max(var(--set-view-pad),calc((100% - var(--set-view-max)) / 2)) clamp(24px,5vh,48px)}
-@media(max-width:900px){.settings-shell[data-layout=page] .set-main{padding-top:84px}}
+.settings-shell[data-layout=page] .set-main>.set-body{flex:none;overflow:visible;min-height:auto;padding:4px max(var(--set-view-pad),calc((100% - var(--set-view-max)) / 2)) clamp(24px,5vh,48px)}
+/* Section « à la taille de l'écran » (`fill` au registre : Architecture) : même défilement unique, mais le contenu
+   prend exactement la hauteur restante sous l'en-tête et toute la largeur ; rien à faire défiler, sauf sur un très
+   petit écran où la hauteur minimale du contenu fait revenir le défilement normal. */
+.settings-shell[data-layout=page][data-fill] .set-main>.set-body{flex:1 0 auto;min-height:360px;display:flex;flex-direction:column;padding:4px var(--set-view-pad) clamp(12px,2vh,20px)}
+.settings-shell[data-fill] .set-body>.set-mount,.settings-shell[data-fill] :is([data-architecture-page],#architectureCanvas){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.settings-shell[data-fill] #architectureCanvas>.arch{flex:1 1 auto;min-height:0}
+.settings-shell[data-fill] #architectureCanvas .arch-main{height:auto}
+@media(max-width:900px){.settings-shell[data-layout=page] .set-main{padding-top:88px}}
 /* Contenu hérité : typographie de lecture (le contenu lui-même ne change pas). */
 /* Titres de primitive (`.set-panel-title`, `.set-float-title`) exclus : ils gardent la fondation (Slice 07). */
 .settings-shell .content h3:not(.set-panel-title,.set-float-title){margin:30px 0 12px;font-size:15px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--set-ink)}
@@ -1086,13 +1094,13 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 /* En-tête de page : fil d'Ariane, grand titre léger, chapeau, filet. */
 .set-page-head{position:relative;display:flex;justify-content:space-between;align-items:flex-start;gap:var(--set-sp-6);flex-wrap:wrap;margin-bottom:clamp(18px,3vh,30px)}
 .set-crumb{display:flex;align-items:center;gap:10px;margin:0 0 6px;font-size:12px;letter-spacing:.3em;text-transform:uppercase;color:var(--set-ink-2)}
-.set-title{margin:0;font-size:var(--set-fs-display);font-weight:300;letter-spacing:-.01em;line-height:1.1;text-wrap:balance}
+.set-title{margin:0;font-size:var(--set-fs-display);font-weight:300;letter-spacing:-.01em;line-height:1.1;text-wrap:balance;text-shadow:0 2px 16px rgba(0,0,0,.5)}
+/* Icône de la page devant son titre : celle de sa carte du hub (`settingsIcon`, source unique), à sa teinte. */
+.set-title-row{display:flex;align-items:center;gap:var(--set-sp-4);min-width:0}
+.set-title-icon{flex:none;width:clamp(44px,3.6vw,56px);aspect-ratio:1;display:grid;place-items:center;border-radius:50%;color:var(--set-hue,var(--set-tone));background:color-mix(in srgb,var(--set-hue,var(--set-tone)) 14%,rgba(3,8,12,.6));border:1px solid color-mix(in srgb,var(--set-hue,var(--set-tone)) 45%,transparent)}
+.set-title-icon svg{width:50%;height:50%;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .set-lead{margin:10px 0 0;max-width:62ch;font-size:15px;line-height:1.55;color:var(--set-ink-2)}
 .set-rule{display:block;width:64px;height:2px;margin-top:18px;border-radius:2px;background:linear-gradient(90deg,var(--set-cyan),transparent)}
-/* « Paramètres » du fil d'Ariane : un lien de retour au hub, au texte du fil. */
-.set-crumb button{all:unset;cursor:pointer;letter-spacing:inherit;border-radius:var(--set-r-xs);padding:2px 4px;margin:-2px -4px}
-.set-crumb button:hover{color:var(--set-ink)}
-.set-crumb button:focus-visible{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:var(--set-focus-offset)}
 /* Grilles. `.set-grid` : 12 colonnes à gouttière constante, enfants placés par `.set-span-N` ; 2 colonnes quand le
    conteneur `.set-page` passe sous 1080 px (span ≤ 6 → une colonne, > 6 → toute la rangée), 1 colonne sous 640 px.
    `.set-grid-auto` : 3/2/1 colonnes sans requête, chaque colonne au moins `--set-col-min`. `.set-workbench` : surface
@@ -1280,13 +1288,13 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
   :is(.set-tab[aria-selected=true],.set-switch[aria-checked=true] .set-switch-track,.set-choice:has(input:checked)){outline:2px solid Highlight}
   .set-dot::before{forced-color-adjust:none}}
 @media(max-height:700px) and (min-width:901px){
-  .set-rail{padding-top:20px}.set-rail-title{margin-bottom:14px}
+  .set-rail{padding-top:66px}.set-rail-title{margin-bottom:14px}
   .set-cat{padding:8px 10px}
   .set-head{padding-top:20px}.set-items{margin-top:14px}
 }
 @media(max-width:900px){
   .settings-shell{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
-  .set-rail{padding:14px 16px 10px;border-right:0;border-bottom:1px solid var(--set-hair);overflow:visible}
+  .set-rail{padding:70px 16px 10px;border-right:0;border-bottom:1px solid var(--set-hair);overflow:visible}
   .set-rail-title{margin:0 2px 10px;font-size:18px}
   .set-cats{flex-direction:row;overflow-x:auto;gap:6px;scrollbar-width:thin}
   .set-cat{flex:none;width:auto;grid-template-columns:28px auto;padding:6px 12px 6px 6px}
@@ -1295,9 +1303,8 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
   .set-cat-label{font-size:13.5px;white-space:nowrap}.set-cat-desc{display:none}
   .set-items-grouped{flex-wrap:nowrap}
   .set-head{padding-top:18px;gap:12px}.set-intro-icon{display:none}.set-intro-title{font-size:21px}
-  .set-close span{display:none}
 }
-@media(prefers-reduced-motion:reduce){.overlay.open,.set-body.set-enter{animation:none}.set-cat,.set-close{transition:none}
+@media(prefers-reduced-motion:reduce){.overlay.open,.set-body.set-enter{animation:none}.set-cat{transition:none}
   /* Toute section, y compris celles des modules : ni animation qui dure, ni transition, ni défilement animé. */
   .settings-shell *,.settings-shell *::before,.settings-shell *::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
 @media(forced-colors:active){.set-cat[aria-selected=true],.set-item.active{outline:2px solid Highlight}
@@ -2842,24 +2849,27 @@ button.wsp-ename:hover{color:var(--accent)}
      `JarvisSettingsRegistry.CATEGORIES`, puis les entrées de la catégorie (#modalTabs). -->
 <div class="overlay" id="overlay">
   <!-- Hub des Réglages (2026-10-23) : premier niveau, six cartes ; une carte ouvre le shell sur sa catégorie. -->
-  <section class="set-hub" id="settingsHub" role="dialog" aria-modal="true" aria-labelledby="settingsHubTitle" aria-describedby="settingsHubLead">
+  <section class="set-hub" id="settingsHub" role="dialog" aria-modal="true" aria-labelledby="settingsHubTitle">
     <button type="button" class="set-hub-close" id="settingsHubClose" aria-label="Fermer les paramètres" aria-keyshortcuts="Escape"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     <header class="set-hub-head">
-      <p class="set-hub-brand">JARVIS</p>
-      <h2 class="set-hub-title" id="settingsHubTitle">Paramètres</h2>
-      <p class="set-hub-lead" id="settingsHubLead">Personnalisez votre assistant et façonnez votre expérience JARVIS.</p>
-      <span class="set-hub-rule" aria-hidden="true"></span>
+      <span class="set-hub-mark" id="settingsHubIcon" aria-hidden="true"></span>
+      <div class="set-hub-heading">
+        <p class="set-hub-brand">JARVIS</p>
+        <h2 class="set-hub-title" id="settingsHubTitle">Paramètres</h2>
+        <span class="set-hub-rule" aria-hidden="true"></span>
+      </div>
     </header>
     <nav class="set-hub-grid" id="settingsHubGrid" aria-label="Catégories des paramètres"></nav>
   </section>
   <!-- Page Personnalisation (2026-10-23) : ouverte par la carte Personnalisation du hub ; `control_center_personalization.js`. -->
   <section class="set-view set-perso" id="settingsPerso" role="dialog" aria-modal="true" aria-labelledby="persoTitle" aria-describedby="persoLead">
     <button type="button" class="set-hub-close" id="persoClose" aria-label="Fermer les paramètres" aria-keyshortcuts="Escape"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    <button type="button" class="set-hub-back" id="persoBack" aria-label="Retour au menu des paramètres"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button>
     <div class="set-page">
       <header class="set-page-head perso-head">
         <div>
-          <nav class="set-crumb" aria-label="Fil d’Ariane"><span>JARVIS</span><span aria-hidden="true">›</span><button type="button" id="persoCrumbHub">Paramètres</button></nav>
-          <h2 class="set-title" id="persoTitle">Personnalisation</h2>
+          <p class="set-crumb"><span>JARVIS</span><span aria-hidden="true">›</span><span>Paramètres</span></p>
+          <div class="set-title-row"><span class="set-title-icon" id="persoIcon" aria-hidden="true"></span><h2 class="set-title" id="persoTitle">Personnalisation</h2></div>
           <p class="set-lead" id="persoLead">Définissez la personnalité, la voix et le comportement de JARVIS pour une expérience qui vous ressemble.</p>
           <span class="set-rule" aria-hidden="true"></span>
         </div>
@@ -2869,6 +2879,8 @@ button.wsp-ename:hover{color:var(--accent)}
     </div>
   </section>
   <div class="settings-shell" id="settingsShell" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="settingsHelp">
+    <button type="button" class="set-hub-close" id="closeModal" aria-label="Fermer les réglages" aria-keyshortcuts="Escape"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    <button type="button" class="set-hub-back" id="settingsBack" aria-label="Retour au menu des paramètres"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button>
     <aside class="set-rail">
       <h2 class="set-rail-title" id="modalTitle">Paramètres</h2>
       <nav class="set-cats" id="settingsCategories" role="tablist" aria-orientation="vertical" aria-label="Catégories des réglages"></nav>
@@ -2876,9 +2888,7 @@ button.wsp-ename:hover{color:var(--accent)}
     </aside>
     <main class="set-main" id="settingsMain" role="tabpanel">
       <div class="set-head">
-        <button type="button" class="set-back" id="settingsBack" aria-label="Retour aux catégories des paramètres"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg><span>Toutes les catégories</span></button>
         <div class="set-head-text" id="settingsIntro"></div>
-        <button type="button" class="set-close" id="closeModal" aria-label="Fermer les réglages" aria-keyshortcuts="Escape"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Fermer</span><kbd>Échap</kbd></button>
       </div>
       <nav class="set-items" id="modalTabs" role="tablist" aria-label="Sections de la catégorie"></nav>
       <div class="set-body content" id="modalContent"></div>
@@ -5726,7 +5736,7 @@ function mountArchitectureSettings(host,context){
     event.preventDefault();ARCH.panel.close();
   });
   const nodeLabel=id=>{const n=ARCH.view&&((ARCH.view.state.snapshot||{}).nodes||[]).find(x=>x.id===id);return n?n.label:id};
-  ARCH.view=A.mount(canvas,{adapter:A.createHttpAdapter(),subagentsTarget:'subagents',onConfigureBrain:(nodeId,detail)=>{
+  ARCH.view=A.mount(canvas,{adapter:A.createHttpAdapter(),onConfigureBrain:(nodeId,detail)=>{
     if(!context.isCurrent())return;
     ARCH.panel=P.open(panels,{adapter:panelAdapter,brainId:nodeId,field:detail&&detail.field,
       returnFocus:P.canvasReturnFocus(canvas,nodeId,detail||{}),
@@ -5747,7 +5757,8 @@ function mountArchitectureSettings(host,context){
       onClose:()=>{ARCH.panel=null}});
   }});
 }
-const ARCHITECTURE_SECTION={id:'architecture',category:'agents_models',order:10,label:'Architecture',save:'self',
+/* `fill` : le graphe prend toute la hauteur restante sous l'en-tête de la page (retours Human du 25/10). */
+const ARCHITECTURE_SECTION={id:'architecture',category:'agents_models',order:10,label:'Architecture',save:'self',fill:true,
   description:'Les cerveaux de JARVIS, l’audio et leurs liaisons réelles. Clic droit ou « … » sur un cerveau : sa configuration.',
   mount(host,context){mountArchitectureSettings(host,context)},
   destroy(){destroyArchitectureSettings()},
@@ -5897,6 +5908,8 @@ const SETTINGS_ICON={
   memory_knowledge:'<ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v13c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-13"/><path d="M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8"/>',
   interface_interactions:'<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
   connections:'<path d="M9 4.5a2 2 0 0 1 4 0V6h3.5a1 1 0 0 1 1 1v3.5h-1.3a2 2 0 0 0 0 4h1.3V18a1 1 0 0 1-1 1H13v-1.3a2 2 0 0 0-4 0V19H5.5a1 1 0 0 1-1-1v-3.5h1.3a2 2 0 0 0 0-4H4.5V7a1 1 0 0 1 1-1H9z"/>',
+  /* Engrenage du hub lui-même (grande icône devant « Paramètres »). */
+  settings:'<path d="M12.2 2.5h-.4a1.9 1.9 0 0 0-1.9 1.9v.2a1.9 1.9 0 0 1-1 1.6l-.4.2a1.9 1.9 0 0 1-1.9 0l-.1-.1a1.9 1.9 0 0 0-2.6.7l-.2.4a1.9 1.9 0 0 0 .7 2.6l.1.1a1.9 1.9 0 0 1 1 1.6v.5a1.9 1.9 0 0 1-1 1.7l-.1.1a1.9 1.9 0 0 0-.7 2.6l.2.4a1.9 1.9 0 0 0 2.6.7l.1-.1a1.9 1.9 0 0 1 1.9 0l.4.2a1.9 1.9 0 0 1 1 1.6v.2a1.9 1.9 0 0 0 1.9 1.9h.4a1.9 1.9 0 0 0 1.9-1.9v-.2a1.9 1.9 0 0 1 1-1.6l.4-.2a1.9 1.9 0 0 1 1.9 0l.1.1a1.9 1.9 0 0 0 2.6-.7l.2-.4a1.9 1.9 0 0 0-.7-2.6l-.1-.1a1.9 1.9 0 0 1-1-1.7v-.5a1.9 1.9 0 0 1 1-1.6l.1-.1a1.9 1.9 0 0 0 .7-2.6l-.2-.4a1.9 1.9 0 0 0-2.6-.7l-.1.1a1.9 1.9 0 0 1-1.9 0l-.4-.2a1.9 1.9 0 0 1-1-1.6v-.2a1.9 1.9 0 0 0-1.9-1.9z"/><circle cx="12" cy="12" r="3"/>',
   advanced_diagnostics:'<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/>',
   generic:'<circle cx="12" cy="12" r="3"/><path d="M12 3v3m0 12v3M3 12h3m12 0h3"/>',
 };
@@ -6121,17 +6134,19 @@ function renderTabs(){
       +`<span class="set-cat-icon">${settingsIcon(c.id)}</span><span class="set-cat-label">${esc(c.label)}</span><span class="set-cat-desc">${esc(c.description)}</span></button>`}).join('');
   shell.style.setProperty('--set-hue',SETTINGS_HUE[cat.id]||'var(--accent)');
   shell.dataset.category=cat.id;
-  /* Page pleine (Slice 07, `page` du registre) : fil d'Ariane, grand titre, phrase et onglets de page, sans rail ; le
-     bouton Fermer devient le × rond du hub et de Personnalisation, en haut à gauche. Sinon, le shell à rail. */
-  const page=!!cat.page,close=$('#closeModal');
+  /* Page pleine (Slice 07, `page` du registre) : fil d'Ariane, icône et grand titre, phrase et onglets de page, sans
+     rail. Sinon, le shell à rail. × (`#closeModal`) et ← (`#settingsBack`, retour au hub) sont les deux mêmes boutons
+     ronds fixes en haut à gauche dans les deux dispositions (retours Human du 25/10). `data-fill` : la section ouverte
+     se dimensionne à la hauteur restante de l'écran (`fill` au registre). */
+  const page=!!cat.page,open=cat.items.find(i=>i.id===SET.section);
   shell.dataset.layout=page?'page':'rail';
-  close.classList.toggle('set-hub-close',page);close.classList.toggle('set-close',!page);
+  if(page&&open&&open.fill)shell.dataset.fill='';else delete shell.dataset.fill;
   shell.setAttribute('aria-labelledby',page?'settingsCategoryTitle':'modalTitle');
   $('#settingsMain').setAttribute('aria-labelledby',page?'settingsCategoryTitle':`settingsCat-${cat.id}`);
   $('#settingsIntro').innerHTML=page
-    ?`<div class="set-page-intro"><nav class="set-crumb" aria-label="Fil d’Ariane"><span>JARVIS</span><span aria-hidden="true">›</span>`
-      +`<button type="button" id="settingsCrumbHub" data-settings-hub>Paramètres</button></nav>`
-      +`<h2 class="set-title" id="settingsCategoryTitle">${esc(cat.label)}</h2><p class="set-lead">${esc(cat.page.lead||cat.description)}</p>`
+    ?`<div class="set-page-intro"><p class="set-crumb"><span>JARVIS</span><span aria-hidden="true">›</span><span>Paramètres</span></p>`
+      +`<div class="set-title-row"><span class="set-title-icon" aria-hidden="true">${settingsIcon(cat.id)}</span><h2 class="set-title" id="settingsCategoryTitle">${esc(cat.label)}</h2></div>`
+      +`<p class="set-lead">${esc(cat.page.lead||cat.description)}</p>`
       +'<span class="set-rule" aria-hidden="true"></span></div>'
     :`<span class="set-intro-icon" aria-hidden="true">${settingsIcon(cat.id)}</span>`+UI.intro({id:'settingsCategoryTitle',title:cat.label,description:cat.description,level:3});
   /* Avis de catégorie déclaré par le registre (Avancé : outils d'opérateur). */
@@ -6161,9 +6176,9 @@ function renderTabs(){
   items.querySelectorAll('[data-section]').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.section)));
   /* La navigation est redessinée à chaque changement : le focus revient sur l'entrée active de la même liste. */
   /* En page pleine le rail est masqué : le focus venu du rail va sur l'onglet de page actif (à défaut le premier,
-     puis le fil d'Ariane), sinon il tomberait sur `body`. */
+     puis le ← du hub), sinon il tomberait sur `body`. */
   const focusTarget=hadFocus==='rail'&&!page?rail.querySelector('[aria-selected=true]')
-    :hadFocus?(items.querySelector('[aria-selected=true]')||items.querySelector('[role=tab]')||(page?$('#settingsCrumbHub'):null)):null;
+    :hadFocus?(items.querySelector('[aria-selected=true]')||items.querySelector('[role=tab]')||(page?$('#settingsBack'):null)):null;
   if(focusTarget)focusTarget.focus({preventScroll:true});
   /* Consigne clavier du dialogue (`aria-describedby`) : elle suit la disposition. */
   $('#settingsHelp').textContent=page
@@ -6724,6 +6739,7 @@ const HUB_ARROW='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M1
 function renderSettingsHub(){
   const R=window.JarvisSettingsRegistry;
   if(!R){console.error('settings_registry_missing');return}
+  $('#settingsHubIcon').innerHTML=settingsIcon('settings');
   $('#settingsHubGrid').innerHTML=R.CATEGORIES.map((c,i)=>
     `<button type="button" class="set-hub-card" data-hub-category="${esc(c.id)}" aria-describedby="settingsHubDesc-${esc(c.id)}" style="--hue:${SETTINGS_HUE[c.id]||'var(--accent)'};--i:${i}">`
     +`<span class="set-hub-art" aria-hidden="true">${settingsIcon(c.id)}</span><span class="set-hub-icon" aria-hidden="true">${settingsIcon(c.id)}</span>`
@@ -6761,7 +6777,7 @@ function enterSettingsCategory(id){
   console.info('[settings] settings_hub.category',{category:id});
   return openSettingsTab(id,{returnFocus:opener});
 }
-/* « Paramètres » dans la tête du shell : retour au hub, sans fermer l'overlay ; le brouillon reste (`SET.dirty`). */
+/* ← du shell : retour au hub, sans fermer l'overlay ; le brouillon reste (`SET.dirty`). */
 function backToSettingsHub(){
   const opener=SET.opener;
   SET.hubReturn=true;
@@ -6773,9 +6789,8 @@ $('#settingsHubGrid').addEventListener('click',event=>{
   if(card)enterSettingsCategory(card.dataset.hubCategory);
 });
 $('#settingsHubClose').addEventListener('click',closeSettingsHub);
+/* ← en haut à gauche du shell (page pleine ou rail) : retour au hub des Réglages. */
 $('#settingsBack').addEventListener('click',backToSettingsHub);
-/* « Paramètres » du fil d'Ariane d'une page pleine (dessiné par `renderTabs`) : même retour au hub. */
-$('#settingsIntro').addEventListener('click',event=>{if(event.target.closest&&event.target.closest('[data-settings-hub]'))backToSettingsHub()});
 /* Flèches entre les cartes (ordre de lecture) ; Échap ferme ; Tab reste dans le hub (aria-modal). */
 $('#settingsHub').addEventListener('keydown',event=>{
   const cards=[...document.querySelectorAll('#settingsHubGrid .set-hub-card')];
