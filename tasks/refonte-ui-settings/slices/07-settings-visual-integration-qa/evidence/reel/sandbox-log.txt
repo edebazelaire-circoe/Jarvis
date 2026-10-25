@@ -1,0 +1,13 @@
+[01:31:07] candidats semés : ['s07cand1', 's07cand2', 's07cand3']
+[01:31:07] core lancé : PID 28856
+[01:31:12] Core à l'écoute sur 27653
+[01:31:12] control-center lancé : PID 8960
+[01:31:15] Control Center prêt
+[01:31:23] perso : attentes échouées [] ; mesures {"profile_focus": "perso-profile-pick", "profile_closed": [true, "persoProfileBtn"]}
+[01:31:23] perso : console []
+[01:31:31] architecture : attentes échouées [] ; mesures {"arch": {"layout": "page", "rail": false, "health": "4 modules inactifs : Micro, Voice Brain, Tool Brain, Haut-parleurs"}, "after_panel_escape": [true, "architecture"]}
+[01:31:31] architecture : console []
+[01:31:44] memory : attentes échouées [] ; mesures {"tiles": ["0 notes", "3 en attente", "Évaluer la pertinence"], "sources": {"Wiki": "Actif", "Graphe de code": "Indisponible", "Skills": "Actif"}, "stats": ["0", "3", "2", "Prêt"], "stats_after": ["1", "2", "2", "Prêt"], "recall": "L1\n          Vous préférez des réponses concises avec des exemples\n          0.016\n          Pourquoi : lexical #1: terms reponses, concises · rang lexical 1 · source long_term_memory/66798247af72afb75946bf5e75e0426c"}
+[01:31:44] memory : console []
+[01:31:44] control-center arrêté : PID 8960, code 1
+[01:31:44] core arrêté : PID 28856, code 1

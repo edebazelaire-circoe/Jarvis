@@ -271,6 +271,61 @@ sont propres à la Slice 04.
 - Tests : panneau navigateur 8, espace de travail 5, canevas statique + js + couches du shell + panneau js 81,
   `test_architecture_agents_settings_browser` + autres 59 verts. Captures `apres-fenetre-*` refaites.
 
+## Slice 07 — convergence visuelle et QA finale (2026-10-24/25, worktree `rui`)
+
+Skills `caveman`, `coding-guideline`, `impeccable` chargés. Base : `95d14da7` (S01–S06 fusionnées).
+
+Livré :
+- **Mise en page unique** (décision d'agent 0) : `page: {lead}` au registre pour `agents_models` et `memory_knowledge` ;
+  `renderTabs` pose `#settingsShell[data-layout=page]` : × rond en haut à gauche (`#closeModal` prend `.set-hub-close`),
+  fil d'Ariane « JARVIS › Paramètres » (`#settingsCrumbHub` → `backToSettingsHub`), grand titre `.set-title`, phrase,
+  onglets de page `.set-tab` (pictogramme + libellé, `SETTINGS_SECTION_ICON`), sans rail ni « Toutes les catégories ».
+  Même shell, mêmes fonctions et identifiants : liens profonds, alias, `openSettingsTab`/`openSettingsLink`, raccourcis,
+  Échap (menu → fenêtre → page), état d'onglet inchangés ; focus à l'ouverture sur l'onglet de page. L'en-tête et les
+  onglets restent en place, seul le contenu défile (une page entière qui défilait laissait la fenêtre fixe d'un cerveau
+  recouvrir titre et onglets : deux tests l'ont montré, corrigé). `architecturePanelZone` : sous les onglets et le ×.
+  Pas d'avatar (aucune donnée de profil hors Personnalisation). Docs : `settings-shell.md` § 1 bis,
+  `navigation-registry.md`, `architecture-agents.md`, `memory.md`, `personalization-page.md`, `visual-foundation.md`,
+  registre des couches (`docs/control-center-shell.md`, préfixe `.settings-shell[data-layout=page] `).
+- **Finitions faites** : `.content h3` / `.settings-shell .content h3` excluent `.set-panel-title`/`.set-float-title`,
+  contournement S03 retiré ; Mémoire et Memory Center migrés sur les primitives (panneaux, médaillons, interrupteur
+  `JarvisSettingsUI.toggle` lié au clic, `.set-range`, `.set-choice` avec témoin radio visible, `.set-dot`, badges,
+  boutons, onglets internes `.set-tabs-fill`, champs `.set-input`) ; `.sar-side` retiré, `.sar-summary` dans le module ;
+  commentaire 1080 → 1240 ; course de `control_center_personalization.js` (texte d'instructions en vol écrasé par le
+  rendu d'une autre carte puis renvoyé) corrigée par `textSaving` ; aides des rappels en info-bulle ; Réglages détaillés
+  sans vide ; code stable dans une cellule `guarded` ; `memoryCenterTab` consommé même en échec ; deux mentions
+  « Réglages › Mémoire & connaissances » de la tâche au libellé vivant ; tests S02 manquants (refus → restauration,
+  échéance 15 s → relecture, brouillon en vol, piège Tab), test de la pastille Tencent (faux Core `tencent`).
+- **Laissés, dit** : `.mcpp-switch` (vue hors maquettes, CSS épinglée par `test_control_center_mcp_plugins_js.py`) ;
+  `max=10` du test de rappel et libellés `LEVELS`/`RETENTIONS`/`KINDS` (contrat serveur à servir) ; mentions
+  « Avancé & diagnostic », « Connexions », « Interface & interactions » des messages serveur (préexistantes, voir
+  ci-dessous ; changer ces messages dépasse la Slice).
+- Tests : nouveau `test_settings_page_layout_browser.py` (mise en page, rail, focus, alias, défilement unique, captures
+  finales) ; adaptés : `test_architecture_workspace_browser`, `test_jarvis_wheel_browser`, `test_status_centre_browser`,
+  `test_settings_accessibility_browser` (couleurs forcées depuis l'onglet de page), `test_memory_settings_browser`,
+  `test_personalization_page_browser`, `test_subagent_role_routing_ui_js`, `settings_visual.VIEWS['memory_center']`.
+
+Suite finale (venv du dépôt principal, depuis `rui`) :
+- Navigateur : page pleine + espace de travail Architecture 7 ; `test_architecture_agents_settings_browser` 9 ;
+  `test_architecture_settings_browser` + `test_brain_config_panel_browser` 22 ; `test_memory_settings_browser` 16 ;
+  `test_personalization_page_browser` + `test_settings_shell_browser` 17 ; `test_settings_accessibility_browser` 17 ;
+  `test_wake_word_settings_browser` 20 ; `test_advanced_settings_browser` + `test_settings_visual_foundation_browser`
+  20 ; `test_interface_settings_browser` + `test_subagent_settings_browser` 21 ; `test_jarvis_wheel_browser` +
+  `test_status_centre_browser` 34 ; `test_connections_settings_browser` 7 + 3 échecs préexistants connus ;
+  `test_settings_message_destinations_browser` 1 + 1 échec **préexistant** (rouge sur `be80ab9b` : 18 mentions, 10 ici).
+- Rapides `tests/unit` hors navigateur (847 fichiers, 12 lots) : 22 787 passés, 68 sautés ; échecs : `test_control_center_mcp_api`
+  ×6 et `test_brain_capability_parity` (connus) ; **préexistants prouvés sur `be80ab9b`** (worktree temporaire
+  `s07base`, supprimé) : `test_app::…tools_gateway_target…`, `test_barehands_interaction_js` ×2,
+  `test_scene_group_drag_js` ×1, `test_surface_reflex_policy::test_no_provider_model_id…`,
+  `test_tool_brain_choices::test_ui_projection…` ; instable sous charge : `test_memory_context` (38/38 seul).
+- Essai réel (bac à sable `scratchpad/s07` de la session, vrai Core 27653 + Control Center 27654, visualiseur coupé, CLI
+  cerveau neutralisé, 3 candidats semés dans la vraie file) : cinq vues ouvertes/fermées, profils (focus, Échap),
+  préréglage enregistré, fenêtre du cerveau ouverte puis fermée par Échap (Réglages restés ouverts), onglets,
+  Connaissances (Wiki/Skills Actif, Graphe de code Indisponible), candidat accepté → notes 0 → 1, candidats 3 → 2, test
+  de rappel à la touche Entrée retrouve la nouvelle note ; console vide ; PID lancés arrêtés seuls. Preuves :
+  `slices/07-settings-visual-integration-qa/evidence/reel/`.
+- Captures finales et paquet Human : `slices/07-settings-visual-integration-qa/evidence/`, `HUMAN-VALIDATION.md`.
+
 ## LOG Drive d'origine
 # Execution log
 
