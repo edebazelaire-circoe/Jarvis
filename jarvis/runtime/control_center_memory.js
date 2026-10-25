@@ -40,7 +40,7 @@
   const STYLE_ID='jarvisMemoryCenterStyle';
   const STYLE=`
 .mcw{--mc-hue:var(--accent);--mc-violet:var(--role-accent-violet,#b9a2ff);--mc-line:color-mix(in srgb,var(--mc-hue) 22%,var(--set-hair-2,#1b3442));
-  --mc-hair:var(--set-hair-2,#24414f);--mc-hair-1:var(--set-hair,rgba(151,191,209,.13));--mc-glass:var(--shell-glass-strong,rgba(4,10,15,.8));
+  --mc-hair:var(--set-hair-2,#24414f);--mc-hair-1:var(--set-hair,rgba(151,191,209,.13));
   --mc-ink-2:var(--set-ink-2,#a9c2cf);--mc-ink-3:var(--set-ink-3,#8aa5b3);
   container-type:inline-size;display:grid;gap:14px;min-width:0;color:var(--set-ink,var(--text));font-size:13px;line-height:1.45}
 .mcw *{box-sizing:border-box}
@@ -81,6 +81,9 @@
 .mc-select{width:auto;max-width:100%;min-height:36px;padding:6px 10px;font-size:12.5px}
 .mc-select option{background:#08121a}
 .mc-check{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--mc-ink-2)}
+.mc-check input[type=checkbox]{width:16px;height:16px;margin:0;accent-color:var(--accent)}
+.mc-why.mc-warn{color:var(--set-warn,var(--warn))}
+.mc-selectwrap{display:inline-block}
 .mc-btn svg{width:15px;height:15px}
 .mc-btn.ok{color:var(--set-ok)}.mc-btn.bad{color:var(--set-bad)}
 .mc-link{padding:0;border:0;background:none;color:var(--accent);font:inherit;font-size:12.5px;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
@@ -101,7 +104,7 @@
 .mc-lvl-L0{color:var(--mc-ink-2)}.mc-lvl-L1{color:var(--ok)}.mc-lvl-L2{color:var(--role-accent-sky,#74c6ff)}.mc-lvl-L3{color:var(--mc-violet)}
 .mc-iconbtn{display:grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid transparent;border-radius:8px;background:none;color:var(--mc-ink-2);cursor:pointer}
 .mc-iconbtn:hover{border-color:var(--mc-hair);color:var(--set-ink,var(--text))}
-@container (max-width:720px){.mc-table .c-scope,.mc-table .c-ret{display:none}}
+@container (max-width:640px){.mc-table .c-scope,.mc-table .c-ret{display:none}}
 @container (max-width:430px){.mc-table .c-kind,.mc-table .c-date{display:none}}
 .mc-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;color:var(--mc-ink-2);font-size:12.5px}
 .mc-pages{display:flex;align-items:center;gap:6px}
@@ -375,9 +378,9 @@
           <p>${n.hits?'<span class="set-badge mc-chip derived">Dérivé</span> Résultats de l’index lexical ; ouvrir une note affiche son contenu canonique.':'<span class="set-badge set-badge-ok mc-chip canon">Canonique</span> Notes Markdown retenues par JARVIS.'}</p></div><span></span></div>
         <form class="mc-filters" data-form="notes" role="search" aria-label="Rechercher et filtrer les notes">
           <label class="mc-search">${icon('search')}<span class="sr">Rechercher une note</span><input id="mcQuery" type="search" value="${esc(n.q)}" placeholder="Rechercher une note…" autocomplete="off"></label>
-          <label><span class="sr">Niveau</span><select class="set-input mc-select" id="mcLevel" data-filter>${opt(LEVELS,n.level,'Tous les niveaux')}</select></label>
-          <label><span class="sr">Rétention</span><select class="set-input mc-select" id="mcRetention" data-filter>${opt(RETENTIONS,n.retention,'Toutes rétentions')}</select></label>
-          ${n.q.trim()?'':`<label><span class="sr">Type</span><select class="set-input mc-select" id="mcKind" data-filter>${opt(KINDS,n.kind,'Tous les types')}</select></label>
+          <label><span class="sr">Niveau</span><span class="set-select mc-selectwrap"><select class="mc-select" id="mcLevel" data-filter>${opt(LEVELS,n.level,'Tous les niveaux')}</select></span></label>
+          <label><span class="sr">Rétention</span><span class="set-select mc-selectwrap"><select class="mc-select" id="mcRetention" data-filter>${opt(RETENTIONS,n.retention,'Toutes rétentions')}</select></span></label>
+          ${n.q.trim()?'':`<label><span class="sr">Type</span><span class="set-select mc-selectwrap"><select class="mc-select" id="mcKind" data-filter>${opt(KINDS,n.kind,'Tous les types')}</select></span></label>
           <label class="mc-check"><input id="mcSuper" type="checkbox" data-filter${n.superseded?' checked':''}> Remplacées</label>`}
           <button type="submit" class="set-btn set-btn-sm mc-btn">Rechercher</button></form>
         ${notesTable()}${notesFoot()}</section>`;
@@ -385,7 +388,7 @@
 
     function candCard(x,full){
       const c=st.cands,pending=c.pending[x.id],confirm=c.confirm&&c.confirm.id===x.id?c.confirm:null,err=c.errors[x.id];
-      const meta=`<span class="set-badge set-badge-warn mc-chip prop">Proposition</span>${lvl(x.level)}<span>${esc(label(KINDS,x.kind))}</span><span>confiance ${esc(Math.round(Number(x.confidence)*100))} %</span>${x.conflicts&&x.conflicts.length?`<span class="mc-warn">${x.conflicts.length} conflit(s)</span>`:''}`;
+      const meta=`<span class="set-badge set-badge-warn mc-chip prop">Proposition</span>${lvl(x.level)}<span>${esc(label(KINDS,x.kind))}</span><span>confiance ${esc(Math.round(Number(x.confidence)*100))} %</span>${x.conflicts&&x.conflicts.length?`<span class="set-badge set-badge-warn mc-chip">${x.conflicts.length} conflit(s)</span>`:''}`;
       const acts=x.state==='proposed'?`<div class="mc-cand-a">${pending?busy(pending==='accept'?'Acceptation…':'Rejet…')
         :`<button type="button" class="set-btn set-btn-sm set-tone-ok mc-btn ok" data-act="cand-accept" data-id="${esc(x.id)}" aria-label="Accepter « ${esc(x.title)} »">${icon('check')}Accepter</button>
           <button type="button" class="set-btn set-btn-sm set-btn-danger mc-btn bad" data-act="cand-reject" data-id="${esc(x.id)}" aria-label="Rejeter « ${esc(x.title)} »">${icon('close')}Rejeter</button>`}</div>`
@@ -427,7 +430,7 @@
       return `<section class="set-panel mc-card" aria-labelledby="mcCandAllTitle">
         <div class="mc-cardhead"><span class="set-medallion mc-medal">${icon('users')}</span><div><h3 id="mcCandAllTitle">Candidats de consolidation</h3>
           <p>Relisez chaque proposition, sa provenance et ses conflits avant de décider.</p></div>
-          <label><span class="sr">État</span><select class="set-input mc-select" id="mcCandState">${Object.entries(CAND_STATES).map(([k,v])=>`<option value="${k}"${c.filter===k?' selected':''}>${esc(v)}</option>`).join('')}</select></label></div>
+          <label><span class="sr">État</span><span class="set-select mc-selectwrap"><select class="mc-select" id="mcCandState">${Object.entries(CAND_STATES).map(([k,v])=>`<option value="${k}"${c.filter===k?' selected':''}>${esc(v)}</option>`).join('')}</select></span></label></div>
         ${candsBody(true)}</section>`;
     }
 

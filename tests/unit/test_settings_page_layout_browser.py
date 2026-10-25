@@ -144,3 +144,26 @@ async def test_final_captures_of_the_five_views_have_no_horizontal_overflow(serv
             assert all(a["ok"] for a in waits), (name, [a for a in waits if not a["ok"]])
             over = got(step, "overflow")
             assert over["page"] == 0 and all(v == 0 for v in over["containers"].values()), (name, width, height, over)
+
+
+async def test_choosing_a_full_page_category_from_the_rail_keeps_the_focus_on_the_active_page_tab(served):
+    """Reprise QA S07 : depuis une catégorie à rail, choisir au clavier une catégorie en page pleine masque le rail ;
+    le focus doit aller à l'onglet de page actif, pas tomber sur `body`. La consigne clavier du dialogue suit."""
+    state = ("(()=>{const a=document.activeElement;return {layout:document.getElementById('settingsShell').dataset.layout,"
+             "section:SET.section,focus:a&&(a.dataset.section||a.id||a.tagName),inTabs:!!a&&!!a.closest('#modalTabs'),"
+             "help:document.getElementById('settingsHelp').textContent}})()")
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        *MEM, *HUB, click("#settingsHubGrid [data-hub-category=connections]"),
+        wait("SET.category==='connections'&&!!document.querySelector('#settingsCategories [aria-selected=true]')", 15000),
+        eval_(state, "rail"),
+        eval_("(document.getElementById('settingsCat-memory_knowledge').focus(),1)"), key("Enter"),
+        wait("SET.category==='memory_knowledge'&&document.getElementById('settingsShell').dataset.layout==='page'", 15000),
+        eval_("new Promise(r=>setTimeout(()=>r(1),300))"), eval_(state, "memory"),
+    ]}])
+    step = out["steps"][0]
+    assert all(a["ok"] for a in step["actions"] if a.get("a") == "wait"), [a for a in step["actions"] if a.get("a") == "wait" and not a["ok"]]
+    assert out["console"] == [], out["console"]
+    assert "haut et bas" in got(step, "rail")["help"], got(step, "rail")
+    mem = got(step, "memory")
+    assert mem["layout"] == "page" and mem["inTabs"] and mem["focus"] == mem["section"], ("focus sur l'onglet de page actif", mem)
+    assert "gauche et droite" in mem["help"], mem

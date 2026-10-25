@@ -171,10 +171,12 @@
       +`<div class="set-row-control">${control}</div></div>`;
   }
 
-  function dot(kind,text){
+  /* `className` : classe d'accroche ajoutée devant `set-dot` (ex. `mem-pill`, que lisent les tests Mémoire). */
+  function dot(kind,text,{className}={}){
     const k=DOT_KINDS.includes(kind)?kind:'info';
     if(!String(text||'').trim())throw new Error('JarvisSettingsUI.dot : une pastille porte toujours un mot.');
-    return `<span class="set-dot set-dot-${k}">${esc(text)}</span>`;
+    const extra=String(className||'').trim().split(/\s+/).filter(c=>/^[\w-]+$/.test(c)).join(' ');
+    return `<span class="${extra?extra+' ':''}set-dot set-dot-${k}">${esc(text)}</span>`;
   }
 
   /* Bouton. `variant` : 'primary' | 'ghost' | 'danger' ; `size` : 'sm' ; `iconOnly` : `label` devient `aria-label`.

@@ -6135,7 +6135,8 @@ function renderTabs(){
       +'<span class="set-rule" aria-hidden="true"></span></div>'
     :`<span class="set-intro-icon" aria-hidden="true">${settingsIcon(cat.id)}</span>`+UI.intro({id:'settingsCategoryTitle',title:cat.label,description:cat.description,level:3});
   /* Avis de catégorie déclaré par le registre (Avancé : outils d'opérateur). */
-  if(cat.notice)$('#settingsIntro .set-intro').insertAdjacentHTML('beforeend',`<p class="set-intro-notice" id="settingsCategoryNotice">${esc(cat.notice)}</p>`);
+  const introHost=$('#settingsIntro').querySelector('.set-page-intro, .set-intro');
+  if(cat.notice&&introHost)introHost.insertAdjacentHTML('beforeend',`<p class="set-intro-notice" id="settingsCategoryNotice">${esc(cat.notice)}</p>`);
   /* `data-section` : l'identifiant de l'entrée ; `.active` et `aria-selected` : l'entrée montrée. */
   /* Page pleine : les entrées sont les onglets de page de la fondation (`.set-tab`, pictogramme + libellé). */
   const itemHtml=(i,group)=>{const on=i.id===SET.section;
@@ -6159,8 +6160,15 @@ function renderTabs(){
   rail.querySelectorAll('[data-category]').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.category)));
   items.querySelectorAll('[data-section]').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.section)));
   /* La navigation est redessinée à chaque changement : le focus revient sur l'entrée active de la même liste. */
-  if(hadFocus==='rail')rail.querySelector('[aria-selected=true]').focus({preventScroll:true});
-  if(hadFocus==='items'){const on=items.querySelector('[aria-selected=true]');if(on)on.focus({preventScroll:true})}
+  /* En page pleine le rail est masqué : le focus venu du rail va sur l'onglet de page actif (à défaut le premier,
+     puis le fil d'Ariane), sinon il tomberait sur `body`. */
+  const focusTarget=hadFocus==='rail'&&!page?rail.querySelector('[aria-selected=true]')
+    :hadFocus?(items.querySelector('[aria-selected=true]')||items.querySelector('[role=tab]')||(page?$('#settingsCrumbHub'):null)):null;
+  if(focusTarget)focusTarget.focus({preventScroll:true});
+  /* Consigne clavier du dialogue (`aria-describedby`) : elle suit la disposition. */
+  $('#settingsHelp').textContent=page
+    ?'Flèches gauche et droite dans les onglets de la page, puis Entrée pour en ouvrir un. Échap ferme les réglages.'
+    :'Flèches haut et bas dans les catégories, puis Entrée pour en ouvrir une. Échap ferme les réglages.';
   /* En largeur étroite les deux barres défilent : l'entrée active est ramenée dans la vue. */
   for(const on of [rail.querySelector('[aria-selected=true]'),items.querySelector('[aria-selected=true]')])
     if(on&&on.scrollIntoView)on.scrollIntoView({block:'nearest',inline:'nearest'});

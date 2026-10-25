@@ -440,3 +440,13 @@ def test_the_diagnostic_pin_yields_to_any_user_scroll_and_is_cleaned_up(tmp_path
     for case in ("wheel", "keydown", "pointerdown", "touchstart", "timeout"):
         assert out[case] == released, (case, out[case])
     assert out["destroy"] == {"observing": False, "timers": 0, "live": 0}
+
+
+def test_a_missing_consolidation_mode_shows_a_dash_instead_of_breaking_the_page(tmp_path):
+    """Reprise QA S07 : la pastille d'état (`ui.dot`) refuse un texte vide ; un `consolidation.mode` absent de l'état
+    effectif ne doit pas faire planter tout le rendu de l'onglet Mémoire, la pastille dit « — »."""
+    out = run_node(tmp_path, {}, """
+delete (MEM.effective||{})['consolidation.mode'];
+const host=fakeHost(),v=M.create(host,{fetch:fetchFn,section:'recall',mode:'memory'});await v.load();
+out({html:host.innerHTML});""")
+    assert 'class="mem-pill set-dot' in out["html"] and ">—</span>" in out["html"], out["html"][:400]

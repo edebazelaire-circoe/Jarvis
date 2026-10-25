@@ -65,7 +65,7 @@
   const STYLE=`
 .mem-page,.mem-card{--set-tone:var(--mem-hue)}
 .mem-page{--mem-hue:var(--accent);--mem-violet:var(--role-accent-violet,#b9a2ff);--mem-line:color-mix(in srgb,var(--mem-hue) 22%,var(--set-hair-2,#1b3442));
-  --mem-glass:var(--shell-glass-strong,rgba(4,10,15,.8));--mem-ink-2:var(--set-ink-2,#a9c2cf);--mem-ink-3:var(--set-ink-3,#8aa5b3);--mem-hair:var(--set-hair-2,#24414f);--mem-r:14px;
+  --mem-ink-2:var(--set-ink-2,#a9c2cf);--mem-ink-3:var(--set-ink-3,#8aa5b3);--mem-hair:var(--set-hair-2,#24414f);
   container-type:inline-size;display:grid;gap:16px;min-width:0;color:var(--set-ink,var(--text));font-size:13.5px;line-height:1.5}
 .mem-page *{box-sizing:border-box}
 .mem-page .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
@@ -377,8 +377,9 @@
       return `<div class="mem-head"><span class="set-medallion mem-medal">${icon(iconName)}</span><div><h3 class="mem-title"${id?` id="${id}"`:''}>${esc(title)}</h3>`
         +`${sub?`<p class="mem-sub">${esc(sub)}</p>`:''}</div>${trailing||'<span></span>'}</div>`;
     }
-    /* Pastille d'état : la primitive `.set-dot` (Slice 07) ; `mem-pill` reste l'accroche des tests. */
-    function pill(tone,text){return ui.dot(tone,text).replace('class="set-dot','class="mem-pill set-dot')}
+    /* Pastille d'état : la primitive `.set-dot` (Slice 07) ; `mem-pill` reste l'accroche des tests. Un état absent
+       (ex. `consolidation.mode` manquant) s'affiche « — » : la primitive refuse une pastille vide. */
+    function pill(tone,text){return ui.dot(tone,String(text==null?'':text).trim()||'—',{className:'mem-pill'})}
     const savedLegs=()=>st.memory.status.legs||{};
 
     function recallCard(){

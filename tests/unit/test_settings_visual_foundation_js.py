@@ -49,6 +49,7 @@ out({
   stat:UI.stat({value:'98 %',label:'Taux <',icon:svg}),
   row:UI.row({id:'r1',label:'Libellé',hint:'Aide',control:'<b>c</b>',wide:true}),
   dot:UI.dot('nope','Actif'),
+  dotHook:UI.dot('ok','Actif',{className:'mem-pill bad"x'}),
   btn:UI.button({id:'b1',label:'Ok & go',variant:'primary',busy:true,data:{act:'save"x'}}),
   iconBtn:UI.button({label:'Fermer',iconOnly:true,icon:svg}),
   toggle:UI.toggle({id:'t1',labelledBy:'r1-label',describedBy:'r1-hint',checked:true,stateText:{on:'Activé',off:'Désactivé'}}),
@@ -70,6 +71,8 @@ out({
     assert "Taux &lt;" in out["stat"] and 'class="set-stat-value">98 %<' in out["stat"]
     assert 'id="r1-label"' in out["row"] and 'id="r1-hint"' in out["row"] and "set-row-wide" in out["row"]
     assert out["dot"] == '<span class="set-dot set-dot-info">Actif</span>'
+    # Classe d'accroche optionnelle (reprise QA S07) : seuls les noms de classe sûrs passent.
+    assert out["dotHook"] == '<span class="mem-pill set-dot set-dot-ok">Actif</span>'
     btn = out["btn"]
     assert 'aria-busy="true"' in btn and " disabled" in btn and 'data-act="save&quot;x"' in btn and "Ok &amp; go" in btn
     assert 'aria-label="Fermer"' in out["iconBtn"] and "set-btn-icon" in out["iconBtn"] and "<span>" not in out["iconBtn"]

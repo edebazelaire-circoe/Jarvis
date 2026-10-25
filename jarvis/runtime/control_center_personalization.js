@@ -67,7 +67,7 @@
   const svg=(name,cls='')=>`<svg${cls?` class="${cls}"`:''} viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICON[name]||ICON.details}</svg>`;
   const AVATAR='<svg viewBox="0 0 40 40" aria-hidden="true" focusable="false"><circle cx="20" cy="15" r="7"/><path d="M7 36c1.5-7.5 6.6-11 13-11s11.5 3.5 13 11"/></svg>';
 
-  const P={open:false,data:null,profiles:null,error:'',menu:false,creating:false,busy:false,textTimer:null,textSaving:false,generation:0,closeMenu:null,unbind:null};
+  const P={open:false,data:null,profiles:null,error:'',menu:false,creating:false,busy:false,textTimer:null,textSaving:0,generation:0,closeMenu:null,unbind:null};
   const root=()=>document.getElementById('settingsPerso');
   const grid=()=>document.getElementById('persoGrid');
   const isOpen=()=>P.open&&overlay.classList.contains('open')&&(overlay.dataset||{}).view==='perso';
@@ -218,8 +218,8 @@
     renderProfile();
     /* Un texte en cours de frappe ou en cours d'envoi survit au rendu d'une autre carte (sinon l'ancienne valeur revenait
        dans le champ pendant l'envoi, puis repartait au serveur à la sortie du champ). Un refus, lui, remet la valeur
-       enregistrée : `save` lève `textSaving` avant de redessiner. */
-    const typing=document.getElementById('persoInstructions'),draft=typing&&(P.textTimer||P.textSaving)?typing.value:null;
+       enregistrée : `save` décompte `textSaving` (un compteur : plusieurs envois du texte peuvent se chevaucher) avant de redessiner. */
+    const typing=document.getElementById('persoInstructions'),draft=typing&&(P.textTimer||P.textSaving>0)?typing.value:null;
     UI.keepFocus(root(),()=>{
       if(P.unbind)P.unbind();
       if(P.error){
@@ -305,9 +305,9 @@
   async function save(cardId,payload,{rerender=false}={}){
     const generation=P.generation,text=!!(payload.cli&&payload.cli.behavior&&'custom_instructions' in payload.cli.behavior);
     status(cardId,'Enregistrement…','busy');
-    if(text)P.textSaving=true;
+    if(text)P.textSaving++;
     try{
-      const data=await withDeadline(api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),'Enregistrement').finally(()=>{if(text)P.textSaving=false});
+      const data=await withDeadline(api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),'Enregistrement').finally(()=>{if(text)P.textSaving--});
       if(generation!==P.generation)return;
       P.data=data;patchShellDraft(data);
       if(P.profiles)await refreshProfiles(generation);
