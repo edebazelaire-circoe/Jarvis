@@ -1,0 +1,25 @@
+{
+  "schema": "jarvis.package-runtimes",
+  "schema_version": 1,
+  "_comment": "Runtimes privés épinglés du paquet Windows (docs/windows-packaging.md). Sources officielles uniquement ; empreintes publiées par l'éditeur (python.org API release_file, nodejs.org SHASUMS256.txt), revérifiées à chaque build.",
+  "runtimes": {
+    "python": {
+      "version": "3.14.6",
+      "url": "https://www.python.org/ftp/python/3.14.6/python-3.14.6-embed-amd64.zip",
+      "sha256": "df901e84a896ff1ee720ad03377e0c8d8c2244fda79808aeeaff6316df1cb75c",
+      "size": 12570832,
+      "checksum_source": "https://www.python.org/api/v2/downloads/release_file/?release=1110",
+      "license": "PSF-2.0",
+      "license_file": "LICENSE.txt"
+    },
+    "node": {
+      "version": "24.21.0",
+      "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-x64.zip",
+      "sha256": "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541",
+      "checksum_source": "https://nodejs.org/dist/v24.21.0/SHASUMS256.txt",
+      "license": "MIT (Node.js; bundled dependencies listed in its LICENSE, npm Artistic-2.0)",
+      "license_file": "LICENSE",
+      "strip_components": 1
+    }
+  }
+}

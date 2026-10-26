@@ -3,6 +3,60 @@
     {
       "id": "HV-PACKAGE-01",
       "description": "On a Windows machine without Git, system Python, Node/npm or FFmpeg on PATH, launch the packaged build and verify Jarvis reaches a usable Presentation readiness state."
+    },
+    {
+      "id": "HV-PACKAGE-02",
+      "kind": "decision",
+      "description": "Claude Code CLI: the package does NOT redistribute it (default). The user installs it with Anthropic's official installer and signs in (Slice 07 onboarding). Decide whether CIRCOE may bundle or auto-provision it, after reading Anthropic's terms for the CLI.",
+      "default_applied": "not bundled; resolved on the user's PATH; declared `external` in third_party_policy.json"
+    },
+    {
+      "id": "HV-PACKAGE-03",
+      "kind": "decision",
+      "description": "FFmpeg GPLv3 from `imageio-ffmpeg` (screen recording only): excluded from the Presentation package by default, so screen recording is refused `source_unavailable`. Decide: keep excluded, ship it with GPL compliance (notice + corresponding source offer), or ship an LGPL build without libx264.",
+      "default_applied": "excluded"
+    },
+    {
+      "id": "HV-PACKAGE-04",
+      "kind": "decision",
+      "description": "openWakeWord pre-trained models are CC BY-NC-SA 4.0 (non-commercial). Excluded with `openwakeword`/`onnxruntime`; the product wakes by keyboard (F9). Decide: train a permissively licensed model, license another engine, or keep keyboard wake for V1.",
+      "default_applied": "excluded; keyboard wake"
+    },
+    {
+      "id": "HV-PACKAGE-05",
+      "kind": "decision",
+      "description": "Porcupine (`pvporcupine`, Picovoice): SDK Apache-2.0 but the engine/keywords require a Picovoice AccessKey and commercial terms. Excluded by default. Decide whether CIRCOE takes a Picovoice commercial plan.",
+      "default_applied": "excluded"
+    },
+    {
+      "id": "HV-PACKAGE-06",
+      "kind": "decision",
+      "description": "Barehands and ai-visualizer (AGPL-3.0-or-later): excluded from the Presentation package (no Presentation path needs them; the Control Center runs without the visualizer face). Confirm the exclusion (recommended) or request a legal review to ship them.",
+      "default_applied": "excluded"
+    },
+    {
+      "id": "HV-PACKAGE-07",
+      "kind": "decision",
+      "description": "Legal review of the generated third-party manifest and license texts before the first external distribution, in particular pynput (LGPL-3.0, shipped unmodified and replaceable), certifi (MPL-2.0) and the GCC runtime bundled in numpy (GPL-3.0 with runtime exception).",
+      "default_applied": "shipped with license texts under licenses/ and third-party-manifest.json"
+    },
+    {
+      "id": "HV-PACKAGE-08",
+      "kind": "decision",
+      "description": "Remotion licence: Remotion is free for individuals and small companies but may require a company licence. The npm packages (including the compositor and its FFmpeg) are not in the package: they are fetched by `npm ci` from the pinned lock at first provisioning. Decide the Remotion licence for CIRCOE and whether this fetch model is acceptable for distribution.",
+      "default_applied": "not bundled; provisioned on demand from the pinned lock"
+    },
+    {
+      "id": "HV-PACKAGE-09",
+      "kind": "decision",
+      "description": "Remotion renders with the installed Chrome or Edge (Edge ships with Windows 10/11); no private browser is shipped. Confirm this system dependency for V1.",
+      "default_applied": "system Chrome/Edge; absent = typed render refusal"
+    },
+    {
+      "id": "HV-PACKAGE-10",
+      "kind": "decision",
+      "description": "Code-signing identity (certificate), installer technology and install location (per-machine Program Files vs per-user %LOCALAPPDATA%\\Programs). Slice 06 ships an unsigned portable folder; Slice 07 builds the installer on top of it.",
+      "default_applied": "unsigned folder package; layout independent of the install location"
     }
   ]
 }

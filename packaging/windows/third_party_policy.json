@@ -1,0 +1,357 @@
+{
+  "schema": "jarvis.third-party-policy",
+  "schema_version": 1,
+  "_comment": "Politique de distribution des composants tiers de l'édition presentation (docs/windows-packaging.md). Chaque roue du verrou doit avoir une entrée ; le build et tests/unit/test_windows_packaging.py refusent un trou. Les licences sont des expressions SPDX vérifiées sur les métadonnées des roues le 2026-10-26.",
+  "python_packages": {
+    "aiofiles": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    },
+    "aiohappyeyeballs": {
+      "license": "PSF-2.0",
+      "status": "bundled"
+    },
+    "aiohttp": {
+      "license": "Apache-2.0 AND MIT",
+      "status": "bundled"
+    },
+    "aiosignal": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    },
+    "annotated-types": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "anyio": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "attrs": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "certifi": {
+      "license": "MPL-2.0",
+      "status": "bundled",
+      "notes": "MPL-2.0 (copyleft au niveau du fichier) : livré non modifié, source sur PyPI."
+    },
+    "cffi": {
+      "license": "MIT-0",
+      "status": "bundled"
+    },
+    "charset-normalizer": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "click": {
+      "license": "BSD-3-Clause",
+      "status": "bundled"
+    },
+    "cryptography": {
+      "license": "Apache-2.0 OR BSD-3-Clause",
+      "status": "bundled",
+      "notes": "La roue embarque OpenSSL 3 (Apache-2.0)."
+    },
+    "frozenlist": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    },
+    "google-api-core": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    },
+    "google-api-python-client": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    },
+    "google-auth": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    },
+    "google-auth-httplib2": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    },
+    "google-auth-oauthlib": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    },
+    "googleapis-common-protos": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    },
+    "h11": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "httpcore": {
+      "license": "BSD-3-Clause",
+      "status": "bundled"
+    },
+    "httplib2": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "httpx": {
+      "license": "BSD-3-Clause",
+      "status": "bundled"
+    },
+    "httpx-sse": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "idna": {
+      "license": "BSD-3-Clause",
+      "status": "bundled"
+    },
+    "jsonschema": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "jsonschema-specifications": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "livekit": {
+      "license": "Apache-2.0",
+      "status": "bundled",
+      "notes": "Annulation d'écho WebRTC : la roue embarque une bibliothèque native dérivée de libwebrtc (BSD-3-Clause)."
+    },
+    "mcp": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "multidict": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    },
+    "numpy": {
+      "license": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+      "status": "bundled",
+      "notes": "La roue Windows embarque OpenBLAS (BSD-3-Clause) et la bibliothèque d'exécution GCC/gfortran (GPL-3.0 avec GCC Runtime Library Exception) : texte complet dans licenses/python-packages/numpy."
+    },
+    "oauthlib": {
+      "license": "BSD-3-Clause",
+      "status": "bundled"
+    },
+    "opentelemetry-api": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    },
+    "propcache": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    },
+    "proto-plus": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    },
+    "protobuf": {
+      "license": "BSD-3-Clause",
+      "status": "bundled"
+    },
+    "pyasn1": {
+      "license": "BSD-2-Clause",
+      "status": "bundled"
+    },
+    "pyasn1-modules": {
+      "license": "BSD-2-Clause",
+      "status": "bundled"
+    },
+    "pycparser": {
+      "license": "BSD-3-Clause",
+      "status": "bundled"
+    },
+    "pydantic": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "pydantic-core": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "pydantic-settings": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "pyjwt": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "pynput": {
+      "license": "LGPL-3.0-only",
+      "status": "bundled",
+      "notes": "LGPL-3.0 : livré non modifié, sous forme de fichiers Python remplaçables par l'utilisateur ; texte de licence fourni. Décision Human HV-PACKAGE-07 (revue juridique LGPL)."
+    },
+    "pyparsing": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "python-dotenv": {
+      "license": "BSD-3-Clause",
+      "status": "bundled"
+    },
+    "python-multipart": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    },
+    "pywin32": {
+      "license": "PSF-2.0",
+      "status": "bundled",
+      "notes": "Dépendance Windows de mcp."
+    },
+    "referencing": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "requests": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    },
+    "requests-oauthlib": {
+      "license": "ISC",
+      "status": "bundled"
+    },
+    "rpds-py": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "six": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "sounddevice": {
+      "license": "MIT",
+      "status": "bundled",
+      "notes": "La roue embarque la DLL PortAudio (MIT)."
+    },
+    "sse-starlette": {
+      "license": "BSD-3-Clause",
+      "status": "bundled"
+    },
+    "starlette": {
+      "license": "BSD-3-Clause",
+      "status": "bundled"
+    },
+    "types-protobuf": {
+      "license": "Apache-2.0",
+      "status": "bundled",
+      "notes": "Stubs de typage tirés par une dépendance ; aucun code exécuté."
+    },
+    "typing-extensions": {
+      "license": "PSF-2.0",
+      "status": "bundled"
+    },
+    "typing-inspection": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "tzdata": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    },
+    "uritemplate": {
+      "license": "BSD-3-Clause OR Apache-2.0",
+      "status": "bundled"
+    },
+    "urllib3": {
+      "license": "MIT",
+      "status": "bundled"
+    },
+    "uvicorn": {
+      "license": "BSD-3-Clause",
+      "status": "bundled"
+    },
+    "yarl": {
+      "license": "Apache-2.0",
+      "status": "bundled"
+    }
+  },
+  "excluded": [
+    {
+      "id": "openwakeword",
+      "kind": "python-package",
+      "reason": "Modèles pré-entraînés (hey_jarvis, melspectrogram, embedding) sous CC BY-NC-SA 4.0 : non commercial. Mot d'éveil du produit = raccourci clavier (F9) tant que la décision HV-PACKAGE-04 n'est pas prise.",
+      "decision": "HV-PACKAGE-04"
+    },
+    {
+      "id": "onnxruntime",
+      "kind": "python-package",
+      "reason": "Tiré seulement par openwakeword (extra wakeword).",
+      "decision": "HV-PACKAGE-04"
+    },
+    {
+      "id": "openwakeword-models",
+      "kind": "model",
+      "reason": "CC BY-NC-SA 4.0 ; jamais livrés ni téléchargés par le paquet (le catalogue reste du code de développement).",
+      "decision": "HV-PACKAGE-04"
+    },
+    {
+      "id": "imageio-ffmpeg",
+      "kind": "python-package",
+      "reason": "Binaire FFmpeg 7.1 gyan.dev « essentials » GPLv3 (libx264). Seul l'enregistrement d'écran l'utilise ; refusé `source_unavailable` dans le paquet. Le rendu Remotion a son propre FFmpeg (compositor npm).",
+      "decision": "HV-PACKAGE-03"
+    },
+    {
+      "id": "pvporcupine",
+      "kind": "python-package",
+      "reason": "SDK Apache-2.0 mais moteur et mots-clés Picovoice soumis à une AccessKey et à des conditions commerciales Picovoice.",
+      "decision": "HV-PACKAGE-05"
+    },
+    {
+      "id": "sherpa-onnx",
+      "kind": "python-package",
+      "reason": "Vérification du locuteur (Solo Owner) hors du manifeste fonctionnel V1 ; extra facultatif, refus propre sans lui.",
+      "decision": null
+    },
+    {
+      "id": "barehands",
+      "kind": "third-party-source",
+      "reason": "AGPL-3.0-or-later ; aucun chemin Presentation ne l'exige. Absent du paquet (third_party/ non copié).",
+      "decision": "HV-PACKAGE-06"
+    },
+    {
+      "id": "ai-visualizer",
+      "kind": "third-party-source",
+      "reason": "AGPL-3.0-or-later ; le Control Center démarre sans lui (visage désactivé quand il n'est pas installé).",
+      "decision": "HV-PACKAGE-06"
+    },
+    {
+      "id": "mediapipe-tasks-vision",
+      "kind": "third-party-source",
+      "reason": "Livré seulement avec l'instantané Barehands (mode test de la main) : exclu avec lui.",
+      "decision": null
+    },
+    {
+      "id": "developer-tools",
+      "kind": "repository",
+      "reason": "scripts/, tests/, docs/, setup.ps1, .venv, third_party/ : outils de développement, jamais dans le paquet (git archive de jarvis/ seulement).",
+      "decision": null
+    }
+  ],
+  "external": [
+    {
+      "id": "claude-code-cli",
+      "resolution": "Non redistribué. Résolu sur le PATH de l'utilisateur (installeur natif officiel d'Anthropic : %USERPROFILE%\\.local\\bin\\claude.exe) ; compte ou clé connecté par l'onboarding (Slice 07). Conditions d'Anthropic à confirmer avant toute redistribution.",
+      "decision": "HV-PACKAGE-02"
+    },
+    {
+      "id": "chrome-or-edge",
+      "resolution": "Navigateur système (Edge est présent sur Windows 10/11) utilisé par le rendu Remotion ; jamais téléchargé. Absent : rendu refusé avec un code typé, diagnostic Slice 07.",
+      "decision": "HV-PACKAGE-09"
+    },
+    {
+      "id": "windows-webview-and-audio",
+      "resolution": "Pilotes audio Windows (PortAudio par sounddevice) ; aucune dépendance supplémentaire.",
+      "decision": null
+    }
+  ],
+  "provisioned": [
+    {
+      "id": "remotion-npm-packages",
+      "resolution": "Installés à la demande par `npm ci` (Node privé) dans %LOCALAPPDATA%\\CIRCOE\\Jarvis\\data\\local_capabilities\\remotion\\runtime depuis le verrou livré (jarvis/capabilities/remotion/package-lock.json, intégrité sha512) ; jamais dans le paquet. Licence Remotion (« company licence may be required ») et FFmpeg du compositor à trancher.",
+      "decision": "HV-PACKAGE-08"
+    }
+  ]
+}
