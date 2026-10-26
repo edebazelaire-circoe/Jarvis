@@ -12,6 +12,11 @@ enregistre lui-même (`claude mcp add`). `build_server(read_only=True)` est celu
 que **JARVIS déclare au cerveau** (2026-10-07, `write_mcp_config`) : recherche,
 métadonnées et lecture seulement, aucun outil d'écriture n'est même enregistré.
 L'écriture sur le Drive de l'utilisateur reste une décision à lui.
+
+Édition (Slice 05 presentation-edition, `docs/product-connectors.md`) : le Control Center écrit
+`JARVIS_PRODUCT_EDITION` dans l'environnement du serveur (comme `jarvis-workspace`). En
+`presentation`, tout ce qui vient du Drive (noms, métadonnées, texte lu) est rendu dans un bloc
+cadré comme donnée non fiable (`connector_content.frame_payload`) et le jeton OAuth suit les portées minimales du produit.
 """
 
 from __future__ import annotations
@@ -25,7 +30,10 @@ import tempfile
 from typing import Any
 
 from jarvis.adapters.google_drive import GoogleDriveBackend
+from jarvis.domain.connector_content import frame_payload
 from jarvis.domain.drive import DriveQuery
+from jarvis.domain.product_connectors import connector_policy
+from jarvis.domain.product_edition import PRODUCT_EDITION_ENV, ProductEditionPolicy
 from jarvis.environment import load_project_environment
 from jarvis.runtime.mcp_tool_meta import tool_annotations
 
@@ -59,9 +67,14 @@ def backend() -> GoogleDriveBackend:
     global _backend
     if _backend is None:
         secret, token = credential_paths()
-        if not token.is_file():
+        from jarvis.adapters.google_oauth import token_present
+
+        if not token_present(token):
             raise RuntimeError(f"Aucun jeton Drive dans {token}. Lancez d'abord : python -m jarvis drive-auth")
-        _backend = GoogleDriveBackend.from_oauth_files(secret, token)
+        from jarvis.runtime.local_secrets import google_token_options
+
+        # Serveur stdio : jamais de navigateur (stdout est le protocole) ; consentement manquant = erreur nommée.
+        _backend = GoogleDriveBackend.from_oauth_files(secret, token, **{**google_token_options(), "interactive": False})
     return _backend
 
 
@@ -78,8 +91,16 @@ def _file(item: Any) -> dict[str, Any]:
     }
 
 
-def build_server(*, read_only: bool = False):
+def build_server(*, read_only: bool = False, edition: ProductEditionPolicy | None = None):
     from mcp.server.fastmcp import FastMCP
+
+    from jarvis.runtime.product_edition_env import process_edition
+
+    frame = connector_policy(edition or process_edition()).frame_untrusted_content
+
+    def out(payload: dict[str, Any]) -> dict[str, Any]:
+        """`presentation` : noms, métadonnées et texte venus du Drive dans un bloc cadré (`frame_payload`)."""
+        return frame_payload(payload, source="Google Drive") if frame else payload
 
     if read_only:
         instructions = ("Accès en lecture seule au Google Drive de l'utilisateur : drive_search, drive_get, drive_read. "
@@ -94,7 +115,9 @@ def build_server(*, read_only: bool = False):
     async def drive_search(text: str = "", parent_id: str = "", mime_type: str = "", limit: int = 25) -> list[dict[str, Any]]:
         """Chercher des fichiers par nom et contenu, éventuellement dans un dossier."""
         query = DriveQuery(text=text.strip() or None, parent_id=parent_id or None, mime_type=mime_type or None, limit=limit)
-        return [_file(item) for item in await backend().list_files(query)]
+        files = [_file(item) for item in await backend().list_files(query)]
+        # `presentation` : une liste d'un seul élément cadré (le type de retour de l'outil reste une liste).
+        return [out({"files": files})] if frame else files
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "drive_get"))
     async def drive_get(file_id: str) -> dict[str, Any]:
@@ -102,13 +125,13 @@ def build_server(*, read_only: bool = False):
         found = await backend().get_file(file_id)
         if found is None:
             raise ValueError(f"fichier introuvable : {file_id}")
-        return _file(found)
+        return out({"file": _file(found)}) if frame else _file(found)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "drive_read"))
     async def drive_read(file_id: str, max_chars: int = 20000) -> dict[str, Any]:
         """Contenu texte d'un fichier. Docs, Sheets et Slides sont exportés (markdown, csv, texte)."""
         content = await backend().read_file(file_id, max_chars=max_chars)
-        return {"file": _file(content.file), "text": content.text, "truncated": content.truncated, "exported_as": content.exported_as}
+        return out({"file": _file(content.file), "text": content.text, "truncated": content.truncated, "exported_as": content.exported_as})
 
     if read_only:
         return mcp
@@ -117,13 +140,13 @@ def build_server(*, read_only: bool = False):
     async def drive_create(name: str, content: str = "", mime_type: str = "text/plain", parent_id: str = "") -> dict[str, Any]:
         """Créer un fichier. mime_type application/vnd.google-apps.document crée un Google Doc."""
         created = await backend().create_file(name, content=content, mime_type=mime_type, parent_id=parent_id or None, idempotency_key=f"mcp-create-{name}-{parent_id}")
-        return _file(created)
+        return out({"file": _file(created)}) if frame else _file(created)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "drive_update"))
     async def drive_update(file_id: str, content: str) -> dict[str, Any]:
         """Remplacer intégralement le contenu d'un fichier non natif."""
         updated = await backend().update_file(file_id, content=content, idempotency_key=f"mcp-update-{file_id}-{hash(content)}")
-        return _file(updated)
+        return out({"file": _file(updated)}) if frame else _file(updated)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "drive_delete"))
     async def drive_delete(file_id: str) -> dict[str, Any]:
@@ -135,7 +158,7 @@ def build_server(*, read_only: bool = False):
     async def drive_share(file_id: str, email: str, role: str = "reader") -> dict[str, Any]:
         """Partager un fichier avec une adresse e-mail. role: reader, commenter ou writer."""
         shared = await backend().share_file(file_id, email=email, role=role, idempotency_key=f"mcp-share-{file_id}-{email}-{role}")
-        return {"file": _file(shared), "shared_with": email, "role": role}
+        return out({"file": _file(shared), "shared_with": email, "role": role})
 
     return mcp
 
@@ -146,9 +169,14 @@ class DriveMcpTarget:
 
     runtime_root: Path | None = None
     read_only: bool = True
+    #: Édition écrite dans l'environnement du serveur (`None` : rien, le serveur lit la sienne).
+    edition: str | None = None
 
     def env(self) -> dict[str, str]:
-        return {ENV_READ_ONLY: "1"} if self.read_only else {}
+        env = {ENV_READ_ONLY: "1"} if self.read_only else {}
+        if self.edition:
+            env[PRODUCT_EDITION_ENV] = self.edition
+        return env
 
 
 def read_only_from_env(environ: "os._Environ[str] | dict[str, str] | None" = None) -> bool:

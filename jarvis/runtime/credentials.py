@@ -8,6 +8,11 @@ qu'utilise la voix ne demande pas de recoller la valeur.
 
 La valeur en clair ne sort jamais d'ici : `list_credentials` ne rend qu'un
 indice de fin de chaîne, et seuls les processus JARVIS appellent `secret_for`.
+
+Deux formes d'entrée (Slice 05 presentation-edition, `jarvis/runtime/local_secrets.py`) :
+`value` en clair (développement) ou `sealed` (DPAPI, édition produit) avec son `hint`. Toute
+lecture passe par `entry_value`, qui descelle à la demande ; une entrée illisible (blob d'un autre
+poste) vaut une chaîne vide et se signale `readable: false` dans `list_credentials`.
 """
 
 from __future__ import annotations
@@ -134,6 +139,22 @@ def redact(value: str) -> str:
     return "…" + text[-4:]
 
 
+def entry_value(item: dict[str, Any], sealer: Any = None) -> str:
+    """Valeur d'une entrée, en clair ou scellée ; `""` si absente ou illisible (jamais une exception)."""
+
+    plain = str(item.get("value") or "").strip()
+    if plain or "sealed" not in item:
+        return plain
+    from jarvis.runtime.local_secrets import credential_sealer, unseal_value
+
+    try:
+        return unseal_value(item["sealed"], sealer or credential_sealer()).strip()
+    except ValueError:
+        # Argued: an unreadable sealed key (copied from another Windows account) behaves as absent;
+        # `list_credentials` shows it `readable: false` so the user can replace it.
+        return ""
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -158,7 +179,7 @@ def _new_id(existing: Iterable[str]) -> str:
             return candidate
 
 
-def migrate_legacy(settings: dict[str, Any]) -> bool:
+def migrate_legacy(settings: dict[str, Any], sealer: Any = None) -> bool:
     """Reprendre les clés du format plat sans jamais en perdre une.
 
     Les anciens champs sont conservés en place : `app.py` et les tests plus
@@ -172,7 +193,7 @@ def migrate_legacy(settings: dict[str, Any]) -> bool:
         value = str(settings.get(legacy_key) or "").strip()
         if not value:
             continue
-        if any(item.get("value") == value for item in entries):
+        if any(entry_value(item, sealer) == value for item in entries):
             continue
         record = {
             "id": _new_id(item["id"] for item in entries),
@@ -196,16 +217,18 @@ def list_credentials(settings: dict[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for item in _entries(settings):
         provider = str(item.get("provider") or "custom")
-        out.append(
-            {
-                "id": str(item["id"]),
-                "provider": provider,
-                "name": str(item.get("name") or ""),
-                "hint": redact(str(item.get("value") or "")),
-                "created_at": str(item.get("created_at") or ""),
-                "bound": bindings.get(provider) == str(item["id"]),
-            }
-        )
+        view = {
+            "id": str(item["id"]),
+            "provider": provider,
+            "name": str(item.get("name") or ""),
+            "hint": redact(str(item.get("value") or "")) if "sealed" not in item else str(item.get("hint") or ""),
+            "created_at": str(item.get("created_at") or ""),
+            "bound": bindings.get(provider) == str(item["id"]),
+        }
+        if "sealed" in item and not str(item.get("value") or "").strip():
+            view["sealed"] = True
+            view["readable"] = bool(entry_value(item))
+        out.append(view)
     out.sort(key=lambda x: (x["provider"], x["name"].lower()))
     return out
 
@@ -251,6 +274,9 @@ def upsert_credential(
         # renommer une clé l'effacerait, puisque l'interface ne la relit jamais.
         if secret:
             target["value"] = secret
+            # Nouvelle valeur : l'ancien blob scellé ne vaut plus ; `local_secrets.seal_settings` rescelle.
+            target.pop("sealed", None)
+            target.pop("hint", None)
         target["provider"] = spec.id
         target["name"] = label
         record = target
@@ -283,7 +309,7 @@ def upsert_credential(
         "id": str(record["id"]),
         "provider": spec.id,
         "name": label,
-        "hint": redact(str(record.get("value") or "")),
+        "hint": redact(entry_value(record)),
         "created_at": str(record.get("created_at") or ""),
     }
 
@@ -341,11 +367,13 @@ def secret_for(settings: dict[str, Any], provider: str) -> str:
     bound_id = _bindings(settings).get(spec.id)
     if bound_id:
         match = next((item for item in entries if str(item.get("id")) == str(bound_id)), None)
-        if match and str(match.get("value") or "").strip():
-            return str(match["value"]).strip()
-    owned = [item for item in entries if str(item.get("provider")) == spec.id and str(item.get("value") or "").strip()]
+        value = entry_value(match) if match else ""
+        if value:
+            return value
+    owned = [value for value in (entry_value(item) for item in entries if str(item.get("provider")) == spec.id)
+             if value]
     if len(owned) == 1:
-        return str(owned[0]["value"]).strip()
+        return owned[0]
     for legacy_key, legacy_provider in LEGACY_KEYS.items():
         if legacy_provider == spec.id:
             value = str(settings.get(legacy_key) or "").strip()

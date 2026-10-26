@@ -233,6 +233,8 @@ class LocalProtocolServer:
             # Édition produit (jarvis-presentation-edition-v1, Slice 01, `docs/product-edition.md`) :
             # segment fixe avant `{board_id}`, comme `active` (aucun Board ne s'appelle ainsi).
             web.get("/v1/boards/edition", self.product_edition),
+            # Connecteurs de l'édition (Slice 05, `docs/product-connectors.md`) : manifeste et états produit.
+            web.get("/v1/edition/connectors", self.edition_connectors),
             web.get("/v1/boards/{board_id}", self.get_board),
             web.patch("/v1/boards/{board_id}", self.update_board),
             web.post("/v1/boards/{board_id}/archive", self.archive_board),
@@ -1225,6 +1227,13 @@ class LocalProtocolServer:
 
         board = await self.core.boards.create(await self._board_body(request, required=True))
         return web.json_response(await self._board_view(board), status=201)
+
+    async def edition_connectors(self, request: web.Request) -> web.Response:
+        """`GET /v1/edition/connectors` : connecteurs de l'édition, états produit, règles des outils externes."""
+
+        if request.query:
+            raise ValueError("unexpected connectors query")
+        return web.json_response(await self.core.connector_status())
 
     async def product_edition(self, request: web.Request) -> web.Response:
         """`GET /v1/boards/edition` : édition active, types de Board disponibles et défaut de création."""

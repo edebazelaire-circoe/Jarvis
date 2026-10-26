@@ -36,6 +36,7 @@ from jarvis.core.artifact_service import ArtifactService
 from jarvis.core.upload_service import BoardDropSeam, UploadService
 from jarvis.domain.artifacts import ARTIFACTS_DIR
 from jarvis.domain.uploads import upload_bounds
+from jarvis.domain.product_connectors import ConnectorFacts, connector_policy, connectors_payload
 from jarvis.domain.product_edition import FULL_EDITION, ProductEditionPolicy
 from jarvis.core.capture_service import CaptureAssociation, CaptureService, NoCaptureSources
 from jarvis.core.recording_transcriber import RecordingTranscriber
@@ -161,7 +162,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None, local_capability_store: LocalCapabilityStore | None = None, remotion: RemotionFactory | None = None, engine_gate: bool | None = None, remotion_studio_runner: StudioRunner | None = None, remotion_studio_idle_s: float | None = None, upstream_fetcher=None, upstream_engine=None, remotion_import_owners=None, remotion_render_runner: RenderRunner | None = None, authoring_compiler=None, authoring_engine_pin=None, product_edition: ProductEditionPolicy = FULL_EDITION, export_destination: ExportDestination | None = None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None, local_capability_store: LocalCapabilityStore | None = None, remotion: RemotionFactory | None = None, engine_gate: bool | None = None, remotion_studio_runner: StudioRunner | None = None, remotion_studio_idle_s: float | None = None, upstream_fetcher=None, upstream_engine=None, remotion_import_owners=None, remotion_render_runner: RenderRunner | None = None, authoring_compiler=None, authoring_engine_pin=None, product_edition: ProductEditionPolicy = FULL_EDITION, export_destination: ExportDestination | None = None, connectors_needing_authorization: frozenset[str] = frozenset()) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -227,9 +228,18 @@ class JarvisCoreApplication:
         # sealer, aucun identifiant n'est accepté (`mcp_vault_unavailable`) ;
         # sans connecteur, `connect` répond `mcp_connector_unavailable`.
         mcp_store = SQLiteMcpPluginRepository(self.state)
+        # Connecteurs de l'édition (Slice 05 presentation-edition, `docs/product-connectors.md`) : la politique
+        # des outils externes (`side_effect`) et le cadrage des résultats s'appliquent dans ce service, à l'appel.
+        self.connector_policy = connector_policy(product_edition)
+        #: Connecteurs natifs dont le consentement manquait au démarrage (`app._google_backend`).
+        self.connectors_needing_authorization = frozenset(connectors_needing_authorization)
+        if self.connectors_needing_authorization:
+            self._diagnostics.emit("connectors.authorization_required", "Autorisation Google à donner",
+                                   level="warning", data={"connectors": sorted(self.connectors_needing_authorization)})
         self.mcp_plugins = McpPluginService(
             mcp_store, CredentialVault(mcp_store, sealer, diagnostics=diagnostics), connector=connector,
             diagnostics=diagnostics, allow_loopback_http=mcp_allow_loopback_http,
+            connector_policy=self.connector_policy,
         )
         # Capacités locales installables (Remotion ; handoff jarvis-remotion-presentation-integration, Slice 04,
         # `docs/local-capabilities.md`) : AUCUN lancement au démarrage (l'installation est une action explicite
@@ -720,7 +730,9 @@ class JarvisCoreApplication:
         self.conversation_event_emitter.add_listener(self.presentation_studio_presenter.on_event)
         from jarvis.core.back_brain import BackBrainTaskService
         self.back_brain = BackBrainTaskService(self.jobs, self.conversations, self.voice_ledger)
-        self.tools = CoreToolRouter(scheduler=self.scheduler, calendar=self.calendar, drive=self.drive, timezone=timezone)
+        self.tools = CoreToolRouter(scheduler=self.scheduler, calendar=self.calendar, drive=self.drive, timezone=timezone,
+                                    frame_untrusted_content=self.connector_policy.frame_untrusted_content,
+                                    native_calendar=self.connector_policy.offers_native_calendar)
         self._stopped = asyncio.Event()
         self._notification_task: asyncio.Task[None] | None = None
         self._notification_queue: asyncio.Queue[ProtocolEnvelope] | None = None
@@ -749,7 +761,8 @@ class JarvisCoreApplication:
                 settings=agenda_settings, fetch=self._fetch_agenda, wake=self.brain.wake_for_agenda,
                 memory_path=root / "agenda_reminders.json", zone=ZoneInfo(timezone), diagnostics=diagnostics or NullDiagnosticSink(),
                 user_turn_at=lambda: self.brain.last_user_turn_at,
-                **({"clock": agenda_clock} if agenda_clock is not None else {}), tick_s=agenda_tick_s)
+                **({"clock": agenda_clock} if agenda_clock is not None else {}), tick_s=agenda_tick_s,
+                frame_untrusted_content=self.connector_policy.frame_untrusted_content)
         self._brain_notice_task: asyncio.Task[None] | None = None
         self._host_align_task: asyncio.Task[bool] | None = None
         self._work_attention_task: asyncio.Task[None] | None = None
@@ -914,6 +927,19 @@ class JarvisCoreApplication:
             except Exception:
                 pass
             raise
+
+    async def connector_status(self) -> dict[str, object]:
+        """`GET /v1/edition/connectors` : manifeste des connecteurs de l'édition et leur état produit.
+
+        Faits lus ici, rien d'autre : Drive relié, agenda persistant, vue publique des plugins MCP
+        (`public_view`, jamais `credential_ref`). Aucun réseau : l'état est celui que Core connaît.
+        """
+
+        plugins = [plugin.public_view() for plugin in await self.mcp_plugins.list_plugins()]
+        facts = ConnectorFacts(drive_available=self.drive.available,
+                               calendar_persisted=bool(self.calendar.storage.get("persisted")), plugins=plugins,
+                               needs_authorization=self.connectors_needing_authorization)
+        return connectors_payload(self.connector_policy, facts)
 
     async def _authorised_boards(self) -> frozenset[str]:
         """Boards a presentation's live references may read (Remotion Slice 15, `docs/presentation-live-refs.md`): the Board the user is

@@ -398,7 +398,11 @@ def _when(reminder: Reminder, now: datetime, zone: tzinfo) -> str:
     return f"à {clock}, dans {delta} min"
 
 
-def build_agenda_prompt(reminders: tuple[Reminder, ...], now: datetime, zone: tzinfo) -> str:
+def build_agenda_prompt(reminders: tuple[Reminder, ...], now: datetime, zone: tzinfo, *,
+                        frame_untrusted_content: bool = False) -> str:
+    """Consigne de rappel. `frame_untrusted_content` (édition `presentation`, Slice 05) : titres et lieux,
+    venus du plugin d'agenda distant, sont enfermés dans un bloc à jeton (`connector_content.frame_untrusted`)."""
+
     lines = []
     for reminder in reminders[:MAX_EVENTS_PER_ANNOUNCEMENT]:
         event = reminder.event
@@ -407,4 +411,9 @@ def build_agenda_prompt(reminders: tuple[Reminder, ...], now: datetime, zone: tz
     more = len(reminders) - MAX_EVENTS_PER_ANNOUNCEMENT
     if more > 0:
         lines.append(f"- … et {more} autre(s) rendez-vous proches.")
-    return AGENDA_REMINDER_PROMPT_HEAD + "\n\n[Rendez-vous, données de l'agenda]\n" + "\n".join(lines)
+    body = "\n".join(lines)
+    if frame_untrusted_content:
+        from jarvis.domain.connector_content import frame_untrusted
+
+        body = frame_untrusted(body, source="Agenda CIRCOE")
+    return AGENDA_REMINDER_PROMPT_HEAD + "\n\n[Rendez-vous, données de l'agenda]\n" + body

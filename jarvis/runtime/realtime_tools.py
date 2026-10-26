@@ -27,6 +27,25 @@ REALTIME_TOOLS: list[dict[str, object]] = [
 ]
 
 
+#: Outils de la voix servis par l'adaptateur natif Google Agenda : absents d'une édition qui ne l'offre pas.
+NATIVE_CALENDAR_PREFIX = "calendar_"
+
+
+def for_edition(tools: list[dict[str, object]], *, native_calendar: bool) -> list[dict[str, object]]:
+    """Catalogue de la voix filtré par l'édition (`ConnectorPolicy.offers_native_calendar`, Slice 05)."""
+
+    if native_calendar:
+        return tools
+    return [tool for tool in tools if not str(tool.get("name", "")).startswith(NATIVE_CALENDAR_PREFIX)]
+
+
+def edition_offers_native_calendar() -> bool:
+    from jarvis.domain.product_connectors import connector_policy
+    from jarvis.runtime.product_edition_env import process_edition
+
+    return connector_policy(process_edition()).offers_native_calendar
+
+
 def tools_for(*, continuous_brain: bool) -> list[dict[str, object]]:
     """Le catalogue d'outils exposé au modèle de surface pour une architecture.
 

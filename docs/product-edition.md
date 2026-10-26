@@ -154,6 +154,12 @@ edition: with a single available kind it has **no** `board_kind` argument (an
 attempt is « Arguments inconnus », nothing sent) and the tool sends that kind;
 its description says the limit is the edition's, whatever the active Board.
 
+## Connectors
+
+Which connectors an edition offers, the call-time policy for external tool side effects, the
+framing of untrusted connector content and the sealing of local secrets derive from the edition
+through `connector_policy(edition)`: [product-connectors.md](product-connectors.md) (Slice 05).
+
 ## Out of scope (later Slices)
 
 - product UI for unavailable kinds (Slice 08); the current Boards control still

@@ -17,6 +17,7 @@ Core directement.
 | `GET /api/sessions` | `GET /v1/sessions` |
 | `POST /api/sessions/new` | `POST /v1/sessions/new` |
 | `GET /api/boards/edition` | `GET /v1/boards/edition` |
+| `GET /api/edition/connectors` | `GET /v1/edition/connectors` |
 
 **Relais transparent.** Statut et corps JSON de Core rendus tels quels, erreurs
 comprises (`{"error": {"code", "message"}}`, codes `BoardErrorCode`). Core
@@ -68,6 +69,7 @@ from urllib.parse import quote
 
 from aiohttp import web
 
+from jarvis.protocol.client import ForwardRefused
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.runtime.core_sessions import CORE_TRANSITION_PATHS
 from jarvis.runtime.journal import RuntimeJournal
@@ -131,6 +133,8 @@ class BoardSessionRoutes:
             web.get("/api/boards/active", self.relay("/v1/boards/active")),
             # Disponibilité des types de Board pour l'interface (`docs/product-edition.md`) : Core décide.
             web.get("/api/boards/edition", self.relay("/v1/boards/edition")),
+            # Connecteurs de l'édition (`docs/product-connectors.md`) : onboarding et santé (Slice 07).
+            web.get("/api/edition/connectors", self.relay("/v1/edition/connectors")),
             # Avant `{board_id}` : « pending » n'est pas un identifiant de Board.
             web.get("/api/boards/pending", self.pending),
             web.post("/api/boards/switch", self.switch_board),
@@ -300,6 +304,12 @@ class BoardSessionRoutes:
             status, payload = await self._transport.forward(method, core_path, params=params, body=body)
         except asyncio.CancelledError:
             raise
+        except ForwardRefused as exc:
+            # Core est peut-être joignable : c'est la liste blanche du relais qui refuse (bogue local), dit tel quel.
+            self._journal.emit("board.request.not_forwardable", f"Relais refusé pour {method} {core_path}",
+                               level="error", data={"code": "relay_path_not_forwardable", "method": method,
+                                                    "path": core_path})
+            return _error(500, "relay_path_not_forwardable", str(exc)[:300])
         except asyncio.TimeoutError as exc:
             if not (method == "POST" and core_path in CORE_TRANSITION_PATHS):
                 # Lecture ou écriture simple (délai 10 s du client) : Core ne répond

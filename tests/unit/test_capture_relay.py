@@ -24,7 +24,9 @@ from tests.fakes.capture_stack import TOKEN, CaptureStack
 def test_the_forwardable_prefixes_are_pinned():
     """Ajouter un préfixe relayé est un choix délibéré : ce test doit changer avec lui."""
 
-    assert FORWARDABLE_PREFIXES == ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mcp/oauth/callback",
+    assert FORWARDABLE_PREFIXES == ("/v1/boards",
+                                    "/v1/edition/connectors",  # connecteurs de l'édition (presentation-edition S05)
+                                    "/v1/sessions", "/v1/mcp/plugins", "/v1/mcp/oauth/callback",
                                     "/v1/contexts", "/v1/captures", "/v1/artifacts", "/v1/activity",
                                     "/v1/workspace/",  # inspection du workspace (board-memory S04), lecture seule
                                     "/v1/prefabs",  # catalogue des prefabs (prefab-foundation S03)

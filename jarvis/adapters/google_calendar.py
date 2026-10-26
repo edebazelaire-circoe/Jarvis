@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from jarvis.adapters.google_oauth import build_service, load_credentials
+from jarvis.adapters.google_oauth import TokenSealer, build_service, load_credentials
 from jarvis.domain.calendar import CalendarAttendee, CalendarEvent, CalendarQuery
 
 
@@ -12,6 +12,8 @@ class GoogleCalendarBackend:
     """Google Calendar adapter; provider objects stay outside Core contracts."""
 
     SCOPES = ("https://www.googleapis.com/auth/calendar",)
+    #: Édition produit (`GoogleScopeProfile.MINIMAL`, Slice 05) : événements seulement (ni agendas, ni partages).
+    MINIMAL_SCOPES = ("https://www.googleapis.com/auth/calendar.events",)
     name = "google"
     persistent = True
 
@@ -21,8 +23,14 @@ class GoogleCalendarBackend:
         self._idempotency: dict[str, object] = {}
 
     @classmethod
-    def from_oauth_files(cls, client_secret_file: Path, token_file: Path, *, calendar_id: str = "primary") -> "GoogleCalendarBackend":
-        creds = load_credentials(client_secret_file, token_file, cls.SCOPES)
+    def scopes_for(cls, minimal: bool) -> tuple[str, ...]:
+        return cls.MINIMAL_SCOPES if minimal else cls.SCOPES
+
+    @classmethod
+    def from_oauth_files(cls, client_secret_file: Path, token_file: Path, *, calendar_id: str = "primary",
+                         minimal_scopes: bool = False, sealer: TokenSealer | None = None, interactive: bool = True) -> "GoogleCalendarBackend":
+        creds = load_credentials(client_secret_file, token_file, cls.scopes_for(minimal_scopes), sealer=sealer,
+                                 interactive=interactive)
         return cls(build_service("calendar", "v3", creds), calendar_id=calendar_id)
 
     async def list_events(self, query: CalendarQuery):

@@ -6,7 +6,7 @@ import io
 from pathlib import Path
 from typing import Any
 
-from jarvis.adapters.google_oauth import build_service, load_credentials
+from jarvis.adapters.google_oauth import TokenSealer, build_service, load_credentials
 from jarvis.domain.drive import NATIVE_EXPORTS, DriveContent, DriveFile, DriveQuery
 
 FIELDS = "id,name,mimeType,size,modifiedTime,parents,webViewLink,trashed"
@@ -18,6 +18,9 @@ class GoogleDriveBackend:
     """Google Drive adapter; provider objects stay outside Core contracts."""
 
     SCOPES = ("https://www.googleapis.com/auth/drive",)
+    #: Édition produit (`GoogleScopeProfile.MINIMAL`, Slice 05) : lecture de tout le Drive, écriture des seuls
+    #: fichiers créés par JARVIS (export explicite). `update`/`delete`/`share` d'un autre fichier : 403 de Google.
+    MINIMAL_SCOPES = ("https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/drive.file")
     name = "google"
     persistent = True
 
@@ -26,8 +29,14 @@ class GoogleDriveBackend:
         self._idempotency: dict[str, object] = {}
 
     @classmethod
-    def from_oauth_files(cls, client_secret_file: Path, token_file: Path) -> "GoogleDriveBackend":
-        creds = load_credentials(client_secret_file, token_file, cls.SCOPES)
+    def scopes_for(cls, minimal: bool) -> tuple[str, ...]:
+        return cls.MINIMAL_SCOPES if minimal else cls.SCOPES
+
+    @classmethod
+    def from_oauth_files(cls, client_secret_file: Path, token_file: Path, *, minimal_scopes: bool = False,
+                         sealer: TokenSealer | None = None, interactive: bool = True) -> "GoogleDriveBackend":
+        creds = load_credentials(client_secret_file, token_file, cls.scopes_for(minimal_scopes), sealer=sealer,
+                                 interactive=interactive)
         return cls(build_service("drive", "v3", creds))
 
     async def list_files(self, query: DriveQuery):

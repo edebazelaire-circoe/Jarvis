@@ -42,7 +42,10 @@ from typing import Annotated, Any, Literal
 
 import aiohttp
 
+from jarvis.domain.connector_content import frame_untrusted
 from jarvis.domain.mcp_plugins import McpErrorCode, McpPluginError
+from jarvis.domain.product_connectors import connector_policy
+from jarvis.domain.product_edition import PRODUCT_EDITION_ENV
 from jarvis.domain.tool_discovery import (
     DEFAULT_LIMIT,
     MAX_CURSOR_CHARS,
@@ -107,6 +110,12 @@ _NEXT_STEP: dict[str, str] = {
     McpErrorCode.ARGUMENTS_INVALID.value: "corrige les arguments selon input_schema (rappelle list_tools au besoin)",
     McpErrorCode.CURSOR_INVALID.value: "rappelle list_tools sans curseur",
     McpErrorCode.REMOTE_TIMEOUT.value: "le service distant n'a pas répondu à temps",
+    # Politique de l'édition (Slice 05 presentation-edition, `docs/product-connectors.md`) : rien n'a été envoyé.
+    McpErrorCode.TOOL_CONFIRMATION_REQUIRED.value: ("rien n'a été envoyé : cette édition ne permet pas encore "
+                                                    "de modifier les données d'un service externe ; dis-le à "
+                                                    "l'utilisateur, ne réessaie pas"),
+    McpErrorCode.TOOL_SIDE_EFFECT_REFUSED.value: ("rien n'a été envoyé : cet outil peut supprimer ou écraser des "
+                                                  "données et n'est pas permis dans cette édition ; ne réessaie pas"),
     "core_unreachable": "Core ne répond pas : les outils des plugins sont indisponibles pour l'instant",
 }
 
@@ -125,12 +134,17 @@ class ToolsGatewayTarget:
     runtime_root: Path | None = None
     native_servers: tuple[str, ...] = ()
     agent: Literal["claude", "codex"] = "claude"
+    #: Édition écrite dans l'environnement de la passerelle (Slice 05 presentation-edition) : cadrage des résultats.
+    edition: str | None = None
 
     def _core(self) -> DisplayMcpTarget:
         return DisplayMcpTarget(self.core_host, self.core_port, self.token_file, self.runtime_root)
 
     def env(self) -> dict[str, str]:
-        return {**self._core().env(), ENV_NATIVE_SERVERS: ",".join(self.native_servers), ENV_AGENT: self.agent}
+        env = {**self._core().env(), ENV_NATIVE_SERVERS: ",".join(self.native_servers), ENV_AGENT: self.agent}
+        if self.edition:
+            env[PRODUCT_EDITION_ENV] = self.edition
+        return env
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "ToolsGatewayTarget":
@@ -347,8 +361,12 @@ class ToolsGateway:
 
     def __init__(self, core: Any, *, native_servers: Sequence[str] = (), agent: str = "claude",
                  catalog: Callable[[], Awaitable[Mapping[str, Any]]] | None = None,
-                 journal: RuntimeJournal | None = None, monotonic: Callable[[], float] = time.monotonic) -> None:
+                 journal: RuntimeJournal | None = None, monotonic: Callable[[], float] = time.monotonic,
+                 frame_untrusted_content: bool = False) -> None:
         self._core = core
+        #: Édition `presentation` : tout texte rendu par un plugin est cadré comme donnée non fiable, ici, au bord
+        #: du modèle (`docs/product-connectors.md` › *Contenu non fiable*) ; Core rend le résultat brut.
+        self._frame = frame_untrusted_content
         self._agent = agent
         self._native_servers = tuple(native_servers)
         self._catalog = catalog
@@ -363,8 +381,33 @@ class ToolsGateway:
 
     @classmethod
     def from_target(cls, target: ToolsGatewayTarget, *, journal: RuntimeJournal | None = None) -> "ToolsGateway":
+        from jarvis.runtime.product_edition_env import process_edition
+
         core = CoreToolsTransport(host=target.core_host, port=target.core_port, token_file=target.token_file)
-        return cls(core, native_servers=target.native_servers, agent=target.agent, journal=journal)
+        frame = connector_policy(process_edition()).frame_untrusted_content
+        return cls(core, native_servers=target.native_servers, agent=target.agent, journal=journal,
+                   frame_untrusted_content=frame)
+
+    def _display_name(self, plugin_id: str) -> str | None:
+        return next((str(plugin.get("display_name")) for plugin in self._external.plugins
+                     if isinstance(plugin, Mapping) and plugin.get("plugin_id") == plugin_id
+                     and plugin.get("display_name")), None)
+
+    async def _source_of(self, tool_id: str) -> str:
+        """Nom affiché du plugin (étiquette du cadre). Catalogue pas encore lu (appel sans `list_tools` avant,
+        passerelle relancée) : il est lu une fois ici ; Core injoignable : l'identifiant du plugin."""
+
+        plugin_id = tool_id.split(".", 1)[0]
+        name = self._display_name(plugin_id)
+        if name is None:
+            await self._external_tools()
+            name = self._display_name(plugin_id)
+        return name or plugin_id
+
+    async def _framed(self, tool_id: str, texts: list[str]) -> list[str]:
+        if not self._frame or not texts:
+            return texts
+        return [frame_untrusted("\n".join(texts), source=await self._source_of(tool_id))]
 
     def _emit(self, kind: str, message: str, *, level: str = "info", data: dict[str, Any] | None = None) -> None:
         if self._journal is not None:
@@ -492,6 +535,7 @@ class ToolsGateway:
                      and isinstance(block.get("text"), str)]
             if not texts and isinstance(outcome.get("structured"), dict):
                 texts = [json.dumps(outcome["structured"], ensure_ascii=False, separators=(",", ":"))]
+            texts = await self._framed(tool_id, texts)
             if outcome.get("truncated"):
                 texts.append("[résultat tronqué : borne de 32 Kio atteinte]")
             if not outcome.get("ok"):

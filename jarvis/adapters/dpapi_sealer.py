@@ -7,6 +7,10 @@
 - `UnavailableSealer` : hors Windows. `available` faux ⇒ le coffre refuse tout
   secret (`mcp_vault_unavailable`), **aucun repli en clair**.
 
+Slice 05 presentation-edition : le même scellement sert les clés API du Control Center et les
+jetons Google OAuth de l'édition produit (`jarvis/runtime/local_secrets.py`), avec une
+**entropie propre à chaque usage** (`entropy`) : un blob d'un usage ne se descelle pas dans un autre.
+
 Modèle de menace (`docs/mcp/plugins.md` §3.2) : DPAPI CurrentUser protège
 contre les autres utilisateurs et les copies de la base, pas contre un
 processus malveillant du même utilisateur.
@@ -39,7 +43,8 @@ class DpapiSealer:
 
     scheme = DPAPI_SCHEME
 
-    def __init__(self) -> None:
+    def __init__(self, entropy: bytes = DPAPI_ENTROPY) -> None:
+        self._entropy = bytes(entropy)
         self._crypt32 = None
         self._kernel32 = None
         self._load_error: str | None = None
@@ -64,7 +69,7 @@ class DpapiSealer:
         if self._crypt32 is None or self._kernel32 is None:
             raise SealerError(self._load_error or "DPAPI unavailable")
         source, _keep = _blob(data)
-        entropy, _keep_entropy = _blob(DPAPI_ENTROPY)
+        entropy, _keep_entropy = _blob(self._entropy)
         out = _DataBlob()
         # Same argument layout for both calls: (in, description, entropy,
         # reserved, prompt, flags, out); the description is neither set nor read.
@@ -101,11 +106,11 @@ class UnavailableSealer:
         raise SealerError(self.unavailable_reason)
 
 
-def default_sealer() -> DpapiSealer | UnavailableSealer:
+def default_sealer(entropy: bytes = DPAPI_ENTROPY) -> DpapiSealer | UnavailableSealer:
     """DPAPI sous Windows, sinon `UnavailableSealer` (injecté par `app.py:_run_core_v2`)."""
 
     if sys.platform == "win32":
-        sealer = DpapiSealer()
+        sealer = DpapiSealer(entropy)
         if sealer.available:
             return sealer
         return UnavailableSealer(sealer.unavailable_reason or "DPAPI unavailable")
