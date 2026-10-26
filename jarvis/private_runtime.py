@@ -123,6 +123,7 @@ class PackageLayout:
         if (not isinstance(payload, dict) or payload.get("schema") != RUNTIME_MANIFEST_SCHEMA
                 or payload.get("schema_version") != RUNTIME_MANIFEST_VERSION):
             raise ValueError(f"{RUNTIME_MANIFEST} : schéma attendu {RUNTIME_MANIFEST_SCHEMA!r} v{RUNTIME_MANIFEST_VERSION}")
+        _check_manifest_shape(payload)
         return payload
 
     def ships(self, component: str) -> bool:
@@ -147,6 +148,36 @@ class PackageLayout:
         else:
             return None
         return str(path) if path.is_file() else None
+
+
+def _package_relative(value: object) -> bool:
+    """Chemin relatif non vide qui reste dans le dossier d'installation (ni absolu, ni lecteur, ni `..`)."""
+
+    if not isinstance(value, str) or not value.strip():
+        return False
+    text = value.replace("\\", "/")
+    parts = text.split("/")
+    return not text.startswith("/") and ":" not in text and all(part not in ("", ".", "..") for part in parts)
+
+
+def _check_manifest_shape(payload: dict) -> None:
+    """Forme des blocs lus par le diagnostic et `verify_runtimes` : `ValueError` (donc `runtime_manifest_invalid`),
+    jamais une `AttributeError` au démarrage de Core sur une entrée qui n'est pas un objet."""
+
+    runtimes = payload.get("runtimes", {})
+    if not isinstance(runtimes, dict):
+        raise ValueError(f"{RUNTIME_MANIFEST} : `runtimes` n'est pas un objet")
+    for name, entry in runtimes.items():
+        if not isinstance(entry, dict):
+            raise ValueError(f"{RUNTIME_MANIFEST} : `runtimes.{name}` n'est pas un objet")
+        for key in ("root", "executable"):
+            if not _package_relative(entry.get(key)):
+                raise ValueError(f"{RUNTIME_MANIFEST} : `runtimes.{name}.{key}` n'est pas un chemin relatif au paquet")
+    if not isinstance(payload.get("product", {}), dict):
+        raise ValueError(f"{RUNTIME_MANIFEST} : `product` n'est pas un objet")
+    excluded = payload.get("excluded", [])
+    if not isinstance(excluded, list) or not all(isinstance(entry, dict) for entry in excluded):
+        raise ValueError(f"{RUNTIME_MANIFEST} : `excluded` n'est pas une liste d'objets")
 
 
 def layout_for(code_root: Path) -> PackageLayout | None:
@@ -267,6 +298,20 @@ def diagnostics(layout: object = PROCESS) -> dict:
                       "runtimes": {name: (entry or {}).get("version") for name, entry in sorted(runtimes.items())},
                       "excluded": sorted((entry or {}).get("id") for entry in manifest.get("excluded") or [] if entry),
                       "problems": problems}
+
+
+def runtime_reserve(block: object) -> str | None:
+    """Réserve à porter par `/v1/health` et le journal quand les runtimes du paquet sont cassés, sinon `None`.
+
+    `block` est le dict rendu par `diagnostics()` : `None` en développement et quand le statut est `ok`.
+    La phrase nomme chaque problème (composant + code), sans chemin.
+    """
+
+    if not isinstance(block, Mapping) or block.get("status") not in ("degraded", "invalid"):
+        return None
+    problems = [problem for problem in block.get("problems") or [] if isinstance(problem, Mapping)]
+    named = ", ".join(f"{problem.get('component')}: {problem.get('code')}" for problem in problems) or "unknown problem"
+    return f"private runtimes {block['status']} ({named}); repair or reinstall Jarvis"
 
 
 def _presence_problems(layout: PackageLayout, runtimes: Mapping[str, Mapping]) -> list[RuntimeProblem]:

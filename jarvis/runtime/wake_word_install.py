@@ -21,6 +21,11 @@ et `wake_model_missing` / `wake_package_missing` pour `status`.
 
 Codes de sortie : 0 tout est en place, 1 échec ou refus, 2 confirmation
 impossible (pas de clavier et pas de `--yes`).
+
+Produit installé en édition `presentation` (`docs/windows-packaging.md`) : `install`
+est refusé (`wake_word_install_unavailable_in_edition`, code 1). Les modèles
+(CC BY-NC-SA) et openWakeWord sont exclus du paquet : le produit ne les télécharge
+jamais. `status` reste permis (lecture seule).
 """
 
 from __future__ import annotations
@@ -189,17 +194,41 @@ def _install(out: TextIO, err: TextIO, input_fn: Callable[[str], str], *, yes: b
     return 0
 
 
+INSTALL_REFUSED = "wake_word_install_unavailable_in_edition"
+
+
+def install_refusal(*, installed: bool, edition: str) -> str | None:
+    """Phrase du refus de `install` dans un produit installé `presentation`, `None` ailleurs (checkout, `full`)."""
+
+    if installed and edition == "presentation":
+        return (f"{INSTALL_REFUSED}: l'éveil vocal openWakeWord n'est pas livré dans l'édition presentation "
+                "(modèles sous licence non commerciale CC BY-NC-SA) ; le réveil se fait au clavier.")
+    return None
+
+
+def _process_install_refusal() -> str | None:
+    from jarvis.installation import detect_installation
+    from jarvis.runtime.product_edition_env import process_edition
+
+    return install_refusal(installed=detect_installation().installed, edition=process_edition().edition.value)
+
+
 def run_cli(
     args: Any,
     *,
     out: TextIO | None = None,
     err: TextIO | None = None,
     input_fn: Callable[[str], str] = input,
+    refusal: Callable[[], str | None] = _process_install_refusal,
 ) -> int:
     out = out or sys.stdout
     err = err or sys.stderr
     if args.wake_action == "status":
         return _status(read_states(), out, as_json=bool(getattr(args, "json", False)))
     if args.wake_action == "install":
+        refused = refusal()
+        if refused is not None:
+            err.write(refused + "\n")
+            return 1
         return _install(out, err, input_fn, yes=bool(getattr(args, "yes", False)))
     raise AssertionError(args.wake_action)

@@ -36,6 +36,7 @@ from jarvis.ports.mcp_plugins import McpPluginStoreError
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleConflict, LiveLifecycleState
 from jarvis.domain.voice_channel import VOICE_CHANNEL_SCHEMA_VERSION
 from jarvis.ports.scene import ScenePatchWindow, SceneStoreError, SceneUnavailableError
+from jarvis.private_runtime import runtime_reserve
 from jarvis.protocol import scene_wire
 from jarvis.protocol.capture_routes import CaptureProtocolRoutes
 from jarvis.protocol.local_capability_routes import LocalCapabilityProtocolRoutes
@@ -360,7 +361,12 @@ class LocalProtocolServer:
 
     async def health(self, request: web.Request) -> web.Response:
         store = self.core.conversation_events
-        return web.json_response({"protocol_version": PROTOCOL_VERSION, "ready": self.core.health.ready, "status": self.core.health.status, "detail": self.core.health.detail,
+        status, detail = self.core.health.status, self.core.health.detail
+        # Runtimes privés du paquet cassés (docs/windows-packaging.md) : Core sert (`ready`), mais jamais `ok` sans réserve.
+        reserve = runtime_reserve((self.installation or {}).get("runtimes"))
+        if reserve is not None and status == "ok":
+            status, detail = "degraded", reserve
+        return web.json_response({"protocol_version": PROTOCOL_VERSION, "ready": self.core.health.ready, "status": status, "detail": detail,
                                   # `scene` : disponibilité de la scène constellation (Slice 03). Elle ne
                                   # change pas `ready` : une scène refusée n'empêche pas Core de servir.
                                   "scene": scene_wire.availability_block(self.core.scene.availability, self.core.scene.capacity),

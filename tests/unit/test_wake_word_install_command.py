@@ -419,3 +419,28 @@ def test_a_corrupt_download_does_not_stop_the_other_files(runtime, net, small_ca
     code, output = run("install", "--yes")
     assert code == 1 and "wake_model_mismatch" in output and len(net.requested) == 3
     assert "2 sur 3" in output and "restent à installer" not in output
+
+
+# ------------------------------------------- produit installé presentation (reprise QA S06)
+
+
+def test_install_is_refused_only_in_an_installed_presentation_product():
+    assert wake_word_install.install_refusal(installed=True, edition="presentation").startswith(
+        "wake_word_install_unavailable_in_edition")
+    assert wake_word_install.install_refusal(installed=False, edition="presentation") is None
+    assert wake_word_install.install_refusal(installed=True, edition="full") is None
+
+
+def test_the_installed_presentation_product_never_downloads_the_models(runtime, net, small_catalog, tmp_path, monkeypatch):
+    from jarvis import installation
+
+    code_root = tmp_path / "program" / "app"
+    code_root.mkdir(parents=True)
+    (code_root / installation.PRODUCT_MARKER).write_text(json.dumps(installation.marker_payload()), encoding="utf-8")
+    monkeypatch.setattr(installation, "CODE_ROOT", code_root)
+    monkeypatch.delenv("JARVIS_PRODUCT_EDITION", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "lad"))
+    code, output = run("install", "--yes")
+    assert code == 1 and "wake_word_install_unavailable_in_edition" in output
+    assert net.requested == [] and not (runtime / MODELS_DIR).exists()
+    assert run("status")[0] == 1  # la lecture reste permise

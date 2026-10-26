@@ -13,7 +13,8 @@ Trois commandes, aucune ne touche au JARVIS vivant ni à `%LOCALAPPDATA%\\CIRCOE
         code `jarvis/` tiré de git (`git archive`, rien de non versionné), marqueur produit,
         bytecode précompilé (`unchecked-hash` : rien n'est écrit dans le dossier du programme
         à l'exécution), licences, `third-party-manifest.json` et `runtime-manifest.json`.
-        Termine par une sonde du paquet lancé avec un PATH réduit à Windows.
+        Termine par une sonde du paquet lancé avec un PATH réduit à Windows. Exige un dépôt git (pas une archive des
+        sources) et refuse un arbre de travail qui diffère de `--rev` sur `jarvis/`, `packaging/windows/`, `pyproject.toml`.
 
     python packaging/windows/build_package.py verify DIR
         Recalcule les empreintes des arbres et les compare au manifeste.
@@ -31,7 +32,7 @@ import hashlib
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import platform
 import re
 import shutil
@@ -179,15 +180,34 @@ def fetch_verified(entry: dict, cache: Path) -> Path:
     return target
 
 
+def safe_destination(target: Path, name: str, *, strip_components: int = 0, label: str) -> Path | None:
+    r"""Destination d'un membre d'archive sous `target`, `None` s'il ne reste rien après `strip_components`.
+
+    Refuse (Zip Slip) : `..`, nom absolu (`/x`, `\x`), lettre de lecteur (`C:x`, `C:\x`), et toute destination
+    qui sortirait de `target` une fois résolue.
+    """
+
+    normalized = name.replace("\\", "/")
+    if normalized.startswith("/") or PureWindowsPath(name).drive or ":" in normalized:
+        raise BuildError(f"{label}: chemin refusé {name}")
+    raw = normalized.split("/")
+    if ".." in raw:
+        raise BuildError(f"{label}: chemin refusé {name}")
+    parts = [part for part in raw if part not in ("", ".")][strip_components:]
+    if not parts:
+        return None
+    destination = target.joinpath(*parts)
+    if not destination.resolve().is_relative_to(target.resolve()):
+        raise BuildError(f"{label}: chemin refusé {name}")
+    return destination
+
+
 def extract_zip(archive: Path, target: Path, *, strip_components: int = 0) -> None:
     with zipfile.ZipFile(archive) as bundle:
         for info in bundle.infolist():
-            parts = Path(info.filename).parts[strip_components:]
-            if not parts or info.is_dir():
+            destination = safe_destination(target, info.filename, strip_components=strip_components, label=archive.name)
+            if destination is None or info.is_dir():
                 continue
-            if any(part in ("..", "") or ":" in part for part in parts):
-                raise BuildError(f"{archive.name}: chemin refusé {info.filename}")
-            destination = target.joinpath(*parts)
             destination.parent.mkdir(parents=True, exist_ok=True)
             with bundle.open(info) as source, open(destination, "wb") as sink:
                 shutil.copyfileobj(source, sink, 1 << 20)
@@ -269,8 +289,39 @@ def build_node(out: Path, runtimes: dict, cache: Path) -> Path:
     return target
 
 
+#: Ce que le build lit dans le dépôt : le code (`git archive`), le verrou, la politique, les runtimes, le marqueur et la
+#: version. Ils doivent être ceux de `--rev` : sinon le paquet dirait une révision et en porterait une autre.
+BUILD_INPUTS = ("jarvis", "packaging/windows", "pyproject.toml")
+PREREQUISITES = ("le build exige un dépôt git du code (clone ou worktree, pas une archive) avec git sur le PATH, et le "
+                 "Python de développement de la version du runtime épinglé (docs/windows-packaging.md › Build)")
+
+
+def git(*args: str) -> bytes:
+    """`git -C <dépôt> …` ; échec = `BuildError` avec la commande, le code et le message complet de git."""
+
+    try:
+        result = subprocess.run(["git", "-C", str(REPO), *args], capture_output=True)
+    except FileNotFoundError as exc:
+        raise BuildError(f"git introuvable : {PREREQUISITES}") from exc
+    if result.returncode != 0:
+        message = result.stderr.decode("utf-8", errors="replace").strip()
+        raise BuildError(f"`git {' '.join(args)}` a échoué (code {result.returncode}) : {message}\n{PREREQUISITES}")
+    return result.stdout
+
+
 def git_revision(rev: str) -> str:
-    return subprocess.run(["git", "-C", str(REPO), "rev-parse", rev], check=True, capture_output=True, text=True).stdout.strip()
+    return git("rev-parse", "--verify", f"{rev}^{{commit}}").decode("utf-8").strip()
+
+
+def ensure_inputs_match(revision: str) -> None:
+    """Refuse un arbre de travail dont les entrées du build diffèrent de `revision` (modifiées, ou autre révision)."""
+
+    changed = [line for line in git("diff", "--name-only", revision, "--", *BUILD_INPUTS).decode("utf-8").splitlines()
+               if line.strip()]
+    if changed:
+        shown = ", ".join(changed[:10]) + (f" (+{len(changed) - 10})" if len(changed) > 10 else "")
+        raise BuildError(f"l'arbre de travail diffère de {revision[:12]} sur les entrées du build : {shown}. "
+                         "Committez, ou construisez depuis un checkout propre de cette révision.")
 
 
 def build_app(out: Path, revision: str) -> Path:
@@ -278,20 +329,26 @@ def build_app(out: Path, revision: str) -> Path:
 
     app = out / PR.APP_DIR
     app.mkdir(parents=True, exist_ok=True)
-    archive = subprocess.run(["git", "-C", str(REPO), "archive", "--format=tar", revision, "jarvis"], check=True,
-                             capture_output=True).stdout
+    archive = git("archive", "--format=tar", revision, "jarvis")
     with tarfile.open(fileobj=io.BytesIO(archive)) as bundle:
         for member in bundle.getmembers():
             if not member.isfile():
                 continue
-            parts = Path(member.name).parts
-            if any(part in ("..", "") for part in parts) or Path(member.name).is_absolute():
-                raise BuildError(f"git archive: chemin refusé {member.name}")
-            destination = app.joinpath(*parts)
+            destination = safe_destination(app, member.name, label="git archive")
+            if destination is None:
+                continue
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(bundle.extractfile(member).read())
     (app / PRODUCT_MARKER).write_text(json.dumps(marker_payload(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return app
+
+
+def compileall_argv(out: Path, roots: list[Path]) -> list[str]:
+    """`compileall` en un seul processus (`-j 1`) : avec `-j 0`, le bytecode de certains modules change d'un build à
+    l'autre (QA S06 : 3 jeux différents sur 6 exécutions, `protocol/server.py` entre autres) ; `-j 1` : 4 sur 4 égaux."""
+
+    return [sys.executable, "-m", "compileall", "-q", "-j", "1", "--invalidation-mode", "unchecked-hash",
+            "-s", str(out), *[str(root) for root in roots]]
 
 
 def precompile(out: Path, runtime_version: str, roots: list[Path]) -> None:
@@ -307,8 +364,7 @@ def precompile(out: Path, runtime_version: str, roots: list[Path]) -> None:
     if platform.python_version() != runtime_version:
         raise BuildError(f"Python de build {platform.python_version()} ≠ runtime {runtime_version} : bytecode incompatible")
     env = dict(os.environ, PYTHONHASHSEED="0")
-    result = subprocess.run([sys.executable, "-m", "compileall", "-q", "-j", "0", "--invalidation-mode", "unchecked-hash",
-                             "-s", str(out), *[str(root) for root in roots]], capture_output=True, text=True,
+    result = subprocess.run(compileall_argv(out, roots), capture_output=True, text=True,
                             encoding="utf-8", errors="replace", env=env)
     if result.returncode != 0:
         failed = [line for line in result.stdout.splitlines() if line.startswith("*** Error compiling")]
@@ -469,13 +525,31 @@ def probe(out: Path) -> dict:
     if result.returncode != 0:
         raise BuildError("sonde du paquet en échec:\n" + (result.stdout + result.stderr)[-3000:])
     report = json.loads(result.stdout.strip().splitlines()[-1])
-    expected = (report["installed"] and report["executable_in_package"] and report["node_private"]
-                and report["no_site"] and not report["sys_path_outside_package"]
-                and not any(report["excluded_importable"].values()) and report["ffmpeg"] is None
-                and not any(report["path_tools"].values()) and report["diagnostics"].get("status") == "ok")
-    if not expected:
-        raise BuildError(f"sonde du paquet inattendue: {json.dumps(report)}")
+    problems = probe_problems(report)
+    if problems:
+        raise BuildError(f"sonde du paquet inattendue ({'; '.join(problems)}): {json.dumps(report)}")
     return report
+
+
+def probe_problems(report: dict) -> list[str]:
+    """Écarts du rapport de sonde au contrat du paquet ; vide = paquet conforme."""
+
+    problems = [f"{key} faux" for key in ("installed", "executable_in_package", "node_private", "no_site")
+                if not report.get(key)]
+    if report.get("sys_path_outside_package"):
+        problems.append(f"sys.path hors du paquet : {report['sys_path_outside_package']}")
+    importable = sorted(name for name, present in (report.get("excluded_importable") or {}).items() if present)
+    if importable:
+        problems.append(f"composants exclus importables : {importable}")
+    if report.get("ffmpeg") is not None:
+        problems.append("ffmpeg résolu alors que l'édition ne le livre pas")
+    on_path = sorted(name for name, found in (report.get("path_tools") or {}).items() if found)
+    if on_path:
+        problems.append(f"outils trouvés sur le PATH réduit : {on_path}")
+    status = (report.get("diagnostics") or {}).get("status")
+    if status != "ok":
+        problems.append(f"diagnostic des runtimes : {status}")
+    return problems
 
 
 def command_build(args: argparse.Namespace) -> int:
@@ -485,9 +559,10 @@ def command_build(args: argparse.Namespace) -> int:
         raise BuildError(f"{out} n'est pas vide : un build part toujours d'un dossier vide")
     if out == REPO or REPO in out.parents:
         raise BuildError("le dossier de sortie ne peut pas être dans le dépôt")
+    revision = git_revision(args.rev)
+    ensure_inputs_match(revision)
     runtimes, policy = load_json(RUNTIMES_FILE), load_json(POLICY_FILE)
     lock_rows = parse_lock(LOCK_FILE.read_text(encoding="utf-8"))
-    revision = git_revision(args.rev)
     out.mkdir(parents=True, exist_ok=True)
     log(f"révision {revision} → {out}")
     python_dir = build_python(out, runtimes, cache)
@@ -507,19 +582,39 @@ def command_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def unexpected_entries(out: Path, manifest: dict) -> list[str]:
+    r"""Ce qui n'appartient à aucun arbre suivi : à la racine du paquet, et directement sous `runtime\` hors des
+    runtimes du manifeste (les arbres suivis eux-mêmes sont comparés par empreinte)."""
+
+    top = {PR.APP_DIR, PR.RUNTIME_DIR, LICENSES_DIR, PR.RUNTIME_MANIFEST, THIRD_PARTY_MANIFEST}
+    found = [entry.name for entry in out.iterdir() if entry.name not in top]
+    roots = {str(entry.get("root", "")).replace("\\", "/").rstrip("/").split("/")[-1]
+             for entry in (manifest.get("runtimes") or {}).values() if isinstance(entry, dict)}
+    runtime = out / PR.RUNTIME_DIR
+    if runtime.is_dir():
+        found += [f"{PR.RUNTIME_DIR}/{entry.name}" for entry in runtime.iterdir() if entry.name not in roots]
+    return sorted(found)
+
+
 def command_verify(args: argparse.Namespace) -> int:
     out = Path(args.out).resolve()
     layout = PR.PackageLayout(out)
-    manifest = layout.manifest()
+    try:
+        manifest = layout.manifest()
+    except ValueError as exc:
+        raise BuildError(f"paquet altéré : {exc}") from exc
     if manifest is None:
         raise BuildError(f"{PR.RUNTIME_MANIFEST} absent")
     problems = [f"{p.component}: {p.code.value} ({p.detail})" for p in PR.verify_runtimes(layout)]
     for key, root in (("app", PR.APP_DIR), ("licenses", LICENSES_DIR)):
-        actual, _count = PR.tree_sha256(out / root)
-        if actual != manifest[key]["tree_sha256"]:
+        block = manifest.get(key)
+        actual = PR.tree_sha256(out / root)[0] if (out / root).is_dir() else ""
+        if not isinstance(block, dict) or actual != block.get("tree_sha256"):
             problems.append(f"{key}: arbre modifié")
-    if PR.file_sha256(out / THIRD_PARTY_MANIFEST) != manifest["third_party_manifest_sha256"]:
+    third_party = out / THIRD_PARTY_MANIFEST
+    if not third_party.is_file() or PR.file_sha256(third_party) != manifest.get("third_party_manifest_sha256"):
         problems.append("third-party-manifest.json modifié")
+    problems += [f"{name}: fichier ou dossier inattendu" for name in unexpected_entries(out, manifest)]
     body = {key: value for key, value in manifest.items() if key != "package_sha256"}
     if package_digest(body) != manifest.get("package_sha256"):
         problems.append("package_sha256 ne correspond pas au manifeste")

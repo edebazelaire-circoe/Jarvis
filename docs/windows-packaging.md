@@ -62,9 +62,16 @@ Nothing else: no `scripts\`, `tests\`, `docs\`, `third_party\`, `setup.ps1`,
   `PYTHON*` variable (`sys.flags.ignore_environment`). The pywin32
   DLLs are copied next to `python.exe` (what `pywin32.pth` would have done).
 - Every `.py` of `app\` and `site-packages\` is precompiled with
-  `--invalidation-mode unchecked-hash`: Python never writes `__pycache__` in
-  the program folder (I-002 point 1), and the bytecode is identical from one
-  build to the next.
+  `--invalidation-mode unchecked-hash`, in one process (`compileall -j 1`:
+  parallel workers gave different bytecode from one build to the next): Python
+  does not rewrite `__pycache__` in the program folder (I-002 point 1), and the
+  bytecode is identical from one build to the next. **Exception**: a
+  third-party file that does not compile (a Python 2 example shipped in a
+  wheel) is skipped with a build message; if such a module were ever imported,
+  the interpreter would try to write its bytecode into the program folder and
+  `verify` would then report the package altered. The Slice 07 launcher must
+  therefore start `python.exe` with **`-B`** (no bytecode written), which
+  makes the rule hold for every module.
 - Child processes (MCP servers, routing hook) are launched with
   `sys.executable`, i.e. the packaged `python.exe`; their `*-mcp.json` name it
   (I-002 point 2).
@@ -112,9 +119,21 @@ is the `runtimes` block of `installation` in `/v1/health` and of the
 `core.installation` journal event: `mode`, `status` (`ok`/`degraded`/`invalid`),
 `edition`, `version`, runtime versions, excluded ids, typed `problems`
 (`runtime_manifest_missing`, `runtime_manifest_invalid`,
-`private_runtime_missing`). `private_runtime.verify_runtimes()` recomputes the
+`private_runtime_missing`). A manifest whose `runtimes`, `product` or
+`excluded` blocks do not have the expected shape (an entry that is not an
+object, a `root`/`executable` that is not a relative path inside the package)
+is `runtime_manifest_invalid`, never a crash at Core startup.
+`private_runtime.verify_runtimes()` recomputes the
 runtime trees on demand (`private_runtime_integrity_failed`): for a repair or
 readiness action (Slice 07), never at startup.
+
+**Broken runtimes are never silent.** When the `runtimes` status is `degraded`
+or `invalid` (`private_runtime.runtime_reserve`): the `core.installation`
+event is logged at `error` (so it reaches the error journal) with a message
+naming each problem, and `/v1/health` answers `status: "degraded"` with that
+sentence in `detail` instead of `ok`. `ready` stays `true`: Core serves (the
+conversation, the Boards), only what needs the missing runtime fails, with its
+own typed refusal. The readiness view and the repair action are Slice 07.
 
 ## Third-party policy and manifest
 
@@ -144,10 +163,22 @@ redistributed).
 
 ## Build
 
-Run with the development Python of the **same version** as the pinned runtime
+**Prerequisites**: a Git repository of the code (a clone or a worktree, not a
+source archive: the code comes from `git archive`) with `git` on the `PATH`,
+and the development Python of the **same version** as the pinned runtime
 (3.14.6, the repository `.venv`): pip comes from it, and it produces the
 bytecode (`PYTHONHASHSEED=0`; the packaged interpreter ignores the environment
-and could not fix the hash seed, which orders `frozenset` constants).
+and could not fix the hash seed, which orders `frozenset` constants). Without
+Git the build stops with `git … a échoué (code N) : <git's full message>` and
+these prerequisites.
+
+**Inputs come from the revision.** The build reads the code (`git archive`),
+`runtimes.json`, `requirements.lock`, `third_party_policy.json`, the marker and
+the `pyproject.toml` version. It **refuses** to start when the working tree
+differs from `--rev` on `jarvis\`, `packaging\windows\` or `pyproject.toml`
+(uncommitted change, or `--rev` older than the checkout): commit first, or build
+from a clean checkout of that revision. A package therefore never claims one
+`source_revision` while carrying another revision's lock or policy.
 
 ```powershell
 # from the repository; output and cache outside the repository
@@ -172,8 +203,27 @@ excluded module importable (`onnxruntime`, `openwakeword`, `imageio_ffmpeg`,
 `pvporcupine`, `sherpa_onnx`) and report `diagnostics().status == "ok"`.
 
 **Reproducible**: two builds of the same revision into two folders give the
-same `package_sha256` (proved in the Slice 06 LOG). The output folder must be
-empty and outside the repository.
+same `package_sha256` (proved in the Slice 06 LOG, then again after the QA
+rework with `compileall -j 1`). The output folder must be empty and outside
+the repository. Archive members are extracted only inside their target folder
+(no `..`, no absolute name, no drive letter).
+
+**`verify`** recomputes every tracked tree (`app`, `licenses`, each runtime),
+the third-party manifest digest and `package_sha256`, and reports any file or
+folder that belongs to no tracked tree (at the package root, or directly under
+`runtime\` beside the declared runtimes). An unreadable manifest (invalid JSON,
+a UTF-8 BOM, a wrong shape) is a clean `ÉCHEC : paquet altéré`, exit code 1.
+
+### Trying the package (simulated installed product)
+
+Never on the live JARVIS ports or data. Start the packaged `python.exe` with:
+`PATH` reduced to `C:\Windows\System32;C:\Windows`; `LOCALAPPDATA` pointed at a
+throw-away folder (the product home is created under it); free ports in
+`JARVIS_CORE_PORT`, `JARVIS_UI_PORT`, `JARVIS_REMOTION_SANDBOX_PORT`,
+`JARVIS_VISUALIZER_PORT`; `JARVIS_VISUALIZER_ENABLED=0`; and
+**`JARVIS_OPEN_BROWSER=0`**, otherwise the Control Center opens its page in the
+tester's own browser. Then `python.exe -B -m jarvis core` (and
+`control-center`) and read `/v1/health`. Stop the processes by their exact PID.
 
 ### Changing a pin
 
@@ -197,4 +247,10 @@ empty and outside the repository.
   launcher may start processes from any folder.
 - No updater (Slice 10). `verify_runtimes` detects a changed runtime tree; it
   does not repair it.
+- Excluded components stay unreachable from the product, not only absent:
+  in the `presentation` edition the Control Center does not declare the
+  `jarvis-barehands` MCP server (no `barehands-mcp.json` is written), and an
+  installed `presentation` product refuses `python -m jarvis wake-word install`
+  (`wake_word_install_unavailable_in_edition`: the CC BY-NC-SA models are never
+  downloaded by the product; `wake-word status` stays available).
 - Readiness UI, repair actions and the Claude CLI sign-in: Slice 07.

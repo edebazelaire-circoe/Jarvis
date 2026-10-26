@@ -198,3 +198,91 @@ def test_tree_digest_does_not_depend_on_the_install_folder(tmp_path):
         (tmp_path / name / "sub").mkdir(parents=True)
         (tmp_path / name / "sub" / "f.txt").write_bytes(b"same")
     assert PR.tree_sha256(tmp_path / "a") == PR.tree_sha256(tmp_path / "b")
+
+
+# -- reprise QA S06 -------------------------------------------------------------------------------------------------
+
+def base_manifest(**changes) -> dict:
+    manifest = {"schema": PR.RUNTIME_MANIFEST_SCHEMA, "schema_version": PR.RUNTIME_MANIFEST_VERSION,
+                "product": {"edition": "presentation"}, "excluded": [],
+                "runtimes": {"node": {"version": "1", "root": "runtime/node", "executable": "runtime/node/node.exe",
+                                      "tree_sha256": "0" * 64}}}
+    return manifest | changes
+
+
+@pytest.mark.parametrize("changes", [
+    {"runtimes": {"node": "x"}}, {"runtimes": ["node"]}, {"product": "p"}, {"excluded": ["a"]}, {"excluded": "a"},
+    {"runtimes": {"node": {"root": "", "executable": "runtime/node/node.exe"}}},
+    {"runtimes": {"node": {"root": "../outside", "executable": "runtime/node/node.exe"}}},
+    {"runtimes": {"node": {"root": "C:/elsewhere", "executable": "runtime/node/node.exe"}}},
+    {"runtimes": {"node": {"root": "/abs", "executable": "runtime/node/node.exe"}}},
+    {"runtimes": {"node": {"root": "runtime/node", "executable": None}}}])
+def test_a_manifest_of_the_wrong_shape_is_invalid_never_a_crash(tmp_path, changes):
+    layout = make_package(tmp_path / "Jarvis", manifest=base_manifest(**changes))
+    report = PR.diagnostics(layout)
+    assert report["status"] == "invalid" and report["problems"][0]["code"] == "runtime_manifest_invalid"
+    assert PR.verify_runtimes(layout)[0].code is PR.RuntimeProblemCode.MANIFEST_INVALID
+    assert PR.which("node", layout=layout, fallback=never) == layout.tool("node")  # résolution inchangée, jamais le PATH
+
+
+def test_runtime_reserve_names_each_problem_only_when_runtimes_are_broken(tmp_path):
+    assert PR.runtime_reserve({"mode": "development", "source": "path"}) is None
+    assert PR.runtime_reserve(PR.diagnostics(make_package(tmp_path / "ok"))) is None
+    layout = make_package(tmp_path / "broken")
+    layout.node_exe.unlink()
+    reserve = PR.runtime_reserve(PR.diagnostics(layout))
+    assert reserve.startswith("private runtimes degraded") and "node: private_runtime_missing" in reserve
+    assert "repair or reinstall Jarvis" in reserve and str(tmp_path) not in reserve
+    assert "runtime_manifest_missing" in PR.runtime_reserve(PR.diagnostics(make_package(tmp_path / "m", manifest=False)))
+
+
+def _health(installation: dict | None, status: str = "ok") -> dict:
+    import asyncio
+    from dataclasses import dataclass
+    from enum import Enum
+    from types import SimpleNamespace
+
+    from jarvis.protocol.server import LocalProtocolServer
+
+    class State(Enum):
+        READY = "ready"
+
+    @dataclass
+    class Counters:
+        emitted: int = 0
+
+    core = SimpleNamespace(
+        health=SimpleNamespace(ready=True, status=status, detail=""),
+        scene=SimpleNamespace(availability=SimpleNamespace(state=State.READY, code=None), capacity=None),
+        conversation_events=SimpleNamespace(unreadable_rows=0, diagnostic_failures=0),
+        conversation_event_emitter=SimpleNamespace(counters=Counters()),
+        conversation_event_queries=SimpleNamespace(failures=0))
+    server = LocalProtocolServer(core, host="127.0.0.1", port=1, token="t" * 40, installation=installation)
+    return json.loads(asyncio.run(server.health(None)).body)
+
+
+def test_health_is_never_ok_without_reserve_when_the_package_runtimes_are_broken(tmp_path):
+    layout = make_package(tmp_path / "Jarvis")
+    healthy = _health({"mode": "installed", "runtimes": PR.diagnostics(layout)})
+    assert healthy["status"] == "ok" and healthy["ready"] is True
+    layout.node_exe.unlink()
+    broken = _health({"mode": "installed", "runtimes": PR.diagnostics(layout)})
+    assert broken["status"] == "degraded" and broken["ready"] is True
+    assert "node: private_runtime_missing" in broken["detail"]
+    assert _health({"mode": "development", "runtimes": PR.diagnostics(None)})["status"] == "ok"
+    # Un Core déjà en panne garde sa propre cause : la réserve ne la masque pas.
+    assert _health({"mode": "installed", "runtimes": PR.diagnostics(layout)}, status="fail")["status"] == "fail"
+
+
+def test_screen_recording_ignores_an_importable_imageio_ffmpeg_in_the_presentation_package(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    planted = tmp_path / "ffmpeg.exe"
+    planted.write_bytes(b"gpl")
+    monkeypatch.setitem(sys.modules, "imageio_ffmpeg", SimpleNamespace(get_ffmpeg_exe=lambda: str(planted)))
+    monkeypatch.delenv("JARVIS_FFMPEG_EXE", raising=False)
+    monkeypatch.setattr(PR, "package_layout", lambda: None)
+    assert screen_capture.find_ffmpeg() == str(planted)  # développement : l'extra `capture` sert
+    monkeypatch.setattr(PR, "package_layout", lambda: make_package(tmp_path / "Jarvis"))
+    assert screen_capture.find_ffmpeg() is None  # produit installé : jamais le FFmpeg GPL d'imageio

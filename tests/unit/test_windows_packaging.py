@@ -231,3 +231,141 @@ def test_records_of_removed_launchers_are_dropped(tmp_path):
     record.write_text("../../bin/httpx.exe,sha256=abc,1\r\nhttpx/__init__.py,sha256=def,2\r\n", encoding="utf-8", newline="")
     B.drop_script_records(tmp_path)
     assert record.read_bytes() == b"httpx/__init__.py,sha256=def,2\r\n"
+
+
+# -- reprise QA S06 -------------------------------------------------------------------------------------------------
+
+def test_bytecode_is_compiled_in_a_single_process(tmp_path):
+    argv = B.compileall_argv(tmp_path, [tmp_path / "app"])
+    assert argv[argv.index("-j") + 1] == "1"  # -j 0 : bytecode différent d'un build à l'autre (QA S06, 3 jeux sur 6)
+    assert argv[argv.index("--invalidation-mode") + 1] == "unchecked-hash"
+
+
+@pytest.mark.parametrize("name", ["/evil.txt", r"\evil.txt", "C:/evil.txt", "C:evil.txt", r"C:\evil.txt",
+                                  "top/../../outside.txt", "top/a/../../../x.txt"])
+def test_zip_extraction_refuses_absolute_drive_and_parent_names(tmp_path, name):
+    archive = tmp_path / "evil.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr(name, b"x")
+    with pytest.raises(B.BuildError, match="chemin refusé"):
+        B.extract_zip(archive, tmp_path / "out")
+    assert not (tmp_path / "evil.txt").exists() and not (tmp_path / "outside.txt").exists()
+
+
+def test_a_build_outside_a_git_repository_names_git_and_the_prerequisites(tmp_path, monkeypatch):
+    monkeypatch.setattr(B, "REPO", tmp_path)  # une archive des sources : pas de dépôt git
+    with pytest.raises(B.BuildError) as caught:
+        B.git_revision("HEAD")
+    message = str(caught.value)
+    assert "git rev-parse" in message and "code 128" in message and "not a git repository" in message
+    assert "dépôt git" in message and "Python" in message
+
+
+def test_the_build_refuses_a_working_tree_that_differs_from_the_revision(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_git(*args):
+        calls.append(args)
+        return b"packaging/windows/requirements.lock\n"
+
+    monkeypatch.setattr(B, "git", fake_git)
+    with pytest.raises(B.BuildError, match="requirements.lock"):
+        B.ensure_inputs_match("a" * 40)
+    assert calls == [("diff", "--name-only", "a" * 40, "--", *B.BUILD_INPUTS)]
+    monkeypatch.setattr(B, "git", lambda *args: b"")
+    B.ensure_inputs_match("a" * 40)
+
+
+def test_the_build_checks_the_revision_before_reading_any_input(tmp_path, monkeypatch):
+    monkeypatch.setattr(B, "git_revision", lambda rev: "b" * 40)
+    monkeypatch.setattr(B, "ensure_inputs_match", lambda revision: (_ for _ in ()).throw(B.BuildError("dirty")))
+    monkeypatch.setattr(B, "load_json", lambda path: pytest.fail("input read before the revision check"))
+    assert B.main(["build", "--out", str(tmp_path / "out"), "--cache", str(tmp_path / "cache")]) == 1
+    assert not (tmp_path / "out").exists()
+
+
+GOOD_PROBE = {"installed": True, "executable_in_package": True, "node_private": True, "no_site": True,
+              "sys_path_outside_package": [], "excluded_importable": {"onnxruntime": False, "openwakeword": False},
+              "ffmpeg": None, "path_tools": {"python": None, "node": None}, "diagnostics": {"status": "ok"}}
+
+
+@pytest.mark.parametrize("change, expected", [
+    ({"installed": False}, "installed"), ({"executable_in_package": False}, "executable_in_package"),
+    ({"node_private": False}, "node_private"), ({"no_site": False}, "no_site"),
+    ({"sys_path_outside_package": ["C:/elsewhere"]}, "sys.path"),
+    ({"excluded_importable": {"onnxruntime": True}}, "onnxruntime"),
+    ({"ffmpeg": "C:/x/ffmpeg.exe"}, "ffmpeg"), ({"path_tools": {"node": "C:/node/node.exe"}}, "node"),
+    ({"diagnostics": {"status": "degraded"}}, "degraded")])
+def test_the_probe_names_every_departure_from_the_package_contract(change, expected):
+    assert B.probe_problems(GOOD_PROBE) == []
+    problems = B.probe_problems(GOOD_PROBE | change)
+    assert len(problems) == 1 and expected in problems[0]
+
+
+def fake_built_package(out: Path) -> Path:
+    """Paquet minimal et cohérent : arbres, manifestes et `package_sha256` calculés comme le build."""
+
+    from jarvis import private_runtime as PR
+
+    for relative, content in (("app/jarvis/__init__.py", b""), ("licenses/node/LICENSE", b"MIT"),
+                              ("runtime/python/python.exe", b"py"), ("runtime/node/node.exe", b"node")):
+        (out / relative).parent.mkdir(parents=True, exist_ok=True)
+        (out / relative).write_bytes(content)
+    (out / B.THIRD_PARTY_MANIFEST).write_text("{}\n", encoding="utf-8")
+    runtimes = {name: {"version": "1", "root": f"runtime/{name}", "executable": f"runtime/{name}/{name}.exe",
+                       "tree_sha256": PR.tree_sha256(out / "runtime" / name)[0]} for name in ("python", "node")}
+    manifest = {"schema": PR.RUNTIME_MANIFEST_SCHEMA, "schema_version": PR.RUNTIME_MANIFEST_VERSION,
+                "product": {"edition": "presentation"}, "runtimes": runtimes,
+                "app": {"root": "app", "tree_sha256": PR.tree_sha256(out / "app")[0]},
+                "licenses": {"root": "licenses", "tree_sha256": PR.tree_sha256(out / "licenses")[0]},
+                "third_party_manifest_sha256": PR.file_sha256(out / B.THIRD_PARTY_MANIFEST), "excluded": []}
+    manifest["package_sha256"] = B.package_digest(manifest)
+    B.write_json(out / PR.RUNTIME_MANIFEST, manifest)
+    return out
+
+
+def verify(out: Path, capsys) -> tuple[int, str]:
+    code = B.main(["verify", str(out)])
+    captured = capsys.readouterr()
+    return code, captured.out + captured.err
+
+
+def test_verify_accepts_an_intact_package(tmp_path, capsys):
+    code, output = verify(fake_built_package(tmp_path / "pkg"), capsys)
+    assert code == 0 and "paquet intact" in output
+
+
+@pytest.mark.parametrize("tamper, expected", [
+    (lambda out: (out / "app" / "jarvis" / "planted.py").write_bytes(b"x"), "app: arbre modifié"),
+    (lambda out: (out / "app" / "jarvis" / "__init__.py").write_bytes(b"changed"), "app: arbre modifié"),
+    (lambda out: (out / "licenses" / "node" / "LICENSE").unlink(), "licenses: arbre modifié"),
+    (lambda out: (out / "third-party-manifest.json").write_text("{\"x\": 1}\n", encoding="utf-8"),
+     "third-party-manifest.json modifié"),
+    (lambda out: (out / "runtime" / "node" / "node.exe").write_bytes(b"other"), "node: private_runtime_integrity_failed"),
+    (lambda out: (out / "runtime" / "python" / "evil.pth").write_bytes(b"x"), "python: private_runtime_integrity_failed"),
+    (lambda out: (out / "planted.dll").write_bytes(b"x"), "planted.dll: fichier ou dossier inattendu"),
+    (lambda out: (out / "runtime" / "ffmpeg").mkdir(), "runtime/ffmpeg: fichier ou dossier inattendu"),
+])
+def test_verify_reports_each_kind_of_tampering(tmp_path, capsys, tamper, expected):
+    out = fake_built_package(tmp_path / "pkg")
+    tamper(out)
+    code, output = verify(out, capsys)
+    assert code == 1 and "paquet altéré" in output and expected in output
+
+
+def test_verify_detects_a_forged_package_digest(tmp_path, capsys):
+    out = fake_built_package(tmp_path / "pkg")
+    manifest_path = out / "runtime-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["product"]["edition"] = "full"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    code, output = verify(out, capsys)
+    assert code == 1 and "package_sha256 ne correspond pas" in output
+
+
+@pytest.mark.parametrize("raw", [b"\xef\xbb\xbf{}", b"{not json", b'{"schema": "jarvis.runtime-manifest", "schema_version": 1, "runtimes": {"node": "x"}}'])
+def test_verify_fails_cleanly_on_an_unreadable_manifest(tmp_path, capsys, raw):
+    out = fake_built_package(tmp_path / "pkg")
+    (out / "runtime-manifest.json").write_bytes(raw)
+    code, output = verify(out, capsys)
+    assert code == 1 and "ÉCHEC" in output and "Traceback" not in output

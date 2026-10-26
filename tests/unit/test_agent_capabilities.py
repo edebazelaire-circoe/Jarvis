@@ -318,3 +318,17 @@ async def test_the_console_route_answers_a_typed_conflict(monkeypatch, tmp_path)
     with pytest.raises(web.HTTPConflict) as refused:
         await ControlCenter.agent_console_open(fake, None)
     assert refused.value.headers[SETTINGS_ERROR_CODE_HEADER] == "debug_console_unavailable_in_edition"
+
+
+# ------------------------------------------------------------------ Bare Hands hors de l'édition presentation (S06)
+
+@pytest.mark.parametrize("edition, warned", [("presentation", 0), ("full", 1)])
+async def test_bare_hands_absent_from_presentation_is_intended_not_a_warning(monkeypatch, tmp_path, edition, warned):
+    from jarvis.runtime.control_center import ControlCenter
+
+    monkeypatch.setenv("JARVIS_PRODUCT_EDITION", edition)
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path, barehands_mcp=None)
+    assert control.agent.barehands_mcp is None
+    assert not (tmp_path / "barehands-mcp.json").exists()
+    events = [e for e in read_jsonl_tail(tmp_path / "trace.jsonl", limit=200) if e["kind"] == "barehands.mcp_unconfigured"]
+    assert len(events) == warned

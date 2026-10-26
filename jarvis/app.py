@@ -879,10 +879,17 @@ async def _run_core_v2() -> int:
     # Racines de ce démarrage, sans chemin absolu (docs/local-data.md › Diagnostics) : journal et `/v1/health`.
     installation = installation_diagnostics(settings.data_root, settings.runtime_root)
     # Runtimes privés du paquet (docs/windows-packaging.md) : présence et versions, sans hachage ni chemin absolu.
-    from jarvis.private_runtime import diagnostics as runtime_diagnostics
+    from jarvis.private_runtime import diagnostics as runtime_diagnostics, runtime_reserve
     installation["runtimes"] = runtime_diagnostics()
-    RuntimeJournal(settings.runtime_root).emit("core.installation", "racines de données et runtime de ce démarrage",
-                                               data=installation | {"edition": product_edition.edition.value})
+    # Runtimes du paquet absents ou altérés : l'événement passe en erreur (journal d'erreurs), Core démarre quand même
+    # et `/v1/health` porte la même réserve (`status` = `degraded`). La réparation relève de la Slice 07.
+    runtime_problem = runtime_reserve(installation["runtimes"])
+    RuntimeJournal(settings.runtime_root).emit(
+        "core.installation",
+        "racines de données et runtime de ce démarrage" if runtime_problem is None
+        else f"installation à réparer : {runtime_problem}",
+        level="info" if runtime_problem is None else "error",
+        data=installation | {"edition": product_edition.edition.value})
     token = generate_session_token()
     _write_session_token(settings.token_file, token)
     delivery = WindowsNotificationDelivery() if os.name == "nt" and os.getenv("JARVIS_WINDOWS_NOTIFICATIONS", "0") in {"1", "true", "yes"} else NullNotificationDelivery()
@@ -1829,7 +1836,10 @@ async def _run_control_center_v2() -> int:
             core_host=settings.core_host, core_port=settings.core_port,
             token_file=settings.token_file, runtime_root=runtime_root,
         ),
-        barehands_mcp=BarehandsMcpTarget("127.0.0.1", ui_port, runtime_root),
+        # Édition `presentation` : pas de Bare Hands (composants AGPL exclus du paquet, docs/windows-packaging.md),
+        # donc ni `barehands-mcp.json` ni serveur `jarvis-barehands` déclaré au cerveau.
+        barehands_mcp=None if _process_edition_value() == "presentation"
+        else BarehandsMcpTarget("127.0.0.1", ui_port, runtime_root),
         console_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
         # `jarvis-workspace` (board-memory-workspace-inspector, Slice 06) : même Control Center.
         workspace_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),

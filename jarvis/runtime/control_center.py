@@ -1908,7 +1908,9 @@ class ControlCenter:
             # d'appeler settings_set(barehands.enabled, true)) : la surface est
             # donc toujours là et le refus dit quoi faire.
             agent.barehands_mcp = self.barehands_mcp
-            if self.barehands_mcp is None and not self._barehands_unconfigured_reported:
+            # Édition `presentation` : l'absence est voulue (Bare Hands exclu), pas une panne à signaler.
+            if (self.barehands_mcp is None and not self._barehands_unconfigured_reported
+                    and edition_capabilities().edition.value != "presentation"):
                 self._barehands_unconfigured_reported = True
                 self.journal.emit(
                     "barehands.mcp_unconfigured",
