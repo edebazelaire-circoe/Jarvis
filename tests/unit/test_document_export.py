@@ -81,8 +81,10 @@ def test_a_file_stem_is_one_safe_component(raw, expected):
 
 def test_a_long_title_is_bounded_and_the_default_name_says_the_class():
     assert len(file_stem("x" * 500)) == MAX_STEM_CHARS
-    assert default_stem("Atelier", EXPORT_CLASSES[ArtifactKind.PRESENTATION_VIDEO]) == "Atelier - video"
-    assert default_stem(None, EXPORT_CLASSES[ArtifactKind.PRESENTATION_PDF]) == f"{FALLBACK_STEM} - pdf"
+    assert default_stem("Atelier", EXPORT_CLASSES[ArtifactKind.PRESENTATION_VIDEO]) == "Atelier - vidéo"
+    assert default_stem(None, EXPORT_CLASSES[ArtifactKind.PRESENTATION_PDF]) == f"{FALLBACK_STEM} - PDF"
+    assert FALLBACK_STEM == "Export Jarvis", "French in the user's folder (I-003)"
+    assert default_stem("Atelier", EXPORT_CLASSES[ArtifactKind.PRESENTATION_STILL]) == "Atelier - image"
 
 
 def test_collision_candidates_never_reuse_a_name_and_are_bounded():

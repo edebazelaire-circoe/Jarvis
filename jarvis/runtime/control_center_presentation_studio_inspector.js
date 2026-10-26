@@ -64,6 +64,9 @@
       open:false,available:true,hiddenReason:null,presentations:[],presentationId:null,variant:null,sceneId:null,scene:null,
       tab:'content',showPreview:true,history:null,art:{state:'idle',doc:null,revision:null,message:''},
       reload:{pending:[],rows:[],degraded:null},loading:null,fatal:null,status:null,reloading:null,generation:0,
+      /* presentation-edition-v1 Slice 09: the variant and scene asked by Variants (« Modifier »), consumed by the next presentation read;
+         the active variant of the presentation, to say whether the edited one is it. */
+      want:null,activeVariantId:null,presentationTitle:'',
     };
     const ui={};
     const widgets=new Map();     /* control_id -> {row, el, update(row), session} */
@@ -163,7 +166,8 @@
       ensureStyle();
       const panel=el('aside');
       panel.id=PANEL_ID;
-      attrs(panel,{role:'region','aria-label':'Inspecteur de présentation'});
+      /* `data-keep-live`: Variants makes the page under it inert, except what lives beside it (the editor docks there, Slice 09). */
+      attrs(panel,{role:'region','aria-label':'Inspecteur de présentation','data-keep-live':'true'});
       panel.hidden=true;
       ui.title=el('h2','jvi-title','Inspecteur');
       ui.title.id='jviTitle';ui.title.setAttribute('tabindex','-1');
@@ -178,6 +182,8 @@
       [ui.title,ui.explore,ui.undo,ui.redo,ui.close].forEach((n)=>bar.appendChild(n));
       ui.live=el('div','jvi-sr');attrs(ui.live,{role:'status','aria-live':'polite'});
       ui.pick=el('div','jvi-pick');
+      /* Slice 09: what is being edited, always in words (presentation, variant and whether it is the active one, scene k of n). */
+      ui.context=el('div','jvi-context');ui.context.hidden=true;attrs(ui.context,{'aria-live':'polite','data-role':'edit-context'});
       ui.status=el('div','jvi-status');ui.status.hidden=true;
       ui.spin=el('span','jvi-spin');ui.spin.setAttribute('aria-hidden','true');
       ui.statusText=el('div','jvi-msgtext');
@@ -199,7 +205,9 @@
       ui.panels=el('div');
       ui.empty=el('p','jvi-empty');ui.empty.hidden=true;
       ui.top=el('div','jvi-top');
-      [ui.pick,ui.status,ui.reloadBanner,ui.srcline].forEach((n)=>ui.top.appendChild(n));
+      /* The source line (versions of the scene's model, last hot reload) is an engine detail: a developer surface (Slice 09). */
+      ui.srcline.setAttribute('data-surface','developer');
+      [ui.context,ui.pick,ui.status,ui.reloadBanner,ui.srcline].forEach((n)=>ui.top.appendChild(n));
       [ui.da,ui.empty,ui.issues,ui.panels].forEach((n)=>ui.main.appendChild(n));
       [bar,ui.live,ui.top,ui.stage,ui.tabs,ui.main].forEach((n)=>panel.appendChild(n));
       panel.addEventListener('keydown',onPanelKey);
@@ -329,12 +337,19 @@
       abandonDrafts('presentation');
       const body=await read(`${ROUTE}/${encodeURIComponent(id)}`,'Présentation');
       const active=body.presentation&&body.presentation.active_variant_id;
-      let variant=(body.variants||[]).find((v)=>v.variant_id===active)||null;
-      if(!variant&&active)variant=await read(`${ROUTE}/${encodeURIComponent(id)}/variants/${encodeURIComponent(active)}`,'Variante');
+      S.activeVariantId=active||null;S.presentationTitle=body.presentation&&body.presentation.title||'';
+      S.variantNumbers=new Map(((body.presentation&&body.presentation.variants)||[]).filter((v)=>v&&typeof v.variant_id==='string').map((v)=>[v.variant_id,v.variant_number]));
+      /* Slice 09: Variants asks for the variant ON SCREEN (any live branch, not only the active one) and its scene. */
+      const want=options&&options.variantId?{variantId:options.variantId,sceneId:options.sceneId||null}:S.want&&S.want.presentationId===id?S.want:null;
+      S.want=null;
+      const target=want&&want.variantId||active;
+      let variant=(body.variants||[]).find((v)=>v.variant_id===target)||null;
+      if(!variant&&target)variant=await read(`${ROUTE}/${encodeURIComponent(id)}/variants/${encodeURIComponent(target)}`,'Variante');
       S.variant=variant;syncExplore();
       S.history=null;S.art={state:'idle',doc:null,revision:null,message:''};
       const scenes=variant&&Array.isArray(variant.scenes)?variant.scenes:[];
-      if(!keep||!scenes.some((s)=>s.scene_id===S.sceneId))S.sceneId=scenes.length?scenes[0].scene_id:null;
+      if(want&&want.sceneId&&scenes.some((s)=>s.scene_id===want.sceneId))S.sceneId=want.sceneId;
+      else if(!keep||!scenes.some((s)=>s.scene_id===S.sceneId))S.sceneId=scenes.length?scenes[0].scene_id:null;
       renderPick();
       log('variant_loaded',{presentation_id:id,variant_id:variant&&variant.variant_id,scenes:scenes.length,revision:variant&&variant.revision});
       await Promise.all([loadScene(),loadHistory(),loadArtDirection()]);
@@ -446,6 +461,7 @@
     /* -------------------------------------------------------------- rendu */
     function renderPick(){
       if(!ui.pick)return;
+      renderContext();
       clear(ui.pick);
       const solo=S.presentations.length<=1;
       ui.pick.className='jvi-pick'+(solo?' is-solo':'');
@@ -463,7 +479,8 @@
       }
       const scenes=(S.variant&&S.variant.scenes)||[];
       const field=el('label','jvi-field');
-      field.appendChild(el('span',null,S.variant?`Scène · ${S.variant.title||'variante active'}`:'Scène'));
+      /* Slice 09: the variant (and whether it is the active one) is said by the context line above, never guessed here. */
+      field.appendChild(el('span',null,S.variant&&S.variant.title?`Scène · ${S.variant.title}`:'Scène'));
       const sel=el('select');sel.setAttribute('aria-label','Scène');sel.id='jviScene';
       scenes.forEach((s,i)=>{
         const o=el('option',null,`${i+1}. ${s.title||'(sans titre)'}${s.section?' · '+s.section:''}`);o.value=s.scene_id;
@@ -481,12 +498,90 @@
         row.appendChild(field);row.appendChild(prev);row.appendChild(next);ui.pick.appendChild(row);
       }else{ui.pick.appendChild(field);ui.pick.appendChild(prev);ui.pick.appendChild(next)}
     }
-    function chooseScene(id){
+    function chooseScene(id,options){
       if(id===S.sceneId)return;
       abandonDrafts('scene');
       S.sceneId=id;S.reload.degraded=null;renderReloadBanner(null);
       renderPick();
+      /* Slice 09: a scene chosen HERE while Variants shows this variant brings Variants to it (one scene on screen, never two). */
+      if(!(options&&options.fromExplorer))followInExplorer(id);
       loadScene().then(()=>pollReloads());
+    }
+    /* ------------------------------------------------------------ Variants and the editor (presentation-edition-v1 Slice 09) */
+    function explorerApi(){return root.JarvisStudioExplorer||null}
+    function explorerScene(){
+      const ex=explorerApi();
+      try{return ex&&typeof ex.scene==='function'?ex.scene():null}catch(_error){return null /* intentional: Variants absent or closed reads as « nothing on screen » */}
+    }
+    function followInExplorer(sceneId){
+      const at=explorerScene(),ex=explorerApi();
+      if(!at||!S.variant||at.presentation_id!==S.presentationId||at.variant_id!==S.variant.variant_id||at.scene_id===sceneId)return;
+      try{ex.showScene(sceneId)}catch(error){log('explorer_follow_failed',{error:describe(error)},'warn')}
+    }
+    function sceneLabel(sceneId){
+      const scenes=(S.variant&&S.variant.scenes)||[];
+      const i=scenes.findIndex((s)=>s.scene_id===sceneId);
+      return i<0?null:`scène ${i+1} « ${clip(scenes[i].title||'(sans titre)',60)} »`;
+    }
+    /* What is being edited, in words (RULE ZERO: the active scene and variant are always clear). */
+    function renderContext(){
+      if(!ui.context)return;
+      const v=S.variant;
+      ui.context.hidden=!v;
+      clear(ui.context);
+      if(!v)return;
+      const scenes=Array.isArray(v.scenes)?v.scenes:[];
+      const index=scenes.findIndex((s)=>s.scene_id===S.sceneId);
+      const isActive=!!S.activeVariantId&&v.variant_id===S.activeVariantId;
+      const n=Number.isInteger(v.variant_number)?v.variant_number:S.variantNumbers&&S.variantNumbers.get(v.variant_id);
+      const number=Number.isInteger(n)?`variante #${n}`:'variante';
+      ui.context.appendChild(document_text('Vous modifiez '));
+      ui.context.appendChild(el('strong',null,index>=0?`la scène ${index+1} sur ${scenes.length}`:'cette variante'));
+      ui.context.appendChild(document_text(` de la ${number}`));
+      const tag=el('span','jvi-ctx-tag',isActive?'active':'non active');tag.setAttribute('data-active',String(isActive));ui.context.appendChild(tag);
+      const sub=el('span','jvi-ctx-sub',isActive?'Celle qui se présente et s’exporte.':'Elle ne se présente pas tant que vous ne l’activez pas.');
+      ui.context.appendChild(sub);
+    }
+    function document_text(text){return doc.createTextNode(text)}
+    /* Said to the page after every committed change (edit, undo, redo): Variants re-reads the variant from Core. */
+    function sayEdited(revision,sceneId){
+      if(typeof win.dispatchEvent!=='function'||typeof win.CustomEvent!=='function'||!S.variant)return;
+      try{win.dispatchEvent(new win.CustomEvent('jarvis:studio-variant-edited',{detail:{presentation_id:S.presentationId,variant_id:S.variant.variant_id,
+        revision:Number.isInteger(revision)?revision:null,scene_id:sceneId||S.sceneId||null}}))}
+      catch(error){log('edited_event_failed',{error:describe(error)},'warn')}
+    }
+    /* Variants changed the scene (or the variant) on screen: the editor follows, when it edits the same presentation. */
+    function onExplorerScene(event){
+      const d=event&&event.detail||{};
+      if(!S.open||!d.presentation_id||d.presentation_id!==S.presentationId)return;
+      if(S.variant&&d.variant_id===S.variant.variant_id){
+        if(d.scene_id&&d.scene_id!==S.sceneId)chooseScene(d.scene_id,{fromExplorer:true});
+        return;
+      }
+      log('follow_variant',{variant_id:d.variant_id,scene_id:d.scene_id});
+      selectPresentation(d.presentation_id,{variantId:d.variant_id,sceneId:d.scene_id})
+        .catch((error)=>{setFatal(error,()=>{loadPresentations()});log('follow_failed',{code:error.code,error:describe(error)},'error')});
+    }
+    /* « Modifier » in Variants: open beside it on that variant and that scene. */
+    async function edit(request){
+      const r=request||{};
+      if(typeof r.presentation_id!=='string'||typeof r.variant_id!=='string')return {state:'refused',reason:'présentation ou variante manquante'};
+      log('edit_requested',{via:r.via||'api',variant_id:r.variant_id,scene_id:r.scene_id||null});
+      if(S.open){
+        if(S.presentationId===r.presentation_id&&S.variant&&S.variant.variant_id===r.variant_id){
+          if(r.scene_id&&r.scene_id!==S.sceneId)chooseScene(r.scene_id,{fromExplorer:true});
+        }else{
+          try{await selectPresentation(r.presentation_id,{variantId:r.variant_id,sceneId:r.scene_id})}
+          catch(error){setFatal(error,()=>{loadPresentations()});log('edit_select_failed',{code:error.code,error:describe(error)},'error');return {state:'failed',reason:describe(error)}}
+        }
+        if(ui.title)ui.title.focus();
+        return {state:'opened'};
+      }
+      S.presentationId=r.presentation_id;
+      S.want={presentationId:r.presentation_id,variantId:r.variant_id,sceneId:r.scene_id||null};
+      const opened=open();
+      if(opened===false){S.want=null;return {state:'refused',reason:S.hiddenReason==='fullscreen'?'Quittez le plein écran pour modifier.':'Arrêtez la présentation en cours pour modifier.'}}
+      return {state:'opened'};
     }
 
     function renderHistory(){
@@ -495,8 +590,17 @@
       const canUndo=!!h&&h.undo_count>0,canRedo=!!h&&h.redo_count>0;
       ui.undo.disabled=!canUndo;ui.redo.disabled=!canRedo;
       const who=(e)=>e&&e.actor==='brain'?' (faite par Jarvis)':'';
-      ui.undo.title=canUndo?`Annuler la dernière modification${who(h.next_undo)} (Ctrl+Z dans l'inspecteur)`:'Rien à annuler';
-      ui.redo.title=canRedo?`Rétablir la modification annulée${who(h.next_redo)} (Ctrl+Y dans l'inspecteur)`:'Rien à rétablir';
+      /* Slice 09: the step's scene, in words; « autre scène » when it is not the one on screen. */
+      const on=(e)=>{
+        const sid=e&&Array.isArray(e.scene_ids)&&e.scene_ids[0];
+        const label=sid?sceneLabel(sid):null;
+        return label?`, ${label}${sid!==S.sceneId?' (autre scène : elle s’affichera)':''}`:'';
+      };
+      ui.undo.title=canUndo?`Annuler la dernière modification${who(h.next_undo)}${on(h.next_undo)} (Ctrl+Z dans l'inspecteur)`:'Rien à annuler';
+      ui.redo.title=canRedo?`Rétablir la modification annulée${who(h.next_redo)}${on(h.next_redo)} (Ctrl+Y dans l'inspecteur)`:'Rien à rétablir';
+      /* The name stays the action (« Annuler la dernière modification »); the scene it changes is its description. */
+      const describe_=(node,text)=>{if(text)node.setAttribute('aria-description',text.replace(/^, /,''));else node.removeAttribute('aria-description')};
+      describe_(ui.undo,canUndo?on(h.next_undo):'');describe_(ui.redo,canRedo?on(h.next_redo):'');
       if(!canUndo)ui.undo.title=h&&h.tracked===false?'Rien à annuler : l\'historique ne garde que les modifications faites depuis le démarrage de Core':'Rien à annuler';
     }
 
@@ -979,6 +1083,7 @@
         log('commit_applied',{control_id:id,op:op.op,revision:result.revision,changed:!!result.changed,previews});
         setRowMessage(id,'info','');
         await Promise.all([loadScene({quiet:true}),loadHistory()]);
+        sayEdited(result.revision,ctx.row.scene_id||S.sceneId);
         flashSaved(id);
         announce(`${ctx.row.label} : enregistré.`);
         return result;
@@ -1074,12 +1179,21 @@
           const result=response.body;
           if(result&&typeof result.status==='string'&&(result.status==='applied'||Object.prototype.hasOwnProperty.call(HISTORY_TEXT,result.status))){
             if(result.status==='applied'){
-              log('history_applied',{direction,revision:result.revision});
+              /* Slice 09: the step says which scene it changed (`scene_ids`, ids only); a step on another scene brings that scene on screen,
+                 here and in Variants, so an undo never changes a scene out of sight. */
+              const touched=entry&&Array.isArray(entry.scene_ids)?entry.scene_ids:[];
+              const where=touched.length?sceneLabel(touched[0]):null;
+              log('history_applied',{direction,revision:result.revision,scenes:touched.length,moved:!!(touched[0]&&touched[0]!==S.sceneId)});
               setStatus(null);
+              if(touched[0]&&touched[0]!==S.sceneId&&((S.variant&&S.variant.scenes)||[]).some((s)=>s.scene_id===touched[0])){
+                S.sceneId=touched[0];renderPick();followInExplorer(touched[0]);
+              }
               await Promise.all([loadScene({quiet:true}),loadHistory()]);
-              setStatus('ok',direction==='undo'?'Modification annulée':'Modification rétablie','');
+              sayEdited(result.revision,touched[0]||S.sceneId);
+              const said=`${direction==='undo'?'Modification annulée':'Modification rétablie'}${where?` : ${where}`:''}`;
+              setStatus('ok',said,'');
               later(()=>{if(S.status&&S.status.kind==='ok')setStatus(null)},4000);
-              announce(direction==='undo'?'Modification annulée.':'Modification rétablie.');
+              announce(`${said}.`);
               return result;
             }
             const text=`${HISTORY_TEXT[result.status]}.${result.message?' '+clip(result.message,300):''}`;
@@ -1250,6 +1364,7 @@
       if(!S.available)return false;
       S.open=true;
       ui.root.hidden=false;ui.root.inert=false;
+      if(doc.documentElement&&doc.documentElement.classList)doc.documentElement.classList.add('jvi-open');
       if(ui.dock){ui.dock.classList.add('active');ui.dock.setAttribute('aria-expanded','true')}
       const closeSidePanel=typeof d.closeSidePanel==='function'?d.closeSidePanel:(typeof root.closePanel==='function'?root.closePanel:null);
       if(closeSidePanel){try{closeSidePanel()}catch(_error){/* intentional: the side panel closing is a courtesy */}}
@@ -1262,7 +1377,8 @@
     function close(options){
       if(!S.open&&!(ui.root&&!ui.root.hidden))return;
       abandonDrafts('close');
-      S.open=false;
+      S.open=false;S.want=null;
+      if(doc.documentElement&&doc.documentElement.classList)doc.documentElement.classList.remove('jvi-open');
       stopPolling();
       unmountPreview();
       if(ui.root)ui.root.hidden=true;
@@ -1285,7 +1401,7 @@
       if(typeof doc.addEventListener==='function'){
         doc.addEventListener('fullscreenchange',checkAvailability);
         /* Le lecteur dit tout de suite qu'une lecture commence ou finit (il l'apprend par son relevé) : pas d'attente du prochain tour de 500 ms. */
-        if(typeof win.addEventListener==='function'){win.addEventListener(PLAYBACK_EVENT,checkAvailability);win.addEventListener('jarvis:studio-explorer-closed',onExplorerClosed)}
+        if(typeof win.addEventListener==='function'){win.addEventListener(PLAYBACK_EVENT,checkAvailability);win.addEventListener('jarvis:studio-explorer-closed',onExplorerClosed);win.addEventListener('jarvis:studio-explorer-scene',onExplorerScene)}
         doc.addEventListener('visibilitychange',()=>{if(S.open&&!doc.hidden)pollReloads()});
       }
       availTimer=every(checkAvailability,AVAILABILITY_MS);
@@ -1306,7 +1422,7 @@
       pendingDrafts:[...sessions.values()].filter((s)=>s.dirty).map((s)=>s.id)});
 
     return Object.freeze({install,open,close,toggle,destroy,view,stats:()=>Object.assign({},stats),refresh:()=>loadPresentations(),
-      checkAvailability,pollReloads,selectScene:chooseScene,selectTab,runHistory,loadScene,selectPresentation,
+      checkAvailability,pollReloads,selectScene:chooseScene,selectTab,runHistory,loadScene,selectPresentation,edit,
       widget:(id)=>widgets.get(id)||null,element:()=>ui.root,dockButton:()=>ui.dock,previewHost:()=>previewHost});
   }
 

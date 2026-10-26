@@ -206,7 +206,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 33 | `.panel` | `control_center.html` | `.panel` | side panels (`#panel`, `#chatPanel`) |
 | 34 | `.board-drop-card` | `control_center.html` | `.board-drop-card` | drop card, readable over the left column at 600 px |
 | 34 | `#boardDropTray` | `control_center.html` | `.board-drop-tray` | drop tray, above the status centre and the chat tab |
-| 34 | `#jvStudioInspector` | `control_center_presentation_studio_inspector_core.js` | `#${PANEL_ID}` | Studio inspector side panel, above the panel it replaces |
+| 34 | `#jvStudioInspector` | `control_center_presentation_studio_inspector_core.js` | `#${PANEL_ID}` | Studio inspector side panel, above the panel it replaces (9120 while Variants is open, below) |
 | 35 | `.live-banner` | `control_center.html` | `.live-banner` | GPT-Live banner over the controls |
 | 36 | `.bh-hud-pop` | `control_center_barehands_hud.js` | `#${DOM.hostId} .bh-hud-pop` | Bare Hands lifecycle selector |
 | 36 | `.dock[data-more-open]` | `control_center.html` | `.dock[data-more-open]` | launcher with its « Plus d’outils » popover open (Slice 08): the whole launcher rises to the choosers' rank, over the side panels and the banner it briefly covers |
@@ -231,6 +231,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 85 | `.cdialog-back` | `control_center.html` | `.cdialog-back` | in-page confirmation |
 | 9000 | `#jvStudioExplorer` | `control_center_presentation_studio_explorer_core.js` | `#${HOST_ID}` | Variantes (Studio explorer) |
 | 9100 | `html.jvr-studio #presentationRail` | `control_center_presentation_rail.js` | `html.jvr-studio #${DOM.hostId}` | rail docked as the right column beside the Studio |
+| 9120 | `html.jvx-open #jvStudioInspector` | `control_center_presentation_studio_inspector_core.js` | `html.jvx-open #${PANEL_ID}` | the editor docked beside Variants, above it and the docked rail (`data-keep-live`; presentation-edition-v1 Slice 09, [presentation-studio.md](presentation-studio.md) › *Editing from Variants (V1)*) |
 | 9150 | `html.jvx-run #boardsHud` | `control_center_presentation_studio_explorer_core.js` | `html.jvx-run #boardsHud` | Board card during a run shown in Variantes (Voice presence stays visible) |
 | 9150 | `html.jvx-run #boardsPanel` | `control_center_presentation_studio_explorer_core.js` | `html.jvx-run #boardsPanel` | its panel during a run, above Variantes like the card |
 | 9150 | `html.jvx-run #recIndicators` | `control_center_presentation_studio_explorer_core.js` | `html.jvx-run #recIndicators` | recording indicators during a run (`data-keep-live="run"`, wheel/dossier refactor Slice 04, QA B1): a screen or audio recording stays visible and stoppable over Variantes, top-left, over no Studio control; not shown in the stage's native fullscreen (`F`), by design |
@@ -1191,6 +1192,7 @@ like the edition. There is no in-page toggle: a user of the installed product ca
 | Réglages › Interface & Interactions › Bare Hands | developer section | hidden (Raccourcis stays) |
 | Réglages › Plugins & MCP › Plugins MCP | developer section | hidden; the category reads « Connexions » (Fournisseurs stays) |
 | Rail card menu « Remotion Studio… » and the engine name « Remotion » on cards | developer | hidden (a Slidecar presentation still says « Slidecar ») |
+| Variantes: « Remotion Studio », its state line (master line, « Cette scène seule dans Remotion Studio », publish / revert); the editor's source line (Slice 09, I-006) | developer | hidden; « Modifier » and « Exporter la vidéo » stay |
 | Board card, Board panel, wheel (JARVIS, Sélection, Dossier, Capture, Paramètres), chat, rail, status centre, Variantes | product | shown |
 
 A Settings target that the edition hides (`openSettingsTab('prompts')`, an internal link) opens the first shown

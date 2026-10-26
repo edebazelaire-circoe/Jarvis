@@ -38,6 +38,18 @@
   background:var(--panel,rgba(6,12,18,.94));color:var(--text,#d8edf7);border:1px solid var(--line,#183343);border-radius:10px;overflow:hidden;
   backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 0 50px rgba(0,0,0,.45);font:13px/1.45 system-ui,sans-serif;container-type:inline-size}
 #${PANEL_ID}[hidden]{display:none}
+/* presentation-edition-v1 Slice 09: while Variants is open (\`jvx-open\` on <html>) the editor docks beside it, above its layer (9000)
+   and above the presentations rail (9100), and Variants makes room for it; under 900 px it covers Variants (its own preview shows the scene). */
+html.jvx-open #${PANEL_ID}{position:fixed;z-index:9120;top:8px;right:8px;bottom:8px;width:min(420px,calc(100% - 16px))}
+@media (min-width:900px){html.jvx-open.jvi-open #jvStudioExplorer:not(:fullscreen){right:436px}}
+#${PANEL_ID} .jvi-context{margin:10px 14px 0;padding:8px 10px;border:1px solid var(--line,#183343);border-radius:7px;background:rgba(7,13,19,.55);font-size:12.5px;line-height:1.4}
+#${PANEL_ID} .jvi-context[hidden]{display:none}
+/* The line says what Variants put on screen: outside Variants the panel keeps its height for the controls (it edits the active variant). */
+html:not(.jvx-open) #${PANEL_ID} .jvi-context{display:none}
+#${PANEL_ID} .jvi-context strong{font-weight:650;color:var(--text,#d8edf7)}
+#${PANEL_ID} .jvi-context .jvi-ctx-sub{display:block;color:var(--muted,#7190a0)}
+#${PANEL_ID} .jvi-context .jvi-ctx-tag{display:inline-block;margin-left:6px;padding:0 6px;border:1px solid var(--line,#183343);border-radius:999px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;vertical-align:1px}
+#${PANEL_ID} .jvi-context .jvi-ctx-tag[data-active="true"]{border-color:var(--accent,#6ee7ff);color:var(--accent,#6ee7ff)}
 #${PANEL_ID} *{box-sizing:border-box}
 #${PANEL_ID} button,#${PANEL_ID} input,#${PANEL_ID} select,#${PANEL_ID} textarea{font:inherit;color:inherit}
 #${PANEL_ID} .jvi-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}

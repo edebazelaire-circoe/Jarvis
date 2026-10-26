@@ -312,7 +312,7 @@ def test_derivation_is_deterministic_and_mentions_pick_the_gap_filler():
     signals = fx.signals_dark_brand()
     assert au.derive_from_signals(signals).canonical() == au.derive_from_signals(signals).canonical()
     only_words = au.derive_from_signals(au.DesignSignals(mentions=("tech", "developer")))
-    assert only_words.provenance.origin is ad.Origin.GENERATED and only_words.name == "Derived direction"  # not "inferred": no section is
+    assert only_words.provenance.origin is ad.Origin.GENERATED and only_words.name == "Direction déduite"  # not "inferred": no section is
     assert all(only_words.provenance.origin_of(s) is ad.Origin.GENERATED for s in ad.Section)  # nothing but words: nothing inferred
     assert only_words.provenance.fallback is False and only_words.provenance.confidence == 0.3
     assert ad.relative_luminance(only_words.palette.background) < 0.1  # the 'Technical dark' direction fills the gaps

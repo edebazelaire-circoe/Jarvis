@@ -84,6 +84,15 @@ PLACEHOLDER_SCENE_ID = "pss_" + "0" * 12
 PLACEHOLDER_ITEM_ID = "psi_" + "0" * 12
 
 
+#: The rationale stored on a first draft's variant, shown as is by Variants: French, the user's language (presentation-edition-v1
+#: Slice 09; drafts assembled before keep their English text, it is data).
+_WORKFLOW_WORDS = {"one_shot": "en un coup", "directed": "dirigé", "exploratory": "exploratoire"}
+
+
+def first_draft_rationale(workflow: "Workflow") -> str:
+    return f"Premier jet ({_WORKFLOW_WORDS.get(workflow.value, workflow.value)})"
+
+
 class Workflow(StrEnum):
     ONE_SHOT = "one_shot"
     DIRECTED = "directed"
@@ -759,6 +768,6 @@ def _directions(data: Mapping[str, Any], brief: AuthoringBrief, keys: set[str], 
         # Native authoring: the scenes carry their own look; a generated fallback direction still gives the variant its required DA (and
         # its `theme` prop to the scenes that read it).
         profile = generate_fallback_profile(brief.seed()) if brief.native else None
-        return [DraftDirection(brief.title, f"first draft ({brief.workflow.value})", profile)]
+        return [DraftDirection(brief.title, first_draft_rationale(brief.workflow), profile)]
     profile = c.guard("art_direction", lambda: _profile(data["art_direction"], "art_direction", brief))
-    return [DraftDirection(brief.title, f"first draft ({brief.workflow.value})", profile)] if profile is not None else []
+    return [DraftDirection(brief.title, first_draft_rationale(brief.workflow), profile)] if profile is not None else []

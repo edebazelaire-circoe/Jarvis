@@ -453,3 +453,51 @@ def test_an_identical_export_says_nothing_was_redone(tmp_path):
       out({html:e.html(),posts:e.posts().length});
     """)
     assert "Export terminé" in _text(seen["html"]) and "rendu identique déjà existant, rien n’a été refait" in _text(seen["html"]) and seen["posts"] == 1
+
+
+# ------------------------------------------------------------------ Copy to Documents (presentation-edition-v1 Slice 09, I-003)
+
+def test_a_finished_render_offers_a_copy_to_documents_and_says_where_it_went(tmp_path):
+    seen = run_node(tmp_path, SEED + EXPORT_SEED + r"""
+      const e=exporter();
+      seed(e.w,[group({},{renders:[
+        {artifact_id:'jart_'+'c'.repeat(32),kind:'presentation_still',state:'complete',format:'still',size_bytes:2048,board_ids:['board_a']},
+        {artifact_id:'jart_'+'f'.repeat(32),kind:'presentation_pdf',state:'running',format:'pdf',board_ids:['board_a']}]})]);
+      e.manager.open();await settle();await e.manager.act('view',{view:'artifacts'});await settle();await e.manager.act('artifacts-filter',{scope:'board',id:'board_a'});await settle();
+      const offered=e.html();
+      let release;e.w.server.plan['/api/exports']={status:201,body:{export:{artifact_id:'jart_'+'c'.repeat(32),file_name:'Atelier - image (2).png',renamed:true,
+        destination:{root:'Documents\\Jarvis',display_path:'Documents\\Jarvis\\Atelier - image (2).png'}}}};
+      const p=e.manager.act('artifact-save-copy',{id:'jart_'+'c'.repeat(32)});
+      const saving=e.html();
+      const second=e.manager.act('artifact-save-copy',{id:'jart_'+'c'.repeat(32)});
+      await p;await second;await settle();
+      out({offered,saving,saved:e.html(),posts:e.posts(),logs:e.logs.map(l=>l.level+' '+l.event)});
+    """)
+    offered = seen["offered"]
+    assert offered.count('data-act="artifact-save-copy"') == 1, "only the COMPLETE render offers a copy"
+    assert f'data-id="jart_{"c" * 32}"' in offered and "Enregistrer une copie dans Documents" in _text(offered)
+    assert "Copie dans Documents en cours" in _text(seen["saving"]) and 'data-wsp-since="' in seen["saving"]
+    assert 'data-act="artifact-save-copy"' not in seen["saving"], "no second copy while one is running"
+    assert [c["body"] for c in seen["posts"] if c["path"] == "/api/exports"] == [{"artifact_id": "jart_" + "c" * 32}], "one POST, an id, never a path"
+    saved = _text(seen["saved"])
+    assert r"Copie enregistrée : Documents\Jarvis\Atelier - image (2).png (le nom était pris : numéroté, rien n’a été écrasé)." in saved
+    assert "info workspace.copy_requested" in seen["logs"] and "info workspace.copy_saved" in seen["logs"]
+
+
+def test_a_refused_copy_says_why_with_its_code_and_offers_the_button_again(tmp_path):
+    seen = run_node(tmp_path, SEED + EXPORT_SEED + r"""
+      globalThis.JarvisVariantsVideoExport={SAVE_ERRORS:{export_destination_unsafe:'Le dossier d’export est un lien : rien n’a été copié.'}};
+      const e=exporter();await e.openBoard();
+      e.w.server.plan['/api/exports']={status:409,body:{error:{code:'export_destination_unsafe',message:'reparse point'}}};
+      await e.manager.act('artifact-save-copy',{id:'jart_'+'c'.repeat(32)});await settle();
+      e.w.server.plan['/api/exports']={status:500,body:{error:{code:'brand_new_code',message:'disk exploded'}}};
+      const refused=e.html();
+      await e.manager.act('artifact-save-copy',{id:'jart_'+'c'.repeat(32)});await settle();
+      out({refused,unknown:e.html(),logs:e.logs.map(l=>l.level+' '+l.event)});
+    """)
+    refused = _text(seen["refused"])
+    assert "Le dossier d’export est un lien : rien n’a été copié." in refused and "export_destination_unsafe" in refused
+    assert 'role="alert"' in seen["refused"] and 'data-act="artifact-save-copy"' in seen["refused"], "the user can try again"
+    unknown = _text(seen["unknown"])
+    assert "La copie n’a pas abouti : disk exploded" in unknown and "brand_new_code" in unknown, "the real cause, never a generic sentence"
+    assert "warn workspace.copy_failed" in seen["logs"] and "error workspace.copy_failed" in seen["logs"]

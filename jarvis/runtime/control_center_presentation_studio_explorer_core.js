@@ -261,7 +261,7 @@
      (comparison) and `[` `]` (the controller). The sheet replaced the hint line under the tree (§ 6 #6). */
   const TREE_SHORTCUTS=Object.freeze([
     {keys:['↑','↓'],does:"Parcourir l'arbre"},{keys:['→','←'],does:'Ouvrir, fermer une branche'},{keys:['Entrée'],does:'Choisir la variante'},
-    {keys:['0–9'],does:'Aller au numéro tapé'},{keys:['A'],does:'Activer'},{keys:['N'],does:"Brancher d'ici"},{keys:['F2'],does:'Renommer'},
+    {keys:['0–9'],does:'Aller au numéro tapé'},{keys:['A'],does:'Activer'},{keys:['N'],does:"Nouvelle variante d'ici"},{keys:['F2'],does:'Renommer'},
     {keys:['Suppr'],does:'Archiver'},{keys:['R'],does:'Restaurer (archivée)'},{keys:['C'],does:'Marquer pour comparer'},
     {keys:['Maj+C'],does:'Comparer les variantes marquées'},{keys:['[',']'],does:'Variante précédente, suivante'},
     {keys:['Maj+F10'],does:'Menu des actions'},
@@ -586,6 +586,13 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-preview{container:jvxpreview/inline-size}
 #${HOST_ID} .jvx-transport{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 100%}
 #${HOST_ID} .jvx-stage-note>[data-act="present"]{margin-left:auto;min-height:30px;padding:0 12px;font-size:12px;flex:none}
+/* presentation-edition-v1 Slice 09: « Modifier », the editing entry, accented; the group keeps its single push to the right (Remotion Studio,
+   or « Exporter la vidéo » where Remotion Studio is a hidden developer surface). */
+#${HOST_ID} .jvx-stage-note>[data-act="edit_scene"]{min-height:30px;padding:0 12px;font-size:12px;flex:none;border-color:color-mix(in srgb,var(--jvx-accent) 60%,transparent);color:var(--jvx-accent);font-weight:600}
+#${HOST_ID} .jvx-stage-note>[data-act="edit_scene"][aria-disabled="true"]{opacity:.55;cursor:default}
+#${HOST_ID} .jvx-stage-note>[data-act="edit_scene"]+[data-act="present"]{margin-left:0}
+html[data-developer-surfaces="hidden"] #${HOST_ID} .jvx-stage-note>[data-act="video_export"]{margin-left:auto}
+#${HOST_ID} .jvx-theater:fullscreen .jvx-stage-note>[data-act="edit_scene"]{display:none}
 #${HOST_ID} .jvx-scene-count{flex:0 0 auto;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
 #${HOST_ID} .jvx-transport .jvx-btn{min-height:30px;padding:0 10px;font-size:12px;flex:none}
 #${HOST_ID} .jvx-transport .jvx-btn-icon{width:30px;padding:0}
@@ -610,6 +617,11 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
   #${HOST_ID} .jvx-stage-note .jvx-scene-line .jvx-chip{display:none}
   #${HOST_ID} .jvx-transport{gap:4px}
   #${HOST_ID} .jvx-transport .jvx-btn:not(.jvx-btn-icon){padding:0 8px}
+  /* presentation-edition-v1 Slice 09: « Modifier » joined the scene row; on a narrow preview the row's buttons get tighter (the scene
+     count gives way first: the strip under the stage shows the scene too), so the row stays one line. */
+  #${HOST_ID} .jvx-stage-note>.jvx-btn{padding:0 8px}
+  #${HOST_ID} .jvx-stage-note{column-gap:8px}
+  #${HOST_ID} .jvx-stage-note>.jvx-scene-count{display:none}
   /* Slice 09: on a narrow preview « Arrêter » keeps its name (text, title) but shows a glyph, so the transport stays one row. */
   #${HOST_ID} .jvx-transport .jvx-btn[data-act="stop_run"]{width:30px;padding:0;font-size:0}
   #${HOST_ID} .jvx-transport .jvx-btn[data-act="stop_run"]::before{content:"■";font-size:12px}

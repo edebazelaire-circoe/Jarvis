@@ -222,7 +222,7 @@ async def test_activate_branch_rename_archive_and_restore_through_the_real_relay
         assert nodes[13]["parent_variant_id"] == rig.vids[4] and nodes[13]["created_by"] == "user"
         assert nodes[13]["title"] == "Sobre, 90 secondes", [(n, v["title"]) for n, v in sorted(nodes.items())]
         assert graph["variant_counter"] == 13 and branched["active"] == nodes[13]["variant_id"] == graph["active_variant_id"], "the next number, durable"
-        assert "Branche #13 créée depuis #4 et activée" in branched["notice"]
+        assert "Variante #13 créée depuis #4 et activée" in branched["notice"]
         assert json.loads(reads["shown_set"]) == [["#3", "Ton chaleureux"], ["#6", "Chaleureux, couleurs vives"], ["#7", "Couleurs vives, titre court"],
                                                   ["#8", "Chaleureux, récit client"], ["#9", "Récit client, version comité"]], "the exact set is shown before anything moves"
         assert reads["dialog_focus"] == "Annuler"
@@ -371,7 +371,7 @@ async def test_a_complete_flow_with_the_keyboard_alone(tmp_path):
         assert reads["after_tabs"] != "treeitem" and "button" not in reads["after_tabs"].lower() or True
         assert reads["scene_after_keys"] == S3, (reads["after_tabs"], reads["scene_after_keys"])
         assert reads["back_in_tree"] == "treeitem"
-        assert json.loads(reads["menu"]) == [True, "Brancher"] and json.loads(reads["after_menu"]) == [False, "treeitem"]
+        assert json.loads(reads["menu"]) == [True, "Nouvelle"] and json.loads(reads["after_menu"]) == [False, "treeitem"]
         assert reads["dialog_focus"] == "Annuler"
         assert json.loads(reads["after_archive_cancel"]) == [None, "treeitem"] and reads["closed"] is False
         graph = await rig.snapshot()

@@ -210,7 +210,24 @@ class HistoryEntry:
 
     def summary(self) -> dict[str, Any]:
         return {"entry_id": self.entry_id, "ops": list(self.op_names), "tier": self.tier, "actor": self.actor,
-                "revision": self.revision, "bytes": self.size}
+                "revision": self.revision, "bytes": self.size, "scene_ids": scene_ids_of(self.ops)}
+
+
+def scene_ids_of(ops: tuple[Mapping[str, Any], ...]) -> list[str]:
+    """Les scènes que ce pas touche, dans l'ordre, sans doublon : des identifiants seulement, jamais un titre ni une valeur.
+
+    Presentation-edition-v1 Slice 09 : « Annuler » dit QUELLE scène il change, pour qu'un retour arrière ne modifie jamais une
+    autre scène en silence. Une opération sans `scene_id` à plat (insertion d'une scène entière) le porte dans `scene`.
+    """
+
+    out: list[str] = []
+    for op in ops:
+        sid = op.get("scene_id") if isinstance(op, Mapping) else None
+        if sid is None and isinstance(op, Mapping) and isinstance(op.get("scene"), Mapping):
+            sid = op["scene"].get("scene_id")
+        if isinstance(sid, str) and sid and sid not in out:
+            out.append(sid)
+    return out
 
 
 @dataclass(slots=True)

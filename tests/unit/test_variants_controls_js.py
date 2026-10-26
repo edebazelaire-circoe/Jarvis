@@ -152,14 +152,14 @@ def test_during_a_run_the_inert_parts_are_marked_dimmed_with_the_reason_and_the_
       env.key(doc.activeElement,'Escape');await env.advance(20);
       await showView({phase:'idle',running:false,last_run:{reason:'stopped'}});await env.advance(500);
       const after={dataRun:host.hasAttribute('data-run'),note:note.hidden,inert:[q('.jvx-treepane').inert,q('.jvx-actions').inert],
-        branch:qa('.jvx-actions button').find(b=>b.textContent.includes('Brancher')).getAttribute('aria-disabled')==='true',
+        branch:qa('.jvx-actions button').find(b=>b.textContent.includes('Nouvelle variante')).getAttribute('aria-disabled')==='true',
         sceneRow:[q('.jvx-scene-count').hidden,q('.jvx-scene-line').hidden,q('[data-act="present"]').hidden]};
       return {during,runSheet,after};
     """)
     d = out["during"]
     assert d["dataRun"] is True, "the host carries `data-run`: the CSS dims the tree, the actions and the upgrade notice"
     assert d["note"][0] is False and "Présentation en cours" in d["note"][1], "the reason is on screen, beside the actions"
-    assert [a[0] for a in d["acts"]] == ["Activer", "Brancher d'ici…", "Renommer…", "Archiver…"], "the actions stay on screen"
+    assert [a[0] for a in d["acts"]] == ["Activer", "Nouvelle variante…", "Renommer…", "Archiver…"], "the actions stay on screen"
     assert all(a[1] == "true" and "Présentation en cours" in a[2] for a in d["acts"]), d["acts"]
     assert d["inert"] == [True, True]
     assert d["sceneRow"] == [True, True, True] and d["stop"] is False, "the presenter strip replaces the scene row; one « Arrêter »"

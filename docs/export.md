@@ -14,6 +14,7 @@ final files: [remotion-render.md](remotion-render.md), [presentation-artifacts.m
 | Core routes | `jarvis/protocol/export_routes.py` (`GET /v1/exports/root`, `POST /v1/exports`) | same |
 | Control Center relay | `jarvis/runtime/export_relay.py` (`GET /api/exports/root`, `POST /api/exports`); both Core paths are in `forward_json`'s whitelist (`FORWARDABLE_PATHS`, `jarvis/protocol/client.py`) | `tests/unit/test_export_relay.py`, `test_document_export_routes.py` (real Control Center, real `forward_json`, real Core), `test_control_center_relay_whitelist.py` (every relayed Core path of every relay is accepted by `forward_json`) |
 | UI | « Enregistrer une copie dans Documents » after « Exporter la vidéo » (texts from Core's `display_path`, no hard-coded root) (`control_center_presentation_studio_explorer_export.js`) | `tests/unit/test_variants_export_save_js.py` |
+| UI | the same button on every finished render (video, PNG image, PDF) of a Board's Artifacts view, Sessions & Boards (`control_center_workspace.js`, `artifact-save-copy`; the copy sentences are Variants' `SAVE_ERRORS`; presentation-edition-v1 Slice 09, I-003) | `tests/unit/test_workspace_presentations_js.py` |
 | Brain (MCP) | `remotion_export` op `save` (`jarvis/runtime/remotion_mcp.py`, `remotion_mcp_tools.py`), typed client `LocalCoreClient.document_export` | `tests/unit/test_remotion_export_save_mcp.py` |
 
 ## Internal vs exported
@@ -77,9 +78,10 @@ runtime root, the installed product home `%LOCALAPPDATA%\CIRCOE\Jarvis`, or the 
 - The caller names a source (`artifact_id`), never a path. An optional `file_name` (UI or HTTP only; the brain cannot send one)
   is a stem, sanitized to ONE component (`file_stem`): separators, `..`, Windows-forbidden and control characters become spaces,
   trailing dots and spaces go, reserved names (`CON`, `NUL`, `COM1`, ...) get a `_` prefix, at most 80 characters, empty =
-  `Jarvis export`. The extension comes from the class.
-- Default name: `<presentation title> - <video|image|pdf>` (title read through `rendered_from` → snapshot → source; unreadable →
-  `Jarvis export - <class>`, journalled `core.export.title_unavailable`).
+  `Export Jarvis`. The extension comes from the class.
+- Default name, in French because it lands in the user's own folder (I-003, Slice 09): `<presentation title> - <vidéo|image|PDF>`
+  (title read through `rendered_from` → snapshot → source; unreadable → `Export Jarvis - <class>`, journalled
+  `core.export.title_unavailable`).
 - File names drop Unicode format characters (category `Cf`: right-to-left override, zero-width joiners), which could disguise a
   name or its extension.
 - Same bytes already there: if a file under one of this export's names (up to the first free one) has the same size and SHA-256,

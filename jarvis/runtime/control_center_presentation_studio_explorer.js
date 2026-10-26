@@ -57,6 +57,7 @@
     describeRefusal,planModel,sameSet,readPrefs,writePrefs,MAX_RATIONALE_BYTES,AUTO_DWELL_DEFAULT,AUTO_TICK_MS,AUTO_SKIP_MS,autoStep,leftKeyAction,nextDwell,dwellLabel}=Core;
 
   const GRAPH_POLL_MS=10000;
+  const EDIT_TITLE='Modifier la scène à l’écran (texte, couleurs, mouvement) : le panneau s’ouvre à droite, l’aperçu suit';
   const COMMAND_POLL_WAIT_S=25;
   const COMMAND_POLL_TIMEOUT_MS=30000;
   const COMMAND_MIN_GAP_MS=1000;
@@ -414,6 +415,7 @@
       ui.vxButton=videoExport?videoExport.buildButton():null;ui.vxStatus=videoExport?videoExport.buildStatus():null;
       note.appendChild(ui.transport);note.appendChild(ui.sceneCount);note.appendChild(sceneLine);note.appendChild(ui.rmsButton);
       if(ui.vxButton)note.appendChild(ui.vxButton);
+      note.appendChild(ui.edit);
       note.appendChild(ui.present);
       note.appendChild(ui.rmsStatus);
       if(ui.vxStatus)note.appendChild(ui.vxStatus);
@@ -603,7 +605,8 @@
         if(withKids&&withKids.length)add('restore_all','Restaurer avec ses sous-branches','restore','',{});
       }else{
         add('activate','Activer','power','A',{disabled:busy?busyText:S.graph.activeId===node.variant_id?'Cette variante est déjà la variante active.':null});
-        add('branch','Brancher d\'ici…','fork','N',{disabled:busy?busyText:live>=MAX_LIVE?`${MAX_LIVE} variantes vivantes au plus : archivez des branches abandonnées d'abord.`:null});
+        /* Slice 09 (presentation-edition-v1): « Nouvelle variante… », the user's words for a branch. */
+        add('branch','Nouvelle variante…','fork','N',{disabled:busy?busyText:live>=MAX_LIVE?`${MAX_LIVE} variantes vivantes au plus : archivez des branches abandonnées d'abord.`:null});
         add('rename','Renommer…','pencil','F2',{});
         add('archive','Archiver…','box','Suppr',{danger:true,disabled:busy?busyText:live<=1?'Une présentation garde toujours au moins une variante vivante.':null});
       }
@@ -786,6 +789,9 @@
         title:'Présenter cette variante : vous, Jarvis, ou une répétition (la partition mène)'}});
       ui.stopRun=button('Arrêter','jvx-btn',()=>{runCommand('stop')},{attrs:{'data-act':'stop_run','data-danger':'',title:'Arrêter la présentation'}});
       ui.stopRun.hidden=true;
+      /* presentation-edition-v1 Slice 09: « Modifier » opens the editor (the inspector) beside Variants on the variant and the scene ON SCREEN. */
+      ui.edit=button('Modifier','jvx-btn jvx-edit',()=>{openEditor('button')},{attrs:{'data-act':'edit_scene','aria-haspopup':'dialog',
+        title:EDIT_TITLE}});
       for(const node of [ui.prevScene,ui.restart,ui.skipBack,ui.playAll,ui.skipFwd,ui.nextScene,ui.scrub,ui.time,ui.sound,ui.fsT,ui.more,ui.stopRun])ui.transport.appendChild(node);
     }
     /* ⏮ ⏭, ← →, Page précédente / suivante: the start of the previous / next scene, play state kept (§ 4.4). Without a map (a variant
@@ -1166,6 +1172,7 @@
       ui.sceneBadge.title='Variantes locales de cette scène (elles restent hors de l\'arbre tant qu\'on ne les promeut pas)';
       ui.sceneCount.textContent=scene?`Scène ${index+1} sur ${p.scenes.length}`:'';
       ui.stage.setAttribute('aria-label',scene?`Aperçu, scène ${index+1} sur ${p.scenes.length} : ${scene.title}`:'Aperçu');
+      sayScene();
       door.sync();
       renderPlayback();
     }
@@ -1504,7 +1511,7 @@
       });
       if(done&&!done.error){
         const n=created&&created.node?created.node:{};
-        return {select:n.variant_id||null,message:`Branche #${n.variant_number||'?'} créée depuis #${node.variant_number}${form.activate?' et activée':''}.`};
+        return {select:n.variant_id||null,message:`Variante #${n.variant_number||'?'} créée depuis #${node.variant_number}${form.activate?' et activée':''}.`};
       }
       return false;
     }
@@ -1621,9 +1628,9 @@
       const node=nodeOf(id);
       if(!node||node.state!=='live')return;
       if(S.live.size>=MAX_LIVE){say('refused',describeRefusal({code:'presentation_studio_limit_reached'},{op:'branch'}).text);return}
-      openTitleDialog({kind:'branch',heading:`Brancher depuis #${node.variant_number}`,
+      openTitleDialog({kind:'branch',heading:`Nouvelle variante depuis #${node.variant_number}`,
         intro:`La nouvelle variante part d'une copie de #${node.variant_number} « ${cleanLine(node.title,50)} » ; l'original ne bouge pas.`,
-        title:cleanLine(`Branche de ${cleanLine(node.title,60)}`,80),confirm:'Créer la branche',withRationale:true,returnFocus,
+        title:cleanLine(`Variante de ${cleanLine(node.title,60)}`,80),confirm:'Créer la variante',withRationale:true,returnFocus,
         run:(form)=>branch(id,form),finish:(out)=>after(out.select,out.message)});
     }
     function openRenameDialog(id,returnFocus){
@@ -1948,7 +1955,7 @@
       if(!S.run||!ui.playAll)return;
       const m=runModel();
       if(!m.active)return;
-      ui.stopRun.hidden=false;ui.present.hidden=true;
+      ui.stopRun.hidden=false;ui.present.hidden=true;ui.edit.hidden=true;
       ui.sceneCount.hidden=true;ui.sceneLine.hidden=true;   // the presenter strip says the scene and the item (Slice 02 inventory § 2)
       ui.rmsButton.hidden=true;ui.rmsStatus.hidden=true;   // Slice 11: Remotion Studio opens when the run has stopped
       if(ui.vxButton){ui.vxButton.hidden=true;ui.vxStatus.hidden=true}   // master Slice 08: the export too
@@ -2042,6 +2049,69 @@
       if(!S.preview.doc.score_id)return 'Cette variante n\'a pas de partition : « Présenter » suit une partition.';
       return null;
     }
+    /* ---------------------------------------------------------- « Modifier » (presentation-edition-v1 Slice 09)
+       Variants is THE editing surface: the editor is the inspector (the same door as the voice, `POST .../edits`), opened beside Variants on
+       the variant and the scene on screen, never on another one. The preview is re-read from Core after every committed change
+       (`jarvis:studio-variant-edited`), never patched from the editor's own values; the editor follows the scene on screen
+       (`jarvis:studio-explorer-scene`). */
+    function editBlocked(){
+      if(S.run)return 'Une présentation est en cours : arrêtez-la pour modifier une scène.';
+      if(cmp.isActive())return 'Quittez la comparaison pour modifier une scène.';
+      const node=nodeOf(S.selectedId);
+      if(!node)return 'Choisissez d’abord une variante dans l’arbre.';
+      if(node.state==='archived')return 'Cette variante est archivée : restaurez-la pour la modifier.';
+      if(S.preview.status!=='ready'||!currentScene())return 'L’aperçu de la scène n’est pas encore prêt : patientez un instant.';
+      return null;
+    }
+    async function openEditor(via){
+      const blocked=editBlocked();
+      if(blocked){say('info',blocked);log('edit_refused',{via,why:blocked});return {state:'refused',reason:blocked}}
+      const module_=root.JarvisStudioInspector,ins=module_&&module_.instance;
+      if(!ins||typeof ins.edit!=='function'){
+        say('failed','L’éditeur des scènes n’est pas chargé dans cette page : rechargez la page.');
+        log('edit_unavailable',{via},'error');
+        return {state:'refused',reason:'editor_unavailable'};
+      }
+      const scene=currentScene();
+      log('edit_requested',{via,presentation_id:S.pid,variant_id:S.preview.variantId,scene_id:scene.id});
+      try{
+        const result=await ins.edit({presentation_id:S.pid,variant_id:S.preview.variantId,scene_id:scene.id,via:'variants'});
+        if(!result||result.state!=='opened'){
+          say('failed',`L’éditeur ne s’est pas ouvert : ${cleanLine(result&&result.reason||'raison inconnue',160)}`);
+          log('edit_not_opened',{via,state:result&&result.state},'warn');
+        }
+        return result;
+      }catch(error){
+        log('edit_failed',{via,error:describe(error)},'error');
+        say('failed',`L’éditeur ne s’est pas ouvert : ${describe(error)}`);
+        return {state:'failed',reason:describe(error)};
+      }
+    }
+    /* The scene on screen, said to the page (the editor follows it). Only a change is said. */
+    let sceneSaid='';
+    function sayScene(){
+      const p=S.preview,scene=S.open&&p.status==='ready'&&!S.run?currentScene():null;
+      const key=scene?`${S.pid}|${p.variantId}|${scene.id}`:'';
+      if(key===sceneSaid)return;
+      sceneSaid=key;
+      if(!scene||typeof win.dispatchEvent!=='function'||typeof win.CustomEvent!=='function')return;
+      try{win.dispatchEvent(new win.CustomEvent('jarvis:studio-explorer-scene',{detail:{presentation_id:S.pid,variant_id:p.variantId,scene_id:scene.id}}))}
+      catch(error){log('scene_event_failed',{error:describe(error)},'warn')}
+    }
+    /* A committed change of the editor (or its undo / redo): the variant is re-read from Core, the preview remounts what Core holds. A change
+       on another scene of the variant on screen brings that scene on screen (an undo never changes a scene out of sight). */
+    function onVariantEdited(event){
+      const d=event&&event.detail||{};
+      if(!S.open||d.presentation_id!==S.pid)return;
+      log('edit_seen',{variant_id:d.variant_id,revision:d.revision,scene_id:d.scene_id||null});
+      const p=S.preview;
+      if(d.scene_id&&d.variant_id===p.variantId&&d.scene_id!==p.sceneId&&p.scenes.some(s=>s.id===d.scene_id)&&!(seq&&seq.active()))showScene(d.scene_id);
+      loadGraph({}).then(()=>{if(S.open){renderAll();schedulePreview()}})
+        .catch(error=>{const info=describeRefusal(error.info||error,{op:'graph'});
+          say('failed',`Modification enregistrée, mais l’aperçu n’a pas pu être relu : ${info.text}`,{action:{label:'Relire',run:()=>refresh()}});
+          log('edit_reread_failed',{code:info.code},'error')});
+    }
+    if(typeof win.addEventListener==='function')win.addEventListener('jarvis:studio-variant-edited',onVariantEdited);
     function renderPresent(){
       if(!ui.present)return;
       ui.stopRun.hidden=true;ui.present.hidden=false;
@@ -2053,6 +2123,9 @@
       if(videoExport)videoExport.render();
       const blocked=presentBlocked();
       attrs(ui.present,{'aria-disabled':blocked?'true':'false',title:blocked||'Présenter cette variante : vous, Jarvis, ou une répétition (la partition mène)'});
+      const editBlock=editBlocked();
+      ui.edit.hidden=false;
+      attrs(ui.edit,{'aria-disabled':editBlock?'true':'false',title:editBlock||EDIT_TITLE});
       if(ui.presenter)ui.presenter.hidden=true;
     }
     function openPresentMenu(){
@@ -2286,6 +2359,8 @@
       S.opener=opts.opener||doc.activeElement;
       S.open=true;S.loading={label:'Chargement du graphe',at:now()};
       ui.host.hidden=false;
+      /* Slice 09 (presentation-edition-v1): the editor docks beside Variants while it is open (`jvx-open` on <html>). */
+      if(doc.documentElement&&doc.documentElement.classList)doc.documentElement.classList.add('jvx-open');
       door.start();   // Slice 11: listens for the return to this tab; Remotion Studio is read once a Remotion scene is on screen (`loadDetail`)
       applyInert();
       if(!ui.bound){doc.addEventListener('fullscreenchange',onFullscreenChange);ui.bound=true}
@@ -2397,7 +2472,8 @@
       else if(api&&typeof api.cancel==='function'&&api.state&&api.state().armed){try{api.cancel()}catch(error){log('fullscreen_cancel_failed',{error:describe(error)},'warn')}}
       S.fullscreenOwned=false;
       releaseInert();
-      ui.host.hidden=true;
+      ui.host.hidden=true;sceneSaid='';
+      if(doc.documentElement&&doc.documentElement.classList)doc.documentElement.classList.remove('jvx-open');
       const target=S.opener;
       S.opener=null;
       if(!opts.quiet){
@@ -2487,6 +2563,10 @@
         state:()=>videoExport?videoExport.state():null,model:()=>videoExport?videoExport.model():null}),
       onSelectionChange(fn){selectionListeners.add(fn);return()=>selectionListeners.delete(fn)},
       select:(id)=>{if(S.open&&nodeOf(id))selectVariant(id,{focus:true})},
+      /* Slice 09 (presentation-edition-v1): « Modifier » (the same as the button) and the scene the editor asks for. */
+      edit:o=>openEditor(o&&o.via||'api'),
+      showScene:(sceneId)=>{if(S.open&&!S.run&&S.preview.scenes.some(s=>s.id===sceneId)){setScene(sceneId,{});return true}return false},
+      scene:()=>{const sc=S.open&&S.preview.status==='ready'?currentScene():null;return sc?{presentation_id:S.pid,variant_id:S.preview.variantId,scene_id:sc.id}:null},
       runAction:(act,id)=>runAction(act,id||S.selectedId,{}),
       state:()=>({open:S.open,presentation_id:S.pid,selected:S.selectedId,active:S.graph&&S.graph.activeId,mode:S.open?modeNow():null,fullscreen:fsNow(),
         revision:S.graph&&S.graph.revision,live:S.live?S.live.size:0,archived:S.archived?S.archived.size:0,preview:{status:S.preview.status,scene:S.preview.sceneId,
@@ -2538,6 +2618,7 @@
     window.JarvisStudioExplorer=Object.freeze({
       open:explorer.open,close:explorer.close,isOpen:explorer.isOpen,state:explorer.state,selection:explorer.selection,
       onSelectionChange:explorer.onSelectionChange,select:explorer.select,refresh:explorer.refresh,stats:explorer.stats,
+      edit:explorer.edit,showScene:explorer.showScene,scene:explorer.scene,
       inspectTree:explorer.inspectTree,repaint:explorer.repaint,playback:explorer.playback,run:explorer.run,remotionStudio:explorer.remotionStudio,videoExport:explorer.videoExport,
       compare:Object.freeze({open:o=>explorer.compare.start(o),close:o=>explorer.compare.close(o),isOpen:()=>explorer.compare.isActive(),view:()=>explorer.compare.view(),
         state:()=>explorer.compare.state(),marks:()=>explorer.compare.marks(),mark:id=>explorer.compare.mark(id),focus:pair=>explorer.compare.setPair(pair),

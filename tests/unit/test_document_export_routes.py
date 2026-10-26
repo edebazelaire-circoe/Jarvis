@@ -99,7 +99,7 @@ async def test_each_existing_class_is_exported_as_a_copy_named_after_the_present
     status, body = await call(stack.base, "POST", "/v1/exports", json={"artifact_id": artifact_id})
     assert status == 201, body
     exported = body["export"]
-    label = {"mp4": "video", "still": "image", "pdf": "pdf"}[fmt]
+    label = {"mp4": "vidéo", "still": "image", "pdf": "PDF"}[fmt]
     assert exported["file_name"] == f"Atelier - {label}{ext}" and exported["copy"] is True and exported["renamed"] is False
     assert exported["destination"] == {"root": "Documents\\Jarvis", "display_path": f"Documents\\Jarvis\\Atelier - {label}{ext}"}
     copy = stack.docs / "Jarvis" / exported["file_name"]
@@ -218,7 +218,7 @@ async def test_the_typed_client_exports_for_the_brain_with_the_id_alone(stack):
     await ready(stack)
     artifact_id, _, _ = await rendered(stack, "pdf", {"frames": [0]})
     answer = await stack.client.document_export(artifact_id)
-    assert answer["export"]["file_name"] == "Atelier - pdf.pdf"
+    assert answer["export"]["file_name"] == "Atelier - PDF.pdf"
     actors = [d.get("actor") for k, _, d in stack.sink.events if k == "core.export.completed"]
     assert actors == ["brain"]
 

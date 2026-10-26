@@ -249,7 +249,7 @@ def test_the_serious_draft_is_variant_one_with_its_score_and_its_art_direction()
     only = result.variants[0]
     assert not only.draft and only.variant.parent_variant_id is None and only.variant.art_direction_id == only.art.art_direction_id
     assert only.variant.score_id == only.score.score_id and only.variant.revision == 1
-    assert presentation.variants[0].created_by == "user" and presentation.variants[0].rationale == "first draft (directed)"
+    assert presentation.variants[0].created_by == "user" and presentation.variants[0].rationale == "Premier jet (dirigé)"
     order = [i.scene_id for i in only.score.chain()]
     assert order == [result.scene_ids[s.key] for s in draft.scenes]          # the score is the draft's order, one chain
     assert only.score.start_item_id == only.score.items[0].item_id

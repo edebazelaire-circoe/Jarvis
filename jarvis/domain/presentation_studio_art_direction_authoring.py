@@ -609,5 +609,6 @@ def derive_from_signals(signals: DesignSignals) -> ArtDirectionProfile:
              f"Gaps filled with the generated '{spec.label}' direction ({'from the mentions' if matched else 'stable hash'}).")
     dataviz = replace(base.dataviz, series=_series(palette))
     return ArtDirectionProfile(
-        "Derived direction", Provenance(origin, sections, False, confidence, notes), palette, typography,
+        # The name is shown to the user as is (Variants, the editor): French (presentation-edition-v1 Slice 09).
+        "Direction déduite", Provenance(origin, sections, False, confidence, notes), palette, typography,
         base.spacing, shapes, base.imagery, dataviz, base.motion, signals.sources)

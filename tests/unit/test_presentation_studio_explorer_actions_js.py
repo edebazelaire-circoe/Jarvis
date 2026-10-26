@@ -68,14 +68,14 @@ return {opening,emptyError,longError,rationaleError,noPostYet,post:post&&post.bo
   dialogGone:ex.state().dialog,selected:ex.state().selected.slice(-2),active:ex.state().active.slice(-2),
   numbers:numbers(),parent:world.byId(vid(6)).parent_variant_id.slice(-2),notice:noticeText(),focus:doc.activeElement.dataset.id.slice(-2),counter:world.counter};
 """)
-    assert out["opening"]["heading"] == "Brancher depuis #3" and out["opening"]["title"] == "Branche de Variante 3" and out["opening"]["focus"] == "jvxTitleInput"
+    assert out["opening"]["heading"] == "Nouvelle variante depuis #3" and out["opening"]["title"] == "Variante de Variante 3" and out["opening"]["focus"] == "jvxTitleInput"
     assert out["opening"]["insideInert"] >= 3, "the rest of the workspace is inert behind the dialog"
     assert "titre" in out["emptyError"] and "80" in out["longError"] and "octets" in out["rationaleError"] or "caractères" in out["rationaleError"]
     assert out["noPostYet"] == 0, "an invalid form never reaches Core"
     assert out["url"] == "variants" and out["post"] == {"title": "Version sobre", "source_variant_id": "psv_00000000000000000000000000000003",
                                                          "activate": True, "expected_revision": 5, "rationale": "Plus calme pour le comité"}
     assert out["dialogGone"] is None and out["selected"] == "06" and out["active"] == "06" and out["parent"] == "03"
-    assert out["numbers"][-1] == 6 and "Branche #6 créée depuis #3 et activée" in out["notice"] and out["focus"] == "06"
+    assert out["numbers"][-1] == 6 and "Variante #6 créée depuis #3 et activée" in out["notice"] and out["focus"] == "06"
 
 
 def test_a_hostile_title_is_cleaned_before_it_is_sent(tmp_path):
@@ -419,7 +419,7 @@ rowFor(5).dispatchEvent(new (require(process.env.JARVIS_EXPLORER_DOM).FakeEvent)
 await env.advance(300);const early=ex.state().menu;await env.advance(300);
 return {pointer,afterArrows,closed,keyboard,viaMenu,longPress:{early,late:ex.state().menu,labels:labels()}};
 """)
-    assert out["pointer"]["labels"][:4] == ["Activer", "Brancher d'ici…", "Renommer…", "Archiver…"] and out["pointer"]["selected"] == "03"
+    assert out["pointer"]["labels"][:4] == ["Activer", "Nouvelle variante…", "Renommer…", "Archiver…"] and out["pointer"]["selected"] == "03"
     assert out["pointer"]["role"] == "menu" and out["pointer"]["focus"].startswith("Activer")
     assert out["afterArrows"].startswith("Renommer") and out["closed"] == {"menu": False, "focus": "03"}
     assert out["keyboard"][0].startswith("Activer") and out["viaMenu"] == {"dialog": "rename", "menu": False}

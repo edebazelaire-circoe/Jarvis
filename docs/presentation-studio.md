@@ -1095,7 +1095,7 @@ held (reserved) while the pin leaves the document, converted into the entry in t
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/redo` | `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/redo`, actor forced to `user` |
 
 `GET .../history` answers `{revision, in_sync, durable: false, tracked, reason, message, undo_count, redo_count, undo, redo, next_undo, next_redo, bytes, evicted, redo_cleared, stats}`
-(`undo` / `redo`: the 8 most recent entries, newest first, as `{entry_id, ops, tier, actor, revision, bytes}`: operation names only). It reads and writes nothing. Core takes `actor` from the body; the relay replaces it with `user`
+(`undo` / `redo`: the 8 most recent entries, newest first, as `{entry_id, ops, tier, actor, revision, bytes, scene_ids}`: operation names and the ids of the scenes the step touches, never a title or a value; `scene_ids` lets « Annuler » say which scene it changes, presentation-edition-v1 Slice 09). It reads and writes nothing. Core takes `actor` from the body; the relay replaces it with `user`
 (same rule as the edits: one voice/GUI door, the MCP layer of Slice 21 stamps `brain`). A committed undo, like any edit, changes the canonical variant only; the visible stage window follows through the commit listener of Slice 12 (the run pauses and re-syncs).
 
 ### Observability
@@ -2694,6 +2694,66 @@ Never in the DOM (asserted at 800×600, 1280×720 and 1920×1080): `rs-bar`, a d
 **Level 3 conformance.** Node: `tests/unit/test_variants_controls_js.py` (the sheet derived from the one key map in both modes, its tree keys answered by `treeKey`, each control once and the toolbar holding playback only, the count label, no « explorateur » in what the user reads, `?` / « ⋯ » / `Échap` / focus / a `?` typed in a field, run dimming, the reason and the end). Real Chrome: `tests/unit/test_variants_controls_browser.py` (each control once, named, inside the window, no horizontal overflow and nothing forbidden at 800×600, 1280×720 and 1920×1080; the sheet by `?` and by « ⋯ »; during a run the actions under 0.5 opacity and inert, the tree dimmed, the reason shown, the presenter strip under the transport, everything back after « Arrêter »; the readout audit; with a Remotion runtime the 9-scene video deck, its composition readout and the before / after screenshots). Updated for the new structure: `test_variants_transport_js.py`, `test_variants_transport_browser.py`, `test_presentation_rail_e2e_browser.py`. Fullscreen overlays (rework): `test_variants_controls_browser.py` › `test_in_stage_fullscreen_the_sheet_and_the_overflow_menu_are_drawn_inside_it_and_escape_is_nested` (the sheet and « ⋯ » drawn and hit inside the fullscreen element, the transport inert under the sheet and live after it, the `Échap` lock taken and given back) and `…_space_plays_and_pauses_after_the_sheet_is_closed` (with a Remotion runtime). Docs parity: `tests/unit/test_variants_controls_docs.py`, which also scans the refusals, reasons and spoken sentences of the page, the command channel and the presentation MCP for « explorateur ». Evidence: `tasks/jarvis-remotion-native-studio-playback-fix/slices/10-variants-interface-control-audit/evidence/`.
 
 **Limits, said.** The left presentations rail keeps its geometry (the user's sketch). « Remotion Studio » on the scene row: done by Slice 11 (*Remotion Studio from Variants (Level 3, Slice 11)*). The visual audit on the user's live screen is the Human check HV-RFX-10-01.
+
+### Editing from Variants (V1, presentation-edition-v1 Slice 09)
+
+Status: **Level 3** (handoff `jarvis-presentation-edition-v1`, Slice 09). Variants is THE editing surface of a presentation; the editor
+is the inspector (*Semantic edit contract*, *Persistence and undo contract*), docked beside Variants. Nothing here adds an edit path:
+every change is `POST .../variants/{variant_id}/edits` of the relay (actor `user`), undo / redo are `POST .../undo|redo`.
+
+**Entry.** « Modifier » (`data-act="edit_scene"`) on the scene row, before « Présenter ». It opens the editor on the presentation, the
+**variant on screen** (any live branch, not only the active one) and the **scene on screen** (`JarvisStudioInspector.instance.edit(
+{presentation_id, variant_id, scene_id})`, also `JarvisStudioExplorer.edit()`). It says why it cannot (`aria-disabled` + title, then a
+notice on click): no variant chosen, archived variant (« restaurez-la »), preview not ready, compare open, presentation running (the
+button is hidden during a run, like « Présenter »). The rail's « Éditer » keeps its meaning (Variants plus the editor) and gets the same
+docking.
+
+**Layering.** While Variants is open (`html.jvx-open`, set by Variants) the editor is fixed at the right, above Variants (9000) and the
+docked rail (9100) at **9120**, marked `data-keep-live="true"` so Variants' inert sweep and its document key capture leave it alone; with
+the editor open (`html.jvi-open`) and a window of 900 px or more, Variants makes room (`right: 436px`); below 900 px the editor covers
+Variants (its own local preview shows the scene). `Esc` in the editor closes the editor only. Outside Variants the inspector is the dock
+panel it always was (z 34).
+
+**What is edited, always in words.** A context line at the top of the editor (`[data-role="edit-context"]`): « Vous modifiez la scène
+k sur n de la variante #N » + a tag « active » / « non active » + whether that variant is the one presented and exported, and that each
+change is saved on release.
+
+**One scene on screen.** Variants says the scene on screen (`jarvis:studio-explorer-scene {presentation_id, variant_id, scene_id}`, only
+on change); the editor follows it (scene, or variant + scene). A scene chosen in the editor's picker brings Variants to it
+(`JarvisStudioExplorer.showScene`).
+
+**Honest saving.** The editor says « enregistré » only after Core's variant is read back (unchanged rule of the inspector); it then says
+`jarvis:studio-variant-edited {presentation_id, variant_id, revision, scene_id}` and Variants re-reads the graph and the variant from
+Core and remounts the preview (no value copied from the editor). A failed re-read is said in Variants (« Modification enregistrée, mais
+l'aperçu n'a pas pu être relu », « Relire »).
+
+**Undo scoped to a scene.** `GET .../history` steps carry `scene_ids` (ids only). « Annuler » / « Rétablir » name the scene of the next
+step (« Annuler la dernière modification, scène 3 « … » (autre scène : elle s'affichera) »); an undo or redo of a change made on another
+scene first brings that scene on screen, in the editor and in Variants, and the status says « Modification annulée : scène k « … » ». The
+ring stays per variant (Core); nothing else is undone.
+
+**Developer surfaces.** In a product edition without developer mode, « Remotion Studio », its state line (`.jvx-rms`, master line,
+« Cette scène seule dans Remotion Studio », publish / revert) and the editor's source line (versions of the scene's model, last hot reload)
+are `data-surface="developer"` (`docs/control-center-shell.md` › *Product edition UI*); « Exporter la vidéo » then takes the row's push
+to the right. A not-ready engine reads « Le moteur vidéo de Jarvis n'est pas prêt (…) : demandez à Jarvis de l'installer ou de le
+réparer » there, never the MCP dialog (I-006).
+
+**Words.** The branch action reads « Nouvelle variante… » (dialog « Nouvelle variante depuis #N », « Créer la variante »,
+notice « Variante #N créée depuis #M »). A first draft's rationale is French (« Premier jet (dirigé) »), and the derived art direction is
+named « Direction déduite » (data stored before keep their English text).
+
+**Journal.** `[studio-explorer] edit_requested|edit_refused|edit_unavailable|edit_not_opened|edit_failed|edit_seen|edit_reread_failed|
+scene_event_failed`; `[studio-inspector] edit_requested|edit_select_failed|follow_variant|follow_failed|explorer_follow_failed|
+edited_event_failed`, `history_applied {scenes, moved}`.
+
+**Known limit.** A Remotion scene paused at its first frame shows what its first frame draws: a scene whose content fades in shows its
+background only until it plays (the editor's local preview shows the settled frame). Choosing a representative still for a paused scene
+is a Composition clock decision, not taken here.
+
+**Tests.** `tests/unit/test_presentation_editing_ui_browser.py` (real Core, Control Center, Chrome: non-active branch edited, docking on
+top, follow both ways, Core read back, undo on another scene, developer surfaces hidden / shown, 1280×720, 1440×900, 600×800),
+`tests/unit/test_presentation_export_after_edit.py` (an edited deck exports its edit from a new frozen copy, the old copy keeps its value,
+the live variant reopens with the edit), `test_presentation_studio_history.py::test_a_step_names_the_scenes_it_touches_by_id_only`.
 
 ### Remotion Studio from Variants (Level 3, Slice 11)
 

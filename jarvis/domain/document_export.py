@@ -33,7 +33,8 @@ DEFAULT_ROOT_LABEL = r"Documents\Jarvis"
 OVERRIDE_ROOT_LABEL = "JARVIS_EXPORT_ROOT"
 MAX_STEM_CHARS = 80
 MAX_COLLISIONS = 999
-FALLBACK_STEM = "Jarvis export"
+#: Nom de repli, en français comme le dossier de l'utilisateur (I-003, Slice 09).
+FALLBACK_STEM = "Export Jarvis"
 #: Suffixe du fichier temporaire écrit dans la destination avant le renommage atomique.
 TEMP_SUFFIX = ".jarvis-export.partial"
 
@@ -97,7 +98,8 @@ class ExportClass:
 
 
 def _classes() -> Mapping[ArtifactKind, ExportClass]:
-    labels = {RenderFormat.MP4: "video", RenderFormat.STILL: "image", RenderFormat.PDF: "pdf"}
+    # Libellés français : le nom atterrit dans le dossier Documents de l'utilisateur (I-003, Slice 09).
+    labels = {RenderFormat.MP4: "vidéo", RenderFormat.STILL: "image", RenderFormat.PDF: "PDF"}
     out: dict[ArtifactKind, ExportClass] = {}
     for fmt, spec in RENDERS.items():
         extension = "." + spec.payload_name.rsplit(".", 1)[1]
