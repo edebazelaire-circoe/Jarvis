@@ -39,6 +39,7 @@ import stat
 import time
 from urllib import request as urlrequest
 
+from jarvis import private_runtime
 from jarvis.adapters import process_tree
 from jarvis.adapters.node_capability_runner import _is_link, _remove_tree, extended_path
 from jarvis.domain import remotion_studio as D
@@ -155,7 +156,7 @@ def _clear_readonly(path: Path) -> None:
 
 
 class RemotionStudioRunner:
-    def __init__(self, runtime_dir: Callable[[], Path], *, which: Callable[[str], str | None] = shutil.which,
+    def __init__(self, runtime_dir: Callable[[], Path], *, which: Callable[[str], str | None] = private_runtime.which,
                  environ: Mapping[str, str] | None = None, spawn=process_tree.spawn_detached, clock=time.monotonic,
                  sleep=time.sleep, start_timeout_s: float = D.START_TIMEOUT_S,
                  port_chooser: Callable[[], int] = free_loopback_port, wall_ns: Callable[[], int] = time.time_ns) -> None:
@@ -196,7 +197,7 @@ class RemotionStudioRunner:
     def runtime_ready(self) -> str | None:
         runtime = Path(self._runtime_dir())
         if self._which("node") is None:
-            return "node_missing: Node.js is no longer on PATH"
+            return "node_missing: Node.js is no longer available"
         if not (runtime / CLI_ENTRY).is_file():
             return "cli_missing: @remotion/cli is not installed in the Remotion runtime; run repair"
         return None
@@ -607,7 +608,7 @@ class RemotionStudioRunner:
         node = self._which("node")
         runtime = Path(self._runtime_dir())
         if node is None:
-            raise StudioError(C.START_FAILED, "node_missing: Node.js is no longer on PATH")
+            raise StudioError(C.START_FAILED, "node_missing: Node.js is no longer available")
         if not (runtime / CLI_ENTRY).is_file():
             raise StudioError(C.RUNTIME_UNAVAILABLE, "cli_missing: @remotion/cli is not installed; run repair")
         if not (self._work / D.WORK_ROOT_FILE).is_file():

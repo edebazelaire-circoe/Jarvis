@@ -33,6 +33,7 @@ import threading
 import time
 from typing import Any
 
+from jarvis import private_runtime
 from jarvis.adapters import process_tree
 from jarvis.adapters.node_capability_runner import _remove_tree, extended_path
 from jarvis.adapters.remotion_compiler import read_installed_engine
@@ -114,7 +115,7 @@ def _browser_candidates(environ: Mapping[str, str], which: Callable[[str], str |
 
 
 class RemotionRenderRunner:
-    def __init__(self, runtime_dir: Callable[[], Path], *, which: Callable[[str], str | None] = shutil.which,
+    def __init__(self, runtime_dir: Callable[[], Path], *, which: Callable[[str], str | None] = private_runtime.which,
                  environ: Mapping[str, str] | None = None, spawn=process_tree.spawn_tracked, clock=time.monotonic,
                  free_bytes: Callable[[Path], int] | None = None,
                  self_ref: Callable[[], str] = lambda: process_tree.make_process_ref(os.getpid())) -> None:
@@ -145,7 +146,7 @@ class RemotionRenderRunner:
     def runtime_ready(self) -> str | None:
         runtime = Path(self._runtime_dir())
         if self._which("node") is None:
-            return "node_missing: Node.js is no longer on PATH"
+            return "node_missing: Node.js is no longer available"
         for package in ("bundler", "renderer"):
             if not (runtime / "node_modules" / "@remotion" / package / "package.json").is_file():
                 return f"{package}_missing: @remotion/{package} is not installed in the Remotion runtime; run repair"
@@ -222,7 +223,7 @@ class RemotionRenderRunner:
         job = self.job_dir(job_id)
         node = self._which("node")
         if node is None:
-            return RunOutcome(False, C.RUNTIME_UNAVAILABLE.value, "node_missing: Node.js is no longer on PATH")
+            return RunOutcome(False, C.RUNTIME_UNAVAILABLE.value, "node_missing: Node.js is no longer available")
         full = {**spec, "runtime": str(Path(self._runtime_dir())), "work": str(job / "work"), "bundle_dir": str(job / "bundle"),
                 "progress": str(job / "progress.json"), "result": str(job / "result.json"), "pages_dir": str(job / "pages"),
                 "out": str(job / self._out_name(spec["format"])), "browser": browser.path}

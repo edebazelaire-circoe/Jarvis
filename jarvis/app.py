@@ -878,6 +878,9 @@ async def _run_core_v2() -> int:
     product_edition = process_edition()
     # Racines de ce démarrage, sans chemin absolu (docs/local-data.md › Diagnostics) : journal et `/v1/health`.
     installation = installation_diagnostics(settings.data_root, settings.runtime_root)
+    # Runtimes privés du paquet (docs/windows-packaging.md) : présence et versions, sans hachage ni chemin absolu.
+    from jarvis.private_runtime import diagnostics as runtime_diagnostics
+    installation["runtimes"] = runtime_diagnostics()
     RuntimeJournal(settings.runtime_root).emit("core.installation", "racines de données et runtime de ce démarrage",
                                                data=installation | {"edition": product_edition.edition.value})
     token = generate_session_token()

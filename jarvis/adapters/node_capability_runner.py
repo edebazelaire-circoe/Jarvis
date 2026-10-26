@@ -29,6 +29,7 @@ import threading
 import time
 from urllib import request as urlrequest
 
+from jarvis import private_runtime
 from jarvis.adapters import process_tree
 from jarvis.adapters.global_context import GLOBAL_CONTEXT_DIR, GlobalContextProtected, ensure_not_global_context
 from jarvis.adapters.process_tree import ProcessResult
@@ -190,7 +191,7 @@ def _retry(action: Callable[[], None], attempts: int = 5) -> None:
 
 class NodeCapabilityRunner:
     def __init__(self, spec: NodeRuntimeSpec, *, execute: Callable[..., ProcessResult] = process_tree.run_bounded,
-                 which: Callable[[str], str | None] = shutil.which, environ: Mapping[str, str] | None = None,
+                 which: Callable[[str], str | None] = private_runtime.which, environ: Mapping[str, str] | None = None,
                  free_bytes: Callable[[Path], int] | None = None, windows: bool | None = None) -> None:
         self._spec = spec
         self._execute = execute
@@ -261,7 +262,7 @@ class NodeCapabilityRunner:
 
         node = self._node()
         if node is None:
-            return ProcessResult(None, "node_missing: node is no longer on PATH", False, 0.0, started=False)
+            return ProcessResult(None, "node_missing: node is no longer available", False, 0.0, started=False)
         return self._run([node, *SCRIPT_NODE_FLAGS, SCRIPT_FILE, *args], cwd=Path(runtime_dir), env=self._env(), timeout_s=timeout_s)
 
     # ------------------------------------------------------------------- exigences
@@ -272,7 +273,7 @@ class NodeCapabilityRunner:
         spec = self._spec
         node = self._node()
         if node is None:
-            return (f"node_missing: Node.js >= {spec.node_minimum} was not found on PATH; install it, Jarvis does not",)
+            return (f"node_missing: Node.js >= {spec.node_minimum}: {private_runtime.missing_tool_hint('Node.js')}",)
         missing: list[str] = []
         cwd = Path(node).resolve().parent
         probe = self._query([node, "-p", "process.version+' '+process.platform+'-'+process.arch"], cwd)
@@ -516,7 +517,7 @@ class NodeCapabilityRunner:
             raise LocalCapabilityError(C.HEALTH_FAILED, f"shipped_files_changed: {', '.join(changed) or 'package-lock.json'} differ from what was installed; repair re-syncs them")
         node = self._node()
         if node is None:
-            raise LocalCapabilityError(C.HEALTH_FAILED, "node_missing: node is no longer on PATH")
+            raise LocalCapabilityError(C.HEALTH_FAILED, "node_missing: node is no longer available")
         self._check_tree(runtime_dir, platform=record.get("platform", ""))
         if self._fingerprint(runtime_dir, installed) != record.get("fingerprint"):
             raise LocalCapabilityError(C.HEALTH_FAILED, "tree_corrupt: a pinned package has missing, extra or truncated files")
@@ -534,7 +535,7 @@ class NodeCapabilityRunner:
         runtime_dir = Path(runtime_dir)
         node = self._node()
         if node is None:
-            raise LocalCapabilityError(C.START_FAILED, "node_missing: node is no longer on PATH")
+            raise LocalCapabilityError(C.START_FAILED, "node_missing: node is no longer available")
         _remove_tree(runtime_dir / WORKER_FILE)
         log = runtime_dir / WORKER_LOG
         try:

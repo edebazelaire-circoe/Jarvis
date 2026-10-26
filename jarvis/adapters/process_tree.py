@@ -29,6 +29,8 @@ import sys
 import threading
 import time
 
+from jarvis import private_runtime
+
 IS_WINDOWS = sys.platform == "win32"
 #: Variables que l'enfant a le droit de voir : rien de ce qui ressemble à un secret de Jarvis.
 ENV_ALLOWLIST = ("PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "TEMP", "TMP", "TMPDIR", "HOME",
@@ -44,6 +46,10 @@ def clean_env(extra: Mapping[str, str] | None = None, *, environ: Mapping[str, s
     wanted = {name.upper() for name in ENV_ALLOWLIST}
     env = {key: value for key, value in source.items() if key.upper() in wanted}
     env.update(extra or {})
+    # Produit installé : le Node privé du paquet passe devant le PATH du poste (`docs/windows-packaging.md`) ;
+    # inchangé dans un checkout de développement.
+    path_key = next((key for key in env if key.upper() == "PATH"), "PATH")
+    env[path_key] = private_runtime.child_path(env.get(path_key, ""))
     return env
 
 

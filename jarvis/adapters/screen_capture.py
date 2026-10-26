@@ -48,6 +48,7 @@ import threading
 import time
 from typing import Any, Protocol
 
+from jarvis import private_runtime
 from jarvis.adapters.windows_display import Display, Frame, parse_display_token, pick_display
 from jarvis.domain.capture import DEFAULT_DEVICE, CaptureChannel, CaptureError, CaptureErrorCode, CaptureMode
 from jarvis.domain.v2 import utc_now
@@ -90,11 +91,18 @@ _DISK_FULL_MARKERS = ("no space left", "there is not enough space", "espace insu
 
 
 def find_ffmpeg() -> str | None:
-    """Binaire ffmpeg : `JARVIS_FFMPEG_EXE`, sinon celui du paquet `imageio-ffmpeg` (extra `capture`)."""
+    """Binaire ffmpeg : `JARVIS_FFMPEG_EXE`, sinon celui du paquet `imageio-ffmpeg` (extra `capture`).
+
+    Produit installé (`docs/windows-packaging.md`) : seulement le ffmpeg que le paquet déclare livré ; l'édition
+    `presentation` n'en livre aucun (FFmpeg GPL, décision Human), donc l'enregistrement est refusé `source_unavailable`.
+    """
 
     configured = os.getenv("JARVIS_FFMPEG_EXE", "").strip()
     if configured:
         return configured if Path(configured).is_file() else None
+    layout = private_runtime.package_layout()
+    if layout is not None:
+        return layout.tool("ffmpeg")
     try:
         import imageio_ffmpeg  # extra `capture`, facultatif
     except ImportError:
