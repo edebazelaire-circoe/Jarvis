@@ -83,7 +83,10 @@ Agenda aux portées complètes a donc besoin d'un nouveau consentement. **Où il
 produit ni dans le serveur stdio `jarvis-drive` (aucune fenêtre ; `interactive=False`). Core démarre
 quand même, sans ce connecteur, et `GET /v1/edition/connectors` le montre `needs_authorization`
 (« Autorisation à renouveler », action `authorize`) ; la recherche documentaire suit. Le flux
-d'autorisation relève de l'onboarding (Slice 07). En développement, `python -m jarvis drive-auth` reste
+d'autorisation relève de l'onboarding (Slice 07) : il demande un client OAuth Google de CIRCOE pour le
+produit (décision HV-INSTALL-02) ; d'ici là la préparation dit que relier Drive n'est pas encore proposé
+dans cette version ([product-install.md](product-install.md) › *Readiness*). Le compte CIRCOE (Circuit
+Toolbox), lui, se relie depuis la préparation (`connect_circoe`). En développement, `python -m jarvis drive-auth` reste
 la seule commande qui ouvre le navigateur ; un Core `full` d'un checkout garde son comportement
 (consentement interactif) et ses portées.
 

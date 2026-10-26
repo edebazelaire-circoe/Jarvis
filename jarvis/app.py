@@ -43,6 +43,7 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("core", help="Run persistent v0.2 Core daemon")
     sub.add_parser("voice", help="Run v0.2 wake-word + Realtime Voice client")
     sub.add_parser("control-center", help="Run Jarvis visualizer + Control Center + local Claude agent")
+    sub.add_parser("launch", help="Start the installed product (Core, Control Center, Voice) and open its page")
     # Installer / lire les modèles openWakeWord (jarvis-wake-word, Issue 002) :
     # action explicite de l'utilisateur, jamais lancée par Voice.
     wake_word = sub.add_parser("wake-word", help="Install or check the openWakeWord models (explicit, with network)")
@@ -2139,6 +2140,14 @@ async def _amain(argv: list[str] | None = None) -> int:
         parser.error(f"unrecognized arguments: {' '.join(unknown)}")
     # `routing-hook` tolère un argument inconnu (reprise QA M1) : un lanceur plus récent ne doit jamais faire sortir
     # le hook en 2, ce qui ferait refuser l'appel `Agent` par le CLI.
+    if args.command == "launch":
+        # Lanceur du produit installé (Slice 07, `docs/product-install.md`) : AVANT tout chargement d'environnement,
+        # pour qu'un refus (marqueur, `LOCALAPPDATA`) soit montré et écrit par le lanceur lui-même, jamais perdu
+        # dans une console absente (`pythonw.exe`). Chaque enfant charge son environnement lui-même.
+        from jarvis.runtime.product_launcher import main as launch_main
+
+        # Appel direct (bloquant) : rien d'autre ne tourne sur cette boucle, et Ctrl+C arrive au lanceur, qui arrête ses enfants.
+        return launch_main()
     load_project_environment()
     command = args.command or "health"
     _arm_crash_capture(command)

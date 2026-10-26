@@ -734,6 +734,13 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
         list.append(item);
       }
       li.append(title,list);
+      /* Préparation (Slice 07, I-006 point 2) : ce qui reste avant la première vidéo, ou les comptes reliés ; lu du module
+         de préparation, jamais deviné ici. Absent (page sans le module, rapport pas encore lu) : rien n'est ajouté. */
+      const readiness=d.readiness||root.JarvisReadiness;
+      if(readiness&&typeof readiness.homeLine==='function'){
+        try{const line=readiness.homeLine();if(line)li.insertBefore(line,list)}
+        catch(error){log('home_readiness_failed',{error:cleanLine(error&&error.message,120)},'error')}
+      }
       return li;
     }
     /* L'accueil quand Core n'a pas dit ce que l'édition permet : la cause, son code, « Réessayer » (relit Core). */

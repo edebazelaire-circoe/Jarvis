@@ -57,8 +57,9 @@ FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/edition/connectors", "/v1/sessions", 
 #: jamais `.../brain-turns/cancel`, `.../turns` ni une autre route de conversation.
 #: Dépôt d'une URL sur le Board affiché (Slice 08, `chat_relay.py`) : le chemin exact, jamais une autre route d'upload.
 #: Export explicite d'un fichier final (presentation-edition-v1 Slice 03, `export_relay.py`) : les deux chemins exacts.
+#: Préparation du produit (presentation-edition-v1 Slice 07, `product_readiness.py`) : `GET /v1/health`, lecture seule.
 FORWARDABLE_PATHS = (re.compile(r"/v1/conversations/[^/?#]+/brain-turns"), re.compile(r"/v1/uploads/links"),
-                     re.compile(r"/v1/exports(?:/root)?"))
+                     re.compile(r"/v1/exports(?:/root)?"), re.compile(r"/v1/health"))
 
 
 def is_forwardable(path: str) -> bool:

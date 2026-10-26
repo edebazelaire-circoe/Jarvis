@@ -19,6 +19,10 @@ Trois commandes, aucune ne touche au JARVIS vivant ni à `%LOCALAPPDATA%\\CIRCOE
     python packaging/windows/build_package.py verify DIR
         Recalcule les empreintes des arbres et les compare au manifeste.
 
+    python packaging/windows/build_package.py installer --package DIR --out FILE.exe
+        Installeur par utilisateur (Slice 07, docs/product-install.md) : amorce C# compilée par le compilateur du
+        .NET Framework livré avec Windows, paquet vérifié puis zippé (déterministe) et accolé, remorque JVSETUP1.
+
 Le cache des téléchargements vit hors du dépôt (`%LOCALAPPDATA%\\Temp\\jarvis-build-cache` par défaut).
 Lancer avec le Python de développement (`.venv`) de la MÊME version que le runtime épinglé (3.14.6) : pip y est
 requis, et il produit le bytecode du paquet (graine de hachage fixée).
@@ -480,9 +484,9 @@ def runtime_manifest(out: Path, runtimes: dict, revision: str, policy: dict) -> 
 
 
 def package_digest(manifest: dict) -> str:
-    """Empreinte du paquet entier : celle du manifeste canonique (qui porte les empreintes de chaque arbre)."""
+    """Empreinte du paquet entier (`private_runtime.package_digest`, partagée avec l'installeur)."""
 
-    return hashlib.sha256(json.dumps(manifest, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    return PR.package_digest(manifest)
 
 
 def probe_env(out: Path) -> dict[str, str]:
@@ -583,45 +587,119 @@ def command_build(args: argparse.Namespace) -> int:
 
 
 def unexpected_entries(out: Path, manifest: dict) -> list[str]:
-    r"""Ce qui n'appartient à aucun arbre suivi : à la racine du paquet, et directement sous `runtime\` hors des
-    runtimes du manifeste (les arbres suivis eux-mêmes sont comparés par empreinte)."""
+    """Fichiers ou dossiers hors des arbres suivis (`private_runtime.unexpected_entries`)."""
 
-    top = {PR.APP_DIR, PR.RUNTIME_DIR, LICENSES_DIR, PR.RUNTIME_MANIFEST, THIRD_PARTY_MANIFEST}
-    found = [entry.name for entry in out.iterdir() if entry.name not in top]
-    roots = {str(entry.get("root", "")).replace("\\", "/").rstrip("/").split("/")[-1]
-             for entry in (manifest.get("runtimes") or {}).values() if isinstance(entry, dict)}
-    runtime = out / PR.RUNTIME_DIR
-    if runtime.is_dir():
-        found += [f"{PR.RUNTIME_DIR}/{entry.name}" for entry in runtime.iterdir() if entry.name not in roots]
-    return sorted(found)
+    return PR.unexpected_entries(out, manifest)
 
 
 def command_verify(args: argparse.Namespace) -> int:
     out = Path(args.out).resolve()
-    layout = PR.PackageLayout(out)
-    try:
-        manifest = layout.manifest()
-    except ValueError as exc:
-        raise BuildError(f"paquet altéré : {exc}") from exc
+    manifest, problems = PR.verify_package(PR.PackageLayout(out))
     if manifest is None:
-        raise BuildError(f"{PR.RUNTIME_MANIFEST} absent")
-    problems = [f"{p.component}: {p.code.value} ({p.detail})" for p in PR.verify_runtimes(layout)]
-    for key, root in (("app", PR.APP_DIR), ("licenses", LICENSES_DIR)):
-        block = manifest.get(key)
-        actual = PR.tree_sha256(out / root)[0] if (out / root).is_dir() else ""
-        if not isinstance(block, dict) or actual != block.get("tree_sha256"):
-            problems.append(f"{key}: arbre modifié")
-    third_party = out / THIRD_PARTY_MANIFEST
-    if not third_party.is_file() or PR.file_sha256(third_party) != manifest.get("third_party_manifest_sha256"):
-        problems.append("third-party-manifest.json modifié")
-    problems += [f"{name}: fichier ou dossier inattendu" for name in unexpected_entries(out, manifest)]
-    body = {key: value for key, value in manifest.items() if key != "package_sha256"}
-    if package_digest(body) != manifest.get("package_sha256"):
-        problems.append("package_sha256 ne correspond pas au manifeste")
+        raise BuildError(f"paquet altéré : {problems[0] if problems else PR.RUNTIME_MANIFEST + ' absent'}")
     if problems:
-        raise BuildError("paquet altéré:\n  " + "\n  ".join(problems))
+        raise BuildError("paquet altéré:" + "".join(f"\n  {problem}" for problem in problems))
     log(f"paquet intact : {manifest['package_sha256']}")
     return 0
+
+
+# ---------------------------------------------------------------------- installeur (Slice 07, HV-PACKAGE-10)
+
+STUB_SOURCE = HERE / "setup_stub.cs"
+SETUP_MAGIC = b"JVSETUP1"
+#: Date fixe des membres du zip : le même paquet donne le même zip (l'exécutable de l'amorce, lui, porte l'heure du
+#: compilateur C# 4.x, qui n'a pas de mode déterministe).
+ZIP_EPOCH = (2026, 1, 1, 0, 0, 0)
+CSC_REFERENCES = ("System.dll", "System.Core.dll", "System.Drawing.dll", "System.Windows.Forms.dll",
+                  "System.IO.Compression.dll", "System.Web.Extensions.dll")
+
+
+def find_csc() -> Path:
+    """Compilateur C# du .NET Framework 4.x livré avec Windows (dossier `Microsoft.NET` de `%WINDIR%`, v4.0.30319)."""
+
+    root = Path(os.environ.get("WINDIR") or os.environ.get("SYSTEMROOT") or r"C:\Windows") / "Microsoft.NET"
+    for flavour in ("Framework64", "Framework"):
+        candidate = root / flavour / "v4.0.30319" / "csc.exe"
+        if candidate.is_file():
+            return candidate
+    raise BuildError("compilateur C# du .NET Framework 4.x introuvable (csc.exe du dossier Microsoft.NET de %WINDIR%) : "
+                     "l'amorce de l'installeur ne peut pas être compilée sur ce poste (voir HV-PACKAGE-10)")
+
+
+def compile_stub(out_exe: Path) -> None:
+    csc = find_csc()
+    argv = [str(csc), "/nologo", "/target:winexe", "/optimize+", "/codepage:65001", f"/out:{out_exe}",
+            *(f"/reference:{name}" for name in CSC_REFERENCES), str(STUB_SOURCE)]
+    result = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if result.returncode != 0 or not out_exe.is_file():
+        output = (result.stdout + result.stderr)[-3000:]
+        raise BuildError(f"compilation de l'amorce en échec (code {result.returncode}) :\n{output}")
+
+
+def zip_package(package: Path, out_zip: Path) -> int:
+    """Zip déterministe du paquet (ordre des chemins, date fixe, deflate) ; rend le nombre de fichiers."""
+
+    count = 0
+    with zipfile.ZipFile(out_zip, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as bundle:
+        for relative, path in PR.iter_tree(package):
+            info = zipfile.ZipInfo(relative, date_time=ZIP_EPOCH)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            with open(path, "rb") as handle, bundle.open(info, "w") as target:
+                shutil.copyfileobj(handle, target, 1 << 20)
+            count += 1
+    return count
+
+
+def command_installer(args: argparse.Namespace) -> int:
+    package = Path(args.package).resolve()
+    out = Path(args.out).resolve()
+    if out.exists():
+        raise BuildError(f"{out} existe déjà : choisissez un nouveau nom")
+    if out == REPO or REPO in out.parents:
+        raise BuildError("l'installeur ne s'écrit pas dans le dépôt")
+    manifest, problems = PR.verify_package(PR.PackageLayout(package))
+    if manifest is None or problems:
+        raise BuildError("paquet altéré, installeur refusé:" + "".join(f"\n  {problem}" for problem in problems))
+    with tempfile.TemporaryDirectory(prefix="jarvis-setup-build-") as work:
+        stub = Path(work) / "stub.exe"
+        payload = Path(work) / "package.zip"
+        compile_stub(stub)
+        log(f"amorce compilée ({stub.stat().st_size} octets)")
+        files = zip_package(package, payload)
+        log(f"paquet zippé : {files} fichiers, {payload.stat().st_size} octets")
+        offset = stub.stat().st_size
+        length = payload.stat().st_size
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with open(out, "wb") as target:
+            for part in (stub, payload):
+                with open(part, "rb") as handle:
+                    shutil.copyfileobj(handle, target, 1 << 20)
+            target.write(SETUP_MAGIC + offset.to_bytes(8, "little") + length.to_bytes(8, "little"))
+        payload_sha = PR.file_sha256(payload)
+    report = {"out": str(out), "package_sha256": manifest["package_sha256"], "payload_sha256": payload_sha,
+              "installer_sha256": PR.file_sha256(out), "files": files, "bytes": out.stat().st_size, "signed": False}
+    log(f"installeur : {out} ({report['bytes']} octets, non signé : HV-PACKAGE-10)")
+    print(json.dumps(report, ensure_ascii=False))
+    return 0
+
+
+def read_trailer(installer: Path) -> tuple[int, int]:
+    """(position, longueur) du zip accolé à l'amorce ; `BuildError` sans remorque valide."""
+
+    with open(installer, "rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        if size < 24:
+            raise BuildError("installeur trop court")
+        handle.seek(-24, os.SEEK_END)
+        trailer = handle.read(24)
+    if trailer[:8] != SETUP_MAGIC:
+        raise BuildError("remorque de l'installeur absente")
+    offset, length = int.from_bytes(trailer[8:16], "little"), int.from_bytes(trailer[16:24], "little")
+    if offset < 0 or length <= 0 or offset + length > size - 24:
+        raise BuildError("remorque de l'installeur incohérente")
+    return offset, length
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -636,12 +714,16 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--rev", default="HEAD")
     verify = sub.add_parser("verify")
     verify.add_argument("out")
+    installer = sub.add_parser("installer")
+    installer.add_argument("--package", required=True)
+    installer.add_argument("--out", required=True)
     args = parser.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):  # console Windows en cp1252 quand la sortie est redirigée
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     try:
-        return {"lock": command_lock, "build": command_build, "verify": command_verify}[args.command](args)
+        return {"lock": command_lock, "build": command_build, "verify": command_verify,
+                "installer": command_installer}[args.command](args)
     except (BuildError, subprocess.CalledProcessError) as exc:
         print(f"[build] ÉCHEC : {exc}", file=sys.stderr)
         return 1

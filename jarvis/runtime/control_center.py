@@ -705,6 +705,10 @@ BOARDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BOARDS_JS__*/"
 #: `<html data-developer-surfaces>` posé par `page_edition_markup` ; `window.JarvisProductEdition`. Avant les Boards.
 PRODUCT_EDITION_SCRIPT_FILE = "control_center_product_edition.js"
 PRODUCT_EDITION_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRODUCT_EDITION_JS__*/"
+#: Préparation de JARVIS et premier lancement (presentation-edition-v1 Slice 07, `docs/product-install.md`) :
+#: `window.JarvisReadiness`, lu par l'accueil des présentations. Avant le rail des présentations.
+PRODUCT_READINESS_SCRIPT_FILE = "control_center_product_readiness.js"
+PRODUCT_READINESS_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRODUCT_READINESS_JS__*/"
 PRESENTATION_ATTENTION_SCRIPT_FILE = "control_center_presentation_attention.js"
 PRESENTATION_ATTENTION_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_ATTENTION_JS__*/"
 #: Client pur de la scène constellation (Slice 03) : application ordonnée des
@@ -1499,6 +1503,13 @@ class ControlCenter:
         self.presentation_render_routes = PresentationRenderRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Export explicite d'un dérivé final vers Documents\Jarvis (presentation-edition-v1 Slice 03, `docs/export.md`).
         self.export_routes = ExportRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Préparation et premier lancement du produit (presentation-edition-v1 Slice 07, `docs/product-install.md`) :
+        # rapport sans effet de bord, actions nommées, Board Présentation au premier lancement, « Quitter » du lanceur.
+        from jarvis.runtime.product_readiness import ProductReadinessRoutes, ProductReadinessService
+        self.product_readiness = ProductReadinessService(
+            transport=lambda: self.sessions, runtime_root=self.runtime_root, journal=self.journal,
+            list_audio=lambda: self.audio_diagnostics.list_devices())
+        self.product_readiness_routes = ProductReadinessRoutes(self.product_readiness, journal=self.journal)
         # Contexts, captures, Artifacts (Slice 09 session-context-recording) : relais
         # vers Core, sans état propre ; transport relu à chaque requête.
         self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
@@ -1667,6 +1678,7 @@ class ControlCenter:
             *self.board_routes.routes(),
             *self.capture_routes.routes(),
             *self.export_routes.routes(),
+            *self.product_readiness_routes.routes(),
             *self.workspace_routes.routes(),
             *self.chat_routes.routes(),
             *self.memory_routes.routes(),
@@ -2466,6 +2478,7 @@ class ControlCenter:
         # Avant tout le reste : un appel du cerveau qui attend une page rend la
         # main tout de suite avec sa cause, au lieu d'attendre son échéance
         # pendant que le serveur se ferme sous lui.
+        await self.product_readiness.close()
         self.barehands_commands.close()
         self.fullscreen.close()
         self.studio_explorer.close()
@@ -2688,6 +2701,10 @@ class ControlCenter:
         html = html.replace(
             PRODUCT_EDITION_SCRIPT_MARKER,
             page.with_name(PRODUCT_EDITION_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            PRODUCT_READINESS_SCRIPT_MARKER,
+            page.with_name(PRODUCT_READINESS_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = page_edition_markup(html, report=self._report_page_edition_unreadable)
         html = html.replace(

@@ -196,6 +196,28 @@ const SERVER=`(()=>{
     /* Slice 08 presentation-edition : la disponibilité des types (\`edition\` : la charge de Core, défaut \`full\` ;
        \`editionFail\` : {status, code} refusé ; \`editionHang\` : jamais de réponse, seule l'échéance de la page l'abandonne),
        et la création d'un Board qui suit la même règle que Core (409 \`board_kind_unavailable\`). */
+    /* Slice 07 presentation-edition : la préparation. \`readiness\` : la charge du serveur (absente : 404) ;
+       \`readinessActions\` : {action_id: {status?, answer, next?, delayMs?}} (\`next\` remplace le rapport) ;
+       le premier lancement marque le rapport « fait » et active un Board Présentation. */
+    if(url.startsWith('/api/product/readiness/actions/')&&method==='POST'){
+      const id=decodeURIComponent(url.split('/').pop()),a=(S.readinessActions||{})[id];
+      if(!a)return json(404,{error:{code:'readiness_action_unknown',message:'unknown readiness action (double)'}});
+      if(a.delayMs)await new Promise(r=>setTimeout(r,a.delayMs));
+      if(a.next)S.readiness=a.next;
+      if((a.status||200)>=400)return json(a.status,{error:a.answer});
+      return json(a.status||200,Object.assign({action_id:id},a.answer||{},{report:S.readiness}));
+    }
+    if(url.split('?')[0]==='/api/product/readiness'){
+      S.readinessReads=(S.readinessReads||0)+1;
+      if(!S.readiness)return json(404,{error:{code:'http_error',message:'not stubbed '+url}});
+      return json(200,S.readiness);
+    }
+    if(url==='/api/product/onboarding/complete'&&method==='POST'){
+      if(S.readiness)S.readiness=Object.assign({},S.readiness,{onboarding:{completed:true,completed_at:iso(now)}});
+      S.activeBoard='board_pres';
+      return json(200,{onboarding:{completed:true},board:{board_id:'board_pres',title:'Mes présentations',board_kind:'presentation'}});
+    }
+    if(url==='/api/product/quit'&&method==='POST')return json(200,{status:'stopping'});
     if(url==='/api/boards/edition'){
       S.editionReads=(S.editionReads||0)+1;
       if(S.editionHang)return new Promise((_ok,ko)=>{const sig=init&&init.signal;if(sig)sig.addEventListener('abort',()=>ko(new DOMException('aborted','AbortError')),{once:true})});

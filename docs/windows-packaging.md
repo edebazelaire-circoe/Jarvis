@@ -133,7 +133,8 @@ event is logged at `error` (so it reaches the error journal) with a message
 naming each problem, and `/v1/health` answers `status: "degraded"` with that
 sentence in `detail` instead of `ok`. `ready` stays `true`: Core serves (the
 conversation, the Boards), only what needs the missing runtime fails, with its
-own typed refusal. The readiness view and the repair action are Slice 07.
+own typed refusal. The readiness view and the repair actions (Slice 07):
+[product-install.md](product-install.md) › *Readiness*.
 
 ## Third-party policy and manifest
 
@@ -238,9 +239,14 @@ tester's own browser. Then `python.exe -B -m jarvis core` (and
 
 ## Limits and what later Slices own
 
-- Unsigned folder package; no installer, shortcut, launcher or uninstaller
-  (Slice 07, HV-PACKAGE-10). The program folder must not be inside the product
-  home (`%LOCALAPPDATA%\CIRCOE\Jarvis`): the export guard refuses that overlap.
+- Unsigned folder package. The installer (one `.exe` built on top of this
+  folder by `build_package.py installer`), shortcuts, the single launcher
+  (`python -B -m jarvis launch`) and the uninstaller are Slice 07:
+  [product-install.md](product-install.md) (HV-PACKAGE-10 recommendation there).
+  The program folder must not be inside the product home
+  (`%LOCALAPPDATA%\CIRCOE\Jarvis`): the export guard and the installer refuse
+  that overlap. `verify` and the installer share one verification,
+  `private_runtime.verify_package`.
 - The `._pth` file also sets `sys.flags.safe_path`: the working directory is
   never on `sys.path` (a `plantedmod.py` in the current folder is not found by
   `python.exe -m plantedmod`, checked on the real package), so the Slice 07
@@ -253,4 +259,5 @@ tester's own browser. Then `python.exe -B -m jarvis core` (and
   installed `presentation` product refuses `python -m jarvis wake-word install`
   (`wake_word_install_unavailable_in_edition`: the CC BY-NC-SA models are never
   downloaded by the product; `wake-word status` stays available).
-- Readiness UI, repair actions and the Claude CLI sign-in: Slice 07.
+- Readiness UI, repair actions and the Claude CLI sign-in: Slice 07,
+  [product-install.md](product-install.md) › *Readiness*.

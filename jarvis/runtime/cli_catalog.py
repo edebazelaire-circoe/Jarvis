@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+import os
 import shutil
 from typing import Any
 
@@ -108,7 +109,17 @@ def resolve_command(command: str) -> str:
     name = str(command or "").strip()
     if not name:
         return name
-    return shutil.which(name) or name
+    found = shutil.which(name)
+    if found is None and name.lower() in {"claude", "claude.exe", "claude.cmd"}:
+        # Produit installé seulement (Slice 07, `brain_cli.locate`) : la CLI installée après le lancement de JARVIS
+        # n'est pas encore sur le PATH hérité du menu Démarrer ; ses emplacements officiels sont lus. Développement :
+        # `package_layout()` est `None`, rien ne change.
+        from jarvis.private_runtime import package_layout
+        from jarvis.runtime import brain_cli
+
+        if package_layout() is not None:
+            found = brain_cli.locate(installed=True, environ={**os.environ, brain_cli.CLI_ENV: ""})
+    return found or name
 
 
 #: Caractères que `cmd.exe` interprète dans une ligne de commande, même entre guillemets pour

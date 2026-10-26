@@ -33,6 +33,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    @shell-layer 55: .tl, .tlab, .mcpi, .wsp, .pfb, #dossierView
    @shell-layer 58: #boardsPanel
    @shell-layer 60: .overlay
+   @shell-layer 62: #jvReadiness
    @shell-layer 70: .toasts
    @shell-layer 75: .bgpop, #jvStudioReloadBand
    @shell-layer 80: .ctxmenu
@@ -3586,6 +3587,10 @@ const STATUS={
 /* Le rail actif des présentations (zone droite, Slice 07 : cartes avec aperçu, type, état), ses pastilles d'état et son menu ; le clic ouvre Variantes :
    `control_center_presentation_rail.js`. Il lit le client de lecture, Variantes et l'inspecteur à la demande. Avant lui, l'adaptateur pur des
    Artifacts du Board actif (étape B) : `control_center_workspace_rail_model.js`. */
+/* Préparation de JARVIS et premier lancement (presentation-edition-v1 Slice 07) : `control_center_product_readiness.js`,
+   `window.JarvisReadiness` (fenêtre de préparation, ligne de l'accueil des présentations). Il utilise `toast`, déclaration
+   de fonction remontée de ce même `<script>`. Contrat : `docs/product-install.md` › *Onboarding UI*. */
+/*__CONTROL_CENTER_PRODUCT_READINESS_JS__*/
 /*__CONTROL_CENTER_WORKSPACE_RAIL_MODEL_JS__*/
 /*__CONTROL_CENTER_PRESENTATION_RAIL_JS__*/
 /* Inspecteur d'édition d'une présentation (studio de présentation, Slice 07) : panneau du dock `INS`, widgets générés de la route

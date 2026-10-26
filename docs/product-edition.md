@@ -184,6 +184,12 @@ policy; components whose licence is incompatible with distribution (openWakeWord
 models, FFmpeg GPL of screen recording, Picovoice, Barehands/ai-visualizer AGPL)
 are excluded: [windows-packaging.md](windows-packaging.md) (Slice 06).
 
+## Installation and first run
+
+A per-user installer, one launcher, the « Préparation de JARVIS » readiness window and the first
+run that lands on a Presentation Board (never an Assistant one): [product-install.md](product-install.md)
+(Slice 07). The window opens by itself only in a product edition; `full` never reads it.
+
 ## Out of scope (later Slices)
 
 - ~~product UI for unavailable kinds (Slice 08)~~: done, the Boards control reads this payload, shows unavailable kinds

@@ -345,3 +345,60 @@ def verify_runtimes(layout: PackageLayout) -> list[RuntimeProblem]:
             problems.append(RuntimeProblem(RuntimeProblemCode.INTEGRITY_FAILED, name,
                                            f"tree sha256 {actual[:12]}… differs from the manifest"))
     return problems
+
+
+#: Racine d'un paquet : ce qui appartient à un arbre suivi par le manifeste.
+LICENSES_DIR = "licenses"
+THIRD_PARTY_MANIFEST = "third-party-manifest.json"
+
+
+def package_digest(manifest: Mapping) -> str:
+    """Empreinte du paquet entier : celle du manifeste canonique (qui porte les empreintes de chaque arbre)."""
+
+    return hashlib.sha256(json.dumps(manifest, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def unexpected_entries(install_root: Path, manifest: Mapping) -> list[str]:
+    r"""Ce qui n'appartient à aucun arbre suivi : à la racine du paquet, et directement sous `runtime\` hors des
+    runtimes du manifeste (les arbres suivis eux-mêmes sont comparés par empreinte)."""
+
+    root = Path(install_root)
+    top = {APP_DIR, RUNTIME_DIR, LICENSES_DIR, RUNTIME_MANIFEST, THIRD_PARTY_MANIFEST}
+    found = [entry.name for entry in root.iterdir() if entry.name not in top]
+    roots = {str(entry.get("root", "")).replace("\\", "/").rstrip("/").split("/")[-1]
+             for entry in (manifest.get("runtimes") or {}).values() if isinstance(entry, dict)}
+    runtime = root / RUNTIME_DIR
+    if runtime.is_dir():
+        found += [f"{RUNTIME_DIR}/{entry.name}" for entry in runtime.iterdir() if entry.name not in roots]
+    return sorted(found)
+
+
+def verify_package(layout: PackageLayout) -> tuple[dict | None, list[str]]:
+    """Vérification complète d'un paquet (build `verify`, installeur, réparation de la Slice 07).
+
+    Rend `(manifeste, problèmes)` ; aucun problème = paquet intact. Recalcule chaque arbre suivi (`app`, `licenses`,
+    chaque runtime), l'empreinte du manifeste tiers et `package_sha256`, et nomme tout fichier ou dossier en trop.
+    Lecture seule ; un manifeste illisible est un problème, jamais une exception.
+    """
+
+    try:
+        manifest = layout.manifest()
+    except ValueError as exc:
+        return None, [f"manifest: {RuntimeProblemCode.MANIFEST_INVALID.value} ({exc})"]
+    if manifest is None:
+        return None, [f"manifest: {RuntimeProblemCode.MANIFEST_MISSING.value} ({RUNTIME_MANIFEST} absent)"]
+    root = layout.install_root
+    problems = [f"{p.component}: {p.code.value} ({p.detail})" for p in verify_runtimes(layout)]
+    for key, sub in (("app", APP_DIR), ("licenses", LICENSES_DIR)):
+        block = manifest.get(key)
+        actual = tree_sha256(root / sub)[0] if (root / sub).is_dir() else ""
+        if not isinstance(block, dict) or actual != block.get("tree_sha256"):
+            problems.append(f"{key}: arbre modifié")
+    third_party = root / THIRD_PARTY_MANIFEST
+    if not third_party.is_file() or file_sha256(third_party) != manifest.get("third_party_manifest_sha256"):
+        problems.append(f"{THIRD_PARTY_MANIFEST} modifié")
+    problems += [f"{name}: fichier ou dossier inattendu" for name in unexpected_entries(root, manifest)]
+    body = {key: value for key, value in manifest.items() if key != "package_sha256"}
+    if package_digest(body) != manifest.get("package_sha256"):
+        problems.append("package_sha256 ne correspond pas au manifeste")
+    return manifest, problems

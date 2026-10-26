@@ -70,6 +70,13 @@ utilise (les journaux sont dans `runtime\`, le cache de compilation Remotion
 dans `data\local_capabilities\remotion\compiled\`). Rien de canonique ni de
 secret ne vit sous le dossier du programme ni sous le dossier courant.
 
+Les trois dossiers sont créés au premier lancement par le lanceur du produit
+(`python -B -m jarvis launch`, Slice 07), qui écrit aussi ses journaux dans
+`runtime\logs\` (`launcher.log`, `core.log`, `ui.log`, `voice.log`) ; la
+préparation les recrée sur demande (action `prepare_data`). L'installeur, la
+mise à jour et la désinstallation ne touchent jamais cette maison :
+[product-install.md](product-install.md).
+
 **Précédence**, identique dans les deux modes :
 
 | Racine | 1. variable | 2. produit installé | 3. développement |
