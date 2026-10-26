@@ -59,6 +59,14 @@ sur ce Board.
 
 Sans hôte (`host=None` : tests, Core sans Control Center) l'étape 3 et le
 rétablissement de l'hôte sont sautés ; tout le reste est identique.
+
+**Édition produit** (`docs/product-edition.md`). Le service reçoit la politique
+de l'édition (`ProductEditionPolicy`, `full` par défaut). Elle fixe le type du
+Board `default` créé par `ensure_default`, le défaut de `create` sans
+`board_kind`, et refuse **409 `board_kind_unavailable`** la création et la
+bascule (étape 1) vers un type indisponible, avant toute écriture. Les Boards
+hérités de ces types restent lisibles, éditables et archivables : seule leur
+activation est refusée. Le repli de démarrage est dans `SessionManager`.
 """
 
 from __future__ import annotations
@@ -73,6 +81,7 @@ from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.speech_authority import BOARD_SWITCHED, BOARD_VOICE_BINDING_CHANGED, SpeechAuthority
 from jarvis.domain._checks import preview
 from jarvis.domain.interaction_mode import InteractionMode, InteractionModeError, behaving_interaction_mode
+from jarvis.domain.product_edition import FULL_EDITION, ProductEditionPolicy
 from jarvis.domain.v2 import ProtocolEnvelope, utc_now
 from jarvis.domain.workspace_board import (
     DEFAULT_BOARD_ID, LEGACY_EMPTY_BOARD_KIND, Board, BoardConversationBinding, BoardError, BoardErrorCode,
@@ -96,7 +105,7 @@ BOARD_SWITCH_SOURCE = "board_switch"
 EDITABLE_FIELDS = frozenset({
     "title", "context_summary", "task_refs", "artifact_refs", "project_refs", "scene_ref", "runtime_metadata",
 })
-#: Champs de `create` : les éditables, plus le type (défaut `assistant`).
+#: Champs de `create` : les éditables, plus le type (défaut : celui de l'édition produit).
 CREATE_FIELDS = EDITABLE_FIELDS | {"board_kind"}
 #: Statut du comportement d'un Board Réunion, dit dans les traces de mode :
 #: valide et ouvrable, comportement assistant tant que la réunion n'existe pas.
@@ -262,9 +271,11 @@ class BoardService:
         interaction_mode: InteractionModeService,
         diagnostics: DiagnosticSink | None = None,
         clock: Callable[[], datetime] = utc_now,
+        edition: ProductEditionPolicy = FULL_EDITION,
     ) -> None:
         self._repo = repository
         self._modes = interaction_mode
+        self._edition = edition
         self._diagnostics = diagnostics
         self._clock = clock
         # Lecture-modification-écriture d'un Board : deux éditions concurrentes
@@ -276,6 +287,12 @@ class BoardService:
         self._authority: SpeechAuthority | None = None
         self._host: BoardBrainHost | None = None
         self._events: Any = None
+
+    @property
+    def edition(self) -> ProductEditionPolicy:
+        """Politique de l'édition produit active (une par processus Core)."""
+
+        return self._edition
 
     # ------------------------------------------------------------ cycle de vie
 
@@ -305,12 +322,18 @@ class BoardService:
         jamais réglé se comportait déjà en assistant). Des Boards existent sans
         `default` : rien n'est inventé, c'est dit ; `get_active()` le dira
         ensuite par `board_not_found` tant qu'aucune Session ne désigne un Board.
+        Édition qui exclut `assistant` : le Board naît du type par défaut de
+        l'édition (`presentation`) ; un `default` hérité n'est jamais réécrit.
         """
 
-        created = await self._repo.insert_board_if_empty(default_board(now=self._clock()))
+        self._trace("core.product_edition.active", f"Édition produit : {self._edition.edition.value}",
+                    data=self._edition.to_payload())
+        board = default_board(now=self._clock(), board_kind=self._edition.default_board_kind)
+        created = await self._repo.insert_board_if_empty(board)
         if created:
             self._trace("core.board.default_created", "Board par défaut créé (migration mono-espace)",
-                        data={"board_id": DEFAULT_BOARD_ID})
+                        data={"board_id": DEFAULT_BOARD_ID, "board_kind": board.board_kind.value,
+                              "edition": self._edition.edition.value})
         elif await self._repo.get_board(DEFAULT_BOARD_ID) is None:
             self._trace("core.board.default_absent", "Aucun Board par défaut : des Boards existent déjà",
                         level="warning", data={"board_id": DEFAULT_BOARD_ID})
@@ -342,7 +365,13 @@ class BoardService:
         edits = parse_board_edits(payload, require_title=True, allowed=CREATE_FIELDS)
         now = self._clock()
         title = edits.pop("title")
-        board = create_board(title, now=now, board_kind=edits.pop("board_kind", BoardKind.ASSISTANT))
+        kind = edits.pop("board_kind", self._edition.default_board_kind)
+        try:
+            self._edition.ensure_available(kind, action="create")
+        except BoardError as exc:
+            self._refused_kind(exc, kind, action="create", board_id=None)
+            raise
+        board = create_board(title, now=now, board_kind=kind)
         if edits:
             board = update_board(board, now=now, **edits)
         async with self._lock:
@@ -459,6 +488,11 @@ class BoardService:
         board = await self.get(board_id)
         if board.status is BoardStatus.ARCHIVED:
             raise BoardError(BoardErrorCode.BOARD_ARCHIVED, f"board {board.board_id} is archived")
+        try:
+            self._edition.ensure_available(board.board_kind, action="switch")
+        except BoardError as exc:
+            self._refused_kind(exc, board.board_kind, action="switch", board_id=board.board_id, origin=origin)
+            raise
         if board.board_id == session.active_board_id:
             # Le mode du type est réappliqué (en-tête, *Aucun autre écrivain du mode*) : c'est
             # la reprise d'une restauration du Studio ratée ; idempotent sinon.
@@ -577,6 +611,16 @@ class BoardService:
         return True
 
     # ------------------------------------------------------------ journal
+
+    def _refused_kind(self, exc: BoardError, kind: BoardKind, *, action: str, board_id: str | None,
+                      origin: str | None = None) -> None:
+        """Refus d'édition attendu (client hérité, requête forgée) : warning, pas un défaut de Core."""
+
+        self._trace("core.board.kind_unavailable_refused",
+                    f"Type de Board indisponible dans l'édition {self._edition.edition.value} : rien n'a été écrit",
+                    level="warning", data={"code": exc.code.value, "action": action, "board_kind": kind.value,
+                                           "board_id": board_id, "edition": self._edition.edition.value,
+                                           "origin": origin})
 
     def _trace(self, kind: str, message: str, *, level: str = "info", data: Mapping[str, Any] | None = None) -> None:
         if self._diagnostics is None:

@@ -54,6 +54,7 @@ from urllib.parse import quote
 
 import aiohttp
 
+from jarvis.domain.product_edition import PRODUCT_EDITION_ENV, ProductEditionPolicy, resolve_product_edition
 from jarvis.domain.relation_runtime import CALLER_STAMP_KEY, RELATION_TOOLS
 from jarvis.runtime.capture_mcp import artifact_item
 from jarvis.runtime.relations_mcp_tools import CURRENT_CALLER, RelationTools
@@ -79,6 +80,7 @@ BOARD_ID_PATTERN = r"^(default|board_[A-Za-z0-9_-]+)$"
 MAX_BOARD_ID_CHARS = 80
 SESSION_ID_PATTERN = r"^jsess_[A-Za-z0-9_-]+$"
 #: `BoardKind` (`workspace_board.py`) : assistant (défaut), presentation, meeting. Création seulement.
+#: Édition `full` ; une édition qui restreint les types retire l'argument (`_board_kind_pattern`, `build_server`).
 BOARD_KIND_PATTERN = r"^(assistant|presentation|meeting)$"
 ARTIFACT_ID_PATTERN = r"^jart_[a-z0-9_-]+$"
 #: Chemin relatif à `memory/` (`BoardMemoryPath`, 240 caractères au plus) ; Core le valide en entier.
@@ -132,11 +134,18 @@ class WorkspaceToolError(Exception):
         self.code = code
 
 
-def mcp_config(target: ConsoleMcpTarget, *, python: str | None = None) -> dict[str, Any]:
-    """Le document `--mcp-config` : ce seul serveur, même interpréteur, `-m jarvis workspace-mcp`."""
+def mcp_config(target: ConsoleMcpTarget, *, python: str | None = None,
+               edition: ProductEditionPolicy | None = None) -> dict[str, Any]:
+    """Le document `--mcp-config` : ce seul serveur, même interpréteur, `-m jarvis workspace-mcp`.
 
+    L'édition produit du Control Center (`docs/product-edition.md`) est transmise explicitement : le
+    schéma de `board_create` que voit le cerveau suit l'édition, quel que soit l'environnement du CLI.
+    """
+
+    edition = edition or resolve_product_edition(os.environ)
+    env = {**target.env(), PRODUCT_EDITION_ENV: edition.edition.value}
     return {"mcpServers": {SERVER_NAME: {"type": "stdio", "command": python or sys.executable,
-                                         "args": ["-m", "jarvis", "workspace-mcp"], "env": target.env()}}}
+                                         "args": ["-m", "jarvis", "workspace-mcp"], "env": env}}}
 
 
 def write_mcp_config(target: ConsoleMcpTarget, directory: Path, *, python: str | None = None) -> Path:
@@ -188,12 +197,13 @@ class WorkspaceTools:
     """
 
     def __init__(self, target: ConsoleMcpTarget, *, journal: RuntimeJournal | None = None,
-                 session_factory: Any = None) -> None:
+                 session_factory: Any = None, edition: ProductEditionPolicy | None = None) -> None:
         self.target = target
         self.journal = journal
         self._session_factory = session_factory
         self._session: Any = None
-        self.boards = BoardTools(target.base_url, http=self._http, error=WorkspaceToolError, emit=self._emit)
+        self.boards = BoardTools(target.base_url, http=self._http, error=WorkspaceToolError, emit=self._emit,
+                                 edition=edition or resolve_product_edition(os.environ))
 
     async def close(self) -> None:
         if self._session is not None:
@@ -522,8 +532,15 @@ _SERVER_INSTRUCTIONS = (
 )
 
 
-def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTools | None = None):
-    """Construire le serveur FastMCP. `tools` : injection pour les tests."""
+def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTools | None = None,
+                 edition: ProductEditionPolicy | None = None):
+    """Construire le serveur FastMCP. `tools` : injection pour les tests.
+
+    `edition` (défaut : `JARVIS_PRODUCT_EDITION`) fixe le schéma de `board_create` : en édition
+    `full`, `board_kind` optionnel parmi les trois types ; quand l'édition n'en rend qu'un disponible
+    (`presentation`), l'argument n'existe pas et ce type est envoyé. Core refuse de toute façon un
+    type indisponible (`board_kind_unavailable`) : le schéma évite seulement de le proposer.
+    """
 
     from typing import Annotated, Literal
 
@@ -545,6 +562,7 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
         SessionNewResult, output_contract_fields,
     )
 
+    edition = edition or resolve_product_edition(os.environ)
     if tools is None:
         target = target or ConsoleMcpTarget.from_env()
         journal = RuntimeJournal(target.runtime_root) if target.runtime_root is not None else None
@@ -610,8 +628,9 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
     # Motif plutôt qu'enum, délibérément : `list_tools` (jarvis-tools) indexe les valeurs d'un enum, et
     # `meeting` y faisait passer board_create / board_update devant les outils d'agenda pour « réunion »,
     # « rendez-vous » (recall@3 de `test_tool_relevance` 0,88 < 0,90). Le motif reste strict ; Core revalide.
-    Kind = Annotated[str, Field(pattern=BOARD_KIND_PATTERN, description=(
-        "Type du Board, choisi à la création et jamais modifié ensuite (défaut assistant)."))]
+    Kind = Annotated[str, Field(pattern=_board_kind_pattern(edition), description=(
+        "Type du Board, choisi à la création et jamais modifié ensuite "
+        f"(défaut {edition.default_board_kind.value})."))]
     Summary = Annotated[str, Field(max_length=MAX_CONTEXT_SUMMARY_CHARS, description=(
         f"Résumé du contexte du Board ({MAX_CONTEXT_SUMMARY_CHARS} caractères au plus) : de quoi il s'agit, où on "
         "en est. Il accompagne chaque tour de ce Board ; condense plutôt que tronquer."))]
@@ -648,23 +667,43 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
         """Lire le Board actif : celui où la conversation et la voix se trouvent en ce moment."""
         return await ws.boards.get_active()
 
-    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "board_create"))
-    async def board_create(
-        title: Title,
-        board_kind: Kind | None = None,
-        context_summary: Summary | None = None,
-        task_refs: Refs | None = None,
-        artifact_refs: Refs | None = None,
-        project_refs: Refs | None = None,
-    ) -> BoardResult:
-        """Créer un Board (un nouvel espace de travail). Ne bascule pas dessus.
+    if len(edition.available_board_kinds) == 1:
+        only_kind = edition.default_board_kind.value
 
-        Si l'utilisateur veut aussi y aller (« crée un board Recherche et bascule dessus »), appelle ensuite
-        board_switch avec l'identifiant rendu.
-        """
-        return await ws.boards.create_board(title, board_kind=board_kind, context_summary=context_summary,
-                                            task_refs=task_refs, artifact_refs=artifact_refs,
-                                            project_refs=project_refs)
+        @mcp.tool(annotations=tool_annotations(SERVER_NAME, "board_create"))
+        async def board_create(
+            title: Title,
+            context_summary: Summary | None = None,
+            task_refs: Refs | None = None,
+            artifact_refs: Refs | None = None,
+            project_refs: Refs | None = None,
+        ) -> BoardResult:
+            """Créer un Board Présentation (un nouvel espace de travail). Ne bascule pas dessus.
+
+            C'est le seul type de Board disponible ici : il n'y a pas de type à choisir. Si l'utilisateur veut
+            aussi y aller, appelle ensuite board_switch avec l'identifiant rendu.
+            """
+            return await ws.boards.create_board(title, board_kind=only_kind, context_summary=context_summary,
+                                                task_refs=task_refs, artifact_refs=artifact_refs,
+                                                project_refs=project_refs)
+    else:
+        @mcp.tool(annotations=tool_annotations(SERVER_NAME, "board_create"))
+        async def board_create(
+            title: Title,
+            board_kind: Kind | None = None,
+            context_summary: Summary | None = None,
+            task_refs: Refs | None = None,
+            artifact_refs: Refs | None = None,
+            project_refs: Refs | None = None,
+        ) -> BoardResult:
+            """Créer un Board (un nouvel espace de travail). Ne bascule pas dessus.
+
+            Si l'utilisateur veut aussi y aller (« crée un board Recherche et bascule dessus »), appelle ensuite
+            board_switch avec l'identifiant rendu.
+            """
+            return await ws.boards.create_board(title, board_kind=board_kind, context_summary=context_summary,
+                                                task_refs=task_refs, artifact_refs=artifact_refs,
+                                                project_refs=project_refs)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "board_update"))
     async def board_update(
@@ -871,6 +910,12 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
     return mcp
 
 
+def _board_kind_pattern(edition: ProductEditionPolicy) -> str:
+    """Motif strict des types disponibles ; `full` : `BOARD_KIND_PATTERN` à l'identique."""
+
+    return "^(" + "|".join(kind.value for kind in edition.available_board_kinds) + ")$"
+
+
 async def serve_stdio() -> int:
     """Point d'entrée de `python -m jarvis workspace-mcp` : stdout est le protocole, rien d'autre n'y écrit."""
 
@@ -878,7 +923,8 @@ async def serve_stdio() -> int:
     journal = RuntimeJournal(target.runtime_root) if target.runtime_root is not None else None
     if journal is not None:
         journal.emit("workspace.server_started", "Serveur MCP du workspace démarré",
-                     data={"host": target.host, "port": target.port, "pid": os.getpid()})
+                     data={"host": target.host, "port": target.port, "pid": os.getpid(),
+                           "product_edition": resolve_product_edition(os.environ).edition.value})
     tools = WorkspaceTools(target, journal=journal)
     try:
         await build_server(target, tools=tools).run_stdio_async()

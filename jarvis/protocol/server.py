@@ -225,6 +225,9 @@ class LocalProtocolServer:
             web.get("/v1/boards", self.list_boards),
             web.post("/v1/boards", self.create_board),
             web.get("/v1/boards/active", self.active_board),
+            # Édition produit (jarvis-presentation-edition-v1, Slice 01, `docs/product-edition.md`) :
+            # segment fixe avant `{board_id}`, comme `active` (aucun Board ne s'appelle ainsi).
+            web.get("/v1/boards/edition", self.product_edition),
             web.get("/v1/boards/{board_id}", self.get_board),
             web.patch("/v1/boards/{board_id}", self.update_board),
             web.post("/v1/boards/{board_id}/archive", self.archive_board),
@@ -1208,10 +1211,18 @@ class LocalProtocolServer:
                                   "active_board_id": await self.core.boards.active_board_id()})
 
     async def create_board(self, request: web.Request) -> web.Response:
-        """`POST /v1/boards` `{title, ...champs éditables}` -> 201. Refus : `invalid_title`, `invalid_board`."""
+        """`POST /v1/boards` `{title, ...champs éditables}` -> 201. Refus : `invalid_title`, `invalid_board`,
+        409 `board_kind_unavailable` (type exclu par l'édition produit)."""
 
         board = await self.core.boards.create(await self._board_body(request, required=True))
         return web.json_response(await self._board_view(board), status=201)
+
+    async def product_edition(self, request: web.Request) -> web.Response:
+        """`GET /v1/boards/edition` : édition active, types de Board disponibles et défaut de création."""
+
+        if request.query:
+            raise ValueError("unexpected product edition query")
+        return web.json_response(self.core.boards.edition.to_payload())
 
     async def active_board(self, request: web.Request) -> web.Response:
         """`GET /v1/boards/active` : le Board de la Session ouverte, `default` sans Session."""
@@ -1245,7 +1256,8 @@ class LocalProtocolServer:
 
         200 `{session, binding, board, previous_board_id, changed}` (`changed`
         faux pour le Board déjà actif). Refus : 404 `board_not_found`, 409
-        `board_archived`, 400 `invalid_board`, 502 `board_activation_failed`
+        `board_archived`, 409 `board_kind_unavailable` (type exclu par l'édition
+        produit), 400 `invalid_board`, 502 `board_activation_failed`
         (rien écrit), 500 `board_switch_rolled_back` (hôte et mode rétablis,
         rien écrit), 503 `core_unavailable`.
         """

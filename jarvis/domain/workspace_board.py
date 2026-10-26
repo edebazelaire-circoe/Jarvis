@@ -104,6 +104,10 @@ class BoardErrorCode(StrEnum):
     #: Changer le type d'un Board existant (D02) : il est fixé à la création.
     #: Pour un autre type, on crée un autre Board.
     BOARD_KIND_IMMUTABLE = "board_kind_immutable"
+    #: Créer ou activer un Board d'un type que l'édition produit ne rend pas
+    #: disponible (`jarvis/domain/product_edition.py`, `docs/product-edition.md`) :
+    #: rien n'est écrit, le Board actif ne change pas.
+    BOARD_KIND_UNAVAILABLE = "board_kind_unavailable"
     #: Une étape après l'activation a échoué (mode du Board refusé, écriture) :
     #: l'activation précédente a été rétablie, rien n'est validé, l'ancien Board
     #: reste actif. Défaut côté serveur, d'où 500.
@@ -126,6 +130,7 @@ HTTP_STATUS: Mapping[BoardErrorCode, int] = MappingProxyType({
     BoardErrorCode.INVALID_BINDING: 400,
     BoardErrorCode.BRAIN_NOT_FOREGROUND: 409,
     BoardErrorCode.BOARD_KIND_IMMUTABLE: 409,
+    BoardErrorCode.BOARD_KIND_UNAVAILABLE: 409,
     #: 502 : c'est l'hôte en amont (le Control Center) qui a échoué.
     BoardErrorCode.BOARD_ACTIVATION_FAILED: 502,
     BoardErrorCode.BOARD_SWITCH_ROLLED_BACK: 500,
@@ -666,10 +671,14 @@ def create_board(title: str, *, now: datetime, board_kind: BoardKind = DEFAULT_B
                  updated_at=now, board_kind=board_kind)
 
 
-def default_board(*, now: datetime) -> Board:
-    """Board `default` de la migration mono-espace ; type `assistant` (06 section H)."""
+def default_board(*, now: datetime, board_kind: BoardKind = DEFAULT_BOARD_KIND) -> Board:
+    """Board `default` de la migration mono-espace ; type `assistant` (06 section H), sauf édition qui l'exclut.
 
-    return Board(board_id=DEFAULT_BOARD_ID, title=DEFAULT_BOARD_TITLE, created_at=now, updated_at=now)
+    `board_kind` : défaut de création de l'édition produit (`ProductEditionPolicy.default_board_kind`).
+    """
+
+    return Board(board_id=DEFAULT_BOARD_ID, title=DEFAULT_BOARD_TITLE, created_at=now, updated_at=now,
+                 board_kind=board_kind)
 
 
 def _require_open_board(board: Board) -> None:

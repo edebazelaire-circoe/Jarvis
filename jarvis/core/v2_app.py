@@ -36,6 +36,7 @@ from jarvis.core.artifact_service import ArtifactService
 from jarvis.core.upload_service import BoardDropSeam, UploadService
 from jarvis.domain.artifacts import ARTIFACTS_DIR
 from jarvis.domain.uploads import upload_bounds
+from jarvis.domain.product_edition import FULL_EDITION, ProductEditionPolicy
 from jarvis.core.capture_service import CaptureAssociation, CaptureService, NoCaptureSources
 from jarvis.core.recording_transcriber import RecordingTranscriber
 from jarvis.core.capture_api import CaptureApi
@@ -158,7 +159,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None, local_capability_store: LocalCapabilityStore | None = None, remotion: RemotionFactory | None = None, engine_gate: bool | None = None, remotion_studio_runner: StudioRunner | None = None, remotion_studio_idle_s: float | None = None, upstream_fetcher=None, upstream_engine=None, remotion_import_owners=None, remotion_render_runner: RenderRunner | None = None, authoring_compiler=None, authoring_engine_pin=None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None, local_capability_store: LocalCapabilityStore | None = None, remotion: RemotionFactory | None = None, engine_gate: bool | None = None, remotion_studio_runner: StudioRunner | None = None, remotion_studio_idle_s: float | None = None, upstream_fetcher=None, upstream_engine=None, remotion_import_owners=None, remotion_render_runner: RenderRunner | None = None, authoring_compiler=None, authoring_engine_pin=None, product_edition: ProductEditionPolicy = FULL_EDITION) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -210,8 +211,12 @@ class JarvisCoreApplication:
         # même connexion que `self.state` (schéma v3). `start()` migre vers le
         # Board `default`, réapplique son mode, puis enregistre chaque
         # changement de mode sur le Board actif (`jarvis/core/board_service.py`).
+        # Édition produit (`docs/product-edition.md`) : types de Board disponibles, défaut de création,
+        # repli de démarrage. Résolue par `app.py` depuis `JARVIS_PRODUCT_EDITION` ; `full` par défaut.
+        self.product_edition = product_edition
         self.boards = BoardService(
             SQLiteBoardRepository(self.state), interaction_mode=self.interaction_mode, diagnostics=diagnostics,
+            edition=product_edition,
         )
         # Plugins MCP distants (handoff generic-mcp-plugin-runtime, Slice 02) :
         # même base, même connexion que `self.state` (schéma v4). Registre et

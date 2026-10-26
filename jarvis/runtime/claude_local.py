@@ -310,6 +310,37 @@ BRAIN_WORKSPACE_PROMPT = """BOARDS, SESSIONS, MÉMOIRE : jarvis-workspace
 - Relations entre sous-agents : relation_start / relation_post / relation_close / relation_handoff sont à eux ; toi, relation_read seulement.
 """
 
+#: Ligne de `BRAIN_WORKSPACE_PROMPT` qui dit les types de Board : édition `full`. Une édition qui restreint
+#: les types (`docs/product-edition.md`) la remplace par `BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE`, rendue par
+#: `workspace_prompt_for` (renderer `prompt_catalog._brain_workspace`, variable `BRAIN_PRODUCT_EDITION_VARIABLE`).
+BRAIN_WORKSPACE_KINDS_LINE = (
+    "- Mode présentation / simple / réunion = type du Board actif (board_kind presentation / assistant / meeting ; "
+    "réunion se comporte encore en simple) : un seul Board de ce type, bascule dessus ; plusieurs, demande lequel ; "
+    "aucun, propose board_create et crée-le s'il accepte.\n"
+)
+BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE = (
+    "- Édition Présentation : tout Board est un Board Présentation, board_create n'a pas de type à choisir. "
+    "Assistant et Réunion n'existent pas ici : ne les proposez pas. « Passe en mode présentation » : un seul Board, "
+    "basculez dessus ; plusieurs, demandez lequel ; aucun, proposez board_create et créez-le s'il accepte. Un ancien "
+    "Board d'un autre type ne s'ouvre pas (board_kind_unavailable) : board_inspect pour le regarder.\n"
+)
+#: Variable de consigne : l'édition produit du lancement (`ProductEdition.value`).
+BRAIN_PRODUCT_EDITION_VARIABLE = "product_edition"
+
+
+def workspace_prompt_for(edition: str | None) -> str:
+    """`BRAIN_WORKSPACE_PROMPT` de l'édition ; `full`, absente ou inconnue : la consigne d'avant, octet pour octet."""
+
+    from jarvis.domain.product_edition import PRODUCT_EDITIONS, ProductEdition
+
+    try:
+        policy = PRODUCT_EDITIONS[ProductEdition(edition)] if isinstance(edition, str) else None
+    except ValueError:
+        policy = None
+    if policy is None or not policy.restricts_board_kinds:
+        return BRAIN_WORKSPACE_PROMPT
+    return BRAIN_WORKSPACE_PROMPT.replace(BRAIN_WORKSPACE_KINDS_LINE, BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE)
+
 # Consigne de la passerelle `jarvis-tools` (handoff generic-mcp-plugin-runtime,
 # Slice 05, ARCH §8.1). Composée seulement quand la passerelle est réellement
 # déclarée (ARCH E20) : programmes `conversation_tools_*` quand son
@@ -1163,6 +1194,9 @@ class ClaudeLocalAgent:
                           if delegation is DelegationTendency.NEVER else [])
             if self.execution_profile == "conversation":
                 prompt_variables[BRAIN_DELEGATION_VARIABLE] = delegation.value
+                # Édition produit (`docs/product-edition.md`) : la consigne Boards ne propose que les types disponibles.
+                from jarvis.domain.product_edition import resolve_product_edition
+                prompt_variables[BRAIN_PRODUCT_EDITION_VARIABLE] = resolve_product_edition(os.environ).edition.value
             if self.execution_profile == "conversation" and self.global_context_dir is not None:
                 # Relu à chaque lancement : c'est ainsi qu'une modification faite
                 # par l'agent devient son prochain prompt initial. Hors de la boucle.

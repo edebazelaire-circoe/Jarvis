@@ -49,6 +49,8 @@ def test_error_codes_are_stable_and_all_mapped_to_http():
         "binding_not_found", "binding_conflict", "invalid_title", "context_summary_too_long",
         "invalid_board", "invalid_session", "invalid_binding", "brain_not_foreground",
         "board_activation_failed", "board_switch_rolled_back", "board_kind_immutable",
+        # jarvis-presentation-edition-v1 S01 : type exclu par l'édition produit (`docs/product-edition.md`).
+        "board_kind_unavailable",
     }
     assert set(HTTP_STATUS) == set(BoardErrorCode)
     err = BoardError(BoardErrorCode.BOARD_IS_ACTIVE, "x")
@@ -58,6 +60,7 @@ def test_error_codes_are_stable_and_all_mapped_to_http():
                                               BoardErrorCode.BOARD_SWITCH_ROLLED_BACK)} == {
         "brain_not_foreground": 409, "board_activation_failed": 502, "board_switch_rolled_back": 500}
     assert HTTP_STATUS[BoardErrorCode.BOARD_KIND_IMMUTABLE] == 409
+    assert HTTP_STATUS[BoardErrorCode.BOARD_KIND_UNAVAILABLE] == 409
 
 
 def test_ids_use_the_documented_prefixes_and_default(boards):

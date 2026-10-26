@@ -114,6 +114,8 @@ _BOARD_OF_CACHE = 512
 #: Texte de relais d'un Context (`handoff.md`), en caractères : un résumé
 #: choisi, pas une copie (D05). Refusé au-delà, jamais tronqué.
 MAX_HANDOFF_SUMMARY_CHARS = 8_000
+#: Titre du Board créé au démarrage quand l'édition n'en trouve aucun de disponible.
+EDITION_FALLBACK_BOARD_TITLE = "Présentation"
 
 
 def _demoted_to(activation: BoardActivation | None) -> BrainLifecycle:
@@ -371,14 +373,27 @@ class SessionManager:
 
     async def _start_board(self, newest: JarvisSession | None) -> Board:
         """Dernier Board actif (Session restée ouverte, sinon la plus récente) ; `default` s'il est
-        archivé ou absent ; sinon le premier Board actif."""
+        archivé ou absent ; sinon le premier Board actif.
 
+        Édition produit qui restreint les types (`docs/product-edition.md` › *Startup restore*) :
+        un Board d'un type indisponible n'est **jamais** activé ; repli sur le Board disponible
+        ouvert le plus récemment, sinon un Board du type par défaut de l'édition est créé. Les
+        Boards hérités restent tels quels.
+        """
+
+        edition = self._boards.edition
         last = newest.active_board_id if newest is not None else DEFAULT_BOARD_ID
         board = await self._repo.get_board(last)
-        if board is not None and board.status is BoardStatus.ACTIVE:
+        if board is not None and board.status is BoardStatus.ACTIVE and edition.allows(board.board_kind):
             return board
-        self._trace("core.session.last_board_unavailable", "Dernier Board actif archivé ou absent : repli",
-                    level="warning", data={"board_id": last, "found": board is not None})
+        open_board = board is not None and board.status is BoardStatus.ACTIVE
+        reason = "kind_unavailable" if open_board else "archived_or_absent"
+        self._trace("core.session.last_board_unavailable",
+                    "Dernier Board actif archivé, absent ou indisponible : repli", level="warning", data={"board_id": last, "found": board is not None, "reason": reason,
+                                           "board_kind": board.board_kind.value if board is not None else None,
+                                           "edition": edition.edition.value})
+        if edition.restricts_board_kinds:
+            return await self._edition_fallback_board()
         fallback = await self._repo.get_board(DEFAULT_BOARD_ID)
         if fallback is not None and fallback.status is BoardStatus.ACTIVE:
             return fallback
@@ -386,6 +401,27 @@ class SessionManager:
         if listed:
             return listed[0]
         raise BoardError(BoardErrorCode.BOARD_NOT_FOUND, "no active board to open a session on")
+
+    async def _edition_fallback_board(self) -> Board:
+        """Board disponible ouvert le plus récemment ; aucun : un Board neuf du type par défaut de l'édition.
+
+        Core n'a pas d'état « sans Board » (Voice a besoin d'une conversation de vérité) : d'où la
+        création plutôt qu'une Session sans Board. Rejouable : au démarrage suivant, ce Board est trouvé.
+        """
+
+        edition = self._boards.edition
+        available = [b for b in await self._repo.list_boards() if edition.allows(b.board_kind)]
+        if available:
+            chosen = max(available, key=lambda b: (b.last_opened_at or b.created_at, b.created_at))
+            self._trace("core.session.edition_fallback", "Repli de démarrage sur le dernier Board disponible",
+                        data={"board_id": chosen.board_id, "board_kind": chosen.board_kind.value,
+                              "edition": edition.edition.value, "created": False})
+            return chosen
+        created = await self._boards.create({"title": EDITION_FALLBACK_BOARD_TITLE})
+        self._trace("core.session.edition_fallback", "Aucun Board disponible : Board neuf créé pour le démarrage",
+                    data={"board_id": created.board_id, "board_kind": created.board_kind.value,
+                          "edition": edition.edition.value, "created": True})
+        return created
 
     async def _start_conversation(self, adopt_latest: bool) -> tuple[str, bool]:
         if adopt_latest:

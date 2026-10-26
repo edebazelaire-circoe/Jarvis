@@ -16,6 +16,7 @@ deterministic — there is no global reasoning Brain.
 | --- | --- | --- | --- |
 | *Glossary*, *Values*, *Lifecycle*, *Invariants*, *Errors* | vocabulary, values, transitions | `jarvis/domain/workspace_board.py`, `jarvis/ports/workspace_board.py` | `tests/unit/test_workspace_board_contract.py` |
 | *Board type*, *Board memory*, *Non-activating inspection* | `board_kind` (fixed type, derived mode), memory locator and paths, memory errors, Board vs SessionContext ownership, memory disk store | `jarvis/domain/workspace_board.py`, `jarvis/domain/board_memory.py`, `jarvis/adapters/board_memory_store.py` | `tests/unit/test_board_memory_contract.py`, `tests/unit/test_board_memory_store.py` |
+| *Board type* › product edition | which kinds an edition can create/activate (`full`, `presentation`), refusal `board_kind_unavailable`, startup fallback, legacy Boards — [product-edition.md](product-edition.md) | `jarvis/domain/product_edition.py` | `tests/unit/test_product_edition.py` |
 | *Workspace inspection API* | side-effect-free reads of Sessions, Boards, bindings, Contexts, Artifacts, memory (`/v1/workspace/*`, `/api/workspace/*`) | `jarvis/core/workspace_service.py`, `jarvis/protocol/workspace_routes.py`, `jarvis/runtime/workspace_relay.py` | `tests/unit/test_workspace_inspection_api.py` |
 | *Persistence* | SQLite v3, default-Board migration, v9 type migration, mode derived from the type | `jarvis/adapters/sqlite_workspace_board.py`, `jarvis/adapters/sqlite_state.py` (`_MIGRATIONS[9]`), `jarvis/core/board_service.py` | `test_board_store_sqlite.py`, `test_board_kind_migration_v9.py`, `test_board_service.py`, `test_board_protocol.py` |
 | *Sessions* | Core start = resume the open Session, bindings, Voice conversation | `jarvis/core/session_manager.py` | `test_session_manager.py`, `test_session_protocol.py`, `test_voice_session_binding.py` |
@@ -226,6 +227,14 @@ separate, user-selected interaction mode any more.
   rolled back for its mode.
 - Stored in the Board payload JSON (`work_boards.data`), no column. Boards
   written before v9 were normalized once by the v9 migration (*Persistence*).
+- **Product edition** ([product-edition.md](product-edition.md)). The kinds above
+  are those of the `full` edition (development default). The `presentation`
+  edition (`JARVIS_PRODUCT_EDITION=presentation`) makes only `presentation`
+  available: it is the create default and the `default` Board's kind; creating
+  or switching to another kind is refused **409 `board_kind_unavailable`**,
+  nothing written; startup never resumes on such a Board (fallback: last
+  available Board, else a new Presentation Board); legacy Assistant/Réunion
+  Boards are kept intact, readable and editable, never activated.
 
 ## Board memory
 
@@ -677,6 +686,8 @@ the three foreign headers (`test_every_mutation_is_refused_from_a_foreign_origin
 | `board_archived`, `board_is_active`, `session_closed`, `binding_conflict` | 409 |
 | `invalid_title`, `context_summary_too_long`, `invalid_board`, `invalid_session`, `invalid_binding` | 400 |
 | `brain_not_foreground` — a turn aimed at a binding without speech authority (pool routing, 04a) | 409 |
+| `board_kind_immutable` — a `PATCH` carrying `board_kind` (*Board type*) | 409 |
+| `board_kind_unavailable` — create or switch to a kind the product edition does not make available ([product-edition.md](product-edition.md)) | 409 |
 | `board_activation_failed` — the host (Control Center) could not activate the target agent; switch aborted, nothing written (04b) | 502 |
 | `board_switch_rolled_back` — a step after activation failed (mode refused, write); previous activation restored, nothing committed, previous Board still active (04b). Server-side failure, hence 500 | 500 |
 
@@ -824,12 +835,13 @@ Authenticated like every `/v1` route; errors are
 | Route | Body | Answer |
 | --- | --- | --- |
 | `GET /v1/boards[?include_archived=true]` | — | 200 `{boards: [...], active_board_id}` |
-| `POST /v1/boards` | `{title, board_kind?, context_summary?, task_refs?, artifact_refs?, project_refs?, scene_ref?, runtime_metadata?}` (`board_kind` defaults to `assistant`) | 201 `{board, active}`; 400 `invalid_title` / `invalid_board` / `context_summary_too_long` |
+| `POST /v1/boards` | `{title, board_kind?, context_summary?, task_refs?, artifact_refs?, project_refs?, scene_ref?, runtime_metadata?}` (`board_kind` defaults to the product edition's default, `assistant` in `full`) | 201 `{board, active}`; 400 `invalid_title` / `invalid_board` / `context_summary_too_long`; 409 `board_kind_unavailable` |
 | `GET /v1/boards/active` | — | 200 `{board, active: true}` |
+| `GET /v1/boards/edition` | — | 200 product edition availability payload ([product-edition.md](product-edition.md)) |
 | `GET /v1/boards/{board_id}` | — | 200 `{board, active}`; 404 `board_not_found` |
 | `PATCH /v1/boards/{board_id}` | any non-empty subset of the editable fields (never `board_kind`) | 200 `{board, active}`; 404; 409 `board_kind_immutable` (checked first) / `board_archived`; 400 |
 | `POST /v1/boards/{board_id}/archive` | empty | 200 `{board, active}` (replayable); 409 `board_is_active`; 404 |
-| `POST /v1/boards/switch` (Slice 04b) | `{board_id}` | 200 `{session, binding, board, previous_board_id, changed}`; 404 `board_not_found`; 409 `board_archived`; 400 `invalid_board`; 502 `board_activation_failed`; 500 `board_switch_rolled_back`; 503 `core_unavailable` |
+| `POST /v1/boards/switch` (Slice 04b) | `{board_id}` | 200 `{session, binding, board, previous_board_id, changed}`; 404 `board_not_found`; 409 `board_archived` / `board_kind_unavailable`; 400 `invalid_board`; 502 `board_activation_failed`; 500 `board_switch_rolled_back`; 503 `core_unavailable` |
 
 Unknown fields and query parameters are 400; a body above 128 KiB is 400.
 `board_kind` is chosen on create only (strict internal value or the deprecated `empty`, `invalid_board` otherwise); a `PATCH` carrying it is `board_kind_immutable`. `interaction_mode` is not a Board field: it is derived from the type (*Board type*). The Control Center relays
@@ -1377,6 +1389,7 @@ in flight (or the one that just ended, during the grace):
 | --- | --- |
 | `GET/POST /api/boards` | `GET/POST /v1/boards` |
 | `GET /api/boards/active` | `GET /v1/boards/active` |
+| `GET /api/boards/edition` | `GET /v1/boards/edition` |
 | `GET /api/boards/pending` | — (Control Center only: pending brain requests) |
 | `POST /api/boards/switch` | `POST /v1/boards/switch` |
 | `GET/PATCH /api/boards/{board_id}` | `GET/PATCH /v1/boards/{board_id}` |
@@ -1423,7 +1436,7 @@ and **moved** here without alias: `jarvis-console` keeps only `settings_*`).
 | --- | --- | --- |
 | `board_list` | Boards + active id (summary rows, with `board_kind`) | `GET /api/boards` |
 | `board_get` / `board_get_active` | one Board as the screen shows it | `GET /api/boards/{id}` / `/active` |
-| `board_create` | new Board (`board_kind` optional, fixed for good); does **not** switch | `POST /api/boards` |
+| `board_create` | new Board (`board_kind` optional, fixed for good; absent from the schema when the product edition has a single kind, [product-edition.md](product-edition.md)); does **not** switch | `POST /api/boards` |
 | `board_update` | title, summary, refs (a list replaces the previous one); never the type | `PATCH /api/boards/{id}` |
 | `board_archive` | archive (never the active Board) | `POST /api/boards/{id}/archive` |
 | `board_switch` | conversation and voice move to that Board; the left Board keeps its background work | `POST /api/boards/switch`, `origin: brain` |

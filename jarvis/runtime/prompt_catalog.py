@@ -119,6 +119,12 @@ def _brain_system(values: Mapping[str, object]) -> str:
     return apply_delegation_rule(claude_local.BRAIN_SYSTEM_PROMPT, level)
 
 
+def _brain_workspace(values: Mapping[str, object]) -> str:
+    # Édition absente (aperçu, tests) : `full`, la consigne d'avant (`docs/product-edition.md`).
+    raw = values.get(claude_local.BRAIN_PRODUCT_EDITION_VARIABLE)
+    return claude_local.workspace_prompt_for(raw if isinstance(raw, str) else None)
+
+
 def _request_text(values: Mapping[str, object]) -> str:
     request_text = values.get("request_text")
     return request_text if isinstance(request_text, str) else ""
@@ -448,4 +454,5 @@ def default_prompt_registry() -> PromptRegistry:
         "backend.turn.request": _request_text,
         "backend.claude.conversation.global_context": _global_context,
         "backend.claude.conversation.system": _brain_system,
+        "backend.claude.conversation.workspace": _brain_workspace,
     })

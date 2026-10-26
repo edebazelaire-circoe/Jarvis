@@ -53,6 +53,8 @@ from urllib.parse import quote
 
 import aiohttp
 
+from jarvis.domain.product_edition import FULL_EDITION, ProductEditionPolicy
+from jarvis.domain.workspace_board import BoardKind
 from jarvis.runtime.core_sessions import CORE_TRANSITION_TIMEOUT_S
 
 BOARDS_ROUTE = "/api/boards"
@@ -101,6 +103,9 @@ ERROR_SENTENCES: dict[str, str] = {
                                 "le Board actuel reste actif."),
     "board_kind_immutable": ("Le type d'un Board est fixé à sa création : rien n'a été écrit. Pour un autre type, "
                              "crée un autre Board (board_create) puis bascule dessus."),
+    "board_kind_unavailable": ("Ce type de Board n'est pas disponible dans cette édition : rien n'a été écrit, le "
+                               "Board actif n'a pas changé. Ne le proposez plus ; board_inspect pour regarder un "
+                               "ancien Board de ce type."),
     "board_switch_rolled_back": ("La bascule a échoué après l'activation et a été annulée : "
                                  "le Board précédent reste actif, rien n'a été écrit."),
     "invalid_title": "Titre refusé (1 à 120 caractères, une ligne, sans espace autour) : rien n'a été écrit.",
@@ -164,7 +169,8 @@ class BoardTools:
 
     `http` rend la session aiohttp partagée du serveur (`WorkspaceTools._http`) ;
     `error` fabrique l'erreur d'outil du serveur (`WorkspaceToolError`) ;
-    `emit` écrit dans le journal du serveur.
+    `emit` écrit dans le journal du serveur ;
+    `edition` : l'édition produit du serveur (`docs/product-edition.md`), lue par `switch_board`.
     """
 
     def __init__(
@@ -174,7 +180,9 @@ class BoardTools:
         http: Callable[[], Awaitable[Any]],
         error: Callable[[str, str], Exception],
         emit: Callable[..., None],
+        edition: ProductEditionPolicy = FULL_EDITION,
     ) -> None:
+        self._edition = edition
         self._base_url = base_url
         self._http = http
         self._error = error
@@ -326,6 +334,14 @@ class BoardTools:
         if board.get("status") == "archived":
             self._failed("board_switch", "board_archived", _board_route(board_id), board_id=board_id)
             raise self._error("board_archived", _refusal("board_archived", f"board {board_id} is archived", "Core"))
+        kind = board.get("board_kind")
+        if kind in {k.value for k in BoardKind} and not self._edition.allows(BoardKind(kind)):
+            # Même raison que l'archivage : différée, la bascule ne rendrait son refus qu'au journal.
+            self._failed("board_switch", "board_kind_unavailable", _board_route(board_id), board_id=board_id,
+                         board_kind=kind, edition=self._edition.edition.value)
+            raise self._error("board_kind_unavailable", _refusal(
+                "board_kind_unavailable", f"board {board_id} is {kind}, unavailable in the "
+                f"{self._edition.edition.value} edition", "édition produit"))
         active = body.get("active") is True
         if active and not await self._switch_pending_elsewhere(board_id):
             self._done("board_switch", "déjà actif", board_id=board_id, status="unchanged")

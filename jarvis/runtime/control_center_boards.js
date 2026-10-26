@@ -175,6 +175,8 @@
     board_activation_failed:'L’agent du Board n’a pas pu démarrer. Rien n’a changé : le Board précédent reste actif.',
     board_switch_rolled_back:'La bascule a échoué en cours de route et a été annulée. Le Board précédent reste actif.',
     board_kind_immutable:'Le type d’un Board est fixé à sa création. Créez un autre Board pour un autre type.',
+    // Édition produit (docs/product-edition.md) : type exclu de cette édition, création ou bascule refusée.
+    board_kind_unavailable:'Ce type de Board n’est pas disponible dans cette édition. Rien n’a changé.',
     board_store_unreadable:'Le stockage des Boards est illisible.',
     board_store_failed:'Le stockage des Boards est indisponible.',
     core_unreachable:'Core ne répond pas. Rien n’a changé.',
