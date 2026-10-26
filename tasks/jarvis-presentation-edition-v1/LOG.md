@@ -57,3 +57,9 @@ Implementation agents append durable execution notes here. This handoff intentio
 - Garde `CONTEXT_GLOBAL` : chemins résolus (`realpath` + `normcase` : `..`, 8.3, casse) ; `within` limite la vérification aux composants sous la racine permise (`safe_tree.remove_tree`) ; `contains_global_context` pour la purge du cache Remotion (refuse un dossier qui le contient) ; `node_capability_runner._remove_tree` : entrée résolue puis nom de chaque dossier visité.
 - `ui.feedback_session` : étiquette symbolique (`feedback_dir_label`) au lieu du chemin.
 - Tests : `test_installed_product_root.py` 30 passés (dont nom court 8.3 réel) ; data_root/global_context/config/product_edition/feedback/environment/schema_migrations/node_runner/remotion_compiler/purge/prefab/studio runner 287 passés (2 ignorés, liens) ; app/studio store/local capabilities/boards/sessions/display_mcp/routing_hook/wakeword/testlab 368 passés + 1 échec préexistant (`test_app::test_the_control_center_receives_a_tools_gateway_target_built_from_core_settings`).
+
+## 2026-10-26 — Slice 02 QA and decision (agent 0)
+- Code review: no blocking finding. NB-1 (V1 `AppConfig` path miswired in installed mode) plus 4 minor findings fixed in rework `797ba070`. The two reported failures also fail on `main` (checked from `rui`).
+- Runtime (extracted copy + marker + simulated `LOCALAPPDATA`, ports 2765x): 7/7 PASS (product home, CONTEXT_GLOBAL across restart and program move, `config\.env`, precedence, refusals, dev mode unchanged). Live JARVIS, `~/.jarvis` and the real `%LOCALAPPDATA%\CIRCOE` untouched.
+- Guard rework diff reviewed by agent 0 (resolved paths, `within`). Decision: **Slice 02 APPROVED**. Leftovers in `Issues/I-002-s02-leftovers.md`.
+- Next: Slice 03 in `pev1`; Slice 05 in parallel in worktree `pev1c` (branch `task/jarvis-presentation-edition-v1-s05`, merged back into the task branch after QA).
