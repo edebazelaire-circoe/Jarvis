@@ -85,3 +85,12 @@ Chemin critique inchangé : `01 → 02 → 03 → 04 → 06 → 07 → 10 → 11
 - **Dispatch 1 : Slice 01** seule (un seul writer dans `pev1`, contrat d'édition dont dépendent 02, 04, 05, 08).
 - Ensuite 02, puis 03 ; 05 et 08 peuvent partir dès 01 approuvée, chacun dans son propre worktree s'ils tournent en parallèle (≤ 3 agents, machine limitée).
 - Contrôle de fraîcheur ciblé contre `origin/main` avant chaque dispatch.
+
+## Correction of E1 (2026-10-26, after Slice 05)
+E1 was **wrong**. CIRCOE Mail and Agenda exist as the generic remote MCP plugin
+**Circuit Toolbox** (`https://circoetoolbox-server-production.up.railway.app/mcp`,
+`docs/mcp/plugins.md` §14: OAuth with DCR, scopes `mail calendar contacts`, no refresh
+token; tools `infomaniak.*`, e.g. `infomaniak.calendar.list_events` read by
+`docs/agenda-reminders.md`). It is configured in the data, not in the code, so the code
+audit missed it. X2 is reduced to: the real tool catalogue and its annotations (live
+"phase B" login, HV-07-01). The Google Calendar adapter is not in the D09 list.
