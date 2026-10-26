@@ -468,7 +468,11 @@
         +'ambiante est indisponible. Jarvis n’entend que ce qui lui est adressé.'}),
     refused:Object.freeze({line:'Refusé par la voix',tone:'bad',
       said:'PRESENTATION refusé : l’architecture vocale ne le porte pas (une session '
-        +'continue est requise, le Duplex est exclu). Changez-la dans Réglages › Avancé & Diagnostics › Architecture & compatibilité.'}),
+        +'continue est requise, le Duplex est exclu). Changez-la dans Réglages › Avancé & Diagnostics › Architecture & compatibilité.',
+      /* Édition produit (surfaces de développement cachées, Slice 08 presentation-edition) : la page citée plus haut
+         n'y est pas montrée ; la phrase ne renvoie pas vers une impasse et ne parle pas le jargon du moteur vocal. */
+      saidProduct:'La séance de présentation n’a pas pu démarrer : la configuration vocale actuelle de Jarvis ne la '
+        +'permet pas. Jarvis reste adressable, mais n’écoute pas la salle. Ce réglage se change en mode développeur.'}),
     entry_failed:Object.freeze({line:'Entrée échouée',tone:'bad',
       said:'PRESENTATION n’a pas pu ouvrir le micro partagé : Jarvis reste adressable, '
         +'mais n’écoute pas la salle.'}),
@@ -496,8 +500,9 @@
   }
 
   /* Le relevé, traduit en un état. `mode` est le mode en vigueur du même
-     statut. `null` sans relevé (Voice hors ligne). Pur. */
-  function presenceOf(report,mode){
+     statut. `null` sans relevé (Voice hors ligne). Pur. `options.developerSurfaces` (`hidden` en édition produit)
+     choisit la phrase qui ne renvoie pas vers une page cachée. */
+  function presenceOf(report,mode,options){
     if(!isObject(report))return null;
     const code=value=>typeof value==='string'&&value?value:'';
     let state=PRESENCE.INACTIVE,why='';
@@ -511,7 +516,8 @@
     }
     const said=PRESENCE_TEXT[state];
     return Object.freeze({
-      state,code:why,line:said.line,said:said.said,tone:said.tone,
+      state,code:why,line:said.line,tone:said.tone,
+      said:options&&options.developerSurfaces==='hidden'&&said.saidProduct?said.saidProduct:said.said,
       /* `inactive` hors PRESENTATION est l'état ordinaire : le dire en
          permanence serait un bandeau que plus personne ne lit. Il reste porté
          par `data-bd-presence`. */
@@ -1088,6 +1094,8 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
        tous les types restent disponibles, comme avant. */
     const editionSource=deps.edition&&typeof deps.edition.state==='function'?deps.edition:null;
     const editionView=()=>editionSource?editionSource.state():null;
+    /* Les surfaces de développement que l'édition montre (sans source : celles d'avant la Slice 08). */
+    const presenceOptions=()=>{const e=editionView();return {developerSurfaces:e?e.developerSurfaces:'visible'}};
     const openChanged=value=>{
       if(!onOpenChange)return;
       try{onOpenChange(value)}
@@ -1229,9 +1237,12 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
     const kindNote=el('div','bd-kindnote');kindNote.id=DOM.kindNoteId;kindNote.setAttribute('role','status');kindNote.hidden=true;
     const kindNoteText=el('p','');const kindNoteDetail=el('small','');
     const kindRetry=el('button','bd-act','Réessayer');kindRetry.id=DOM.kindRetryId;kindRetry.setAttribute('type','button');kindRetry.hidden=true;
-    kindRetry.addEventListener('click',()=>{if(!editionSource)return;log('info','boards.kinds_retry',{});editionSource.refresh();paintKinds()});
+    kindRetry.addEventListener('click',()=>{if(!editionSource)return;log('info','boards.kinds_retry',{});kindFeedback='';editionSource.refresh();paintKinds()});
     kindNote.appendChild(kindNoteText);kindNote.appendChild(kindNoteDetail);kindNote.appendChild(kindRetry);
     kindScreen.appendChild(kindNote);
+    /* Réponse à un clic sur un type à venir (« Assistant : bientôt disponible… »). Elle ne vit que tant que l'état de
+       l'édition ne change pas : toute nouvelle lecture (`subscribe`), « Réessayer » ou une nouvelle création l'efface,
+       et la note de l'édition (cause d'un refus, lecture en cours, « … arrivent bientôt ») reprend la main. */
     let kindFeedback='';
 
     /* La création, second temps : l'orbe du type choisi, le titre, Créer. */
@@ -1265,6 +1276,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
     let kindWaitTicker=0;
     function paintKinds(){
       const edition=editionView();
+      const note=kindNoteOf(edition,now());
       for(const kind of Object.keys(kindPicks)){
         const b=kindPicks[kind],choice=kindChoiceOf(kind,edition);
         b.setAttribute(DOM.availAttribute,choice.state);
@@ -1273,11 +1285,12 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
         const planned=PLANNED[kind];
         const said=choice.state==='soon'?SOON.tag:choice.state==='available'&&planned?planned.tag:'';
         if(tag){if(tag.textContent!==said)tag.textContent=said;tag.hidden=!said;tag.setAttribute('data-tone',choice.state==='soon'?'soon':'planned')}
+        /* Inconnu : ce que dit la note (la cause d'un refus de lecture, sinon la lecture en cours), pour le lecteur
+           d'écran aussi (QA runtime S08, m2). */
         const description=choice.state==='soon'?SOON.said(BOARD_KINDS[kind]||kind):choice.state==='available'&&planned?planned.said
-          :choice.state==='unknown'?KIND_WAIT:'';
+          :choice.state==='unknown'?(note&&note.tone==='bad'?note.text:KIND_WAIT):'';
         if(description)b.setAttribute('aria-description',description);else b.removeAttribute('aria-description');
       }
-      const note=kindNoteOf(edition,now());
       const said=kindFeedback||(note?note.text:'');
       kindNote.hidden=!said;
       kindNote.setAttribute('data-tone',kindFeedback?'info':note?note.tone:'');
@@ -1344,8 +1357,11 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       /* Slice 08 : un type à venir ou pas encore lu ne mène nulle part — aucune requête ; l'écran le dit. */
       const choice=kindChoiceOf(kind,editionView());
       if(choice.state!=='available'){
-        kindFeedback=choice.state==='soon'?SOON.said(BOARD_KINDS[kind]||kind):KIND_WAIT;
-        announce.textContent=kindFeedback;
+        /* À venir : la phrase « bientôt disponible ». Pas encore lu : la note de l'édition reste en place (sa cause,
+           ou la lecture en cours) et elle est seulement redite — jamais remplacée par une attente. */
+        const note=kindNoteOf(editionView(),now());
+        kindFeedback=choice.state==='soon'?SOON.said(BOARD_KINDS[kind]||kind):'';
+        announce.textContent=kindFeedback||(note?note.text:KIND_WAIT);
         log('info','boards.kind_unavailable_chosen',{kind,state:choice.state});
         paintKinds();
         return;
@@ -1371,6 +1387,8 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
     newPick.addEventListener('click',()=>{startCreate()});
     back.addEventListener('click',()=>{goBack()});
     if(editionSource&&typeof editionSource.subscribe==='function')editionSource.subscribe(()=>{
+      /* L'état de l'édition a changé : sa note prime sur la réponse au dernier clic (QA runtime S08, M1). */
+      kindFeedback='';
       /* Le défaut de Core arrive : le type proposé le suit tant que rien n'a été choisi. */
       if(screen!=='name'&&!pending){createKind.value=defaultKindOf(editionView());paintKindHint()}
       paintKinds();if(opened)paint(true);
@@ -1380,7 +1398,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
 
     function paintTrigger(){
       const view=triggerViewOf(block,pending,waitSeconds());
-      const session=presenceOf(report,liveModeOf(modeBlock));
+      const session=presenceOf(report,liveModeOf(modeBlock),presenceOptions());
       const shown=!!session&&session.shown;
       host.setAttribute(DOM.toneAttribute,view.tone);
       host.setAttribute(DOM.kindAttribute,view.kind);
@@ -1982,7 +2000,8 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
          `board_kind`, vers le défaut d'une autre édition). */
       const choice=kindChoiceOf(kind,editionView());
       if(choice.state!=='available'){
-        createError.textContent=choice.state==='soon'?SOON.said(BOARD_KINDS[kind]||kind):KIND_WAIT;paintControls();
+        const note=kindNoteOf(editionView(),now());
+        createError.textContent=choice.state==='soon'?SOON.said(BOARD_KINDS[kind]||kind):note?note.text:KIND_WAIT;paintControls();
         log('info','boards.create_kind_unavailable',{kind,state:choice.state});
         return null;
       }
@@ -2240,7 +2259,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       view:()=>view,
       presentation:()=>triggerViewOf(block,pending,waitSeconds()),
       /* La séance que la carte peint (Slice 02), `null` sans relevé. */
-      presence:()=>presenceOf(report,liveModeOf(modeBlock)),
+      presence:()=>presenceOf(report,liveModeOf(modeBlock),presenceOptions()),
       waits:()=>waits.size,
       block:()=>block,
     };

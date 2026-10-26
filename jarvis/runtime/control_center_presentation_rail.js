@@ -70,9 +70,16 @@
     presentation_studio_limit_reached:'Le nombre maximal de présentations est atteint : archivez-en une, puis réessayez.',
     presentation_studio_storage_io:'Le disque a refusé l’écriture : rien n’a été créé.',
     presentation_studio_invalid:'Titre refusé : ',
+    invalid_request:'La demande est mal formée : rien n’a été créé.',
     core_unreachable:'Jarvis ne répond pas : rien n’a été créé.',core_unconfigured:'Ce Control Center ne connaît pas Jarvis : rien n’a été créé.',
+    /* Issue inconnue (le relais ou la page a cessé d'attendre ; Core a peut-être créé) : jamais « impossible ». */
+    core_timeout:'Jarvis n’a pas répondu à temps : l’issue est inconnue, la liste est relue.',
+    timeout:`Pas de réponse après ${CREATE_TIMEOUT_MS/1000} s : l’issue est inconnue, la liste est relue.`,
     network:'La connexion avec le Control Center a échoué : rien n’a été créé.',
   });
+  /* Mêmes codes que la table du moteur (`JarvisStudioEngineCore.ERRORS` ; `test_product_edition_ui_js.py` le vérifie),
+     ton produit ici. Ceux-ci laissent l'issue inconnue : la liste relue la tranche. */
+  const CREATE_UNKNOWN_OUTCOME=Object.freeze(['core_timeout','timeout']);
   /* Le parcours de l'accueil, dans l'ordre du travail (D13 : la retouche fine des scènes est l'affaire de Variantes et de l'inspecteur). */
   const JOURNEY=Object.freeze([
     Object.freeze({step:'sources',title:'Rassemblez vos sources',text:'Déposez fichiers, liens et notes dans le Dossier de ce Board.',action:'dossier',label:'Ouvrir le Dossier'}),
@@ -93,6 +100,13 @@
   function cleanLine(value,max){
     const text=String(value==null?'':value).replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]+/g,' ').replace(/\s+/g,' ').trim();
     return max&&text.length>max?text.slice(0,Math.max(1,max-1))+'…':text;
+  }
+  /* Lecture de l'édition tombée (accueil sans réponse de Core) : la cause, dite comme sur l'écran du type des Boards. */
+  function editionCause(error){
+    const code=error&&error.code?String(error.code):'network';
+    const said=code==='timeout'?'Jarvis n’a pas répondu à temps.':code==='core_unreachable'||code==='http_503'?'Jarvis ne répond pas.'
+      :code==='network'?'La connexion avec le Control Center a échoué.':cleanLine(error&&error.message,120)||code;
+    return {code,text:said};
   }
   function monogram(title){
     const words=cleanLine(title,80).split(' ').filter(Boolean);
@@ -301,6 +315,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
 .jvr-dialog h2{margin:0 0 8px;font-size:14px;font-weight:700}.jvr-dialog p{margin:0 0 12px;color:#9db6c4;line-height:1.45}
 .jvr-dialog input{width:100%;padding:8px 10px;margin-bottom:12px;background:#04080c;border:1px solid rgba(110,231,255,.28);border-radius:7px;color:inherit;font:inherit}
 .jvr-dialog .jvr-row{display:flex;gap:8px;justify-content:flex-end}
+.jvr-dialog .jvr-fielderr{margin:-6px 0 12px;color:var(--sem-alert,#ff9f43);font-size:12px}.jvr-dialog .jvr-fielderr[hidden]{display:none}
 .jvr-dialog button{padding:7px 12px;border-radius:7px;background:rgba(110,231,255,.1);border:1px solid rgba(110,231,255,.3);color:inherit;font:inherit;cursor:pointer}
 .jvr-dialog button[data-danger]{background:rgba(255,101,119,.14);border-color:rgba(255,101,119,.5);color:#ff9aa6}
 /* Slice 08 : accueil d'une édition produit — bouton « Nouvelle présentation » et parcours en quatre étapes. */
@@ -322,6 +337,11 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
 #${DOM.hostId} .jvr-step button{justify-self:start;margin-top:4px;padding:4px 10px;border:1px solid var(--jvr-line);border-radius:999px;background:none;color:var(--jvr-ink);font:inherit;font-size:11.5px;cursor:pointer}
 #${DOM.hostId} .jvr-step button:hover{border-color:var(--jvr-hot)}
 #${DOM.hostId} .jvr-step button:focus-visible{outline:var(--shell-focus-w,2px) solid var(--shell-focus,#6ee7ff);outline-offset:var(--shell-focus-offset,2px)}
+#${DOM.hostId} .jvr-home-error{margin:6px 4px 0;color:var(--sem-alert,#ff9f43);font-size:11.5px;line-height:1.45}
+#${DOM.hostId} .jvr-home-code{display:block;margin:4px 4px 0;color:var(--jvr-mute);font-size:10.5px}
+#${DOM.hostId} .jvr-home-retry{margin:8px 4px 2px;padding:4px 10px;border:1px solid var(--jvr-line);border-radius:999px;background:none;color:var(--jvr-ink);font:inherit;font-size:11.5px;cursor:pointer}
+#${DOM.hostId} .jvr-home-retry:hover{border-color:var(--jvr-hot)}
+#${DOM.hostId} .jvr-home-retry:focus-visible{outline:var(--shell-focus-w,2px) solid var(--shell-focus,#6ee7ff);outline-offset:var(--shell-focus-offset,2px)}
 #${DOM.hostId} .jvr-homebox[hidden],#${DOM.hostId}[data-density=slim] .jvr-homebox,#${DOM.hostId}[data-density=compact] .jvr-homebox{display:none}
 #${DOM.hostId} .jvr-list[hidden]{display:none}
 @media (prefers-reduced-motion:reduce){#${DOM.hostId} .jvr-new{transition:none}}
@@ -341,6 +361,10 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
     const editionModel=()=>{try{const v=edition&&typeof edition.state==='function'?edition.state():null;return v&&v.model||null}catch(_e){return null /* intentional: no edition = previous behaviour */}};
     /* Accueil produit : l'édition lue n'est pas `full`. Surfaces de développement : le marquage confirmé par Core. */
     const home=()=>{const m=editionModel();return !!(m&&m.edition!=='full')};
+    /* La lecture de l'édition est tombée alors que la page est marquée édition produit : l'accueil reste montré, avec la
+       cause et « Réessayer » (QA S08, M4), au lieu d'un rail caché et muet. */
+    const homeUnread=()=>{try{const v=edition&&typeof edition.state==='function'?edition.state():null;
+      return v&&!v.model&&v.error&&(v.status==='error'||v.status==='loading')&&v.pageEdition&&v.pageEdition!=='full'?v:null}catch(_e){return null /* intentional: no edition = previous behaviour */}};
     const developer=()=>{try{return !(edition&&typeof edition.developerSurfacesShown==='function')||edition.developerSurfacesShown()}catch(_e){return true /* intentional */}};
     const S={coreOk:false,rows:[],loaded:false,lost:false,pref:'auto',collapsed:false,drawer:false,density:'full',boardKind:null,boardId:null,mode:null,voice:'idle',foldHidden:false,foldArchived:false,foldWorkspace:false,
       lastSeq:null,firstPoll:true,studioOpen:false,notice:null,busy:new Set(),playing:null,selected:null,menuRow:null,dialog:null,lastReport:'',lastReportAt:0};
@@ -405,7 +429,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
     function model(){return modelOf(S.rows,S.pref)}
     function shown(){
       if(S.studioOpen&&(Number(win.innerWidth)||1280)<HIDE_IN_STUDIO_BELOW_PX&&S.pref!=='shown')return false;
-      return shouldShow(model(),{pref:S.pref,boardKind:S.boardKind,mode:S.mode,studioOpen:S.studioOpen,home:home()})}
+      return shouldShow(model(),{pref:S.pref,boardKind:S.boardKind,mode:S.mode,studioOpen:S.studioOpen,home:home()||!!homeUnread()})}
     function build(){
       if(ui.host)return ui.host;
       if(!doc.getElementById(DOM.styleId)){const style=el('style');style.id=DOM.styleId;style.textContent=CSS;(doc.head||doc.documentElement).appendChild(style)}
@@ -656,10 +680,11 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       if(!S.loaded&&!S.lost)ui.list.appendChild(el('li','jvr-empty','Chargement…'));
       /* L'accueil dépend de l'édition lue sur Core : elle n'est demandée que dans ce cas (Board Présentation, aucune présentation). */
       if(S.loaded&&!m.total&&(S.boardKind==='presentation'||S.mode==='presentation')&&edition&&typeof edition.ensure==='function')edition.ensure();
-      const showHome=S.loaded&&!m.visible.length&&!m.total&&home()&&!S.lost;
+      const unread=home()?null:homeUnread();
+      const showHome=S.loaded&&!m.visible.length&&!m.total&&(home()||!!unread)&&!S.lost;
       /* L'accueil vit hors de la liste d'options (une liste d'options ne contient que des options). */
       clear(ui.home);ui.home.hidden=!showHome;ui.list.hidden=showHome;
-      if(showHome)ui.home.appendChild(homeFor());
+      if(showHome)ui.home.appendChild(unread?homeUnreadFor(unread):homeFor());
       else if(!m.visible.length)ui.list.appendChild(el('li','jvr-empty',m.total?'Toutes sont masquées ou archivées.':'Aucune présentation.'));
       for(const row of m.visible)ui.list.appendChild(itemFor(row));
       clear(ui.hiddenFold);clear(ui.archivedFold);
@@ -711,6 +736,28 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       li.append(title,list);
       return li;
     }
+    /* L'accueil quand Core n'a pas dit ce que l'édition permet : la cause, son code, « Réessayer » (relit Core). */
+    function homeUnreadFor(view){
+      const box=el('div','jvr-homewrap');
+      const cause=editionCause(view.error);
+      /* Relecture en cours (« Réessayer », reprise, retour de Core) : l'accueil reste en place et le dit. */
+      const again=view.status==='loading';
+      const said=el('p','jvr-home-error',again?'Nouvelle lecture auprès de Jarvis…'
+        :`Jarvis n’a pas pu dire ce que cette édition permet : ${cause.text} La création attend cette lecture.`);
+      said.setAttribute('role',again?'status':'alert');
+      const code=el('small','jvr-home-code',cause.code);
+      const retry=el('button','jvr-home-retry','Réessayer');retry.type='button';retry.dataset.homeAct='retry_edition';
+      if(again)retry.setAttribute('aria-disabled','true');
+      retry.addEventListener('click',()=>{
+        if(retry.getAttribute('aria-disabled')==='true')return;
+        log('home_edition_retry',{code:cause.code});
+        const failed=error=>{log('home_edition_retry_failed',{error:cleanLine(error&&error.message,120)},'error');
+          say('failed',`Relecture impossible : ${cleanLine(error&&error.message,100)}`)};
+        try{const r=edition.refresh();if(r&&typeof r.catch==='function')r.catch(failed)}catch(error){failed(error)}
+      });
+      box.append(el('p','jvr-home-title','Votre première présentation'),said,code,retry);
+      return box;
+    }
     function homeAct(action,origin){
       log('home_action',{action});
       if(action==='create')return createPresentation('home');
@@ -752,9 +799,10 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       }catch(error){
         const code=error&&error.code||'network';
         const base=CREATE_ERRORS[code];
-        const text=code==='timeout'?`Pas de réponse après ${CREATE_TIMEOUT_MS/1000} s : l’issue est inconnue, la liste est relue.`
-          :code==='presentation_studio_invalid'?base+cleanLine(error&&error.message,120):base||`Création impossible : ${cleanLine(error&&error.message,120)||code}`;
-        log('create_failed',{via,code,status:error&&error.status||null,message:cleanLine(error&&error.message,160)},'error');
+        const unknown=CREATE_UNKNOWN_OUTCOME.includes(code);
+        const text=code==='presentation_studio_invalid'?base+cleanLine(error&&error.message,120)
+          :base||`Création impossible : ${cleanLine(error&&error.message,120)||code}`;
+        log(unknown?'create_outcome_unknown':'create_failed',{via,code,status:error&&error.status||null,message:cleanLine(error&&error.message,160)},unknown?'warn':'error');
         S.creating=null;
         say('failed',text);
         refresh();
@@ -1006,16 +1054,24 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
         if(focusEl)focusEl.focus({preventScroll:true});
       });
     }
+    let askSeq=0;
     function askText(spec){
       const box=dialogShell(spec.title,spec.body);
       const input=el('input');input.type='text';input.value=cleanLine(spec.value,80);input.maxLength=80;input.setAttribute('aria-label',spec.title);
+      /* Un titre vide n'est pas envoyé : la ligne dit pourquoi rien ne part (QA runtime S08, m1). */
+      const why=el('p','jvr-fielderr');why.id=`jvrAskWhy${++askSeq}`;why.setAttribute('role','alert');why.hidden=true;
+      input.setAttribute('aria-describedby',why.id);
       const row=el('div','jvr-row');const cancel=el('button','',spec.cancelLabel||'Annuler');cancel.type='button';
       const ok=el('button','',spec.confirmLabel||'Valider');ok.type='button';
-      row.append(cancel,ok);box.append(input,row);
+      row.append(cancel,ok);box.append(input,why,row);
       const p=showDialog(box,input);
       cancel.addEventListener('click',()=>box.__finish(null));
-      const submit=()=>{const v=cleanLine(input.value,80);if(!v){input.focus();return}box.__finish(v)};
+      const submit=()=>{const v=cleanLine(input.value,80);
+        if(!v){why.textContent=spec.emptyText||'Le titre ne peut pas être vide : écrivez-en un.';why.hidden=false;
+          input.setAttribute('aria-invalid','true');input.focus();log('ask_text_empty',{title:spec.title});return}
+        box.__finish(v)};
       ok.addEventListener('click',submit);
+      input.addEventListener('input',()=>{if(!why.hidden){why.hidden=true;why.textContent='';input.removeAttribute('aria-invalid')}});
       input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submit()}});
       try{input.select()}catch(_e){/* intentional */}
       return p;
@@ -1091,7 +1147,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
   }
 
   const API=Object.freeze({DOM,ROUTE,STATE_ROUTE,STATE_LABEL,STATE_SHORT,STATE_COLOR,CSS,cleanLine,monogram,hueOf,stateOf,displayState,typeOf,ago,previewOf,cardOf,
-    densityOf,modelOf,shouldShow,menuModel,createRail,JOURNEY,CREATE_ROUTE,CREATE_ERRORS});
+    densityOf,modelOf,shouldShow,menuModel,createRail,JOURNEY,CREATE_ROUTE,CREATE_ERRORS,CREATE_UNKNOWN_OUTCOME,editionCause});
   root.JarvisPresentationRailCore=API;
   if(typeof module!=='undefined'&&module.exports)module.exports=API;
 

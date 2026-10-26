@@ -4459,12 +4459,17 @@ create button).
   « Présentations · moteur » card that stays the developer door (engine choice, Slidecar). One creation at a time,
   30 s deadline, the rail note counts the seconds; success re-reads the list, focuses the new card and says the next
   step; a refusal says its cause (limit reached, disk, Jarvis unreachable, title refused + Core's message); a timeout
-  says the outcome is unknown and re-reads.
+  (the page's 30 s, or the relay's `core_timeout` 504) says the outcome is unknown and re-reads. The codes are those
+  of the engine card's table (`JarvisStudioEngineCore.ERRORS`, checked by `test_product_edition_ui_js.py`) in
+  product wording. An empty title is not sent and the dialog says why.
+- **Edition not read** (Core did not answer `/api/boards/edition`, page marked as a product edition): the empty home
+  stays, says the cause and its code, and offers « Réessayer »; no creation step until Core answers.
 - **No engine jargon** when developer surfaces are hidden: a Remotion presentation reads « Présentation » (a Slidecar
   one still says « Slidecar »), and the card menu has no « Remotion Studio… » (`menuModel(row, {developer:false})`).
 
-Out of scope here (Slice 09, editing pass): the wording inside Variantes and the inspector, the export of a still or a
-PDF from the rail (I-003 point 1), French default export file names (I-003 point 2).
+Out of scope here (Slice 09, editing pass): the wording inside Variantes and the inspector, including hiding the
+« Remotion Studio » button and the message that points to the MCP dialog when developer surfaces are hidden (I-006);
+the export of a still or a PDF from the rail (I-003 point 1); French default export file names (I-003 point 2).
 
 ### Active workspace rail (Level 3, orbital shell Slice 07)
 

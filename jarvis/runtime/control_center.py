@@ -2686,7 +2686,7 @@ class ControlCenter:
             PRODUCT_EDITION_SCRIPT_MARKER,
             page.with_name(PRODUCT_EDITION_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
-        html = page_edition_markup(html)
+        html = page_edition_markup(html, report=self._report_page_edition_unreadable)
         html = html.replace(
             BOARDS_SCRIPT_MARKER,
             page.with_name(BOARDS_SCRIPT_FILE).read_text(encoding="utf-8"),
@@ -4173,6 +4173,20 @@ class ControlCenter:
         settings = self._settings()
         self._report_wake_word_unreadable(wake_word_settings.inspect(settings))
         return web.json_response(wake_word_settings.describe(settings))
+
+    def _report_page_edition_unreadable(self, exc: Exception) -> None:
+        """L'édition produit de ce processus est illisible au service de la page (Slice 08 presentation-edition).
+
+        La page est servie quand même (marquée `unreadable`, elle lit Core) ; Core refusera de démarrer avec la
+        même valeur. La cause est celle de `resolve_product_edition`, jamais un repli silencieux.
+        """
+
+        self.journal.emit(
+            "product_edition.page_unreadable",
+            f"Édition produit illisible au service de la page : {exc}",
+            level="error",
+            data={"error_type": type(exc).__name__},
+        )
 
     def _report_wake_word_unreadable(self, seen: dict) -> None:
         """Une ligne par processus quand le bloc est illisible (défauts appliqués).

@@ -1203,33 +1203,48 @@ is a normal radio; an unavailable kind is `aria-disabled`, dimmed with a dashed 
 Présentation. »; choosing it says that sentence and sends **no request**. A line under the orbs says « Cette édition
 crée des Boards Présentation. Assistant et Réunion arrivent bientôt. ». While Core has not answered, every orb is
 `aria-disabled` and the line counts the seconds (« Lecture des types de Board auprès de Jarvis… 3 s »); a failed read
-says its real cause and offers « Réessayer ». A Board of an unavailable kind (legacy) stays listed, renamable,
+says its real cause and offers « Réessayer ». The edition's line always wins over the answer to a click: choosing a
+kind that is not read yet re-says the cause (or the wait) and never replaces it with a wait, and the sentence of an
+unavailable kind lasts only until the edition's state changes (a new read, a recovery, « Réessayer »). While the read
+has failed, the accessible description of each orb says the same cause. A Board of an unavailable kind (legacy) stays listed, renamable,
 inspectable and archivable, tagged « Bientôt disponible », and never switched.
 
 **Presentation home** ([presentation-studio.md](presentation-studio.md) › *Presentation home*). In a product edition
 the workspace rail is visible in a Presentation Board even with no presentation, shows the journey (sources → create →
 scenes → review, present, export) and a « Nouvelle présentation » button in its head. Creation does not depend on the
-MCP inspector.
+MCP inspector. If the edition read fails while the page is marked as a product edition (`data-product-edition`,
+exposed as `pageEdition` by the store), the empty home stays visible and says the cause, its code and « Réessayer »
+instead of hiding the rail; no creation step is offered until Core answers. An empty title in « Nouvelle présentation »
+is not sent: the dialog says why (`role="alert"`, `aria-invalid`).
 
 **States.**
 
 | State | What the user sees |
 | --- | --- |
 | Edition not read yet | developer surfaces already as the server marked them; kind orbs off, line « Lecture… N s » |
-| Edition unreadable | kind orbs off, « Types de Board illisibles — <cause> La création attend leur lecture. », `code · message`, « Réessayer »; retried in the background |
-| Creating a presentation | rail note « Création de « X »… N s » (30 s deadline), button `aria-disabled`; timeout says the outcome is unknown and re-reads the list |
+| Edition unreadable | kind orbs off, « Types de Board illisibles — <cause> La création attend leur lecture. », `code · message`, « Réessayer »; retried in the background; empty Presentation Board: the home says the cause and « Réessayer » |
+| Page marking unreadable | server: journal `product_edition.page_unreadable` (error) and the module logger; page: `[edition] edition.page_unreadable`; surfaces stay visible until Core answers |
+| Creating a presentation | rail note « Création de « X »… N s » (30 s deadline), button `aria-disabled`; a page timeout or the relay's `core_timeout` (504) says the outcome is unknown and re-reads the list |
 | Creation refused | the cause in the rail note (limit reached, disk refused, Jarvis unreachable, title refused + Core's message); the home stays |
 
 **Journal.** `[edition] edition.loaded {edition, available, developer_surfaces}`, `.load_failed {code, status,
-message, attempt, retry_ms}`, `.surfaces_disagree`, `.shortcut_hidden`, `.settings_target_hidden`; `[boards]
+message, attempt, retry_ms}` (the 8 s deadline covers the response body too: a body that never ends is a `timeout`),
+`.surfaces_disagree`, `.shortcut_hidden`, `.settings_target_hidden`, `.page_unreadable`; `[boards]
 boards.kind_unavailable_chosen`, `.create_kind_unavailable`, `.switch_unavailable_kind`, `.kinds_retry`;
-`[presentation-rail] home_action`, `create_started`, `created`, `create_failed`, `studio_hidden`.
+`[presentation-rail] home_action`, `create_started`, `created`, `create_failed`, `create_outcome_unknown`,
+`home_edition_retry`, `ask_text_empty`, `studio_hidden`.
+
+**Voice refusal on the Board card.** In a product edition the « Refusé par la voix » sentence does not send the user to
+Réglages › Avancé & Diagnostics (hidden there): it says the voice configuration does not allow the session and that the
+setting is changed in developer mode (`PRESENCE_TEXT.refused.saidProduct`).
 
 **Tests.** `tests/unit/test_presentation_edition_ui_browser.py` (served page, `fetch` double of
 `_status_centre_browser.mjs` with `/api/boards/edition`, `POST /api/boards` and `POST
 /api/presentation-studio/presentations`; 1440×900, 1280×720, 600×800): hidden tools unreachable by click, Tab and
 shortcut; four Settings categories; kinds, focus, « Bientôt disponible », no request for an unavailable kind; legacy
-Board never switched; unreadable edition and retry; home, creation and refusal; `full` unchanged.
+Board never switched; unreadable edition and retry; a click on a kind never hides the cause and a recovery shows the
+edition; unread home with cause and retry; empty title and relay timeout; developer mode (`JARVIS_DEVELOPER_MODE=1`,
+page marked `visible`); `full` unchanged on a page marked `full`.
 `tests/unit/test_product_edition_ui_js.py` (node: payload parsing, kind choice, rows, registry filtering, rail model).
 `tests/unit/test_product_edition.py` (payload `developer_surfaces`, developer mode, page marking).
 

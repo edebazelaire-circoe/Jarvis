@@ -30,7 +30,7 @@ import subprocess
 
 import pytest
 
-from jarvis.domain.product_edition import FULL_EDITION, PRESENTATION_EDITION
+from jarvis.domain.product_edition import FULL_EDITION, PRESENTATION_EDITION, resolve_product_edition
 from jarvis.runtime.product_edition_env import page_edition_markup
 from tests.unit.test_boards_card_browser import _chrome, _served_page
 
@@ -51,22 +51,23 @@ NOTE = "(n=>n&&!n.hidden?{text:n.querySelector('p').textContent,tone:n.dataset.t
 FOCUS = "(()=>{const a=document.activeElement;return a?(a.id||a.dataset.kind||a.dataset.panel||a.tagName):null})()"
 
 
-def _page(tmp_path: Path, edition: str | None) -> Path:
-    """La page servie ; `edition` : marquée comme le serveur la marque pour cette édition (`None` : non marquée)."""
+def _page(tmp_path: Path, edition: str | None, env: dict | None = None) -> Path:
+    """La page servie ; `edition` : marquée comme le serveur la marque pour cette édition (`None` : non marquée) ;
+    `env` : variables de plus du processus (`JARVIS_DEVELOPER_MODE`)."""
 
     page = _served_page(tmp_path)
     if edition is not None:
-        env = {"JARVIS_PRODUCT_EDITION": edition}
+        env = {"JARVIS_PRODUCT_EDITION": edition, **(env or {})}
         page.write_text(page_edition_markup(page.read_text(encoding="utf-8"), env), encoding="utf-8")
     return page
 
 
-def _drive(tmp_path: Path, plan: list, edition: str | None) -> list:
+def _drive(tmp_path: Path, plan: list, edition: str | None, env: dict | None = None) -> list:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node absent")
     chrome = _chrome()
-    page = _page(tmp_path, edition)
+    page = _page(tmp_path, edition, env)
     plan_file = tmp_path / "plan.json"
     plan_file.write_text(json.dumps(plan), encoding="utf-8")
     done = subprocess.run([node, str(HARNESS), str(page), chrome, "@" + str(plan_file)],
@@ -238,7 +239,36 @@ def test_an_unreadable_edition_says_so_and_retries(tmp_path):
     assert "Core ne répond pas" in r["note"]["text"], "the real cause is said, not a generic one"
     assert r["screen"] == "kind", "nothing is creatable while Core has not answered"
     assert {k["kind"]: k["avail"] for k in r["kindsAfter"]} == {"assistant": "soon", "presentation": "available", "meeting": "soon"}
-    assert r["noteAfter"]["tone"] == "info"
+    assert r["noteAfter"]["tone"] == "info" and "arrivent bientôt" in r["noteAfter"]["text"], r["noteAfter"]
+    assert not any(b["path"] == "/api/boards" for b in step["bodies"])
+
+
+def test_a_click_on_a_kind_never_hides_the_cause_and_a_recovery_shows_the_edition(tmp_path):
+    """QA runtime S08, M1 + m2 : lecture en échec, clic sur un type, puis reprise réussie (sans « Réessayer »)."""
+    seed = {"edition": PRESENTATION, "editionFail": {"status": 503, "code": "core_unreachable"}}
+    actions = [
+        ["click", "card", "#boardsButton", 500],
+        ["click", "new", "#boardsNewBoard", 400],
+        ["eval", "note", NOTE, 50],
+        ["click", "assistant", '#boardsCreateKindPick [data-kind="assistant"]', 200],
+        ["eval", "noteClicked", NOTE, 50],
+        ["eval", "said", "document.getElementById('boardsAnnounce').textContent", 50],
+        ["eval", "kinds", KINDS, 50],
+        ["eval", "coreBack", "window.__sc.editionFail=null,1", 50],
+        ["eval", "recovered", "JarvisProductEdition.instance.refresh().then(()=>1)", 300],
+        ["eval", "noteAfter", NOTE, 50],
+        ["eval", "kindsAfter", KINDS, 50],
+    ]
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed, "actions": actions}], "presentation")[0]
+    r = step["results"]
+    cause = "Types de Board illisibles"
+    assert r["note"]["tone"] == "bad" and cause in r["note"]["text"]
+    assert r["noteClicked"] == r["note"], "the click on an unread kind keeps the cause on screen"
+    assert cause in r["said"], "the click re-says the cause"
+    assert all(cause in k["description"] for k in r["kinds"]), "the accessible description says the cause"
+    assert r["noteAfter"]["tone"] == "info" and "arrivent bientôt" in r["noteAfter"]["text"], r["noteAfter"]
+    assert "Lecture" not in r["noteAfter"]["text"]
+    assert {k["kind"]: k["avail"] for k in r["kindsAfter"]}["presentation"] == "available"
     assert not any(b["path"] == "/api/boards" for b in step["bodies"])
 
 
@@ -304,6 +334,93 @@ def test_a_failed_creation_says_its_cause_and_the_home_stays(tmp_path):
     assert r["home"] and r["busy"] is None, "the home stays and the button is usable again"
 
 
+def test_an_empty_presentation_board_says_why_when_the_edition_is_unread(tmp_path):
+    """QA S08, M4 : lecture de l'édition tombée, Board Présentation vide → l'accueil dit la cause et « Réessayer »."""
+    seed = {"edition": PRESENTATION, "rail": False, "boards": _boards(("default", "Pitch", "presentation")),
+            "editionFail": {"status": 503, "code": "core_unreachable"}}
+    rail = ("(h=>({visible:!h.hidden,text:h.querySelector('.jvr-homebox').textContent,"
+            "retry:!!h.querySelector('[data-home-act=retry_edition]'),alert:!!h.querySelector('.jvr-homebox [role=alert]'),"
+            "steps:h.querySelectorAll('.jvr-step').length}))(document.getElementById('presentationRail'))")
+    actions = [
+        ["eval", "settle", "1", 1500],
+        ["eval", "down", rail, 50],
+        *_shot("after-presentation-home-unread-1440x900"),
+        ["eval", "coreBack", "window.__sc.editionFail=null,1", 50],
+        ["click", "retry", "#presentationRail [data-home-act=retry_edition]", 800],
+        ["eval", "back", rail, 50],
+    ]
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed, "actions": actions}], "presentation")[0]
+    r = step["results"]
+    assert r["down"]["visible"] and r["down"]["retry"] and r["down"]["alert"], r["down"]
+    assert "Jarvis ne répond pas" in r["down"]["text"] and "core_unreachable" in r["down"]["text"]
+    assert r["down"]["steps"] == 0, "nothing is offered for creation before Core answers"
+    assert r["back"]["visible"] and r["back"]["steps"] == 4 and not r["back"]["retry"], r["back"]
+
+
+def test_an_empty_title_says_why_and_a_relay_timeout_is_an_unknown_outcome(tmp_path):
+    """QA runtime S08, m1 (titre vide) et QA S08, M3 (`core_timeout`, 504 du relais)."""
+    seed = {"edition": PRESENTATION, "rail": False, "boards": _boards(("default", "Pitch", "presentation")),
+            "createFail": {"status": 504, "code": "core_timeout", "message": "Core n'a pas répondu à temps"}}
+    actions = [
+        ["eval", "settle", "1", 1500],
+        ["click", "create", "#presentationRail .jvr-new", 300],
+        ["click", "empty", ".jvr-dialog .jvr-row button:last-child", 200],
+        ["eval", "why", "(d=>d?{text:d.querySelector('.jvr-fielderr').textContent,shown:!d.querySelector('.jvr-fielderr').hidden,"
+                        "invalid:d.querySelector('input').getAttribute('aria-invalid'),focus:document.activeElement.tagName}:null)"
+                        "(document.querySelector('.jvr-dialog'))", 50],
+        ["eval", "typed", _type(".jvr-dialog input", "Bilan"), 50],
+        ["eval", "cleared", "document.querySelector('.jvr-dialog .jvr-fielderr').hidden", 50],
+        ["click", "ok", ".jvr-dialog .jvr-row button:last-child", 1200],
+        ["eval", "after", "(n=>({text:n.textContent,kind:n.dataset.kind}))(document.querySelector('#presentationRail .jvr-note'))", 50],
+    ]
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed, "actions": actions}], "presentation")[0]
+    r = step["results"]
+    assert r["why"] == {"text": "Le titre ne peut pas être vide : écrivez-en un.", "shown": True, "invalid": "true",
+                        "focus": "INPUT"}, r["why"]
+    assert r["cleared"] is True
+    posts = [b for b in step["bodies"] if b["path"] == "/api/presentation-studio/presentations"]
+    assert posts == [{"path": "/api/presentation-studio/presentations", "body": {"title": "Bilan"}}], "an empty title sends nothing"
+    assert "issue est inconnue" in r["after"]["text"] and "impossible" not in r["after"]["text"], r["after"]
+
+
+# ------------------------------------------------------------------ mode développeur
+
+
+def test_developer_mode_shows_the_developer_tools_in_the_presentation_edition(tmp_path):
+    """QA S08, M7 : `JARVIS_DEVELOPER_MODE=1` → page marquée `visible`, Core le confirme ; les types restent ceux de
+    l'édition Presentation."""
+    env = {"JARVIS_PRODUCT_EDITION": "presentation", "JARVIS_DEVELOPER_MODE": "1"}
+    payload = resolve_product_edition(env).to_payload()
+    assert payload["edition"] == "presentation" and payload["developer_surfaces"] == "visible"
+    actions = [
+        ["eval", "markup", "[document.documentElement.getAttribute('data-product-edition'),"
+                           "document.documentElement.getAttribute('data-developer-surfaces')]", 50],
+        ["click", "more", "#dockMore", 250],
+        ["eval", "tools", "({" + ",".join(f"{code}:{SHOWN}({json.dumps(sel)})" for code, sel in DEVELOPER_TOOLS.items()) + "})", 50],
+        ["key", "esc", "Escape", 150],
+        ["eval", "blur", "document.activeElement.blur(),1", 50],
+        ["key", "t", "t", 300],
+        ["eval", "trace", "document.getElementById('panel').classList.contains('open')", 50],
+        ["click", "closeTrace", "#closePanel", 200],
+        ["eval", "hub", "openSettingsHub({source:'test'}),[...document.querySelectorAll('#settingsHubGrid [data-hub-category]')].map(c=>c.dataset.hubCategory)", 300],
+        ["eval", "close", "closeSettingsHub(),1", 400],
+        ["click", "card", "#boardsButton", 500],
+        ["click", "new", "#boardsNewBoard", 400],
+        ["eval", "kinds", KINDS, 50],
+        ["eval", "surfaces", "document.documentElement.getAttribute('data-developer-surfaces')", 50],
+    ]
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": {"edition": payload}, "actions": actions}],
+                  "presentation", {"JARVIS_DEVELOPER_MODE": "1"})[0]
+    _no_errors(step)
+    r = step["results"]
+    assert r["markup"] == ["presentation", "visible"]
+    assert r["tools"] == {"TRC": True, "LAB": True, "MCP": True, "PFB": True}
+    assert r["trace"] is True, "the Trace shortcut works again in developer mode"
+    assert len(r["hub"]) == 6 and "advanced_diagnostics" in r["hub"], r["hub"]
+    assert {k["kind"]: k["avail"] for k in r["kinds"]} == {"assistant": "soon", "presentation": "available", "meeting": "soon"}
+    assert r["surfaces"] == "visible", "Core confirms the page marking"
+
+
 # ------------------------------------------------------------------ édition full inchangée
 
 
@@ -325,10 +442,11 @@ def test_full_edition_is_unchanged(tmp_path):
         ["key", "esc3", "Escape", 200],
         ["eval", "rail", "document.getElementById('presentationRail').hidden", 50],
     ]
-    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed, "actions": actions}], None)[0]
+    # QA S08, M7 : la page est marquée `full` comme le serveur la marque (et non laissée sans marquage).
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed, "actions": actions}], "full")[0]
     _no_errors(step)
     r = step["results"]
-    assert r["markup"] == "__JARVIS_DEVELOPER_SURFACES__" or r["markup"] == "visible"
+    assert r["markup"] == "visible"
     assert r["tools"] == {"TRC": True, "LAB": True, "MCP": True, "PFB": True}
     assert r["hub"] == 6 and "Plugins & MCP" in r["names"] and "Avancé & Diagnostics" in r["names"]
     assert all(k["avail"] == "available" and k["disabled"] is None for k in r["kinds"]), r["kinds"]

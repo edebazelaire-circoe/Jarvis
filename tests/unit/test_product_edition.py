@@ -563,6 +563,46 @@ def test_the_served_page_is_marked_with_the_same_policy():
     assert page_edition_markup(page, {PRODUCT_EDITION_ENV: "nope"}) == '<html lang="fr" data-product-edition="unreadable">'
 
 
+def test_an_unreadable_page_edition_is_journaled_with_its_cause(caplog):
+    """M5 (QA S08) : la page illisible est servie, mais l'échec laisse une ligne avec la vraie cause."""
+    from jarvis.domain.errors import ConfigurationError
+    from jarvis.runtime.product_edition_env import PAGE_EDITION_PLACEHOLDER, page_edition_markup
+
+    seen: list[Exception] = []
+    page = f"<html {PAGE_EDITION_PLACEHOLDER}>"
+    with caplog.at_level("WARNING", logger="jarvis.runtime.product_edition_env"):
+        served = page_edition_markup(page, {PRODUCT_EDITION_ENV: "nope"}, report=seen.append)
+    assert served == '<html data-product-edition="unreadable">'
+    assert len(seen) == 1 and isinstance(seen[0], ConfigurationError) and "nope" in str(seen[0])
+    assert any("product edition unreadable" in r.getMessage() for r in caplog.records)
+    # Le chemin ordinaire ne signale rien.
+    page_edition_markup(page, {PRODUCT_EDITION_ENV: "presentation"}, report=seen.append)
+    assert len(seen) == 1
+
+
+async def test_the_control_center_journals_an_unreadable_page_edition(tmp_path, monkeypatch):
+    from jarvis.runtime.control_center import ControlCenter
+
+    monkeypatch.delenv(PRODUCT_EDITION_ENV, raising=False)
+    center = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+    # Le constructeur refuse déjà une valeur illisible : elle devient illisible ensuite (fichier .env relu, etc.).
+    monkeypatch.setenv(PRODUCT_EDITION_ENV, "nope")
+    emitted: list[tuple] = []
+    real = center.journal
+
+    class Spy:
+        def emit(self, kind, message, **kw):
+            emitted.append((kind, message, kw))
+            real.emit(kind, message, **kw)
+
+    monkeypatch.setattr(center, "journal", Spy())
+    served = (await center.index(None)).text
+    assert 'data-product-edition="unreadable"' in served
+    assert [e[0] for e in emitted if e[0].startswith("product_edition.")] == ["product_edition.page_unreadable"]
+    kind, message, kw = next(e for e in emitted if e[0] == "product_edition.page_unreadable")
+    assert "nope" in message and kw["level"] == "error"
+
+
 def test_the_control_center_page_carries_the_placeholder_once():
     from pathlib import Path
 

@@ -457,7 +457,10 @@ async def test_refus_perime_ecarte_et_code_en_infobulle_dans_un_vrai_navigateur(
         _wait(f"{HOST}.getAttribute('data-bd-presence')==='none'"),                         # 0
         {"a": "write", "file": ".voice_presentation", "value": stale, "ageS": 30},          # 1
         {"a": "post", "path": BOARD_MODE, "body": {"mode": "presentation"}},                # 2
-        _presence_is("inactive"),                                                           # 3
+        # `inactive` seul est ambigu : un battement servi entre l'écriture (1) et la bascule (2) le donne déjà, ligne
+        # cachée (mode Assistant). On attend la ligne MONTRÉE, donc le battement qui porte PRESENTATION (S08 reprise).
+        _wait(f"{HOST}.getAttribute('data-bd-presence')==='inactive'"
+              "&&!document.getElementById('boardsPresence').hidden"),                       # 3
         {"a": "read"},                                                                      # 4
         {"a": "write", "file": ".voice_presentation", "value": REPORTS["refused"]},         # 5
         _presence_is("refused"),                                                            # 6

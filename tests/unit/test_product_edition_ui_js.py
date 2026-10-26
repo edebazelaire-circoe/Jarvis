@@ -91,6 +91,36 @@ def test_the_store_reads_on_demand_and_never_loops_while_core_is_down():
     assert out["after"] == 3, "a ready model is never re-read by ensure"
 
 
+
+def test_a_body_slower_than_the_deadline_is_a_timeout_and_nothing_is_left_unhandled():
+    """M6 (QA S08) : la réponse arrive, son corps traîne au-delà de l'échéance → cause `timeout`, aucun rejet orphelin."""
+    out = node(
+        "const unhandled=[];process.on('unhandledrejection',e=>unhandled.push(String(e&&e.message||e)));"
+        "const timers=[];"
+        "const fetch=async()=>({ok:true,status:200,json:()=>new Promise(()=>{})});"
+        "const st=E.createStore({fetch,setTimeout:(fn,ms)=>{timers.push({fn,ms});return timers.length},clearTimeout:()=>{},"
+        "console:{info(){},warn(){},error(){}}});"
+        "const flush=()=>new Promise(r=>setImmediate(r));"
+        "st.ensure();await flush();"
+        "const deadline=timers.find(t=>t.ms===E.DEADLINE_MS);deadline.fn();await flush();await flush();"
+        "await new Promise(r=>setTimeout(r,20));"
+        "return {status:st.state().status,code:st.state().error.code,unhandled}")
+    assert out == {"status": "error", "code": "timeout", "unhandled": []}
+
+
+def test_an_unreadable_page_edition_is_said_at_the_console():
+    """M5 (QA S08) : la page marquée `unreadable` par le serveur le redit, puis s'en remet à Core."""
+    out = node(
+        "const lines=[];const attrs={'data-product-edition':'unreadable'};"
+        "const document={documentElement:{getAttribute:k=>attrs[k]===undefined?null:attrs[k],setAttribute(k,v){attrs[k]=v}}};"
+        "const st=E.createStore({document,fetch:async()=>{throw new Error('no')},setTimeout:()=>0,clearTimeout:()=>{},"
+        "console:{info(l){lines.push(['info',l])},warn(l){lines.push(['warn',l])},error(l){lines.push(['error',l])}}});"
+        "const plain=[];E.createStore({document:{documentElement:{getAttribute:()=>null,setAttribute(){}}},"
+        "console:{info(l){plain.push(l)},warn(l){plain.push(l)},error(l){plain.push(l)}}});"
+        "return {lines,shown:st.developerSurfacesShown(),plain}")
+    assert out["lines"] and out["lines"][0][0] == "error" and "edition.page_unreadable" in out["lines"][0][1]
+    assert out["shown"] is True and out["plain"] == []
+
 def test_the_board_kind_choice_follows_core_and_never_guesses():
     out = node(f"const ready={{status:'ready',model:E.parse({PRESENTATION}).model}};"
                "const kinds=['assistant','presentation','meeting'];"
@@ -115,6 +145,19 @@ def test_the_board_kind_choice_follows_core_and_never_guesses():
     assert "Jarvis n’a pas répondu à temps" in out["timeout"]
     assert out["full"] is None
     assert out["idle"] == "Lecture des types de Board auprès de Jarvis…", "never asked yet: no seconds counted"
+
+
+def test_a_refused_session_never_points_to_a_hidden_settings_page():
+    """M2 (QA S08) : en édition produit, le refus de la voix ne renvoie pas vers Avancé & Diagnostics (caché)."""
+    out = node("const r={event:'refused',last_failure_code:'presentation_requires_continuous'};"
+               "return {full:B.presenceOf(r,'presentation').said,visible:B.presenceOf(r,'presentation',{developerSurfaces:'visible'}).said,"
+               "hidden:B.presenceOf(r,'presentation',{developerSurfaces:'hidden'})}")
+    assert "Avancé & Diagnostics" in out["full"] and out["visible"] == out["full"]
+    hidden = out["hidden"]
+    assert hidden["state"] == "refused" and hidden["code"] == "presentation_requires_continuous"
+    for word in ("Réglages ›", "Avancé", "Duplex", "PRESENTATION"):
+        assert word not in hidden["said"], word
+    assert "mode développeur" in hidden["said"]
 
 
 def test_rows_mark_a_legacy_board_and_only_with_an_edition():
@@ -168,3 +211,26 @@ def test_the_rail_home_and_plain_cards():
     assert out["menu"] == [False, True]
     assert out["journey"] == [["sources", "dossier"], ["create", "create"], ["scenes", "chat"], ["review", None]]
     assert out["route"] == "/api/presentation-studio/presentations"
+
+
+def test_the_rail_creation_reads_every_engine_code_and_a_timeout_is_an_unknown_outcome():
+    """M3 (QA S08) : les codes de création du rail sont ceux de la table du moteur ; `core_timeout` (504 du relais) et
+    `timeout` laissent l'issue inconnue, jamais « Création impossible »."""
+    engine = json.dumps(str(RUNTIME / "control_center_presentation_studio_engine.js"))
+    out = node(f"const G=require({engine});"
+               "const engineOnly=['presentation_studio_engine_selection_refused','presentation_studio_unknown_presentation'];"
+               "return {missing:Object.keys(G.ERRORS).filter(c=>!engineOnly.includes(c)&&!(c in P.CREATE_ERRORS)),"
+               "unknown:P.CREATE_UNKNOWN_OUTCOME,core_timeout:P.CREATE_ERRORS.core_timeout,"
+               "cause:[P.editionCause({code:'timeout'}),P.editionCause({code:'core_unreachable'}),P.editionCause({code:'x',message:'boom'}),P.editionCause(null)]}")
+    assert out["missing"] == []
+    assert out["unknown"] == ["core_timeout", "timeout"]
+    assert "issue est inconnue" in out["core_timeout"] and "impossible" not in out["core_timeout"]
+    assert [c["code"] for c in out["cause"]] == ["timeout", "core_unreachable", "x", "network"]
+    assert out["cause"][2]["text"] == "boom"
+
+
+def test_the_store_tells_the_edition_marked_on_the_page():
+    out = node("const mk=v=>({documentElement:{getAttribute:k=>k==='data-product-edition'?v:null,setAttribute(){}}});"
+               "const c={info(){},warn(){},error(){}};"
+               "return ['presentation','full','unreadable','__JARVIS_PRODUCT_EDITION__',null].map(v=>E.createStore({document:mk(v),console:c}).state().pageEdition)")
+    assert out == ["presentation", "full", None, None, None]

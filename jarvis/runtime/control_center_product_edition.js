@@ -90,6 +90,10 @@
     const sink=d.console||null;
     const listeners=new Set();
     const marked=pageSurfaces(html&&html.getAttribute?html.getAttribute('data-developer-surfaces'):null);
+    /* L'édition que le serveur a posée sur la page (`presentation`, `full`…) ; `null` si non marquée ou illisible. Indice
+       seulement : elle dit qu'une lecture tombée concerne une édition produit (l'accueil le dit), jamais ce qui se crée. */
+    const pageEdition=(v=>typeof v==='string'&&/^[a-z][a-z_-]*$/.test(v)&&v!=='unreadable'?v:null)(
+      html&&html.getAttribute?html.getAttribute('data-product-edition'):null);
     const S={status:'idle',model:null,error:null,attempt:0,since:0,surfaces:marked||'visible',source:marked?'page':'default',
       inFlight:null,retry:0,coreBoards:false};
 
@@ -100,7 +104,7 @@
     }
     function snapshot(){
       return Object.freeze({status:S.status,model:S.model,error:S.error,attempt:S.attempt,since:S.since,
-        developerSurfaces:S.surfaces,source:S.source});
+        developerSurfaces:S.surfaces,source:S.source,pageEdition});
     }
     function emit(){
       const view=snapshot();
@@ -132,10 +136,18 @@
         const controller=typeof root.AbortController==='function'?new root.AbortController():null;
         try{
           if(!fetchImpl)throw Object.assign(new Error('la porte réseau de la page manque'),{code:'network'});
+          /* L'échéance couvre la réponse ET la lecture du corps : un corps qui traîne est un `timeout`, pas une
+             « réponse illisible ». Les deux promesses perdantes sont écoutées (aucun `unhandledrejection`). */
           const deadline=new Promise((_,reject)=>{timer=later(()=>{if(controller)controller.abort();
             reject(Object.assign(new Error(`pas de réponse après ${DEADLINE_MS/1000} s`),{code:'timeout'}))},DEADLINE_MS)});
-          const response=await Promise.race([fetchImpl(ROUTE,{cache:'no-store',signal:controller?controller.signal:undefined}),deadline]);
-          let body=null;try{body=await response.json()}catch(_e){body=null /* intentional: reported below as unreadable */}
+          const read=(async()=>{
+            const response=await fetchImpl(ROUTE,{cache:'no-store',signal:controller?controller.signal:undefined});
+            let body=null;try{body=await response.json()}catch(_e){body=null /* intentional: reported below as unreadable */}
+            return {response,body};
+          })();
+          deadline.catch(()=>{/* intentional: the race below reports it when it wins */});
+          read.catch(()=>{/* intentional: the race below reports it when it wins; after the deadline it is moot */});
+          const {response,body}=await Promise.race([read,deadline]);
           if(!response.ok){
             const e=isObject(body)&&isObject(body.error)?body.error:{};
             throw Object.assign(new Error(text(e.message)||`HTTP ${response.status}`),{code:text(e.code)||`http_${response.status}`,status:response.status});
@@ -160,6 +172,10 @@
       return S.inFlight;
     }
     if(marked&&html&&html.setAttribute)html.setAttribute('data-developer-surfaces',marked);
+    /* Le serveur n'a pas pu lire l'édition (`product_edition_env.page_edition_markup`, journalisé côté serveur) :
+       la page le redit, puis s'en remet à Core (surfaces visibles jusque-là, comme une page non marquée). */
+    if(html&&html.getAttribute&&html.getAttribute('data-product-edition')==='unreadable')
+      log('error','page_unreadable',{developer_surfaces:S.surfaces,next:ROUTE});
     return {
       /* Le bloc `boards` de `/api/status` (1 Hz) : tant que Core sert ses Boards, une lecture tombée est reprise ; quand
          il revient après une panne, elle repart aussitôt. */
