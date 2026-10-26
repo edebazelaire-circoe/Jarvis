@@ -265,8 +265,14 @@ class ProductReadinessService:
 
     async def complete_onboarding(self) -> dict[str, Any]:
         """Board Présentation actif (le Board actif s'il l'est, sinon le premier Présentation, sinon un nouveau), puis
-        le premier lancement est noté. Jamais un Board Assistant : l'édition le refuserait de toute façon."""
+        le premier lancement est noté. Jamais un Board Assistant : l'édition le refuserait de toute façon.
+        Refus `readiness_not_ready` (409) tant qu'une ligne indispensable n'est pas prête : la page grise
+        « Commencer » ; le serveur tient la même règle."""
 
+        report = await self.report()
+        if not report["ready"]:
+            raise ReadinessActionError(409, "readiness_not_ready",
+                                       f"required items not ready: {', '.join(report['blocking'])}")
         board = await self._ensure_presentation_board()
         record = {"schema": ONBOARDING_SCHEMA, "schema_version": 1, "completed_at": utc_now_iso(),
                   "board_id": board.get("board_id")}

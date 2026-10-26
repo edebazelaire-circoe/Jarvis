@@ -173,8 +173,12 @@ class FakeCore:
         return answer(body) if callable(answer) else answer
 
 
-def service(tmp_path: Path, core: FakeCore, *, installed: bool = True, **kwargs) -> ProductReadinessService:
+def service(tmp_path: Path, core: FakeCore, *, installed: bool = True, home_ready: bool = True,
+            **kwargs) -> ProductReadinessService:
     home = ProductHome(tmp_path / "home" / "CIRCOE" / "Jarvis")
+    if installed and home_ready:
+        for folder in (home.data, home.runtime, home.config):
+            folder.mkdir(parents=True, exist_ok=True)
     installation = Installation(InstallMode.INSTALLED if installed else InstallMode.DEVELOPMENT, tmp_path / "app",
                                 home if installed else None)
     runtime = tmp_path / "runtime"
@@ -189,7 +193,7 @@ def service(tmp_path: Path, core: FakeCore, *, installed: bool = True, **kwargs)
 
 async def test_a_report_reads_core_and_writes_nothing(tmp_path):
     core = FakeCore()
-    svc = service(tmp_path, core)
+    svc = service(tmp_path, core, home_ready=False)
     before = sorted(p.name for p in tmp_path.rglob("*"))
     payload = await svc.report()
     assert payload["schema"] == "jarvis.product-readiness" and payload["edition"] == "presentation"
@@ -214,7 +218,7 @@ async def test_a_core_refusal_or_timeout_becomes_a_line_with_its_cause(tmp_path)
 
 
 async def test_prepare_data_creates_the_home_layout_only(tmp_path):
-    svc = service(tmp_path, FakeCore())
+    svc = service(tmp_path, FakeCore(), home_ready=False)
     outcome = await svc.act("prepare_data")
     home = tmp_path / "home" / "CIRCOE" / "Jarvis"
     assert outcome["status"] == "done" and sorted(outcome["created"]) == ["config", "data", "runtime"]
@@ -312,6 +316,7 @@ async def test_onboarding_activates_a_presentation_board_and_never_an_assistant_
     assert done["board"]["board_id"] == "pres1" and done["onboarding"]["completed"] is True
     assert ("POST", "/v1/boards/switch", {"board_id": "pres1"}) in core.calls
     assert not any(call[:2] == ("POST", "/v1/boards") for call in core.calls)
+    assert all(call[0] == "GET" for call in core.calls if call[1] != "/v1/boards/switch")
     record = json.loads((tmp_path / "runtime" / "product-onboarding.json").read_text(encoding="utf-8"))
     assert record["schema"] == "jarvis.product-onboarding" and record["board_id"] == "pres1"
 
@@ -331,7 +336,18 @@ async def test_onboarding_keeps_an_active_presentation_board(tmp_path):
     core = FakeCore({("GET", "/v1/boards"): (200, {"boards": [{"board_id": "default", "board_kind": "presentation"}],
                                                    "active_board_id": "default"})})
     done = await service(tmp_path, core).complete_onboarding()
-    assert done["board"]["board_id"] == "default" and [c[:2] for c in core.calls] == [("GET", "/v1/boards")]
+    assert done["board"]["board_id"] == "default"
+    assert [c for c in core.calls if c[0] == "POST"] == []
+
+
+async def test_onboarding_is_refused_while_a_required_item_is_open(tmp_path):
+    core = FakeCore({("GET", "/v1/local-capabilities/remotion"): (200, {"capability": {"status": "not_installed"}})})
+    svc = service(tmp_path, core)
+    with pytest.raises(ReadinessActionError) as refused:
+        await svc.complete_onboarding()
+    assert refused.value.status == 409 and refused.value.code == "readiness_not_ready" and "render" in str(refused.value)
+    assert not any(call[1].startswith("/v1/boards") and call[1] != "/v1/boards/edition" for call in core.calls)
+    assert not (tmp_path / "runtime" / "product-onboarding.json").exists()
 
 
 async def test_an_unreadable_onboarding_record_replays_the_first_run(tmp_path):

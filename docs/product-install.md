@@ -194,7 +194,9 @@ deferred cleanly.
 **« Commencer »** (enabled when every required item is ready): `POST /api/product/onboarding/complete`
 makes a **Presentation** Board active — the active one if it is a Presentation Board, else the first
 Presentation Board, else a new « Mes présentations » — never an Assistant Board, then records
-`runtime\product-onboarding.json` (`jarvis.product-onboarding` v1). An unreadable record replays the
+`runtime\product-onboarding.json` (`jarvis.product-onboarding` v1). The server holds the same rule as
+the greyed button: while a required item is open it answers 409 `readiness_not_ready` (naming the
+items) and changes nothing. An unreadable record replays the
 first run (nothing is lost) and is journaled. Once done, the button reads « Fermer » and never switches
 Boards again.
 
