@@ -28,13 +28,17 @@
        Architecture et Sous-agents, qui sont ses deux onglets internes (`docs/settings/architecture-agents.md`). */
     /* `page` (refonte-ui-settings, Slice 07) : la catégorie s'ouvre en page pleine (fil d'Ariane, grand titre, `lead`,
        onglets de page, sans rail), comme la page Personnalisation ; les autres gardent le shell à rail. */
-    {id:'agents_models',label:'Architecture & Agents',description:'Architecture des cerveaux, délégation et modèles des sous-agents.',
+    /* `surface` (presentation-edition Slice 08, `docs/settings/navigation-registry.md` § Édition produit) : `developer` =
+       absente de la navigation quand l'édition cache les surfaces de développement ; ses sections en héritent.
+       `product` : libellé et description montrés à la place dans ce cas (sans jargon). */
+    {id:'agents_models',label:'Architecture & Agents',description:'Architecture des cerveaux, délégation et modèles des sous-agents.',surface:'developer',
       page:Object.freeze({lead:'Configurez l’architecture de JARVIS et ses sous-agents spécialisés pour orchestrer chaque tâche.'})},
     {id:'memory_knowledge',label:'Mémoire & Connaissances',description:'Mémoire, rappel et bases de connaissances.',
       page:Object.freeze({lead:'Configurez la mémoire de JARVIS, les sources de connaissances et l’accès des agents à ces informations.'})},
     {id:'interface_interactions',label:'Interface & Interactions',description:'Interface, modes d’interaction, entrées et sorties.'},
-    {id:'connections',label:'Plugins & MCP',description:'Extensions, outils externes et connecteurs.'},
-    {id:'advanced_diagnostics',label:'Avancé & Diagnostics',description:'Paramètres avancés, journaux et outils de diagnostic.',
+    {id:'connections',label:'Plugins & MCP',description:'Extensions, outils externes et connecteurs.',
+      product:Object.freeze({label:'Connexions',description:'Comptes et services que Jarvis peut utiliser.'})},
+    {id:'advanced_diagnostics',label:'Avancé & Diagnostics',description:'Paramètres avancés, journaux et outils de diagnostic.',surface:'developer',
       notice:'Outils d’opérateur : architecture, prompts, runtime, état constaté et essais de JARVIS. Les réglages du quotidien sont dans les autres catégories.'},
   ]);
   const CATEGORY_IDS=Object.freeze(CATEGORIES.map(c=>c.id));
@@ -87,7 +91,8 @@
   const SAVE_POLICIES=Object.freeze(['footer','self','readonly']);
   const APPLIES=Object.freeze(['immediate','next_turn','next_core_start','next_voice_start']);
   const ID=/^[a-z][a-z0-9_]{0,63}$/;
-  const KEYS=new Set(['id','category','label','description','order','group','mount','destroy','save','isDirty','advanced','applies','fill']);
+  const KEYS=new Set(['id','category','label','description','order','group','mount','destroy','save','isDirty','advanced','applies','fill','surface']);
+  const SURFACES=Object.freeze(['product','developer']);
 
   function fail(code,message){const error=new Error(message);error.code=code;error.name='SettingsRegistryError';return error}
   const own=(object,key)=>Object.prototype.hasOwnProperty.call(object,key);
@@ -96,10 +101,11 @@
 
   /* Catégorie voisine dans l'ordre canonique, en boucle : ce que font
      `ui_tab_next` / `ui_tab_prev` dans le shell à six catégories (Slice 02). */
-  function cycleCategory(id,step){
-    const index=CATEGORY_IDS.indexOf(id),delta=step<0?-1:1;
-    if(index<0)return CATEGORY_IDS[delta>0?0:CATEGORY_IDS.length-1];
-    return CATEGORY_IDS[(index+delta+CATEGORY_IDS.length)%CATEGORY_IDS.length];
+  function cycleCategory(id,step,options){
+    const ids=options?categoriesFor(options).map(c=>c.id):CATEGORY_IDS;
+    const index=ids.indexOf(id),delta=step<0?-1:1;
+    if(index<0)return ids[delta>0?0:ids.length-1];
+    return ids[(index+delta+ids.length)%ids.length];
   }
 
   function legacyAlias(tabId){return typeof tabId==='string'&&own(LEGACY_TAB_ALIASES,tabId)?LEGACY_TAB_ALIASES[tabId]:null}
@@ -129,6 +135,22 @@
     if(spec.advanced!==undefined&&typeof spec.advanced!=='boolean')throw fail(ERROR_CODES.invalid,`Section ${spec.id} : advanced booléen attendu.`);
     if(spec.fill!==undefined&&typeof spec.fill!=='boolean')throw fail(ERROR_CODES.invalid,`Section ${spec.id} : fill booléen attendu.`);
     if(spec.applies!==undefined&&!APPLIES.includes(spec.applies))throw fail(ERROR_CODES.invalid,`Section ${spec.id} : applies attendu parmi ${APPLIES.join(', ')}.`);
+    if(spec.surface!==undefined&&!SURFACES.includes(spec.surface))throw fail(ERROR_CODES.invalid,`Section ${spec.id} : surface attendue parmi ${SURFACES.join(', ')}.`);
+  }
+
+  /* --- Édition produit (presentation-edition Slice 08) ------------------------------------------------------------
+     `options.developerSurfaces` vaut `hidden` quand l'édition cache les surfaces de développement
+     (`JarvisProductEdition`, lu sur Core) : les catégories et sections `developer` sortent de la navigation et une
+     catégorie qui déclare `product` montre ce libellé. Tout autre valeur (ou rien) : les six catégories, inchangées. */
+  const hidesDeveloper=options=>!!options&&options.developerSurfaces==='hidden';
+  function categoriesFor(options){
+    const hide=hidesDeveloper(options);
+    return CATEGORIES.filter(c=>!(hide&&c.surface==='developer'))
+      .map(c=>hide&&c.product?Object.assign({},c,{label:c.product.label,description:c.product.description}):c);
+  }
+  function surfaceOfSection(entry){
+    const c=category(entry.category);
+    return c&&c.surface==='developer'?'developer':entry.surface||'product';
   }
 
   function createRegistry(){
@@ -143,7 +165,7 @@
       const entry=Object.freeze({id,category:spec.category,label:spec.label,description:spec.description||'',
         order:spec.order===undefined?0:spec.order,group:spec.group||null,mount:spec.mount,destroy:spec.destroy||null,
         save:spec.save,isDirty:spec.isDirty||null,advanced:spec.advanced===true,applies:spec.applies||null,
-        fill:spec.fill===true,seq:sections.size});
+        fill:spec.fill===true,surface:spec.surface||'product',seq:sections.size});
       sections.set(id,entry);
       return entry;
     }
@@ -182,10 +204,23 @@
   /* --- Navigation du shell à six catégories (Slice 02) ---------------------
      Ce que le shell dessine : pour chaque catégorie, ses sections enregistrées dans l'ordre du registre
      (`registry.sections`). Depuis la Slice 09 il n'y a plus d'onglet hérité ni de lien « encore dans ». */
-  function shellNavigation(registry){
-    const categories=CATEGORIES.map(c=>({id:c.id,label:c.label,description:c.description,notice:c.notice||'',page:c.page||null,groups:groupsOf(c.id),
-      items:(registry?registry.sections(c.id):[]).map(s=>({kind:'section',id:s.id,label:s.label,save:s.save,advanced:s.advanced,group:s.group,fill:!!s.fill}))}));
+  function shellNavigation(registry,options){
+    const hide=hidesDeveloper(options);
+    const categories=categoriesFor(options).map(c=>({id:c.id,label:c.label,description:c.description,notice:c.notice||'',page:c.page||null,groups:groupsOf(c.id),
+      items:(registry?registry.sections(c.id):[]).filter(s=>!(hide&&surfaceOfSection(s)==='developer'))
+        .map(s=>({kind:'section',id:s.id,label:s.label,save:s.save,advanced:s.advanced,group:s.group,fill:!!s.fill}))}));
     return {categories};
+  }
+
+  /* Une cible (catégorie, section, alias) est-elle montrée dans cette édition ? Inconnue : `false`. */
+  function targetShown(target,registry,options){
+    const hit=registry?registry.resolve(target):(CATEGORY_IDS.includes(target)?{category:target,section:null}:null);
+    if(!hit)return false;
+    if(!hidesDeveloper(options))return true;
+    const c=category(hit.category);
+    if(c&&c.surface==='developer')return false;
+    const entry=hit.section&&registry?registry.section(hit.section):null;
+    return !(entry&&surfaceOfSection(entry)==='developer');
   }
 
   /* Une cible (catégorie, section, alias hérité) → `{category, item}` dans `nav` (`shellNavigation`). `item` vaut
@@ -201,7 +236,7 @@
   }
 
   const api=Object.freeze({CATEGORIES,CATEGORY_IDS,CATEGORY_GROUPS,DEFAULT_CATEGORY,LEGACY_TAB_ALIASES,ERROR_CODES,SAVE_POLICIES,APPLIES,
-    category,groups:groupsOf,cycleCategory,legacyAlias,createRegistry,shellNavigation,shellTarget,
+    category,groups:groupsOf,cycleCategory,legacyAlias,createRegistry,shellNavigation,shellTarget,categoriesFor,targetShown,SURFACES,
     /* L'instance de la page, où les modules enregistrent leurs sections. */
     page:createRegistry()});
   root.JarvisSettingsRegistry=api;

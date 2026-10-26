@@ -27,6 +27,7 @@ from jarvis.runtime.voice_architecture_config import (
     parse_voice_mode, store_voice_architecture, voice_architecture_query,
 )
 from jarvis.runtime.voice_capabilities import VoiceCapabilityRegistry, default_voice_registry
+from jarvis.runtime.product_edition_env import page_edition_markup
 from jarvis.domain.speaker import (
     DEFAULT_OWNER_BUFFER_MS,
     MAX_OWNER_BUFFER_MS,
@@ -699,6 +700,10 @@ INPUT_ARBITRATION_SCRIPT_MARKER = "/*__CONTROL_CENTER_INPUT_ARBITRATION_JS__*/"
 #: (`#boardsHud`, `#boardsPanel`) ; refus d'installation rattrapé.
 BOARDS_SCRIPT_FILE = "control_center_boards.js"
 BOARDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BOARDS_JS__*/"
+#: Édition produit côté page (jarvis-presentation-edition-v1, Slice 08) : lit `/api/boards/edition` et le marquage
+#: `<html data-developer-surfaces>` posé par `page_edition_markup` ; `window.JarvisProductEdition`. Avant les Boards.
+PRODUCT_EDITION_SCRIPT_FILE = "control_center_product_edition.js"
+PRODUCT_EDITION_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRODUCT_EDITION_JS__*/"
 PRESENTATION_ATTENTION_SCRIPT_FILE = "control_center_presentation_attention.js"
 PRESENTATION_ATTENTION_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_ATTENTION_JS__*/"
 #: Client pur de la scène constellation (Slice 03) : application ordonnée des
@@ -2677,6 +2682,11 @@ class ControlCenter:
             html = html.replace(marker, page.with_name(file_name).read_text(encoding="utf-8"))
         # Remis AVEC la page, une fois la vue du Dossier insérée (Slice 07) : ses reçus de navigation l'exigent.
         html = html.replace(DOSSIER_PAGE_TOKEN_MARKER, self.dossier_navigation.broker.page_token)
+        html = html.replace(
+            PRODUCT_EDITION_SCRIPT_MARKER,
+            page.with_name(PRODUCT_EDITION_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = page_edition_markup(html)
         html = html.replace(
             BOARDS_SCRIPT_MARKER,
             page.with_name(BOARDS_SCRIPT_FILE).read_text(encoding="utf-8"),

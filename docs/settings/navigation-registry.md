@@ -190,3 +190,23 @@ ont été retirés. `test_no_legacy_tab_machinery_is_left_in_the_repository` emp
   enregistrée (par son ID ou un alias de § 3) ; la catégorie seule d'un alias dont la section n'est pas enregistrée ;
   `null` pour une cible inconnue.
 - Le shell, son clavier, son focus et la façon de monter une section : [`settings-shell.md`](settings-shell.md).
+
+## 7. Édition produit (Slice 08 de `jarvis-presentation-edition-v1`)
+
+Une catégorie ou une section se déclare **surface de développement** là où elle est déclarée : `surface:'developer'`
+(catégories `agents_models` et `advanced_diagnostics` ; sections `barehands` d'Interface & Interactions et
+`mcp_plugins` de Plugins & MCP). Une section hérite du `developer` de sa catégorie. Valeurs permises : `product`
+(défaut) et `developer` ; toute autre est refusée (`settings_section_invalid`). Une catégorie peut porter `product`
+(`{label, description}`) : le libellé montré quand ces surfaces sont cachées (`connections` → « Connexions »,
+« Comptes et services que Jarvis peut utiliser. »).
+
+- `categoriesFor(options)`, `shellNavigation(registry, options)`, `cycleCategory(id, step, options)` : avec
+  `options.developerSurfaces === 'hidden'`, les catégories et sections `developer` sortent ; sans option, les six
+  catégories, inchangées.
+- `targetShown(cible, registry, options)` : la cible (catégorie, section, alias) est-elle montrée ? `openSettingsTab`
+  ouvre une cible cachée comme une cible inconnue, sur `DEFAULT_CATEGORY` (journal `edition.settings_target_hidden`).
+- `settingsEditionOptions()` (page) lit `JarvisProductEdition.developerSurfacesShown()` : le marquage que le serveur
+  pose sur `<html>`, confirmé par Core ([`../control-center-shell.md`](../control-center-shell.md) › *Product edition UI*).
+
+Rien n'est retiré du registre : la page enregistre toujours toutes ses sections ; seule la navigation les cache.
+Régression : `tests/unit/test_product_edition_ui_js.py`, `tests/unit/test_presentation_edition_ui_browser.py`.

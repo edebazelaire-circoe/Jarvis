@@ -1651,6 +1651,26 @@ this page; the server side of each refusal is already journaled by Core
 **Reduced motion.** The waiting bar stops (static full bar), the panel opens
 without animation; the counters keep counting.
 
+### Product edition (Slice 08 of `jarvis-presentation-edition-v1`)
+
+The control reads Board kind availability from Core only (`GET /api/boards/edition`, through
+`window.JarvisProductEdition`; contract [product-edition.md](product-edition.md) › *Availability*, page rules
+[control-center-shell.md](control-center-shell.md) › *Product edition UI*). Pure helpers, exported on
+`window.JarvisBoards`: `kindChoiceOf(kind, edition)` (`available` | `soon` | `unknown`), `defaultKindOf(edition)`,
+`kindNoteOf(edition, now)`, `SOON`, and `rowsOf(…, {edition})` (`unavailable` per row).
+
+| Situation | Kind screen | List |
+| --- | --- | --- |
+| Edition read, kind available | normal radio orb; the type proposed first is Core's `default_board_kind` | row switchable |
+| Edition read, kind unavailable | orb `aria-disabled`, dashed and dimmed, tag « Bientôt disponible », described « <Type> : bientôt disponible. Cette édition de Jarvis crée des Boards Présentation. »; choosing it says so, **no request** (journal `boards.kind_unavailable_chosen`) | a legacy Board of that kind: tag « Bientôt disponible », its pick `aria-disabled`, a click says why it does not open (journal `boards.switch_unavailable_kind`), no switch request; rename, inspect and archive stay |
+| Not read yet | every orb `aria-disabled`, line « Lecture des types de Board auprès de Jarvis… N s » (live seconds) | rows as before (Core still refuses a forged switch, 409) |
+| Read failed | every orb `aria-disabled`, line « Types de Board illisibles — <cause> La création attend leur lecture. » with `code · message` and « Réessayer »; entering the kind screen re-reads at once | rows as before |
+
+`createBoard` refuses locally a kind that is not `available` (journal `boards.create_kind_unavailable`): a body
+without `board_kind` would otherwise be given the default of another edition. Without an edition source
+(`deps.edition` absent: node extracts, older harnesses) every kind stays available, as before. In `full` the screen is
+unchanged except that the kinds wait for Core's answer (a few milliseconds locally).
+
 ### `/api/status` → `boards`
 
 Read once per status beat together with the interaction mode (one

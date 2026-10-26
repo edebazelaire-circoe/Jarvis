@@ -100,6 +100,11 @@ const SERVER=`(()=>{
       out.push({seq:++seq,ts:iso(now-60000*seq),category,kind:'agent.subagent.finished',label:labels[category]+' '+(i+1),detail:'',task_id:'',unread:true});
     return out;
   };
+  /* La charge de Core en édition \`full\` (\`ProductEditionPolicy.to_payload\`). */
+  const EDITION_FULL={edition:'full',default_board_kind:'assistant',developer_surfaces:'visible',board_kinds:[
+    {board_kind:'assistant',availability:'available',available:true,behavior_status:'ready'},
+    {board_kind:'presentation',availability:'available',available:true,behavior_status:'ready'},
+    {board_kind:'meeting',availability:'available',available:true,behavior_status:'planned'}]};
   const json=(status,body)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
   const snapshot=()=>({source:'core',core_reachable:true,scene:{state:'ready',code:null,saturated:false,objects:S.objects.length,object_limit:512},
     scene_id:'scene',epoch:'e1',revision:S.revision,
@@ -188,6 +193,25 @@ const SERVER=`(()=>{
       }
       return json(200,{outcome:'applied',revision:S.revision});
     }
+    /* Slice 08 presentation-edition : la disponibilité des types (\`edition\` : la charge de Core, défaut \`full\` ;
+       \`editionFail\` : {status, code} refusé ; \`editionHang\` : jamais de réponse, seule l'échéance de la page l'abandonne),
+       et la création d'un Board qui suit la même règle que Core (409 \`board_kind_unavailable\`). */
+    if(url==='/api/boards/edition'){
+      S.editionReads=(S.editionReads||0)+1;
+      if(S.editionHang)return new Promise((_ok,ko)=>{const sig=init&&init.signal;if(sig)sig.addEventListener('abort',()=>ko(new DOMException('aborted','AbortError')),{once:true})});
+      if(S.editionFail&&!(S.editionFailTimes!=null&&S.editionReads>S.editionFailTimes))
+        return json(S.editionFail.status||503,{error:{code:S.editionFail.code||'core_unreachable',message:S.editionFail.message||'Core injoignable (double)'}});
+      return json(200,S.edition||EDITION_FULL);
+    }
+    if(url==='/api/boards'&&method==='POST'){
+      const body=JSON.parse(init.body),edition=S.edition||EDITION_FULL;
+      const kind=body.board_kind||edition.default_board_kind;
+      const row=edition.board_kinds.find(k=>k.board_kind===kind);
+      if(!row||!row.available)return json(409,{error:{code:'board_kind_unavailable',message:'board_kind '+kind+' is not available (double)'}});
+      const board={board_id:'board_'+(S.boards.length+1),title:body.title,status:'active',board_kind:kind};
+      S.boards=S.boards.concat([board]);
+      return json(201,{board});
+    }
     if(url.split('?')[0]==='/api/boards')return json(200,{boards:S.boards,active_board_id:S.activeBoard});
     if(url==='/api/boards/switch'&&method==='POST'){S.activeBoard=JSON.parse(init.body).board_id;return json(200,{changed:true});}
     if(url==='/api/sessions/current')return json(200,{session:{jarvis_session_id:'jsess_1',started_at:iso(now),visited_board_ids:[S.activeBoard]}});
@@ -199,10 +223,21 @@ const SERVER=`(()=>{
         variant_count:2,engine:'remotion',type:{engine:'remotion'},revision:1,updated_at:iso(now-3600000*n),hidden:false,archived:false,
         preview:null,unreviewed:null,work:n===1?{state:'working',label:'presentation_edit',age_s:3}:{state:'done',label:'',age_s:null}});
       const rows=S.railRows?S.railRows.map((r,i)=>Object.assign(row(i+1,r.title||'Présentation '+(i+1)),r)):[row(1,'Présentation Jarvis'),row(2,'Bilan trimestriel')];
-      return json(200,{presentations:S.rail===false?[]:rows,problems:[],work_revision:1,
+      return json(200,{presentations:(S.rail===false?[]:rows).concat(S.created||[]),problems:[],work_revision:1,
         ui:{seq:0,request:null,reported:null},playing:null});
     }
     if(url==='/api/presentation-studio/rail/display-state')return json(200,{seq:0});
+    /* Slice 08 presentation-edition : « Nouvelle présentation » de l'accueil ; \`createFail\` : {status, code}. */
+    if(url==='/api/presentation-studio/presentations'&&method==='POST'){
+      if(S.createDelayMs)await new Promise(r=>setTimeout(r,S.createDelayMs));
+      if(S.createFail)return json(S.createFail.status||500,{error:{code:S.createFail.code,message:S.createFail.message||'refusé (double)'}});
+      const title=JSON.parse(init.body).title,n=(S.created||[]).length+1;
+      const id='pst_'+('c'+n).padEnd(32,'0');
+      const row={presentation_id:id,title,active_variant_id:'psv_'+('c'+n).padEnd(32,'0'),variant_count:1,engine:'remotion',type:{engine:'remotion'},
+        revision:1,updated_at:iso(Date.now()),hidden:false,archived:false,preview:null,unreviewed:null,work:{state:'done',label:'',age_s:null}};
+      S.created=(S.created||[]).concat([row]);
+      return json(201,{presentation:{presentation_id:id,title,engine:'remotion'}});
+    }
     /* Slice 07 : le Dossier plein écran. \`dsr\` (graine) : {boards:{id:{board, entries, files:{path:{text, sha}}}}} ;
        \`dsrFail\` : {route: {status, code}} (list | entry | read | write | present | move | delete | search) ;
        \`dsrDelayMs\` : {route: ms}. Les écritures suivent le propriétaire : \`expected_sha256\` faux -> 409
