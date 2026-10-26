@@ -312,14 +312,40 @@ def dir_size_kb(root: Path) -> int:
     return total // 1024
 
 
+def copy_matches(source: Path, target: Path) -> list[str]:
+    """La copie a-t-elle exactement les fichiers (chemins et tailles) du paquet vérifié, et le même manifeste ?
+
+    Le paquet source vient d'être vérifié en entier (empreintes). Le refaire sur la copie relirait chaque fichier une
+    seconde fois : sur un poste protégé par l'antivirus, chaque première lecture d'un fichier neuf est analysée
+    (mesuré : ~3,5 min pour 11 000 fichiers). La copie est donc vérifiée par sa forme exacte ; une installation
+    altérée plus tard est trouvée par « Vérifier l'installation » (`verify_package`, empreintes complètes).
+    """
+
+    def listing(root: Path) -> dict[str, int]:
+        return {relative: path.stat().st_size for relative, path in PR.iter_tree(root)}
+
+    expected, actual = listing(source), listing(target)
+    problems = [f"{name}: absent de la copie" for name in sorted(set(expected) - set(actual))[:20]]
+    problems += [f"{name}: en trop dans la copie" for name in sorted(set(actual) - set(expected))[:20]]
+    problems += [f"{name}: taille différente" for name in sorted(set(expected) & set(actual))
+                 if expected[name] != actual[name]][:20]
+    if (source / PR.RUNTIME_MANIFEST).read_bytes() != (target / PR.RUNTIME_MANIFEST).read_bytes():
+        problems.append(f"{PR.RUNTIME_MANIFEST}: différent")
+    return problems
+
+
 def install(source: Path, targets: Targets, *, move: bool, progress: Progress,
             shortcuts: Shortcuts | None = None, alive: Callable[[int], bool] = pid_alive,
-            verify: Callable[[PR.PackageLayout], tuple[dict | None, list[str]]] = PR.verify_package) -> dict[str, Any]:
+            verify: Callable[[PR.PackageLayout], tuple[dict | None, list[str]]] = PR.verify_package,
+            verify_copy: Callable[[Path, Path], list[str]] = copy_matches) -> dict[str, Any]:
     """Installe (ou met à jour, ou répare) le paquet `source` dans `targets.target`. Voir l'en-tête du module."""
 
     check_target(targets)
+    # Avant la vérification du paquet (plusieurs minutes) : un JARVIS ouvert est dit tout de suite.
+    if launcher_running(targets.home, alive=alive):
+        raise SetupError("jarvis_running", "JARVIS est ouvert : quittez-le, puis relancez l'installation.")
     source = Path(source).resolve()
-    progress.step("verify_source", "Vérification du paquet…")
+    progress.step("verify_source", "Vérification de chaque fichier du paquet (quelques minutes)…")
     manifest, problems = verify(PR.PackageLayout(source))
     if manifest is None or problems:
         raise SetupError("package_damaged", "Le fichier d'installation est abîmé : téléchargez-le à nouveau.",
@@ -335,8 +361,6 @@ def install(source: Path, targets: Targets, *, move: bool, progress: Progress,
             existing = {"product": {"version": "?"}}
         if existing is None and any(target.iterdir()):
             raise SetupError("target_not_empty", "Ce dossier contient déjà autre chose que JARVIS.", str(target))
-    if launcher_running(targets.home, alive=alive):
-        raise SetupError("jarvis_running", "JARVIS est ouvert : quittez-le, puis relancez l'installation.")
     mode = "install" if existing is None else ("repair" if _version(existing) == version else "update")
     progress.step("plan", {"install": "Installation de JARVIS…", "repair": "Réparation de JARVIS…",
                            "update": "Mise à jour de JARVIS…"}[mode], mode=mode, version=version)
@@ -350,15 +374,18 @@ def install(source: Path, targets: Targets, *, move: bool, progress: Progress,
                              "relancez l'installation.", f"{type(exc).__name__}: {exc}") from exc
     try:
         progress.step("copy", "Mise en place des fichiers…")
+        moved = False
         if move:
             try:
                 os.replace(source, target)
+                moved = True
             except OSError:
+                # intentional: the running installer Python lives in `source` (Windows refuses to move it); copy instead
                 shutil.copytree(source, target)
         else:
             shutil.copytree(source, target)
         progress.step("verify_target", "Vérification de l'installation…")
-        _installed, after = verify(PR.PackageLayout(target))
+        after = [] if moved else verify_copy(source, target)
         if after:
             raise SetupError("installed_copy_damaged", "La copie installée ne correspond pas au paquet.",
                              "; ".join(after)[:1000])

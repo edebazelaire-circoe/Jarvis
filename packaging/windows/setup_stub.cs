@@ -273,7 +273,7 @@ namespace Circoe.Jarvis.Setup
         void Tick()
         {
             int seconds = (int)(DateTime.Now - startedAt).TotalSeconds;
-            status.Text = installer.Phase + "  ·  " + seconds + " s (l'installation prend en général une à trois minutes)";
+            status.Text = installer.Phase + "  ·  " + seconds + " s (l'installation prend en général trois à six minutes)";
             if (worker.IsAlive) return;
             timer.Stop(); bar.Visible = false; finished = true;
             var r = installer.Result;

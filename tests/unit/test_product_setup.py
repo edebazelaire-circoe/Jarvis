@@ -123,16 +123,9 @@ def test_a_damaged_source_changes_nothing(tmp_path):
 def test_a_failure_after_the_swap_puts_the_previous_program_back(tmp_path):
     t = targets(tmp_path)
     S.install(make_package(tmp_path / "v1"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
-    calls = {"n": 0}
-
-    def verify(layout):
-        calls["n"] += 1
-        manifest, problems = PR.verify_package(layout)
-        return (manifest, problems) if calls["n"] == 1 else (manifest, ["app: arbre modifié"])
-
     with pytest.raises(S.SetupError) as refused:
         S.install(make_package(tmp_path / "v2", "0.3.0"), t, move=False, progress=quiet(),
-                  shortcuts=RecordingShortcuts(), verify=verify)
+                  shortcuts=RecordingShortcuts(), verify_copy=lambda source, target: ["app/jarvis/x.py: taille différente"])
     assert refused.value.code == "installed_copy_damaged"
     assert "0.2.0" in (t.target / "app" / "jarvis" / "__init__.py").read_text(encoding="utf-8")
     assert not list(t.target.parent.glob("Jarvis.previous-*"))
@@ -234,3 +227,19 @@ def test_real_shortcuts_are_written_with_wscript_shell_into_a_simulated_folder(t
     finally:
         pythoncom.CoUninitialize()
     assert arguments == "-B -m jarvis launch" and target.lower().endswith("notepad.exe")
+
+
+def test_the_copy_check_names_missing_extra_and_resized_files(tmp_path):
+    source = make_package(tmp_path / "src")
+    copy = tmp_path / "copy"
+    import shutil
+
+    shutil.copytree(source, copy)
+    assert S.copy_matches(source, copy) == []
+    (copy / "licenses" / "LICENSE.txt").write_text("changed size\n", encoding="utf-8")
+    (copy / "runtime" / "node" / "node.exe").unlink()
+    (copy / "stray.txt").write_text("x", encoding="utf-8")
+    problems = S.copy_matches(source, copy)
+    assert "runtime/node/node.exe: absent de la copie" in problems
+    assert "stray.txt: en trop dans la copie" in problems
+    assert "licenses/LICENSE.txt: taille différente" in problems
