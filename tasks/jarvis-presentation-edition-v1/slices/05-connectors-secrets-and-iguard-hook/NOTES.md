@@ -76,6 +76,8 @@ la tâche n'est pas édité ici (worktree parallèle du Slice 03) : l'orchestrat
 - Échecs présents avant cette Slice (non dus à elle) : `test_app::…tools_gateway_target…`,
   `test_brain_capability_parity` (`ui_intent_publish`), `test_control_center_mcp_api` (5 tests :
   `jarvis-display` compte 21 outils au lieu de 20, changement du Slice 02 `f239e91c`).
+  `test_connections_settings_browser` (3 tests, `focus` sur un élément absent du DOM) : échoue
+  aussi sur `24d6d86a` sans cette Slice (vérifié dans un worktree jetable, supprimé).
 
 ## À éprouver en runtime (bac à sable, jamais le JARVIS vivant)
 
