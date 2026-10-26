@@ -36,3 +36,7 @@ deliberately left out. Not blocking; owners:
 - m2: no test covers "no `jarvis-barehands` in `presentation`" (`jarvis/app.py`); the only test going through it already fails on `main`.
 - m3: the build-inputs test compares against `B.BUILD_INPUTS` itself (removing `pyproject.toml` survives); the `resolve().is_relative_to` extraction guard is never reached by the tested cases.
 - Observation: in an installed product, a hand-set `JARVIS_PRODUCT_EDITION=full` re-enables `wake-word install` (decide with HV-PACKAGE-04). Cross-machine reproducibility not proven (both builds on the same machine/pip/cache).
+
+## Slice 07 status (2026-10-26)
+- Point 1: done. Readiness shows « Moteur de rendu : Réparer » on `install_failed` and the named action `render_repair` reinstalls at the pinned versions. Reproduced and fixed in the simulated install (private Node removed, restored by a repair reinstall, capability still `install_failed`, then ready in 61 s).
+- Launcher `-B`: done (every child of the launcher). The MCP servers started by the Claude CLI from `*-mcp.json` still run without `-B`; `verify` of the installed folder stayed intact after two sessions and a render.

@@ -26,3 +26,6 @@ Not blocking; owners:
    `test_barehands_interaction_js.py::test_the_practice_frame_is_moved_by_one_zone_through_the_real_engine`,
    `::test_the_practice_frame_resizes_only_on_two_distinct_compatible_zones`,
    `test_barehands_palette_js.py::test_the_served_page_puts_the_tools_on_the_palette_and_not_in_the_settings`.
+
+## Slice 07 status (2026-10-26)
+- Point 2: done. The Presentation home (`homeFor`) carries the readiness line (what is left before the first video, or the linked accounts) with a button that opens « Préparation de JARVIS » (`control_center_product_readiness.js`, `docs/product-install.md`).

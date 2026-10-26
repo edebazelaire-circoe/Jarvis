@@ -10,3 +10,8 @@ Origin: Slice 02 QA (runtime 7/7 PASS, code review with no blocker). Owners:
 6. **Slice 04**: the brain and agents' cwd = `CODE_ROOT` (`app.py:832,954,1380`, `control_center.py:1759-1762`). Self-dev / worktrees stay development tools, to confine.
 7. Observation: the Claude CLI writes its cache to `%LOCALAPPDATA%\claude-cli-nodejs` (CLI state, not JARVIS state). Take it into account in the Slice 06 provisioning.
 8. Present before this task: `test_app::test_the_control_center_receives_a_tools_gateway_target_built_from_core_settings` (stub without `data_root`) and `test_surface_reflex_policy::test_no_provider_model_id_reaches_core_or_domain` fail on `main` 2d6ca879.
+
+## Slice 07 status (2026-10-26)
+- Point 3: done. The launcher (`python -B -m jarvis launch`) creates `data`, `runtime`, `config` at first launch; the readiness action `prepare_data` recreates them.
+- Point 4: done. Launcher refusals are shown (message box without a console) and written (`runtime/logs/launcher.log`, `errors.jsonl`, or `%TEMP%/jarvis-launcher-error.log` before any home exists). Proven in the simulated install (LOCALAPPDATA removed).
+- Point 5: not re-measured (simulated home under `%TEMP%`, no long-path failure seen); stays with Slice 10.

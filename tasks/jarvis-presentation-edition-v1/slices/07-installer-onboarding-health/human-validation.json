@@ -3,6 +3,30 @@
     {
       "id": "HV-INSTALL-01",
       "description": "A non-developer follows the Windows installer and first-run flow without terminal commands, reaches a clear readiness state, connects required services, and creates/opens a Presentation Board."
+    },
+    {
+      "id": "HV-INSTALL-02",
+      "kind": "decision",
+      "description": "Google Drive from the onboarding needs a CIRCOE Google OAuth client (desktop client id/secret) shipped with or provisioned for the product. Decide whether CIRCOE creates one and how it is distributed.",
+      "default_applied": "not offered: the readiness line says Drive linking is not offered in this version; Drive stays optional"
+    },
+    {
+      "id": "HV-INSTALL-03",
+      "kind": "decision",
+      "description": "Uninstall keeps %LOCALAPPDATA%\\CIRCOE\\Jarvis (presentations, settings, CONTEXT_GLOBAL) and says where it stays. Decide whether uninstall should offer an explicit 'also delete my data' option.",
+      "default_applied": "data always kept; deleting it is a manual act"
+    },
+    {
+      "id": "HV-INSTALL-04",
+      "kind": "decision",
+      "description": "Installer technology recommendation under HV-PACKAGE-10: per-user install in %LOCALAPPDATA%\\Programs\\CIRCOE\\Jarvis, no admin rights, C# bootstrap compiled by the .NET Framework compiler shipped with Windows, payload installed by the package's own Python. Confirm or choose MSIX/Inno/WiX, and provide the signing certificate.",
+      "default_applied": "unsigned per-user setup .exe (SmartScreen warns until signed)"
+    },
+    {
+      "id": "HV-INSTALL-05",
+      "kind": "decision",
+      "description": "Shortcuts and the uninstall entry show the Python icon of the private runtime: no JARVIS .ico exists in the repository. Provide a brand icon (.ico) to embed in the bootstrap and the shortcuts.",
+      "default_applied": "pythonw.exe icon"
     }
   ]
 }

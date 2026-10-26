@@ -37,3 +37,11 @@ A Level 3 requirement means not only prose documentation but a reusable implemen
 |---|---|
 | Windows production packaging (package layout, private runtimes, runtime manifest, third-party policy/manifest) | **3**: `docs/windows-packaging.md`, `jarvis/private_runtime.py`, `packaging/windows/*`, conformance `tests/unit/test_private_runtime.py` + `test_windows_packaging.py`, real reproducible build. Installer/launcher remain Slice 07. |
 | Local capabilities / Remotion in the installed product | **3**: private Node resolution (default `which` of the three runners), child `PATH`, typed `node_missing` repair message; real `npm ci` + MP4/PNG/PDF renders with the packaged Python and Node, `PATH` reduced to Windows. |
+
+## Slice 07 (2026-10-26)
+| Concept | Level reached |
+|---|---|
+| Installer (per-user, update/repair/uninstall, data retention) | **3**: `docs/product-install.md`, `jarvis/product_setup.py`, `packaging/windows/setup_stub.cs` + `build_package.py installer`, conformance `tests/unit/test_product_setup.py` + `test_windows_installer.py`, real simulated install of the real package. Signing and final technology: HV-PACKAGE-10. |
+| Single launcher / child ownership | **3**: `jarvis/runtime/product_launcher.py` (Job Objects, one instance, bounded restarts, visible and durable refusals), `tests/unit/test_product_launcher.py`. |
+| Product readiness / repair | **3**: pure matrix `jarvis/domain/product_readiness.py`, facts and named actions `jarvis/runtime/product_readiness.py`, page `control_center_product_readiness.js`, node + browser tests. |
+| Brain CLI provisioning | **2-3**: located, read and signed in through `jarvis/runtime/brain_cli.py`; never redistributed (HV-PACKAGE-02). |
