@@ -42,6 +42,7 @@ import shutil
 import subprocess
 import sys
 import time
+import time
 from typing import Any, Protocol
 
 from jarvis import private_runtime as PR
@@ -257,10 +258,21 @@ class Progress:
         self.echo = echo
 
     def step(self, phase: str, message: str, **data: Any) -> None:
+        """Une ligne de progression. Jamais une exception : l'amorce lit ce fichier pendant qu'il s'écrit (essai réel :
+        une lecture concurrente refusait l'ouverture et faisait tomber l'installation sans issue écrite). Quelques
+        reprises brèves, puis la ligne est abandonnée : l'issue (`--result`) reste la source de vérité."""
+
         row = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "phase": phase, "message": message, **data}
         if self.path is not None:
-            with self.path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+            line = json.dumps(row, ensure_ascii=False) + "\n"
+            for attempt in range(10):
+                try:
+                    self.path.parent.mkdir(parents=True, exist_ok=True)
+                    with self.path.open("a", encoding="utf-8") as handle:
+                        handle.write(line)
+                    break
+                except OSError:
+                    time.sleep(0.05 * (attempt + 1))  # intentional: progress is advisory, the result file is the truth
         if self.echo and sys.stdout is not None:
             print(f"[setup] {message}", flush=True)
 
@@ -554,7 +566,11 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
                   "detail": f"{type(exc).__name__}: {exc}"[:1000]}
         progress.step("failed", result["message"], code="setup_failed", detail=result["detail"])
     if args.result:
-        Path(args.result).write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        written = Path(args.result)
+        written.parent.mkdir(parents=True, exist_ok=True)
+        temp = written.with_name(written.name + ".tmp")
+        temp.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.replace(temp, written)
     if sys.stdout is not None and (args.quiet or sys.stdout.isatty() or not args.result):
         print(json.dumps(result, ensure_ascii=False))
     return 0 if result.get("ok") else 1

@@ -158,8 +158,16 @@ namespace Circoe.Jarvis.Setup
         {
             try
             {
-                string[] lines = File.ReadAllLines(path, Encoding.UTF8);
-                for (int i = lines.Length - 1; i >= 0; i--)
+                // Partage lecture/écriture : Python ajoute des lignes pendant cette lecture (File.ReadAllLines refusait
+                // l'écriture concurrente et faisait tomber l'installation, essai réel de la Slice 07).
+                var lines = new List<string>();
+                using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                using (var reader = new StreamReader(stream, Encoding.UTF8))
+                {
+                    string line;
+                    while ((line = reader.ReadLine()) != null) lines.Add(line);
+                }
+                for (int i = lines.Count - 1; i >= 0; i--)
                 {
                     var row = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(lines[i]);
                     object message;
@@ -188,18 +196,30 @@ namespace Circoe.Jarvis.Setup
                                              + " --progress " + Quote(progress) + " --result " + Quote(result));
                 for (int i = 0; i < options.Passthrough.Count; i++) argv.Append(" ").Append(options.Passthrough[i].StartsWith("--") ? options.Passthrough[i] : Quote(options.Passthrough[i]));
                 Log("python " + argv);
-                var start = new ProcessStartInfo(python, argv.ToString()) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = work };
+                // Une issue d'une installation précédente ne doit jamais passer pour celle-ci.
+                if (File.Exists(result)) File.Delete(result);
+                var start = new ProcessStartInfo(python, argv.ToString()) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = work,
+                                                                            RedirectStandardOutput = true, RedirectStandardError = true,
+                                                                            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
                 start.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
+                var tail = new Queue<string>();
+                DataReceivedEventHandler keep = (s, e) => { if (e.Data == null) return; lock (tail) { tail.Enqueue(e.Data); while (tail.Count > 40) tail.Dequeue(); } };
                 using (var process = Process.Start(start))
                 {
+                    process.OutputDataReceived += keep; process.ErrorDataReceived += keep;
+                    process.BeginOutputReadLine(); process.BeginErrorReadLine();
                     while (!process.WaitForExit(400))
                     {
                         string said = LastProgress(progress);
                         if (said != null) Phase = said;
                     }
+                    process.WaitForExit();
                     Log("product_setup a rendu " + process.ExitCode);
                 }
+                string said_ = string.Join("\n", tail.ToArray());
                 Result = ReadResult(result);
+                if (!Result.Ok) Log("sortie de product_setup :\n" + said_);
+                if (!Result.Ok && Result.Detail == null) Result.Detail = said_.Length > 600 ? said_.Substring(said_.Length - 600) : said_;
             }
             catch (Exception exc)
             {

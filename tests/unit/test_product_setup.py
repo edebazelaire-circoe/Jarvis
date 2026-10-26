@@ -259,3 +259,18 @@ def test_the_copy_check_names_missing_extra_and_resized_files(tmp_path):
     assert "runtime/node/node.exe: absent de la copie" in problems
     assert "stray.txt: en trop dans la copie" in problems
     assert "licenses/LICENSE.txt: taille différente" in problems
+
+
+def test_progress_never_breaks_the_installation_when_its_file_cannot_be_written(tmp_path, monkeypatch):
+    """Essai réel de la Slice : l'amorce lisait le fichier de progression sans partage d'écriture ; l'ajout de Python
+    échouait et l'installation tombait sans écrire son issue."""
+
+    blocked = tmp_path / "progress.jsonl"
+    blocked.mkdir()  # ouvrir un dossier en ajout échoue à chaque essai
+    monkeypatch.setattr(S.time, "sleep", lambda seconds: None)
+    S.Progress(blocked, echo=False).step("verify_source", "Vérification…")
+    target = tmp_path / "Programs" / "Jarvis"
+    code = S.main(["install", "--source", str(make_package(tmp_path / "src")), "--target", str(target), "--registry-file",
+                   str(tmp_path / "hive.json"), "--progress", str(blocked), "--result", str(tmp_path / "out" / "result.json")],
+                  environ={"LOCALAPPDATA": str(tmp_path / "Local")})
+    assert code == 0 and json.loads((tmp_path / "out" / "result.json").read_text(encoding="utf-8"))["ok"] is True
