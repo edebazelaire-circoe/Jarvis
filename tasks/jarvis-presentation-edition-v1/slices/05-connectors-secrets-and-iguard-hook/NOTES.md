@@ -157,3 +157,22 @@ Issues (rangées, hors Slice) :
   même politique et la même table ; il cherche l'outil dans le catalogue filtré : cohérent (testé de
   bout en bout avec un Core réel, connecteur scripté). Un serveur d'une autre adresse n'en bénéficie
   pas (outil retiré, appel refusé, rien envoyé). `docs/agenda-reminders.md` le dit.
+
+## Reprise 3 (contre-revue)
+
+- Classement explicite : la table `tool_side_effects` ne comble qu'une annonce absente ; avec une
+  annonce, le plus restrictif des deux (`_strictest`). Le descripteur porte `side_effect_hint`
+  (`null` = aucune annotation d'effet, `"write"` = `readOnlyHint: false` seul ; clé absente = annonce
+  complète, forme d'avant inchangée). Tests paramétrés sur cinq formes d'annotations.
+- Google Agenda natif en `presentation` : non construit (`JARVIS_CALENDAR_PROVIDER=google` ignoré,
+  `core.calendar.native_excluded`), outils `calendar_*` retirés du catalogue de la voix
+  (`realtime_tools.for_edition`), appel forgé refusé par `CoreToolRouter(native_calendar=False)`.
+- Rappels d'agenda : `build_agenda_prompt(frame_untrusted_content=True)` en `presentation` (source
+  « Agenda CIRCOE »).
+- Passerelle : `_source_of` relit le catalogue si le nom affiché manque (plus d'étiquette `source=<id>`
+  quand `list_tools` n'a pas été appelé).
+
+Issue :
+
+- I-S05-6 : la CLI du cerveau peut basculer silencieusement de modèle (`model_refusal_fallback`, portée
+  session) sans que JARVIS le remonte : à couvrir par la santé (Slices 07/10).

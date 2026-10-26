@@ -59,7 +59,11 @@ confirmer (catalogue live de Circuit Toolbox ; contrat d'IGuard).
 CIRCOE n'est pas Google Agenda mais Circuit Toolbox (correction de l'amendement E1 du Slice 00, établie
 au Slice 05). L'adaptateur natif reste dans le code et n'apparaît qu'en édition `full`. S'il est
 quand même configuré sur un produit (`JARVIS_CALENDAR_PROVIDER=google`), il garde les portées
-minimales et le jeton scellé, mais aucun écran produit ne le propose.
+En `presentation` (`ConnectorPolicy.offers_native_calendar` faux), Core **ne le construit pas**
+même si `JARVIS_CALENDAR_PROVIDER=google` (réglage ignoré et journalisé
+`core.calendar.native_excluded`), la voix ne reçoit **aucun** outil `calendar_*`
+(`realtime_tools.for_edition`), et un appel forgé est refusé par le `CoreToolRouter` (`deny`, rien
+exécuté). Hors `presentation`, il garde les portées minimales et le jeton scellé d'un produit installé.
 
 ### Google Drive
 
@@ -101,9 +105,14 @@ autorisation à refaire ⇒ `needs_authorization`, connecté ⇒ `ready`.
 
 **Classement explicite des outils.** Un outil non annoté est `destructive` (défaut MCP) et serait
 refusé en `presentation`, ce qui couperait les rappels d'agenda. `ConnectorSpec.tool_side_effects`
-(nom d'outil ⇒ `read` | `write` | `destructive`) **prime sur l'annotation distante pour le plugin
-apparié seulement** (`ConnectorPolicy.effective_side_effect`). Il ne contient que ce qui est attesté
-dans le dépôt :
+(nom d'outil ⇒ `read` | `write` | `destructive`), pour le plugin apparié seulement
+(`ConnectorPolicy.effective_side_effect`), **comble une annonce absente** et ne rend jamais un outil
+moins restrictif que ce que le serveur annonce : sans annotation d'effet (`side_effect_hint: null` du
+descripteur), la table décide ; avec une annonce (`readOnlyHint: false` seul ⇒ au moins `write` ;
+`destructiveHint` explicite ; `readOnlyHint: true`), on retient le plus restrictif des deux
+(`read` < `write` < `destructive`). Une ligne d'outils enregistrée avant la clé `side_effect_hint` vaut
+annonce complète jusqu'à la reconnexion suivante (nouvelle liste). Il ne contient que ce qui est
+attesté dans le dépôt :
 
 | Outil | Classement | Preuve |
 | --- | --- | --- |
@@ -122,7 +131,9 @@ Ne jamais classer en `read` sans preuve.
 **Appels internes de Core.** Les rappels d'agenda (`JarvisCoreApplication._fetch_agenda`, `caller.agent
 = core-agenda`) passent par la même politique que le modèle (`McpPluginService.call`) : ils trouvent
 l'outil dans le catalogue filtré, et l'appel est vérifié avec la même table. Rien ne contourne la
-politique, et le résultat leur arrive brut (le cadrage se fait au bord du modèle).
+politique, et le résultat leur arrive brut. La consigne de rappel remise au cerveau
+(`build_agenda_prompt`) est, elle, au bord du modèle : en `presentation`, titres et lieux des
+rendez-vous y sont cadrés (`frame_untrusted`, source « Agenda CIRCOE »).
 
 ### Recherche documentaire
 
@@ -196,7 +207,9 @@ titres, descriptions, lieux et participants d'agenda) est une donnée, jamais un
 `presentation`, il est cadré **au bord du modèle**, là où le résultat lui est rendu :
 
 - passerelle `jarvis-tools` : les textes d'un plugin distant (et `structured`, sérialisé quand il n'y a
-  pas de texte) forment un seul bloc cadré ; c'est la seule forme que le modèle reçoit ;
+  pas de texte) forment un seul bloc cadré ; c'est la seule forme que le modèle reçoit ; la source est
+  le nom affiché du plugin (catalogue relu si besoin, l'identifiant seulement si Core ne répond pas) ;
+- rappels d'agenda : la consigne `build_agenda_prompt` (titres, lieux) ;
 - `CoreToolRouter` (outils natifs de la voix : `calendar_*`, `drive_*`) et `jarvis-drive`
   (`drive_search`, `drive_get`, `drive_read`) : `frame_payload` déplace `events`, `event`, `files`,
   `file`, `text` dans un bloc cadré `content`, garde les clés de contrôle (`disposition`,

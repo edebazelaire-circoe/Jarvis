@@ -713,13 +713,22 @@ class ExternalToolDescriptor:
     idempotent: bool
     open_world: bool
     atomicity: str = "external"
+    #: Ce que le serveur a **annoncé** quand `side_effect` vient (en partie) du défaut MCP : `None` = aucune
+    #: annotation d'effet, `"write"` = `readOnlyHint: false` seul. `"announced"` = entièrement annoncé
+    #: (`side_effect` tel quel). Sert au classement explicite du manifeste (`product_connectors`), qui ne
+    #: comble qu'une annonce absente et ne rend jamais un outil moins restrictif que son annonce.
+    side_effect_hint: str | None = "announced"
 
     def to_payload(self) -> dict[str, Any]:
-        return {"tool_id": self.tool_id, "plugin_id": self.plugin_id, "name": self.name, "title": self.title,
-                "description": self.description, "input_schema": _thaw(self.input_schema),
-                "output_schema": None if self.output_schema is None else _thaw(self.output_schema),
-                "side_effect": self.side_effect, "idempotent": self.idempotent, "atomicity": self.atomicity,
-                "open_world": self.open_world}
+        payload = {"tool_id": self.tool_id, "plugin_id": self.plugin_id, "name": self.name, "title": self.title,
+                   "description": self.description, "input_schema": _thaw(self.input_schema),
+                   "output_schema": None if self.output_schema is None else _thaw(self.output_schema),
+                   "side_effect": self.side_effect, "idempotent": self.idempotent, "atomicity": self.atomicity,
+                   "open_world": self.open_world}
+        if self.side_effect_hint != "announced":
+            # Clé présente seulement pour un outil incomplètement annoté (forme d'avant inchangée sinon).
+            payload["side_effect_hint"] = self.side_effect_hint
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -810,12 +819,15 @@ def normalize_remote_tool(plugin_id: str, raw: object) -> ExternalToolDescriptor
     if not isinstance(output, Mapping) or not _schema_fits(output):
         output = None
     annotations = raw.get("annotations") if isinstance(raw.get("annotations"), Mapping) else {}
+    hint: str | None = "announced"
     if _hint(annotations, "readOnlyHint") is True:
         side_effect = "read"
     elif _hint(annotations, "destructiveHint") is False:
         side_effect = "write"
     else:
         side_effect = "destructive"  # MCP default: an unannotated tool may destroy
+        if _hint(annotations, "destructiveHint") is None:
+            hint = "write" if _hint(annotations, "readOnlyHint") is False else None
     open_world = _hint(annotations, "openWorldHint")
     return ExternalToolDescriptor(
         tool_id=f"{plugin_id}.{name}", plugin_id=plugin_id, name=name,
@@ -825,6 +837,7 @@ def normalize_remote_tool(plugin_id: str, raw: object) -> ExternalToolDescriptor
         input_schema=_freeze_json(dict(schema)),
         output_schema=None if output is None else _freeze_json(dict(output)),
         side_effect=side_effect, idempotent=_hint(annotations, "idempotentHint") is True,
+        side_effect_hint=hint,
         open_world=True if open_world is None else open_world,
     )
 

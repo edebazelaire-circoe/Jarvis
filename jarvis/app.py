@@ -331,6 +331,14 @@ def _calendar_backend_from_env():
     provider = os.getenv("JARVIS_CALENDAR_PROVIDER", "fake").strip().lower()
     if provider in {"", "fake", "none"}:
         return None
+    from jarvis.domain.product_connectors import connector_policy
+    from jarvis.runtime.product_edition_env import process_edition
+
+    if provider == "google" and not connector_policy(process_edition()).offers_native_calendar:
+        # Édition `presentation` : l'adaptateur natif Google Agenda n'est pas un connecteur du produit (D09) ;
+        # l'agenda CIRCOE passe par Circuit Toolbox. Réglage ignoré, et dit (`core.calendar.native_excluded`).
+        _NATIVE_CALENDAR_EXCLUDED.append(provider)
+        return None
     if provider != "google":
         raise RuntimeError(f"Unsupported calendar provider: {provider}")
     from jarvis.adapters.google_calendar import GoogleCalendarBackend
@@ -362,6 +370,10 @@ def _drive_backend_from_env():
 
     return _google_backend("google_drive", lambda: GoogleDriveBackend.from_oauth_files(
         Path(secret), Path(token), **google_token_options()))
+
+
+#: `JARVIS_CALENDAR_PROVIDER=google` ignoré par l'édition (journalisé par `_announce_calendar_backend`).
+_NATIVE_CALENDAR_EXCLUDED: list[str] = []
 
 
 #: Connecteurs Google dont le consentement manque à ce démarrage de Core (produit : jamais de navigateur
@@ -703,6 +715,11 @@ def _announce_calendar_backend(core, runtime_root: Path) -> None:
 
     storage = core.calendar.storage
     journal = RuntimeJournal(runtime_root)
+    if _NATIVE_CALENDAR_EXCLUDED:
+        journal.emit("core.calendar.native_excluded",
+                     "JARVIS_CALENDAR_PROVIDER=google ignoré : l'agenda Google natif n'est pas offert par cette "
+                     "édition (agenda CIRCOE : Circuit Toolbox)", level="warning",
+                     data={"edition": core.product_edition.edition.value})
     if storage.get("persisted"):
         journal.emit("calendar.backend", f"Agenda connecté : {storage['backend']}", data=storage)
         return
@@ -1114,6 +1131,9 @@ async def _run_voice_v2() -> int:
     from jarvis.runtime.claude_gateway import ClaudeGateway
     from jarvis.runtime.journal import RuntimeJournal
     from jarvis.runtime.realtime_tools import REALTIME_TOOLS
+    # Édition `presentation` : pas d'outils `calendar_*` (agenda natif hors produit, Slice 05).
+    REALTIME_TOOLS = realtime_tools.for_edition(REALTIME_TOOLS,  # noqa: N806 - même nom que le catalogue filtré
+                                                native_calendar=realtime_tools.edition_offers_native_calendar())
     from jarvis.runtime.visual_signals import VisualSignalBus
     from jarvis.runtime.voice_v2 import PersistentVoiceRuntime
     from jarvis.runtime.voice_switch import VoiceSwitchBus, VoiceSwitchCoordinator
@@ -1261,7 +1281,9 @@ async def _run_voice_v2() -> int:
         openai_model = realtime_model or default_model
         effective_model = openai_model
         from jarvis.runtime.back_brain_delegation import conversation_tools
-        surface_tools = conversation_tools() if direct_conversation else realtime_tools.tools_for(continuous_brain=continuous_brain)
+        surface_tools = conversation_tools() if direct_conversation else realtime_tools.for_edition(
+            realtime_tools.tools_for(continuous_brain=continuous_brain),
+            native_calendar=realtime_tools.edition_offers_native_calendar())
 
         async def realtime_factory(context: dict[str, object]):
             if isinstance(composition.selection.config, DuplexVoiceConfig):

@@ -237,6 +237,14 @@ class ConnectorPolicy:
     seal_local_secrets: bool
 
     @property
+    def offers_native_calendar(self) -> bool:
+        """L'adaptateur natif Google Agenda et les outils `calendar_*` de la voix existent-ils dans cette édition ?
+
+        Non en `presentation` (D09 : seul Google Drive côté Google ; l'agenda CIRCOE est Circuit Toolbox)."""
+
+        return any(spec.connector_id is ConnectorId.GOOGLE_CALENDAR for spec in self.connectors)
+
+    @property
     def restricts_remote_tools(self) -> bool:
         return any(value is not RemoteToolDisposition.ALLOW for value in self.remote_tools.values())
 
@@ -247,13 +255,23 @@ class ConnectorPolicy:
         return self.remote_tools[key]
 
     def effective_side_effect(self, plugin: Mapping[str, Any], descriptor: Mapping[str, Any]) -> object:
-        """`side_effect` qui décide : classement explicite du manifeste pour un plugin apparié (endpoint
-        exact), sinon celui du descripteur (annotation distante ; absent = `destructive`)."""
+        """`side_effect` qui décide pour un outil de plugin.
+
+        Sans classement du manifeste (plugin non apparié par endpoint exact, ou outil absent de la table) :
+        celui du descripteur (annotation distante ; absente = `destructive`). Avec classement : la table
+        **comble** une annonce absente (`side_effect_hint: null`) ; si le serveur a annoncé quelque chose,
+        on retient **le plus restrictif** des deux (`read` < `write` < `destructive`). Une ligne d'avant
+        la clé `side_effect_hint` compte comme entièrement annoncée (reconnexion = nouvelle liste).
+        """
 
         name = descriptor.get("name")
+        announced = descriptor.get("side_effect_hint", "announced")
+        if announced == "announced":
+            announced = descriptor.get("side_effect", "destructive")
         for spec in self.connectors:
             if spec.plugin_match is not None and name in spec.tool_side_effects and spec.plugin_match.matches(plugin):
-                return spec.tool_side_effects[name]
+                classified = spec.tool_side_effects[name]
+                return classified if announced is None else _strictest(classified, announced)
         return descriptor.get("side_effect", "destructive")
 
     def spec(self, connector_id: ConnectorId) -> ConnectorSpec:
@@ -273,6 +291,16 @@ CONNECTOR_POLICIES: Mapping[ProductEdition, ConnectorPolicy] = MappingProxyType(
                                                  frame_untrusted_content=True,
                                                  google_scopes=GoogleScopeProfile.MINIMAL, seal_local_secrets=True),
 })
+
+
+_RESTRICTION = {"read": 0, "write": 1, "destructive": 2}
+
+
+def _strictest(first: object, second: object) -> str:
+    """Le plus restrictif ; une valeur inconnue compte comme `destructive`."""
+
+    ranks = [_RESTRICTION.get(value, 2) if isinstance(value, str) else 2 for value in (first, second)]
+    return ("read", "write", "destructive")[max(ranks)]
 
 
 def connector_policy(edition: ProductEditionPolicy | ProductEdition) -> ConnectorPolicy:

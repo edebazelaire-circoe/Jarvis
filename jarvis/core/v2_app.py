@@ -723,7 +723,8 @@ class JarvisCoreApplication:
         from jarvis.core.back_brain import BackBrainTaskService
         self.back_brain = BackBrainTaskService(self.jobs, self.conversations, self.voice_ledger)
         self.tools = CoreToolRouter(scheduler=self.scheduler, calendar=self.calendar, drive=self.drive, timezone=timezone,
-                                    frame_untrusted_content=self.connector_policy.frame_untrusted_content)
+                                    frame_untrusted_content=self.connector_policy.frame_untrusted_content,
+                                    native_calendar=self.connector_policy.offers_native_calendar)
         self._stopped = asyncio.Event()
         self._notification_task: asyncio.Task[None] | None = None
         self._notification_queue: asyncio.Queue[ProtocolEnvelope] | None = None
@@ -752,7 +753,8 @@ class JarvisCoreApplication:
                 settings=agenda_settings, fetch=self._fetch_agenda, wake=self.brain.wake_for_agenda,
                 memory_path=root / "agenda_reminders.json", zone=ZoneInfo(timezone), diagnostics=diagnostics or NullDiagnosticSink(),
                 user_turn_at=lambda: self.brain.last_user_turn_at,
-                **({"clock": agenda_clock} if agenda_clock is not None else {}), tick_s=agenda_tick_s)
+                **({"clock": agenda_clock} if agenda_clock is not None else {}), tick_s=agenda_tick_s,
+                frame_untrusted_content=self.connector_policy.frame_untrusted_content)
         self._brain_notice_task: asyncio.Task[None] | None = None
         self._host_align_task: asyncio.Task[bool] | None = None
         self._work_attention_task: asyncio.Task[None] | None = None

@@ -60,8 +60,11 @@ Wake = Callable[[str], Awaitable[bool]]
 class AgendaReminderService:
     def __init__(self, *, settings: Callable[[], AgendaSettings], fetch: Fetch, wake: Wake, memory_path: Path,
                  zone: tzinfo, diagnostics: DiagnosticSink, user_turn_at: Callable[[], datetime | None] = lambda: None,
-                 clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc), tick_s: float = DEFAULT_TICK_S) -> None:
+                 clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc), tick_s: float = DEFAULT_TICK_S,
+                 frame_untrusted_content: bool = False) -> None:
         self._settings = settings
+        #: Édition `presentation` (Slice 05) : titres/lieux du plugin distant cadrés dans la consigne du cerveau.
+        self._frame = frame_untrusted_content
         self._fetch = fetch
         self._wake = wake
         self._path = Path(memory_path)
@@ -126,7 +129,7 @@ class AgendaReminderService:
             announce.append(reminder)
         sent = 0
         if announce:
-            prompt = build_agenda_prompt(tuple(announce), now, self._zone)
+            prompt = build_agenda_prompt(tuple(announce), now, self._zone, frame_untrusted_content=self._frame)
             if await self._wake(prompt):
                 for reminder in announce:
                     memory[reminder.key] = stamp

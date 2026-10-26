@@ -20,7 +20,7 @@ from jarvis.security.v2_policy import ActionDisposition, V2ActionBroker
 class CoreToolRouter:
     """Authoritative tool boundary for Voice/Realtime clients."""
 
-    def __init__(self, *, scheduler: SchedulerService, calendar: CalendarService, drive: DriveService | None = None, timezone: str = "Europe/Paris", confirmation_timeout_s: float = 45.0, clock: Callable[[], float] = time.monotonic, frame_untrusted_content: bool = False) -> None:
+    def __init__(self, *, scheduler: SchedulerService, calendar: CalendarService, drive: DriveService | None = None, timezone: str = "Europe/Paris", confirmation_timeout_s: float = 45.0, clock: Callable[[], float] = time.monotonic, frame_untrusted_content: bool = False, native_calendar: bool = True) -> None:
         if confirmation_timeout_s <= 0:
             raise ValueError("confirmation_timeout_s must be positive")
         self.scheduler = scheduler
@@ -33,9 +33,15 @@ class CoreToolRouter:
         #: Édition `presentation` (Slice 05, `docs/product-connectors.md`) : ce routeur est le bord du modèle vocal ;
         #: le contenu d'agenda et de Drive qu'il rend y est cadré comme donnée non fiable (`frame_payload`).
         self.frame_untrusted_content = frame_untrusted_content
+        #: Faux en `presentation` (Slice 05) : les outils `calendar_*` ne sont pas offerts à la voix ; un appel
+        #: forgé est refusé ici, avant la politique et tout effet.
+        self.native_calendar = native_calendar
         self._pending: dict[str, tuple[str, dict[str, object], str | None, float]] = {}
 
     async def call(self, name: str, arguments: dict[str, object], *, conversation_id: str | None) -> dict[str, object]:
+        if not self.native_calendar and name.startswith("calendar_"):
+            return {"disposition": ActionDisposition.DENY.value, "executed": False, "action": name,
+                    "message": "L'agenda n'est pas disponible par cet outil dans cette édition."}
         ambiguous = not isinstance(arguments, dict) or self._is_ambiguous(name, arguments)
         disposition = self.policy.evaluate(name, explicit_request=True, ambiguous=ambiguous)
         if disposition is ActionDisposition.CLARIFY:

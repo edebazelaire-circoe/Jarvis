@@ -388,16 +388,26 @@ class ToolsGateway:
         return cls(core, native_servers=target.native_servers, agent=target.agent, journal=journal,
                    frame_untrusted_content=frame)
 
-    def _source_of(self, tool_id: str) -> str:
-        plugin_id = tool_id.split(".", 1)[0]
-        names = {plugin.get("plugin_id"): plugin.get("display_name") for plugin in self._external.plugins
-                 if isinstance(plugin, Mapping)}
-        return str(names.get(plugin_id) or plugin_id)
+    def _display_name(self, plugin_id: str) -> str | None:
+        return next((str(plugin.get("display_name")) for plugin in self._external.plugins
+                     if isinstance(plugin, Mapping) and plugin.get("plugin_id") == plugin_id
+                     and plugin.get("display_name")), None)
 
-    def _framed(self, tool_id: str, texts: list[str]) -> list[str]:
+    async def _source_of(self, tool_id: str) -> str:
+        """Nom affiché du plugin (étiquette du cadre). Catalogue pas encore lu (appel sans `list_tools` avant,
+        passerelle relancée) : il est lu une fois ici ; Core injoignable : l'identifiant du plugin."""
+
+        plugin_id = tool_id.split(".", 1)[0]
+        name = self._display_name(plugin_id)
+        if name is None:
+            await self._external_tools()
+            name = self._display_name(plugin_id)
+        return name or plugin_id
+
+    async def _framed(self, tool_id: str, texts: list[str]) -> list[str]:
         if not self._frame or not texts:
             return texts
-        return [frame_untrusted("\n".join(texts), source=self._source_of(tool_id))]
+        return [frame_untrusted("\n".join(texts), source=await self._source_of(tool_id))]
 
     def _emit(self, kind: str, message: str, *, level: str = "info", data: dict[str, Any] | None = None) -> None:
         if self._journal is not None:
@@ -525,7 +535,7 @@ class ToolsGateway:
                      and isinstance(block.get("text"), str)]
             if not texts and isinstance(outcome.get("structured"), dict):
                 texts = [json.dumps(outcome["structured"], ensure_ascii=False, separators=(",", ":"))]
-            texts = self._framed(tool_id, texts)
+            texts = await self._framed(tool_id, texts)
             if outcome.get("truncated"):
                 texts.append("[résultat tronqué : borne de 32 Kio atteinte]")
             if not outcome.get("ok"):
