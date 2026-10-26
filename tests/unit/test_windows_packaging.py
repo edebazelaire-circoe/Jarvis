@@ -223,3 +223,11 @@ def test_the_package_digest_ignores_key_order():
 def test_the_build_refuses_an_output_inside_the_repository(tmp_path):
     assert B.main(["build", "--out", str(ROOT / "build-out-test"), "--cache", str(tmp_path)]) == 1
     assert not (ROOT / "build-out-test").exists()
+
+
+def test_records_of_removed_launchers_are_dropped(tmp_path):
+    record = tmp_path / "httpx-0.28.1.dist-info" / "RECORD"
+    record.parent.mkdir()
+    record.write_text("../../bin/httpx.exe,sha256=abc,1\r\nhttpx/__init__.py,sha256=def,2\r\n", encoding="utf-8", newline="")
+    B.drop_script_records(tmp_path)
+    assert record.read_bytes() == b"httpx/__init__.py,sha256=def,2\r\n"

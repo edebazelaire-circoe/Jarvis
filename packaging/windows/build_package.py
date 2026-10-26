@@ -234,8 +234,19 @@ def install_wheels(out: Path, runtimes: dict, cache: Path) -> Path:
     # Lanceurs de scripts : ils portent le chemin absolu du Python de BUILD ; le produit ne les utilise jamais.
     shutil.rmtree(site / "bin", ignore_errors=True)
     shutil.rmtree(site / "Scripts", ignore_errors=True)
+    drop_script_records(site)
     install_pywin32_dlls(site)
     return site
+
+
+def drop_script_records(site: Path) -> None:
+    """Retire des `RECORD` les lanceurs supprimés (`bin/…`) : leur empreinte dépend du dossier de build (non reproductible)."""
+
+    for record in sorted(site.glob("*.dist-info/RECORD")):
+        lines = record.read_text(encoding="utf-8").splitlines(keepends=True)
+        kept = [line for line in lines if not line.startswith(("../../bin/", "bin/", "../../Scripts/", "Scripts/"))]
+        if kept != lines:
+            record.write_text("".join(kept), encoding="utf-8", newline="")
 
 
 def install_pywin32_dlls(site: Path) -> None:
