@@ -45,8 +45,8 @@ ou d'un autre schéma refuse le démarrage (`ConfigurationError`) au lieu de
 retomber en mode développement. Le marqueur est ignoré par git
 (`/jarvis-product.json`) : un checkout ne le porte jamais par accident. Couture
 du paquet (Slice 06) : poser ce fichier, rien d'autre. Le paquet pose le code dans
-`<installation>pp\` (marqueur compris) et ses runtimes privés (Python, Node)
-dans `<installation>untime\` : disposition, résolution sans PATH et manifeste
+`<installation>\app\` (marqueur compris) et ses runtimes privés (Python, Node)
+dans `<installation>\runtime\` : disposition, résolution sans PATH et manifeste
 dans [windows-packaging.md](windows-packaging.md). Le dossier du programme ne
 contient aucun état et n'est jamais écrit à l'exécution (bytecode précompilé).
 
