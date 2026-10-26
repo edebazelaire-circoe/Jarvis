@@ -7,7 +7,8 @@ import os
 import tomllib
 from urllib.parse import urlparse
 
-from .data_root import LEGACY_DATA_ROOT, adopt_legacy_memory, resolve_data_root, resolve_runtime_root
+from .data_root import LEGACY_DATA_ROOT, RUNTIME_DIR_ENV, adopt_legacy_memory, resolve_data_root, resolve_runtime_root
+from .installation import detect_installation
 from .domain.errors import ConfigurationError
 
 _LOG = logging.getLogger("jarvis")
@@ -50,6 +51,24 @@ def _loopback_url(value: str, field: str) -> str:
     if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
         raise ConfigurationError(f"{field} doit etre une URL HTTP loopback")
     return value.rstrip("/")
+
+
+def _runtime_dir_from(runtime_section: dict) -> Path:
+    """`JARVIS_RUNTIME_DIR`, puis `runtime.runtime_dir` du TOML, puis le défaut partagé (`jarvis/data_root.py`).
+
+    L'environnement réel est passé au résolveur (`LOCALAPPDATA` compris). Produit installé : une valeur
+    TOML **relative** (`./runtime` du fichier d'exemple) est ignorée, elle placerait le runtime sous le
+    dossier courant ; une valeur absolue est respectée (choix d'administration).
+    """
+
+    configured = str(runtime_section.get("runtime_dir") or "").strip()
+    env = dict(os.environ)
+    if configured and not str(env.get(RUNTIME_DIR_ENV) or "").strip():
+        if detect_installation(env).installed and not Path(configured).expanduser().is_absolute():
+            _LOG.warning("runtime.runtime_dir relatif ignoré en produit installé : runtime de la maison du produit")
+        else:
+            env[RUNTIME_DIR_ENV] = configured
+    return resolve_runtime_root(env)
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,13 +169,14 @@ class AppConfig:
         else:
             # Une seule racine mémoire, hors du dépôt : `<data_root>/memory`, comme Core V2.
             # L'ancien `./data/memory` y est copié une fois (jamais supprimé).
+            # Produit installé : `./data` serait dans le dossier du programme, jamais repris (comme Core, `app.py`).
             memory_dir = resolve_data_root() / "memory"
-            try:
-                adopt_legacy_memory(memory_dir, LEGACY_DATA_ROOT)
-            except OSError as exc:
-                _LOG.warning("reprise de ./data/memory impossible, mémoire laissée telle quelle: %s", exc)
-        # `JARVIS_RUNTIME_DIR`, puis `runtime.runtime_dir` du TOML, puis le défaut partagé (`jarvis/data_root.py`).
-        runtime_dir = resolve_runtime_root({"JARVIS_RUNTIME_DIR": os.getenv("JARVIS_RUNTIME_DIR") or str(r.get("runtime_dir") or "")})
+            if not detect_installation().installed:
+                try:
+                    adopt_legacy_memory(memory_dir, LEGACY_DATA_ROOT)
+                except OSError as exc:
+                    _LOG.warning("reprise de ./data/memory impossible, mémoire laissée telle quelle: %s", exc)
+        runtime_dir = _runtime_dir_from(r)
         runtime = RuntimeConfig(
             ptt_key=os.getenv("JARVIS_PTT_KEY", str(r.get("ptt_key", ""))).strip().lower(),
             memory_dir=memory_dir,

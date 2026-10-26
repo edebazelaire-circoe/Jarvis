@@ -261,7 +261,13 @@ def adopt_legacy_data(target: Path, legacy: Path = LEGACY_DATA_ROOT) -> Adoption
         if os.path.lexists(target / GLOBAL_CONTEXT_DIR):
             report.skipped.append(f"{GLOBAL_CONTEXT_DIR}: déjà présent dans la nouvelle racine")
         else:
-            report.files_copied += _copy_tree_staged(context, target / GLOBAL_CONTEXT_DIR)
+            # Un échec ici (jonction, lien, fichier verrouillé) ne fait pas échouer toute la reprise : Core
+            # retomberait sinon sur `./data` à chaque démarrage. Signalé (journal `core.data_root.adopted`,
+            # niveau warning), source laissée intacte, à copier à la main.
+            try:
+                report.files_copied += _copy_tree_staged(context, target / GLOBAL_CONTEXT_DIR)
+            except (LegacyAdoptionError, OSError) as exc:
+                report.skipped.append(f"{GLOBAL_CONTEXT_DIR}: non repris ({type(exc).__name__}: {exc})"[:500])
     if report.adopted:
         record = target / ADOPTION_RECORD
         payload = {"adopted_at": datetime.now(timezone.utc).isoformat(), **report.to_payload()}

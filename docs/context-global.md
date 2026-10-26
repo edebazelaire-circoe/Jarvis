@@ -29,13 +29,18 @@ réinstallation du programme le retrouvent tel quel.
   (`global_context_root(settings.data_root)`, Control Center), jamais
   ré-ensemencé une fois créé ;
 - **jamais effacé** par un nettoyage, une réparation, une purge de cache ou une
-  désinstallation. Garde réutilisable : `ensure_not_global_context(chemin)`
-  (`jarvis/adapters/global_context.py`, `GlobalContextProtected`, casse
-  ignorée). Branchée sur les effaceurs récursifs : `safe_tree.remove_tree`
+  désinstallation. Garde réutilisable : `ensure_not_global_context(chemin,
+  within=None)` / `is_global_context_path` et `contains_global_context`
+  (`jarvis/adapters/global_context.py`, `GlobalContextProtected`). Le chemin
+  est comparé **résolu** (`..`, noms courts 8.3, liens, casse) ; avec `within`
+  (la racine que l'effaceur peut toucher), seuls les composants sous cette
+  racine comptent : un ancêtre nommé `CONTEXT_GLOBAL` ne bloque rien. Branchée sur les effaceurs récursifs : `safe_tree.remove_tree`
   (purge des Presentations archivées, prefabs ; refus avant le premier fichier
   effacé), `node_capability_runner._remove_tree` (nettoyage, réparation et
   retrait des capacités locales, rendus et Studio Remotion ; refus en
-  descendant) et la purge du cache de compilation Remotion. Tout nouvel
+  descendant, chemin d'entrée résolu puis nom de chaque dossier visité) et la
+  purge du cache de compilation Remotion (refuse le dossier, ce qu'il contient
+  et tout dossier qui le contient). Tout nouvel
   effaceur récursif d'un dossier de la racine doit l'appeler. Le
   désinstalleur (Slice 06/07) ne retire jamais `data\` ;
 - **copié par toute reprise** : en bloc par la reprise de l'ancien `./data`

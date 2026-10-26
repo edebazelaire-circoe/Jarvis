@@ -136,7 +136,8 @@ def remove_tree(folder: Path, *, within: Path) -> TreeCount:
         raise UnsafeTree(".", "outside the folder it may be removed from")
     folders, files = _walk(folder)
     # CONTEXT_GLOBAL est permanent (docs/context-global.md › Permanence) : refusé avant le premier octet effacé.
-    if any(is_global_context_path(current.resolve()) for current in folders):
+    # Seuls les composants sous `within` comptent : un ancêtre de la racine nommé ainsi ne bloque rien.
+    if any(is_global_context_path(current, within=within) for current in folders):
         raise UnsafeTree(".", f"{GLOBAL_CONTEXT_DIR} is permanent state and is never removed")
     removed = 0
     for path, size in files:

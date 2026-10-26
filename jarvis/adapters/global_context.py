@@ -58,23 +58,59 @@ class GlobalContextProtected(OSError):
     """
 
 
-def is_global_context_path(path: Path) -> bool:
-    """Vrai si un composant de `path` est `CONTEXT_GLOBAL` (casse ignorée, comme le système de fichiers Windows)."""
+def _canonical(path: Path) -> str:
+    """Chemin absolu canonique pour comparer : `..` résolus, noms courts 8.3 dépliés (chemin existant), casse ignorée."""
 
-    wanted = GLOBAL_CONTEXT_DIR.casefold()
-    return any(part.casefold() == wanted for part in Path(path).parts)
+    return os.path.normcase(os.path.realpath(os.path.abspath(os.fspath(path))))
 
 
-def ensure_not_global_context(path: Path) -> None:
+def _is_protected_name(part: str) -> bool:
+    return part.casefold() == GLOBAL_CONTEXT_DIR.casefold()
+
+
+def is_global_context_path(path: Path, *, within: Path | None = None) -> bool:
+    """Vrai si `path`, une fois résolu, est `CONTEXT_GLOBAL` ou se trouve dedans.
+
+    Avec `within` (la racine que l'effaceur a le droit de toucher), seuls les
+    composants **sous** `within` comptent : un ancêtre de la racine qui
+    s'appellerait `CONTEXT_GLOBAL` ne bloque rien. Sans `within`, tout le chemin
+    résolu compte (règle stricte des effaceurs qui ne connaissent pas leur racine).
+    """
+
+    resolved = _canonical(path)
+    if within is not None:
+        root = _canonical(within)
+        try:
+            relative = os.path.relpath(resolved, root)
+        except ValueError:  # autre lecteur : hors de `within`, on juge le chemin entier
+            relative = resolved
+        if relative == os.curdir:
+            return False
+        if not relative.startswith(os.pardir):
+            return any(_is_protected_name(part) for part in Path(relative).parts)
+    return any(_is_protected_name(part) for part in Path(resolved).parts)
+
+
+def contains_global_context(folder: Path) -> bool:
+    """Vrai si un dossier nommé `CONTEXT_GLOBAL` se trouve sous `folder` (aucun lien ni jonction suivi)."""
+
+    for _current, dirs, _files in os.walk(folder, followlinks=False):
+        if any(_is_protected_name(name) for name in dirs):
+            return True
+    return False
+
+
+def ensure_not_global_context(path: Path, *, within: Path | None = None) -> None:
     """Garde réutilisable de tout effacement récursif : `GlobalContextProtected` si `path` est dans `CONTEXT_GLOBAL`.
 
     Appelée sur chaque dossier visité par un effaceur, elle refuse aussi un
     ancêtre qui le contient : l'effaceur l'atteint en descendant et s'arrête
-    là. Les effaceurs qui inventorient d'abord (`safe_tree.remove_tree`)
-    refusent donc avant le premier fichier effacé.
+    là. Un effaceur qui ne descend pas lui-même appelle aussi
+    `contains_global_context`. `safe_tree.remove_tree` inventorie d'abord et
+    refuse donc avant le premier fichier effacé.
     """
 
-    if is_global_context_path(path):
+    if is_global_context_path(path, within=within):
         raise GlobalContextProtected(f"{GLOBAL_CONTEXT_DIR} est permanent : effacement refusé")
 
 

@@ -1590,10 +1590,10 @@ async def _run_control_center_v2() -> int:
     ui_port = int(os.getenv("JARVIS_UI_PORT", str(DEFAULT_UI_PORT)))
     # Avant tout sous-processus : le brain Claude hérite du dossier de retours
     # de cette session (`JARVIS_FEEDBACK_DIR`).
-    from jarvis.runtime.feedback_sessions import feedback_session_dir
+    from jarvis.runtime.feedback_sessions import feedback_dir_label, feedback_session_dir
     try:
         feedback_dir = feedback_session_dir(ROOT)
-        journal.emit("ui.feedback_session", "Dossier de retours utilisateur de la session", data={"path": str(feedback_dir)})
+        journal.emit("ui.feedback_session", "Dossier de retours utilisateur de la session", data={"path": feedback_dir_label(feedback_dir)})
     except OSError as exc:
         journal.emit("ui.feedback_session", f"Dossier de retours utilisateur non créé: {type(exc).__name__}", level="warning",
                      data={"code": "feedback_session_dir_failed"})

@@ -28,7 +28,7 @@ from pathlib import Path
 import time
 
 from jarvis.data_root import DATA_ROOT_ENV, resolve_data_root
-from jarvis.installation import detect_installation
+from jarvis.installation import PRODUCT_HOME_LABEL, detect_installation
 
 FEEDBACK_ROOT_NAME = "retours-utilisateur"
 LAUNCHED_AT_ENV = "JARVIS_LAUNCHED_AT"
@@ -66,3 +66,20 @@ def feedback_session_dir(project_root: Path, *, now: float | None = None) -> Pat
     directory.mkdir(parents=True, exist_ok=True)
     os.environ[FEEDBACK_DIR_ENV] = str(directory)
     return directory
+
+
+def feedback_dir_label(directory: Path, environ: Mapping[str, str] | None = None) -> str:
+    """Étiquette du dossier pour le journal, sans chemin d'utilisateur (comme le bloc `installation` de `/v1/health`).
+
+    `%LOCALAPPDATA%/CIRCOE/Jarvis/data` (produit installé), `<JARVIS_DATA_ROOT>` ou `<dépôt>`, suivi de
+    `retours-utilisateur/<lancement>`.
+    """
+
+    env = os.environ if environ is None else environ
+    if env.get(DATA_ROOT_ENV, "").strip():
+        base = f"<{DATA_ROOT_ENV}>"
+    elif detect_installation(env).installed:
+        base = PRODUCT_HOME_LABEL + "\\data"
+    else:
+        base = "<dépôt>"
+    return f"{base}/{FEEDBACK_ROOT_NAME}/{Path(directory).name}"

@@ -143,7 +143,10 @@ def test_diagnostics_name_the_product_home_without_any_user_path(tmp_path):
 # -- consommateurs : une seule racine partagée ---------------------------------------------------------------------
 
 def test_every_consumer_resolves_under_the_shared_product_home(tmp_path, monkeypatch):
-    """Core et Control Center (`V2Settings`), chemin V1, Test Lab, MCP Écran, hook de routage, modèles, retours, `.env`."""
+    """Core et Control Center (`V2Settings`), Test Lab, MCP Écran, hook de routage, modèles, retours, `.env`.
+
+    Le chemin V1 (`AppConfig`) est exercé par `test_app_config_in_installed_mode_…`.
+    """
 
     code = installed_code(tmp_path / "program")
     env = local_appdata(tmp_path)
@@ -378,3 +381,148 @@ def test_health_carries_the_installation_block_only_when_given(tmp_path):
     assert body["installation"]["mode"] == "installed" and str(tmp_path) not in json.dumps(body)
     without = LocalProtocolServer(core, host="127.0.0.1", port=1, token=token)
     assert "installation" not in json.loads(asyncio.run(without.health(None)).body)
+
+
+# -- reprise QA S2 -------------------------------------------------------------------------------------------------
+
+EXAMPLE_TOML = Path(__file__).resolve().parents[2] / "config" / "jarvis.example.toml"
+
+
+def app_config_env(monkeypatch, tmp_path, *, installed_at: Path | None):
+    for name in ("JARVIS_DATA_ROOT", "JARVIS_RUNTIME_DIR", "JARVIS_MEMORY_DIR", "JARVIS_CONFIG"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", local_appdata(tmp_path)["LOCALAPPDATA"])
+    if installed_at is not None:
+        monkeypatch.setattr(installation, "CODE_ROOT", installed_at)
+    monkeypatch.chdir(tmp_path)
+    config = tmp_path / "config"
+    config.mkdir(exist_ok=True)
+    (config / "jarvis.toml").write_text(EXAMPLE_TOML.read_text(encoding="utf-8"), encoding="utf-8")
+    return config / "jarvis.toml"
+
+
+def test_app_config_in_installed_mode_uses_the_product_home_and_ignores_a_relative_toml_runtime(tmp_path, monkeypatch):
+    from jarvis import config as v1_config
+    from jarvis.config import AppConfig
+
+    code = installed_code(tmp_path / "program")
+    (code / "data" / "memory" / "long_term_memory").mkdir(parents=True)
+    (code / "data" / "memory" / "long_term_memory" / "note.md").write_text("ancienne\n", encoding="utf-8")
+    monkeypatch.setattr(v1_config, "LEGACY_DATA_ROOT", code / "data")
+    toml = app_config_env(monkeypatch, tmp_path, installed_at=code)
+    assert 'runtime_dir = "./runtime"' in toml.read_text(encoding="utf-8")
+    home = (Path(local_appdata(tmp_path)["LOCALAPPDATA"]) / "CIRCOE" / "Jarvis").resolve()
+    loaded = AppConfig.load(toml)
+    assert loaded.runtime.runtime_dir == home / "runtime"  # pas `<cwd>/runtime`
+    assert loaded.runtime.memory_dir == home / "data" / "memory"
+    assert not (home / "data" / "memory" / "long_term_memory" / "note.md").exists()  # dossier du programme jamais repris
+    # Une valeur TOML absolue est un choix d'administration, respecté ; la variable passe toujours devant.
+    toml.write_text(toml.read_text(encoding="utf-8").replace('runtime_dir = "./runtime"',
+                    f"runtime_dir = '{tmp_path / 'admin-rt'}'"), encoding="utf-8")
+    assert AppConfig.load(toml).runtime.runtime_dir == (tmp_path / "admin-rt").resolve()
+    monkeypatch.setenv("JARVIS_RUNTIME_DIR", str(tmp_path / "env-rt"))
+    assert AppConfig.load(toml).runtime.runtime_dir == (tmp_path / "env-rt").resolve()
+
+
+def test_app_config_in_development_keeps_the_toml_runtime_under_the_cwd(tmp_path, monkeypatch):
+    from jarvis.config import AppConfig
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    toml = app_config_env(monkeypatch, tmp_path, installed_at=checkout)
+    assert AppConfig.load(toml).runtime.runtime_dir == (tmp_path / "runtime").resolve()
+
+
+def test_a_global_context_copy_failure_is_reported_and_the_rest_of_the_adoption_stands(tmp_path, monkeypatch):
+    legacy, target = tmp_path / "repo" / "data", tmp_path / "home" / "data"
+    (legacy / "state").mkdir(parents=True)
+    conn = sqlite3.connect(legacy / "state" / "jarvis.sqlite3")
+    conn.execute("CREATE TABLE t (x)")
+    conn.commit()
+    conn.close()
+    seeded_global_context(legacy)
+
+    def refuse(source, staging):
+        raise UnsafeTree("current_task", "symbolic link, junction or reparse point refused")
+
+    monkeypatch.setattr(data_root, "copy_tree", refuse)
+    report = adopt_legacy_data(target, legacy)
+    assert "state/jarvis.sqlite3" in report.databases
+    assert any(item.startswith(f"{GLOBAL_CONTEXT_DIR}: non repris") and "junction" in item for item in report.skipped)
+    assert not (target / GLOBAL_CONTEXT_DIR).exists()
+    assert (legacy / GLOBAL_CONTEXT_DIR / "user_habits.md").is_file()
+    assert not list(target.glob(f".{GLOBAL_CONTEXT_DIR}.adopting-*"))
+
+
+def test_the_guard_resolves_dotdot_and_case_and_ignores_an_ancestor_of_the_allowed_root(tmp_path):
+    from jarvis.adapters.global_context import is_global_context_path
+
+    data = tmp_path / "data"
+    context = seeded_global_context(data)
+    sneaky = data / "prefabs" / ".." / "context_global" / "user_habits.md"
+    assert is_global_context_path(sneaky) and is_global_context_path(sneaky, within=data)
+    with pytest.raises(GlobalContextProtected):
+        _remove_tree(data / "prefabs" / ".." / "Context_Global")
+    with pytest.raises(UnsafeTree):
+        remove_tree(data / "prefabs" / ".." / GLOBAL_CONTEXT_DIR, within=data)
+    # Un ANCÊTRE de la racine nommé CONTEXT_GLOBAL ne bloque pas une purge légitime sous cette racine.
+    odd_root = tmp_path / GLOBAL_CONTEXT_DIR / "jarvis-data"
+    (odd_root / "prefabs" / ".archive" / "p" / "1").mkdir(parents=True)
+    (odd_root / "prefabs" / ".archive" / "p" / "1" / "manifest.json").write_text("{}", encoding="utf-8")
+    assert not is_global_context_path(odd_root / "prefabs" / ".archive" / "p", within=odd_root)
+    remove_tree(odd_root / "prefabs" / ".archive" / "p", within=odd_root)
+    assert not (odd_root / "prefabs" / ".archive" / "p").exists()
+    assert (context / "user_habits.md").is_file()
+
+
+def test_the_guard_sees_through_windows_short_names(tmp_path):
+    if os.name != "nt":
+        pytest.skip("noms courts 8.3 : Windows seulement")
+    import ctypes
+
+    context = seeded_global_context(tmp_path / "data")
+    buffer = ctypes.create_unicode_buffer(1024)
+    if not ctypes.windll.kernel32.GetShortPathNameW(str(context), buffer, 1024):
+        pytest.skip("GetShortPathNameW indisponible")
+    short = Path(buffer.value)
+    if short.name.casefold() == GLOBAL_CONTEXT_DIR.casefold():
+        pytest.skip("noms courts 8.3 désactivés sur ce volume")
+    with pytest.raises(GlobalContextProtected):
+        ensure_not_global_context(short / "user_habits.md")
+    with pytest.raises(GlobalContextProtected):
+        _remove_tree(short)
+    assert (context / "user_habits.md").is_file()
+
+
+def test_the_remotion_cache_purge_refuses_a_folder_that_contains_global_context(tmp_path):
+    from jarvis.adapters.remotion_compiler import RemotionCompiler
+
+    data = tmp_path / "data"
+    context = seeded_global_context(data)
+    assert RemotionCompiler._remove_tree(data) is False
+    assert RemotionCompiler._remove_tree(context / "user_habits.md") is False
+    assert (context / "user_habits.md").is_file()
+    cache = data / "local_capabilities" / "remotion" / "compiled" / "k1"
+    cache.mkdir(parents=True)
+    (cache / "bundle.js").write_text("x", encoding="utf-8")
+    assert RemotionCompiler._remove_tree(cache) is True and not cache.exists()
+
+
+def test_the_feedback_log_label_names_no_user_path(tmp_path):
+    from jarvis.runtime.feedback_sessions import feedback_dir_label
+
+    code = installed_code(tmp_path / "program")
+    env = local_appdata(tmp_path)
+    directory = Path(env["LOCALAPPDATA"]) / "CIRCOE" / "Jarvis" / "data" / "retours-utilisateur" / "1789654261"
+    assert feedback_dir_label(directory, env) == "<dépôt>/retours-utilisateur/1789654261"  # CODE_ROOT réel : checkout
+    assert feedback_dir_label(directory, env | {"JARVIS_DATA_ROOT": str(tmp_path)}) == \
+        "<JARVIS_DATA_ROOT>/retours-utilisateur/1789654261"
+    import jarvis.installation as inst
+    original = inst.CODE_ROOT
+    try:
+        inst.CODE_ROOT = code
+        label = feedback_dir_label(directory, env)
+    finally:
+        inst.CODE_ROOT = original
+    assert label == r"%LOCALAPPDATA%\CIRCOE\Jarvis\data/retours-utilisateur/1789654261"
+    assert "someone" not in label

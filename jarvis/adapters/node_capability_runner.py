@@ -30,7 +30,7 @@ import time
 from urllib import request as urlrequest
 
 from jarvis.adapters import process_tree
-from jarvis.adapters.global_context import ensure_not_global_context
+from jarvis.adapters.global_context import GLOBAL_CONTEXT_DIR, GlobalContextProtected, ensure_not_global_context
 from jarvis.adapters.process_tree import ProcessResult
 from jarvis.domain.local_capabilities import CapabilityManifest, LocalCapabilityError, LocalCapabilityErrorCode as C
 
@@ -130,17 +130,24 @@ def _remove_tree(path: Path) -> None:
     un nettoyage ou une réparation de capacité ne l'efface jamais (docs/context-global.md › Permanence).
     """
 
-    ensure_not_global_context(path)
-    path = extended_path(path)
+    ensure_not_global_context(path)  # chemin résolu (`..`, noms courts 8.3, casse)
+    _remove_tree_below(extended_path(path))
+
+
+def _remove_tree_below(path: Path) -> None:
+    """Effacement récursif ; chaque dossier visité est vérifié par son nom (un descendant `CONTEXT_GLOBAL` refuse)."""
+
     try:
         info = os.lstat(path)
     except FileNotFoundError:
         return
     if stat.S_ISDIR(info.st_mode) and not _is_link(info):
+        if path.name.casefold() == GLOBAL_CONTEXT_DIR.casefold():
+            raise GlobalContextProtected(f"{GLOBAL_CONTEXT_DIR} est permanent : effacement refusé")
         with os.scandir(path) as entries:
             children = [Path(entry.path) for entry in entries]
         for child in children:
-            _remove_tree(child)
+            _remove_tree_below(child)
         _retry(lambda: os.rmdir(path))
     else:
         _retry(lambda: _unlink(path, info))

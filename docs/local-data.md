@@ -80,6 +80,15 @@ tests et de l'administration ; le produit n'en pose aucune. Déplacer ou mettre
 à jour le programme ne crée donc pas de second profil, et un worktree (sans
 marqueur) reste isolé du profil installé.
 
+Chemin V1 (`AppConfig`, `python -m jarvis run|text|health|reindex`) : même
+résolveur, avec l'environnement réel. Ordre : `JARVIS_RUNTIME_DIR`, puis
+`runtime.runtime_dir` du TOML, puis le défaut. En produit installé, une valeur
+TOML **relative** (le `./runtime` de `config/jarvis.example.toml`) est
+**ignorée** (avertissement au journal) : elle placerait le runtime sous le
+dossier courant ; une valeur absolue est respectée. L'ancien
+`./data/memory` n'est pas repris en produit installé (`adopt_legacy_memory`
+coupé, comme la reprise de `./data` par Core).
+
 **Consommateurs** (tous par `resolve_data_root` / `resolve_runtime_root` /
 `default_runtime_root` de `jarvis/data_root.py`) : Core et le Control Center
 (`V2Settings.load`), la voix, le chemin V1 (`AppConfig`), le Test Lab
@@ -150,8 +159,11 @@ automatiquement.
 `CONTEXT_GLOBAL/` d'un ancien `./data`, s'il existe, est repris **en bloc**,
 seulement si la nouvelle racine n'en a pas (sinon : signalé dans `skipped`,
 jamais complété fichier par fichier, pour qu'un fichier supprimé par l'agent
-reste supprimé). Mode développement seulement : le produit installé ne fait
-jamais cette reprise.
+reste supprimé). Si sa copie échoue (jonction, lien, fichier verrouillé), le
+reste de la reprise tient : l'échec est noté dans `skipped` (journal
+`core.data_root.adopted`, niveau warning), la source reste intacte et se copie à
+la main ; Core ne retombe pas sur `./data`. Mode développement seulement : le
+produit installé ne fait jamais cette reprise.
 
 ## Reprise d'un profil vers une racine vide
 
@@ -528,7 +540,8 @@ l'arbre de travail git ; il suit maintenant la racine locale. Ordre de
 résolution : `JARVIS_MEMORY_DIR`, puis `runtime.memory_dir` du fichier TOML,
 puis `<racine>/memory`.
 
-Quand la valeur par défaut est utilisée, l'ancien `./data/memory` est copié une
+Quand la valeur par défaut est utilisée (checkout de développement seulement :
+jamais en produit installé), l'ancien `./data/memory` est copié une
 seule fois dans la nouvelle racine (`adopt_legacy_memory`, `jarvis/data_root.py`) :
 
 - copie seulement : l'ancien dossier n'est ni modifié, ni supprimé, ni marqué ;
