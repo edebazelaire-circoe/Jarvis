@@ -180,6 +180,7 @@ const mount=options=>{
     confirm:opts.noConfirm?undefined:async spec=>{confirms.push(spec);return answer},
     runBlocked:opts.runBlocked,
     inspect:opts.inspect,
+    edition:opts.edition,
     log:(level,event,data)=>journal.push({level,event,data}),
   });
   control.gate(opts.block===undefined?server.block():opts.block,opts.mode,opts.report);
@@ -1303,3 +1304,45 @@ def test_during_a_studio_run_actions_that_would_open_a_hidden_layer_are_off_and_
     after = result["after"]
     assert after["archive"][0] is None and after["archive"][1] == "Archiver", after
     assert after["inspect"][0] is None and after["session"] == [None, None], after
+
+
+def test_the_edition_note_wins_again_as_soon_as_the_edition_changes(tmp_path):
+    """QA runtime S08, M1 + m2 : un clic sur un type ne masque jamais la cause d'une lecture tombée, et la réponse à
+    ce clic s'efface dès que l'état de l'édition change (reprise réussie, nouvel échec)."""
+    model = ("{edition:'presentation',defaultKind:'presentation',developerSurfaces:'hidden',"
+             "kinds:{assistant:{available:false},presentation:{available:true},meeting:{available:false}},"
+             "order:['assistant','presentation','meeting'],available:['presentation'],restricts:true}")
+    result = run_node(tmp_path, r"""
+      const failed={status:'error',model:null,error:{code:'core_unreachable',message:'down'},attempt:1,since:clock};
+      const ready={status:'ready',model:MODEL,error:null,attempt:0,since:clock};
+      const listeners=new Set();let state=failed,refreshes=0;
+      const edition={state:()=>state,subscribe(fn){listeners.add(fn);fn(state);return ()=>listeners.delete(fn)},
+        refresh(){refreshes+=1},ensure(){},set(next){state=next;for(const fn of listeners)fn(state)}};
+      const m=mount({edition});
+      const note=()=>{const n=byId(m.panel,B.DOM.kindNoteId);return n.hidden?null:
+        {text:n.children[0].textContent,tone:n.getAttribute('data-tone'),role:n.getAttribute('role'),retry:!byId(m.panel,B.DOM.kindRetryId).hidden}};
+      const pick=kind=>all(m.panel).find(n=>n.className==='bd-kindpick'&&n.getAttribute('data-kind')===kind);
+      m.trigger.fire('click');await settle();
+      byId(m.panel,B.DOM.newBoardId).fire('click');await settle();
+      const before=note();
+      pick('assistant').fire('click');await settle();
+      const afterClick=note(),said=byId(m.panel,B.DOM.announceId).textContent,
+        description=pick('presentation').getAttribute('aria-description');
+      edition.set(ready);await settle();
+      const recovered=note();
+      pick('meeting').fire('click');await settle();
+      const soon=note();
+      edition.set(Object.assign({},failed,{model:null}));await settle();
+      const failedAgain=note();
+      out({before,afterClick,said,description,recovered,soon,failedAgain,refreshes,
+        posts:m.server.calls.filter(c=>c.method==='POST').length});
+    """.replace("MODEL", model))
+    cause = "Types de Board illisibles"
+    assert result["before"]["tone"] == "bad" and cause in result["before"]["text"] and result["before"]["retry"]
+    assert result["afterClick"] == result["before"], "a click on a kind never hides the cause of the failed read"
+    assert cause in result["said"], "the click re-says the cause instead of a wait"
+    assert cause in result["description"], "the accessible description of an unread kind says the cause"
+    assert result["recovered"]["tone"] == "info" and "arrivent bientôt" in result["recovered"]["text"], result["recovered"]
+    assert result["soon"]["tone"] == "info" and result["soon"]["text"].startswith("Réunion : bientôt disponible")
+    assert result["failedAgain"]["tone"] == "bad" and cause in result["failedAgain"]["text"],         "a new edition state wins over the answer to the last click"
+    assert result["posts"] == 0

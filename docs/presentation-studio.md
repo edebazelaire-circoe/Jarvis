@@ -4437,6 +4437,40 @@ Context budget: `jarvis-presentation` 16 849 -> 18 495 bytes (18 495 alone, 19 1
 - "Jouer" from the rail uses the `user_presenter` role (the user presents, PRESENTATION mode); rehearsal with Jarvis speaking stays in the player band and the voice tools.
 - The Studio in full screen hides the rail (browser rule); the windowed Studio is the mode that keeps rail and voice visible.
 
+### Presentation home (Level 3, presentation-edition Slice 08)
+
+Status: implemented by `tasks/jarvis-presentation-edition-v1/` Slice 08 (D01, D13). Owner:
+`control_center_presentation_rail.js` (`JOURNEY`, `CREATE_ROUTE`, `createPresentation`); page rules:
+[control-center-shell.md](control-center-shell.md) › *Product edition UI*. Conformance:
+`tests/unit/test_product_edition_ui_js.py`, `tests/unit/test_presentation_edition_ui_browser.py`.
+
+In a **product edition** (the edition Core reports is not `full`) the workspace rail is the home of a Presentation
+Board: `shouldShow` gets `home: true` and shows the rail in a Presentation Board (or PRESENTATION mode) even with no
+presentation; the user's `hidden` preference still wins. In `full`, nothing changes (an empty rail stays hidden, no
+create button).
+
+- **Empty home** (`.jvr-homebox`, outside the listbox, hidden in the 72 px strip): « Votre première présentation », four
+  steps in work order: 1 « Rassemblez vos sources » → « Ouvrir le Dossier » (`JarvisDossier.open`); 2 « Créez la
+  présentation » → « Nouvelle présentation »; 3 « Faites écrire les scènes » → « Ouvrir le chat » (`JarvisChat.open`;
+  the voice works too); 4 « Relisez, présentez, exportez » (open the card: Variantes for the scenes, « Présenter »,
+  then « Enregistrer une copie dans Documents » after an export, [export.md](export.md)).
+- **« Nouvelle présentation »** in the rail head (icon only in the strip and the Studio column): a title dialog, then
+  `POST /api/presentation-studio/presentations {title}` — Core's default engine, none named, the same route as the
+  « Présentations · moteur » card that stays the developer door (engine choice, Slidecar). One creation at a time,
+  30 s deadline, the rail note counts the seconds; success re-reads the list, focuses the new card and says the next
+  step; a refusal says its cause (limit reached, disk, Jarvis unreachable, title refused + Core's message); a timeout
+  (the page's 30 s, or the relay's `core_timeout` 504) says the outcome is unknown and re-reads. The codes are those
+  of the engine card's table (`JarvisStudioEngineCore.ERRORS`, checked by `test_product_edition_ui_js.py`) in
+  product wording. An empty title is not sent and the dialog says why.
+- **Edition not read** (Core did not answer `/api/boards/edition`, page marked as a product edition): the empty home
+  stays, says the cause and its code, and offers « Réessayer »; no creation step until Core answers.
+- **No engine jargon** when developer surfaces are hidden: a Remotion presentation reads « Présentation » (a Slidecar
+  one still says « Slidecar »), and the card menu has no « Remotion Studio… » (`menuModel(row, {developer:false})`).
+
+Out of scope here (Slice 09, editing pass): the wording inside Variantes and the inspector, including hiding the
+« Remotion Studio » button and the message that points to the MCP dialog when developer surfaces are hidden (I-006);
+the export of a still or a PDF from the rail (I-003 point 1); French default export file names (I-003 point 2).
+
 ### Active workspace rail (Level 3, orbital shell Slice 07)
 
 Status: implemented by handoff `jarvis-board-orbital-ui-workspace-rail`, Slice 07, decision D10 (Stage A). Owners: `jarvis/core/presentation_studio_rail.py` (`preview`,

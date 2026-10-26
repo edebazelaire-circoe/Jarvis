@@ -73,3 +73,10 @@ Update editing/variant/inspector docs and add V1 user-flow screenshots or states
 
 ## Handoff Notes
 Frontend coding Slice: `/caveman`, `/coding-guideline`, `/impeccable`; use a Claude Work Agent where supported. QA: `qa-verification`, `code-review`, `runtime-validation`.
+
+## Slice 08 handoff (2026-10-26, I-006)
+- In scope: in the `presentation` edition without developer mode, Variantes must not offer « Remotion Studio »
+  (`control_center_presentation_studio_explorer_remotion.js:122,198`) nor send the user to the MCP dialog's
+  « Plugins externes » tab (`:189`), which is hidden there. Declare the button `data-surface="developer"` (contract:
+  `docs/control-center-shell.md` › *Product edition UI*) and give the message a product wording; add a browser test in
+  `presentation` (hidden) and with `JARVIS_DEVELOPER_MODE=1` (shown).

@@ -33,6 +33,13 @@
    Artifacts liés au Board actif (fichiers déposés, liens, captures, enregistrements, rendus) en cartes du même dessin, état sans jaune ; le
    clic ouvre l'image dans l'aperçu des captures quand il existe (Slice 05), sinon le détail de l'Artifact dans l'inspecteur (`JarvisWorkspace`).
 
+   Édition produit (jarvis-presentation-edition-v1, Slice 08 ; `docs/presentation-studio.md` › *Presentation home*). Quand l'édition
+   est une édition produit (`JarvisProductEdition`, lue sur Core : `edition` ≠ `full`), le rail est l'ACCUEIL des présentations d'un Board
+   Présentation : visible même vide, avec le parcours en quatre étapes (sources du Dossier → créer → faire écrire les scènes → relire,
+   présenter, exporter) et un bouton « Nouvelle présentation » en tête (`POST /api/presentation-studio/presentations`, le défaut de Core :
+   aucun moteur nommé). Quand l'édition cache les surfaces de développement, aucun nom de moteur ni « Remotion Studio… » n'apparaît. En
+   `full`, rien ne change.
+
    Tout texte d'auteur (titre) passe par `textContent`. Chaque échec est journalisé (`[presentation-rail] <clé> {json}`) et dit à l'écran. */
 (function(root){
   'use strict';
@@ -56,6 +63,30 @@
   const STATE_COLOR=Object.freeze({working:'var(--sem-working,#4da3ff)',problem:'var(--sem-problem,#ff6a4d)',unreviewed:'var(--sem-review,#ffd166)',
     done:'var(--sem-done,#68e0a0)',unknown:'transparent'});
   const ENGINE_LABEL=Object.freeze({remotion:'Remotion',slidecar:'Slidecar'});
+  /* Slice 08 : création depuis l'accueil (route de Core relayée, la même que la carte « Présentations · moteur »). */
+  const CREATE_ROUTE='/api/presentation-studio/presentations';
+  const CREATE_TIMEOUT_MS=30000;
+  const CREATE_ERRORS=Object.freeze({
+    presentation_studio_limit_reached:'Le nombre maximal de présentations est atteint : archivez-en une, puis réessayez.',
+    presentation_studio_storage_io:'Le disque a refusé l’écriture : rien n’a été créé.',
+    presentation_studio_invalid:'Titre refusé : ',
+    invalid_request:'La demande est mal formée : rien n’a été créé.',
+    core_unreachable:'Jarvis ne répond pas : rien n’a été créé.',core_unconfigured:'Ce Control Center ne connaît pas Jarvis : rien n’a été créé.',
+    /* Issue inconnue (le relais ou la page a cessé d'attendre ; Core a peut-être créé) : jamais « impossible ». */
+    core_timeout:'Jarvis n’a pas répondu à temps : l’issue est inconnue, la liste est relue.',
+    timeout:`Pas de réponse après ${CREATE_TIMEOUT_MS/1000} s : l’issue est inconnue, la liste est relue.`,
+    network:'La connexion avec le Control Center a échoué : rien n’a été créé.',
+  });
+  /* Mêmes codes que la table du moteur (`JarvisStudioEngineCore.ERRORS` ; `test_product_edition_ui_js.py` le vérifie),
+     ton produit ici. Ceux-ci laissent l'issue inconnue : la liste relue la tranche. */
+  const CREATE_UNKNOWN_OUTCOME=Object.freeze(['core_timeout','timeout']);
+  /* Le parcours de l'accueil, dans l'ordre du travail (D13 : la retouche fine des scènes est l'affaire de Variantes et de l'inspecteur). */
+  const JOURNEY=Object.freeze([
+    Object.freeze({step:'sources',title:'Rassemblez vos sources',text:'Déposez fichiers, liens et notes dans le Dossier de ce Board.',action:'dossier',label:'Ouvrir le Dossier'}),
+    Object.freeze({step:'create',title:'Créez la présentation',text:'Donnez-lui un titre : elle apparaît ici.',action:'create',label:'Nouvelle présentation'}),
+    Object.freeze({step:'scenes',title:'Faites écrire les scènes',text:'Demandez à Jarvis, à la voix ou dans le chat, de les rédiger à partir de vos sources.',action:'chat',label:'Ouvrir le chat'}),
+    Object.freeze({step:'review',title:'Relisez, présentez, exportez',text:'Ouvrez la présentation pour relire ses scènes, la présenter, puis en enregistrer une copie dans Documents.',action:null,label:null}),
+  ]);
   const POLL_BUSY_MS=2000,POLL_IDLE_MS=4000,POLL_HIDDEN_MS=20000,REPORT_EVERY_MS=15000,REQUEST_TIMEOUT_MS=8000,NOTICE_MS=6000;
   const TITLE_SHORT=40;
   const STUDIO_WIDTH_PX=188;
@@ -69,6 +100,13 @@
   function cleanLine(value,max){
     const text=String(value==null?'':value).replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]+/g,' ').replace(/\s+/g,' ').trim();
     return max&&text.length>max?text.slice(0,Math.max(1,max-1))+'…':text;
+  }
+  /* Lecture de l'édition tombée (accueil sans réponse de Core) : la cause, dite comme sur l'écran du type des Boards. */
+  function editionCause(error){
+    const code=error&&error.code?String(error.code):'network';
+    const said=code==='timeout'?'Jarvis n’a pas répondu à temps.':code==='core_unreachable'||code==='http_503'?'Jarvis ne répond pas.'
+      :code==='network'?'La connexion avec le Control Center a échoué.':cleanLine(error&&error.message,120)||code;
+    return {code,text:said};
   }
   function monogram(title){
     const words=cleanLine(title,80).split(' ').filter(Boolean);
@@ -84,9 +122,11 @@
     if(s==='working'||s==='problem'||s==='unknown')return s;
     return row&&row.unreviewed&&typeof row.unreviewed==='object'?'unreviewed':'done';
   }
-  function typeOf(row){
+  /* `opts.plain` (Slice 08, surfaces de développement cachées) : le moteur par défaut n'est pas nommé ; un autre moteur
+     (Slidecar, expérimental) l'est encore, parce que la présentation se comporte autrement. */
+  function typeOf(row,opts){
     const engine=row&&row.type&&typeof row.type.engine==='string'?row.type.engine:(row&&typeof row.engine==='string'?row.engine:null);
-    const name=engine&&ENGINE_LABEL[engine]||null;
+    const name=engine&&!(opts&&opts.plain&&engine==='remotion')&&ENGINE_LABEL[engine]||null;
     return {engine:name?engine:null,badge:name||'Présentation',label:name?`Présentation · ${name}`:'Présentation'};
   }
   /* « il y a 2 h » à partir d'un horodatage ISO de Core ; illisible ou futur lointain : rien (jamais une date inventée). */
@@ -101,18 +141,18 @@
     return `il y a ${Math.round(d/30)} mois`;
   }
   /* Aperçu : l'image d'un rendu complet que Core désigne (`preview`), sinon une vignette typée. Jamais un chemin, jamais une fausse diapositive. */
-  function previewOf(row){
+  function previewOf(row,opts){
     const p=row&&row.preview;
     if(p&&typeof p==='object'&&p.kind==='presentation_still'&&typeof p.artifact_id==='string'&&ID_ARTIFACT.test(p.artifact_id))
       return {kind:'image',url:payloadUrl(p.artifact_id),artifact_id:p.artifact_id,width:Number(p.width)||null,height:Number(p.height)||null};
-    return {kind:'placeholder',label:typeOf(row).label};
+    return {kind:'placeholder',label:typeOf(row,opts).label};
   }
   /* La carte, en données (pur, testé sous node) : ce que le DOM affiche, rien de plus. */
-  function cardOf(row,nowMs){
-    const st=displayState(row),type=typeOf(row),count=Number(row&&row.variant_count)||0;
+  function cardOf(row,nowMs,opts){
+    const st=displayState(row),type=typeOf(row,opts),count=Number(row&&row.variant_count)||0;
     const when=ago(row&&row.updated_at,nowMs);
     return {id:row.presentation_id,title:cleanLine(row.title,80)||'Sans titre',short:cleanLine(row.title,TITLE_SHORT)||'Sans titre',
-      state:st,stateShort:STATE_SHORT[st],stateLabel:STATE_LABEL[st],color:STATE_COLOR[st],type,preview:previewOf(row),
+      state:st,stateShort:STATE_SHORT[st],stateLabel:STATE_LABEL[st],color:STATE_COLOR[st],type,preview:previewOf(row,opts),
       meta:[type.badge,count>1?`${count} variantes`:null].filter(Boolean).join(' · '),when};
   }
 
@@ -130,7 +170,8 @@
     const c=ctx||{};
     if(c.pref==='hidden')return false;
     if(c.pref==='shown')return true;
-    if(!model.total)return false;
+    /* Slice 08 : l'accueil d'une édition produit (`c.home`) se montre vide dans un Board Présentation. */
+    if(!model.total)return !!(c.home&&(c.boardKind==='presentation'||c.mode==='presentation'));
     return !!(c.boardKind==='presentation'||c.mode==='presentation'||model.working.length||model.problems.length||c.studioOpen);
   }
   /* Densité de la carte (pur) : `full` (300 px), `slim` (72 px : vignette, libellé au focus), `drawer` (onglet sous 700 px),
@@ -147,7 +188,8 @@
     const items=[
       {act:'open',label:'Ouvrir les variantes',note:c.playing&&!c.playingThis?'Une autre présentation est en cours : Variantes la montre.':null},
       /* native-studio-playback-fix Slice 11 (§ 1): Variants on the active variant, then Remotion Studio on the scene on screen, after the confirmation. */
-      {act:'studio',label:'Remotion Studio…',note:c.playing?'Une présentation est en cours : Remotion Studio s’ouvre à son arrêt.':null},
+      /* Slice 08 : outil de développement, absent quand l'édition cache ces surfaces (`c.developer === false`). */
+      ...(c.developer===false?[]:[{act:'studio',label:'Remotion Studio…',note:c.playing?'Une présentation est en cours : Remotion Studio s’ouvre à son arrêt.':null}]),
       {act:'edit',label:'Éditer',note:c.playing?'Une présentation est en cours : l’inspecteur est indisponible.':null},
       {act:'play',label:'Présenter',note:c.playing?'Une présentation est déjà en cours.':null},
       '-',
@@ -273,8 +315,36 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
 .jvr-dialog h2{margin:0 0 8px;font-size:14px;font-weight:700}.jvr-dialog p{margin:0 0 12px;color:#9db6c4;line-height:1.45}
 .jvr-dialog input{width:100%;padding:8px 10px;margin-bottom:12px;background:#04080c;border:1px solid rgba(110,231,255,.28);border-radius:7px;color:inherit;font:inherit}
 .jvr-dialog .jvr-row{display:flex;gap:8px;justify-content:flex-end}
+.jvr-dialog .jvr-fielderr{margin:-6px 0 12px;color:var(--sem-alert,#ff9f43);font-size:12px}.jvr-dialog .jvr-fielderr[hidden]{display:none}
 .jvr-dialog button{padding:7px 12px;border-radius:7px;background:rgba(110,231,255,.1);border:1px solid rgba(110,231,255,.3);color:inherit;font:inherit;cursor:pointer}
 .jvr-dialog button[data-danger]{background:rgba(255,101,119,.14);border-color:rgba(255,101,119,.5);color:#ff9aa6}
+/* Slice 08 : accueil d'une édition produit — bouton « Nouvelle présentation » et parcours en quatre étapes. */
+#${DOM.hostId} .jvr-new{display:inline-flex;align-items:center;gap:6px;margin-left:auto;padding:5px 10px;border:1px solid color-mix(in srgb,var(--accent,#6ee7ff) 45%,transparent);border-radius:999px;
+  background:color-mix(in srgb,var(--accent,#6ee7ff) 10%,transparent);color:var(--accent,#6ee7ff);font:600 11px/1.1 inherit;letter-spacing:.02em;cursor:pointer;white-space:nowrap}
+#${DOM.hostId} .jvr-new svg{width:13px;height:13px;flex:none}
+#${DOM.hostId} .jvr-new:hover:not([aria-disabled=true]){background:color-mix(in srgb,var(--accent,#6ee7ff) 18%,transparent)}
+#${DOM.hostId} .jvr-new[aria-disabled=true]{opacity:.55;cursor:progress}
+#${DOM.hostId} .jvr-new:focus-visible{outline:var(--shell-focus-w,2px) solid var(--shell-focus,#6ee7ff);outline-offset:var(--shell-focus-offset,2px)}
+#${DOM.hostId}[data-density=slim] .jvr-new span,#${DOM.hostId}[data-density=compact] .jvr-new span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+#${DOM.hostId}[data-density=slim] .jvr-new,#${DOM.hostId}[data-density=compact] .jvr-new{padding:5px;margin-left:0}
+#${DOM.hostId} .jvr-home{list-style:none;margin:0;padding:6px 4px 4px;display:grid;gap:10px;counter-reset:jvr-step}
+#${DOM.hostId} .jvr-home-title{margin:2px 4px 0;color:var(--jvr-ink);font:600 13px/1.3 inherit;letter-spacing:.01em}
+#${DOM.hostId} .jvr-step{counter-increment:jvr-step;display:grid;grid-template-columns:22px 1fr;gap:2px 9px;align-items:start}
+#${DOM.hostId} .jvr-step::before{content:counter(jvr-step);grid-row:span 3;display:grid;place-items:center;width:22px;height:22px;border-radius:50%;
+  border:1px solid var(--jvr-hot);color:var(--accent,#6ee7ff);font:600 11px/1 inherit}
+#${DOM.hostId} .jvr-step strong{color:var(--jvr-ink);font:600 12px/1.35 inherit}
+#${DOM.hostId} .jvr-step p{margin:0;color:var(--jvr-mute);font-size:11.5px;line-height:1.45}
+#${DOM.hostId} .jvr-step button{justify-self:start;margin-top:4px;padding:4px 10px;border:1px solid var(--jvr-line);border-radius:999px;background:none;color:var(--jvr-ink);font:inherit;font-size:11.5px;cursor:pointer}
+#${DOM.hostId} .jvr-step button:hover{border-color:var(--jvr-hot)}
+#${DOM.hostId} .jvr-step button:focus-visible{outline:var(--shell-focus-w,2px) solid var(--shell-focus,#6ee7ff);outline-offset:var(--shell-focus-offset,2px)}
+#${DOM.hostId} .jvr-home-error{margin:6px 4px 0;color:var(--sem-alert,#ff9f43);font-size:11.5px;line-height:1.45}
+#${DOM.hostId} .jvr-home-code{display:block;margin:4px 4px 0;color:var(--jvr-mute);font-size:10.5px}
+#${DOM.hostId} .jvr-home-retry{margin:8px 4px 2px;padding:4px 10px;border:1px solid var(--jvr-line);border-radius:999px;background:none;color:var(--jvr-ink);font:inherit;font-size:11.5px;cursor:pointer}
+#${DOM.hostId} .jvr-home-retry:hover{border-color:var(--jvr-hot)}
+#${DOM.hostId} .jvr-home-retry:focus-visible{outline:var(--shell-focus-w,2px) solid var(--shell-focus,#6ee7ff);outline-offset:var(--shell-focus-offset,2px)}
+#${DOM.hostId} .jvr-homebox[hidden],#${DOM.hostId}[data-density=slim] .jvr-homebox,#${DOM.hostId}[data-density=compact] .jvr-homebox{display:none}
+#${DOM.hostId} .jvr-list[hidden]{display:none}
+@media (prefers-reduced-motion:reduce){#${DOM.hostId} .jvr-new{transition:none}}
 `;
 
   function createRail(deps){
@@ -286,6 +356,16 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
     const cancelLater=d.clearTimeout||(id=>clearTimeout(id));
     const now=d.now||(()=>Date.now());
     const sink=d.console||root.console;
+    /* Slice 08 : l'édition (lue sur Core par `JarvisProductEdition`). Absente : comportement d'avant (pas d'accueil, moteurs nommés). */
+    const edition=d.edition!==undefined?d.edition:(root.JarvisProductEdition&&root.JarvisProductEdition.instance||null);
+    const editionModel=()=>{try{const v=edition&&typeof edition.state==='function'?edition.state():null;return v&&v.model||null}catch(_e){return null /* intentional: no edition = previous behaviour */}};
+    /* Accueil produit : l'édition lue n'est pas `full`. Surfaces de développement : le marquage confirmé par Core. */
+    const home=()=>{const m=editionModel();return !!(m&&m.edition!=='full')};
+    /* La lecture de l'édition est tombée alors que la page est marquée édition produit : l'accueil reste montré, avec la
+       cause et « Réessayer » (QA S08, M4), au lieu d'un rail caché et muet. */
+    const homeUnread=()=>{try{const v=edition&&typeof edition.state==='function'?edition.state():null;
+      return v&&!v.model&&v.error&&(v.status==='error'||v.status==='loading')&&v.pageEdition&&v.pageEdition!=='full'?v:null}catch(_e){return null /* intentional: no edition = previous behaviour */}};
+    const developer=()=>{try{return !(edition&&typeof edition.developerSurfacesShown==='function')||edition.developerSurfacesShown()}catch(_e){return true /* intentional */}};
     const S={coreOk:false,rows:[],loaded:false,lost:false,pref:'auto',collapsed:false,drawer:false,density:'full',boardKind:null,boardId:null,mode:null,voice:'idle',foldHidden:false,foldArchived:false,foldWorkspace:false,
       lastSeq:null,firstPoll:true,studioOpen:false,notice:null,busy:new Set(),playing:null,selected:null,menuRow:null,dialog:null,lastReport:'',lastReportAt:0};
     const ui={};
@@ -349,7 +429,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
     function model(){return modelOf(S.rows,S.pref)}
     function shown(){
       if(S.studioOpen&&(Number(win.innerWidth)||1280)<HIDE_IN_STUDIO_BELOW_PX&&S.pref!=='shown')return false;
-      return shouldShow(model(),{pref:S.pref,boardKind:S.boardKind,mode:S.mode,studioOpen:S.studioOpen})}
+      return shouldShow(model(),{pref:S.pref,boardKind:S.boardKind,mode:S.mode,studioOpen:S.studioOpen,home:home()||!!homeUnread()})}
     function build(){
       if(ui.host)return ui.host;
       if(!doc.getElementById(DOM.styleId)){const style=el('style');style.id=DOM.styleId;style.textContent=CSS;(doc.head||doc.documentElement).appendChild(style)}
@@ -365,7 +445,11 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       ui.collapseBtn=el('button','jvr-tool','›');ui.collapseBtn.type='button';
       /* Sous 700 px le bouton ouvre ou ferme l'onglet ; au-dessus il replie le rail en bande de vignettes (72 px). */
       ui.collapseBtn.addEventListener('click',()=>{if(S.density==='drawer')S.drawer=!S.drawer;else{S.collapsed=!S.collapsed;save()}render()});
-      head.append(ui.title,ui.urgent,ui.voice,ui.collapseBtn);
+      /* Slice 08 : « Nouvelle présentation », montré par `render` quand l'édition est une édition produit. */
+      ui.newBtn=el('button','jvr-new');ui.newBtn.type='button';ui.newBtn.hidden=true;ui.newBtn.setAttribute('aria-label','Nouvelle présentation');ui.newBtn.title='Nouvelle présentation';
+      ui.newBtn.append(svgIcon([['path',{d:'M12 5v14M5 12h14'}]]),el('span','','Nouvelle'));
+      ui.newBtn.addEventListener('click',()=>{createPresentation('head')});
+      head.append(ui.title,ui.urgent,ui.voice,ui.newBtn,ui.collapseBtn);
       ui.list=el('ul','jvr-list');ui.list.setAttribute('role','listbox');ui.list.setAttribute('aria-label','Présentations');
       ui.folds=el('div','jvr-folds');ui.hiddenFold=el('div');ui.archivedFold=el('div');ui.folds.append(ui.hiddenFold,ui.archivedFold);
       ui.note=el('div','jvr-note');ui.note.setAttribute('role','status');ui.note.setAttribute('aria-live','polite');
@@ -374,7 +458,8 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
          qui défile, pour ne pas être rognée). */
       ui.peek=el('div','jvr-peek');ui.peek.hidden=true;ui.peek.setAttribute('aria-hidden','true');
       ui.ws=el('div','jvr-ws');ui.ws.setAttribute('role','group');ui.ws.setAttribute('aria-label','Sur ce Board');
-      host.append(head,ui.list,ui.ws,ui.folds,ui.note,ui.peek);
+      ui.home=el('div','jvr-homebox');ui.home.hidden=true;ui.home.setAttribute('role','group');ui.home.setAttribute('aria-label','Accueil des présentations');
+      host.append(head,ui.list,ui.home,ui.ws,ui.folds,ui.note,ui.peek);
       const peekOn=event=>{const item=event.target&&event.target.closest&&event.target.closest('.jvr-item');if(item&&S.density==='slim')showPeek(item);else hidePeek()};
       host.addEventListener('focusin',peekOn);host.addEventListener('mouseover',peekOn);
       host.addEventListener('focusout',()=>hidePeek());host.addEventListener('mouseleave',()=>hidePeek());
@@ -389,7 +474,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       return host;
     }
     function itemFor(row,opts){
-      const card=cardOf(row,now());
+      const card=cardOf(row,now(),{plain:!developer()});
       const li=el('li','jvr-card');li.setAttribute('role','none');
       const b=el('button','jvr-item');b.type='button';b.setAttribute('role','option');b.dataset.id=row.presentation_id;
       b.dataset.state=card.state;b.style.setProperty('--c',card.color);
@@ -573,6 +658,9 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       ui.host.dataset.collapsed=String(slim);
       if(!slim)hidePeek();
       ui.count.textContent=m.visible.length?`(${m.visible.length})`:'';
+      const offer=home();ui.newBtn.hidden=!offer||density==='drawer'&&!S.drawer;
+      if(offer){const busy=!!S.creating;if(busy)ui.newBtn.setAttribute('aria-disabled','true');else ui.newBtn.removeAttribute('aria-disabled');
+        ui.newBtn.title=busy?`Création de « ${cleanLine(S.creating.title,40)} »…`:'Nouvelle présentation'}
       const urgent=m.problems.length?'problem':m.working.length?'working':m.unreviewed.length?'unreviewed':null;
       ui.urgent.style.setProperty('--c',urgent?STATE_COLOR[urgent]:'transparent');ui.urgent.title=urgent?STATE_LABEL[urgent]:'';
       if(urgent)ui.urgent.dataset.state=urgent;else delete ui.urgent.dataset.state;
@@ -590,6 +678,13 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       const focused=active&&ui.host.contains(active)&&active.classList&&active.classList.contains('jvr-item')?active.dataset.id:null;
       clear(ui.list);
       if(!S.loaded&&!S.lost)ui.list.appendChild(el('li','jvr-empty','Chargement…'));
+      /* L'accueil dépend de l'édition lue sur Core : elle n'est demandée que dans ce cas (Board Présentation, aucune présentation). */
+      if(S.loaded&&!m.total&&(S.boardKind==='presentation'||S.mode==='presentation')&&edition&&typeof edition.ensure==='function')edition.ensure();
+      const unread=home()?null:homeUnread();
+      const showHome=S.loaded&&!m.visible.length&&!m.total&&(home()||!!unread)&&!S.lost;
+      /* L'accueil vit hors de la liste d'options (une liste d'options ne contient que des options). */
+      clear(ui.home);ui.home.hidden=!showHome;ui.list.hidden=showHome;
+      if(showHome)ui.home.appendChild(unread?homeUnreadFor(unread):homeFor());
       else if(!m.visible.length)ui.list.appendChild(el('li','jvr-empty',m.total?'Toutes sont masquées ou archivées.':'Aucune présentation.'));
       for(const row of m.visible)ui.list.appendChild(itemFor(row));
       clear(ui.hiddenFold);clear(ui.archivedFold);
@@ -602,14 +697,120 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
         if(S.foldArchived){const ul=el('ul','jvr-list');for(const row of m.archived)ul.appendChild(itemFor(row,{dim:true}));ui.archivedFold.appendChild(ul)}
       }
       renderWorkspace();
-      const note=S.lost?{kind:'failed',text:'Rail injoignable : l’état affiché n’est plus confirmé.'}:S.notice;
+      const note=S.lost?{kind:'failed',text:'Rail injoignable : l’état affiché n’est plus confirmé.'}
+        :S.creating?{kind:'info',text:`Création de « ${cleanLine(S.creating.title,40)} »… ${Math.max(0,Math.floor((now()-S.creating.since)/1000))} s`}:S.notice;
       ui.note.hidden=!note;ui.note.textContent=note?note.text:'';ui.note.dataset.kind=note?note.kind:'';
       ui.note.title=note&&!S.lost?'Cliquer pour masquer ce message':'';
+      /* Les secondes d'une création ne se lisent pas à voix haute chaque seconde : l'annonce part au début et à l'issue. */
+      ui.note.setAttribute('aria-live',S.creating?'off':'polite');
       doc.documentElement.classList.toggle('jvr-studio',!!(S.studioOpen&&visible));
       doc.documentElement.classList.toggle('jvr-slim',!!(S.studioOpen&&visible&&slim));
       if(focused&&doc.activeElement!==ui.host.querySelector(`.jvr-item[data-id="${focused}"]`)){const again=itemById(focused);if(again){again.focus({preventScroll:true});if(slim)showPeek(again)}}
       syncStudioInset(visible);
       reportSoon();
+    }
+    /* Slice 08 : pictogramme au trait (même dessin que les vignettes). */
+    function svgIcon(parts){
+      const ns='http://www.w3.org/2000/svg',svg=doc.createElementNS(ns,'svg');
+      svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('fill','none');svg.setAttribute('stroke','currentColor');svg.setAttribute('stroke-width','2');
+      svg.setAttribute('stroke-linecap','round');svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false');
+      for(const [tag,attrs] of parts){const n=doc.createElementNS(ns,tag);for(const k of Object.keys(attrs))n.setAttribute(k,attrs[k]);svg.appendChild(n)}
+      return svg;
+    }
+    /* L'accueil vide (Slice 08) : quatre étapes, chacune avec son geste quand il existe dans la page. */
+    function homeFor(){
+      const li=el('div','jvr-homewrap');
+      const title=el('p','jvr-home-title','Votre première présentation');title.id='jvrHomeTitle';
+      const list=el('ol','jvr-home');list.setAttribute('aria-labelledby',title.id);
+      for(const step of JOURNEY){
+        const item=el('li','jvr-step');item.dataset.step=step.step;
+        item.append(el('strong','',step.title),el('p','',step.text));
+        if(step.action){
+          const b=el('button','',step.label);b.type='button';b.dataset.homeAct=step.action;
+          if(step.action==='create'&&S.creating)b.setAttribute('aria-disabled','true');
+          b.addEventListener('click',()=>homeAct(step.action,b));
+          item.append(b);
+        }
+        list.append(item);
+      }
+      li.append(title,list);
+      return li;
+    }
+    /* L'accueil quand Core n'a pas dit ce que l'édition permet : la cause, son code, « Réessayer » (relit Core). */
+    function homeUnreadFor(view){
+      const box=el('div','jvr-homewrap');
+      const cause=editionCause(view.error);
+      /* Relecture en cours (« Réessayer », reprise, retour de Core) : l'accueil reste en place et le dit. */
+      const again=view.status==='loading';
+      const said=el('p','jvr-home-error',again?'Nouvelle lecture auprès de Jarvis…'
+        :`Jarvis n’a pas pu dire ce que cette édition permet : ${cause.text} La création attend cette lecture.`);
+      said.setAttribute('role',again?'status':'alert');
+      const code=el('small','jvr-home-code',cause.code);
+      const retry=el('button','jvr-home-retry','Réessayer');retry.type='button';retry.dataset.homeAct='retry_edition';
+      if(again)retry.setAttribute('aria-disabled','true');
+      retry.addEventListener('click',()=>{
+        if(retry.getAttribute('aria-disabled')==='true')return;
+        log('home_edition_retry',{code:cause.code});
+        const failed=error=>{log('home_edition_retry_failed',{error:cleanLine(error&&error.message,120)},'error');
+          say('failed',`Relecture impossible : ${cleanLine(error&&error.message,100)}`)};
+        try{const r=edition.refresh();if(r&&typeof r.catch==='function')r.catch(failed)}catch(error){failed(error)}
+      });
+      box.append(el('p','jvr-home-title','Votre première présentation'),said,code,retry);
+      return box;
+    }
+    function homeAct(action,origin){
+      log('home_action',{action});
+      if(action==='create')return createPresentation('home');
+      if(action==='dossier'){
+        const dossier=d.dossier||root.JarvisDossier;
+        if(!dossier||typeof dossier.open!=='function'){say('failed','Le Dossier n’est pas chargé dans cette page.');return null}
+        try{const r=dossier.open({opener:origin});if(r&&r.ok===false)say('failed',r.reason||'Le Dossier n’a pas pu s’ouvrir.');return r}
+        catch(error){log('home_dossier_failed',{error:cleanLine(error&&error.message,120)},'error');say('failed',`Dossier : ${cleanLine(error&&error.message,100)}`);return null}
+      }
+      if(action==='chat'){
+        const chat=d.chat||root.JarvisChat;
+        if(!chat||typeof chat.open!=='function'){say('failed','Le chat n’est pas chargé dans cette page.');return null}
+        try{return chat.open({})}
+        catch(error){log('home_chat_failed',{error:cleanLine(error&&error.message,120)},'error');say('failed',`Chat : ${cleanLine(error&&error.message,100)}`);return null}
+      }
+      return null;
+    }
+    /* « Nouvelle présentation » (Slice 08) : un titre, puis la création par Core (son moteur par défaut, aucun nommé). Une seule à la fois,
+       bornée (`CREATE_TIMEOUT_MS`) ; l'attente se voit (note avec secondes), un échec dit sa cause, la liste est relue dans tous les cas. */
+    async function createPresentation(via){
+      if(S.creating){say('info','Une création est déjà en cours.');return null}
+      if(!home()){log('create_refused',{via,reason:'not_product_edition'},'warn');return null}
+      const title=await askText({title:'Nouvelle présentation',body:'Donnez-lui un titre. Jarvis pourra ensuite en écrire les scènes à partir des sources du Dossier.',
+        value:'',confirmLabel:'Créer'});
+      if(title===null)return null;
+      S.creating={title,since:now()};
+      const ticker=typeof win.setInterval==='function'?win.setInterval(()=>render(),1000):null;
+      log('create_started',{via});render();
+      try{
+        const answer=await call('POST',CREATE_ROUTE,{title},CREATE_TIMEOUT_MS);
+        const created=answer&&answer.presentation||null;
+        const id=created&&typeof created.presentation_id==='string'?created.presentation_id:null;
+        log('created',{via,presentation_id:id?id.slice(0,12):null,seconds:Math.round((now()-S.creating.since)/1000)});
+        S.creating=null;
+        await refresh();
+        say('ok',`« ${cleanLine(title,40)} » créée. Demandez à Jarvis d’en écrire les scènes, puis ouvrez-la pour les relire.`);
+        const card=id?itemById(id):null;if(card)card.focus({preventScroll:true});
+        return created;
+      }catch(error){
+        const code=error&&error.code||'network';
+        const base=CREATE_ERRORS[code];
+        const unknown=CREATE_UNKNOWN_OUTCOME.includes(code);
+        const text=code==='presentation_studio_invalid'?base+cleanLine(error&&error.message,120)
+          :base||`Création impossible : ${cleanLine(error&&error.message,120)||code}`;
+        log(unknown?'create_outcome_unknown':'create_failed',{via,code,status:error&&error.status||null,message:cleanLine(error&&error.message,160)},unknown?'warn':'error');
+        S.creating=null;
+        say('failed',text);
+        refresh();
+        return null;
+      }finally{
+        if(ticker&&typeof win.clearInterval==='function')win.clearInterval(ticker);
+        S.creating=null;render();
+      }
     }
     function syncStudioInset(visible){
       const html=doc.documentElement;
@@ -757,7 +958,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       const row=rowOf(id);if(!row)return;
       if(action==='open')return openRow(id,'menu');
       if(action==='edit')return edit(id);
-      if(action==='studio')return remotionStudio(id);
+      if(action==='studio'){if(!developer()){log('studio_hidden',{});return null}return remotionStudio(id)}
       if(action==='play')return play(id);
       if(action==='hide'||action==='show'){const a=await write(id,{action},action==='hide'?'Masquer':'Afficher');if(a)say('ok',action==='hide'?'Masquée du rail (menu Masquées pour la réafficher).':'Réaffichée dans le rail.');return}
       if(action==='ack')return write(id,{action:'acknowledge'},'Acquitter');
@@ -780,7 +981,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
 
     /* ------------------------------------------------------------ menu contextuel et boîtes (propres au rail : elles doivent passer AU-DESSUS du Studio) */
     function openMenuFor(row,origin,x,y){
-      const items=menuModel(row,{playing:runActive(),playingThis:playingId()===row.presentation_id});
+      const items=menuModel(row,{playing:runActive(),playingThis:playingId()===row.presentation_id,developer:developer()});
       openMenu(row.title,items,origin,x,y,act=>run(act,row.presentation_id),row);
     }
     /* Le menu du rail (présentations et, étape B, éléments du Board) : en-tête, entrées, une note dit pourquoi une entrée est indisponible. */
@@ -853,16 +1054,24 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
         if(focusEl)focusEl.focus({preventScroll:true});
       });
     }
+    let askSeq=0;
     function askText(spec){
       const box=dialogShell(spec.title,spec.body);
       const input=el('input');input.type='text';input.value=cleanLine(spec.value,80);input.maxLength=80;input.setAttribute('aria-label',spec.title);
+      /* Un titre vide n'est pas envoyé : la ligne dit pourquoi rien ne part (QA runtime S08, m1). */
+      const why=el('p','jvr-fielderr');why.id=`jvrAskWhy${++askSeq}`;why.setAttribute('role','alert');why.hidden=true;
+      input.setAttribute('aria-describedby',why.id);
       const row=el('div','jvr-row');const cancel=el('button','',spec.cancelLabel||'Annuler');cancel.type='button';
       const ok=el('button','',spec.confirmLabel||'Valider');ok.type='button';
-      row.append(cancel,ok);box.append(input,row);
+      row.append(cancel,ok);box.append(input,why,row);
       const p=showDialog(box,input);
       cancel.addEventListener('click',()=>box.__finish(null));
-      const submit=()=>{const v=cleanLine(input.value,80);if(!v){input.focus();return}box.__finish(v)};
+      const submit=()=>{const v=cleanLine(input.value,80);
+        if(!v){why.textContent=spec.emptyText||'Le titre ne peut pas être vide : écrivez-en un.';why.hidden=false;
+          input.setAttribute('aria-invalid','true');input.focus();log('ask_text_empty',{title:spec.title});return}
+        box.__finish(v)};
       ok.addEventListener('click',submit);
+      input.addEventListener('input',()=>{if(!why.hidden){why.hidden=true;why.textContent='';input.removeAttribute('aria-invalid')}});
       input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submit()}});
       try{input.select()}catch(_e){/* intentional */}
       return p;
@@ -905,6 +1114,8 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       win.addEventListener&&win.addEventListener('resize',()=>{const next=densityOf({width:Number(win.innerWidth)||1280,collapsed:S.collapsed,studio:!!(S.studioOpen&&ui.host&&!ui.host.hidden)});if(S.studioOpen||next!==S.density)render()});
       win.addEventListener&&win.addEventListener('jarvis:studio-explorer-opened',()=>{S.studioOpen=true;render();reportSoon(true)});
       win.addEventListener&&win.addEventListener('jarvis:studio-explorer-closed',()=>{S.studioOpen=false;render();reportSoon(true)});
+      /* Slice 08 : l'édition lue (ou relue) sur Core peut ouvrir l'accueil ou cacher les noms de moteur. */
+      if(edition&&typeof edition.subscribe==='function')edition.subscribe(()=>{if(ui.host)render()});
       log('installed',{});
     }
     function stop(){destroyed=true;for(const t of [pollTimer,reportTimer,noticeTimer])if(t)cancelLater(t);pollTimer=reportTimer=noticeTimer=null}
@@ -929,21 +1140,21 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
     function setPref(value){if(value==='auto'||value==='shown'||value==='hidden'){S.pref=value;save();render();return true}return false}
     function cyclePref(){const order=['auto','shown','hidden'];setPref(order[(order.indexOf(S.pref)+1)%order.length]);return S.pref}
 
-    return {start,stop,refresh,render,gate,setPref,cyclePref,run,openMenuFor,closeMenu,
-      state:()=>({pref:S.pref,collapsed:S.collapsed,density:S.density,drawer:S.drawer,loaded:S.loaded,lost:S.lost,visible:!!(ui.host&&!ui.host.hidden),rows:S.rows.length,
+    return {start,stop,refresh,render,gate,setPref,cyclePref,run,openMenuFor,closeMenu,createPresentation,
+      state:()=>({pref:S.pref,collapsed:S.collapsed,density:S.density,drawer:S.drawer,loaded:S.loaded,lost:S.lost,visible:!!(ui.host&&!ui.host.hidden),rows:S.rows.length,home:home(),creating:!!S.creating,
         studioOpen:S.studioOpen,menuOpen:!!S.menuRow,dialogOpen:!!S.dialog,notice:S.notice}),
       model,host:()=>ui.host,rows:()=>S.rows.slice(),workspace:()=>ws?ws.view():null,setStudio:on=>{S.studioOpen=!!on;render()}};
   }
 
   const API=Object.freeze({DOM,ROUTE,STATE_ROUTE,STATE_LABEL,STATE_SHORT,STATE_COLOR,CSS,cleanLine,monogram,hueOf,stateOf,displayState,typeOf,ago,previewOf,cardOf,
-    densityOf,modelOf,shouldShow,menuModel,createRail});
+    densityOf,modelOf,shouldShow,menuModel,createRail,JOURNEY,CREATE_ROUTE,CREATE_ERRORS,CREATE_UNKNOWN_OUTCOME,editionCause});
   root.JarvisPresentationRailCore=API;
   if(typeof module!=='undefined'&&module.exports)module.exports=API;
 
   if(typeof window==='undefined'||typeof document==='undefined')return;
   function installRail(){
     const rail=createRail({document,window,toast:typeof toast==='function'?toast:null});
-    root.JarvisPresentationRail=Object.freeze({gate:rail.gate,refresh:rail.refresh,state:rail.state,setPref:rail.setPref,cyclePref:rail.cyclePref,run:rail.run,
+    root.JarvisPresentationRail=Object.freeze({gate:rail.gate,refresh:rail.refresh,state:rail.state,setPref:rail.setPref,cyclePref:rail.cyclePref,run:rail.run,createPresentation:rail.createPresentation,
       model:rail.model,render:rail.render,workspace:rail.workspace});
     /* Pas de bouton au dock (sa géométrie est comptée pour dix outils, y compris celle du thème Cosmos) : Alt+Maj+P fait tourner automatique / toujours visible / masqué. */
     document.addEventListener('keydown',event=>{

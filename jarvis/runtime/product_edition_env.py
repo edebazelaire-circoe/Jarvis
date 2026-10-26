@@ -7,11 +7,14 @@ Core (`app.py`), le Control Center (consigne du cerveau, `--mcp-config`) et les 
 
 from __future__ import annotations
 
+import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from jarvis.domain.product_edition import ProductEdition, ProductEditionPolicy, resolve_product_edition
 from jarvis.installation import detect_installation
+
+_LOG = logging.getLogger(__name__)
 
 
 def process_edition(environ: Mapping[str, str] | None = None, *, code_root=None) -> ProductEditionPolicy:
@@ -24,3 +27,35 @@ def process_edition(environ: Mapping[str, str] | None = None, *, code_root=None)
     env = os.environ if environ is None else environ
     installed = detect_installation(env, code_root=code_root).installed
     return resolve_product_edition(env, installed_default=ProductEdition.PRESENTATION if installed else None)
+
+
+#: Marquage de `<html>` dans `control_center.html`, remplacé à chaque service de la page (Slice 08 presentation-edition,
+#: `docs/control-center-shell.md` › *Product edition UI*). Non remplacé (page lue telle quelle), il ne vaut ni
+#: `visible` ni `hidden` : la page garde alors ses surfaces, comme avant.
+PAGE_EDITION_PLACEHOLDER = 'data-product-edition="__JARVIS_PRODUCT_EDITION__" data-developer-surfaces="__JARVIS_DEVELOPER_SURFACES__"'
+
+
+def page_edition_markup(
+    html: str,
+    environ: Mapping[str, str] | None = None,
+    *,
+    report: Callable[[Exception], None] | None = None,
+) -> str:
+    """Pose l'édition de ce processus et ses surfaces de développement sur `<html>` (même politique que Core).
+
+    Valeur illisible (`ConfigurationError`) : le marquage devient `data-product-edition="unreadable"`, l'échec est
+    journalisé ici (`report`, le journal du Control Center, et le logger du module), la page le redit à la console
+    (`edition.page_unreadable`) et lit Core (`/api/boards/edition`), qui refuserait d'ailleurs de démarrer avec la
+    même valeur.
+    """
+
+    try:
+        policy = process_edition(environ)
+    except Exception as exc:  # noqa: BLE001 - captured: the page must still be served; Core is the authority, read next
+        _LOG.warning("product edition unreadable while serving the page: %s", exc, exc_info=True)
+        if report is not None:
+            report(exc)
+        return html.replace(PAGE_EDITION_PLACEHOLDER, 'data-product-edition="unreadable"')
+    payload = policy.to_payload()
+    return html.replace(PAGE_EDITION_PLACEHOLDER,
+                        f'data-product-edition="{payload["edition"]}" data-developer-surfaces="{payload["developer_surfaces"]}"')

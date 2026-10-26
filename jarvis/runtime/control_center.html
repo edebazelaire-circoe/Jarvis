@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="fr" data-product-edition="__JARVIS_PRODUCT_EDITION__" data-developer-surfaces="__JARVIS_DEVELOPER_SURFACES__">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -113,6 +113,10 @@ html.jvr-studio .dock,html.jvr-studio #chatTab{visibility:hidden}
 .dock-pop{position:absolute;top:calc(100% + 6px);right:0;width:max-content;min-width:216px;max-width:calc(100vw - 2 * var(--shell-gutter));display:grid;gap:2px;padding:6px;background:var(--shell-glass-strong);border:1px solid var(--shell-stroke);border-radius:var(--shell-radius);backdrop-filter:blur(22px);box-shadow:0 18px 50px rgba(0,0,0,.45);transform-origin:top right;animation:dockPopIn var(--shell-dur) var(--shell-ease)}
 .dock-pop[hidden]{display:none}
 .dock-pop .tool{display:block}
+/* Édition produit (Slice 08 presentation-edition ; docs/control-center-shell.md › Product edition UI) : une surface
+   déclarée développeur disparaît de la navigation quand l'édition cache ces surfaces (`<html data-developer-surfaces>`,
+   posé par le serveur, confirmé par Core). `display:none` la retire aussi du focus et de l'arbre d'accessibilité. */
+html[data-developer-surfaces="hidden"] [data-surface="developer"]{display:none!important}
 #dockMorePop button{width:100%;height:36px;display:flex;align-items:center;justify-content:flex-start;gap:10px;padding:0 12px 0 8px;border-color:transparent;background:transparent;border-radius:8px;text-align:left;transform:none;box-shadow:none;backdrop-filter:none}
 #dockMorePop button svg{flex:none}
 #dockMorePop button::after{content:attr(data-dock-label);font-size:12px;letter-spacing:.02em;color:var(--text);white-space:nowrap}
@@ -2623,11 +2627,11 @@ button.wsp-ename:hover{color:var(--accent)}
     <div class="tool dock-more"><button type="button" id="dockMore" aria-expanded="false" aria-controls="dockMorePop" aria-label="Plus d’outils" title="Plus d’outils"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><circle cx="5.5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18.5" cy="12" r="1.7"/></svg></button>
       <div class="dock-pop" id="dockMorePop" role="group" aria-label="Plus d’outils" hidden>
         <div class="tool"><button id="openSettings" title="Réglages" aria-label="Réglages" data-dock-label="Réglages">SET</button></div>
-        <div class="tool"><button data-panel="trace" title="Trace" aria-label="Trace" data-dock-label="Trace">TRC</button></div>
-        <div class="tool"><button id="openTestLab" title="Test Lab · diagnostics ciblés" aria-label="Test Lab · diagnostics ciblés" aria-haspopup="dialog" aria-expanded="false" aria-controls="testlab" data-dock-label="Test Lab">LAB</button></div>
-        <div class="tool"><button id="openMcpInspector" title="MCP · outils du brain et plugins externes" aria-label="MCP · outils du brain et plugins externes" aria-haspopup="dialog" aria-expanded="false" aria-controls="mcpInspector" data-dock-label="MCP">MCP</button></div>
+        <div class="tool" data-surface="developer"><button data-panel="trace" title="Trace" aria-label="Trace" data-dock-label="Trace">TRC</button></div>
+        <div class="tool" data-surface="developer"><button id="openTestLab" title="Test Lab · diagnostics ciblés" aria-label="Test Lab · diagnostics ciblés" aria-haspopup="dialog" aria-expanded="false" aria-controls="testlab" data-dock-label="Test Lab">LAB</button></div>
+        <div class="tool" data-surface="developer"><button id="openMcpInspector" title="MCP · outils du brain et plugins externes" aria-label="MCP · outils du brain et plugins externes" aria-haspopup="dialog" aria-expanded="false" aria-controls="mcpInspector" data-dock-label="MCP">MCP</button></div>
         <div class="tool"><button id="openWorkspace" title="Sessions &amp; Boards" aria-label="Sessions &amp; Boards · mémoire, relations, artefacts" aria-haspopup="dialog" aria-expanded="false" aria-controls="workspaceManager" data-dock-label="Sessions &amp; Boards">WSP</button></div>
-        <div class="tool"><button id="openPrefabs" title="Prefabs · bibliothèque partagée" aria-label="Prefabs · bibliothèque partagée, aperçu et fork" aria-haspopup="dialog" aria-expanded="false" aria-controls="prefabLibrary" data-dock-label="Prefabs">PFB</button></div>
+        <div class="tool" data-surface="developer"><button id="openPrefabs" title="Prefabs · bibliothèque partagée" aria-label="Prefabs · bibliothèque partagée, aperçu et fork" aria-haspopup="dialog" aria-expanded="false" aria-controls="prefabLibrary" data-dock-label="Prefabs">PFB</button></div>
         <div class="tool"><button id="openStudioInspector" title="Inspecteur · réglages de la présentation" aria-label="Inspecteur · réglages de la présentation" aria-expanded="false" aria-controls="jvStudioInspector" data-dock-label="Inspecteur">INS</button></div>
       </div>
     </div>
@@ -2902,6 +2906,10 @@ button.wsp-ename:hover{color:var(--accent)}
 
 <script>
 /*__CONTROL_CENTER_SHELL_JS__*/
+/* Édition produit côté page (jarvis-presentation-edition-v1, Slice 08) : `window.JarvisProductEdition`, lu par les
+   Boards, le rail des présentations, les Réglages et le lanceur. Contrat : `docs/control-center-shell.md` ›
+   *Product edition UI*. */
+/*__CONTROL_CENTER_PRODUCT_EDITION_JS__*/
 /* Registre canonique des Réglages (jarvis-settings-ui-reorganization, Slice 01) : six catégories figées,
    sections enregistrées, alias des onglets hérités (`window.JarvisSettingsRegistry`). Pur, avant tout
    module de réglages. Contrat : `docs/settings/navigation-registry.md`. */
@@ -3380,7 +3388,7 @@ async function renderErrors(){const archived=errorsView==='archived';title.textC
    qui tarde ne s'empile pas sous le suivant — et une échéance de 4 s, au-delà de laquelle la lecture est abandonnée
    et la page passe en « statut perdu » au lieu de rester figée sur le dernier état. */
 const STATUS_BEAT={inFlight:false,timeoutMs:4000};
-async function refreshStatus(){if(STATUS_BEAT.inFlight)return;STATUS_BEAT.inFlight=true;const statusAbort=typeof AbortController==='function'?new AbortController():null;const statusTimer=setTimeout(()=>{if(statusAbort)statusAbort.abort()},STATUS_BEAT.timeoutMs);try{const s=await api('/api/status',statusAbort?{signal:statusAbort.signal}:undefined),online=s.voice_online===true;renderLive(s.live);try{if(window.JarvisRuntimeWheel)JarvisRuntimeWheel.gate(s)}catch(jarvisError){console.error('[jarvis] jarvis_wheel_gate_failed',jarvisError)}$('.face').style.visibility=online?'visible':'hidden';const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background,s.boards);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisBoardsControl)JarvisBoardsControl.gate(s.boards,s.interaction_mode,s.presentation)}catch(boardsError){console.error('[boards] boards_gate_failed',boardsError)}try{if(window.JarvisDossier)JarvisDossier.gate(s.boards,s.dossier_navigation)}catch(dossierError){console.error('[dossier] dossier_gate_failed',dossierError)}try{if(window.JarvisPresentationRail)JarvisPresentationRail.gate(s)}catch(railError){console.error('[presentation-rail] gate_failed',railError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{markBackgroundUnconfirmed()}catch(_pillsError){/* les pastilles non plus */}try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisBoardsControl)JarvisBoardsControl.statusLost()}catch(_boardsError){/* la carte Board non plus : elle doit cesser d'afficher un Board et une séance que plus rien ne confirme */}try{if(window.JarvisDossier)JarvisDossier.statusLost()}catch(_dossierError){/* le Dossier non plus : il dit « Core ne répond pas » et suspend ses écritures */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}try{if(window.JarvisRuntimeWheel)JarvisRuntimeWheel.statusLost()}catch(_jarvisError){/* le sous-menu JARVIS non plus : il dit « état inconnu », jamais le dernier état connu */}$('.face').style.visibility='hidden';updateSubagentBadge(null)}finally{clearTimeout(statusTimer);STATUS_BEAT.inFlight=false}}
+async function refreshStatus(){if(STATUS_BEAT.inFlight)return;STATUS_BEAT.inFlight=true;const statusAbort=typeof AbortController==='function'?new AbortController():null;const statusTimer=setTimeout(()=>{if(statusAbort)statusAbort.abort()},STATUS_BEAT.timeoutMs);try{const s=await api('/api/status',statusAbort?{signal:statusAbort.signal}:undefined),online=s.voice_online===true;renderLive(s.live);try{if(window.JarvisRuntimeWheel)JarvisRuntimeWheel.gate(s)}catch(jarvisError){console.error('[jarvis] jarvis_wheel_gate_failed',jarvisError)}$('.face').style.visibility=online?'visible':'hidden';const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background,s.boards);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisProductEdition&&JarvisProductEdition.instance)JarvisProductEdition.instance.gate(s.boards)}catch(editionError){console.error('[edition] edition.gate_failed',editionError)}try{if(window.JarvisBoardsControl)JarvisBoardsControl.gate(s.boards,s.interaction_mode,s.presentation)}catch(boardsError){console.error('[boards] boards_gate_failed',boardsError)}try{if(window.JarvisDossier)JarvisDossier.gate(s.boards,s.dossier_navigation)}catch(dossierError){console.error('[dossier] dossier_gate_failed',dossierError)}try{if(window.JarvisPresentationRail)JarvisPresentationRail.gate(s)}catch(railError){console.error('[presentation-rail] gate_failed',railError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{markBackgroundUnconfirmed()}catch(_pillsError){/* les pastilles non plus */}try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisBoardsControl)JarvisBoardsControl.statusLost()}catch(_boardsError){/* la carte Board non plus : elle doit cesser d'afficher un Board et une séance que plus rien ne confirme */}try{if(window.JarvisDossier)JarvisDossier.statusLost()}catch(_dossierError){/* le Dossier non plus : il dit « Core ne répond pas » et suspend ses écritures */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}try{if(window.JarvisRuntimeWheel)JarvisRuntimeWheel.statusLost()}catch(_jarvisError){/* le sous-menu JARVIS non plus : il dit « état inconnu », jamais le dernier état connu */}$('.face').style.visibility='hidden';updateSubagentBadge(null)}finally{clearTimeout(statusTimer);STATUS_BEAT.inFlight=false}}
 async function openPanel(name){if(window.JarvisChat)window.JarvisChat.close();if(window.JarvisRelationBoard)window.JarvisRelationBoard.close();current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 /* Un seul panneau latéral : fermer `#panel` ferme aussi le Chat (Échap, inspecteur du Studio). */
 function closePanel(){if(window.JarvisChat)window.JarvisChat.close();if(window.JarvisRelationBoard)window.JarvisRelationBoard.close();current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
@@ -5821,7 +5829,9 @@ function openMcpFromSettings(view){
   try{if(window.JarvisMcpPlugins&&typeof window.JarvisMcpPlugins.select==='function')window.JarvisMcpPlugins.select(view,{focus:true})}
   catch(e){console.error('settings_mcp_view_failed',e)}
 }
-const MCP_PLUGINS_SECTION={id:'mcp_plugins',category:'connections',order:5,save:'readonly',label:'Plugins MCP',
+/* `surface:'developer'` (Slice 08 presentation-edition) : la liste des serveurs MCP est un outil d'opérateur, hors de la
+   navigation d'une édition produit ; les Fournisseurs restent. */
+const MCP_PLUGINS_SECTION={id:'mcp_plugins',category:'connections',order:5,save:'readonly',label:'Plugins MCP',surface:'developer',
   description:'Serveurs MCP externes branchés sur le brain, et outils internes qu’il peut appeler.',
   mount(host,context){
     host.innerHTML=context.ui.section({id:'mcpPluginsSection',title:'Plugins & outils MCP',
@@ -6637,8 +6647,15 @@ async function openSettings(){
    (`DEFAULT_CATEGORY` du registre, `voice_audio`). Sans cible, les réglages s'ouvrent tels quels. */
 function openSettingsTab(tab,options){
   let hit=typeof tab==='string'?settingsTarget(tab):null;
+  /* Une cible que l'édition cache (Avancé, Architecture & Agents… : Slice 08 presentation-edition) s'ouvre comme une
+     cible inconnue, sur la première catégorie montrée ; le refus est journalisé, jamais une page vide. */
+  let hidden=false;
+  if(hit&&!window.JarvisSettingsRegistry.targetShown(tab,window.JarvisSettingsRegistry.page,settingsEditionOptions())){
+    console.info('[edition] edition.settings_target_hidden '+JSON.stringify({target:tab}));
+    hit=null;hidden=true;
+  }
   if(typeof tab==='string'&&!hit){
-    console.warn('settings_target_unknown',{target:tab});
+    if(!hidden)console.warn('settings_target_unknown',{target:tab});
     hit={category:window.JarvisSettingsRegistry.DEFAULT_CATEGORY,item:null};
   }
   if(!SET.open&&options&&options.returnFocus)SET.openerHint=options.returnFocus;
@@ -6650,13 +6667,19 @@ function openSettingsTab(tab,options){
    au registre, aucune liste recopiée. */
 function settingsTabs(){
   const registry=window.JarvisSettingsRegistry;
-  return registry?registry.CATEGORIES.map(c=>({id:c.id,label:c.label,description:c.description})):[];
+  return registry?registry.categoriesFor(settingsEditionOptions()).map(c=>({id:c.id,label:c.label,description:c.description})):[];
 }
-/* Navigation du shell (`shellNavigation` du registre) : six catégories et leurs sections enregistrées. */
+/* Ce que l'édition montre des Réglages (Slice 08 presentation-edition) : `JarvisProductEdition` (marquage du serveur,
+   confirmé par Core). Sans module, rien n'est caché. */
+function settingsEditionOptions(){
+  const E=window.JarvisProductEdition;
+  return {developerSurfaces:E&&typeof E.developerSurfacesShown==='function'&&!E.developerSurfacesShown()?'hidden':'visible'};
+}
+/* Navigation du shell (`shellNavigation` du registre) : les catégories montrées par l'édition et leurs sections. */
 function settingsNavigation(){
   const registry=window.JarvisSettingsRegistry;
   if(!registry){console.error('settings_registry_missing');return null}
-  return registry.shellNavigation(registry.page);
+  return registry.shellNavigation(registry.page,settingsEditionOptions());
 }
 /* Focus (Slice 02) : à l'ouverture, l'élément qui l'a demandée est retenu et le focus va à la catégorie active ; à la
    fermeture, il revient à cet élément s'il est encore dans la page, sinon au bouton Réglages (rangé dans « Plus
@@ -6740,7 +6763,7 @@ function renderSettingsHub(){
   const R=window.JarvisSettingsRegistry;
   if(!R){console.error('settings_registry_missing');return}
   $('#settingsHubIcon').innerHTML=settingsIcon('settings');
-  $('#settingsHubGrid').innerHTML=R.CATEGORIES.map((c,i)=>
+  $('#settingsHubGrid').innerHTML=R.categoriesFor(settingsEditionOptions()).map((c,i)=>
     `<button type="button" class="set-hub-card" data-hub-category="${esc(c.id)}" aria-describedby="settingsHubDesc-${esc(c.id)}" style="--hue:${SETTINGS_HUE[c.id]||'var(--accent)'};--i:${i}">`
     +`<span class="set-hub-art" aria-hidden="true">${settingsIcon(c.id)}</span><span class="set-hub-icon" aria-hidden="true">${settingsIcon(c.id)}</span>`
     +`<span class="set-hub-name">${esc(c.label)}</span><span class="set-hub-desc" id="settingsHubDesc-${esc(c.id)}">${esc(c.description)}</span>`
@@ -6922,9 +6945,11 @@ window.addEventListener('keydown',event=>{
     if(!SET.open)return;
     event.preventDefault();
     /* Les six catégories, dans l'ordre du registre (Slice 02) : jamais les sections ni les anciens onglets. */
-    selectTab(window.JarvisSettingsRegistry.cycleCategory(SET.category,id==='ui_tab_next'?1:-1));return;
+    selectTab(window.JarvisSettingsRegistry.cycleCategory(SET.category,id==='ui_tab_next'?1:-1,settingsEditionOptions()));return;
   }
   const panelName={ui_panel_errors:'errors',ui_panel_trace:'trace',ui_panel_agents:'agents'}[id];
+  /* Une surface cachée par l'édition (Trace) n'a pas de raccourci non plus : le refus est journalisé (Slice 08). */
+  if(panelName==='trace'&&window.JarvisProductEdition&&!window.JarvisProductEdition.developerSurfacesShown()){console.info('[edition] edition.shortcut_hidden '+JSON.stringify({shortcut:id}));return}
   if(panelName){event.preventDefault();if(current===panelName)closePanel();else{if(panelName==='errors')errorsView='active';openPanel(panelName)}}
 });
 
@@ -6943,7 +6968,9 @@ document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.addEventListe
   if(!dock||!more||!pop){log('error','install_failed',{code:'launcher_host_missing'});return}
   const wrap=more.parentElement;
   const items=()=>[...pop.querySelectorAll('button')];
-  const usable=()=>items().filter(b=>!b.disabled);
+  /* Une surface que l'édition cache (Slice 08 presentation-edition) n'est ni dans la liste ni dans le roving. */
+  const editionHides=b=>!!(window.JarvisProductEdition&&window.JarvisProductEdition.instance&&window.JarvisProductEdition.instance.hides(b));
+  const usable=()=>items().filter(b=>!b.disabled&&!editionHides(b));
   const isOpen=()=>!pop.hidden;
   let pointerAt=-Infinity;
   const rove=target=>{for(const b of items())b.tabIndex=b===target?0:-1};
@@ -7016,6 +7043,8 @@ document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.addEventListe
   new MutationObserver(codeInName).observe(dock,{subtree:true,childList:true,attributes:true,attributeFilter:['aria-label','title']});
   codeInName();
   rove(pick('first'));syncActive();
+  /* L'édition confirmée par Core peut changer les outils montrés : le premier outil montré reprend la tabulation. */
+  document.addEventListener('jarvis:product-edition',()=>{if(!isOpen())rove(pick('first'))});
   log('info','installed',{visible:dock.querySelectorAll(':scope>.tool>button').length,more:items().length});
 })();
 $('#closePanel').addEventListener('click',closePanel);

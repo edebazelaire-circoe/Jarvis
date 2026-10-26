@@ -9649,7 +9649,9 @@ try{
   function installSettingsSections(){
     if(typeof registerSettingsSection!=='function'){
       console.error('[barehands] barehands.settings_shell_missing');return}
-    registerSettingsSection({id:SETTINGS_ENTRY.ordinary,category:'interface_interactions',order:30,save:'self',
+    /* `surface:'developer'` (Slice 08 presentation-edition) : Bare Hands est expérimental, hors de la navigation d'une
+       édition produit (inventaire : docs/control-center-shell.md › Product edition UI). */
+    registerSettingsSection({id:SETTINGS_ENTRY.ordinary,category:'interface_interactions',order:30,save:'self',surface:'developer',
       label:'Bare Hands',description:'Aperçu de cible, assistance de visée, sensibilité, mise en veille et calibration.',
       mount(host){mountSettings(host,panelHtml(),true)},
       destroy(host){settingsHosts.delete(host)}});

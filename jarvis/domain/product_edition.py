@@ -25,7 +25,7 @@ Pur : aucune E/S (l'environnement est passé en argument), aucune horloge.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
@@ -36,6 +36,11 @@ from jarvis.domain.workspace_board import BoardError, BoardErrorCode, BoardKind,
 
 #: Variable qui choisit l'édition. Héritée par les processus enfants (Control Center, serveurs MCP).
 PRODUCT_EDITION_ENV = "JARVIS_PRODUCT_EDITION"
+#: Mode développeur (Slice 08) : montre les surfaces de développement qu'une édition produit cache. N'ouvre
+#: aucun type de Board ni aucune capacité : seule la navigation de l'interface en dépend.
+DEVELOPER_MODE_ENV = "JARVIS_DEVELOPER_MODE"
+_TRUE = frozenset({"1", "true", "yes", "on"})
+_FALSE = frozenset({"", "0", "false", "no", "off"})
 
 
 class ProductEdition(StrEnum):
@@ -58,11 +63,16 @@ class BoardKindAvailability(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ProductEditionPolicy:
-    """Politique d'une édition : types disponibles et défaut de création."""
+    """Politique d'une édition : types disponibles, défaut de création, surfaces de développement montrées ou non."""
 
     edition: ProductEdition
     available_board_kinds: tuple[BoardKind, ...]
     default_board_kind: BoardKind
+    #: Surfaces de développement de l'interface (Trace, Test Lab, MCP, Prefabs, Avancé & Diagnostics…, inventaire :
+    #: `docs/control-center-shell.md` › *Product edition UI*) dans la navigation normale. Vrai en `full`, faux en
+    #: `presentation` sauf mode développeur (`DEVELOPER_MODE_ENV`). Une préférence de navigation, pas une sécurité :
+    #: les capacités restent gardées par Core.
+    developer_surfaces: bool = True
 
     def __post_init__(self) -> None:
         if not self.available_board_kinds or self.default_board_kind not in self.available_board_kinds:
@@ -103,6 +113,7 @@ class ProductEditionPolicy:
         return {
             "edition": self.edition.value,
             "default_board_kind": self.default_board_kind.value,
+            "developer_surfaces": "visible" if self.developer_surfaces else "hidden",
             "board_kinds": [
                 {"board_kind": kind.value, "availability": self.availability(kind).value,
                  "available": self.allows(kind),
@@ -118,7 +129,7 @@ PRODUCT_EDITIONS: Mapping[ProductEdition, ProductEditionPolicy] = MappingProxyTy
         ProductEdition.FULL, available_board_kinds=tuple(BoardKind), default_board_kind=BoardKind.ASSISTANT),
     ProductEdition.PRESENTATION: ProductEditionPolicy(
         ProductEdition.PRESENTATION, available_board_kinds=(BoardKind.PRESENTATION,),
-        default_board_kind=BoardKind.PRESENTATION),
+        default_board_kind=BoardKind.PRESENTATION, developer_surfaces=False),
 })
 
 FULL_EDITION = PRODUCT_EDITIONS[ProductEdition.FULL]
@@ -130,13 +141,27 @@ def resolve_product_edition(environ: Mapping[str, str], *,
     """Politique de l'édition active : `JARVIS_PRODUCT_EDITION`, sinon `installed_default`, sinon `full`.
 
     Valeur vide = absente. Valeur inconnue : `ConfigurationError` (voir l'en-tête).
+    `JARVIS_DEVELOPER_MODE` vrai montre les surfaces de développement d'une édition qui les cache (rien d'autre ne
+    change) ; valeur illisible : `ConfigurationError`, comme l'édition.
     Chaque processus la lit par `jarvis.runtime.product_edition_env.process_edition`.
     """
 
     raw = str(environ.get(PRODUCT_EDITION_ENV) or "").strip()
-    if not raw:
-        return PRODUCT_EDITIONS[installed_default or ProductEdition.FULL]
-    return parse_product_edition(raw)
+    policy = parse_product_edition(raw) if raw else PRODUCT_EDITIONS[installed_default or ProductEdition.FULL]
+    if developer_mode(environ) and not policy.developer_surfaces:
+        return replace(policy, developer_surfaces=True)
+    return policy
+
+
+def developer_mode(environ: Mapping[str, str]) -> bool:
+    """`JARVIS_DEVELOPER_MODE` : `1/true/yes/on` ou `0/false/no/off`/absent. Toute autre valeur : `ConfigurationError`."""
+
+    raw = str(environ.get(DEVELOPER_MODE_ENV) or "").strip().casefold()
+    if raw in _TRUE:
+        return True
+    if raw in _FALSE:
+        return False
+    raise ConfigurationError(f"{DEVELOPER_MODE_ENV} doit valoir 1 ou 0, reçu {raw[:40]!r}")
 
 
 def parse_product_edition(value: object) -> ProductEditionPolicy:

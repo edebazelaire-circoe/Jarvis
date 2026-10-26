@@ -13,7 +13,8 @@
     — allowed connectors, credentials, Drive/CIRCOE integration and IGuard seam.
 7. `06-windows-private-runtime-packaging` — private Python/Node/FFmpeg, dependency/license manifest, production package layout.
 8. `07-installer-onboarding-health` — installer, first-run provisioning, product readiness and repair UI.
-9. `08-presentation-product-ui` — Presentation-only Board/product shell + end-to-end Presentation workspace UX pass.
+9. [x] `08-presentation-product-ui` — **APPROVED** on 2026-10-26 (branch `-s08`: `abdfeea9`..`7b38db15`, rework `062b83d1`, merged). Criterion 7 deferred to Slice 07. Leftovers: `Issues/I-006-s08-leftovers.md`.
+    — Presentation-only Board/product shell + end-to-end Presentation workspace UX pass.
 10. `09-presentation-editing-ui` — dedicated editing/variants/media/preview UX pass.
 11. `10-production-readiness-recovery-ci` — crash/update/recovery, CI and packaged artifact release gates.
 12. `11-final-e2e-windows-acceptance` — clean-machine physical E2E and Human acceptance.

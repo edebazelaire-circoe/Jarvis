@@ -24,7 +24,7 @@ import pytest
 from jarvis.core.v2_app import JarvisCoreApplication
 from jarvis.domain.errors import ConfigurationError
 from jarvis.domain.product_edition import (
-    FULL_EDITION, PRESENTATION_EDITION, PRODUCT_EDITION_ENV, BoardKindAvailability, ProductEdition,
+    DEVELOPER_MODE_ENV, FULL_EDITION, PRESENTATION_EDITION, PRODUCT_EDITION_ENV, BoardKindAvailability, ProductEdition,
     resolve_product_edition,
 )
 from jarvis.domain.workspace_board import DEFAULT_BOARD_ID, BoardError, BoardErrorCode, BoardKind
@@ -61,7 +61,7 @@ def test_presentation_edition_allows_only_presentation():
 def test_the_availability_payload_is_the_ui_contract():
     payload = PRESENTATION_EDITION.to_payload()
     assert payload == {
-        "edition": "presentation", "default_board_kind": "presentation",
+        "edition": "presentation", "default_board_kind": "presentation", "developer_surfaces": "hidden",
         "board_kinds": [
             {"board_kind": "assistant", "availability": "unavailable", "available": False, "behavior_status": "ready"},
             {"board_kind": "presentation", "availability": "available", "available": True, "behavior_status": "ready"},
@@ -69,6 +69,25 @@ def test_the_availability_payload_is_the_ui_contract():
         ],
     }
     assert [k["available"] for k in FULL_EDITION.to_payload()["board_kinds"]] == [True, True, True]
+    assert FULL_EDITION.to_payload()["developer_surfaces"] == "visible"
+
+
+@pytest.mark.parametrize("value, expected", [("1", "visible"), (" TRUE ", "visible"), ("on", "visible"),
+                                             ("0", "hidden"), ("", "hidden"), ("off", "hidden")])
+def test_developer_mode_shows_the_developer_surfaces_and_nothing_else(value, expected):
+    """Slice 08 : le mode développeur ne touche que la navigation ; les types de Board restent ceux de l'édition."""
+
+    policy = resolve_product_edition({PRODUCT_EDITION_ENV: "presentation", DEVELOPER_MODE_ENV: value})
+    assert policy.to_payload()["developer_surfaces"] == expected
+    assert policy.available_board_kinds == (BoardKind.PRESENTATION,) and policy.restricts_board_kinds
+    assert policy.to_payload()["board_kinds"] == PRESENTATION_EDITION.to_payload()["board_kinds"]
+    assert resolve_product_edition({DEVELOPER_MODE_ENV: value}) is FULL_EDITION
+
+
+def test_an_unreadable_developer_mode_refuses_to_start():
+    with pytest.raises(ConfigurationError) as refused:
+        resolve_product_edition({PRODUCT_EDITION_ENV: "presentation", DEVELOPER_MODE_ENV: "peut-etre"})
+    assert DEVELOPER_MODE_ENV in str(refused.value)
 
 
 @pytest.mark.parametrize("environ, expected", [
@@ -534,3 +553,67 @@ async def test_the_tool_brain_reads_the_edition_from_core(tmp_path):
 async def test_the_board_create_description_says_the_limit_is_the_edition():
     description = (await _tools(PRESENTATION_EDITION))["board_create"].description
     assert "dans cette édition" in description and "quel que soit le Board actif" in description
+
+
+# ------------------------------------------------------------------ page du Control Center (Slice 08)
+
+
+def test_the_served_page_is_marked_with_the_same_policy():
+    from jarvis.runtime.product_edition_env import PAGE_EDITION_PLACEHOLDER, page_edition_markup
+
+    page = f"<html lang=\"fr\" {PAGE_EDITION_PLACEHOLDER}>"
+    assert page_edition_markup(page, {PRODUCT_EDITION_ENV: "presentation"}) == \
+        '<html lang="fr" data-product-edition="presentation" data-developer-surfaces="hidden">'
+    assert page_edition_markup(page, {PRODUCT_EDITION_ENV: "presentation", DEVELOPER_MODE_ENV: "1"}).endswith(
+        'data-developer-surfaces="visible">')
+    assert 'data-developer-surfaces="visible"' in page_edition_markup(page, {})
+    assert page_edition_markup(page, {PRODUCT_EDITION_ENV: "nope"}) == '<html lang="fr" data-product-edition="unreadable">'
+
+
+def test_an_unreadable_page_edition_is_journaled_with_its_cause(caplog):
+    """M5 (QA S08) : la page illisible est servie, mais l'échec laisse une ligne avec la vraie cause."""
+    from jarvis.domain.errors import ConfigurationError
+    from jarvis.runtime.product_edition_env import PAGE_EDITION_PLACEHOLDER, page_edition_markup
+
+    seen: list[Exception] = []
+    page = f"<html {PAGE_EDITION_PLACEHOLDER}>"
+    with caplog.at_level("WARNING", logger="jarvis.runtime.product_edition_env"):
+        served = page_edition_markup(page, {PRODUCT_EDITION_ENV: "nope"}, report=seen.append)
+    assert served == '<html data-product-edition="unreadable">'
+    assert len(seen) == 1 and isinstance(seen[0], ConfigurationError) and "nope" in str(seen[0])
+    assert any("product edition unreadable" in r.getMessage() for r in caplog.records)
+    # Le chemin ordinaire ne signale rien.
+    page_edition_markup(page, {PRODUCT_EDITION_ENV: "presentation"}, report=seen.append)
+    assert len(seen) == 1
+
+
+async def test_the_control_center_journals_an_unreadable_page_edition(tmp_path, monkeypatch):
+    from jarvis.runtime.control_center import ControlCenter
+
+    monkeypatch.delenv(PRODUCT_EDITION_ENV, raising=False)
+    center = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+    # Le constructeur refuse déjà une valeur illisible : elle devient illisible ensuite (fichier .env relu, etc.).
+    monkeypatch.setenv(PRODUCT_EDITION_ENV, "nope")
+    emitted: list[tuple] = []
+    real = center.journal
+
+    class Spy:
+        def emit(self, kind, message, **kw):
+            emitted.append((kind, message, kw))
+            real.emit(kind, message, **kw)
+
+    monkeypatch.setattr(center, "journal", Spy())
+    served = (await center.index(None)).text
+    assert 'data-product-edition="unreadable"' in served
+    assert [e[0] for e in emitted if e[0].startswith("product_edition.")] == ["product_edition.page_unreadable"]
+    kind, message, kw = next(e for e in emitted if e[0] == "product_edition.page_unreadable")
+    assert "nope" in message and kw["level"] == "error"
+
+
+def test_the_control_center_page_carries_the_placeholder_once():
+    from pathlib import Path
+
+    from jarvis.runtime.product_edition_env import PAGE_EDITION_PLACEHOLDER
+
+    html = (Path(__file__).resolve().parents[2] / "jarvis" / "runtime" / "control_center.html").read_text(encoding="utf-8")
+    assert html.count(PAGE_EDITION_PLACEHOLDER) == 1 and html.index(PAGE_EDITION_PLACEHOLDER) < html.index("<head")

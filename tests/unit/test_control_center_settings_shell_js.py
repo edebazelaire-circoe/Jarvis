@@ -151,8 +151,14 @@ def test_navigation_is_drawn_from_the_registry_and_cycles_categories():
     render = slice_(page, "function renderTabs(){", "function settingsListKeys(")
     assert "rail.innerHTML=nav.categories.map(" in render and "settingsNavigation()" in render
     keys = page[page.index("if(id==='ui_tab_next'||id==='ui_tab_prev'){") :][:600]
-    assert "JarvisSettingsRegistry.cycleCategory(SET.category," in keys and "TABS.findIndex" not in keys
-    assert "function settingsTabs(){" in page and "registry.CATEGORIES.map(" in page
+    # Le cycle suit les catégories montrées par l'édition (Slice 08 de presentation-edition) : mêmes options que le rail.
+    assert "JarvisSettingsRegistry.cycleCategory(SET.category,id==='ui_tab_next'?1:-1,settingsEditionOptions())" in keys
+    assert "TABS.findIndex" not in keys
+    # Les onglets viennent du registre filtré par l'édition, jamais d'une liste recopiée dans la page.
+    start = page.index("function settingsTabs(){")
+    tabs = page[start : page.index("\n}", start)]
+    assert "registry.categoriesFor(settingsEditionOptions()).map(" in tabs
+    assert "CATEGORIES" not in tabs and "[{id:" not in tabs
 
 
 async def test_served_page_inlines_the_primitives_after_the_registry(tmp_path: Path):

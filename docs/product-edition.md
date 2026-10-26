@@ -16,6 +16,7 @@ reusable policy implementation and conformance tests. Handoff
 | Brain prompt | `jarvis/runtime/claude_local.py` (`workspace_prompt_for`), dynamic descriptor + renderer `prompt_catalog._brain_workspace` | same (resolution of the real conversation program and a real launch), plus `test_prompt_registry.py` |
 | `jarvis-console` refusal of `interaction_mode` | `jarvis/runtime/settings_mcp.py` (`interaction_mode_refusal`) | same |
 | Tool Brain choices | `jarvis/runtime/tool_brain_choices.py` (`board.switchable`, `UiState.edition`), `tool_brain_executor.py` | same |
+| Product UI (Slice 08): page marking, availability reader, Board creation, developer surfaces, Presentation home | `jarvis/runtime/product_edition_env.py` (`page_edition_markup`), `control_center_product_edition.js`, `control_center_boards.js`, `control_center_settings_registry.js`, `control_center_presentation_rail.js` ([control-center-shell.md](control-center-shell.md) › *Product edition UI*) | `test_product_edition_ui_js.py`, `test_presentation_edition_ui_browser.py`, `test_product_edition.py` (page marking) |
 
 ## Editions
 
@@ -69,12 +70,20 @@ cannot create or activate a refused kind.
 else (UI, MCP, prompt) keeps its own list:
 
 ```json
-{"edition": "presentation", "default_board_kind": "presentation",
+{"edition": "presentation", "default_board_kind": "presentation", "developer_surfaces": "hidden",
  "board_kinds": [
    {"board_kind": "assistant", "availability": "unavailable", "available": false, "behavior_status": "ready"},
    {"board_kind": "presentation", "availability": "available", "available": true, "behavior_status": "ready"},
    {"board_kind": "meeting", "availability": "unavailable", "available": false, "behavior_status": "planned"}]}
 ```
+
+`developer_surfaces` (Slice 08): `visible` in `full`, `hidden` in `presentation`, `visible` again when
+`JARVIS_DEVELOPER_MODE` is true (`1`/`true`/`yes`/`on`; `0`/`false`/`no`/`off`/absent = false; any other value is a
+`ConfigurationError`, like the edition). Developer mode changes nothing else: Board kinds, connectors and refusals stay
+the edition's. It tells the product UI whether its developer surfaces (Trace, Test Lab, MCP, Prefabs, Avancé &
+Diagnostics…) belong in the normal navigation; it is not a security boundary. The Control Center writes the same value
+on `<html data-developer-surfaces>` when it serves the page (`page_edition_markup`), so nothing flashes before Core is
+read. A payload without the key (older Core) reads as `visible`.
 
 Served by Core `GET /v1/boards/edition` (no query; a fixed segment before
 `/v1/boards/{board_id}`, like `active`) and relayed unchanged by the Control
@@ -177,5 +186,6 @@ are excluded: [windows-packaging.md](windows-packaging.md) (Slice 06).
 
 ## Out of scope (later Slices)
 
-- product UI for unavailable kinds (Slice 08); the current Boards control still
-  offers the three kinds in `full` and gets the 409 in `presentation`;
+- ~~product UI for unavailable kinds (Slice 08)~~: done, the Boards control reads this payload, shows unavailable kinds
+  as « Bientôt disponible » (no request) and never switches to a legacy Board
+  ([control-center-shell.md](control-center-shell.md) › *Product edition UI*).

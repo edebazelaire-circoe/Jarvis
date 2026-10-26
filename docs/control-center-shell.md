@@ -1155,6 +1155,99 @@ frame is analysed afterwards, failed activation shown with its cause, tools
 and quick actions through the second level, voice return through the
 command channel, latency).
 
+## Product edition UI
+
+Handoff `tasks/jarvis-presentation-edition-v1/`, Slice 08 (decisions D01, D13). Contract of what the page shows in a
+**product edition** (`presentation`, [product-edition.md](product-edition.md)); in `full` nothing below changes the
+page. Level 3: this section, the module `jarvis/runtime/control_center_product_edition.js`
+(`window.JarvisProductEdition`), the page marking `jarvis/runtime/product_edition_env.py` (`page_edition_markup`) and
+the suite `tests/unit/test_presentation_edition_ui_browser.py`.
+
+**Where the rule lives.** The UI decides nothing about availability:
+
+| Fact | Authority | How the page gets it |
+| --- | --- | --- |
+| Which Board kinds can be created / opened, the default kind | Core (`ProductEditionPolicy`) | `GET /api/boards/edition` (relay of `/v1/boards/edition`), read by `JarvisProductEdition` on demand (`ensure()`: Board panel opened, kind screen, empty home of a Presentation Board; never at boot), 8 s deadline, retried 2 / 4 / 8 / 16 / 30 s while the status beat says Core serves its Boards (`gate(status.boards)`), re-read by « Réessayer ». `ensure()` reads only once (state `idle`): a failed read waits for the backoff, Core's return (`gate`) or « Réessayer », whose screen shows the cause — never a request loop while Core is down |
+| Whether developer surfaces show (`developer_surfaces`: `visible` \| `hidden`) | the same policy (`full`: visible; `presentation`: hidden unless `JARVIS_DEVELOPER_MODE=1`) | written on `<html data-developer-surfaces>` by the Control Center when it serves the page (same `process_edition()`), so no developer tool shows even for a frame or while Core is down; confirmed by Core's payload (Core wins if they differ, journal `edition.surfaces_disagree`) |
+| Which surface is a developer surface | the surface's own declaration | `data-surface="developer"` in the markup; `surface:'developer'` on a Settings category or section ([settings/navigation-registry.md](settings/navigation-registry.md) § 7) |
+
+There is no list of hidden surfaces anywhere: one CSS rule of the page,
+`html[data-developer-surfaces="hidden"] [data-surface="developer"]{display:none!important}`, removes a marked surface from
+view, focus and the accessibility tree. Hiding is a **navigation** choice, not a security boundary: capabilities stay
+guarded by Core and by the brain's confinement (Slice 04).
+
+**Developer mode.** `JARVIS_DEVELOPER_MODE=1` (Core and Control Center environment) shows the developer surfaces of a
+product edition and changes nothing else (the Board kinds stay the edition's). An unreadable value refuses to start,
+like the edition. There is no in-page toggle: a user of the installed product cannot reach it by accident.
+
+**Inventory (2026-10-26).**
+
+| Surface | Kind | In `presentation` |
+| --- | --- | --- |
+| Launcher: Conversation `CNV`, Agents `AGT`, Erreurs `ERR`, Réglages `SET`, Sessions & Boards `WSP`, Inspecteur `INS` | product | shown |
+| Launcher: Trace `TRC` (and shortcut `ui_panel_trace`), Test Lab `LAB`, MCP inspector `MCP` (with « Plugins externes » and the « Présentations · moteur » card), Prefabs `PFB` | developer | hidden; the popover roving skips them; `t` does nothing (journal `edition.shortcut_hidden`) |
+| Réglages › Architecture & Agents (brain graph, sub-agent roles) | developer category | hidden |
+| Réglages › Avancé & Diagnostics (architecture & compatibilité, prompts, Runtime & CLI, diagnostics, Labs & outils de test, Bare Hands · essais, Work Methods) | developer category | hidden |
+| Réglages › Interface & Interactions › Bare Hands | developer section | hidden (Raccourcis stays) |
+| Réglages › Plugins & MCP › Plugins MCP | developer section | hidden; the category reads « Connexions » (Fournisseurs stays) |
+| Rail card menu « Remotion Studio… » and the engine name « Remotion » on cards | developer | hidden (a Slidecar presentation still says « Slidecar ») |
+| Board card, Board panel, wheel (JARVIS, Sélection, Dossier, Capture, Paramètres), chat, rail, status centre, Variantes | product | shown |
+
+A Settings target that the edition hides (`openSettingsTab('prompts')`, an internal link) opens the first shown
+category, never an empty page (journal `edition.settings_target_hidden`); `ui_tab_next` / `ui_tab_prev` cycle the shown
+categories only.
+
+**Board creation** ([boards.md](boards.md) › *Product edition*). The kind screen keeps three orbs: the available kind
+is a normal radio; an unavailable kind is `aria-disabled`, dimmed with a dashed ring, tagged « Bientôt disponible »
+(neutral, not a warning) and described « Réunion : bientôt disponible. Cette édition de Jarvis crée des Boards
+Présentation. »; choosing it says that sentence and sends **no request**. A line under the orbs says « Cette édition
+crée des Boards Présentation. Assistant et Réunion arrivent bientôt. ». While Core has not answered, every orb is
+`aria-disabled` and the line counts the seconds (« Lecture des types de Board auprès de Jarvis… 3 s »); a failed read
+says its real cause and offers « Réessayer ». The edition's line always wins over the answer to a click: choosing a
+kind that is not read yet re-says the cause (or the wait) and never replaces it with a wait, and the sentence of an
+unavailable kind lasts only until the edition's state changes (a new read, a recovery, « Réessayer »). While the read
+has failed, the accessible description of each orb says the same cause. A Board of an unavailable kind (legacy) stays listed, renamable,
+inspectable and archivable, tagged « Bientôt disponible », and never switched.
+
+**Presentation home** ([presentation-studio.md](presentation-studio.md) › *Presentation home*). In a product edition
+the workspace rail is visible in a Presentation Board even with no presentation, shows the journey (sources → create →
+scenes → review, present, export) and a « Nouvelle présentation » button in its head. Creation does not depend on the
+MCP inspector. If the edition read fails while the page is marked as a product edition (`data-product-edition`,
+exposed as `pageEdition` by the store), the empty home stays visible and says the cause, its code and « Réessayer »
+instead of hiding the rail; no creation step is offered until Core answers. An empty title in « Nouvelle présentation »
+is not sent: the dialog says why (`role="alert"`, `aria-invalid`).
+
+**States.**
+
+| State | What the user sees |
+| --- | --- |
+| Edition not read yet | developer surfaces already as the server marked them; kind orbs off, line « Lecture… N s » |
+| Edition unreadable | kind orbs off, « Types de Board illisibles — <cause> La création attend leur lecture. », `code · message`, « Réessayer »; retried in the background; empty Presentation Board: the home says the cause and « Réessayer » |
+| Page marking unreadable | server: journal `product_edition.page_unreadable` (error) and the module logger; page: `[edition] edition.page_unreadable`; surfaces stay visible until Core answers |
+| Creating a presentation | rail note « Création de « X »… N s » (30 s deadline), button `aria-disabled`; a page timeout or the relay's `core_timeout` (504) says the outcome is unknown and re-reads the list |
+| Creation refused | the cause in the rail note (limit reached, disk refused, Jarvis unreachable, title refused + Core's message); the home stays |
+
+**Journal.** `[edition] edition.loaded {edition, available, developer_surfaces}`, `.load_failed {code, status,
+message, attempt, retry_ms}` (the 8 s deadline covers the response body too: a body that never ends is a `timeout`),
+`.surfaces_disagree`, `.shortcut_hidden`, `.settings_target_hidden`, `.page_unreadable`; `[boards]
+boards.kind_unavailable_chosen`, `.create_kind_unavailable`, `.switch_unavailable_kind`, `.kinds_retry`;
+`[presentation-rail] home_action`, `create_started`, `created`, `create_failed`, `create_outcome_unknown`,
+`home_edition_retry`, `ask_text_empty`, `studio_hidden`.
+
+**Voice refusal on the Board card.** In a product edition the « Refusé par la voix » sentence does not send the user to
+Réglages › Avancé & Diagnostics (hidden there): it says the voice configuration does not allow the session and that the
+setting is changed in developer mode (`PRESENCE_TEXT.refused.saidProduct`).
+
+**Tests.** `tests/unit/test_presentation_edition_ui_browser.py` (served page, `fetch` double of
+`_status_centre_browser.mjs` with `/api/boards/edition`, `POST /api/boards` and `POST
+/api/presentation-studio/presentations`; 1440×900, 1280×720, 600×800): hidden tools unreachable by click, Tab and
+shortcut; four Settings categories; kinds, focus, « Bientôt disponible », no request for an unavailable kind; legacy
+Board never switched; unreadable edition and retry; a click on a kind never hides the cause and a recovery shows the
+edition; unread home with cause and retry; empty title and relay timeout; developer mode (`JARVIS_DEVELOPER_MODE=1`,
+page marked `visible`); `full` unchanged on a page marked `full`.
+`tests/unit/test_product_edition_ui_js.py` (node: payload parsing, kind choice, rows, registry filtering, rail model).
+`tests/unit/test_product_edition.py` (payload `developer_surfaces`, developer mode, page marking).
+
 ## Accessibility and motion rules
 
 - **Icon-only control**: `aria-label` and tooltip (`title`) carry the same
