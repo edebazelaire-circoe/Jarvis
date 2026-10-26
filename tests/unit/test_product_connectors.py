@@ -29,7 +29,7 @@ from jarvis.core.v2_app import JarvisCoreApplication
 from jarvis.domain.connector_content import frame_payload, frame_untrusted, neutralize_markers
 from jarvis.domain.mcp_plugins import HTTP_STATUS, McpErrorCode, McpPluginError
 from jarvis.domain.product_connectors import (
-    CONNECTOR_POLICIES, ConnectorFacts, ConnectorId, ConnectorIntegration, ConnectorState, PluginMatch,
+    CIRCUIT_TOOLBOX_ENDPOINT, CONNECTOR_POLICIES, ConnectorFacts, ConnectorId, ConnectorIntegration, ConnectorState, PluginMatch,
     RemoteToolDisposition, connector_policy, connector_status, connectors_payload, plugin_state,
 )
 from jarvis.domain.product_edition import FULL_EDITION, PRESENTATION_EDITION, ProductEdition
@@ -62,7 +62,15 @@ def test_presentation_manifest_lists_exactly_the_intended_connector_families():
                    ConnectorId.CIRCOE_MAIL, ConnectorId.IGUARD]
     pending = {spec.connector_id for spec in PRESENTATION.connectors
                if spec.integration is ConnectorIntegration.CONTRACT_PENDING}
-    assert pending == {ConnectorId.CIRCOE_MAIL, ConnectorId.IGUARD}
+    assert pending == {ConnectorId.IGUARD}
+    # Messagerie et Agenda CIRCOE : le plugin Circuit Toolbox documenté (`docs/mcp/plugins.md` §14).
+    for connector_id in (ConnectorId.CIRCOE_MAIL, ConnectorId.CALENDAR):
+        spec = PRESENTATION.spec(connector_id)
+        assert spec.integration is ConnectorIntegration.REMOTE_PLUGIN
+        assert spec.plugin_match.endpoint == CIRCUIT_TOOLBOX_ENDPOINT
+    # L'adaptateur natif Google Agenda n'est pas un connecteur du produit (D09) : développement seulement.
+    assert ConnectorId.GOOGLE_CALENDAR not in [spec.connector_id for spec in PRESENTATION.connectors]
+    assert ConnectorId.GOOGLE_CALENDAR in [spec.connector_id for spec in FULL.connectors]
     for spec in PRESENTATION.connectors:
         # Mots de produit : aucun jargon d'implémentation dans ce que voit l'utilisateur.
         for text in (spec.label, spec.description):
@@ -92,12 +100,18 @@ def test_states_follow_core_facts_and_document_search_follows_drive():
     payload = connectors_payload(PRESENTATION, ConnectorFacts())
     states = {item["connector_id"]: item["state"] for item in payload["connectors"]}
     assert states == {"google_drive": "not_configured", "document_search": "not_configured",
-                      "calendar": "not_configured", "circoe_mail": "contract_pending", "iguard": "contract_pending"}
+                      "calendar": "not_configured", "circoe_mail": "not_configured", "iguard": "contract_pending"}
     assert payload["external_tools"] == {"read": "allow", "write": "confirm", "destructive": "deny"}
     assert payload["untrusted_content_framed"] is True and payload["local_secrets_sealed"] is True
-    ready = connectors_payload(PRESENTATION, ConnectorFacts(drive_available=True, calendar_persisted=True))
+    circuit = {"endpoint": CIRCUIT_TOOLBOX_ENDPOINT, "enabled": True, "connection_status": "connected",
+               "auth_status": "authorized", "server_identity": None}
+    ready = connectors_payload(PRESENTATION, ConnectorFacts(drive_available=True, plugins=[circuit]))
     states = {item["connector_id"]: (item["state"], item["state_label"], item["action"]) for item in ready["connectors"]}
-    assert states["google_drive"] == states["document_search"] == states["calendar"] == ("ready", "Prêt", "none")
+    assert (states["google_drive"] == states["document_search"] == states["calendar"] == states["circoe_mail"]
+            == ("ready", "Prêt", "none"))
+    expired = connectors_payload(PRESENTATION, ConnectorFacts(plugins=[dict(circuit, auth_status="expired")]))
+    assert {item["connector_id"]: item["state"] for item in expired["connectors"]}["circoe_mail"] == (
+        "needs_authorization")
     for item in ready["connectors"]:
         assert "mcp" not in json.dumps(item["state_label"]).lower()
 
@@ -489,3 +503,68 @@ async def test_native_connector_results_given_to_the_voice_are_framed_in_present
     assert "IGNORE" not in json.dumps({k: v for k, v in framed.items() if k != "content"})
     raw = await (await _router(False)).call(name, arguments, conversation_id=None)
     assert "untrusted" not in raw and "IGNORE" in json.dumps(raw)  # full : inchangé
+
+
+# ------------------------------------------------------------------ classement explicite (Circuit Toolbox)
+
+
+def test_the_manifest_classification_applies_only_to_the_matched_plugin():
+    unannotated = {"name": "infomaniak.calendar.list_events", "side_effect": "destructive"}
+    circuit = {"endpoint": CIRCUIT_TOOLBOX_ENDPOINT, "server_identity": None}
+    lookalike = {"endpoint": "https://circoetoolbox-server-production.up.railway.app.evil.example/mcp"}
+    assert PRESENTATION.effective_side_effect(circuit, unannotated) == "read"
+    assert PRESENTATION.effective_side_effect(lookalike, unannotated) == "destructive"
+    assert PRESENTATION.effective_side_effect({"endpoint": ENDPOINT}, unannotated) == "destructive"
+    # Outil non classé du même plugin : défaut inchangé (non annoté = destructeur).
+    assert PRESENTATION.effective_side_effect(circuit, {"name": "infomaniak.mail.send"}) == "destructive"
+
+
+AGENDA_TOOLS = [{"name": "infomaniak.calendar.list_events", "inputSchema": {"type": "object"}},  # non annoté
+                {"name": "infomaniak.mail.send", "inputSchema": {"type": "object"}}]
+
+
+async def _agenda_core(tmp_path, endpoint):
+    from datetime import datetime, timezone
+
+    connector = ScriptedConnector("ok")
+    connector.tools = [dict(tool) for tool in AGENDA_TOOLS]
+    connector.call_result = {"content": [{"type": "text", "text": json.dumps([
+        {"id": "e1", "summary": "Point équipe", "start": "2026-10-27T10:00:00+01:00",
+         "end": "2026-10-27T11:00:00+01:00"}])}], "isError": False}
+    core = JarvisCoreApplication(data_root=tmp_path, product_edition=PRESENTATION_EDITION, sealer=FakeSealer(),
+                                 connector=connector)
+    await core.start()
+    plugin = await core.mcp_plugins.create(endpoint)
+    await core.mcp_plugins.connect(plugin.plugin_id, strategy="none")
+    window = (datetime(2026, 10, 27, tzinfo=timezone.utc), datetime(2026, 10, 28, tzinfo=timezone.utc))
+    return core, connector, plugin, window
+
+
+async def test_agenda_reminders_work_in_presentation_with_an_unannotated_circuit_toolbox_tool(tmp_path):
+    core, connector, plugin, window = await _agenda_core(tmp_path, CIRCUIT_TOOLBOX_ENDPOINT)
+    try:
+        assert plugin.plugin_id == "circoetoolbox-server-production"
+        events = await core._fetch_agenda(*window)  # appel interne `core-agenda`, même politique que le modèle
+        assert [event.event_id for event in events] == ["e1"]
+        listing = await core.mcp_plugins.external_tools(None)
+        assert [(tool["name"], tool["side_effect"]) for tool in listing["tools"]] == [
+            ("infomaniak.calendar.list_events", "read")]
+        with pytest.raises(McpPluginError) as refused:  # l'envoi non classé reste refusé
+            await core.mcp_plugins.call(f"{plugin.plugin_id}.infomaniak.mail.send", {}, caller={"agent": "claude"})
+        assert refused.value.code is McpErrorCode.TOOL_SIDE_EFFECT_REFUSED
+        assert connector.calls == ["infomaniak.calendar.list_events"]
+    finally:
+        await core.stop()
+
+
+async def test_a_plugin_of_another_origin_does_not_get_the_classification(tmp_path):
+    core, connector, plugin, window = await _agenda_core(tmp_path, "https://other.example.com/mcp")
+    try:
+        with pytest.raises(RuntimeError):  # outil retiré du catalogue : aucun plugin ne le fournit
+            await core._fetch_agenda(*window)
+        with pytest.raises(McpPluginError) as refused:
+            await core.mcp_plugins.call(f"{plugin.plugin_id}.infomaniak.calendar.list_events", {},
+                                        caller={"agent": "core-agenda"})
+        assert refused.value.code is McpErrorCode.TOOL_SIDE_EFFECT_REFUSED and connector.calls == []
+    finally:
+        await core.stop()

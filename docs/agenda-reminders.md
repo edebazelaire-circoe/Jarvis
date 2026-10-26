@@ -19,6 +19,12 @@ L'outil est cherché par nom (`*calendar.list_events`) parmi les plugins actifs
 et connectés ; aucun plugin calendrier : un diagnostic `core.agenda.fetch_failed`
 (une fois), le dernier cache reste utilisé.
 
+Édition `presentation` ([product-connectors.md](product-connectors.md) › *Messagerie et Agenda
+CIRCOE*) : l'appel (`caller.agent = core-agenda`) passe par la politique `side_effect` comme celui du
+modèle. `infomaniak.calendar.list_events` du plugin Circuit Toolbox (endpoint exact) est classé
+`read` par le manifeste, même non annoté ; le même outil sur un autre serveur, non annoté, est
+refusé et retiré du catalogue (les rappels s'arrêtent alors, `core.agenda.fetch_failed`).
+
 ## Étapes d'un rendez-vous (chacune dite une fois)
 
 `evening` (veille au soir, rendez-vous avant midi), `morning` (matin même),

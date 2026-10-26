@@ -47,12 +47,19 @@ connexions) et l'onboarding/santé (Slice 07) lisent la route ; ils ne redécide
 | --- | --- | --- | --- | --- |
 | `google_drive` | Google Drive | `native` (adaptateur Core) | `documents.search`, `documents.read`, `documents.export` | — |
 | `document_search` | Recherche documentaire | `native` | `documents.search`, `documents.read` | `google_drive` |
-| `calendar` | Agenda CIRCOE | `native` (`jarvis/adapters/google_calendar.py`) | `calendar.read`, `calendar.write` | — |
-| `circoe_mail` | Messagerie CIRCOE | `contract_pending` | `mail.read`, `mail.send` | — |
+| `calendar` | Agenda CIRCOE | `remote_plugin` (Circuit Toolbox) | `calendar.read`, `calendar.write` | — |
+| `circoe_mail` | Messagerie CIRCOE | `remote_plugin` (Circuit Toolbox) | `mail.read`, `mail.send` | — |
 | `iguard` | IGuard | `contract_pending` | (inventaire attendu) | — |
 
 Tous `optional` : aucun ne bloque une présentation. `open_question` porte ce que l'Humain doit
-confirmer (compte Google Workspace de CIRCOE pour l'agenda ; contrats de la messagerie et d'IGuard).
+confirmer (catalogue live de Circuit Toolbox ; contrat d'IGuard).
+
+**Hors manifeste produit : `google_calendar`** (« Google Agenda (développement) »,
+`jarvis/adapters/google_calendar.py`). D09 ne retient, côté Google, que Google Drive ; l'agenda
+CIRCOE n'est pas Google Agenda mais Circuit Toolbox (correction de l'amendement E1 du Slice 00, établie
+au Slice 05). L'adaptateur natif reste dans le code et n'apparaît qu'en édition `full`. S'il est
+quand même configuré sur un produit (`JARVIS_CALENDAR_PROVIDER=google`), il garde les portées
+minimales et le jeton scellé, mais aucun écran produit ne le propose.
 
 ### Google Drive
 
@@ -76,26 +83,61 @@ d'autorisation relève de l'onboarding (Slice 07). En développement, `python -m
 la seule commande qui ouvre le navigateur ; un Core `full` d'un checkout garde son comportement
 (consentement interactif) et ses portées.
 
-### Agenda
+### Messagerie et Agenda CIRCOE : Circuit Toolbox
 
-`GoogleCalendarBackend` sur le compte CIRCOE, à confirmer (amendement E1). Portée produit
-`calendar.events` : événements seulement, ni liste d'agendas ni partages. Sémantique d'action
-inchangée : suppression et invitation confirmées (`V2ActionBroker`).
+Un seul plugin MCP distant du runtime générique, sans code propre au fournisseur
+([mcp/plugins.md](mcp/plugins.md) §14, cible de conformité) :
+`https://circoetoolbox-server-production.up.railway.app/mcp`, identifiant normalisé
+`circoetoolbox-server-production`, OAuth (enregistrement dynamique, portées `mail calendar contacts`,
+**sans jeton de rafraîchissement** : à l'échéance, `needs_authorization` et « Reconnecter »). Ses
+outils s'appellent `infomaniak.*` ; les rappels d'agenda de Core lisent
+`infomaniak.calendar.list_events` ([agenda-reminders.md](agenda-reminders.md)).
+
+`ConnectorSpec.plugin_match = PluginMatch(endpoint=CIRCUIT_TOOLBOX_ENDPOINT)` : appariement sur
+l'**endpoint exact** stocké par le registre ; un autre serveur, même d'adresse voisine, n'est pas
+apparié. Les deux connecteurs lisent l'état du même plugin (`plugin_state`) : absent ⇒
+`not_configured` (« Le compte CIRCOE n'est pas encore relié à JARVIS »), désactivé ⇒ `disabled`,
+autorisation à refaire ⇒ `needs_authorization`, connecté ⇒ `ready`.
+
+**Classement explicite des outils.** Un outil non annoté est `destructive` (défaut MCP) et serait
+refusé en `presentation`, ce qui couperait les rappels d'agenda. `ConnectorSpec.tool_side_effects`
+(nom d'outil ⇒ `read` | `write` | `destructive`) **prime sur l'annotation distante pour le plugin
+apparié seulement** (`ConnectorPolicy.effective_side_effect`). Il ne contient que ce qui est attesté
+dans le dépôt :
+
+| Outil | Classement | Preuve |
+| --- | --- | --- |
+| `infomaniak.calendar.list_events` | `read` | `agenda_reminders` l'appelle en lecture seule (`docs/agenda-reminders.md`) |
+
+Tout autre outil garde son annotation, et le défaut « non annoté = destructeur ». Le catalogue
+`GET /v1/mcp/tools` expose en `presentation` le `side_effect` qui décide.
+
+**Procédure phase B** (connexion live, HV-07-01) : connecter le plugin dans un bac à sable, relever
+`tools/list` (noms, `readOnlyHint`, `destructiveHint`), et pour chaque outil dont l'annotation manque
+ou est fausse, ajouter une ligne à `tool_side_effects` avec sa preuve (capture du `tools/list`,
+documentation du serveur) et un test. Lecture (`list_*`, `get_*`, recherche) ⇒ `read` ; brouillon,
+création ⇒ `write` (refusé en V1 faute de confirmation) ; envoi, suppression ⇒ `destructive`.
+Ne jamais classer en `read` sans preuve.
+
+**Appels internes de Core.** Les rappels d'agenda (`JarvisCoreApplication._fetch_agenda`, `caller.agent
+= core-agenda`) passent par la même politique que le modèle (`McpPluginService.call`) : ils trouvent
+l'outil dans le catalogue filtré, et l'appel est vérifié avec la même table. Rien ne contourne la
+politique, et le résultat leur arrive brut (le cadrage se fait au bord du modèle).
 
 ### Recherche documentaire
 
 Recherche et lecture dans le Drive relié (`drive_search`, `drive_read`) ; son état suit celui de
 Google Drive. Aucun index local nouveau.
 
-### Messagerie CIRCOE et IGuard
+### IGuard
 
-Aucun connecteur n'existe (amendement E1/X2, X1). Ils figurent au manifeste en `contract_pending`,
-état « Bientôt disponible », sans adresse ni nom d'outil. Le point de branchement est
-`ConnectorSpec.plugin_match` (`PluginMatch(endpoint_origin, server_name)`) : quand le contrat réel
-arrive, il le renseigne, l'intégration passe à `remote_plugin`, et l'état se lit du plugin MCP
-correspondant (`plugin_state`), avec la politique `side_effect` ci-dessus. Le transport attendu est
-le runtime générique Streamable HTTP ; un serveur stdio seulement demande une décision explicite
-(gabarits, § *Transport*).
+Aucun connecteur n'existe (X1). Il figure au manifeste en `contract_pending`, état « Bientôt
+disponible », sans adresse ni nom d'outil. Le point de branchement est `ConnectorSpec.plugin_match`
+(`PluginMatch(endpoint=…, endpoint_origin=…, server_name=…)`), comme pour Circuit Toolbox : quand le
+contrat réel arrive, il le renseigne, l'intégration passe à `remote_plugin`, l'état se lit du plugin
+correspondant, et `tool_side_effects` peut classer ses outils attestés. Le transport attendu est le
+runtime générique Streamable HTTP ; un serveur stdio seulement demande une décision explicite
+([connectors/iguard.md](connectors/iguard.md), § *Transport*).
 
 ## États produit
 

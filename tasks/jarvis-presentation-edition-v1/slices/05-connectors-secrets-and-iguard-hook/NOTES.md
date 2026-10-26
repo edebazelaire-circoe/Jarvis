@@ -137,3 +137,23 @@ Issues (rangées, hors Slice) :
   lecture, la politique `presentation` le refuse (non annoté = destructeur) et les rappels s'arrêtent.
 - I-S05-5 : un relais qui refuse un chemin est un bogue local ; d'autres relais (`mcp_plugin_routes`,
   `capture_relay`…) le rendent peut-être encore `core_unreachable` (seul `board_routes` est corrigé).
+
+## Reprise 2 : Messagerie et Agenda CIRCOE = Circuit Toolbox (correction de E1)
+
+- Manifeste : `calendar` (Agenda CIRCOE) et `circoe_mail` (Messagerie CIRCOE) passent en
+  `remote_plugin`, `plugin_match = PluginMatch(endpoint=CIRCUIT_TOOLBOX_ENDPOINT)` (endpoint exact,
+  `docs/mcp/plugins.md` §14) ; état lu du plugin enregistré (`not_configured` / `disabled` /
+  `needs_authorization` / `unavailable` / `ready`). L'hypothèse « Agenda CIRCOE = Google Agenda » est
+  retirée ; l'adaptateur natif devient `google_calendar` (« Google Agenda (développement) »),
+  présent en `full` seulement (D09 ne retient que Google Drive) ; `app._google_backend` le nomme
+  ainsi. `docs/connectors/circoe-mail.md` réécrit : reste « À FOURNIR » le catalogue live, les
+  annotations et l'identité serveur (phase B, HV-07-01).
+- Classement explicite : `ConnectorSpec.tool_side_effects` (nom ⇒ side_effect) prime sur l'annotation
+  pour le plugin apparié seulement (`ConnectorPolicy.effective_side_effect`), utilisé par
+  `McpPluginService` à l'appel, dans `invoke` et dans le catalogue (`side_effect` exposé = celui qui
+  décide, en `presentation`). Seule ligne : `infomaniak.calendar.list_events` = `read` (attesté par
+  `agenda_reminders`). Procédure phase B documentée dans `docs/product-connectors.md`.
+- Appels internes : `_fetch_agenda` (`core-agenda`) passe par `McpPluginService.call`, donc par la
+  même politique et la même table ; il cherche l'outil dans le catalogue filtré : cohérent (testé de
+  bout en bout avec un Core réel, connecteur scripté). Un serveur d'une autre adresse n'en bénéficie
+  pas (outil retiré, appel refusé, rien envoyé). `docs/agenda-reminders.md` le dit.

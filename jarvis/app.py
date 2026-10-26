@@ -341,7 +341,7 @@ def _calendar_backend_from_env():
     from jarvis.runtime.local_secrets import google_token_options
 
     # Édition produit / produit installé : portées minimales et jeton scellé (`docs/product-connectors.md`).
-    return _google_backend("calendar", lambda: GoogleCalendarBackend.from_oauth_files(
+    return _google_backend("google_calendar", lambda: GoogleCalendarBackend.from_oauth_files(
         Path(secret), Path(token), calendar_id=os.getenv("GOOGLE_CALENDAR_ID", "primary"), **google_token_options()))
 
 

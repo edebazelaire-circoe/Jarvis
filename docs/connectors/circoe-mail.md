@@ -1,36 +1,29 @@
-# Messagerie CIRCOE — gabarit de contrat d'intégration (entrée externe attendue, E1/X2)
+# Messagerie et Agenda CIRCOE — contrat d'intégration
 
-**Statut : contrat non fourni.** Constat de l'audit (Slice 00, amendement E1) : le dépôt ne contient
-**aucun** connecteur de messagerie (ni Gmail, ni IMAP, ni SMTP, ni Microsoft Graph). Le fournisseur,
-le protocole et l'authentification sont une entrée externe. Rien n'est inventé ici ; la Messagerie
-CIRCOE figure au manifeste ([product-connectors.md](../product-connectors.md)) en
-`contract_pending` (« Bientôt disponible »), catégories prévues `mail.read` et `mail.send`.
-
-Remarque : des tests du runtime MCP utilisent un outil fictif `send_mail` sur une adresse de
-fixture ; ce n'est pas un connecteur CIRCOE et ne vaut pas contrat.
+**Statut : intégré par le runtime générique ; catalogue live à relever (phase B).** Correction de
+l'audit du Slice 00 (amendement E1, qui concluait « aucun connecteur ») : la messagerie et l'agenda
+CIRCOE passent par le plugin MCP distant **Circuit Toolbox**, déjà documenté et éprouvé hors
+connexion dans [mcp/plugins.md](../mcp/plugins.md) §14 (cible de conformité, sans code propre au
+fournisseur). Manifeste et politique : [product-connectors.md](../product-connectors.md) ›
+*Messagerie et Agenda CIRCOE*.
 
 | Champ | Valeur | Source |
 | --- | --- | --- |
-| Fournisseur | À FOURNIR (Google Workspace, Microsoft 365, autre) | |
-| Protocole / transport | À FOURNIR : API du fournisseur (adaptateur natif) ou serveur MCP (Streamable HTTP attendu) | |
-| Adresse (endpoint) | À FOURNIR | |
-| Authentification | À FOURNIR : OAuth du compte de l'utilisateur, portées minimales (lecture seule d'abord) | |
-| Identité serveur attendue (si MCP) | À FOURNIR : `name` rendu par `initialize` | |
-| Inventaire d'outils | À FOURNIR : lecture (chercher, lire), brouillon, envoi ; annotations de chacun | |
-| Risque lecture/écriture | Envoi = écriture externe irréversible : confirmation obligatoire (politique `write` / `V2ActionBroker` `EXTERNAL`) | règle produit |
-| Sonde de santé | À FOURNIR | |
-| Onboarding | À FOURNIR : consentement par l'utilisateur, compte CIRCOE | |
-| Échecs attendus | À FOURNIR (jeton révoqué, quota, boîte pleine) et leur état produit | |
-| Données sensibles | Courriels = données personnelles ; contenu non fiable, cadré (`connector_content`) | règle produit |
+| Transport | MCP Streamable HTTP attendu ; seul le `401` est visible sans jeton | `mcp/plugins.md` §14 (phase B pour la confirmation) |
+| Adresse (endpoint) | `https://circoetoolbox-server-production.up.railway.app/mcp` ; identifiant `circoetoolbox-server-production` | `mcp/plugins.md` l. 52-53, 133-134, §14 |
+| Authentification | OAuth 2.1, découverte RFC 9728/8414, enregistrement dynamique, client public, PKCE S256, `authorization_code` seul (**pas de jeton de rafraîchissement**), aucun point de révocation | `mcp/plugins.md` §14, l. 371-383 |
+| Portées | `mail calendar contacts` | `mcp/plugins.md` §14 |
+| Identité serveur attendue | À FOURNIR (champ `name` d'`initialize`, phase B) ; l'appariement se fait sur l'endpoint exact | — |
+| Inventaire d'outils | Outils `infomaniak.*` ; attesté : `infomaniak.calendar.list_events` (lecture, rappels d'agenda). **Catalogue complet et annotations : À FOURNIR (phase B, HV-07-01)** | `docs/agenda-reminders.md` |
+| Risque lecture/écriture | Classement explicite `ConnectorSpec.tool_side_effects` pour le plugin apparié, le reste suit l'annotation (non annoté = destructeur) ; en `presentation` : lecture permise, écriture et envoi refusés en V1 | `product-connectors.md` |
+| Sonde de santé | État du plugin dans le registre (`plugin_state`) : `initialize` + `tools/list` à la connexion | runtime générique |
+| Onboarding | Ajouter l'adresse, consentement OAuth par l'utilisateur dans le navigateur (Slice 07 pour le produit) | runtime générique |
+| Échecs attendus | Jeton échu sans rafraîchissement ⇒ `needs_authorization` (« Reconnecter ») ; serveur injoignable ⇒ `unavailable` | `mcp/plugins.md` §14 |
+| Données sensibles | Courriels, rendez-vous, contacts : données personnelles ; contenu cadré comme donnée non fiable au bord du modèle | `product-connectors.md` › *Contenu non fiable* |
 
-## Point de branchement
+## Ce qui reste à fournir (phase B)
 
-- **Si MCP** : comme IGuard ([iguard.md](iguard.md) § *Point de branchement*) : `plugin_match`,
-  `integration=remote_plugin`, runtime générique, politique `side_effect` à l'appel.
-- **Si API native** (comme `google_calendar.py`) : un adaptateur sous `jarvis/adapters/`, des actions
-  Core déclarées au `V2ActionBroker` (lecture `READ_ONLY`, envoi `EXTERNAL` + confirmation), jeton
-  scellé par `google_oauth`/`local_secrets`, état lu par `connector_status` (nouveau fait dans
-  `ConnectorFacts`).
-
-Dans les deux cas : portées minimales, contenu cadré comme donnée non fiable, aucun envoi sans
-confirmation de l'utilisateur.
+Connexion live par l'Humain (HV-07-01), dans un bac à sable : relever le `tools/list` réel (noms,
+annotations), l'identité serveur, la forme des résultats ; puis appliquer la procédure de classement
+de [product-connectors.md](../product-connectors.md) (une ligne de `tool_side_effects` par outil dont
+l'annotation manque, avec sa preuve et un test). Rien n'est classé en lecture sans preuve.

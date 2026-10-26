@@ -1037,8 +1037,8 @@ class McpPluginService:
             plugin = await self._require(plugin_id)
             session = self._ready_session(plugin)
             # Même politique d'édition que `call` : un outil absent du catalogue compte comme destructeur.
-            descriptor = next((tool for tool in plugin.tools if tool.get("name") == name), {})
-            self._check_side_effect(plugin_id, name, descriptor, "internal")
+            descriptor = next((tool for tool in plugin.tools if tool.get("name") == name), {"name": name})
+            self._check_side_effect(plugin, name, descriptor, "internal")
             code: McpErrorCode | None = None
             try:
                 return await self._call_session(session, name, arguments, timeout_s)
@@ -1080,6 +1080,10 @@ class McpPluginService:
             for plugin in sorted(plugins, key=lambda item: item.plugin_id):
                 exposed = plugin.enabled and plugin.connection_status is ConnectionStatus.CONNECTED
                 payload_tools = plugin.to_payload()["tools"] if exposed else []
+                if self._policy.restricts_remote_tools:
+                    # Le `side_effect` exposé est celui qui décide (classement explicite du manifeste compris).
+                    payload_tools = [{**tool, "side_effect": self._policy.effective_side_effect(
+                        self._match_view(plugin), tool)} for tool in payload_tools]
                 permitted = [tool for tool in payload_tools if self._permitted(tool)]
                 summary = {"plugin_id": plugin.plugin_id, "display_name": plugin.display_name,
                            "enabled": plugin.enabled, "connection_status": plugin.connection_status.value,
@@ -1096,10 +1100,22 @@ class McpPluginService:
     def _permitted(self, descriptor: dict[str, Any]) -> bool:
         return self._policy.remote_tool_disposition(descriptor.get("side_effect")) is RemoteToolDisposition.ALLOW
 
-    def _check_side_effect(self, plugin_id: str, name: str, descriptor: dict[str, Any], agent: str) -> None:
-        """Politique d'édition à l'appel (`docs/product-connectors.md` › *Outils externes*) ; avant tout réseau."""
+    @staticmethod
+    def _match_view(plugin: McpPlugin) -> dict[str, Any]:
+        """Ce que `PluginMatch` lit d'un plugin : endpoint normalisé et identité serveur (jamais un secret)."""
 
-        side_effect = descriptor.get("side_effect", "destructive")
+        return {"endpoint": plugin.endpoint, "server_identity": plugin.server_identity}
+
+    def _check_side_effect(self, plugin: McpPlugin, name: str, descriptor: dict[str, Any], agent: str) -> None:
+        """Politique d'édition à l'appel (`docs/product-connectors.md` › *Outils externes*) ; avant tout réseau.
+
+        Le `side_effect` qui décide est `ConnectorPolicy.effective_side_effect` : classement explicite du
+        manifeste pour un plugin apparié par son endpoint exact, sinon l'annotation (absente = destructeur).
+        S'applique aussi aux appels internes de Core (`caller.agent = core-agenda`) : même table, même verdict.
+        """
+
+        plugin_id = plugin.plugin_id
+        side_effect = self._policy.effective_side_effect(self._match_view(plugin), descriptor)
         disposition = self._policy.remote_tool_disposition(side_effect)
         if disposition is RemoteToolDisposition.ALLOW:
             return
@@ -1138,7 +1154,7 @@ class McpPluginService:
             descriptor = next((tool for tool in plugin.tools if tool.get("name") == name), None)
             if descriptor is None:
                 raise McpPluginError(McpErrorCode.TOOL_UNKNOWN, f"unknown plugin tool {str(tool_id)[:200]!r}")
-            self._check_side_effect(plugin_id, name, descriptor, agent)
+            self._check_side_effect(plugin, name, descriptor, agent)
             check_tool_arguments(descriptor.get("input_schema") or {}, arguments)
             bounded = DEFAULT_CALL_TIMEOUT_S if timeout_s is None else timeout_s
             code: McpErrorCode | None = None

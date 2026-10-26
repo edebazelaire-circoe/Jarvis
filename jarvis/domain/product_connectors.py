@@ -18,11 +18,16 @@ Aucune autre table de connecteurs ne doit exister.
   un outil destructeur (ou non annoté, défaut MCP) est refusé (`mcp_tool_side_effect_refused`).
   Le contenu rendu par un connecteur est cadré comme donnée non fiable. Portées Google minimales.
 
-CIRCOE Mail et IGuard sont des **entrées externes non fournies** : leur contrat d'intégration est
-un gabarit (`docs/connectors/circoe-mail.md`, `docs/connectors/iguard.md`). Ils figurent au
-manifeste en `contract_pending`, sans endpoint, sans nom d'outil. Le point de branchement est
-`ConnectorSpec.plugin_match` : quand le contrat réel arrive, il nomme l'origine et l'identité
-serveur attendues, et l'état se lit alors du plugin MCP correspondant (`plugin_state`).
+Messagerie et Agenda CIRCOE passent par **un** plugin MCP distant du runtime générique, Circuit
+Toolbox (`CIRCUIT_TOOLBOX_ENDPOINT`, documenté dans `docs/mcp/plugins.md` §14 et
+`docs/agenda-reminders.md`) : `ConnectorSpec.plugin_match` l'apparie par son endpoint exact, et
+l'état se lit du plugin enregistré (`plugin_state`). `ConnectorSpec.tool_side_effects` classe
+explicitement les outils de ce plugin dont l'usage est attesté dans le dépôt
+(`infomaniak.calendar.list_events` : lecture, `agenda_reminders`) ; cette table prime sur
+l'annotation distante **pour le plugin apparié seulement**, le défaut reste « non annoté =
+destructeur ». IGuard est une **entrée externe non fournie** (`docs/connectors/iguard.md`) : il figure
+au manifeste en `contract_pending`, sans endpoint ni nom d'outil. L'adaptateur natif Google Agenda
+n'est pas un connecteur du produit (D09 ne retient que Google Drive) : il n'apparaît qu'en `full`.
 
 Pur : aucune E/S.
 """
@@ -43,7 +48,10 @@ class ConnectorId(StrEnum):
     """Identifiants stables, jamais traduits."""
 
     GOOGLE_DRIVE = "google_drive"
+    #: Agenda CIRCOE (plugin Circuit Toolbox).
     CALENDAR = "calendar"
+    #: Adaptateur natif Google Agenda : développement (`full`) seulement, hors manifeste produit.
+    GOOGLE_CALENDAR = "google_calendar"
     CIRCOE_MAIL = "circoe_mail"
     IGUARD = "iguard"
     DOCUMENT_SEARCH = "document_search"
@@ -118,9 +126,13 @@ class PluginMatch:
 
     endpoint_origin: str | None = None
     server_name: str | None = None
+    #: Endpoint exact (forme normalisée stockée par le registre, `docs/mcp/plugins.md` §2.1).
+    endpoint: str | None = None
 
     def matches(self, summary: Mapping[str, Any]) -> bool:
-        if self.endpoint_origin is None and self.server_name is None:
+        if self.endpoint_origin is None and self.server_name is None and self.endpoint is None:
+            return False
+        if self.endpoint is not None and summary.get("endpoint") != self.endpoint:
             return False
         if self.endpoint_origin is not None and _origin(summary.get("endpoint")) != self.endpoint_origin:
             return False
@@ -151,6 +163,14 @@ class ConnectorSpec:
     plugin_match: PluginMatch | None = None
     #: Point à confirmer par l'Humain, affiché tel quel dans les diagnostics (jamais une décision).
     open_question: str | None = None
+    #: Classement explicite `nom d'outil -> side_effect` (`read` | `write` | `destructive`) pour le plugin
+    #: apparié par `plugin_match`. Prime sur l'annotation distante ; seulement ce qui est attesté.
+    tool_side_effects: Mapping[str, str] = MappingProxyType({})
+
+
+#: Circuit Toolbox : messagerie, agenda et contacts CIRCOE (`docs/mcp/plugins.md` §14).
+CIRCUIT_TOOLBOX_ENDPOINT = "https://circoetoolbox-server-production.up.railway.app/mcp"
+_CIRCUIT_TOOLBOX = PluginMatch(endpoint=CIRCUIT_TOOLBOX_ENDPOINT)
 
 
 _DRIVE = ConnectorSpec(
@@ -161,18 +181,26 @@ _DRIVE = ConnectorSpec(
     "docs/product-connectors.md#google-drive")
 _CALENDAR = ConnectorSpec(
     ConnectorId.CALENDAR, "Agenda CIRCOE",
-    "Rendez-vous du compte Google Agenda de CIRCOE ; toute suppression ou invitation est confirmée.",
-    ConnectorRequirement.OPTIONAL, ConnectorIntegration.NATIVE,
+    "Rendez-vous du compte CIRCOE, lus pour les rappels ; aucune modification sans confirmation.",
+    ConnectorRequirement.OPTIONAL, ConnectorIntegration.REMOTE_PLUGIN,
     (ToolCategory.CALENDAR_READ, ToolCategory.CALENDAR_WRITE),
-    "docs/product-connectors.md#agenda",
-    open_question="Le compte CIRCOE est-il un compte Google Workspace ? (amendement E1)")
+    "docs/connectors/circoe-mail.md", plugin_match=_CIRCUIT_TOOLBOX,
+    # Attesté : `agenda_reminders` ne fait que lire cet outil (`docs/agenda-reminders.md`).
+    tool_side_effects=MappingProxyType({"infomaniak.calendar.list_events": "read"}),
+    open_question="Catalogue réel et annotations des outils `infomaniak.*` (connexion live, HV-07-01 phase B)")
 _MAIL = ConnectorSpec(
     ConnectorId.CIRCOE_MAIL, "Messagerie CIRCOE",
-    "Lecture et envoi de courriels CIRCOE, quand le contrat d'intégration sera fourni.",
-    ConnectorRequirement.OPTIONAL, ConnectorIntegration.CONTRACT_PENDING,
+    "Courriels du compte CIRCOE ; aucun envoi sans confirmation.",
+    ConnectorRequirement.OPTIONAL, ConnectorIntegration.REMOTE_PLUGIN,
     (ToolCategory.MAIL_READ, ToolCategory.MAIL_SEND),
-    "docs/connectors/circoe-mail.md", plugin_match=None,
-    open_question="Fournisseur, protocole et authentification de la messagerie CIRCOE (amendement E1/X2)")
+    "docs/connectors/circoe-mail.md", plugin_match=_CIRCUIT_TOOLBOX,
+    open_question="Catalogue réel et annotations des outils `infomaniak.*` (connexion live, HV-07-01 phase B)")
+_GOOGLE_CALENDAR = ConnectorSpec(
+    ConnectorId.GOOGLE_CALENDAR, "Google Agenda (développement)",
+    "Adaptateur natif de développement ; hors du produit (D09 ne retient que Google Drive).",
+    ConnectorRequirement.OPTIONAL, ConnectorIntegration.NATIVE,
+    (ToolCategory.CALENDAR_READ, ToolCategory.CALENDAR_WRITE),
+    "docs/product-connectors.md#manifeste")
 _IGUARD = ConnectorSpec(
     ConnectorId.IGUARD, "IGuard",
     "Service IGuard, quand son contrat d'intégration sera fourni.",
@@ -186,7 +214,9 @@ _SEARCH = ConnectorSpec(
     (ToolCategory.DOCUMENTS_SEARCH, ToolCategory.DOCUMENTS_READ),
     "docs/product-connectors.md#recherche-documentaire", depends_on=ConnectorId.GOOGLE_DRIVE)
 
+#: Manifeste du produit (D09) ; `full` y ajoute l'adaptateur natif Google Agenda de développement.
 CONNECTOR_SPECS: tuple[ConnectorSpec, ...] = (_DRIVE, _SEARCH, _CALENDAR, _MAIL, _IGUARD)
+DEVELOPMENT_SPECS: tuple[ConnectorSpec, ...] = CONNECTOR_SPECS + (_GOOGLE_CALENDAR,)
 
 
 class GoogleScopeProfile(StrEnum):
@@ -216,6 +246,16 @@ class ConnectorPolicy:
         key = side_effect if isinstance(side_effect, str) and side_effect in self.remote_tools else "destructive"
         return self.remote_tools[key]
 
+    def effective_side_effect(self, plugin: Mapping[str, Any], descriptor: Mapping[str, Any]) -> object:
+        """`side_effect` qui décide : classement explicite du manifeste pour un plugin apparié (endpoint
+        exact), sinon celui du descripteur (annotation distante ; absent = `destructive`)."""
+
+        name = descriptor.get("name")
+        for spec in self.connectors:
+            if spec.plugin_match is not None and name in spec.tool_side_effects and spec.plugin_match.matches(plugin):
+                return spec.tool_side_effects[name]
+        return descriptor.get("side_effect", "destructive")
+
     def spec(self, connector_id: ConnectorId) -> ConnectorSpec:
         return next(spec for spec in self.connectors if spec.connector_id is ConnectorId(connector_id))
 
@@ -226,7 +266,7 @@ _PRODUCT_TOOLS = MappingProxyType({"read": RemoteToolDisposition.ALLOW, "write":
                                    "destructive": RemoteToolDisposition.DENY})
 
 CONNECTOR_POLICIES: Mapping[ProductEdition, ConnectorPolicy] = MappingProxyType({
-    ProductEdition.FULL: ConnectorPolicy(ProductEdition.FULL, CONNECTOR_SPECS, _ALLOW_ALL,
+    ProductEdition.FULL: ConnectorPolicy(ProductEdition.FULL, DEVELOPMENT_SPECS, _ALLOW_ALL,
                                          frame_untrusted_content=False, google_scopes=GoogleScopeProfile.FULL,
                                          seal_local_secrets=False),
     ProductEdition.PRESENTATION: ConnectorPolicy(ProductEdition.PRESENTATION, CONNECTOR_SPECS, _PRODUCT_TOOLS,
@@ -280,7 +320,7 @@ def _native_state(connector_id: ConnectorId, facts: ConnectorFacts) -> tuple[Con
     if connector_id is ConnectorId.GOOGLE_DRIVE:
         return (ConnectorState.READY, None) if facts.drive_available else (
             ConnectorState.NOT_CONFIGURED, "Aucun compte Google Drive n'est relié à JARVIS.")
-    if connector_id is ConnectorId.CALENDAR:
+    if connector_id is ConnectorId.GOOGLE_CALENDAR:
         return (ConnectorState.READY, None) if facts.calendar_persisted else (
             ConnectorState.NOT_CONFIGURED,
             "Aucun agenda réel n'est relié : les rendez-vous ne seraient gardés qu'en mémoire.")
@@ -296,6 +336,9 @@ def connector_status(spec: ConnectorSpec, facts: ConnectorFacts,
     elif spec.plugin_match is not None:
         matched = next((item for item in facts.plugins if spec.plugin_match.matches(item)), None)
         state = ConnectorState.NOT_CONFIGURED if matched is None else plugin_state(matched)
+        if matched is None:
+            detail = "Le compte CIRCOE n'est pas encore relié à JARVIS." if spec.plugin_match is _CIRCUIT_TOOLBOX \
+                else "Le service n'est pas encore relié à JARVIS."
     elif spec.depends_on is not None:
         parent = (resolved or {}).get(spec.depends_on)
         state = parent if parent is not None else _native_state(spec.depends_on, facts)[0]
