@@ -7,7 +7,9 @@ Bureau simulés, ruche simulée (`FileRegistry`). Jamais le vrai registre, le vr
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import time
 
 import pytest
 
@@ -175,9 +177,23 @@ def test_uninstall_from_inside_the_program_defers_the_folder_removal(tmp_path):
     result = S.uninstall(t, progress=quiet(), running_from=t.target / "runtime" / "python",
                          spawn=lambda argv, **kwargs: spawned.append((argv, kwargs)))
     assert result["deferred_removal"] and t.target.exists()
-    argv, kwargs = spawned[0]
-    assert argv[:3] == ["cmd.exe", "/d", "/c"] and f'rmdir /s /q "{t.target}"' in argv[3]
+    command, kwargs = spawned[0]
+    assert command.startswith('cmd.exe /d /s /c "') and f'rmdir /s /q "{t.target}""' in command
     assert kwargs["cwd"] == str(t.target.parent)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="cmd.exe")
+def test_the_deferred_removal_really_deletes_a_folder_with_spaces(tmp_path):
+    """Essai réel de la commande différée (QA de la Slice : la forme en liste ne supprimait rien)."""
+
+    t = targets(tmp_path / "with space")
+    S.install(make_package(tmp_path / "src"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
+    S.uninstall(t, progress=quiet(), running_from=t.target / "runtime" / "python")
+    for _ in range(100):
+        if not t.target.exists():
+            break
+        time.sleep(0.2)
+    assert not t.target.exists() and t.target.parent.exists()
 
 
 def test_uninstall_refuses_a_folder_that_is_not_jarvis(tmp_path):

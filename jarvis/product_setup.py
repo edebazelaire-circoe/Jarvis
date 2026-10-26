@@ -458,8 +458,11 @@ def uninstall(targets: Targets, *, progress: Progress, alive: Callable[[int], bo
         inside = running_from is not None and (running_from == target or target in running_from.parents)
         if inside:
             deferred = True
-            command = f'ping 127.0.0.1 -n 4 > nul & rmdir /s /q "{target}"'
-            spawn(["cmd.exe", "/d", "/c", command], cwd=str(target.parent), close_fds=True,
+            # Une ligne de commande en CHAÎNE (pas une liste : `list2cmdline` échapperait les guillemets intérieurs en
+            # `\"`, que `cmd.exe` ne comprend pas) ; `/s` retire les seuls guillemets extérieurs. Cible sans `" % ! ^ &`
+            # (`check_target`).
+            command = f'cmd.exe /d /s /c "ping 127.0.0.1 -n 4 >nul & rmdir /s /q "{target}""'
+            spawn(command, cwd=str(target.parent), close_fds=True,
                   creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW, stdin=subprocess.DEVNULL,
                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:

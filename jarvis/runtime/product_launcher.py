@@ -78,6 +78,8 @@ def default_notify(title: str, text: str) -> None:
     quiet = os.environ.get("JARVIS_LAUNCHER_NOTIFY", "").strip().lower() == "stderr"
     if quiet or (sys.stderr is not None and getattr(sys.stderr, "isatty", lambda: False)()):
         if sys.stderr is not None:
+            if quiet and hasattr(sys.stderr, "reconfigure"):
+                sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # redirected console: cp1252 otherwise
             print(f"{title} : {text}", file=sys.stderr)
         return
     if os.name == "nt":
@@ -509,8 +511,10 @@ def main(*, notify: Callable[[str, str], None] = default_notify, environ: Mappin
     lock = InstanceLock(plan.runtime_root / LOCK_FILE)
     if not lock.acquire():
         reopened = reopen_running(plan.runtime_root, open_url=webbrowser.open if plan.open_browser else (lambda _url: None))
-        log.emit("already_running", "JARVIS est déjà ouvert : page rouverte" if reopened else "JARVIS démarre déjà",
-                 reopened=reopened)
+        opened = reopened and plan.open_browser
+        log.emit("already_running", "JARVIS est déjà ouvert : page rouverte" if opened else
+                 "JARVIS est déjà ouvert (page non rouverte : JARVIS_OPEN_BROWSER=0)" if reopened else "JARVIS démarre déjà",
+                 reopened=opened)
         return 0
     try:
         return Launcher(plan, log=log, notify=notify).run()
