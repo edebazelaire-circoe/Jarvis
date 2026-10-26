@@ -125,6 +125,8 @@ def test_refusals_are_typed():
 async def test_the_presentation_brain_is_confined_by_the_cli_itself(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_PRODUCT_EDITION", "presentation")
     agent = _brain(tmp_path)
+    (tmp_path / "data").mkdir()
+    agent.boards_dir = tmp_path / "data" / "boards"
     argv, kwargs = await _launch(monkeypatch, agent)
 
     assert "--restricted" in argv and "--strict-mcp-config" in argv and "--disable-slash-commands" in argv
@@ -142,7 +144,9 @@ async def test_the_presentation_brain_is_confined_by_the_cli_itself(monkeypatch,
     workdir = tmp_path / "runtime" / "agent-workdir"
     assert kwargs["cwd"] == str(workdir) and workdir.is_dir()
     add_dirs = argv[argv.index("--add-dir") + 1:]
-    assert str(tmp_path / "runtime" / "render" / "previews") in add_dirs
+    # Lecture des aperçus Remotion (`<data>/local_capabilities/remotion/runtime/render/previews`) et des captures.
+    assert str(tmp_path / "data" / "local_capabilities") in add_dirs
+    assert str(tmp_path / "runtime" / "scene-captures") in add_dirs
     assert str(tmp_path / "code") not in " ".join(argv)
     # Les sous-agents : le type restreint n'a pas de liste d'outils propre, il hérite de l'ensemble confiné.
     agents = json.loads(_value(argv, "--agents"))

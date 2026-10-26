@@ -1186,18 +1186,34 @@ class ClaudeLocalAgent:
         return folder
 
     def _confined_read_dirs(self) -> tuple[Path, ...]:
-        """Dossiers runtime que le cerveau confiné doit pouvoir **lire** : aperçus Remotion, captures de scène.
+        """Dossiers de JARVIS que le cerveau confiné doit pouvoir **lire**, en plus des `--add-dir` habituels.
 
-        Les outils JARVIS y déposent des images que la consigne fait regarder avec Read
-        (`presentation_source` op preview, `scene_capture`) ; sans écriture native, les accorder ne donne que la lecture.
+        - `<data_root>/local_capabilities` : les aperçus Remotion (`remotion/runtime/render/previews/<job>/`) que
+          `presentation_source` op preview fait regarder avec Read (trace réelle S04 : sans lui, « is outside ») ;
+          dossier de `FileLocalCapabilityStore`, créé ici s'il manque (le CLI ignore un `--add-dir` absent au lancement).
+        - `<runtime>/scene-captures` : les images de `scene_capture`.
+
+        La racine de données est le parent de `boards_dir` (`<data_root>/boards`, posé par le Control Center).
+        Sans écriture native, les accorder ne donne que la lecture.
         """
 
+        from jarvis.adapters.file_local_capability_store import ROOT_DIR as LOCAL_CAPABILITIES_DIR
+
+        wanted = [(Path(self.runtime_root), ("scene-captures",))]
+        if self.boards_dir is not None:
+            wanted.insert(0, (Path(self.boards_dir).parent, (LOCAL_CAPABILITIES_DIR,)))
+        executable = resolve_command(self.command)
         folders = []
-        for relative in (("render", "previews"), ("scene-captures",)):
-            folder = Path(self.runtime_root).joinpath(*relative)
-            folder.mkdir(parents=True, exist_ok=True)
-            if not unsafe_through_cmd_shim(resolve_command(self.command), [str(folder)]):
-                folders.append(folder)
+        for base, names in wanted:
+            try:
+                folder, _created = safe_folders.ensure_folder_tree(base, names)
+            except safe_folders.SafeFolderError as exc:
+                self.journal.emit("agent.add_dir_refused", f"Dossier de lecture non accordé au CLI : {exc.reason[:200]}",
+                                  level="warning", data={"code": "agent_read_dir_unavailable", "kind": exc.kind,
+                                                         "path": str(Path(base, *names))[:300]})
+                continue
+            if not unsafe_through_cmd_shim(executable, [str(folder)]):
+                folders.append(Path(folder))
         return tuple(folders)
 
     async def start(self, *, resume: bool = True) -> dict[str, Any]:
