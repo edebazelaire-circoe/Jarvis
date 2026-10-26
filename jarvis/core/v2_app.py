@@ -160,7 +160,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None, local_capability_store: LocalCapabilityStore | None = None, remotion: RemotionFactory | None = None, engine_gate: bool | None = None, remotion_studio_runner: StudioRunner | None = None, remotion_studio_idle_s: float | None = None, upstream_fetcher=None, upstream_engine=None, remotion_import_owners=None, remotion_render_runner: RenderRunner | None = None, authoring_compiler=None, authoring_engine_pin=None, product_edition: ProductEditionPolicy = FULL_EDITION) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None, local_capability_store: LocalCapabilityStore | None = None, remotion: RemotionFactory | None = None, engine_gate: bool | None = None, remotion_studio_runner: StudioRunner | None = None, remotion_studio_idle_s: float | None = None, upstream_fetcher=None, upstream_engine=None, remotion_import_owners=None, remotion_render_runner: RenderRunner | None = None, authoring_compiler=None, authoring_engine_pin=None, product_edition: ProductEditionPolicy = FULL_EDITION, connectors_needing_authorization: frozenset[str] = frozenset()) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -229,6 +229,11 @@ class JarvisCoreApplication:
         # Connecteurs de l'édition (Slice 05 presentation-edition, `docs/product-connectors.md`) : la politique
         # des outils externes (`side_effect`) et le cadrage des résultats s'appliquent dans ce service, à l'appel.
         self.connector_policy = connector_policy(product_edition)
+        #: Connecteurs natifs dont le consentement manquait au démarrage (`app._google_backend`).
+        self.connectors_needing_authorization = frozenset(connectors_needing_authorization)
+        if self.connectors_needing_authorization:
+            self._diagnostics.emit("connectors.authorization_required", "Autorisation Google à donner",
+                                   level="warning", data={"connectors": sorted(self.connectors_needing_authorization)})
         self.mcp_plugins = McpPluginService(
             mcp_store, CredentialVault(mcp_store, sealer, diagnostics=diagnostics), connector=connector,
             diagnostics=diagnostics, allow_loopback_http=mcp_allow_loopback_http,
@@ -717,7 +722,8 @@ class JarvisCoreApplication:
         self.conversation_event_emitter.add_listener(self.presentation_studio_presenter.on_event)
         from jarvis.core.back_brain import BackBrainTaskService
         self.back_brain = BackBrainTaskService(self.jobs, self.conversations, self.voice_ledger)
-        self.tools = CoreToolRouter(scheduler=self.scheduler, calendar=self.calendar, drive=self.drive, timezone=timezone)
+        self.tools = CoreToolRouter(scheduler=self.scheduler, calendar=self.calendar, drive=self.drive, timezone=timezone,
+                                    frame_untrusted_content=self.connector_policy.frame_untrusted_content)
         self._stopped = asyncio.Event()
         self._notification_task: asyncio.Task[None] | None = None
         self._notification_queue: asyncio.Queue[ProtocolEnvelope] | None = None
@@ -921,7 +927,8 @@ class JarvisCoreApplication:
 
         plugins = [plugin.public_view() for plugin in await self.mcp_plugins.list_plugins()]
         facts = ConnectorFacts(drive_available=self.drive.available,
-                               calendar_persisted=bool(self.calendar.storage.get("persisted")), plugins=plugins)
+                               calendar_persisted=bool(self.calendar.storage.get("persisted")), plugins=plugins,
+                               needs_authorization=self.connectors_needing_authorization)
         return connectors_payload(self.connector_policy, facts)
 
     async def _authorised_boards(self) -> frozenset[str]:

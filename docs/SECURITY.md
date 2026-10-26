@@ -837,7 +837,15 @@ refused `503 credential_vault_unavailable`. An unreadable sealed key (copied fro
 reads as absent and is listed `readable: false`.
 
 **Development unchanged.** A source checkout in `full` keeps the plaintext store and plain token
-files exactly as before; it still *reads* sealed entries.
+files exactly as before; it still *reads* sealed entries. The `.env` is parsed by the one canonical
+parser (`environment.parse_environment_lines`). Support rollback: `python -m jarvis secrets-restore
+<backup> <out>` writes the original content to a new file (never overwrites; plaintext — delete after
+use); an identical backup is never duplicated.
+
+**Google consent in the product.** Granted scopes are read from the token itself
+(`google_oauth.token_covers`); a full-scope token does not pass for the minimal product scopes. Core
+and the stdio `jarvis-drive` never open a browser in the product (`GoogleAuthorizationRequired`):
+the connector reads `needs_authorization` and onboarding (Slice 07) runs the consent.
 
 **Same threat model as control 15:** DPAPI protects against other OS users and copies of the files,
 not against a malicious process of the same user. No secret in public views
@@ -852,9 +860,12 @@ is enforced by Core in `McpPluginService.call`/`invoke`, before arguments and an
 not the boundary. Residual: a remote server that lies in its annotations (`readOnlyHint` on a
 writing tool) is not detectable.
 
-**Untrusted connector content.** In `presentation`, every text a connector returns (remote tool
-result, `drive_read`) is framed by `connector_content.frame_untrusted`: a notice, then markers
-carrying a per-block random token the connector cannot predict, marker look-alikes neutralized.
+**Untrusted connector content.** In `presentation`, everything a connector returns (remote tool
+results, Drive names/metadata/text, calendar titles/descriptions) is framed **where it reaches the
+model** — the `jarvis-tools` gateway, the voice's native `CoreToolRouter`, `jarvis-drive` — by
+`connector_content` (`frame_untrusted`, `frame_payload`): a notice naming the one closing token, then
+markers carrying a per-block random token the connector cannot predict, marker look-alikes
+neutralized. Core's shared `McpPluginService.call` returns raw results (internal callers parse them).
 Framing reduces, it does not eliminate, prompt injection; the call-time refusal above is the hard
 line. Proof: `tests/unit/test_product_connectors.py` (hostile text framed, follow-up write refused,
 nothing sent).

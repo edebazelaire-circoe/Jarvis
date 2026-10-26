@@ -53,6 +53,10 @@ def _parser() -> argparse.ArgumentParser:
     wake_word_status.add_argument("--json", action="store_true")
     sub.add_parser("drive-auth", help="Authorize Google Drive access once and store the token")
     sub.add_parser("drive-mcp", help="Serve the Google Drive MCP tools over stdio")
+    # Support (Slice 05 presentation-edition) : rend le contenu d'origine d'une sauvegarde scellée de secrets locaux.
+    restore = sub.add_parser("secrets-restore", help="Write the original content of a sealed secrets backup (support)")
+    restore.add_argument("backup", help="<file>.plain-backup[.N].dpapi")
+    restore.add_argument("out", help="Output file (must not exist); it holds plaintext keys: delete it after use")
     # Lancée par le CLI du cerveau via `--mcp-config` (scene.enabled), pas par
     # un humain : stdout est le protocole MCP.
     sub.add_parser("display-mcp", help="Serve the brain scene display MCP tools over stdio")
@@ -178,8 +182,9 @@ async def _drive_auth() -> int:
     # la boucle asyncio reste libre d'être interrompue au clavier.
     from jarvis.runtime.local_secrets import google_token_options
 
-    backend = await asyncio.to_thread(lambda: GoogleDriveBackend.from_oauth_files(secret, token,
-                                                                                  **google_token_options()))
+    # Commande explicite de l'utilisateur : la seule qui ouvre le navigateur de consentement.
+    backend = await asyncio.to_thread(lambda: GoogleDriveBackend.from_oauth_files(
+        secret, token, **{**google_token_options(), "interactive": True}))
     files = await backend.list_files(DriveQuery(limit=1))
     print(f"Drive autorisé. Jeton écrit dans {token}.")
     print(f"Vérification : {len(files)} fichier(s) visible(s) dans le Drive.")
@@ -336,8 +341,8 @@ def _calendar_backend_from_env():
     from jarvis.runtime.local_secrets import google_token_options
 
     # Édition produit / produit installé : portées minimales et jeton scellé (`docs/product-connectors.md`).
-    return GoogleCalendarBackend.from_oauth_files(Path(secret), Path(token), calendar_id=os.getenv("GOOGLE_CALENDAR_ID", "primary"),
-                                                  **google_token_options())
+    return _google_backend("calendar", lambda: GoogleCalendarBackend.from_oauth_files(
+        Path(secret), Path(token), calendar_id=os.getenv("GOOGLE_CALENDAR_ID", "primary"), **google_token_options()))
 
 
 def _drive_backend_from_env():
@@ -355,7 +360,25 @@ def _drive_backend_from_env():
         raise RuntimeError("Google Drive requires GOOGLE_DRIVE_CLIENT_SECRET and GOOGLE_DRIVE_TOKEN paths")
     from jarvis.runtime.local_secrets import google_token_options
 
-    return GoogleDriveBackend.from_oauth_files(Path(secret), Path(token), **google_token_options())
+    return _google_backend("google_drive", lambda: GoogleDriveBackend.from_oauth_files(
+        Path(secret), Path(token), **google_token_options()))
+
+
+#: Connecteurs Google dont le consentement manque à ce démarrage de Core (produit : jamais de navigateur
+#: ouvert par Core). Lus par `JarvisCoreApplication(connectors_needing_authorization=…)` : état
+#: `needs_authorization` de `GET /v1/edition/connectors`, le flux relève de l'onboarding (Slice 07).
+_GOOGLE_AUTHORIZATION_REQUIRED: set[str] = set()
+
+
+def _google_backend(connector_id: str, build):
+    from jarvis.adapters.google_oauth import GoogleAuthorizationRequired
+
+    try:
+        return build()
+    except GoogleAuthorizationRequired:
+        # Argued: Core still starts; the connector reads `needs_authorization`, journaled by Core at start.
+        _GOOGLE_AUTHORIZATION_REQUIRED.add(connector_id)
+        return None
 
 
 def _mcp_allow_loopback_http() -> bool:
@@ -876,7 +899,7 @@ async def _run_core_v2() -> int:
         )
     # Plugins MCP (Slice 03) : connecteur injecté, import gardé (extra `mcp` absent ⇒ None).
     mcp_loopback = _mcp_allow_loopback_http()
-    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, file_change_notifier_factory=FileChangeNotifier, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), connector=_mcp_connector(mcp_loopback, RuntimeJournal(settings.runtime_root)), mcp_allow_loopback_http=mcp_loopback, memory=memory, local_capability_runner=_local_capability_runner(), local_capability_store=_local_capability_store(settings.data_root), remotion=_remotion_factory(), remotion_studio_runner=_remotion_studio_runner(settings.data_root), remotion_studio_idle_s=_remotion_studio_idle_s(), remotion_render_runner=_remotion_render_runner(settings.data_root), upstream_fetcher=_upstream_fetcher(), upstream_engine=_upstream_engine(), remotion_import_owners=lambda: _remotion_import_owners(settings.runtime_root), agenda_settings=lambda: load_agenda_settings(_control_settings(settings.runtime_root)), **_audio_recording_from_env(settings.runtime_root), **_brain_availability_from_env(), product_edition=product_edition)
+    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, file_change_notifier_factory=FileChangeNotifier, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), connector=_mcp_connector(mcp_loopback, RuntimeJournal(settings.runtime_root)), mcp_allow_loopback_http=mcp_loopback, memory=memory, local_capability_runner=_local_capability_runner(), local_capability_store=_local_capability_store(settings.data_root), remotion=_remotion_factory(), remotion_studio_runner=_remotion_studio_runner(settings.data_root), remotion_studio_idle_s=_remotion_studio_idle_s(), remotion_render_runner=_remotion_render_runner(settings.data_root), upstream_fetcher=_upstream_fetcher(), upstream_engine=_upstream_engine(), remotion_import_owners=lambda: _remotion_import_owners(settings.runtime_root), agenda_settings=lambda: load_agenda_settings(_control_settings(settings.runtime_root)), **_audio_recording_from_env(settings.runtime_root), **_brain_availability_from_env(), product_edition=product_edition, connectors_needing_authorization=frozenset(_GOOGLE_AUTHORIZATION_REQUIRED))
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token,
                                  installation=installation)
     # Tool Brain (handoff jarvis-tool-brain-ui-orchestrator, Slice 5) : `JARVIS_TOOL_BRAIN=shadow` l'observe et
@@ -1802,6 +1825,7 @@ async def _run_control_center_v2() -> int:
         tools_mcp=ToolsGatewayTarget(
             core_host=settings.core_host, core_port=settings.core_port,
             token_file=settings.token_file, runtime_root=runtime_root,
+            edition=_process_edition_value(),
         ),
     )
     await control.start(port=ui_port)
@@ -2092,6 +2116,12 @@ async def _amain(argv: list[str] | None = None) -> int:
         return wake_word_cli(args)
     if command == "drive-auth": return await _drive_auth()
     if command == "drive-mcp": return await _drive_mcp()
+    if command == "secrets-restore":
+        from jarvis.runtime.local_secrets import restore_backup
+
+        written = restore_backup(Path(args.backup), Path(args.out))
+        print(f"Contenu d'origine écrit dans {written} (clés en clair : supprimez ce fichier après usage).")
+        return 0
     if command == "display-mcp": return await _display_mcp()
     if command == "barehands-mcp": return await _barehands_mcp()
     if command == "console-mcp": return await _console_mcp()

@@ -57,7 +57,7 @@ def test_sealing_applies_to_presentation_and_to_any_installed_product(tmp_path):
 
 def test_google_token_options_follow_the_edition():
     full = local_secrets.google_token_options({"JARVIS_PRODUCT_EDITION": "full"})
-    assert full == {"minimal_scopes": False, "sealer": None}
+    assert full == {"minimal_scopes": False, "sealer": None, "interactive": True}
     product = local_secrets.google_token_options({"JARVIS_PRODUCT_EDITION": "presentation"})
     assert product["minimal_scopes"] is True and product["sealer"] is not None
 
@@ -272,3 +272,135 @@ def test_two_keys_of_one_provider_in_env_and_backups_never_overwrite(tmp_path):
     stored = json.loads(settings_path.read_text(encoding="utf-8"))["credentials"]
     assert {creds.entry_value(item, sealer) for item in stored if item["provider"] == "google"} == {
         "AIza-one-1111", "AIza-two-2222"}
+
+
+# ------------------------------------------------------------------ reprise QA : parseur .env canonique (B1)
+
+
+def test_env_migration_uses_the_canonical_parser_for_comments_quotes_export_and_spaces(tmp_path):
+    sealer = FakeSealer()
+    env = tmp_path / ".env"
+    env.write_text("OPENAI_API_KEY=sk-abc  # ma cle perso\n"
+                   'DEEPGRAM_API_KEY="dg-1" # c\n'
+                   "export ANTHROPIC_API_KEY='sk-ant-#1'\n"
+                   "  ELEVENLABS_API_KEY =  el-2  \n"
+                   "PORCUPINE_ACCESS_KEY=#vide\n"
+                   "JARVIS_VOICE_STACK=openai # garde\n", encoding="utf-8")
+    settings_path = tmp_path / "control-center-settings.json"
+    assert local_secrets.migrate_env_file(env, settings_path, sealer) == 4
+    stored = json.loads(settings_path.read_text(encoding="utf-8"))["credentials"]
+    assert {item["provider"]: creds.entry_value(item, sealer) for item in stored} == {
+        "openai": "sk-abc", "deepgram": "dg-1", "anthropic": "sk-ant-#1", "elevenlabs": "el-2"}
+    # Les lignes reprises disparaissent ; la clé vide et les réglages restent tels quels.
+    assert env.read_text(encoding="utf-8") == "PORCUPINE_ACCESS_KEY=#vide\nJARVIS_VOICE_STACK=openai # garde\n"
+
+
+def test_env_migration_refuses_an_unreadable_env_and_touches_nothing(tmp_path):
+    from jarvis.domain.errors import ConfigurationError
+
+    env = tmp_path / ".env"
+    env.write_text('OPENAI_API_KEY="sk-open\n', encoding="utf-8")
+    before = env.read_bytes()
+    with pytest.raises(ConfigurationError):
+        local_secrets.migrate_env_file(env, tmp_path / "settings.json", FakeSealer())
+    assert env.read_bytes() == before and not (tmp_path / "settings.json").exists()
+
+
+def test_the_startup_loader_and_the_migration_share_one_parser(monkeypatch, tmp_path):
+    from jarvis import environment
+
+    env = tmp_path / ".env"
+    env.write_text('DEEPGRAM_API_KEY="dg-1" # c\n', encoding="utf-8")
+    monkeypatch.setattr(environment, "project_environment_file", lambda: env)
+    monkeypatch.delenv("DEEPGRAM_API_KEY", raising=False)
+    environment.load_project_environment()
+    import os
+
+    assert os.environ["DEEPGRAM_API_KEY"] == "dg-1"
+    monkeypatch.delenv("DEEPGRAM_API_KEY")
+
+
+def test_an_identical_backup_is_never_duplicated(tmp_path):
+    sealer = FakeSealer()
+    path = tmp_path / "f.json"
+    path.write_text("{}", encoding="utf-8")
+    first = local_secrets.backup_sealed(path, sealer)
+    assert local_secrets.backup_sealed(path, sealer) == first
+    path.write_text('{"a": 1}', encoding="utf-8")
+    assert local_secrets.backup_sealed(path, sealer).name == "f.json.plain-backup.2.dpapi"
+    assert len(list(tmp_path.glob("*.dpapi"))) == 2
+
+
+def test_support_restore_writes_the_original_and_never_overwrites(tmp_path):
+    sealer = FakeSealer()
+    path = tmp_path / "control-center-settings.json"
+    original = json.dumps(_plain_settings()).encode("utf-8")
+    path.write_bytes(original)
+    local_secrets.migrate_settings_file(path, sealer)
+    backup = path.with_name(path.name + local_secrets.BACKUP_SUFFIX)
+    out = local_secrets.restore_backup(backup, tmp_path / "restored.json", sealer)
+    assert out.read_bytes() == original
+    with pytest.raises(FileExistsError):
+        local_secrets.restore_backup(backup, out, sealer)
+
+
+def test_the_cli_exposes_the_support_restore():
+    from jarvis.app import _parser
+
+    args = _parser().parse_args(["secrets-restore", "a.plain-backup.dpapi", "out.json"])
+    assert (args.command, args.backup, args.out) == ("secrets-restore", "a.plain-backup.dpapi", "out.json")
+
+
+# ------------------------------------------------------------------ reprise QA : portées du jeton (B3)
+
+
+FULL_DRIVE = {"token": "t", "refresh_token": "r", "client_id": "c", "client_secret": "s",
+              "token_uri": "https://oauth2.googleapis.com/token", "scopes": ["https://www.googleapis.com/auth/drive"],
+              "expiry": "2999-01-01T00:00:00Z"}
+MINIMAL_DRIVE = ("https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/drive.file")
+
+
+def test_token_covers_reads_the_scopes_recorded_in_the_token():
+    from jarvis.adapters.google_oauth import granted_scopes, token_covers
+
+    assert token_covers(FULL_DRIVE, ("https://www.googleapis.com/auth/drive",))
+    assert not token_covers(FULL_DRIVE, MINIMAL_DRIVE)  # `drive` ne vaut pas `drive.readonly` + `drive.file`
+    assert granted_scopes({"scopes": "a b"}) == ("a", "b") and not token_covers(None, MINIMAL_DRIVE)
+
+
+def test_a_full_scope_token_requires_a_new_consent_for_minimal_scopes(tmp_path):
+    from jarvis.adapters.google_oauth import GoogleAuthorizationRequired, load_credentials
+
+    token = tmp_path / "drive-token.json"
+    token.write_text(json.dumps(FULL_DRIVE), encoding="utf-8")
+    secret = tmp_path / "client.json"
+    # Avant la reprise, `from_authorized_user_info(info, wanted)` écrasait les portées : ce jeton passait.
+    with pytest.raises(GoogleAuthorizationRequired):
+        load_credentials(secret, token, MINIMAL_DRIVE, interactive=False)
+    creds = load_credentials(secret, token, ("https://www.googleapis.com/auth/drive",), interactive=False)
+    assert list(creds.scopes) == ["https://www.googleapis.com/auth/drive"]  # portées du jeton, pas demandées
+
+
+def test_no_token_in_product_mode_is_an_authorization_requirement(tmp_path):
+    from jarvis.adapters.google_oauth import GoogleAuthorizationRequired, load_credentials
+
+    with pytest.raises(GoogleAuthorizationRequired):
+        load_credentials(tmp_path / "c.json", tmp_path / "t.json", MINIMAL_DRIVE, sealer=FakeSealer(),
+                         interactive=False)
+
+
+def test_core_records_a_missing_google_consent_instead_of_failing(monkeypatch):
+    from jarvis import app
+    from jarvis.adapters.google_oauth import GoogleAuthorizationRequired
+
+    def build():
+        raise GoogleAuthorizationRequired("consent")
+
+    monkeypatch.setattr(app, "_GOOGLE_AUTHORIZATION_REQUIRED", set())
+    assert app._google_backend("google_drive", build) is None
+    assert app._GOOGLE_AUTHORIZATION_REQUIRED == {"google_drive"}
+
+
+def test_product_token_options_never_open_a_browser():
+    assert local_secrets.google_token_options({"JARVIS_PRODUCT_EDITION": "presentation"})["interactive"] is False
+    assert local_secrets.google_token_options({"JARVIS_PRODUCT_EDITION": "full"})["interactive"] is True

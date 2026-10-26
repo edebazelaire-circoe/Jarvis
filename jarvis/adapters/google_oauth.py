@@ -74,8 +74,34 @@ def _store_token(token_file: Path, payload: str, sealer: TokenSealer | None) -> 
     _write_bytes(sealed_token_path(token_file), sealer.seal(payload.encode("utf-8")))
 
 
+class GoogleAuthorizationRequired(RuntimeError):
+    """Un consentement Google est nécessaire (aucun jeton, ou portées accordées insuffisantes) et ce
+    processus ne peut pas le recueillir (`interactive=False` : Core produit, serveur stdio `jarvis-drive`).
+
+    L'état produit du connecteur devient `needs_authorization` ; le flux d'autorisation relève de
+    l'onboarding (Slice 07) ou, en développement, de `python -m jarvis drive-auth`.
+    """
+
+
+def granted_scopes(info: dict[str, Any] | None) -> tuple[str, ...]:
+    """Portées **enregistrées dans le jeton** (`scopes`, liste ou chaîne séparée par des espaces)."""
+
+    raw = (info or {}).get("scopes")
+    if isinstance(raw, str):
+        return tuple(raw.split())
+    return tuple(str(item) for item in raw) if isinstance(raw, (list, tuple)) else ()
+
+
+def token_covers(info: dict[str, Any] | None, wanted: Sequence[str]) -> bool:
+    """Le jeton enregistré couvre-t-il `wanted` ? Comparaison littérale, comme Google : `drive` ne
+    « couvre » pas `drive.readonly`. Jeton sans portées enregistrées (ancien format) : réputé couvrant."""
+
+    granted = set(granted_scopes(info))
+    return info is not None and (not granted or set(wanted).issubset(granted))
+
+
 def load_credentials(client_secret_file: Path, token_file: Path, scopes: Sequence[str],
-                     sealer: TokenSealer | None = None) -> Any:
+                     sealer: TokenSealer | None = None, *, interactive: bool = True) -> Any:
     """Charger (et rafraîchir) des identifiants OAuth « installed app ».
 
     Le jeton est lié aux portées demandées : Agenda et Drive partagent le même
@@ -83,6 +109,11 @@ def load_credentials(client_secret_file: Path, token_file: Path, scopes: Sequenc
     élargi d'un côté invaliderait silencieusement l'autre. Des portées
     différentes de celles accordées (passage aux portées minimales du produit)
     redemandent un consentement. `sealer` : stockage scellé (voir l'en-tête).
+    `interactive=False` : aucun navigateur n'est ouvert, `GoogleAuthorizationRequired` est levée à la
+    place (Core produit, serveurs stdio).
+
+    Les portées comparées sont celles **du jeton** (`token_covers`), jamais celles demandées : passer
+    `wanted` à `from_authorized_user_info` les écraserait et tout jeton semblerait couvrant.
     """
     try:
         from google.auth.exceptions import TransportError  # type: ignore
@@ -94,10 +125,12 @@ def load_credentials(client_secret_file: Path, token_file: Path, scopes: Sequenc
 
     wanted = tuple(scopes)
     info = _read_token_info(token_file, sealer)
-    creds = Credentials.from_authorized_user_info(info, wanted) if info is not None else None
-    if creds and creds.valid and _covers(creds, wanted):
+    covers = token_covers(info, wanted)
+    # Sans `scopes` : l'objet garde les portées enregistrées dans le jeton.
+    creds = Credentials.from_authorized_user_info(info) if info is not None else None
+    if creds and creds.valid and covers:
         return creds
-    if creds and creds.expired and creds.refresh_token and _covers(creds, wanted):
+    if creds and creds.expired and creds.refresh_token and covers:
         try:
             creds.refresh(Request())
         except TransportError:
@@ -106,19 +139,16 @@ def load_credentials(client_secret_file: Path, token_file: Path, scopes: Sequenc
             # première requête réelle, quand le réseau sera revenu.
             return creds
     else:
+        if not interactive:
+            raise GoogleAuthorizationRequired(
+                "Google authorization required: no token, or its granted scopes do not cover "
+                f"{list(wanted)}; run the authorization flow (onboarding, or `python -m jarvis drive-auth`)")
         if not client_secret_file.is_file():
             raise RuntimeError(f"Google client secret file not found: {client_secret_file}")
         flow = InstalledAppFlow.from_client_secrets_file(str(client_secret_file), list(wanted))
         creds = flow.run_local_server(port=0)
     _store_token(token_file, creds.to_json(), sealer)
     return creds
-
-
-def _covers(creds: Any, scopes: Sequence[str]) -> bool:
-    """Un jeton conserve les portées accordées : les élargir exige un nouveau
-    consentement, que `refresh` ne demande jamais."""
-    granted = set(getattr(creds, "scopes", None) or ())
-    return not granted or set(scopes).issubset(granted)
 
 
 def _write_token(token_file: Path, payload: str) -> None:

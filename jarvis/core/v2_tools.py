@@ -11,6 +11,7 @@ from jarvis.core.calendar_service import CalendarService
 from jarvis.core.drive_service import DriveService
 from jarvis.core.v2_services import SchedulerService
 from jarvis.domain.calendar import CalendarAttendee, CalendarEvent, CalendarQuery
+from jarvis.domain.connector_content import frame_payload
 from jarvis.domain.drive import DriveFile, DriveQuery
 from jarvis.domain.v2 import MissedRunPolicy, ScheduledItem, new_id
 from jarvis.security.v2_policy import ActionDisposition, V2ActionBroker
@@ -19,7 +20,7 @@ from jarvis.security.v2_policy import ActionDisposition, V2ActionBroker
 class CoreToolRouter:
     """Authoritative tool boundary for Voice/Realtime clients."""
 
-    def __init__(self, *, scheduler: SchedulerService, calendar: CalendarService, drive: DriveService | None = None, timezone: str = "Europe/Paris", confirmation_timeout_s: float = 45.0, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, *, scheduler: SchedulerService, calendar: CalendarService, drive: DriveService | None = None, timezone: str = "Europe/Paris", confirmation_timeout_s: float = 45.0, clock: Callable[[], float] = time.monotonic, frame_untrusted_content: bool = False) -> None:
         if confirmation_timeout_s <= 0:
             raise ValueError("confirmation_timeout_s must be positive")
         self.scheduler = scheduler
@@ -29,6 +30,9 @@ class CoreToolRouter:
         self.policy = V2ActionBroker()
         self.confirmation_timeout_s = confirmation_timeout_s
         self.clock = clock
+        #: Édition `presentation` (Slice 05, `docs/product-connectors.md`) : ce routeur est le bord du modèle vocal ;
+        #: le contenu d'agenda et de Drive qu'il rend y est cadré comme donnée non fiable (`frame_payload`).
+        self.frame_untrusted_content = frame_untrusted_content
         self._pending: dict[str, tuple[str, dict[str, object], str | None, float]] = {}
 
     async def call(self, name: str, arguments: dict[str, object], *, conversation_id: str | None) -> dict[str, object]:
@@ -72,6 +76,8 @@ class CoreToolRouter:
             result = {**result, "calendar": self.calendar.storage}
         if name.startswith("drive_") and result.get("executed"):
             result = {**result, "drive": self.drive.storage}
+        if self.frame_untrusted_content and name.startswith(("calendar_", "drive_")):
+            result = frame_payload(result, source="Google Drive" if name.startswith("drive_") else "Google Agenda")
         return result
 
     async def _dispatch(self, name: str, arguments: dict[str, object], *, conversation_id: str | None) -> dict[str, object]:

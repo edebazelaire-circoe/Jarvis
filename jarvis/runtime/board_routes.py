@@ -69,6 +69,7 @@ from urllib.parse import quote
 
 from aiohttp import web
 
+from jarvis.protocol.client import ForwardRefused
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.runtime.core_sessions import CORE_TRANSITION_PATHS
 from jarvis.runtime.journal import RuntimeJournal
@@ -303,6 +304,12 @@ class BoardSessionRoutes:
             status, payload = await self._transport.forward(method, core_path, params=params, body=body)
         except asyncio.CancelledError:
             raise
+        except ForwardRefused as exc:
+            # Core est peut-être joignable : c'est la liste blanche du relais qui refuse (bogue local), dit tel quel.
+            self._journal.emit("board.request.not_forwardable", f"Relais refusé pour {method} {core_path}",
+                               level="error", data={"code": "relay_path_not_forwardable", "method": method,
+                                                    "path": core_path})
+            return _error(500, "relay_path_not_forwardable", str(exc)[:300])
         except asyncio.TimeoutError as exc:
             if not (method == "POST" and core_path in CORE_TRANSITION_PATHS):
                 # Lecture ou écriture simple (délai 10 s du client) : Core ne répond

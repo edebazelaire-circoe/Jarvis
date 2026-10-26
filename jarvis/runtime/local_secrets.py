@@ -1,6 +1,6 @@
 """Secrets locaux de l'édition produit : clés API et jetons Google scellés par DPAPI (amendement E3, Slice 05).
 
-Contrat : `docs/product-connectors.md` › *Secrets* et `docs/SECURITY.md` § 15b.
+Contrat : `docs/product-connectors.md` › *Secrets* et `docs/SECURITY.md` § 23.
 
 **Quand.** `local_secrets_sealed()` : la politique de connecteurs de l'édition le demande
 (`presentation`) **ou** le code tourne comme produit installé (`jarvis/installation.py`), quelle que
@@ -85,7 +85,9 @@ def google_token_options(environ: Mapping[str, str] | None = None) -> dict[str, 
     env = os.environ if environ is None else environ
     minimal = connector_policy(process_edition(env)).google_scopes is GoogleScopeProfile.MINIMAL
     sealed = local_secrets_sealed(env)
-    return {"minimal_scopes": minimal or sealed, "sealer": default_sealer(GOOGLE_TOKEN_ENTROPY) if sealed else None}
+    # Produit : aucun navigateur ouvert par Core ; un consentement manquant devient `needs_authorization`.
+    return {"minimal_scopes": minimal or sealed, "sealer": default_sealer(GOOGLE_TOKEN_ENTROPY) if sealed else None,
+            "interactive": not sealed}
 
 
 # ------------------------------------------------------------------ entrées du magasin de clés
@@ -183,6 +185,12 @@ def backup_sealed(path: Path, sealer: Sealer) -> Path:
     backup = path.with_name(path.name + BACKUP_SUFFIX)
     index = 2
     while backup.exists():
+        # Même contenu déjà sauvegardé (un démarrage précédent dont la suite a échoué) : pas de nouvelle copie.
+        try:
+            if sealer.unseal(backup.read_bytes()) == raw:
+                return backup
+        except Exception:  # noqa: BLE001 - une sauvegarde illisible n'est ni réutilisée ni écrasée
+            pass
         backup = path.with_name(f"{path.name}.plain-backup.{index}.dpapi")
         index += 1
     _atomic_write(backup, sealer.seal(raw))
@@ -195,6 +203,23 @@ def unseal_backup(backup: Path, sealer: Sealer) -> bytes:
     """Retour arrière manuel : le contenu d'origine d'une sauvegarde scellée (même poste, même utilisateur)."""
 
     return sealer.unseal(Path(backup).read_bytes())
+
+
+def restore_backup(backup: Path, out: Path, sealer: Sealer | None = None) -> Path:
+    """Voie de support (`python -m jarvis secrets-restore <sauvegarde> <sortie>`) : écrit le contenu d'origine.
+
+    N'écrase jamais rien (`FileExistsError`) : c'est la personne du support qui décide de remettre le
+    fichier en place. Le fichier écrit contient les clés **en clair** : à supprimer après usage.
+    """
+
+    backup, out = Path(backup), Path(out)
+    if out.exists():
+        raise FileExistsError(f"{out} existe déjà : choisissez une autre sortie")
+    raw = unseal_backup(backup, sealer or credential_sealer())
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "xb") as stream:
+        stream.write(raw)
+    return out
 
 
 Emit = Callable[..., None]
@@ -244,15 +269,14 @@ def migrate_env_file(env_path: Path, settings_path: Path, sealer: Sealer, emit: 
         return 0
     names = {name: spec.id for spec in PROVIDERS for name in spec.env}
     lines = env_path.read_text(encoding="utf-8-sig").splitlines()
-    found: list[tuple[int, str, str, str]] = []
-    for index, raw in enumerate(lines):
-        line = raw.strip()
-        if line.startswith("export "):
-            line = line[7:].lstrip()
-        name, separator, value = line.partition("=")
-        value = value.strip().strip("'\"")
-        if separator and name.strip() in names and value:
-            found.append((index, names[name.strip()], value, name.strip()))
+    # Parseur canonique (le même qui charge le `.env` au démarrage) : guillemets, `export`, commentaires.
+    # Un fichier illisible lève `ConfigurationError` : rien n'est repris, rien n'est retiré.
+    from jarvis.environment import parse_environment_lines
+
+    found: list[tuple[int, str, str, str]] = [
+        (index, names[name], value, name)
+        for index, name, value in parse_environment_lines(lines, path=env_path.name)
+        if name in names and value]
     if not found:
         return 0
     if not sealer.available:

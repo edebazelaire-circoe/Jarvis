@@ -28,8 +28,9 @@ class GoogleCalendarBackend:
 
     @classmethod
     def from_oauth_files(cls, client_secret_file: Path, token_file: Path, *, calendar_id: str = "primary",
-                         minimal_scopes: bool = False, sealer: TokenSealer | None = None) -> "GoogleCalendarBackend":
-        creds = load_credentials(client_secret_file, token_file, cls.scopes_for(minimal_scopes), sealer=sealer)
+                         minimal_scopes: bool = False, sealer: TokenSealer | None = None, interactive: bool = True) -> "GoogleCalendarBackend":
+        creds = load_credentials(client_secret_file, token_file, cls.scopes_for(minimal_scopes), sealer=sealer,
+                                 interactive=interactive)
         return cls(build_service("calendar", "v3", creds), calendar_id=calendar_id)
 
     async def list_events(self, query: CalendarQuery):

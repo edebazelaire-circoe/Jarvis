@@ -92,3 +92,48 @@ la tâche n'est pas édité ici (worktree parallèle du Slice 03) : l'orchestrat
 3. `jarvis-drive` en `presentation` avec un document hostile (compte de test) : `drive_read` cadré.
 4. Passage d'un jeton Drive aux portées minimales : consentement redemandé, jeton `.dpapi`, plus de
    JSON en clair.
+
+## Reprise après revue de code et QA runtime (2026-10-26)
+
+Bloquants corrigés :
+
+- **B1 — `.env`** : le parseur maison de `migrate_env_file` est supprimé ; `jarvis/environment.py`
+  expose `parse_environment_lines` (seul parseur, aussi utilisé par `load_project_environment`).
+  Commentaires, guillemets, `export`, espaces : `test_env_migration_uses_the_canonical_parser_…`
+  (`sk-abc  # ma cle perso` ⇒ `sk-abc`, `"dg-1" # c` ⇒ `dg-1`). Fichier illisible ⇒
+  `ConfigurationError`, rien touché. Voie de support : `python -m jarvis secrets-restore <sauvegarde>
+  <sortie>` (`local_secrets.restore_backup`, n'écrase jamais). Sauvegarde identique jamais dupliquée
+  (`backup_sealed` relit les sauvegardes existantes).
+- **B2 — cadrage** : retiré de `McpPluginService.call` (résultat brut : `core-agenda` /
+  `events_from_outcome` relit le JSON, test `test_agenda_reminders_still_parse_…`). Cadrage au bord
+  du modèle : passerelle `jarvis-tools` (`ToolsGateway._framed`, édition dans son `--mcp-config` via
+  `ToolsGatewayTarget.edition`), `CoreToolRouter` (`calendar_*`, `drive_*` rendus à la voix :
+  `frame_payload`), `jarvis-drive` (`drive_search`, `drive_get`, `drive_read`, résultats d'écriture du
+  profil opérateur). `structured` n'atteint le modèle que sérialisé dans le cadre (passerelle), test
+  paramétré. L'avis nomme le jeton qui seul ferme le bloc.
+- **B3 — portées** : `google_oauth.token_covers` compare aux portées **enregistrées dans le jeton**
+  (`from_authorized_user_info(info)` sans `wanted`) ; test avec un jeton `drive` complet ⇒
+  `GoogleAuthorizationRequired` pour les portées minimales. Produit : `interactive=False` (Core,
+  `jarvis-drive`) ; `app._google_backend` laisse Core démarrer, le connecteur lit
+  `needs_authorization` (trace `connectors.authorization_required`) ; le consentement relève de
+  l'onboarding (Slice 07) ; `drive-auth` reste la seule commande interactive. Doc corrigée.
+- **B4 — relais** : `/v1/edition/connectors` ajouté à `FORWARDABLE_PREFIXES` (test épinglé
+  `test_capture_relay` mis à jour) ; test de bout en bout Control Center ⇒ Core réel
+  (`test_the_control_center_relay_reaches_core`). Un chemin hors liste blanche répond désormais
+  `500 relay_path_not_forwardable` (`ForwardRefused`) au lieu de `503 core_unreachable`.
+- `local_secrets.py` cite § 23.
+
+Issues (rangées, hors Slice) :
+
+- I-S05-1 : la liaison `GOOGLE_API_KEY` / `GEMINI_API_KEY` reprise du `.env` suit l'ordre des lignes
+  (la première clé du fournisseur est liée).
+- I-S05-2 : `jarvis/config.py:152` (chemin v1) lit `OPENAI_API_KEY` dans l'environnement seulement,
+  pas le magasin scellé : une clé retirée du `.env` produit n'y est plus vue.
+- I-S05-3 : retour à un code antérieur à ce Slice : les entrées `sealed` ne sont pas lues par l'ancien
+  `credentials.py` (clés « absentes ») ; restauration par `secrets-restore`.
+- I-S05-4 : les rappels d'agenda de Core lisent un plugin MCP `…calendar.list_events`
+  (`agenda_reminders`, documenté comme `infomaniak.calendar.list_events`) : l'« Agenda CIRCOE » est
+  peut-être Infomaniak et non Google — à confirmer avec E1. Si ce plugin n'annote pas ses outils en
+  lecture, la politique `presentation` le refuse (non annoté = destructeur) et les rappels s'arrêtent.
+- I-S05-5 : un relais qui refuse un chemin est un bogue local ; d'autres relais (`mcp_plugin_routes`,
+  `capture_relay`…) le rendent peut-être encore `core_unreachable` (seul `board_routes` est corrigé).

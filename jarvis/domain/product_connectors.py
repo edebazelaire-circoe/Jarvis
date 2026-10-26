@@ -6,9 +6,10 @@ il dit **quels** connecteurs une édition propose, comment leur état se lit en 
 ce qu'un outil externe peut faire selon son effet de bord.
 
 Une seule source, comme `product_edition.py` : `connector_policy(edition)` est consommée par Core
-(`McpPluginService` : refus à l'appel, catalogue filtré, cadrage des résultats), par la route de
-statut `GET /v1/edition/connectors` (onboarding/santé, Slice 07) et par les serveurs MCP enfants
-(`jarvis-drive` : cadrage). Aucune autre table de connecteurs ne doit exister.
+(`McpPluginService` : refus à l'appel, catalogue filtré ; `CoreToolRouter` : cadrage des outils
+natifs de la voix), par la route de statut `GET /v1/edition/connectors` (onboarding/santé, Slice 07)
+et par les serveurs MCP enfants (`jarvis-tools`, `jarvis-drive` : cadrage au bord du modèle).
+Aucune autre table de connecteurs ne doit exister.
 
 - `full` (développement) : comportement d'avant cette Slice. Tout outil externe s'appelle, aucun
   cadrage ajouté, portées Google complètes.
@@ -251,6 +252,9 @@ class ConnectorFacts:
     #: Résumés des plugins MCP (`plugin_id`, `enabled`, `connection_status`, `auth_status`, `endpoint`,
     #: `server_identity`) : seuls les connecteurs à `plugin_match` les lisent.
     plugins: Sequence[Mapping[str, Any]] = ()
+    #: Connecteurs natifs (`google_drive`, `calendar`) dont le consentement manque (jeton absent ou portées
+    #: insuffisantes) : Core produit n'ouvre aucun navigateur, l'onboarding (Slice 07) le recueille.
+    needs_authorization: frozenset[str] = frozenset()
 
 
 def plugin_state(summary: Mapping[str, Any]) -> ConnectorState:
@@ -270,6 +274,9 @@ def plugin_state(summary: Mapping[str, Any]) -> ConnectorState:
 
 
 def _native_state(connector_id: ConnectorId, facts: ConnectorFacts) -> tuple[ConnectorState, str | None]:
+    if connector_id.value in facts.needs_authorization:
+        return (ConnectorState.NEEDS_AUTHORIZATION,
+                "Le compte Google doit donner son accord à JARVIS (portées de l'édition produit).")
     if connector_id is ConnectorId.GOOGLE_DRIVE:
         return (ConnectorState.READY, None) if facts.drive_available else (
             ConnectorState.NOT_CONFIGURED, "Aucun compte Google Drive n'est relié à JARVIS.")

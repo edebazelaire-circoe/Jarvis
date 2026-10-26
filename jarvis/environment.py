@@ -22,19 +22,18 @@ def project_environment_file() -> Path:
     return installation.home.config / ".env" if installation.installed else PROJECT_ROOT / ".env"
 
 
-def load_project_environment() -> None:
-    """Load literal, single-line .env assignments without replacing the environment."""
-    path = project_environment_file()
-    try:
-        lines = path.read_text(encoding="utf-8-sig").splitlines()
-    except FileNotFoundError:
-        # The local .env is optional when configuration is supplied by the process.
-        return
-    except (OSError, UnicodeError) as exc:
-        raise ConfigurationError(f"Impossible de lire {path}") from exc
+def parse_environment_lines(lines: list[str], *, path: Path | str = ".env") -> list[tuple[int, str, str]]:
+    """Affectations `.env` littérales d'une ligne : `(index de ligne, nom, valeur)`, dans l'ordre du fichier.
 
-    values: dict[str, str] = {}
-    for number, raw in enumerate(lines, start=1):
+    Seul parseur `.env` de JARVIS (chargement au démarrage, reprise des clés dans le coffre,
+    `jarvis/runtime/local_secrets.py`). `export ` en tête accepté ; valeur entre guillemets simples ou
+    doubles prise telle quelle (un `#` après le guillemet fermant est un commentaire) ; sans guillemets,
+    ` #…` est un commentaire ; une valeur qui commence par `#` est vide. Toute ligne illisible lève
+    `ConfigurationError` : le fichier entier est refusé, rien n'est appliqué à moitié.
+    """
+    out: list[tuple[int, str, str]] = []
+    for index, raw in enumerate(lines):
+        number = index + 1
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -54,7 +53,22 @@ def load_project_environment() -> None:
             value = ""
         else:
             value = re.split(r"\s+#", value, maxsplit=1)[0].rstrip()
-        values[name] = value
+        out.append((index, name, value))
+    return out
+
+
+def load_project_environment() -> None:
+    """Load literal, single-line .env assignments without replacing the environment."""
+    path = project_environment_file()
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except FileNotFoundError:
+        # The local .env is optional when configuration is supplied by the process.
+        return
+    except (OSError, UnicodeError) as exc:
+        raise ConfigurationError(f"Impossible de lire {path}") from exc
+
+    values: dict[str, str] = {name: value for _, name, value in parse_environment_lines(lines, path=path)}
 
     # Validate the whole file first so a malformed line cannot partly configure a run.
     for name, value in values.items():

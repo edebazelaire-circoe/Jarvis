@@ -45,8 +45,9 @@ la passerelle `jarvis-tools`, qui voit le catalogue natif.
 Slice 05 jarvis-presentation-edition-v1 (`docs/product-connectors.md`) : la politique de
 connecteurs de l'édition (`connector_policy`) s'applique **à l'appel**, avant tout réseau : un
 outil dont le `side_effect` n'est pas permis est refusé (`mcp_tool_side_effect_refused`,
-`mcp_tool_confirmation_required`) et retiré du catalogue `external_tools` ; en édition
-`presentation`, chaque texte de résultat est cadré comme donnée non fiable (`frame_outcome`).
+`mcp_tool_confirmation_required`) et retiré du catalogue `external_tools`. Le résultat rendu
+ici reste brut : des appelants internes de Core le lisent (`agenda_reminders.events_from_outcome`).
+Le cadrage « donnée non fiable » se fait au bord du modèle, dans la passerelle `jarvis-tools`.
 Édition `full` (défaut) : rien ne change.
 
 Journal (`DiagnosticSink`) : `plugin_id`, opération, codes stables, durées ;
@@ -68,7 +69,6 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from jarvis.core.credential_vault import CredentialVault
-from jarvis.domain.connector_content import frame_outcome
 from jarvis.domain.mcp_endpoint import validate_endpoint
 from jarvis.domain.mcp_plugins import (
     STATIC_STRATEGIES, AuthStatus, AuthStrategy, ConnectionStatus, McpErrorCode, McpPlugin, McpPluginError,
@@ -1148,8 +1148,6 @@ class McpPluginService:
                 outcome = call_outcome(result, known_secrets=await self._known_secrets(plugin))
                 code = None if outcome["ok"] else McpErrorCode(outcome["code"])
                 size = sum(len(block["text"].encode("utf-8")) for block in outcome["content"])
-                if self._policy.frame_untrusted_content:
-                    outcome = frame_outcome(outcome, source=plugin.display_name or plugin.plugin_id)
                 return outcome
             except McpPluginError as exc:
                 code = exc.code

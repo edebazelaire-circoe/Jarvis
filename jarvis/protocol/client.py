@@ -40,7 +40,7 @@ from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleState, 
 #: `prefab_routes.py`) : pour le runtime des cadres et la bibliothèque.
 #: Presentations du Studio (jarvis-interactive-presentation-studio, Slice 05, `presentation_studio_relay.py`) : le
 #: relais n'en expose qu'une partie (lectures + `.../edits`, acteur forcé à `user`) ; la liste vit dans le relais.
-FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mcp/oauth/callback",
+FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/edition/connectors", "/v1/sessions", "/v1/mcp/plugins", "/v1/mcp/oauth/callback",
                         "/v1/contexts", "/v1/captures", "/v1/artifacts", "/v1/activity", "/v1/workspace/",
                         "/v1/prefabs", "/v1/presentation-studio/presentations", "/v1/presentation-studio/playback",
                         "/v1/presentation-studio/authoring", "/v1/presentation-studio/templates",
@@ -84,6 +84,10 @@ MAX_FORWARDED_PAYLOAD_BYTES = 8 * 1024 * 1024
 #: En-têtes de la réponse binaire de Core rendus tels quels par le relais.
 FORWARDED_PAYLOAD_HEADERS = ("Content-Type", "Content-Range", "Accept-Ranges", "Content-Disposition",
                              "Cache-Control", "X-Content-Type-Options")
+
+
+class ForwardRefused(ValueError):
+    """`forward_json` refuse un chemin hors de sa liste blanche : bogue local du relais, Core n'a pas été joint."""
 
 
 class CoreProtocolError(RuntimeError):
@@ -1521,7 +1525,7 @@ class LocalCoreClient:
         """
 
         if not path.startswith(FORWARDABLE_PREFIXES) and not any(p.fullmatch(path) for p in FORWARDABLE_PATHS):
-            raise ValueError(f"forward_json only relays board, session, MCP plugin, context, capture, artifact, "
+            raise ForwardRefused(f"forward_json only relays board, session, MCP plugin, context, capture, artifact, "
                              f"activity, workspace and prefab routes, not {path[:80]!r}")
         session = await self._http()
         headers = {**self.headers, "Content-Type": "application/json"} if body is not None else self.headers

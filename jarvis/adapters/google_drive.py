@@ -34,8 +34,9 @@ class GoogleDriveBackend:
 
     @classmethod
     def from_oauth_files(cls, client_secret_file: Path, token_file: Path, *, minimal_scopes: bool = False,
-                         sealer: TokenSealer | None = None) -> "GoogleDriveBackend":
-        creds = load_credentials(client_secret_file, token_file, cls.scopes_for(minimal_scopes), sealer=sealer)
+                         sealer: TokenSealer | None = None, interactive: bool = True) -> "GoogleDriveBackend":
+        creds = load_credentials(client_secret_file, token_file, cls.scopes_for(minimal_scopes), sealer=sealer,
+                                 interactive=interactive)
         return cls(build_service("drive", "v3", creds))
 
     async def list_files(self, query: DriveQuery):
