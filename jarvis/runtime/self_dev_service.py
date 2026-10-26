@@ -50,7 +50,23 @@ class SelfDevelopmentService:
     # ------------------------------------------------------------ lecture
 
     def gate(self) -> dict[str, bool]:
-        return self_dev.load_gate(self.read_settings())
+        gate = self_dev.load_gate(self.read_settings())
+        if not _edition_allows_self_dev():
+            # Édition confinée (Slice 04) : fermé quel que soit le réglage, et dit comme tel.
+            return {"enabled": False, "auto_deploy": False, "unavailable_in_edition": True}
+        return gate
+
+    def _ensure_edition(self) -> None:
+        """Édition confinée (`docs/product-capabilities.md`) : l'auto-développement lance un agent de code sans
+        confinement (`bypassPermissions`) dans un worktree du dépôt ; il n'existe pas en `presentation`."""
+
+        from jarvis.domain.agent_capabilities import AgentCapabilityError
+        from jarvis.runtime.agent_settings import edition_capabilities
+        try:
+            edition_capabilities().ensure("self_development")
+        except AgentCapabilityError as exc:
+            self.journal.emit("selfdev.refused", str(exc), level="warning", data={"code": exc.code})
+            raise SelfDevError(exc.code, str(exc)) from exc
 
     async def state(self) -> dict[str, Any]:
         """Tout ce qu'il faut pour comprendre où en est l'auto-développement."""
@@ -76,6 +92,7 @@ class SelfDevelopmentService:
 
     def start(self, request: str, *, profile: str = "code") -> Job:
         """Ouvrir un chantier et rendre la main tout de suite."""
+        self._ensure_edition()
         gate = self.gate()
         if not gate["enabled"]:
             raise SelfDevError(
@@ -113,6 +130,7 @@ class SelfDevelopmentService:
 
     async def deploy(self, job_id: str) -> dict[str, Any]:
         """Intégrer le candidat d'un chantier. Le rechargement suit, s'il aboutit."""
+        self._ensure_edition()
         gate = self.gate()
         if not gate["enabled"]:
             raise SelfDevError("selfdev_not_allowed", "L'auto-développement est éteint.")
@@ -147,3 +165,8 @@ def _ticket() -> str:
     import uuid
 
     return uuid.uuid4().hex[:12]
+
+
+def _edition_allows_self_dev() -> bool:
+    from jarvis.runtime.agent_settings import edition_capabilities
+    return edition_capabilities().self_development

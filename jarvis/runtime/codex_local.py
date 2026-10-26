@@ -367,6 +367,7 @@ class CodexLocalAgent:
         del resume
         from jarvis.runtime.cli_catalog import probe
 
+        self._ensure_edition_allows_codex()
         detection = await probe(self.command)
         if self._owned_closed:
             raise RuntimeError("owned_agent_closed")
@@ -718,9 +719,24 @@ class CodexLocalAgent:
 
     # ---------------------------------------------------------------- console
 
+    def _ensure_edition_allows_codex(self) -> None:
+        """Édition produit (`docs/product-capabilities.md`, Slice 04) : Codex n'a pas de confinement équivalent.
+
+        En `presentation`, aucun tour, aucune console : refus typé `agent_cli_unavailable_in_edition`, journalisé.
+        """
+
+        from jarvis.domain.agent_capabilities import AgentCapabilityError, agent_capability_policy
+        from jarvis.runtime.product_edition_env import process_edition
+        try:
+            agent_capability_policy(process_edition()).ensure_agent_cli("codex")
+        except AgentCapabilityError as exc:
+            self.journal.emit("agent.start", str(exc), level="error", data={"code": exc.code, "agent_cli": "codex"})
+            raise
+
     async def open_console(self) -> dict[str, Any]:
         if os.name != "nt":
             raise RuntimeError("La console de debug n'est disponible que sous Windows")
+        self._ensure_edition_allows_codex()
         existing = self._console
         if existing is not None and existing.poll() is None:
             raised = raise_console_window(existing.pid)

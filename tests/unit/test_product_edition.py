@@ -422,8 +422,13 @@ def test_the_resolved_conversation_program_follows_the_edition():
     assert claude_local.BRAIN_WORKSPACE_KINDS_LINE in full
     assert claude_local.BRAIN_WORKSPACE_KINDS_LINE not in presentation
     assert claude_local.BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE in presentation
-    assert presentation.replace(claude_local.BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE,
-                                claude_local.BRAIN_WORKSPACE_KINDS_LINE) == full, "seule la ligne des types change"
+    # Slice 04 (`docs/product-capabilities.md`) : la consigne du cerveau confiné change aussi la mémoire de Board,
+    # les fiches de retour et ajoute ses capacités réelles ; rien d'autre ne bouge.
+    undone = (presentation.replace("\n\n" + claude_local.BRAIN_CONFINED_CAPABILITIES_PROMPT, "\n")
+              .replace(claude_local.BRAIN_MEMORY_TOOL_LINE, claude_local.BRAIN_MEMORY_FILE_LINE)
+              .replace(claude_local.BRAIN_FEEDBACK_TOOL_SECTION, claude_local.BRAIN_FEEDBACK_FILE_SECTION))
+    assert undone.replace(claude_local.BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE,
+                          claude_local.BRAIN_WORKSPACE_KINDS_LINE) == full, "seules les lignes de l'édition changent"
 
 
 def test_an_unknown_edition_in_the_prompt_is_an_error_like_in_core():

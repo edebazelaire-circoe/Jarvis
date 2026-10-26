@@ -49,7 +49,7 @@ from jarvis.domain.voice_architecture import (
     DuplexVoiceConfig, FrontBrainVoiceConfig, VoiceConfigError, VoiceModelRef,
 )
 from jarvis.runtime import cli_catalog
-from jarvis.runtime.agent_settings import resolve_agent_settings
+from jarvis.runtime.agent_settings import edition_capabilities, effective_agent_cli, resolve_agent_settings
 from jarvis.runtime.architecture_graph import ArchitectureGraphService
 from jarvis.runtime.brain_config_store import (
     DELEGATING_BRAINS, BrainConfigStore, LoadedBrainConfig, launched_delegation,
@@ -216,13 +216,13 @@ class BrainConfigService:
 
     async def _core_fields(self, fields: dict, settings: Mapping[str, Any], loaded: LoadedBrainConfig,
                            catalog: "_CatalogReader", snapshot: ArchitectureSnapshot) -> None:
-        agent_cli = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
+        agent_cli = effective_agent_cli(settings.get("agent_cli"), environ=self.environ)
         model = resolve_agent_settings(settings, agent_cli, environ=self.environ)["model"]
         items = await catalog.items("subagents", "text")
         fields["provider"] = _field(
             agent_cli, editable=True, applies=Applies.CORE_RESTART, owner="agent_cli",
             reason="Le CLI cerveau relit ce choix à son lancement (Back Brain : au démarrage de Core).",
-            choices=_cli_choices(items, agent_cli, catalog))
+            choices=_cli_choices(items, agent_cli, catalog, edition_capabilities(self.environ)))
         fields["model"] = _field(
             model, editable=True, applies=Applies.CORE_RESTART, owner=f"agent_cli_settings.{agent_cli}.model",
             reason="Vide : le CLI garde son modèle par défaut. Relu au lancement du CLI cerveau.",
@@ -424,6 +424,11 @@ class BrainConfigService:
             provider = body.get("provider", fields["provider"]["value"])
             if not isinstance(provider, str) or provider not in cli_catalog.AGENT_CLI_IDS:
                 raise BrainConfigError(MODEL_UNAVAILABLE, f"CLI inconnu : {str(provider)[:40]}.", field="provider")
+            capabilities = edition_capabilities(self.environ)
+            if not capabilities.allows_agent_cli(provider):
+                # Édition confinée (Slice 04, `docs/product-capabilities.md`) : refus typé, rien d'écrit.
+                raise BrainConfigError(AGENT_CLI_UNAVAILABLE_IN_EDITION, _edition_cli_reason(capabilities, provider),
+                                       field="provider")
             choices = fields["model"]["choices"]
             if provider != fields["provider"]["value"]:
                 if "model" not in body:  # le CLI choisi garde le modèle qui lui est déjà enregistré
@@ -654,9 +659,22 @@ def _model_choices(items: list[Mapping[str, Any]], current: str, catalog: _Catal
     return choices
 
 
-def _cli_choices(items: list[Mapping[str, Any]], current: str, catalog: _CatalogReader) -> list[dict[str, Any]]:
+AGENT_CLI_UNAVAILABLE_IN_EDITION = "agent_cli_unavailable_in_edition"
+
+
+def _edition_cli_reason(capabilities, agent_id: str) -> str:  # noqa: ANN001 - AgentCapabilityPolicy
+    return (f"Indisponible dans l'édition {capabilities.edition.value} : le confinement de {agent_id} n'est pas "
+            "garanti (docs/product-capabilities.md).")
+
+
+def _cli_choices(items: list[Mapping[str, Any]], current: str, catalog: _CatalogReader,
+                 capabilities=None) -> list[dict[str, Any]]:  # noqa: ANN001 - AgentCapabilityPolicy | None
     choices = []
     for spec in cli_catalog.AGENT_CLIS:
+        if capabilities is not None and not capabilities.allows_agent_cli(spec.id):
+            choices.append({"value": spec.id, "label": spec.label, "available": False,
+                            "reason": _edition_cli_reason(capabilities, spec.id)})
+            continue
         entry = next((item for item in items if (item.get("identity") or {}).get("agent_id") == spec.id
                       and not (item.get("identity") or {}).get("model_id")), None)
         if entry is None:

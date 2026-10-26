@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 import uuid
 
 from jarvis.adapters import global_context, safe_folders
@@ -32,6 +32,9 @@ from jarvis.runtime.display_mcp import (
 )
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.session_context_brief import mask_room_text
+
+if TYPE_CHECKING:
+    from jarvis.domain.agent_capabilities import AgentCapabilityPolicy
 
 
 # Donne au processus enfant sa propre fenêtre console, au lieu de partager
@@ -340,6 +343,49 @@ def workspace_prompt_for(edition: str | None) -> str:
         return BRAIN_WORKSPACE_PROMPT
     return BRAIN_WORKSPACE_PROMPT.replace(BRAIN_WORKSPACE_KINDS_LINE, BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE)
 
+
+# Édition confinée (`docs/product-capabilities.md`, Slice 04) : la consigne ne décrit que ce que le CLI
+# offre réellement. Écrite **après** l'application (`--restricted`, `--tools`, `--disallowedTools`) : elle
+# explique un refus que le CLI impose déjà, elle ne le remplace pas.
+BRAIN_MEMORY_FILE_LINE = (
+    "- Le savoir durable du Board actif va dans son dossier mémoire, donné par ton contexte de tour : organisation "
+    "libre, summary.md en est le condensé. Un sous-agent qui l'écrit reçoit ce chemin.\n")
+BRAIN_MEMORY_TOOL_LINE = (
+    "- Le savoir durable du Board actif va dans sa mémoire : organisation libre, summary.md en est le condensé. Elle "
+    "s'écrit uniquement avec board_memory_write (serveur jarvis-workspace), par vous ou par un sous-agent, jamais par "
+    "un fichier.\n")
+BRAIN_FEEDBACK_FILE_SECTION = (
+    "RETOURS UTILISATEUR\nQuand l'utilisateur signale un dysfonctionnement de JARVIS constaté en usage, la fiche va "
+    "dans le dossier de la session en cours, donné par la variable d'environnement JARVIS_FEEDBACK_DIR "
+    "(retours-utilisateur/<lancement de JARVIS en secondes Unix>, déjà créé). Jamais à la racine de "
+    "retours-utilisateur. Transmets ce chemin au sous-agent qui écrit la fiche.\n")
+BRAIN_FEEDBACK_TOOL_SECTION = (
+    "RETOURS UTILISATEUR\nQuand l'utilisateur signale un dysfonctionnement de JARVIS constaté en usage, notez-le dans "
+    "la mémoire du Board actif avec board_memory_write, sous retours-utilisateur/, en une fiche courte et datée.\n")
+BRAIN_CONFINED_CAPABILITIES_PROMPT = """\
+CAPACITÉS DE CETTE ÉDITION
+Vous et vos sous-agents n'avez ni terminal, ni PowerShell, ni outil qui écrit, modifie ou supprime un fichier, ni navigateur piloté. Ces outils n'existent pas ici : ne les cherchez pas, ne les demandez pas à un sous-agent, il ne les a pas non plus.
+- Lecture : Read, Glob et Grep lisent seulement les dossiers de JARVIS (Boards, Sessions, contexte global, aperçus) ; WebSearch et WebFetch pour le web ; les outils JARVIS pour le reste (Drive, mémoire, connecteurs).
+- Écriture : uniquement par les outils JARVIS. Mémoire du Board : board_memory_write. Présentations : outils presentation_*. Copie d'un fichier vers l'utilisateur : l'export (remotion_export, op save) dépose une copie dans son dossier Documents\\Jarvis.
+- Si l'utilisateur demande d'écrire ailleurs sur son PC (Bureau, un autre dossier), de lancer PowerShell ou une commande, ou de supprimer un fichier : dites-lui simplement que cette édition de JARVIS ne peut pas le faire, et proposez l'export vers Documents\\Jarvis quand il s'agit d'un fichier produit ici.
+"""
+#: Version en lecture seule des règles de `CONTEXT_GLOBAL` (`global_context.GLOBAL_CONTEXT_RULES`) : sans outil
+#: d'écriture, le dossier se lit, il ne se réorganise pas (risque résiduel documenté dans `docs/product-capabilities.md`).
+BRAIN_GLOBAL_CONTEXT_READ_ONLY_KEY = "read_only"
+
+
+def brain_system_prompt_for(text: str, edition: str | None) -> str:
+    """`BRAIN_SYSTEM_PROMPT` (déjà rendu) de l'édition ; non confinée ou absente : le texte reçu, octet pour octet."""
+
+    from jarvis.domain.agent_capabilities import agent_capability_policy
+    from jarvis.domain.product_edition import parse_product_edition
+
+    if edition is None or not agent_capability_policy(parse_product_edition(edition)).confined:
+        return text
+    adapted = text.replace(BRAIN_MEMORY_FILE_LINE, BRAIN_MEMORY_TOOL_LINE).replace(
+        BRAIN_FEEDBACK_FILE_SECTION, BRAIN_FEEDBACK_TOOL_SECTION)
+    return adapted.rstrip("\n") + "\n\n" + BRAIN_CONFINED_CAPABILITIES_PROMPT
+
 # Consigne de la passerelle `jarvis-tools` (handoff generic-mcp-plugin-runtime,
 # Slice 05, ARCH §8.1). Composée seulement quand la passerelle est réellement
 # déclarée (ARCH E20) : programmes `conversation_tools_*` quand son
@@ -645,6 +691,12 @@ class ClaudeLocalAgent:
         # voie le nom réellement transmis. Un nom hors de la table déclarée
         # fait lever plutôt que de partir au CLI.
         self.allowed_tools = _checked_cli_tools(allowed_tools, execution_profile)
+        #: Manifeste de capacités imposé (`jarvis.domain.agent_capabilities`) ; `None` : celui de l'édition du
+        #: processus, relu à chaque lancement (`_capabilities`). Posé par les tests.
+        self.capability_policy: Any | None = None
+        #: Le dernier lancement était-il confiné par l'édition (snapshot, diagnostics).
+        self.launched_confined = False
+        self.launched_permission_mode: str | None = None
         # `DisplayMcpTarget` (Slice 06) : présent seulement quand `scene.enabled`
         # est vrai ; lu au lancement du processus, donc effectif au prochain
         # (re)démarrage. Ignoré hors du profil `conversation`.
@@ -815,7 +867,9 @@ class ClaudeLocalAgent:
             "returncode": self.process.returncode if self.process else None,
             "events": self._events[-80:],
             "session_id": self.session_id,
-            "permission_mode": self.permission_mode,
+            # Le mode réellement lancé : en édition confinée, celui du manifeste, pas le réglage (Slice 04).
+            "permission_mode": self.launched_permission_mode or self.permission_mode,
+            "confined": self.launched_confined,
             "model": self.model,
             "console": self.console_snapshot(),
             # Outils d'affichage déclarés au processus en cours (Slice 11) : ce
@@ -899,6 +953,14 @@ class ClaudeLocalAgent:
         """
         if os.name != "nt":
             raise RuntimeError("La console de debug n'est disponible que sous Windows")
+        # Édition produit (Slice 04) : la console est un CLI interactif complet (`--chrome`, mode réglé, outils par
+        # défaut), hors de tout confinement ; l'édition qui la ferme la refuse avant tout lancement.
+        from jarvis.domain.agent_capabilities import AgentCapabilityError
+        try:
+            self._capabilities().ensure("debug_console")
+        except AgentCapabilityError as exc:
+            self.journal.emit("agent.console_refused", str(exc), level="warning", data={"code": exc.code})
+            raise
 
         existing = self._console
         if existing is not None and existing.poll() is None:
@@ -1101,6 +1163,43 @@ class ClaudeLocalAgent:
             kept.append(Path(text))
         return tuple(kept)
 
+    def _capabilities(self) -> "AgentCapabilityPolicy":
+        """Manifeste de l'édition de ce processus (`docs/product-capabilities.md`), relu à chaque lancement.
+
+        `capability_policy` posé (tests) l'emporte ; sinon `process_edition()`, la lecture unique de l'édition.
+        """
+
+        if self.capability_policy is not None:
+            return self.capability_policy
+        from jarvis.domain.agent_capabilities import agent_capability_policy
+        from jarvis.runtime.product_edition_env import process_edition
+        return agent_capability_policy(process_edition())
+
+    def _confined_workdir(self, capabilities: "AgentCapabilityPolicy") -> Path:
+        """Dossier de travail interne d'un CLI confiné : `<runtime>/<workdir>`, jamais le code (I-002 point 6).
+
+        Vide et propre à JARVIS : `--restricted` y borne les outils de fichiers (avec les `--add-dir`).
+        """
+
+        folder = Path(self.runtime_root) / str(capabilities.workdir or "agent-workdir")
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder
+
+    def _confined_read_dirs(self) -> tuple[Path, ...]:
+        """Dossiers runtime que le cerveau confiné doit pouvoir **lire** : aperçus Remotion, captures de scène.
+
+        Les outils JARVIS y déposent des images que la consigne fait regarder avec Read
+        (`presentation_source` op preview, `scene_capture`) ; sans écriture native, les accorder ne donne que la lecture.
+        """
+
+        folders = []
+        for relative in (("render", "previews"), ("scene-captures",)):
+            folder = Path(self.runtime_root).joinpath(*relative)
+            folder.mkdir(parents=True, exist_ok=True)
+            if not unsafe_through_cmd_shim(resolve_command(self.command), [str(folder)]):
+                folders.append(folder)
+        return tuple(folders)
+
     async def start(self, *, resume: bool = True) -> dict[str, Any]:
         async with self._lock:
             if self._owned_closed:
@@ -1175,6 +1274,10 @@ class ClaudeLocalAgent:
                 invocation = "conversation_" + conversation_session_name(
                     tools=bool(tools_args), display=bool(display_args), hands=bool(barehands_args), studio=bool(studio_args))
             prompt_variables: dict[str, object] = {}
+            # Édition produit (`docs/product-capabilities.md`, Slice 04) : en `presentation`, le cerveau et les jobs
+            # partent confinés par le CLI lui-même ; les réglages (mode de permission) ne peuvent pas élargir.
+            capabilities = self._capabilities()
+            confined = capabilities.confined and self.execution_profile not in RESTRICTED_PROFILES
             # Tendance de délégation du cerveau Core (docs/brain-config.md) : relue à chaque lancement, pour le CLI
             # cerveau comme pour un job Back Brain. `never` retire l'outil qui lance les sous-agents (le hook refuse
             # aussi, en défense en profondeur) ; les autres niveaux ne changent que la consigne de conversation, et
@@ -1202,6 +1305,10 @@ class ClaudeLocalAgent:
                 loaded = await self._load_global_context(self.global_context_dir)
                 if loaded is not None:
                     prompt_variables["global_context"] = loaded.prompt_variable()
+                    if confined:
+                        # Sans outil d'écriture, le dossier se lit seulement : ses règles le disent (Slice 04).
+                        prompt_variables["global_context"] = {**prompt_variables["global_context"],
+                                                              BRAIN_GLOBAL_CONTEXT_READ_ONLY_KEY: True}
                     env[global_context.GLOBAL_CONTEXT_ENV] = str(loaded.root)
             prompt_resolution = resolve_prompt(
                 PromptTarget("backend", None, "claude", self.model or None, None, invocation),
@@ -1270,6 +1377,20 @@ class ClaudeLocalAgent:
                     "--strict-mcp-config",
                     "--safe-mode", "--no-chrome", "--disable-slash-commands",
                     "--permission-prompts", "none", "--no-session-persistence"]
+            chrome_args = ["--chrome"] if self.execution_profile == "conversation" else []
+            if confined:
+                declared = ((DISPLAY_SERVER_NAME,) * bool(display_args) + ("jarvis-presentation",) * bool(studio_args)
+                            + ("jarvis-remotion",) * bool(remotion_args) + ("jarvis-barehands",) * bool(barehands_args)
+                            + ("jarvis-console",) * bool(console_args) + ("jarvis-workspace",) * bool(workspace_args)
+                            + ("jarvis-memory",) * bool(memory_args) + ("jarvis-capture",) * bool(capture_args)
+                            + ("jarvis-drive",) * bool(drive_args) + ("jarvis-tools",) * bool(tools_args))
+                restricted_args = capabilities.cli_args(
+                    declared, extra_denied=agent_orchestration.SPAWN_TOOLS if spawn_args else ())
+                spawn_args, chrome_args = [], []
+                permission_args = ["--permission-mode", str(capabilities.permission_mode)]
+                self.cwd = await asyncio.to_thread(self._confined_workdir, capabilities)
+                if self.execution_profile == "conversation":
+                    add_dirs = (*add_dirs, *await asyncio.to_thread(self._confined_read_dirs))
             # Processus neuf : aucune sortie n'est encore demandée. (La demande
             # porte aussi le processus visé : même sans cette remise à zéro, un
             # arrêt demandé pour l'ancien ne vaudrait pas pour celui-ci.)
@@ -1285,7 +1406,7 @@ class ClaudeLocalAgent:
                     "--output-format",
                     "stream-json",
                     "--verbose",
-                    *(["--chrome"] if self.execution_profile == "conversation" else []),
+                    *chrome_args,
                     *display_args,
                     *studio_args,
                     *remotion_args,
@@ -1320,6 +1441,8 @@ class ClaudeLocalAgent:
                 self.journal.emit("agent.start", "Claude CLI not found", level="error", data={"command": self.command})
                 raise RuntimeError("Claude CLI not found; install Claude Code and ensure `claude` is in PATH") from exc
             self.launched_add_dirs = tuple(add_dirs)
+            self.launched_confined = confined
+            self.launched_permission_mode = permission_args[1]
             self.requested_add_dirs = tuple(self.add_dirs) if self.execution_profile == "conversation" else ()
             self._display_tools_active = bool(display_args)
             self._presentation_tools_active = bool(studio_args)
@@ -1356,6 +1479,8 @@ class ClaudeLocalAgent:
                                                     "capture_mcp": bool(capture_args), "drive_mcp": bool(drive_args),
                                                     "workspace_mcp": bool(workspace_args), "presentation_mcp": bool(studio_args), "remotion_mcp": bool(remotion_args), "memory_mcp": bool(memory_args),
                                                     "add_dirs": [str(path) for path in add_dirs],
+                                                    "confined": confined, "launch_permission_mode": permission_args[1],
+                                                    "chrome": bool(chrome_args), "cwd": str(self.cwd),
                                                     "delegation": delegation.value, "spawn_tools_removed": bool(spawn_args)})
             self.journal.emit("agent.prompt", "Prompt application recorded", data=applied)
             self._reader_task = asyncio.create_task(self._read_stdout(), name="jarvis-claude-stdout")

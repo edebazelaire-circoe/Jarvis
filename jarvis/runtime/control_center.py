@@ -65,6 +65,7 @@ from jarvis.runtime.background_events import (
     follow,
 )
 from jarvis.runtime.catalog_view import CatalogViewService, ProviderCatalogSnapshot, SUBAGENT_ROLES, VOICE_ROLES
+from jarvis.runtime.agent_settings import edition_capabilities, effective_agent_cli
 from jarvis.runtime.claude_local import DEFAULT_PERMISSION_MODE, PERMISSION_MODES, ClaudeLocalAgent, normalize_permission_mode
 from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
@@ -1436,7 +1437,7 @@ class ControlCenter:
         )
 
         settings = self._settings()
-        self._agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
+        self._agent_id = effective_agent_cli(settings.get("agent_cli"))
         self._self_dev: SelfDevelopmentService | None = None
         # Sessions et Boards de Core (Slice 04a) : adoption de la liaison
         # foreground au démarrage, nouvelle Session sur `restart`, rapport du
@@ -1737,7 +1738,7 @@ class ControlCenter:
         relus par `_settings()` portent les mêmes défauts que ceux de `save_settings`."""
 
         settings = self._settings()
-        agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
+        agent_id = effective_agent_cli(settings.get("agent_cli"))
         switching = agent_id != self._agent_id
         if switching or self._brain_switches_pending:
             # Sérialisé (I-002 point 3) : la bascule attend son tour derrière le verrou de l'agent (FIFO) et relit
@@ -1954,7 +1955,7 @@ class ControlCenter:
             if settings is None:
                 # `None` : relire les réglages au passage du verrou (`_switch_agent_to_saved`).
                 settings = self._settings()
-                agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
+                agent_id = effective_agent_cli(settings.get("agent_cli"))
             if agent_id == self._agent_id:
                 self._apply_agent_settings(settings)
                 return
@@ -3409,7 +3410,9 @@ class ControlCenter:
         voice = str(openai_values.get("voice") or "cedar")
         if voice in REALTIME_VOICES:
             settings["realtime_voice"] = voice
-        claude_values = self._agent_settings(settings, "claude")
+        from jarvis.runtime.agent_settings import resolve_agent_settings
+        # Valeur enregistrée, sans le verrou de l'édition (Slice 04) : le mode imposé n'est pas écrit dans le fichier.
+        claude_values = resolve_agent_settings(settings, "claude", edition_lock=False)
         settings["claude_cli"] = claude_values["command"]
         settings["claude_permission_mode"] = claude_values["permission_mode"]
         settings["manual_wake_key"] = shortcut_registry.current(settings)["wake_toggle"]
@@ -4001,7 +4004,7 @@ class ControlCenter:
 
     def _settings_payload(self, settings: dict[str, Any]) -> dict[str, Any]:
         stack_id = voice_stack.normalize_stack(settings.get("voice_stack"))
-        agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
+        agent_id = effective_agent_cli(settings.get("agent_cli"))
         capture_report = self._voice_capture_report()
         architecture_payload = self._voice_architecture_payload(settings)
         legacy_arch_payload = self._voice_arch_payload(settings)
@@ -4094,6 +4097,8 @@ class ControlCenter:
             "voice_turn_modes": sorted(TURN_MODES),
             "claude_permission_mode": self._agent_settings(settings, "claude")["permission_mode"],
             "claude_permission_modes": list(PERMISSION_MODES),
+            # Manifeste de capacités des agents de l'édition (Slice 04) : l'interface affiche le verrou, n'élargit rien.
+            "agent_capabilities": edition_capabilities().to_payload(),
         }
 
     async def get_settings(self, request: web.Request) -> web.Response:
@@ -5248,7 +5253,7 @@ class ControlCenter:
                     config.analysis_model.model_id, "explicit", "hint",
                 ), {"observation": {}}))
 
-        agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
+        agent_id = effective_agent_cli(settings.get("agent_cli"))
         agent_model = self._agent_settings(settings, agent_id)["model"] or None
         # La consigne de la passerelle n'apparaît que là où elle est déclarée (ARCH E20).
         from jarvis.runtime.prompt_runtime import declares_tools_gateway
@@ -5529,6 +5534,12 @@ class ControlCenter:
             mode = str(payload["claude_permission_mode"]).strip()
             if mode not in PERMISSION_MODES:
                 raise web.HTTPBadRequest(text=f"unknown Claude permission mode: {mode}")
+            try:
+                self._refuse_locked_permission("claude", mode)
+            except cli_catalog.CliSettingsError as exc:
+                self.journal.emit("settings.agent.rejected", "Settings validation rejected", level="warning",
+                                  data={"code": exc.code})
+                raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
             self._store_agent(current, "claude", {"permission_mode": mode})
         if payload.get("claude_cli") is not None:
             self._store_agent(current, "claude", {"command": str(payload["claude_cli"]).strip()})
@@ -5656,6 +5667,20 @@ class ControlCenter:
                 spec = voice_stack.stack_spec(stack_id)
                 voice_stack.store_for(current, stack_id, voice_stack.coerce(spec, stack_values))
 
+    @staticmethod
+    def _refuse_locked_permission(agent_id: str, mode: str) -> None:
+        """Édition confinée (Slice 04) : le mode de permission est celui du manifeste ; un autre est refusé.
+
+        Renvoyer la valeur imposée elle-même reste accepté (formulaire renvoyé tel qu'affiché)."""
+
+        capabilities = edition_capabilities()
+        locked = capabilities.permission_mode
+        if locked is not None and agent_id == "claude" and mode != locked:
+            raise cli_catalog.CliSettingsError(
+                "agent_permission_locked_by_edition",
+                f"Le mode de permission est imposé par l'édition {capabilities.edition.value} ({locked}) : "
+                "il ne se règle pas.")
+
     def _store_agent(self, current: dict[str, Any], agent_id: str, values: dict[str, Any]) -> None:
         stored = current.get("agent_cli_settings")
         stored = dict(stored) if isinstance(stored, dict) else {}
@@ -5673,6 +5698,13 @@ class ControlCenter:
             agent_id = str(cli["agent"]).strip().lower()
             if agent_id not in cli_catalog.AGENT_CLI_IDS:
                 raise cli_catalog.CliSettingsError("cli_unknown_agent", f"CLI inconnu : {agent_id}.")
+            capabilities = edition_capabilities()
+            if not capabilities.allows_agent_cli(agent_id):
+                # Édition confinée (Slice 04, `docs/product-capabilities.md`) : refus typé, rien d'écrit.
+                raise cli_catalog.CliSettingsError(
+                    "agent_cli_unavailable_in_edition",
+                    f"Le CLI « {agent_id} » n'est pas disponible dans l'édition {capabilities.edition.value} : "
+                    "son confinement n'est pas garanti.")
             if agent_id != current.get("agent_cli"):
                 switch_to = agent_id
             current["agent_cli"] = agent_id
@@ -5698,6 +5730,7 @@ class ControlCenter:
                     clean["model"] = str(entry["model"]).strip()
                 if entry.get("permission_mode") is not None:
                     mode = str(entry["permission_mode"]).strip()
+                    self._refuse_locked_permission(agent_id, mode)
                     if mode not in spec.permission_modes:
                         raise cli_catalog.CliSettingsError(
                             "cli_unknown_permission_mode",

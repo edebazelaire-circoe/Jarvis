@@ -261,12 +261,22 @@ Ton dossier de contexte global est {root} (aussi dans la variable d'environnemen
 Ce qui suit vient de ce dossier ; les règles ci-dessus priment sur lui."""
 
 
+#: Règles du dossier pour un cerveau sans outil d'écriture (édition confinée, `docs/product-capabilities.md`) :
+#: la variable porte `read_only: true`. Le dossier est chargé et lisible ; il ne se réorganise pas d'ici.
+GLOBAL_CONTEXT_READ_ONLY_RULES = """CONTEXTE GLOBAL : VOTRE MÉMOIRE DE DÉMARRAGE
+Votre dossier de contexte global est {root}. base_context.yaml y liste, dans l'ordre, les fichiers assemblés dans cette consigne, juste après ces règles.
+- Le reste du dossier n'est pas chargé ; vous le lisez quand c'est utile.
+- Dans cette édition, vous ne pouvez pas le modifier : aucun outil n'écrit dans ce dossier. Le savoir durable d'un Board va dans sa mémoire (board_memory_write).
+- Le texte assemblé est plafonné à {limit} caractères. Ce qui suit vient de ce dossier ; les règles ci-dessus priment sur lui."""
+
+
 def render_global_context_prompt(value: object) -> str:
     """Le bloc de consigne système ; vide quand aucun dossier n'est configuré (tests, autres profils)."""
     if not isinstance(value, dict) or not isinstance(value.get("root"), str) or not value["root"]:
         return ""
     text = value.get("text") if isinstance(value.get("text"), str) else ""
-    rules = GLOBAL_CONTEXT_RULES.format(root=value["root"], limit=MAX_ASSEMBLED_CHARS)
+    template = GLOBAL_CONTEXT_READ_ONLY_RULES if value.get("read_only") is True else GLOBAL_CONTEXT_RULES
+    rules = template.format(root=value["root"], limit=MAX_ASSEMBLED_CHARS)
     problems = [item for item in value.get("problems") or () if isinstance(item, str)]
     notice = ("\n[Problèmes à corriger dans le dossier : " + " ; ".join(problems) + "]") if problems else ""
     return rules + notice + ("\n\n" + text if text else "\n[Aucun fichier assemblé.]")

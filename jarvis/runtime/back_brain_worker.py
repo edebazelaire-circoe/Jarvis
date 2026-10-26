@@ -65,6 +65,11 @@ def create_job_agent(settings: AgentExecutionSettings, job_id: str, *, speculati
     if settings.agent_cli == "claude":
         agent = ClaudeLocalAgent(**kwargs, execution_profile="speculative_analysis" if speculative else "job_result")
     elif settings.agent_cli == "codex":
+        # Édition confinée (Slice 04) : `resolve_agent_execution` a déjà ramené le CLI sur Claude ; refus si un
+        # appelant passe Codex quand même (`docs/product-capabilities.md`).
+        from jarvis.runtime.agent_settings import edition_capabilities
+        if not edition_capabilities().allows_agent_cli("codex"):
+            raise BackBrainWorkerError("agent_cli_unavailable_in_edition")
         if speculative:
             raise BackBrainWorkerError("back_brain_speculative_unavailable")
         agent = CodexLocalAgent(**kwargs, execution_profile="job_result")
