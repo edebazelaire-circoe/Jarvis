@@ -31,3 +31,9 @@ Implementation agents append durable execution notes here. This handoff intentio
 - Description MCP `board_create` : « dans cette édition de JARVIS, quel que soit le Board actif ».
 - Non fait (optionnel) : disponibilité par Board dans `board_list` (changerait `BoardSummary` et ses résultats typés).
 - Tests : `test_product_edition.py` 39 passés ; prompts/settings/MCP/scène (15 fichiers) 510 passés + 1 échec préexistant `test_brain_capability_parity` ; Tool Brain + workspace (24 fichiers) 670 passés + 1 échec préexistant `test_tool_brain_choices::test_ui_projection…` ; Boards/Sessions/mode + `test_board_session_e2e` + `test_schema_migrations` 945 passés, 2 ignorés (liens symboliques).
+
+## 2026-10-26 — Slice 01 QA and decision (agent 0)
+- QA qa-verification + code-review: no blocking finding. 5 non-blocking findings.
+- QA runtime-validation + agent-trace-analysis (sandbox, ports 27653/27654, real brain turns): Core/relay/MCP refusals, startup fallback and invalid value all PASS. **Blocking**: the presentation Boards prompt was never rendered (descriptor not `dynamic`).
+- Rework `27e8e345` (dynamic prompt, single edition read, console refusal, Tool Brain filtered, `board_create` description). Counter-check with a real trace: PASS (0 tool calls, correct answer; `full` prompt with the same fingerprint as before).
+- Decision: **Slice 01 APPROVED**. Leftovers in `Issues/I-001-s01-polish.md`.

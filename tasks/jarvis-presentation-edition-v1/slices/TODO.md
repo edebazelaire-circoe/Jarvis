@@ -1,7 +1,8 @@
 # Slice execution queue
 
 1. [x] `00-project-manager` — **READY** on 2026-10-26 (main `2d6ca879`). See `00-project-manager/READINESS.md`. Task Types: Human global waiver of 2026-09-14, `task_type: null`.
-2. `01-product-edition-and-board-lock` — canonical Presentation product policy + Core/API/MCP Board enforcement.
+2. [x] `01-product-edition-and-board-lock` — **APPROVED** on 2026-10-26 (`41a9965d`, rework `27e8e345`). Leftovers: `Issues/I-001-s01-polish.md`.
+    — canonical Presentation product policy + Core/API/MCP Board enforcement.
 3. `02-windows-data-root-context-global` — stable AppData root, migration and permanent `CONTEXT_GLOBAL`.
 4. `03-internal-documents-and-export-boundary` — internal canonical documents + explicit `Documents\Jarvis` export contract.
 5. `04-agent-confinement-capability-policy` — remove general shell/filesystem write authority from product brain/sub-agents.
