@@ -30,3 +30,9 @@ deliberately left out. Not blocking; owners:
    excluded, Barehands/ai-visualizer AGPL excluded, legal review of the manifest, Remotion licence, system
    Chrome/Edge, signing/installer/location). See
    `slices/06-windows-private-runtime-packaging/human-validation.json` and the Slice 06 LOG entry.
+
+## Rework counter-review (`qa/rework-review.md`, `950baca2`)
+- m1: the determinism test checks `compileall_argv`, not that `precompile` uses it (`packaging/windows/build_package.py`).
+- m2: no test covers "no `jarvis-barehands` in `presentation`" (`jarvis/app.py`); the only test going through it already fails on `main`.
+- m3: the build-inputs test compares against `B.BUILD_INPUTS` itself (removing `pyproject.toml` survives); the `resolve().is_relative_to` extraction guard is never reached by the tested cases.
+- Observation: in an installed product, a hand-set `JARVIS_PRODUCT_EDITION=full` re-enables `wake-word install` (decide with HV-PACKAGE-04). Cross-machine reproducibility not proven (both builds on the same machine/pip/cache).
