@@ -36,7 +36,8 @@ Source unique : `jarvis/domain/remotion_capability.py`. `jarvis/capabilities/rem
 
 Versions vérifiées sur le registre npm le 2026-10-09 (`npm view`, dernière version publiée de chacun) et exercées par l'installation réelle (§9). Les 291 autres paquets sont **verrouillés** par `package-lock.json` (version, `resolved` sur `registry.npmjs.org`, `integrity` sha512 pour chacun : un test le vérifie).
 
-**Poste requis** (vérifié, jamais installé par Jarvis) : Node.js ≥ 20.0.0 (le plus haut `engines.node` du verrou est 18.12 ; Node 18 est en fin de vie), npm ≥ 9.0.0, plate-forme `win32-x64`, `darwin-x64`, `darwin-arm64`, `linux-x64` ou `linux-arm64` (celles pour lesquelles le verrou porte les binaires natifs de Remotion et de rspack). Windows ARM64 n'est pas pris en charge. npm est celui livré **avec** le Node trouvé sur le `PATH` (`node_modules/npm/bin/npm-cli.js`), sans passer par `npm.cmd` ni un shell.
+**Poste requis** (vérifié, jamais installé par Jarvis) : Node.js ≥ 20.0.0 (le plus haut `engines.node` du verrou est 18.12 ; Node 18 est en fin de vie), npm ≥ 9.0.0, plate-forme `win32-x64`, `darwin-x64`, `darwin-arm64`, `linux-x64` ou `linux-arm64` (celles pour lesquelles le verrou porte les binaires natifs de Remotion et de rspack). Windows ARM64 n'est pas pris en charge. npm est celui livré **avec** le Node trouvé sur le `PATH` (`node_modules/npm/bin/npm-cli.js`), sans passer par `npm.cmd` ni un shell. **Produit installé** (Slice 06 de jarvis-presentation-edition-v1, [windows-packaging.md](windows-packaging.md)) : Node et npm sont ceux du paquet (`<installation>untime
+ode`, Node 24.21.0 épinglé), jamais le `PATH` du poste (`jarvis.private_runtime.which`, défaut des trois runners) ; ce Node passe en tête du `PATH` des enfants ; absent, le refus dit `node_missing: … the private Node.js runtime of this Jarvis installation is missing; repair or reinstall Jarvis`. En développement, rien ne change.
 
 ## 3. Statuts et échecs typés
 

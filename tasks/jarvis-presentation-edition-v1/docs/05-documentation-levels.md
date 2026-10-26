@@ -31,3 +31,9 @@ A Level 3 requirement means not only prose documentation but a reusable implemen
 | Product secrets (API keys) | Plain text in `control-center-settings.json`/`.env`, level 1. Slice 05 targets level 3 (DPAPI vault). |
 | Brain CLI provisioning | Absent from the handoff, level 0. Slices 06/07 target level 3. |
 | Release CI | `ci.yml` exists (Ubuntu only, no artifact): level 1 confirmed, to extend rather than recreate. |
+
+## Slice 06 (2026-10-26)
+| Concept | Level reached |
+|---|---|
+| Windows production packaging (package layout, private runtimes, runtime manifest, third-party policy/manifest) | **3**: `docs/windows-packaging.md`, `jarvis/private_runtime.py`, `packaging/windows/*`, conformance `tests/unit/test_private_runtime.py` + `test_windows_packaging.py`, real reproducible build. Installer/launcher remain Slice 07. |
+| Local capabilities / Remotion in the installed product | **3**: private Node resolution (default `which` of the three runners), child `PATH`, typed `node_missing` repair message; real `npm ci` + MP4/PNG/PDF renders with the packaged Python and Node, `PATH` reduced to Windows. |

@@ -541,7 +541,11 @@ only *executes* it as a separate process (no linking) and does not
 redistribute it: the user installs it with pip. If Jarvis is ever shipped as
 a bundle containing that binary, the GPLv3 obligations (source offer) apply
 to it. `JARVIS_FFMPEG_EXE` can point at another build, but the encoder
-arguments require `libx264` today.
+arguments require `libx264` today. The Windows package of the `presentation`
+edition does **not** ship it (decision HV-PACKAGE-03,
+[windows-packaging.md](windows-packaging.md#ffmpeg)): in an installed product
+`find_ffmpeg` only accepts an FFmpeg the package manifest declares, so screen
+recording is refused `source_unavailable` there; screenshots still work.
 
 ### Source policy (V1)
 

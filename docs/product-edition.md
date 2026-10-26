@@ -167,6 +167,14 @@ write or process tool in `presentation`, Codex/console/self-dev refused, setting
 derives from the edition through `agent_capability_policy(edition)`:
 [product-capabilities.md](product-capabilities.md) (Slice 04).
 
+## Package
+
+The distributed `presentation` edition is a Windows folder package with private
+pinned Python and Node, a hashed dependency lock and a per-component licence
+policy; components whose licence is incompatible with distribution (openWakeWord
+models, FFmpeg GPL of screen recording, Picovoice, Barehands/ai-visualizer AGPL)
+are excluded: [windows-packaging.md](windows-packaging.md) (Slice 06).
+
 ## Out of scope (later Slices)
 
 - product UI for unavailable kinds (Slice 08); the current Boards control still

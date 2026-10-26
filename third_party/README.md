@@ -30,6 +30,10 @@ Not vendored and not in `LOCK.json`: nothing here is committed, and none of it i
 - **Use** — private, non-commercial testing only ("tests privés, non commercial"). Attribution and share-alike apply if the models are redistributed, and Jarvis redistributes none. Do not ship, bundle or pre-install these models in any commercial distribution.
 - **Replacement path** — the detector sits behind the `WakeWordEngine` contract (`jarvis/adapters/wakeword_shared_pcm.py`): a custom openWakeWord model trained on permissively licensed data, another local keyword-spotting engine, or Porcupine (with its own Picovoice key and terms) can replace it by editing the catalog pins and the engine factory, without touching the voice runtime. Remove the `wakeword` extra and the `runtime/wake-word/` folder to uninstall. Install, diagnostics and the model replacement procedure: `docs/OPERATIONS.md`, « Installer openWakeWord ».
 
+## Presentation Edition package
+
+The Windows package of the `presentation` edition ships **none** of the components above that carry a restrictive licence: Barehands, ai-visualizer (AGPL), MediaPipe (with Barehands), openWakeWord and its models (CC BY-NC-SA 4.0), `imageio-ffmpeg` (FFmpeg GPLv3), `pvporcupine`, `sherpa-onnx`. Per-component policy and the generated third-party manifest: [`docs/windows-packaging.md`](../docs/windows-packaging.md), `packaging/windows/third_party_policy.json`; open licence decisions: HV-PACKAGE-02..10 of the Slice 06 handoff.
+
 Run `python scripts/bootstrap_third_party.py` once on a networked workstation. It downloads exact immutable/pinned inputs, verifies critical upstream Git blob IDs and package/model integrity, applies the small Barehands security patch, and writes `INSTALL-STATE.json` with resulting hashes. After that bootstrap, the Barehands camera page has no CDN/model runtime dependency.
 
 Do not remove upstream `LICENSE`, copyright, or provenance files. AGPL obligations can depend on how you distribute or operate modified versions; obtain legal review before embedding these components into a closed-source distribution.
