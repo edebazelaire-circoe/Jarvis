@@ -7,7 +7,7 @@ import os
 import tomllib
 from urllib.parse import urlparse
 
-from .data_root import LEGACY_DATA_ROOT, adopt_legacy_memory, resolve_data_root
+from .data_root import LEGACY_DATA_ROOT, adopt_legacy_memory, resolve_data_root, resolve_runtime_root
 from .domain.errors import ConfigurationError
 
 _LOG = logging.getLogger("jarvis")
@@ -155,7 +155,8 @@ class AppConfig:
                 adopt_legacy_memory(memory_dir, LEGACY_DATA_ROOT)
             except OSError as exc:
                 _LOG.warning("reprise de ./data/memory impossible, mémoire laissée telle quelle: %s", exc)
-        runtime_dir = Path(os.getenv("JARVIS_RUNTIME_DIR", str(r.get("runtime_dir", "./runtime")))).expanduser().resolve()
+        # `JARVIS_RUNTIME_DIR`, puis `runtime.runtime_dir` du TOML, puis le défaut partagé (`jarvis/data_root.py`).
+        runtime_dir = resolve_runtime_root({"JARVIS_RUNTIME_DIR": os.getenv("JARVIS_RUNTIME_DIR") or str(r.get("runtime_dir") or "")})
         runtime = RuntimeConfig(
             ptt_key=os.getenv("JARVIS_PTT_KEY", str(r.get("ptt_key", ""))).strip().lower(),
             memory_dir=memory_dir,

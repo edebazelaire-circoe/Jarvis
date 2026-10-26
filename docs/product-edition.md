@@ -39,9 +39,14 @@ In `full`, a Réunion Board is available while its behaviour is still
 `resolve_product_edition(environ, installed_default=None)`:
 
 1. `JARVIS_PRODUCT_EDITION` (`full` | `presentation`, trimmed, case-insensitive);
-2. else `installed_default` — reserved for the installed product, which will
-   fix `presentation` (Slice 02 of the handoff owns installed identity);
+2. else `installed_default`: `process_edition` passes `presentation` when the
+   code runs as an **installed product** (marker `jarvis-product.json`,
+   `jarvis/installation.py`, [local-data.md](local-data.md#produit-installé--localappdatacircoejarvis)),
+   nothing for a source checkout;
 3. else `full`.
+
+So an installed product is `presentation` by default and a checkout `full`;
+`JARVIS_PRODUCT_EDITION` still wins in both modes (tests, administration).
 
 An empty value counts as absent. An unknown value raises `ConfigurationError`:
 Core refuses to start (resolved in `app.py:_run_core_v2` before anything is
@@ -151,8 +156,6 @@ its description says the limit is the edition's, whatever the active Board.
 
 ## Out of scope (later Slices)
 
-- installed identity and the `presentation` default for the installed product
-  (Slice 02);
 - product UI for unavailable kinds (Slice 08); the current Boards control still
   offers the three kinds in `full` and gets the 409 in `presentation`;
 - agent confinement (Slice 04).

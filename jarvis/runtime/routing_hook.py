@@ -1075,7 +1075,8 @@ def default_runtime_root() -> Path:
     configured = (os.environ.get("JARVIS_RUNTIME_DIR") or "").strip()
     if configured:
         return Path(configured).expanduser()
-    return Path(__file__).resolve().parents[2] / "runtime"
+    from jarvis.data_root import default_runtime_root  # produit installé : `<maison du produit>/runtime`
+    return default_runtime_root(dev_default=Path(__file__).resolve().parents[2] / "runtime")
 
 
 def main(argv: Sequence[str] | None = None) -> int:

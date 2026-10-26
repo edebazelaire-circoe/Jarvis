@@ -10,9 +10,21 @@ from jarvis.domain.errors import ConfigurationError
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def project_environment_file() -> Path:
+    """`<dépôt>/.env` en développement ; `<maison du produit>/config/.env` pour un produit installé.
+
+    Un produit installé ne lit jamais de `.env` dans le dossier du programme : rien de
+    secret ni de canonique n'y vit (`docs/local-data.md` › *Produit installé*).
+    """
+    from jarvis.installation import detect_installation  # import tardif : `installation` ne dépend de rien ici
+
+    installation = detect_installation()
+    return installation.home.config / ".env" if installation.installed else PROJECT_ROOT / ".env"
+
+
 def load_project_environment() -> None:
     """Load literal, single-line .env assignments without replacing the environment."""
-    path = PROJECT_ROOT / ".env"
+    path = project_environment_file()
     try:
         lines = path.read_text(encoding="utf-8-sig").splitlines()
     except FileNotFoundError:

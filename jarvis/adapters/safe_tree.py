@@ -24,6 +24,7 @@ import stat
 
 from jarvis.adapters import safe_folders
 from jarvis.adapters.file_replace import retry_on_permission
+from jarvis.adapters.global_context import GLOBAL_CONTEXT_DIR, is_global_context_path
 
 #: Profondeur maximale parcourue (un dossier de presentation a 2 niveaux, une version Remotion quelques-uns de plus).
 MAX_DEPTH = 32
@@ -134,6 +135,9 @@ def remove_tree(folder: Path, *, within: Path) -> TreeCount:
     if not _inside(folder, within):
         raise UnsafeTree(".", "outside the folder it may be removed from")
     folders, files = _walk(folder)
+    # CONTEXT_GLOBAL est permanent (docs/context-global.md › Permanence) : refusé avant le premier octet effacé.
+    if any(is_global_context_path(current.resolve()) for current in folders):
+        raise UnsafeTree(".", f"{GLOBAL_CONTEXT_DIR} is permanent state and is never removed")
     removed = 0
     for path, size in files:
         _unlink(path)

@@ -30,6 +30,7 @@ import time
 from urllib import request as urlrequest
 
 from jarvis.adapters import process_tree
+from jarvis.adapters.global_context import ensure_not_global_context
 from jarvis.adapters.process_tree import ProcessResult
 from jarvis.domain.local_capabilities import CapabilityManifest, LocalCapabilityError, LocalCapabilityErrorCode as C
 
@@ -123,8 +124,13 @@ def extended_path(path: Path) -> Path:
 
 
 def _remove_tree(path: Path) -> None:
-    """Supprime `path` sans suivre aucun lien ni jonction ; réessaie un fichier verrouillé (antivirus, indexeur)."""
+    """Supprime `path` sans suivre aucun lien ni jonction ; réessaie un fichier verrouillé (antivirus, indexeur).
 
+    Refuse (`GlobalContextProtected`) tout chemin dans `CONTEXT_GLOBAL`, vérifié à chaque dossier visité :
+    un nettoyage ou une réparation de capacité ne l'efface jamais (docs/context-global.md › Permanence).
+    """
+
+    ensure_not_global_context(path)
     path = extended_path(path)
     try:
         info = os.lstat(path)

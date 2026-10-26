@@ -8,7 +8,7 @@ import ipaddress
 import math
 import os
 
-from jarvis.data_root import resolve_data_root
+from jarvis.data_root import resolve_data_root, resolve_runtime_root
 from jarvis.domain.errors import ConfigurationError
 from jarvis.domain.speaker import (
     DEFAULT_OWNER_BUFFER_MS,
@@ -570,7 +570,8 @@ class V2Settings:
     @classmethod
     def load(cls) -> "V2Settings":
         data_root = resolve_data_root()
-        runtime_root = Path(os.getenv("JARVIS_RUNTIME_DIR", "./runtime")).expanduser().resolve()
+        # `JARVIS_RUNTIME_DIR`, sinon `./runtime` (développement) ou `<maison du produit>/runtime` (installé).
+        runtime_root = resolve_runtime_root()
         port = _int_env("JARVIS_CORE_PORT", 17653)
         if not 1 <= port <= 65535:
             raise ConfigurationError("JARVIS_CORE_PORT must be between 1 and 65535")

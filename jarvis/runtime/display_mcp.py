@@ -246,7 +246,8 @@ class DisplayMcpTarget:
         if token:
             token_file = Path(token).expanduser().resolve()
         else:
-            token_file = (runtime_root or Path("./runtime").resolve()) / "core.token"
+            from jarvis.data_root import default_runtime_root  # `./runtime` en développement, maison du produit installé
+            token_file = (runtime_root or default_runtime_root(env)) / "core.token"
         return cls(core_host=host, core_port=port, token_file=token_file, runtime_root=runtime_root)
 
 

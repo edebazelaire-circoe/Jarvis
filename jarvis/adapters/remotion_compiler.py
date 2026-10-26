@@ -28,6 +28,7 @@ import threading
 import time
 from typing import Any, Protocol
 
+from jarvis.adapters.global_context import is_global_context_path
 from jarvis.adapters.node_capability_runner import EXTENDED_PREFIX, extended_path
 from jarvis.adapters.process_tree import ProcessResult
 from jarvis.domain.remotion_compile import (
@@ -404,6 +405,8 @@ class RemotionCompiler:
 
     @staticmethod
     def _remove_tree(folder: Path) -> bool:
+        if is_global_context_path(folder):  # purge de cache : jamais CONTEXT_GLOBAL (docs/context-global.md › Permanence)
+            return False
         try:
             if not folder.exists() and not os.path.lexists(folder):
                 return True

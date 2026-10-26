@@ -45,7 +45,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from jarvis.data_root import resolve_data_root
+from jarvis.data_root import resolve_data_root, resolve_runtime_root
 from jarvis.ports.v2 import DiagnosticSink
 from jarvis.testlab.catalog import Catalog, DEFAULT_CATALOG_ROOT, load_catalog
 from jarvis.testlab.devices import DeviceContentionDetector, default_contention_detector
@@ -331,12 +331,11 @@ def _roots(environ: Mapping[str, str], runtime_root: Path | str | None,
            data_root: Path | str | None) -> tuple[Path, Path]:
     """`(runtime_root, data_root)`, from the arguments then `JARVIS_RUNTIME_DIR` / `JARVIS_DATA_ROOT`.
 
-    The same defaults as `V2Settings.load()` (`./runtime`, `jarvis.data_root.default_data_root()`), read from the given
+    The same defaults as `V2Settings.load()` (`jarvis.data_root.resolve_runtime_root` / `resolve_data_root`), read from the given
     mapping rather than the process environment so a caller can compose a Test Lab for
     another root without mutating `os.environ`.
     """
-    runtime = (Path(runtime_root) if runtime_root is not None
-               else Path(environ.get("JARVIS_RUNTIME_DIR", "./runtime")))
+    runtime = Path(runtime_root) if runtime_root is not None else resolve_runtime_root(environ)
     data = Path(data_root) if data_root is not None else resolve_data_root(environ)
     return runtime.expanduser().resolve(), data.expanduser().resolve()
 

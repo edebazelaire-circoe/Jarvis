@@ -770,8 +770,13 @@ def _adopt_legacy_data_root(settings):
     """
     import dataclasses
     from jarvis.data_root import DATA_ROOT_ENV, LEGACY_DATA_ROOT, LegacyAdoptionError, adopt_legacy_data
+    from jarvis.installation import detect_installation
     from jarvis.runtime.journal import RuntimeJournal
     if os.getenv(DATA_ROOT_ENV, "").strip():
+        return settings
+    # Produit installé : `./data` serait dans le dossier du programme, qui ne porte aucune donnée canonique ; un
+    # profil n'est repris que par une demande explicite (`adopt_data_root`, docs/local-data.md › Reprise d'un profil).
+    if detect_installation().installed:
         return settings
     journal = RuntimeJournal(settings.runtime_root)
     try:
@@ -813,8 +818,13 @@ async def _run_core_v2() -> int:
     from jarvis.v2_config import V2Settings
     # Édition produit (`docs/product-edition.md`) : valeur illisible = Core ne démarre pas (ConfigurationError).
     from jarvis.runtime.product_edition_env import process_edition
+    from jarvis.data_root import installation_diagnostics
     settings = _adopt_legacy_data_root(V2Settings.load())
     product_edition = process_edition()
+    # Racines de ce démarrage, sans chemin absolu (docs/local-data.md › Diagnostics) : journal et `/v1/health`.
+    installation = installation_diagnostics(settings.data_root, settings.runtime_root)
+    RuntimeJournal(settings.runtime_root).emit("core.installation", "racines de données et runtime de ce démarrage",
+                                               data=installation | {"edition": product_edition.edition.value})
     token = generate_session_token()
     _write_session_token(settings.token_file, token)
     delivery = WindowsNotificationDelivery() if os.name == "nt" and os.getenv("JARVIS_WINDOWS_NOTIFICATIONS", "0") in {"1", "true", "yes"} else NullNotificationDelivery()
@@ -852,7 +862,8 @@ async def _run_core_v2() -> int:
     # Plugins MCP (Slice 03) : connecteur injecté, import gardé (extra `mcp` absent ⇒ None).
     mcp_loopback = _mcp_allow_loopback_http()
     core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, file_change_notifier_factory=FileChangeNotifier, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), connector=_mcp_connector(mcp_loopback, RuntimeJournal(settings.runtime_root)), mcp_allow_loopback_http=mcp_loopback, memory=memory, local_capability_runner=_local_capability_runner(), local_capability_store=_local_capability_store(settings.data_root), remotion=_remotion_factory(), remotion_studio_runner=_remotion_studio_runner(settings.data_root), remotion_studio_idle_s=_remotion_studio_idle_s(), remotion_render_runner=_remotion_render_runner(settings.data_root), upstream_fetcher=_upstream_fetcher(), upstream_engine=_upstream_engine(), remotion_import_owners=lambda: _remotion_import_owners(settings.runtime_root), agenda_settings=lambda: load_agenda_settings(_control_settings(settings.runtime_root)), **_audio_recording_from_env(settings.runtime_root), **_brain_availability_from_env(), product_edition=product_edition)
-    server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
+    server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token,
+                                 installation=installation)
     # Tool Brain (handoff jarvis-tool-brain-ui-orchestrator, Slice 5) : `JARVIS_TOOL_BRAIN=shadow` l'observe et
     # l'enregistre sans rien exécuter ; `off` (défaut) ne construit rien. Le cerveau principal n'est pas touché.
     from jarvis.runtime.tool_brain_wiring import build_tool_brain

@@ -28,6 +28,80 @@ n'y change rien. Cette résolution est faite en un seul endroit,
 `jarvis/data_root.py`. Core, le Control Center (Test Lab) et
 `measure_speech_metrics` la partagent.
 
+## Produit installé : `%LOCALAPPDATA%\CIRCOE\Jarvis`
+
+Ce qui précède décrit un **checkout de développement** (dépôt, worktree, bac à
+sable). Un **produit installé** (Presentation Edition, décisions D04/D05) a une
+maison stable par utilisateur Windows, indépendante du dossier du programme.
+
+**Signal d'installation** (`jarvis/installation.py`, seule source) : le fichier
+`jarvis-product.json`, posé par le paquet d'installation à côté du paquet
+`jarvis/` (dans le dossier du programme). Contenu exact :
+`jarvis.installation.marker_payload()`, soit
+`{"schema": "jarvis.product-install", "schema_version": 1, "vendor": "CIRCOE", "product": "Jarvis"}`.
+Présent = produit installé ; absent = checkout. Le chemin d'installation, le
+nom du dossier ou un exécutable gelé ne comptent jamais. Un marqueur illisible
+ou d'un autre schéma refuse le démarrage (`ConfigurationError`) au lieu de
+retomber en mode développement. Le marqueur est ignoré par git
+(`/jarvis-product.json`) : un checkout ne le porte jamais par accident. Couture
+du paquet (Slice 06) : poser ce fichier, rien d'autre.
+
+**Arborescence** (lue dans `LOCALAPPDATA`, jamais déduite du dossier du
+programme ; `LOCALAPPDATA` absent ou relatif = refus de démarrer) :
+
+```text
+%LOCALAPPDATA%\CIRCOE\Jarvis\
+  data\       racine de données : mêmes chemins internes que ci-dessus
+              (state\, CONTEXT_GLOBAL\, memory\, history\, boards\, sessions\,
+              artifacts\, presentations\, presentation_templates\, prefabs\,
+              local_capabilities\, backups\, retours-utilisateur\)
+  runtime\    core.token, control-center-settings.json (clés API du Control Center),
+              trace.jsonl / errors.jsonl, *-mcp.json, modèles wake-word et
+              locuteur, scene-captures\
+  config\     .env du produit (lu à la place du .env du dossier du programme)
+```
+
+`logs\` et `cache\` ne sont pas créés en V1 : aucun consommateur ne les
+utilise (les journaux sont dans `runtime\`, le cache de compilation Remotion
+dans `data\local_capabilities\remotion\compiled\`). Rien de canonique ni de
+secret ne vit sous le dossier du programme ni sous le dossier courant.
+
+**Précédence**, identique dans les deux modes :
+
+| Racine | 1. variable | 2. produit installé | 3. développement |
+| --- | --- | --- | --- |
+| données | `JARVIS_DATA_ROOT` | `…\Jarvis\data` | `~/.jarvis/instances/<dépôt>-<empreinte>/data` |
+| runtime | `JARVIS_RUNTIME_DIR` (relatif : au dossier courant) | `…\Jarvis\runtime` | `./runtime` (dossier courant) ; `<dépôt>/runtime` pour le hook de routage, les modèles wake-word et le banc locuteur |
+| `.env` | — | `…\Jarvis\config\.env` | `<dépôt>/.env` |
+| édition | `JARVIS_PRODUCT_EDITION` | `presentation` | `full` ([product-edition.md](product-edition.md#selection)) |
+
+Une variable vide compte comme absente. Les variables restent la porte des
+tests et de l'administration ; le produit n'en pose aucune. Déplacer ou mettre
+à jour le programme ne crée donc pas de second profil, et un worktree (sans
+marqueur) reste isolé du profil installé.
+
+**Consommateurs** (tous par `resolve_data_root` / `resolve_runtime_root` /
+`default_runtime_root` de `jarvis/data_root.py`) : Core et le Control Center
+(`V2Settings.load`), la voix, le chemin V1 (`AppConfig`), le Test Lab
+(`testlab/composition.py`), le serveur MCP Écran (jeton par défaut), le hook de
+routage, le catalogue wake-word, le banc locuteur, les retours utilisateur
+(`runtime/feedback_sessions.py`). Les serveurs MCP enfants reçoivent
+`JARVIS_RUNTIME_DIR` explicite du Control Center, et les magasins (Boards,
+Sessions, Artifacts, Presentations, prefabs, capacités locales, mémoire,
+`CONTEXT_GLOBAL`) reçoivent la racine de Core : aucun ne résout seul.
+
+**Reprise** : le produit installé ne reprend **jamais** l'ancien `./data`
+(il serait dans le dossier du programme) et n'adopte **jamais
+automatiquement** un profil de développement. Voir [Reprise d'un
+profil](#reprise-dun-profil-vers-une-racine-vide).
+
+**Diagnostics** : Core journalise `core.installation` au démarrage et
+`GET /v1/health` porte un bloc `installation` : `mode` (`installed` |
+`development`), `product_home`, et pour `data_root` / `runtime_root` une
+`source` (`product_home`, `override`, `development_default`, `followed`) et un
+`label` sans chemin d'utilisateur (`%LOCALAPPDATA%\CIRCOE\Jarvis\data`, le seul
+nom `<dépôt>-<empreinte>`, ou `null`).
+
 ## Pourquoi hors du dépôt
 
 Jusqu'au 2026-09-30, ces données vivaient sous `./data`, dans l'arbre de
@@ -72,6 +146,42 @@ ce soit :
 Une fois la reprise vérifiée, l'ancien `./data/state`, `./data/history` et les
 dossiers de mémoire peuvent être archivés à la main. Rien ne les supprime
 automatiquement.
+
+`CONTEXT_GLOBAL/` d'un ancien `./data`, s'il existe, est repris **en bloc**,
+seulement si la nouvelle racine n'en a pas (sinon : signalé dans `skipped`,
+jamais complété fichier par fichier, pour qu'un fichier supprimé par l'agent
+reste supprimé). Mode développement seulement : le produit installé ne fait
+jamais cette reprise.
+
+## Reprise d'un profil vers une racine vide
+
+`adopt_data_root(source, cible)` (`jarvis/data_root.py`) copie une racine de
+données complète vers une autre. Elle n'est **jamais appelée automatiquement**
+(décision Slice 02 : un profil de développement n'est pas adopté par le
+produit ; aucune version installée antérieure n'existe). C'est la couture
+d'une reprise explicite, demandée par l'utilisateur ou un administrateur
+(intégration d'onboarding prévue par une Slice ultérieure).
+
+- **jamais de fusion** : la cible doit être absente ou vide
+  (`target_not_empty` sinon) ; source et cible ne se chevauchent pas
+  (`roots_overlap`) ;
+- **copie d'abord** dans un dossier voisin `.<cible>.adopting-<hex>`, mise en
+  place par un seul renommage après toutes les vérifications ; en cas d'échec,
+  rien n'est en place et ce dossier de copie est retiré ;
+- chaque `*.sqlite3` par l'API de sauvegarde en lecture seule (WAL compris),
+  `integrity_check` et comptes de lignes comparés (`database_copy_failed`
+  sinon) ; chaque autre fichier vérifié par SHA-256 (`copy_mismatch`) ;
+- un lien, une jonction ou un point d'analyse dans la source refuse tout
+  (`source_unsafe`) ;
+- **non repris** : `-wal`/`-shm` (leur contenu validé passe par la sauvegarde ;
+  un `-wal` sans sa base est signalé et laissé dans la source), `.staging-*`,
+  `.purging-*`, `.adopting-*`, `*.partial`, `*.tmp`, `memory/**/.jarvis/`
+  (index dérivé), `local_capabilities/<id>/runtime/` et `compiled/` (moteurs et
+  cache à réinstaller : la capacité se répare depuis Réglages) ;
+- `CONTEXT_GLOBAL/` est toujours repris, vérifié présent dans la copie
+  (`global_context_missing` sinon) ;
+- la source n'est ni modifiée ni marquée ; la cible reçoit
+  `profile-adoption.json` (rapport).
 
 ## Schéma : migrations versionnées seulement
 

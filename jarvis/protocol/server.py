@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import asdict
 import hmac
 import re
@@ -122,8 +123,11 @@ def _live_enum(enum_type, value: object, field: str):
 
 
 class LocalProtocolServer:
-    def __init__(self, core: JarvisCoreApplication, *, host: str, port: int, token: str) -> None:
+    def __init__(self, core: JarvisCoreApplication, *, host: str, port: int, token: str,
+                 installation: Mapping[str, object] | None = None) -> None:
         self.core = core
+        #: Mode et provenance des racines (`jarvis.data_root.installation_diagnostics`), sans chemin absolu.
+        self.installation = dict(installation) if installation is not None else None
         self.host = validate_loopback_host(host)
         self.port = port
         if len(token) < 32:
@@ -360,7 +364,9 @@ class LocalProtocolServer:
                                       "emitter": asdict(self.core.conversation_event_emitter.counters),
                                       "store": {"unreadable_rows": store.unreadable_rows,
                                                 "diagnostic_failures": store.diagnostic_failures},
-                                      "query_failures": self.core.conversation_event_queries.failures}})
+                                      "query_failures": self.core.conversation_event_queries.failures},
+                                  # Produit installé ou checkout, provenance des racines (Slice 02 presentation-edition).
+                                  **({"installation": self.installation} if self.installation is not None else {})})
 
     async def create_conversation(self, request: web.Request) -> web.Response:
         body = await request.json() if request.can_read_body else {}

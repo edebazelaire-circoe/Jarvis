@@ -573,7 +573,8 @@ def load_audio(manifest: Manifest) -> dict[Path, _Audio]:
 def default_runtime_root() -> Path:
     raw = os.getenv("JARVIS_RUNTIME_DIR")
     if not raw:
-        return ROOT / "runtime"
+        from jarvis.data_root import default_runtime_root  # produit installé : `<maison du produit>/runtime`
+        return default_runtime_root(dev_default=ROOT / "runtime")
     path = Path(raw).expanduser()
     return path if path.is_absolute() else ROOT / path
 

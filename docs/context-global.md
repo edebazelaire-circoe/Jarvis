@@ -15,6 +15,37 @@ fichiers, et choisit lesquels forment son prochain prompt initial.
 - Le chemin est remis au CLI par `--add-dir` et dans la variable
   `JARVIS_GLOBAL_CONTEXT_DIR`, héritée par les sous-agents.
 
+## Permanence
+
+`CONTEXT_GLOBAL` est de l'**état canonique permanent** (décision D05 de
+Presentation Edition) : ni un cache, ni du runtime. Il vit sous la racine de
+données, donc pour un produit installé sous
+`%LOCALAPPDATA%\CIRCOE\Jarvis\data\CONTEXT_GLOBAL\`
+([local-data.md](local-data.md#produit-installé--localappdatacircoejarvis)),
+jamais dans le dossier du programme : une mise à jour, un déplacement ou une
+réinstallation du programme le retrouvent tel quel.
+
+- **chargé à chaque démarrage** du cerveau depuis la racine résolue
+  (`global_context_root(settings.data_root)`, Control Center), jamais
+  ré-ensemencé une fois créé ;
+- **jamais effacé** par un nettoyage, une réparation, une purge de cache ou une
+  désinstallation. Garde réutilisable : `ensure_not_global_context(chemin)`
+  (`jarvis/adapters/global_context.py`, `GlobalContextProtected`, casse
+  ignorée). Branchée sur les effaceurs récursifs : `safe_tree.remove_tree`
+  (purge des Presentations archivées, prefabs ; refus avant le premier fichier
+  effacé), `node_capability_runner._remove_tree` (nettoyage, réparation et
+  retrait des capacités locales, rendus et Studio Remotion ; refus en
+  descendant) et la purge du cache de compilation Remotion. Tout nouvel
+  effaceur récursif d'un dossier de la racine doit l'appeler. Le
+  désinstalleur (Slice 06/07) ne retire jamais `data\` ;
+- **copié par toute reprise** : en bloc par la reprise de l'ancien `./data`
+  (seulement si la cible n'en a pas) et par `adopt_data_root` (vérifié présent
+  dans la copie) ; jamais fusionné fichier par fichier
+  ([local-data.md](local-data.md#reprise-dun-profil-vers-une-racine-vide)).
+
+Tests : `tests/unit/test_installed_product_root.py` (chargement depuis la
+maison du produit et après déplacement du programme, garde, reprises).
+
 ## `base_context.yaml`
 
 La liste ordonnée des fichiers assemblés, chemins relatifs au dossier :

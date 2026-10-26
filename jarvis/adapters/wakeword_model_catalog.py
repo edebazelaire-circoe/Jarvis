@@ -149,7 +149,8 @@ def default_model_dir() -> Path:
         path = Path(raw).expanduser()
         runtime = path if path.is_absolute() else ROOT / path
     else:
-        runtime = ROOT / "runtime"
+        from jarvis.data_root import default_runtime_root  # `<dépôt>/runtime`, ou `<maison du produit>/runtime` installé
+        runtime = default_runtime_root(dev_default=ROOT / "runtime")
     return runtime / "wake-word" / "models"
 
 

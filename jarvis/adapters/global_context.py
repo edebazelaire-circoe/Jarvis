@@ -49,6 +49,35 @@ def global_context_root(data_root: Path) -> Path:
     return Path(data_root).expanduser().resolve() / GLOBAL_CONTEXT_DIR
 
 
+class GlobalContextProtected(OSError):
+    """Un effacement visait `CONTEXT_GLOBAL` ou ce qu'il contient : refusé, rien n'est effacé.
+
+    `CONTEXT_GLOBAL` est de l'état canonique permanent (décision D05,
+    `docs/context-global.md` › *Permanence*) : ni un cache, ni du runtime.
+    Aucun nettoyage, réparation, purge de cache ou désinstallation ne l'efface.
+    """
+
+
+def is_global_context_path(path: Path) -> bool:
+    """Vrai si un composant de `path` est `CONTEXT_GLOBAL` (casse ignorée, comme le système de fichiers Windows)."""
+
+    wanted = GLOBAL_CONTEXT_DIR.casefold()
+    return any(part.casefold() == wanted for part in Path(path).parts)
+
+
+def ensure_not_global_context(path: Path) -> None:
+    """Garde réutilisable de tout effacement récursif : `GlobalContextProtected` si `path` est dans `CONTEXT_GLOBAL`.
+
+    Appelée sur chaque dossier visité par un effaceur, elle refuse aussi un
+    ancêtre qui le contient : l'effaceur l'atteint en descendant et s'arrête
+    là. Les effaceurs qui inventorient d'abord (`safe_tree.remove_tree`)
+    refusent donc avant le premier fichier effacé.
+    """
+
+    if is_global_context_path(path):
+        raise GlobalContextProtected(f"{GLOBAL_CONTEXT_DIR} est permanent : effacement refusé")
+
+
 def seed_global_context(root: Path, seed: Path = SEED_ROOT) -> bool:
     """Créer le dossier depuis le modèle s'il n'existe pas ; ne touche jamais un dossier existant.
 

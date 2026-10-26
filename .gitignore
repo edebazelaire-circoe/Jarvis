@@ -38,3 +38,6 @@ owner-voice-profile*.json
 
 # Worktrees et état local du CLI : un chantier n'est pas un sous-module.
 .claude/
+
+# Marqueur du produit installe (jarvis/installation.py) : pose par le paquet, jamais versionne.
+/jarvis-product.json
