@@ -18,8 +18,11 @@
    balisage, `surface:'developer'` d'une catégorie ou d'une section des Réglages) : aucune liste de surfaces
    ici. La feuille de la page cache `[data-surface="developer"]` sous `html[data-developer-surfaces="hidden"]`.
 
-   Lecture : bornée (`DEADLINE_MS`), reprise avec un recul croissant (`RETRY_MS`) tant que Core ne répond pas ;
-   `refresh()` relit sur demande (ouverture du choix du type). Journal `[edition] edition.<clé> {json}`. */
+   Lecture : À LA DEMANDE (`ensure()`), quand une surface en a besoin — ouverture du panneau des Boards, choix du
+   type, accueil vide d'un Board Présentation — jamais au démarrage : les surfaces de développement viennent déjà du
+   marquage, et un Control Center sans Core ne reçoit aucune requête. Bornée (`DEADLINE_MS`), reprise avec un recul
+   croissant (`RETRY_MS`) tant que le battement de la page dit que Core sert ses Boards (`gate(status.boards)`) ;
+   `refresh()` relit sur demande (« Réessayer »). Journal `[edition] edition.<clé> {json}`. */
 (function(root){
   'use strict';
 
@@ -88,7 +91,7 @@
     const listeners=new Set();
     const marked=pageSurfaces(html&&html.getAttribute?html.getAttribute('data-developer-surfaces'):null);
     const S={status:'idle',model:null,error:null,attempt:0,since:0,surfaces:marked||'visible',source:marked?'page':'default',
-      inFlight:null,retry:0};
+      inFlight:null,retry:0,coreBoards:false};
 
     function log(level,key,data){
       const line=`[edition] edition.${key} ${JSON.stringify(data||{})}`;
@@ -115,7 +118,8 @@
       return changed;
     }
     function schedule(){
-      if(S.retry)return;
+      /* Core ne sert pas ses Boards : pas de reprise ; le battement qui les dit revenus relira (`gate`). */
+      if(S.retry||!S.coreBoards)return;
       const wait=retryDelay(S.attempt);
       S.retry=later(()=>{S.retry=0;load()},wait);
     }
@@ -157,7 +161,18 @@
     }
     if(marked&&html&&html.setAttribute)html.setAttribute('data-developer-surfaces',marked);
     return {
-      start(){if(S.status==='idle')load()},
+      /* Le bloc `boards` de `/api/status` (1 Hz) : tant que Core sert ses Boards, une lecture tombée est reprise ; quand
+         il revient après une panne, elle repart aussitôt. */
+      gate(boards){
+        const up=!!(boards&&typeof boards==='object'&&boards.available===true);
+        const was=S.coreBoards;S.coreBoards=up;
+        if(up&&!was&&S.status==='error'&&!S.model&&!S.inFlight&&!S.retry)load();
+      },
+      /* Première lecture, une seule fois (appel sans effet ensuite). Une lecture tombée n'est PAS relancée ici : le
+         rail appelle `ensure` à chaque rendu et se rend à chaque `emit` — relire ici ferait une boucle de requêtes
+         quand Core ne sert pas ses Boards. Elle repart par la reprise (`schedule`), le retour de Core (`gate`) ou
+         « Réessayer » (`refresh`), que l'écran du type montre avec la cause. */
+      ensure(){if(S.status==='idle'&&!S.inFlight)load()},
       refresh(){return load()},
       state:snapshot,
       subscribe(fn){if(typeof fn==='function'){listeners.add(fn);try{fn(snapshot())}catch(error){log('error','listener_failed',{error:text(error&&error.message)})}}
@@ -180,7 +195,7 @@
   if(root&&root.document&&typeof root.fetch==='function'){
     try{
       api.instance=createStore({document:root.document,fetch:(path,init)=>root.fetch(path,init),console:root.console});
-      api.instance.start();
+      /* La lecture attend le battement de statut (`gate`, appelé par `refreshStatus` de la page). */
     }catch(error){
       try{root.console.error('[edition] edition.install_failed '+JSON.stringify({error:text(error&&error.message)}))}catch(_e){/* intentional */}
     }

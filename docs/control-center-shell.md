@@ -1167,7 +1167,7 @@ the suite `tests/unit/test_presentation_edition_ui_browser.py`.
 
 | Fact | Authority | How the page gets it |
 | --- | --- | --- |
-| Which Board kinds can be created / opened, the default kind | Core (`ProductEditionPolicy`) | `GET /api/boards/edition` (relay of `/v1/boards/edition`), read by `JarvisProductEdition` (8 s deadline, retried 2 / 4 / 8 / 16 / 30 s, re-read when the kind screen opens) |
+| Which Board kinds can be created / opened, the default kind | Core (`ProductEditionPolicy`) | `GET /api/boards/edition` (relay of `/v1/boards/edition`), read by `JarvisProductEdition` on demand (`ensure()`: Board panel opened, kind screen, empty home of a Presentation Board; never at boot), 8 s deadline, retried 2 / 4 / 8 / 16 / 30 s while the status beat says Core serves its Boards (`gate(status.boards)`), re-read by « Réessayer ». `ensure()` reads only once (state `idle`): a failed read waits for the backoff, Core's return (`gate`) or « Réessayer », whose screen shows the cause — never a request loop while Core is down |
 | Whether developer surfaces show (`developer_surfaces`: `visible` \| `hidden`) | the same policy (`full`: visible; `presentation`: hidden unless `JARVIS_DEVELOPER_MODE=1`) | written on `<html data-developer-surfaces>` by the Control Center when it serves the page (same `process_edition()`), so no developer tool shows even for a frame or while Core is down; confirmed by Core's payload (Core wins if they differ, journal `edition.surfaces_disagree`) |
 | Which surface is a developer surface | the surface's own declaration | `data-surface="developer"` in the markup; `surface:'developer'` on a Settings category or section ([settings/navigation-registry.md](settings/navigation-registry.md) § 7) |
 

@@ -654,6 +654,8 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       const focused=active&&ui.host.contains(active)&&active.classList&&active.classList.contains('jvr-item')?active.dataset.id:null;
       clear(ui.list);
       if(!S.loaded&&!S.lost)ui.list.appendChild(el('li','jvr-empty','Chargement…'));
+      /* L'accueil dépend de l'édition lue sur Core : elle n'est demandée que dans ce cas (Board Présentation, aucune présentation). */
+      if(S.loaded&&!m.total&&(S.boardKind==='presentation'||S.mode==='presentation')&&edition&&typeof edition.ensure==='function')edition.ensure();
       const showHome=S.loaded&&!m.visible.length&&!m.total&&home()&&!S.lost;
       /* L'accueil vit hors de la liste d'options (une liste d'options ne contient que des options). */
       clear(ui.home);ui.home.hidden=!showHome;ui.list.hidden=showHome;

@@ -31,7 +31,8 @@ def node(script: str):
             f"const B=require({req('control_center_boards.js')});"
             f"const R=require({req('control_center_settings_registry.js')});"
             f"const P=require({req('control_center_presentation_rail.js')});"
-            f"process.stdout.write(JSON.stringify((()=>{{{script}}})()))")
+            f"Promise.resolve((async()=>{{{script}}})()).then(v=>process.stdout.write(JSON.stringify(v)))"
+            ".catch(e=>{console.error(e&&e.stack||e);process.exit(1)})")
     done = subprocess.run([exe, "-e", code], capture_output=True, text=True, encoding="utf-8", timeout=60, check=False)
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout)
@@ -58,6 +59,38 @@ def test_surfaces_and_retries():
     assert out["retry"] == [2000, 4000, 8000, 16000, 30000, 30000]
 
 
+def test_the_store_reads_on_demand_and_never_loops_while_core_is_down():
+    """`ensure` lit une fois ; sans Boards servis par Core, une lecture tombée attend `gate` ou « Réessayer »."""
+    out = node(
+        "const calls=[],timers=[];let fail=true;"
+        f"const ok={PRESENTATION};"
+        "const fetch=async()=>{calls.push(1);if(fail)throw Object.assign(new Error('down'),{code:'core_unreachable'});"
+        "return {ok:true,status:200,json:async()=>ok}};"
+        "const st=E.createStore({fetch,setTimeout:(fn,ms)=>{timers.push({fn,ms});return timers.length},clearTimeout:()=>{},"
+        "console:{info(){},warn(){},error(){}}});"
+        "const flush=()=>new Promise(r=>setImmediate(r));"
+        "const boot=[calls.length,st.state().status];"
+        "st.ensure();await flush();await flush();"
+        "const down=[calls.length,st.state().status,st.state().error.code];"
+        "for(let i=0;i<5;i++){st.ensure();await flush()}"
+        "const repeated=[calls.length,timers.filter(t=>t.ms!==E.DEADLINE_MS).length];"
+        "st.gate({available:false});await flush();const stillDown=calls.length;"
+        "st.gate({available:true});await flush();await flush();"
+        "const retried=[calls.length,st.state().status,timers.filter(t=>t.ms===2000||t.ms===4000).map(t=>t.ms)];"
+        "fail=false;await st.refresh();"
+        "const back=[calls.length,st.state().status,st.state().model.edition];"
+        "st.ensure();await flush();"
+        "return {boot,down,repeated,stillDown,retried,back,after:calls.length}")
+    assert out["boot"] == [0, "idle"], "nothing is read at boot"
+    assert out["down"] == [1, "error", "core_unreachable"], "the error is shown (with its cause), never an endless wait"
+    assert out["repeated"] == [1, 0], "ensure on every render never re-reads, and no retry while Core serves no Board"
+    assert out["stillDown"] == 1
+    assert out["retried"][0] == 2 and out["retried"][1] == "error", "Core back: read again at once"
+    assert out["retried"][2] == [4000], "then the backoff resumes while Core serves its Boards"
+    assert out["back"] == [3, "ready", "presentation"]
+    assert out["after"] == 3, "a ready model is never re-read by ensure"
+
+
 def test_the_board_kind_choice_follows_core_and_never_guesses():
     out = node(f"const ready={{status:'ready',model:E.parse({PRESENTATION}).model}};"
                "const kinds=['assistant','presentation','meeting'];"
@@ -68,6 +101,7 @@ def test_the_board_kind_choice_follows_core_and_never_guesses():
                "note:B.kindNoteOf(ready,0),wait:B.kindNoteOf({status:'loading',model:null,since:1000},4200).text,"
                "bad:B.kindNoteOf({status:'error',model:null,error:{code:'core_unreachable',message:'down'}},0),"
                "timeout:B.kindNoteOf({status:'error',model:null,error:{code:'timeout',message:''}},0).text,"
+               "idle:B.kindNoteOf({status:'idle',model:null,since:0},9000).text,"
                f"full:B.kindNoteOf({{status:'ready',model:E.parse({FULL}).model}},0)}}")
     assert out["ready"] == ["soon", "available", "soon"]
     assert out["loading"] == ["unknown"] * 3, "nothing is creatable before Core answers"
@@ -80,6 +114,7 @@ def test_the_board_kind_choice_follows_core_and_never_guesses():
     assert out["bad"]["detail"] == "core_unreachable · down"
     assert "Jarvis n’a pas répondu à temps" in out["timeout"]
     assert out["full"] is None
+    assert out["idle"] == "Lecture des types de Board auprès de Jarvis…", "never asked yet: no seconds counted"
 
 
 def test_rows_mark_a_legacy_board_and_only_with_an_edition():

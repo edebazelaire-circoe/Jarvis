@@ -128,6 +128,7 @@ def test_presentation_hides_the_developer_tools_everywhere(tmp_path, width, heig
     assert r["popShown"] == {"TRC": False, "SET": True}
     assert r["first"] == "openSettings" and r["last"] == "openStudioInspector", "the roving list skips the hidden tools"
     assert r["trace"] is False, "the Trace shortcut does not open a hidden surface"
+    assert "GET /api/boards/edition" not in step["calls"], "the edition is read on demand (Board panel), never at boot"
 
 
 def test_presentation_settings_show_four_categories_and_never_a_hidden_page(tmp_path):
@@ -190,6 +191,7 @@ def test_presentation_board_creation_offers_presentation_only_and_sends_nothing_
     posts = [b for b in step["bodies"] if b["path"] == "/api/boards"]
     assert posts == [{"path": "/api/boards", "body": {"title": "Pitch client", "board_kind": "presentation"}}], step["bodies"]
     assert "POST /api/boards/switch" not in step["calls"]
+    assert step["calls"].count("GET /api/boards/edition") == 1, "read once, when the Board panel opens"
 
 
 def test_a_legacy_board_is_listed_but_never_switched(tmp_path):

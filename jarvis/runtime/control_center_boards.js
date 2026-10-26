@@ -410,6 +410,8 @@
           text:`Types de Board illisibles — ${cause} La création attend leur lecture.`,
           detail:said.detail&&said.detail!==said.text?`${said.code} · ${said.detail}`:said.code};
       }
+      /* Pas encore demandée : la lecture part à l'ouverture du panneau (`ensure`). */
+      if(edition.status==='idle')return {tone:'wait',retry:false,code:'',text:KIND_WAIT,detail:''};
       const secs=Math.max(0,Math.floor(((Number(nowMs)||0)-(Number(edition.since)||0))/1000));
       return {tone:'wait',retry:false,code:'',text:`${KIND_WAIT}${Number(edition.since)?` ${secs} s`:''}`,detail:''};
     }
@@ -979,7 +981,8 @@ ${P} .bd-kindpick[${DOM.availAttribute}=soon] .bd-orb,${P} .bd-kindpick[${DOM.av
 ${P} .bd-kindpick[${DOM.availAttribute}=soon] .bd-kindname,${P} .bd-kindpick[${DOM.availAttribute}=unknown] .bd-kindname{color:${MUTED}}
 ${P} .bd-kindpick[${DOM.availAttribute}=soon]:hover,${P} .bd-kindpick[${DOM.availAttribute}=unknown]:hover{background:none}
 ${P} .bd-kindpick[${DOM.availAttribute}=soon]:hover .bd-orb,${P} .bd-kindpick[${DOM.availAttribute}=unknown]:hover .bd-orb{transform:none;border-color:inherit}
-${P} .bd-kindtag[data-tone=soon]{color:${MUTED};border:1px solid color-mix(in srgb,${MUTED} 50%,transparent);border-radius:999px;padding:3px 9px;margin-top:-6px}
+${P} .bd-kindtag[data-tone=soon]{color:${MUTED};border:1px solid color-mix(in srgb,${MUTED} 50%,transparent);border-radius:999px;padding:3px 9px;margin-top:-6px;white-space:nowrap}
+@media(max-width:700px){${P} .bd-kindtag[data-tone=soon]{letter-spacing:.06em;padding:3px 7px}}
 ${P} .bd-kindnote{display:flex;flex-direction:column;align-items:center;gap:10px;max-width:52ch;margin:4px auto 0;text-align:center}
 ${P} .bd-kindnote[hidden]{display:none}
 ${P} .bd-kindnote p{margin:0;font-size:13px;line-height:1.5;color:${MUTED}}
@@ -1031,8 +1034,14 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
   ${P} .bd-back{top:14px;left:14px}
   ${P} .bd-row,${P} .bd-new{width:min(150px,calc(50% - 8px));--bd-orb:80px}
   ${P} .bd-orb svg{width:34px;height:34px}
-  ${P} .bd-kindpick{width:min(150px,calc(50% - 8px))}
+  /* Les trois types restent sur une rangée (l'étiquette « Bientôt disponible » ne se coupe pas) ; deux par rangée
+     seulement sur un téléphone étroit. */
+  ${P} .bd-kinds{gap:16px}
+  ${P} .bd-kindpick{width:min(144px,calc((100% - 32px) / 3));padding:20px 4px}
   ${P} .bd-kindpick .bd-orb{--bd-orb:96px}
+}
+@media(max-width:440px){
+  ${P} .bd-kindpick{width:min(150px,calc(50% - 8px))}
 }
 @media(max-height:600px){
   ${P} .bd-stage{padding-top:72px;gap:22px}
@@ -1350,7 +1359,8 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       createError.textContent='';kindFeedback='';
       /* Une lecture de l'édition tombée est reprise à l'entrée du choix (sans attendre son recul). */
       const edition=editionView();
-      if(editionSource&&edition&&!edition.model&&edition.status==='error')editionSource.refresh();
+      if(editionSource&&edition&&!edition.model&&(edition.status==='error'||edition.status==='idle'))editionSource.refresh();
+      else if(editionSource&&typeof editionSource.ensure==='function')editionSource.ensure();
       go('kind');
     }
     function goBack(){
@@ -1710,6 +1720,8 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
          suite. Sinon il attend sur le panneau et rejoint le Board actif dès que
          la liste arrive — à moins que l'utilisateur ne soit déjà ailleurs. */
       if(listing)focusActive();else panel.focus();
+      /* Slice 08 : la disponibilité des types est lue à l'ouverture (Boards hérités, choix du type). */
+      if(editionSource&&typeof editionSource.ensure==='function')editionSource.ensure();
       log('info','boards.panel_opened',{active_board_id:activeIdOf(block,listing)});
       openChanged(true);
       load().then(()=>{if(opened&&(doc.activeElement===panel||!doc.activeElement))focusActive()});
