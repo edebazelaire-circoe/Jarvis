@@ -463,11 +463,13 @@
       if(!ui.pick)return;
       renderContext();
       clear(ui.pick);
-      const solo=S.presentations.length<=1;
+      /* Slice 09: docked beside Variants, the presentation is the one Variants shows (no second choice that would desync them). */
+      const at=explorerScene(),docked=!!at&&at.presentation_id===S.presentationId;
+      const solo=S.presentations.length<=1||docked;
       ui.pick.className='jvi-pick'+(solo?' is-solo':'');
       if(!S.presentations.length)return;
       if(!solo){
-        const label=el('label','jvi-field');label.appendChild(el('span',null,'Présentation'));
+        const label=el('label','jvi-field jvi-field-presentation');label.appendChild(el('span',null,'Présentation'));
         const select=el('select');select.setAttribute('aria-label','Présentation');
         for(const p of S.presentations){
           const o=el('option',null,p.title||p.presentation_id);o.value=p.presentation_id;

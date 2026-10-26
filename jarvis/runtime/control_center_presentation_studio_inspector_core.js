@@ -64,6 +64,8 @@ html:not(.jvx-open) #${PANEL_ID} .jvi-context{display:none}
 #${PANEL_ID} :is(button,input,select,textarea,summary,[tabindex]):focus-visible{outline:2px solid var(--accent,#6ee7ff);outline-offset:2px}
 #${PANEL_ID} .jvi-pick{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px;align-items:center;padding:10px 14px 0}
 #${PANEL_ID} .jvi-pick.is-solo{grid-template-columns:minmax(0,1fr)}
+/* Slice 09: the presentation choice takes its own row, the scene choice and its ‹ › the next one (they used to wrap one by one). */
+#${PANEL_ID} .jvi-pick .jvi-field-presentation{grid-column:1/-1}
 #${PANEL_ID} .jvi-field{display:flex;flex-direction:column;gap:3px;min-width:0;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted,#7190a0)}
 #${PANEL_ID} select,#${PANEL_ID} input[type=text],#${PANEL_ID} input[type=url],#${PANEL_ID} input[type=number],#${PANEL_ID} textarea{width:100%;min-height:32px;padding:5px 9px;
   background:#071015;border:1px solid var(--line,#183343);border-radius:6px;letter-spacing:0;text-transform:none;font-size:13px}
