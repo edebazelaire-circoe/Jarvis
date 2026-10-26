@@ -193,14 +193,20 @@ def extract_zip(archive: Path, target: Path, *, strip_components: int = 0) -> No
 
 
 def pth_content(version: str) -> str:
-    """Chemins du Python embarquable : sa bibliothèque, le code (`..\\..\\app`), `import site` pour `Lib\\site-packages`.
+    r"""Chemins du Python embarquable, et rien d'autre : sa bibliothèque, `Lib\site-packages` (+ dossiers de pywin32) et
+    le code (`..\..\app`).
 
-    Un fichier `._pth` rend aussi l'interpréteur sourd à `PYTHONPATH`/`PYTHONHOME` : le paquet ne lit jamais un code
-    venu de l'environnement (I-002 point 2).
+    Pas de ligne `import site` : l'interpréteur tourne alors comme `-S`, donc ni site utilisateur
+    (`%APPDATA%\Python\Python314\site-packages`, qui sur un poste de développeur porte par exemple onnxruntime et
+    réintroduirait des composants exclus) ni fichiers `.pth`. Un fichier `._pth` rend aussi l'interpréteur sourd à
+    `PYTHONPATH`/`PYTHONHOME` : le paquet ne lit jamais un code venu de l'environnement (I-002 point 2). Ce que
+    `pywin32.pth` aurait fait est fait ici (dossiers) et par `install_pywin32_dlls` (DLL à côté de `python.exe`).
     """
 
     _short, abi = python_tag(version)
-    return f"python{abi[2:]}.zip\n.\n..\\..\\{PR.APP_DIR}\nimport site\n"
+    lines = [f"python{abi[2:]}.zip", ".", r"Lib\site-packages", r"Lib\site-packages\win32", r"Lib\site-packages\win32\lib",
+             r"Lib\site-packages\pythonwin", "..\\..\\" + PR.APP_DIR]
+    return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------------- étapes du build
@@ -228,7 +234,16 @@ def install_wheels(out: Path, runtimes: dict, cache: Path) -> Path:
     # Lanceurs de scripts : ils portent le chemin absolu du Python de BUILD ; le produit ne les utilise jamais.
     shutil.rmtree(site / "bin", ignore_errors=True)
     shutil.rmtree(site / "Scripts", ignore_errors=True)
+    install_pywin32_dlls(site)
     return site
+
+
+def install_pywin32_dlls(site: Path) -> None:
+    """`pywintypes3xx.dll`/`pythoncom3xx.dll` à côté de `python.exe` (dossier de l'application dans l'ordre de recherche
+    des DLL) : ce que fait `pywin32_bootstrap` via `pywin32.pth`, que le paquet ne traite pas (pas de `site`)."""
+
+    for dll in sorted((site / "pywin32_system32").glob("*.dll")):
+        shutil.copyfile(dll, site.parents[1] / dll.name)
 
 
 def build_node(out: Path, runtimes: dict, cache: Path) -> Path:
@@ -413,10 +428,15 @@ from jarvis.installation import detect_installation
 layout = pr.package_layout()
 node = pr.which("node")
 version = subprocess.run([node, "--version"], capture_output=True, text=True, check=True).stdout.strip()
-missing = {name: shutil.which(name) for name in ("python", "py", "node", "npm", "ffmpeg", "git")}
+missing = {name: shutil.which(name) for name in ("python", "node", "npm", "ffmpeg", "git")}
+import importlib.util
+excluded = {name: importlib.util.find_spec(name) is not None for name in ("onnxruntime", "openwakeword", "imageio_ffmpeg", "pvporcupine", "sherpa_onnx")}
+import win32api, pywintypes, mcp.client.stdio
+outside = [p for p in sys.path if not p.lower().startswith(str(layout.install_root).lower())]
 print(json.dumps({"python": sys.version.split()[0], "executable_in_package": sys.executable.lower().startswith(str(layout.install_root).lower()),
                   "installed": detect_installation().installed, "node": version, "node_private": node.lower().startswith(str(layout.node_dir).lower()),
-                  "ffmpeg": pr.which("ffmpeg"), "flags_no_user_site": not __import__("site").ENABLE_USER_SITE,
+                  "ffmpeg": pr.which("ffmpeg"), "no_site": sys.flags.no_site == 1, "sys_path_outside_package": outside,
+                  "excluded_importable": excluded, "py_launcher_on_path": shutil.which("py"),
                   "path_tools": missing, "diagnostics": pr.diagnostics()}))
 """
 
@@ -431,7 +451,8 @@ def probe(out: Path) -> dict:
         raise BuildError("sonde du paquet en échec:\n" + (result.stdout + result.stderr)[-3000:])
     report = json.loads(result.stdout.strip().splitlines()[-1])
     expected = (report["installed"] and report["executable_in_package"] and report["node_private"]
-                and report["flags_no_user_site"] and report["ffmpeg"] is None
+                and report["no_site"] and not report["sys_path_outside_package"]
+                and not any(report["excluded_importable"].values()) and report["ffmpeg"] is None
                 and not any(report["path_tools"].values()) and report["diagnostics"].get("status") == "ok")
     if not expected:
         raise BuildError(f"sonde du paquet inattendue: {json.dumps(report)}")

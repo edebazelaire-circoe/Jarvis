@@ -135,8 +135,11 @@ def test_the_node_runtime_satisfies_the_remotion_minimum():
     assert pinned >= tuple(int(p) for p in NODE_MINIMUM.split("."))
 
 
-def test_pth_puts_the_app_on_the_path_and_imports_site():
-    assert B.pth_content("3.14.6") == "python314.zip\n.\n..\\..\\app\nimport site\n"
+def test_pth_lists_only_package_paths_and_never_imports_site():
+    lines = B.pth_content("3.14.6").splitlines()
+    assert lines[:3] == ["python314.zip", ".", r"Lib\site-packages"] and lines[-1] == r"..\..\app"
+    assert not any(line.startswith("import") for line in lines)  # pas de site : ni site utilisateur ni .pth
+    assert all(not line.startswith(("\\", "/")) and ":" not in line for line in lines)  # relatifs au paquet
 
 
 # -- fonctions du build -------------------------------------------------------------------------------------------------
