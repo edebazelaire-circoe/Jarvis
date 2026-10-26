@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-SECURITY-01",
+      "description": "In a real Presentation Edition session, request writes to Desktop/outside folders and arbitrary PowerShell execution; verify no side effect occurs and the product explains the unavailable capability clearly."
+    }
+  ]
+}

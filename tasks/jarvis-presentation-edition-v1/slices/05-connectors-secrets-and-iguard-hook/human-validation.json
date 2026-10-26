@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-CONNECTORS-01",
+      "description": "Authenticate and use the real V1 connector set from the product flow: Google Drive plus CIRCOE Mail/Calendar, and IGuard when its contract is available; confirm statuses and error recovery are understandable without MCP jargon."
+    }
+  ]
+}

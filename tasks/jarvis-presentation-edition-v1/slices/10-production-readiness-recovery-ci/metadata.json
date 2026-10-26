@@ -1,0 +1,11 @@
+{
+  "slice_id": "10-production-readiness-recovery-ci",
+  "title": "10 — Production readiness, recovery and CI",
+  "task_type": null,
+  "task_type_blocker": "Slice 00 must resolve a valid existing Workspace Task Type before dispatch; do not invent one.",
+  "frontend": false,
+  "code": true,
+  "required_qa": ["qa-verification", "code-review", "runtime-validation"],
+  "required_skills": ["/caveman", "/coding-guideline"],
+  "agent_routing": null
+}

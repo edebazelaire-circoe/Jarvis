@@ -1,0 +1,12 @@
+{
+  "slice_id": "05-connectors-secrets-and-iguard-hook",
+  "title": "05 — Connectors, secrets and IGuard hook",
+  "task_type": null,
+  "task_type_blocker": "Slice 00 must resolve a valid existing Workspace Task Type before dispatch; do not invent one.",
+  "frontend": false,
+  "code": true,
+  "required_qa": ["qa-verification", "code-review", "runtime-validation", "agent-trace-analysis"],
+  "required_skills": ["/caveman", "/coding-guideline"],
+  "agent_routing": null,
+  "external_input": "IGuard transport/endpoint/authentication/tool contract is required for IGuard-specific completion."
+}

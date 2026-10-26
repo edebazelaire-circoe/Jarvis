@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-PACKAGE-01",
+      "description": "On a Windows machine without Git, system Python, Node/npm or FFmpeg on PATH, launch the packaged build and verify Jarvis reaches a usable Presentation readiness state."
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "project_name": "Jarvis",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "handoff_slug": "jarvis-presentation-edition-v1",
+  "source_branch": "main",
+  "source_sha": "2d6ca879afac7a0e773598cff0872b4f819fa876",
+  "created_on": "2026-10-26",
+  "drive_destination": "Jarvis/task/to-do/jarvis-presentation-edition-v1/",
+  "slices": [
+    "00-project-manager",
+    "01-product-edition-and-board-lock",
+    "02-windows-data-root-context-global",
+    "03-internal-documents-and-export-boundary",
+    "04-agent-confinement-capability-policy",
+    "05-connectors-secrets-and-iguard-hook",
+    "06-windows-private-runtime-packaging",
+    "07-installer-onboarding-health",
+    "08-presentation-product-ui",
+    "09-presentation-editing-ui",
+    "10-production-readiness-recovery-ci",
+    "11-final-e2e-windows-acceptance"
+  ],
+  "planning_blockers": [
+    "Workspace Task Type vocabulary is not exposed during task creation. Slice 00 must resolve valid existing Task Types before dispatch; do not invent one.",
+    "IGuard-specific implementation requires its actual MCP transport, endpoint and authentication contract; other slices are not blocked.",
+    "A distributed V1 must resolve third-party licensing for any component/model shipped, especially the currently documented non-commercial openWakeWord model."
+  ]
+}

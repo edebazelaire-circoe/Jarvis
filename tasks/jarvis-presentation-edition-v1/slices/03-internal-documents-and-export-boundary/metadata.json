@@ -1,0 +1,11 @@
+{
+  "slice_id": "03-internal-documents-and-export-boundary",
+  "title": "03 — Internal documents and explicit export boundary",
+  "task_type": null,
+  "task_type_blocker": "Slice 00 must resolve a valid existing Workspace Task Type before dispatch; do not invent one.",
+  "frontend": false,
+  "code": true,
+  "required_qa": ["qa-verification", "code-review", "runtime-validation"],
+  "required_skills": ["/caveman", "/coding-guideline"],
+  "agent_routing": null
+}

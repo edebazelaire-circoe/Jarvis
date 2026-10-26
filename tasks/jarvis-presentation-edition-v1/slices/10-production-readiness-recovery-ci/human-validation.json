@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "id": "HV-RECOVERY-01",
+      "description": "On the release candidate, interrupt/restart Core or the Remotion worker during normal work and confirm the product recovers or reports a repairable state without losing the Presentation or CONTEXT_GLOBAL."
+    },
+    {
+      "id": "HV-UPDATE-01",
+      "description": "Install the release candidate over a seeded prior Jarvis profile and verify Boards, CONTEXT_GLOBAL, artifacts, connectors and Presentations are preserved; exercise the documented rollback boundary."
+    }
+  ]
+}

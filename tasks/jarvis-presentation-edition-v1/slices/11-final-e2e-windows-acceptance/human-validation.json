@@ -1,0 +1,16 @@
+{
+  "checks": [
+    {
+      "id": "HV-E2E-01",
+      "description": "Clean Windows end-to-end: install, onboard, create Presentation Board, research/import material, author, preview, edit, variant, present/play, export, restart and reopen."
+    },
+    {
+      "id": "HV-AUDIO-01",
+      "description": "If voice ships in V1, exercise real microphone/speakers and Presentation room/addressed-turn behavior on target hardware; record device/OS details and failures."
+    },
+    {
+      "id": "HV-PILOT-01",
+      "description": "Human release review confirms the installer, Presentation workflow and editing UX are coherent enough for a pilot user and that every unverified/waived gate is explicitly documented."
+    }
+  ]
+}

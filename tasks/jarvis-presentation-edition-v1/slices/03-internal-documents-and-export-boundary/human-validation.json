@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-EXPORT-01",
+      "description": "Export a real Presentation to Documents\\Jarvis, delete or move the exported file, then reopen and re-export from Jarvis; internal state must remain complete."
+    }
+  ]
+}

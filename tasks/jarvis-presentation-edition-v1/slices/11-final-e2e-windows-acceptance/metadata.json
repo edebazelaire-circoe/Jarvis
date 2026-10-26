@@ -1,0 +1,11 @@
+{
+  "slice_id": "11-final-e2e-windows-acceptance",
+  "title": "11 — Final Windows E2E and Human acceptance",
+  "task_type": null,
+  "task_type_blocker": "Slice 00 must resolve a valid existing Workspace Task Type before dispatch; do not invent one.",
+  "frontend": false,
+  "code": false,
+  "required_qa": ["qa-verification", "runtime-validation"],
+  "required_skills": [],
+  "agent_routing": null
+}

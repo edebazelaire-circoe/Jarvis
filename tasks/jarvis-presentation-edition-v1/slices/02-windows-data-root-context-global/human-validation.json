@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-STORAGE-01",
+      "description": "On a Windows profile, verify Jarvis canonical data is under the expected AppData root, CONTEXT_GLOBAL is present/permanent, and moving the installed program does not create a second profile."
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-EDIT-01",
+      "description": "Edit a real generated deck: change text, replace a visual, create/select a variant, undo one action, preview, and export. Confirm the active scene/variant and saved result are always understandable."
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-INSTALL-01",
+      "description": "A non-developer follows the Windows installer and first-run flow without terminal commands, reaches a clear readiness state, connects required services, and creates/opens a Presentation Board."
+    }
+  ]
+}

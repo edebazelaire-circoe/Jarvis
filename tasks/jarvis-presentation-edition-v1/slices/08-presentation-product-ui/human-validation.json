@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-UI-01",
+      "description": "Review the real Presentation Edition Board creation and main workflow: Presentation is clearly available, Assistant/Meeting clearly incoming, and a new user can find sources, creation, preview/present and export without developer terminology."
+    }
+  ]
+}
