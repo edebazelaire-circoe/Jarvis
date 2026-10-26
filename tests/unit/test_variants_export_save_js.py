@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 
-from tests.fakes.explorer_js import run_ui
+from tests.fakes.explorer_js import RUNTIME as RUNTIME_DIR, run_ui
 from tests.unit.test_variants_master_entrypoints_js import EXPORT_JS, MASTER_WORLD, export_model
 from tests.unit.test_variants_remotion_studio_js import node
 
@@ -28,7 +28,7 @@ def test_the_save_button_shows_only_on_a_complete_export():
 def test_saving_saved_and_refused_are_said():
     saving = export_model(x={"status": "done", "job": JOB, "started": 1, "save": {"status": "saving", "started": 97_000}}, now=100_000)
     assert saving["status"]["spin"] is True and saving["status"]["save"] is False
-    assert saving["status"]["text"].endswith("Copie vers Documents\\Jarvis… 3 s")
+    assert saving["status"]["text"].endswith("Copie en cours… 3 s")
     saved = export_model(x={"status": "done", "job": JOB, "started": 1, "save": {"status": "saved", "result": {
         "file_name": "Atelier - video (2).mp4", "renamed": True,
         "destination": {"root": "Documents\\Jarvis", "display_path": "Documents\\Jarvis\\Atelier - video (2).mp4"}}}})
@@ -44,8 +44,7 @@ def test_saving_saved_and_refused_are_said():
 def test_every_typed_export_refusal_has_a_french_sentence():
     codes = node(f"const E=require({EXPORT_JS});process.stdout.write(JSON.stringify(Object.keys(E.SAVE_ERRORS)));")
     from jarvis.domain.document_export import ExportErrorCode
-    expected = {c.value for c in ExportErrorCode} - {"export_invalid", "export_failed", "export_unavailable"}
-    assert set(codes) == expected
+    assert set(codes) == {c.value for c in ExportErrorCode}
 
 
 EXPORT_WORLD = MASTER_WORLD + r"""
@@ -88,3 +87,13 @@ def test_a_refused_copy_is_said_with_its_code_and_logged(tmp_path):
     """)
     assert "est un lien ou une jonction" in out["text"] and out["code"] == "export_destination_unsafe"
     assert out["tone"] == "danger" and out["again"] is True and out["warn"] == ["warn"]
+
+
+def test_an_already_exported_copy_says_so_with_cores_display_path_and_no_hard_coded_root():
+    already = export_model(x={"status": "done", "job": JOB, "started": 1, "save": {"status": "saved", "result": {
+        "file_name": "Atelier - video.mp4", "already_exported": True,
+        "destination": {"root": "JARVIS_EXPORT_ROOT", "display_path": "JARVIS_EXPORT_ROOT\\Atelier - video.mp4"}}}})
+    assert already["status"]["text"].endswith("Déjà dans JARVIS_EXPORT_ROOT\\Atelier - video.mp4 : rien n’a été recopié.")
+    source = (RUNTIME_DIR / "control_center_presentation_studio_explorer_export.js").read_text(encoding="utf-8")
+    code = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith(("/*", "-", "*")) and "Documents\\\\Jarvis" in line)
+    assert code == "", "no hard-coded export root in the page texts"

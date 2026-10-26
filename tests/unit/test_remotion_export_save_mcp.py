@@ -53,3 +53,36 @@ async def test_a_core_refusal_comes_back_with_its_code(tmp_path):
     core.refusals["document_export"] = refusal("export_destination_unsafe", "the export folder is a junction")
     failed, text = await call(tools, "remotion_export", {"op": "save", "artifact_id": "jart_x", "user_request": "copie"})
     assert failed and "export_destination_unsafe" in text and "junction" in text
+
+
+async def test_a_sub_agent_refused_outside_the_users_turn_is_told_to_stop_and_hand_back(tmp_path):
+    """QA S03 B2: the delegated path was refused without saying what to do; the sub-agent then looked for another way."""
+    tools, core, _ = make_tools(tmp_path, turn=False)
+    for arguments in ({"op": "save", "artifact_id": "jart_x", "user_request": "copie"},
+                      {"op": "start", "format": "mp4", "user_request": "exporte"}):
+        failed, text = await call(tools, "remotion_export", arguments)
+        assert failed and "remotion_user_turn_required" in text
+        assert "Si tu es un sous-agent" in text and "n'essaie aucun autre moyen" in text and "le cerveau principal appelle" in text
+    failed, text = await call(tools, "remotion_setup", {"op": "install", "user_request": "installe"})
+    assert failed and "sous-agent" not in text, "only the export carries the hand-back advice"
+    assert core.writes == []
+
+
+def test_the_brain_prompt_and_the_tool_say_the_main_brain_exports_itself():
+    from jarvis.runtime import claude_local, mcp_tool_meta  # noqa: F401
+    from jarvis.runtime.remotion_mcp import build_server  # noqa: F401
+
+    prompt = claude_local.BRAIN_REMOTION_PROMPT
+    assert "« dans mes documents » : save" in prompt and "start, cancel, save : TOI, dans ce tour, jamais un sous-agent" in prompt
+    assert len(prompt.encode("utf-8")) <= 2_600
+
+
+async def test_an_already_exported_copy_is_said_without_a_new_copy(tmp_path):
+    tools, core, _ = make_tools(tmp_path, turn=True)
+
+    async def already(artifact_id):
+        core._record("document_export", artifact_id)
+        return {"export": {"file_name": "A.mp4", "already_exported": True, "destination": {"display_path": "Documents\\Jarvis\\A.mp4"}}}
+    core.document_export = already
+    failed, text = await call(tools, "remotion_export", {"op": "save", "artifact_id": "jart_x", "user_request": "copie"})
+    assert not failed and "already_exported" in text and "rien n'a été recopié" in text

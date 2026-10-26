@@ -12,8 +12,8 @@ final files: [remotion-render.md](remotion-render.md), [presentation-artifacts.m
 | Export root, destination policy, atomic no-overwrite copy | `jarvis/adapters/export_destination.py` | same (junctions, links, reparse points, forbidden roots) |
 | Service (artifact id in, copy out, journal) | `jarvis/core/document_export_service.py`, wired as `core.document_export` (`jarvis/core/v2_app.py`) | `tests/unit/test_document_export_routes.py` (real Core, real registry, fake renderer) |
 | Core routes | `jarvis/protocol/export_routes.py` (`GET /v1/exports/root`, `POST /v1/exports`) | same |
-| Control Center relay | `jarvis/runtime/export_relay.py` (`GET /api/exports/root`, `POST /api/exports`) | `tests/unit/test_export_relay.py` |
-| UI | « Enregistrer dans Documents\Jarvis » after « Exporter la vidéo » (`control_center_presentation_studio_explorer_export.js`) | `tests/unit/test_variants_export_save_js.py` |
+| Control Center relay | `jarvis/runtime/export_relay.py` (`GET /api/exports/root`, `POST /api/exports`); both Core paths are in `forward_json`'s whitelist (`FORWARDABLE_PATHS`, `jarvis/protocol/client.py`) | `tests/unit/test_export_relay.py`, `test_document_export_routes.py` (real Control Center, real `forward_json`, real Core), `test_control_center_relay_whitelist.py` (every relayed Core path of every relay is accepted by `forward_json`) |
+| UI | « Enregistrer une copie dans Documents » after « Exporter la vidéo » (texts from Core's `display_path`, no hard-coded root) (`control_center_presentation_studio_explorer_export.js`) | `tests/unit/test_variants_export_save_js.py` |
 | Brain (MCP) | `remotion_export` op `save` (`jarvis/runtime/remotion_mcp.py`, `remotion_mcp_tools.py`), typed client `LocalCoreClient.document_export` | `tests/unit/test_remotion_export_save_mcp.py` |
 
 ## Internal vs exported
@@ -51,8 +51,9 @@ decision required to add one).
   `known_folders.documents_folder`): the real folder, moved or redirected (OneDrive, another drive) included, never a guessed
   localized name. Outside Windows (development): `$XDG_DOCUMENTS_DIR` if absolute, else `~/Documents`. An API failure is
   `export_destination_unavailable` with the HRESULT, never a silent fallback.
-- **Override**: `JARVIS_EXPORT_ROOT` (absolute) replaces the whole root (tests, sandbox, administration). Its parent must exist.
-  Same checks as the default.
+- **Override**: `JARVIS_EXPORT_ROOT` (absolute) replaces the whole root, in development and sandboxes only. Its parent must
+  exist. Same checks as the default. **Installed product: ignored** (journal `core.export.override_ignored`, warning); the root
+  stays `<Documents>\Jarvis`.
 - **Never created early**: describing the root (`GET /v1/exports/root`), starting Core, authoring, freezing and rendering
   create nothing; `Jarvis` is created by the first export.
 - **Labels, never paths**: answers and journal lines name the root `Documents\Jarvis` (or `JARVIS_EXPORT_ROOT`) and the file
@@ -63,7 +64,7 @@ decision required to add one).
 ## Destination policy
 
 Refused as `export_destination_unsafe`: empty or relative root; `..` anywhere; a drive root (`C:\`, or Documents itself a drive
-root); UNC or device paths (`\\server\share`, `//server/share`, `\\?\...`); a base folder whose resolved path differs from its
+root); UNC or device paths (`\\server\share`, `//server/share`, `\\?\...`); a `:` after the drive letter (alternate data stream); a base folder whose resolved path differs from its
 path (it goes through a link or junction); an export folder that is a symbolic link, a junction or any reparse point, or a
 file. **One admitted reparse point**: OneDrive cloud-file folders (`IO_REPARSE_TAG_CLOUD*`, `tag & 0xFFFF0FFF == 0x9000001A`),
 which are ordinary folders for the user. A folder-redirected Documents on a network share (UNC) is refused in V1.
@@ -79,6 +80,11 @@ runtime root, the installed product home `%LOCALAPPDATA%\CIRCOE\Jarvis`, or the 
   `Jarvis export`. The extension comes from the class.
 - Default name: `<presentation title> - <video|image|pdf>` (title read through `rendered_from` → snapshot → source; unreadable →
   `Jarvis export - <class>`, journalled `core.export.title_unavailable`).
+- File names drop Unicode format characters (category `Cf`: right-to-left override, zero-width joiners), which could disguise a
+  name or its extension.
+- Same bytes already there: if a file under one of this export's names (up to the first free one) has the same size and SHA-256,
+  nothing is copied: `already_exported: true`, HTTP 200, journal `core.export.already_exported`. Asking again for the same copy
+  never fills the folder with `name (2)`, `name (3)`...
 - Collision: never an overwrite. `name.ext`, then `name (2).ext` ... `name (999).ext`; any existing entry (file, folder, link)
   takes a name. All taken: `export_collision_exhausted`. `renamed: true` says a number was added.
 
@@ -93,14 +99,19 @@ runtime root, the installed product home `%LOCALAPPDATA%\CIRCOE\Jarvis`, or the 
    `export_source_unavailable` and nothing is kept.
 5. Rename without replacement: `os.rename` on Windows (fails if the target exists), `os.link` + unlink elsewhere. A name taken
    meanwhile moves to the next candidate.
-6. Any failure removes the temporary file. The internal payload is only read.
+6. After the rename, the export folder is read again (`lstat`: still a plain folder, not a link) and the published file's resolved
+   parent must be the root resolved before the copy. Otherwise (the folder was swapped for a junction meanwhile) the copy we just
+   published is removed and the export is `export_destination_unsafe`.
+7. Any failure removes the temporary file. The internal payload is only read.
+
+The *Same bytes already there* check runs before step 1.
 
 ## API
 
 | Method | Core | Control Center relay | Body | Answer |
 | --- | --- | --- | --- | --- |
 | GET | `/v1/exports/root` | `/api/exports/root` (10 s) | — | `{root: {available, root, exists}}` or `{root: {available: false, root, code, message}}` |
-| POST | `/v1/exports` | `/api/exports` (120 s) | `{artifact_id, file_name?, actor?}` | 201 `{export: {artifact_id, format, file_name, destination: {root, display_path}, size_bytes, sha256, exported_at, renamed, copy: true}}` |
+| POST | `/v1/exports` | `/api/exports` (120 s) | `{artifact_id, file_name?, actor?}` | 201 `{export: {artifact_id, format, file_name, destination: {root, display_path}, size_bytes, sha256, exported_at, renamed, already_exported, copy: true}}` (200 when `already_exported`) |
 
 Closed keys: any other key (`path`, `source`, `destination`, ...) is `export_invalid`. `actor` is `user` (default) or `brain`,
 journal information only; the relay refuses any `actor` other than `user`. Core token required; the relay prefix is in
@@ -134,6 +145,15 @@ journal information only; the relay refuses any `actor` other than `user`. Core 
 `start` (an addressed user turn and the user's words in `user_request`), no path, folder or name argument in the schema
 (`additionalProperties: false`), `actor: brain` sent by the typed client. The Slice 04 capability profile decides whether the
 Presentation product brain keeps it; nothing else in the brain can write outside the data root through this contract.
+
+**The main brain does it itself, never a sub-agent** (QA S03 B2). A sub-agent runs after the user's turn ended, so the gate
+refuses it (`remotion_user_turn_required`); delegating « mets la vidéo dans mes documents » therefore never reached the safe path.
+The gate is unchanged. Instead:
+- `BRAIN_REMOTION_PROMPT` (`jarvis/runtime/claude_local.py`): « dans mes documents » = `save` with the `artifact_id` of a
+  `complete` export (otherwise `start`, and the user asks again); `start`, `cancel`, `save` are done by the main brain in this turn,
+  never by a sub-agent. The tool description says the same.
+- The refusal a sub-agent gets from `remotion_export` (`SUBAGENT_EXPORT_ADVICE`) tells it to stop, to try no other way (file, copy,
+  command) and to hand back saying the main brain calls `remotion_export` itself when the user asks.
 
 ## Not canonical
 

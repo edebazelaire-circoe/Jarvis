@@ -38,6 +38,9 @@ class DocumentExportService:
         self._title_of = title_of
         self._diagnostics = diagnostics
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        if getattr(destination, "ignored_override", False):
+            self._trace("override_ignored", "JARVIS_EXPORT_ROOT ignoré : produit installé, la racine reste Documents\\Jarvis",
+                        level="warning", data={"root": destination.label})
 
     @property
     def destination(self) -> ExportDestination:
@@ -89,8 +92,10 @@ class DocumentExportService:
             expected_size=artifact.size_bytes, expected_sha256=expected_sha if isinstance(expected_sha, str) else None)
         result = ExportResult(artifact_id=artifact.artifact_id, format=cls.format, file_name=outcome.file_name,
                               root_label=self._destination.label, size_bytes=outcome.size_bytes, sha256=outcome.sha256,
-                              exported_at=self._clock().isoformat(), renamed=outcome.renamed)
-        self._trace("completed", "Copie exportée", data={"artifact_id": artifact.artifact_id, "actor": actor, "format": cls.format,
+                              exported_at=self._clock().isoformat(), renamed=outcome.renamed,
+                              already_exported=outcome.already_exported)
+        self._trace("already_exported" if outcome.already_exported else "completed",
+                    "Déjà exporté à l'identique : aucune copie de plus" if outcome.already_exported else "Copie exportée", data={"artifact_id": artifact.artifact_id, "actor": actor, "format": cls.format,
                                                        "file_name": outcome.file_name, "root": self._destination.label,
                                                        "size_bytes": outcome.size_bytes, "renamed": outcome.renamed})
         return result

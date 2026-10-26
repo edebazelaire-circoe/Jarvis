@@ -125,7 +125,14 @@ async def test_deleting_the_exported_copy_then_exporting_again_works_from_intern
     assert status == 201 and again["export"]["file_name"] == "Mon export.png"
     assert again["export"]["sha256"] == first["export"]["sha256"]
     status, third = await call(stack.base, "POST", "/v1/exports", json={"artifact_id": artifact_id, "file_name": "Mon export"})
-    assert status == 201 and third["export"]["file_name"] == "Mon export (2).png" and third["export"]["renamed"] is True
+    assert status == 200 and third["export"]["already_exported"] is True and third["export"]["file_name"] == "Mon export.png"
+    assert sorted(p.name for p in (stack.docs / "Jarvis").iterdir()) == ["Mon export.png"], "asking again copies nothing more"
+    (stack.docs / "Jarvis" / "Mon export.png").write_bytes(b"the user's own edited file")
+    status, fourth = await call(stack.base, "POST", "/v1/exports", json={"artifact_id": artifact_id, "file_name": "Mon export"})
+    assert status == 201 and fourth["export"]["file_name"] == "Mon export (2).png" and fourth["export"]["renamed"] is True
+    assert (stack.docs / "Jarvis" / "Mon export.png").read_bytes() == b"the user's own edited file"
+    kinds = [k for k, _, _ in stack.sink.events if k.startswith("core.export.")]
+    assert kinds == ["core.export.completed", "core.export.completed", "core.export.already_exported", "core.export.completed"]
 
 
 async def test_a_renamed_or_moved_export_never_matters_to_jarvis(stack):
@@ -214,3 +221,38 @@ async def test_the_typed_client_exports_for_the_brain_with_the_id_alone(stack):
     assert answer["export"]["file_name"] == "Atelier - pdf.pdf"
     actors = [d.get("actor") for k, _, d in stack.sink.events if k == "core.export.completed"]
     assert actors == ["brain"]
+
+
+async def test_the_real_control_center_relay_reaches_the_real_core_through_forward_json(stack, tmp_path):
+    """QA S03 B1: the relay used to answer 503 `core_unreachable` (path missing from `forward_json`'s whitelist)."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from jarvis.runtime.core_sessions import CoreSessionTransport
+    from tests.unit.test_control_center_mcp_plugins_api import _center
+
+    await ready(stack)
+    artifact_id, _, _ = await rendered(stack, "still")
+    token_file = tmp_path / "core.token"
+    token_file.write_text(TOKEN, encoding="utf-8")
+    port = int(stack.base.rsplit(":", 1)[1])
+    sessions = CoreSessionTransport(host="127.0.0.1", port=port, token_file=token_file)
+    client = TestClient(TestServer(_center(tmp_path / "cc", sessions)._app))
+    await client.start_server()
+    try:
+        response = await client.get("/api/exports/root")
+        assert response.status == 200 and (await response.json())["root"]["available"] is True
+        response = await client.post("/api/exports", json={"artifact_id": artifact_id})
+        body = await response.json()
+        assert response.status == 201, body
+        assert (stack.docs / "Jarvis" / body["export"]["file_name"]).is_file()
+    finally:
+        await client.close()
+        await sessions.close()
+
+
+def test_an_ignored_override_in_an_installed_product_is_journalled_once(tmp_path):
+    from jarvis.core.document_export_service import DocumentExportService
+
+    sink = Sink()
+    DocumentExportService(artifacts=None, destination=ExportDestination(forbidden=(), ignored_override=True), diagnostics=sink)
+    assert [(k, lvl) for k, lvl, _ in sink.events] == [("core.export.override_ignored", "warning")]

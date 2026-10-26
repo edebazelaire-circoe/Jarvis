@@ -83,6 +83,8 @@ def check_root_shape(raw: str) -> Path:
         raise _unsafe("the export root must be an absolute path")
     if any(part == ".." for part in win.parts) or any(part == ".." for part in path.parts):
         raise _unsafe("the export root must not contain '..'")
+    if ":" in (text[2:] if win.drive else text) and os.name == "nt":
+        raise _unsafe("a ':' after the drive letter (alternate data stream) is not an export root")
     if path.parent == path or win.parent == win:
         raise _unsafe("a drive root is not an export root")
     return path
@@ -94,21 +96,27 @@ class CopyOutcome:
     size_bytes: int
     sha256: str
     renamed: bool
+    already_exported: bool = False
 
 
 class ExportDestination:
     """Racine d'export et copie sans écrasement. Voir l'en-tête du module."""
 
     def __init__(self, *, forbidden: Iterable[Path], override: str | None = None,
-                 documents: Callable[[], Path] = documents_folder) -> None:
+                 documents: Callable[[], Path] = documents_folder, ignored_override: bool = False) -> None:
         self._forbidden = tuple(Path(p) for p in forbidden)
         self._override = (override or "").strip() or None
         self._documents = documents
+        #: `JARVIS_EXPORT_ROOT` was set in an installed product and ignored (said once by the service's journal).
+        self.ignored_override = ignored_override
 
     @classmethod
     def from_environment(cls, *, data_root: Path, environ: Mapping[str, str] | None = None,
                          documents: Callable[[], Path] = documents_folder) -> ExportDestination:
-        """Racine depuis l'environnement ; dossiers interdits : données, `CONTEXT_GLOBAL`, runtime, maison du produit, programme."""
+        """Racine depuis l'environnement ; dossiers interdits : données, `CONTEXT_GLOBAL`, runtime, maison du produit, programme.
+
+        `JARVIS_EXPORT_ROOT` vaut pour le développement et les bacs à sable seulement : en produit installé il est ignoré
+        (`ignored_override`, journalisé par le service), la racine reste `<Documents>\\Jarvis`."""
 
         from jarvis.data_root import resolve_runtime_root
         from jarvis.installation import CODE_ROOT, detect_installation
@@ -119,13 +127,18 @@ class ExportDestination:
             forbidden.append(resolve_runtime_root(env))
         except Exception:  # noqa: BLE001 - argued: an unresolvable runtime root removes no protection of the others
             pass
+        installed = False
         try:
             installation = detect_installation(env)
-            if installation.installed and installation.home is not None:
+            installed = installation.installed
+            if installed and installation.home is not None:
                 forbidden.append(installation.home.root)
         except Exception:  # noqa: BLE001 - argued: Core refuses to start on a bad marker; here the other guards still hold
             pass
-        return cls(forbidden=forbidden, override=env.get(EXPORT_ROOT_ENV), documents=documents)
+        override = str(env.get(EXPORT_ROOT_ENV) or "").strip() or None
+        if installed and override:
+            return cls(forbidden=forbidden, documents=documents, ignored_override=True)
+        return cls(forbidden=forbidden, override=override, documents=documents)
 
     # ------------------------------------------------------------ racine
 
@@ -227,6 +240,12 @@ class ExportDestination:
         if free is not None and free < source_info.st_size + FREE_MARGIN_BYTES:
             raise ExportError(E.FAILED, f"not enough free disk space at the export root ({free // (1024 * 1024)} MiB free, "
                                         f"{source_info.st_size // (1024 * 1024) + 64} MiB needed)")
+        root_canon = _canonical(root)
+        wanted = expected_sha256 or _sha256_of(source)
+        existing = _already_there(root, stem, extension, source_info.st_size, wanted)
+        if existing is not None:
+            name, index = existing
+            return CopyOutcome(name, source_info.st_size, wanted, index > 0, already_exported=True)
         temp = root / f".{secrets.token_hex(6)}{TEMP_SUFFIX}"
         self._check_length(temp)
         try:
@@ -239,6 +258,7 @@ class ExportDestination:
         except BaseException:
             _discard(temp)
             raise
+        _verify_published(root, root_canon, root / name)
         return CopyOutcome(name, size, digest, renamed)
 
     @staticmethod
@@ -286,6 +306,63 @@ class ExportDestination:
                 raise ExportError(E.FAILED, f"the export could not be named: {type(exc).__name__}: {exc.strerror}") from exc
             return name, index > 0
         raise ExportError(E.COLLISION_EXHAUSTED, f"{stem}{extension} and its numbered variants are all taken")
+
+
+def _sha256_of(path: Path) -> str:
+    hasher = hashlib.sha256()
+    try:
+        with open(path, "rb") as src:
+            while chunk := src.read(CHUNK_BYTES):
+                hasher.update(chunk)
+    except OSError as exc:
+        raise ExportError(E.SOURCE_UNAVAILABLE, f"the canonical payload is unreadable: {type(exc).__name__}") from exc
+    return hasher.hexdigest()
+
+
+def _already_there(root: Path, stem: str, extension: str, size: int, sha256: str) -> tuple[str, int] | None:
+    """(nom, rang) d'un fichier ordinaire sous un des noms de cet export qui a déjà ces octets ; `None` sinon.
+
+    Plafond des copies (QA S03) : redemander la même copie ne remplit pas le dossier de `nom (2)`, `nom (3)`... Seuls les noms
+    occupés jusqu'au premier libre sont lus, et seulement ceux de la bonne taille.
+    """
+
+    for index, name in enumerate(candidate_names(stem, extension)):
+        path = root / name
+        try:
+            info = os.lstat(path)
+        except FileNotFoundError:
+            return None
+        except OSError:
+            continue
+        if link_like(info) or not stat.S_ISREG(info.st_mode) or info.st_size != size:
+            continue
+        try:
+            if _sha256_of(path) == sha256:
+                return name, index
+        except ExportError:
+            continue  # a user's file that cannot be read is simply not this export
+    return None
+
+
+def _verify_published(root: Path, root_canon: str, final: Path) -> None:
+    """Après le renommage : la racine n'est pas devenue un lien et le fichier est bien dessous (course vérification / renommage).
+
+    Sinon la copie que NOUS venons de publier ailleurs est retirée, et l'export est refusé (`export_destination_unsafe`).
+    """
+
+    try:
+        info = os.lstat(root)
+        safe = not link_like(info) and stat.S_ISDIR(info.st_mode)
+        landed = os.path.normcase(os.path.dirname(os.path.realpath(final)))
+    except OSError:
+        safe, landed = False, ""
+    if safe and landed == root_canon:
+        return
+    try:
+        os.unlink(final)
+    except OSError:
+        pass  # argued: the refusal below names the cause; nothing else can be done for a file we can no longer reach
+    raise _unsafe("the export folder changed during the copy (link or junction): the copy was withdrawn")
 
 
 def _taken(path: Path) -> bool:

@@ -126,6 +126,8 @@ def file_stem(raw: object) -> str:
     """
 
     text = unicodedata.normalize("NFC", str(raw or ""))
+    # Format characters (Cf: U+202E right-to-left override, zero-width joiners...) would disguise the visible name or extension.
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
     text = _FORBIDDEN_CHARS.sub(" ", text)
     text = _SPACES.sub(" ", text).strip()
     text = text[:MAX_STEM_CHARS].strip().rstrip(". ").lstrip(". ")
@@ -163,9 +165,11 @@ class ExportResult:
     sha256: str
     exported_at: str
     renamed: bool
+    #: The same bytes already sat under one of this export's names: nothing was copied (no flood of copies).
+    already_exported: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {"artifact_id": self.artifact_id, "format": self.format, "file_name": self.file_name,
                 "destination": {"root": self.root_label, "display_path": f"{self.root_label}\\{self.file_name}"},
                 "size_bytes": self.size_bytes, "sha256": self.sha256, "exported_at": self.exported_at,
-                "renamed": self.renamed, "copy": True}
+                "renamed": self.renamed, "already_exported": self.already_exported, "copy": True}

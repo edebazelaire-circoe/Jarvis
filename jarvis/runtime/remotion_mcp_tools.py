@@ -40,6 +40,11 @@ from jarvis.runtime.presentation_studio_mcp_support import MAX_LISTED, Presentat
 from jarvis.runtime.presentation_studio_mcp_tools import PresentationTools, _drop_none
 
 JOB_ID = re.compile(r"rj_[0-9a-f]{12}\Z")
+#: Ajouté au refus `remotion_user_turn_required` de `remotion_export` (QA S03 B2) : un sous-agent n'est jamais dans le tour de
+#: l'utilisateur ; il s'arrête et rend la main au cerveau principal, sans autre voie (fichier, commande).
+SUBAGENT_EXPORT_ADVICE = (" Si tu es un sous-agent : arrête-toi ici et n'essaie aucun autre moyen (fichier, copie, commande). Rends la main en "
+                          "disant que le cerveau principal appelle lui-même remotion_export (start, cancel ou save) dans le tour où "
+                          "l'utilisateur le demande.")
 ARTIFACT_ID = re.compile(r"jart_[A-Za-z0-9_]{1,59}\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 #: Les seules clés de réglage d'export que le cerveau peut poser. `concurrency` (mémoire du poste) et tout le reste : à l'utilisateur.
@@ -97,7 +102,11 @@ class RemotionTools(PresentationTools):
         if not clip(user_request, MAX_WORDS):
             raise self._refuse(tool, "remotion_user_request_required", sentence_for("remotion_user_request_required"), op=op)
         if not await self._addressed_user_turn():
-            raise self._refuse(tool, "remotion_user_turn_required", sentence_for("remotion_user_turn_required"), op=op)
+            message = sentence_for("remotion_user_turn_required")
+            if tool == "remotion_export":
+                # QA S03 B2 (presentation-edition-v1): a delegated export is refused here; the sub-agent must stop, not find another way.
+                message += SUBAGENT_EXPORT_ADVICE
+            raise self._refuse(tool, "remotion_user_turn_required", message, op=op)
 
     # ------------------------------------------------------------------ lecture : santé, Studio, exports
 
@@ -263,6 +272,9 @@ class RemotionTools(PresentationTools):
         done = answer.get("export") or {}
         where = (done.get("destination") or {}).get("display_path") or "Documents\\Jarvis"
         renamed = " (nom déjà pris : numéroté, rien n'est écrasé)" if done.get("renamed") else ""
+        if done.get("already_exported"):
+            return self._ok("say", status="already_exported", file_name=done.get("file_name"), destination=where,
+                            say=f"Cette copie est déjà dans {where} : rien n'a été recopié.")
         return self._ok("say", status="saved", file_name=done.get("file_name"), destination=where, size_bytes=done.get("size_bytes"),
                         say=f"Copie enregistrée dans {where}{renamed}.",
                         note="Une copie : l'export reste dans Jarvis ; effacer ou déplacer ce fichier ne change rien à la présentation.")

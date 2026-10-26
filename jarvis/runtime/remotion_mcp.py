@@ -173,7 +173,7 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Remotion
         artifact_id: Annotated[str | None, Field(max_length=64, description="save : jart_…")] = None,
         user_request: UserRequest = None,
     ) -> dict[str, Any]:
-        """Exporter ou annuler, sur demande. « la vidéo » : scope master ; sinon une scène. Aucun Board lu. save : copie dans Documents."""
+        """Exporter ou annuler, sur demande. « la vidéo » : scope master ; sinon une scène. Aucun Board lu. save : copie dans Documents. Toi-même, jamais un sous-agent."""
         return await remotion.export(op, format=format, settings=None if settings is None else settings.model_dump(exclude_none=True),
                                      presentation_id=presentation_id, variant_id=variant_id, job_id=job_id, artifact_id=artifact_id,
                                      user_request=user_request)

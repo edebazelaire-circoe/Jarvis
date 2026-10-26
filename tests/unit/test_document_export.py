@@ -340,9 +340,9 @@ def test_the_installed_product_home_is_forbidden(tmp_path, monkeypatch):
     home.mkdir(parents=True)
     monkeypatch.setattr("jarvis.installation.detect_installation",
                         lambda env=None, code_root=None: Installation(InstallMode.INSTALLED, tmp_path, ProductHome(home)))
-    d = ExportDestination.from_environment(data_root=tmp_path / "data",
-                                           environ={"JARVIS_RUNTIME_DIR": str(tmp_path / "rt"),
-                                                    "JARVIS_EXPORT_ROOT": str(home / "exports")})
+    # a Documents folder that the system would place inside the product home (the override is ignored when installed)
+    d = ExportDestination.from_environment(data_root=tmp_path / "data", documents=lambda: home,
+                                           environ={"JARVIS_RUNTIME_DIR": str(tmp_path / "rt")})
     with pytest.raises(ExportError) as caught:
         d.resolve()
     assert caught.value.code is E.DESTINATION_FORBIDDEN
@@ -364,3 +364,76 @@ def test_only_the_export_adapter_resolves_the_users_documents_folder():
         if any(token in text for token in ("documents_folder", "FOLDERID_DOCUMENTS", "SHGetKnownFolderPath", "EXPORT_ROOT_ENV")):
             users.append(path.relative_to(REPO).as_posix())
     assert sorted(users) == ["jarvis/adapters/export_destination.py", "jarvis/adapters/known_folders.py"]
+
+
+# ------------------------------------------------------------------ reprise QA S03
+
+
+def test_unicode_format_characters_are_removed_from_names():
+    assert file_stem("facture\u202egnp.exe") == "facturegnp.exe"
+    assert file_stem("a\u200db\u200bc\ufeff") == "abc"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows drive syntax")
+@pytest.mark.parametrize("raw", ["C:\\Users\\x\\exports:stream", "C:\\Users\\x:y\\exports"])
+def test_a_colon_after_the_drive_letter_is_refused(raw):
+    with pytest.raises(ExportError) as caught:
+        check_root_shape(raw)
+    assert caught.value.code is E.DESTINATION_UNSAFE
+
+
+def test_the_override_is_ignored_in_an_installed_product(tmp_path, monkeypatch):
+    from jarvis.installation import Installation, InstallMode, ProductHome
+    home = tmp_path / "Local" / "CIRCOE" / "Jarvis"
+    monkeypatch.setattr("jarvis.installation.detect_installation",
+                        lambda env=None, code_root=None: Installation(InstallMode.INSTALLED, tmp_path, ProductHome(home)))
+    docs = tmp_path / "Documents"
+    docs.mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    d = ExportDestination.from_environment(data_root=tmp_path / "data", documents=lambda: docs,
+                                           environ={"JARVIS_RUNTIME_DIR": str(tmp_path / "rt"),
+                                                    "JARVIS_EXPORT_ROOT": str(tmp_path / "elsewhere" / "exports")})
+    assert d.ignored_override is True and d.label == "Documents\\Jarvis"
+    assert d.resolve()[0] == docs / "Jarvis"
+
+
+def test_the_override_stays_honoured_in_development(tmp_path):
+    (tmp_path / "ok").mkdir()
+    d = ExportDestination.from_environment(data_root=tmp_path / "data",
+                                           environ={"JARVIS_RUNTIME_DIR": str(tmp_path / "rt"),
+                                                    "JARVIS_EXPORT_ROOT": str(tmp_path / "ok" / "exports")})
+    assert d.ignored_override is False and d.resolve()[0] == tmp_path / "ok" / "exports"
+
+
+def test_the_same_bytes_already_exported_are_not_copied_again(tmp_path):
+    d, docs = destination(tmp_path)
+    src, size, sha = source_file(tmp_path)
+    first = d.copy_in(src, stem="A", extension=".mp4", expected_size=size, expected_sha256=sha)
+    for _ in range(5):
+        again = d.copy_in(src, stem="A", extension=".mp4", expected_size=size, expected_sha256=sha)
+        assert again.already_exported is True and again.file_name == first.file_name
+    assert [p.name for p in (docs / "Jarvis").iterdir()] == ["A.mp4"]
+    (docs / "Jarvis" / "A.mp4").write_bytes(b"x" * size)  # same size, other bytes: a different file
+    other = d.copy_in(src, stem="A", extension=".mp4", expected_size=size, expected_sha256=sha)
+    assert other.already_exported is False and other.file_name == "A (2).mp4"
+    assert d.copy_in(src, stem="A", extension=".mp4", expected_size=size, expected_sha256=sha).file_name == "A (2).mp4"
+    assert d.copy_in(src, stem="A", extension=".mp4", expected_size=size, expected_sha256=None).already_exported is True
+
+
+def test_a_root_swapped_for_a_junction_during_the_copy_withdraws_the_published_copy(tmp_path, monkeypatch):
+    d, docs = destination(tmp_path)
+    elsewhere = tmp_path / "Desktop"
+    elsewhere.mkdir()
+    real = dest_module._rename_no_replace
+
+    def swap_then_rename(temp, final):
+        moved = tmp_path / "moved-root"
+        os.rename(docs / "Jarvis", moved)          # the attacker moves the checked folder away...
+        junction(docs / "Jarvis", elsewhere)        # ...and plants a junction in its place
+        real(moved / temp.name, final)              # the rename lands through the junction
+    monkeypatch.setattr(dest_module, "_rename_no_replace", swap_then_rename)
+    src, size, sha = source_file(tmp_path)
+    with pytest.raises(ExportError) as caught:
+        d.copy_in(src, stem="A", extension=".mp4", expected_size=size, expected_sha256=sha)
+    assert caught.value.code is E.DESTINATION_UNSAFE
+    assert list(elsewhere.iterdir()) == [], "the copy published outside the root is withdrawn"

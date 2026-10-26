@@ -19,9 +19,10 @@
      Chaque étape est journalisée (`[studio-explorer] video_export_*`, `warn` / `error` pour un échec).
    - **Le résultat est un Artefact.** Terminé : son identifiant, sa taille, « Ouvrir la vidéo » (le fichier servi par Jarvis) ; il apparaît
      aussi dans les Artefacts du Board. Un export lancé ailleurs (voix, autre fenêtre) sur la même vidéo entière est repris à l'ouverture.
-   - **Une copie chez l'utilisateur, seulement sur son geste** (presentation-edition-v1 Slice 03, `docs/export.md`). « Enregistrer dans
-     Documents\Jarvis » COPIE l'Artefact terminé (`POST /api/exports {artifact_id}`) : jamais un chemin, jamais automatique. En cours :
-     pastille et secondes ; fait : le nom du fichier dans Documents\Jarvis (numéroté si le nom était pris) ; refus : sa phrase et son code. */
+   - **Une copie chez l'utilisateur, seulement sur son geste** (presentation-edition-v1 Slice 03, `docs/export.md`). « Enregistrer une
+     copie dans Documents » COPIE l'Artefact terminé (`POST /api/exports {artifact_id}`) : jamais un chemin, jamais automatique. En cours :
+     pastille et secondes ; fait : le `display_path` rendu par Core (numéroté si le nom était pris ; « déjà là » si les mêmes octets y
+     sont) ; refus : sa phrase et son code. Aucun chemin en dur ici : la racine est celle que Core dit. */
 (function(root){
   'use strict';
   const Core=root.JarvisStudioExplorerCore||(typeof require==='function'?require('./control_center_presentation_studio_explorer_core.js'):null);
@@ -30,16 +31,19 @@
   const JOBS='/api/local-capabilities/remotion/render/jobs';
   const EXPORTS='/api/exports';
   const SAVE_DEADLINE_MS=125000;    // the relay waits 120 s for a copy of up to 512 MiB
-  const SAVE_LABEL='Enregistrer dans Documents\\Jarvis';
+  const SAVE_LABEL='Enregistrer une copie dans Documents';
   /* An explicit copy to the user's folder refused or failed, in the user's words (`docs/export.md` › *Errors*). */
   const SAVE_ERRORS=Object.freeze({
     export_destination_unavailable:'Le dossier Documents de ce poste est introuvable : rien n’a été copié.',
-    export_destination_unsafe:'Le dossier Documents\\Jarvis est un lien ou une jonction, ou il n’est pas sur ce poste : Jarvis n’y écrit pas. Rien n’a été copié.',
+    export_destination_unsafe:'Le dossier d’export est un lien ou une jonction, ou il n’est pas sur ce poste : Jarvis n’y écrit pas. Rien n’a été copié.',
     export_destination_forbidden:'Le dossier d’export se trouve dans les données internes de Jarvis : refusé, rien n’a été copié.',
-    export_collision_exhausted:'Tous les noms de ce fichier sont déjà pris dans Documents\\Jarvis : rien n’a été écrasé.',
+    export_collision_exhausted:'Tous les noms de ce fichier sont déjà pris dans le dossier d’export : rien n’a été écrasé.',
     export_source_unavailable:'Le fichier interne de cet export est absent ou ne correspond plus à son enregistrement : exportez de nouveau.',
     export_source_not_exportable:'Cet Artefact n’est pas un fichier final : rien n’a été copié.',
     export_source_not_found:'Cet Artefact n’existe plus : rien n’a été copié.',
+    export_failed:'La copie n’a pas pu être écrite (disque plein, chemin trop long ou refus du système) : rien n’a été gardé.',
+    export_invalid:'Jarvis a refusé cette demande de copie : rien n’a été copié.',
+    export_unavailable:'La copie dans Documents n’est pas disponible sur ce poste : rien n’a été copié.',
   });
   const POLL_MS=2000;
   const POLL_FAILURES=3;
@@ -180,10 +184,11 @@
         const save=x.save||null;
         status.save=!save||save.status==='error';
         if(save&&save.status==='saving'){
-          status.spin=true;status.tone='';status.text+=` Copie vers Documents\\Jarvis… ${fmtDuration(Math.max(0,(i.now-save.started)/1000))}`;
+          status.spin=true;status.tone='';status.text+=` Copie en cours… ${fmtDuration(Math.max(0,(i.now-save.started)/1000))}`;
         }else if(save&&save.status==='saved'){
-          const r=save.result||{},where=r.destination&&r.destination.display_path||`Documents\\Jarvis\\${r.file_name||''}`;
-          status.text+=` Copie enregistrée : ${where}${r.renamed?' (le nom était pris : numéroté, rien n’a été écrasé)':''}.`;
+          const r=save.result||{},where=r.destination&&r.destination.display_path||r.file_name||'le dossier d’export';
+          status.text+=r.already_exported?` Déjà dans ${where} : rien n’a été recopié.`
+            :` Copie enregistrée : ${where}${r.renamed?' (le nom était pris : numéroté, rien n’a été écrasé)':''}.`;
           status.save=false;
         }else if(save&&save.status==='error'){
           status.tone='danger';status.text+=` ${save.error.text}`;status.code=save.error.code+(save.error.detail?` · ${save.error.detail}`:'');
@@ -385,7 +390,7 @@
         return {state:'failed',code:error.code};
       }finally{render()}
     }
-    /* « Enregistrer dans Documents\Jarvis » : a COPY of the finished Artifact, only on this click (never automatic, never a path). */
+    /* « Enregistrer une copie dans Documents » : a COPY of the finished Artifact, only on this click (never automatic, never a path). */
     async function save(options){
       const x=S.x,o=options||{};
       const job=x&&x.job;
@@ -399,15 +404,15 @@
         if(x.save!==attempt)return {state:'superseded'};
         attempt.status='saved';attempt.result=body.export||{};
         log('video_export_saved',{artifact:job.artifact_id,file_name:attempt.result.file_name,renamed:!!attempt.result.renamed,size:attempt.result.size_bytes});
-        announce('Copie enregistrée dans Documents, dossier Jarvis.');
+        announce(attempt.result.already_exported?'Cette copie est déjà dans vos documents.':'Copie enregistrée dans vos documents.');
         return {state:'saved',result:attempt.result};
       }catch(error){
         if(x.save!==attempt)return {state:'superseded'};
         const code=error.code||'network';
         const known=SAVE_ERRORS[code];
         attempt.status='error';
-        attempt.error={code,text:known||(code==='timeout'?'Core n’a pas répondu à temps : la copie a peut-être été faite, regardez dans Documents\\Jarvis avant de réessayer.'
-          :'La copie dans Documents\\Jarvis n’a pas abouti.'),detail:known?'':cleanLine(error.message,160)};
+        attempt.error={code,text:known||(code==='timeout'?'Core n’a pas répondu à temps : la copie a peut-être été faite, regardez dans le dossier d’export avant de réessayer.'
+          :'La copie n’a pas abouti.'),detail:known&&code!=='export_failed'?'':cleanLine(error.message,160)};
         log('video_export_save_failed',{artifact:job.artifact_id,code,status:error.status,message:cleanLine(error.message,160)},
           error.status>=500||!error.status?'error':'warn');
         return {state:'failed',code};

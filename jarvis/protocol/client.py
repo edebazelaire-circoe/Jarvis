@@ -56,7 +56,17 @@ FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mc
 #: Chat (jarvis-unified-chat-and-board-drop, Slice 03, `chat_relay.py`) : le tour écrit, et **seulement** lui —
 #: jamais `.../brain-turns/cancel`, `.../turns` ni une autre route de conversation.
 #: Dépôt d'une URL sur le Board affiché (Slice 08, `chat_relay.py`) : le chemin exact, jamais une autre route d'upload.
-FORWARDABLE_PATHS = (re.compile(r"/v1/conversations/[^/?#]+/brain-turns"), re.compile(r"/v1/uploads/links"))
+#: Export explicite d'un fichier final (presentation-edition-v1 Slice 03, `export_relay.py`) : les deux chemins exacts.
+FORWARDABLE_PATHS = (re.compile(r"/v1/conversations/[^/?#]+/brain-turns"), re.compile(r"/v1/uploads/links"),
+                     re.compile(r"/v1/exports(?:/root)?"))
+
+
+def is_forwardable(path: str) -> bool:
+    """La liste blanche de `LocalCoreClient.forward_json` : un relais du Control Center qui vise un autre chemin lève `ValueError`."""
+
+    return path.startswith(FORWARDABLE_PREFIXES) or any(p.fullmatch(path) for p in FORWARDABLE_PATHS)
+
+
 #: Seule route relayée en flux montant (`forward_upload`, chat Slice 07) ; jamais par `forward_json`.
 UPLOAD_PATH = re.compile(r"/v1/uploads/[A-Za-z0-9][A-Za-z0-9_-]{7,127}")
 #: Capture annotée (orbital-ui Slice 05.B) : le seul chemin que `forward_annotation` relaie.
@@ -1526,7 +1536,7 @@ class LocalCoreClient:
         d'outil n'existe au Control Center (`docs/mcp/tool-contract.md` §8).
         """
 
-        if not path.startswith(FORWARDABLE_PREFIXES) and not any(p.fullmatch(path) for p in FORWARDABLE_PATHS):
+        if not is_forwardable(path):
             raise ValueError(f"forward_json only relays board, session, MCP plugin, context, capture, artifact, "
                              f"activity, workspace and prefab routes, not {path[:80]!r}")
         session = await self._http()

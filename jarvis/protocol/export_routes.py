@@ -77,4 +77,5 @@ class ExportProtocolRoutes:
             raise ExportError(E.INVALID, f"unknown key(s): {', '.join(stray[:5])} (an export takes artifact_id, file_name, actor; never a path)")
         result = await self._service().export(body.get("artifact_id"), file_name=body.get("file_name"),
                                               actor=body.get("actor") or "user")
-        return web.json_response({"export": result.to_dict()}, status=201)
+        # 200 when the same bytes already sat under one of its names (nothing copied), 201 for a new copy
+        return web.json_response({"export": result.to_dict()}, status=200 if result.already_exported else 201)
