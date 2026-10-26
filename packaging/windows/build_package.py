@@ -19,8 +19,8 @@ Trois commandes, aucune ne touche au JARVIS vivant ni à `%LOCALAPPDATA%\\CIRCOE
         Recalcule les empreintes des arbres et les compare au manifeste.
 
 Le cache des téléchargements vit hors du dépôt (`%LOCALAPPDATA%\\Temp\\jarvis-build-cache` par défaut).
-Lancer avec le Python 3.14 de développement (`.venv`) : pip y est requis, et le bytecode est produit par le
-Python du paquet lui-même.
+Lancer avec le Python de développement (`.venv`) de la MÊME version que le runtime épinglé (3.14.6) : pip y est
+requis, et il produit le bytecode du paquet (graine de hachage fixée).
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ import io
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import shutil
 import subprocess
@@ -243,7 +244,8 @@ def drop_script_records(site: Path) -> None:
     """Retire des `RECORD` les lanceurs supprimés (`bin/…`) : leur empreinte dépend du dossier de build (non reproductible)."""
 
     for record in sorted(site.glob("*.dist-info/RECORD")):
-        lines = record.read_text(encoding="utf-8").splitlines(keepends=True)
+        with open(record, encoding="utf-8", newline="") as handle:
+            lines = handle.read().splitlines(keepends=True)
         kept = [line for line in lines if not line.startswith(("../../bin/", "bin/", "../../Scripts/", "Scripts/"))]
         if kept != lines:
             record.write_text("".join(kept), encoding="utf-8", newline="")
@@ -292,16 +294,22 @@ def build_app(out: Path, revision: str) -> Path:
     return app
 
 
-def precompile(out: Path, python_exe: Path, roots: list[Path]) -> None:
-    """Bytecode `unchecked-hash` par le Python du paquet : jamais réécrit à l'exécution, identique d'un build à l'autre.
+def precompile(out: Path, runtime_version: str, roots: list[Path]) -> None:
+    """Bytecode `unchecked-hash` : jamais réécrit à l'exécution, identique d'un build à l'autre.
 
+    Produit par le Python de BUILD, qui doit être exactement la version du runtime embarqué (même nombre magique),
+    avec `PYTHONHASHSEED=0` : l'ordre des ensembles constants (`frozenset`) dans le bytecode dépend du hachage des
+    chaînes, et le Python du paquet ignore l'environnement (`._pth`), donc ne peut pas fixer la graine.
     `-s <out>` retire le dossier de build des noms de fichiers enregistrés (traces lisibles, build reproductible).
     Un fichier tiers non compilable (exemple Python 2 livré dans une roue) est signalé, pas fatal.
     """
 
-    result = subprocess.run([str(python_exe), "-m", "compileall", "-q", "-j", "0", "--invalidation-mode", "unchecked-hash",
+    if platform.python_version() != runtime_version:
+        raise BuildError(f"Python de build {platform.python_version()} ≠ runtime {runtime_version} : bytecode incompatible")
+    env = dict(os.environ, PYTHONHASHSEED="0")
+    result = subprocess.run([sys.executable, "-m", "compileall", "-q", "-j", "0", "--invalidation-mode", "unchecked-hash",
                              "-s", str(out), *[str(root) for root in roots]], capture_output=True, text=True,
-                            encoding="utf-8", errors="replace")
+                            encoding="utf-8", errors="replace", env=env)
     if result.returncode != 0:
         failed = [line for line in result.stdout.splitlines() if line.startswith("*** Error compiling")]
         app_failures = [line for line in failed if f"{os.sep}{PR.APP_DIR}{os.sep}" in line or "app\\jarvis" in line]
@@ -486,7 +494,7 @@ def command_build(args: argparse.Namespace) -> int:
     site = install_wheels(out, runtimes, cache)
     build_node(out, runtimes, cache)
     app = build_app(out, revision)
-    precompile(out, python_dir / "python.exe", [app, site])
+    precompile(out, runtimes["runtimes"]["python"]["version"], [app, site])
     licenses = collect_licenses(out, site, runtimes)
     write_json(out / THIRD_PARTY_MANIFEST, third_party_manifest(site, lock_rows, policy, runtimes, licenses))
     manifest = runtime_manifest(out, runtimes, revision, policy)
