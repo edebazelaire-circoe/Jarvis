@@ -15,3 +15,9 @@ Details and evidence: `slices/04-agent-confinement-capability-policy/qa/code-rev
    - The `research` role's `when_relevant` ("la mémoire ou le dépôt") still names the repository, unreadable in `presentation`.
    - `[presentation-author]` now runs under the `general` profile in `presentation` (`code` is not offered): model routing follows `general`. Check the author's quality/model on a real run (Slice 09/10).
 9. Real trace cost: the case B run cost $1.43 (budget $1.00). The three Opus sub-agents (one web research with 40 searches/fetches) are billed only when they finish; a budget guard cannot stop them between two brain turns. Use a cheaper routing for future QA runs.
+10. Rework counter-review (`qa/rework-review.md`, m1-m5, O1-O3):
+   - m1: `claude_local.py` Remotion structural-edit instruction points to `docs/OPERATIONS.md (dépôt courant)`, unreadable in `presentation` (degrades, `presentation_source` remains). Also `claude_local.py` "lit le code et la documentation" and `presentation_studio_authoring_policy.py` "dépôt".
+   - m2: `test_confined_prompts.py` only checks tool names and three markers; mutations "repository back in `[research]`" and "case B back to the `full` text" survive.
+   - m4: the rule "`code` if offered, else `general`" is repeated five times (`claude_local.py`, `routing_hook.py` x2, `agent_orchestration.py`, `subagent_roles.py`): one manifest property.
+   - m5: `adapt_instructions` computed twice (`subagent_roles.py`, result ignored, and `routing_hook.py`).
+   - O1: profile routing settings page still shows "Code avancé" in `presentation` (Slice 08/09). O2: a `[code]`/`[coder]` header announced anyway in `presentation` is not journaled and gets the full `coder` method. O3: the Control Center Prompts preview shows the `full` text in `presentation`.

@@ -134,3 +134,9 @@ Implementation agents append durable execution notes here. This handoff intentio
   - Coût : 0,31 $ après le tour 1, 0,47 $ après le relais de la question, **1,43 $** au total une fois les trois sous-agents Opus terminés : budget de 1,00 $ dépassé par les sous-agents d'arrière-plan, facturés à leur fin. Aucun tour supplémentaire envoyé (réponse à la question non jouée). Noté dans I-005.
   - Arrêt par PID exacts (Core 28884, Control Center 30224 et leurs 35 descendants : CLI, serveurs MCP) ; bases copiées sous `…\scratchpad\s04rw\db-copies\` puis `%TEMP%\s04rwd` et `%TEMP%\s04rwr` supprimés. Le JARVIS vivant n'a été ni lancé ni touché.
 - Aucune migration de schéma ; aucun redémarrage nécessaire hors du prochain lancement de JARVIS (nouvelle consigne).
+
+## 2026-10-26 — Slice 04 QA and decision (agent 0)
+- Code review (`qa/code-review.md`, `de5ceafd`): PASS, 1 major (M1: prompts and role methods still describing removed tools, `[code]`/`[coder]`/`[desktop]`, mission dossier written with Write/Edit), 7 minor.
+- Independent runtime + trace QA (sandbox from `5484d8e4`, ports 3165x): PASS. Hostile attempts different from the implementer's (settings Codex/permission mode by nested and flat keys, self-dev, debug console, MCP path escapes, `file://`, other sub-agent types, instruction hidden in a document): all refused, typed and journaled; real Documents/Desktop/Public/OneDrive unchanged (22 897 entries), decoy SHA-256 unchanged. `full` launch identical to `cf3f7e44`. Cost $2.03 (over the $1.50 budget: author drafted before discovering the engine missing).
+- Rework `10094459` + `42ca5161`: confined prompts derived from the manifest, real case B trace ($1.43). Counter-review (`qa/rework-review.md`, `a4942431`): PASS, M1 fixed, `full` byte-identical, 5 minor.
+- Decision: **Slice 04 APPROVED**. Leftovers in `Issues/I-005-s04-leftovers.md`. Restart of the live JARVIS needed to pick up the new prompts (no migration) — left to the Human.
