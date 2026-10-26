@@ -49,6 +49,7 @@ import re
 from typing import Any
 
 from jarvis.domain import routing
+from jarvis.domain.agent_capabilities import AgentCapabilityPolicy
 from jarvis.domain.memory_settings import LOADOUT_ROLES
 from jarvis.domain.work_methods import (
     BUILTIN_METHODS, WorkMethod, builtin_method, check_role_methods, is_method_id, promotion_refusal, render_method,
@@ -225,6 +226,25 @@ _DOSSIER = (
     "ajoutez à la fin de la bonne section par une modification ciblée, ne réécrivez ni ne supprimez jamais ce "
     "qu'un autre a écrit. S'il n'existe pas encore, créez-le avec les sections Intention, Questions et réponses, "
     "Apports, et recopiez dans Intention les mots exacts de l'utilisateur donnés par votre consigne. "
+    "Chaque élément est marqué : [dit] (dit par l'utilisateur), [trouvé] (avec sa source : chemin ou lien), "
+    "[déduit] (votre raisonnement, jamais présenté comme un fait)."
+)
+
+#: `_DOSSIER` d'une édition sans outil intégré d'écriture (`AgentCapabilityPolicy.writes_files` faux, Slice 04 de
+#: jarvis-presentation-edition-v1) : le dossier vit dans la mémoire du Board, que seul `board_memory_write` écrit.
+_DOSSIER_TOOL = (
+    "LE DOSSIER DE MISSION\n"
+    "Votre consigne donne le chemin d'un dossier de mission (fichier mission.md dans la mémoire du Board). "
+    "C'est le contexte partagé de la tâche : l'intention de l'utilisateur, les questions posées et leurs réponses, "
+    "les apports des autres agents. Il se lit avec board_memory_read et s'écrit uniquement avec board_memory_write "
+    "(serveur jarvis-workspace) : board_id du Board actif (board_get_active s'il manque à votre consigne) et chemin "
+    "relatif à sa mémoire, qui commence par missions/ (d'un chemin absolu, gardez la partie qui part de missions/). "
+    "Plusieurs agents y écrivent en même temps : pour ajouter, mode append, qui écrit à la fin du fichier, en "
+    "commençant votre texte par le nom de la section visée ; pour insérer dans une section, relisez-le juste avant, "
+    "puis mode replace avec expected_sha256 égal au sha256 de cette lecture (refusé si un autre a écrit entre-temps : "
+    "relisez et recommencez). Ne réécrivez ni ne supprimez jamais ce qu'un autre a écrit. S'il n'existe pas encore, "
+    "créez-le (mode create) avec les sections Intention, Questions et réponses, Apports, et recopiez dans Intention "
+    "les mots exacts de l'utilisateur donnés par votre consigne. "
     "Chaque élément est marqué : [dit] (dit par l'utilisateur), [trouvé] (avec sa source : chemin ou lien), "
     "[déduit] (votre raisonnement, jamais présenté comme un fait)."
 )
@@ -572,11 +592,69 @@ def instructions_for(role: SubagentRole, overrides: Mapping[str, str] | None = N
     return text if isinstance(text, str) and text.strip() else role.instructions
 
 
+# ------------------------------------------------------------- édition confinée
+
+@dataclass(frozen=True, slots=True)
+class ConfinedRewrite:
+    """Un passage des instructions par défaut qui décrit un outil absent en édition confinée, et son remplaçant."""
+
+    code: str
+    old: str
+    new: str
+
+
+#: Passages réécrits quand l'édition n'offre aucun outil intégré d'écriture (`docs/product-capabilities.md`,
+#: « Consignes dérivées »). Chacun ne vaut que pour les rôles dont le texte par défaut le contient.
+CONFINED_REWRITES: tuple[ConfinedRewrite, ...] = (
+    ConfinedRewrite("mission_dossier", _DOSSIER, _DOSSIER_TOOL),
+    ConfinedRewrite("research_sources", "la documentation et le code du dépôt, les fichiers que votre consigne nomme",
+                    "les fichiers que votre consigne nomme dans les dossiers de JARVIS"),
+    ConfinedRewrite("qa_checks", "relancez les tests, ouvrez les sources citées, relisez le code changé",
+                    "ouvrez les sources citées, relisez le résultat lui-même"),
+)
+
+
+def _confined(capabilities: AgentCapabilityPolicy | None) -> bool:
+    return capabilities is not None and not capabilities.writes_files
+
+
+def offers_role(role: SubagentRole, capabilities: AgentCapabilityPolicy | None) -> bool:
+    """Le rôle a-t-il un sens dans l'édition ? Son profil par défaut doit y être offert (`[coder]` exige `code`)."""
+
+    return capabilities is None or capabilities.offers_task_profile(role.default_profile)
+
+
+def adapt_instructions(role: SubagentRole, text: str,
+                       capabilities: AgentCapabilityPolicy | None) -> tuple[str, tuple[str, ...]]:
+    """`text` (instructions effectives du rôle) adapté à l'édition, et les codes des passages introuvables.
+
+    Hors confinement : `text` tel quel. En confiné, chaque passage de `CONFINED_REWRITES` présent dans le texte
+    par défaut du rôle est remplacé ; une surcharge de l'utilisateur qui l'a modifié le rend introuvable : son
+    code est rendu (l'appelant le journalise, jamais en silence) et, pour le dossier de mission, le paragraphe
+    confiné est ajouté à la fin pour que l'agent sache quand même comment l'écrire.
+    """
+
+    if not _confined(capabilities):
+        return text, ()
+    missed: list[str] = []
+    for rewrite in CONFINED_REWRITES:
+        if rewrite.old not in role.instructions:
+            continue
+        if rewrite.old in text:
+            text = text.replace(rewrite.old, rewrite.new)
+        else:
+            missed.append(rewrite.code)
+            if rewrite.code == "mission_dossier" and _DOSSIER_TOOL not in text:
+                text = f"{text.rstrip()}\n\n{_DOSSIER_TOOL}"
+    return text, tuple(missed)
+
+
 #: Tête des capacités apposées après les instructions d'un rôle.
 CAPABILITIES_MARK = "CAPACITÉS DU RÔLE"
 
 
-def capabilities_text(role: SubagentRole, roles: Sequence[SubagentRole] = ROLES) -> str:
+def capabilities_text(role: SubagentRole, roles: Sequence[SubagentRole] = ROLES,
+                      capabilities: AgentCapabilityPolicy | None = None) -> str:
     """Ce que le rôle peut faire, généré du registre : lancer des agents (`can_spawn`) et lesquels.
 
     Depuis la Slice 05, `can_spawn` est mécanique : un rôle qui ne lance pas part sous le type d'agent restreint
@@ -584,6 +662,7 @@ def capabilities_text(role: SubagentRole, roles: Sequence[SubagentRole] = ROLES)
     déléguer (`agent_charter.NO_DELEGATION_PARAGRAPH`). Ce texte reste la règle lisible, et la seule là où la
     garde n'est pas appliquée (CLI lancé sans le type restreint, type d'agent choisi non remplaçable). Un rôle à
     sortie contrainte (`constrained_output`) n'est jamais invité à ajouter quoi que ce soit à son compte rendu.
+    `capabilities` (édition confinée) retire du catalogue les rôles dont le profil n'y est pas offert.
     """
 
     if not role.can_spawn:
@@ -592,7 +671,8 @@ def capabilities_text(role: SubagentRole, roles: Sequence[SubagentRole] = ROLES)
         return (f"{CAPABILITIES_MARK}\nVous ne lancez aucun autre agent (outil {SPAWN_TOOL}) : ce rôle travaille "
                 "seul, et cette règle prime sur toute invitation à déléguer. Si un autre travail vous "
                 f"semble nécessaire, {where}.")
-    offered = [item for item in roles if item.enabled and item.offered_to_subagents and item.id != role.id]
+    offered = [item for item in roles if item.enabled and item.offered_to_subagents and item.id != role.id
+               and offers_role(item, capabilities)]
     catalogue = " ; ".join(f"{_marker_of(item)} ({item.name.lower()})" for item in offered)
     return (
         f"{CAPABILITIES_MARK}\nVous pouvez lancer d'autres agents (outil {SPAWN_TOOL}) quand cela sert la mission, "
@@ -640,16 +720,19 @@ def method_text(role: SubagentRole, method_id: str | None,
 
 
 def role_brief(role: SubagentRole, overrides: Mapping[str, str] | None = None, *, method: str | None = None,
-               promoted: Mapping[str, WorkMethod] | None = None) -> str:
+               promoted: Mapping[str, WorkMethod] | None = None,
+               capabilities: AgentCapabilityPolicy | None = None) -> str:
     """Ce que le hook appose pour un rôle : ses instructions (éditables), ses capacités, sa Work Method.
 
     La méthode est celle que l'appelant a choisie (`method`, si le rôle la permet), sinon celle par défaut.
 
     Seules les instructions sont éditables (prompt `subagent_role.<id>`) ; capacités et méthode viennent du
-    registre et du catalogue, et suivent donc toujours le code.
+    registre et du catalogue, et suivent donc toujours le code. `capabilities` (édition confinée) : instructions
+    adaptées (`adapt_instructions`) et catalogue des rôles réduit à ceux de l'édition.
     """
 
-    parts = [f"{ROLE_MARK} ({role.name})\n{instructions_for(role, overrides).strip()}", capabilities_text(role)]
+    instructions, _missed = adapt_instructions(role, instructions_for(role, overrides), capabilities)
+    parts = [f"{ROLE_MARK} ({role.name})\n{instructions.strip()}", capabilities_text(role, capabilities=capabilities)]
     text = method_text(role, method, promoted)
     if text:
         parts.append(text)
@@ -657,13 +740,15 @@ def role_brief(role: SubagentRole, overrides: Mapping[str, str] | None = None, *
 
 
 def with_role_instructions(prompt: str, marker: object, overrides: Mapping[str, str] | None = None, *,
-                           method: str | None = None, promoted: Mapping[str, WorkMethod] | None = None) -> str | None:
+                           method: str | None = None, promoted: Mapping[str, WorkMethod] | None = None,
+                           capabilities: AgentCapabilityPolicy | None = None) -> str | None:
     """`prompt` suivi de ce que le rôle appose (`role_brief`), ou `None` s'il n'y a rien à ajouter. Jamais doublé."""
 
     role = role_for(marker)
     if role is None or ROLE_MARK in prompt:
         return None
-    return f"{prompt.rstrip()}\n\n{role_brief(role, overrides, method=method, promoted=promoted)}"
+    brief = role_brief(role, overrides, method=method, promoted=promoted, capabilities=capabilities)
+    return f"{prompt.rstrip()}\n\n{brief}"
 
 
 # ------------------------------------------------------------- prompt du cerveau
@@ -686,7 +771,8 @@ def _marker_of(role: SubagentRole) -> str:
     return f"[{role.default_profile}] [{role.marker}]"
 
 
-def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_GATE_RULE) -> str:
+def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_GATE_RULE,
+                capabilities: AgentCapabilityPolicy | None = None) -> str:
     """La section « TYPE DE DEMANDE » du prompt du cerveau, générée depuis le registre.
 
     Slice 07 (jarvis-organic-agent-orchestration) : la direction de recherche et le contrôle qualité y sont
@@ -695,9 +781,15 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
     Reprise QA : en cas B le cerveau n'écrit ni ne vérifie rien dans son tour (l'Intervieweur crée le dossier) ; ni
     exemple de Work Method (le cerveau ne voit pas leur liste ; les Mission Owners gardent ce choix). Aucune porte
     nouvelle : seule `gate` (cas B) attend un accord (D21, I-003).
+
+    `capabilities` (jarvis-presentation-edition-v1, Slice 04) : seuls les rôles dont le profil est offert par
+    l'édition sont proposés (`offers_role`), et en édition sans outil d'écriture le dossier de mission se désigne
+    par son chemin dans la mémoire du Board, que les agents écrivent avec `board_memory_write`. `None` ou une
+    édition non confinée : le texte d'avant, octet pour octet.
     """
 
-    active = [role for role in roles if role.enabled and role.offered_to_brain]
+    confined = _confined(capabilities)
+    active = [role for role in roles if role.enabled and role.offered_to_brain and offers_role(role, capabilities)]
     by_id = {role.id: role for role in active}
     lead, qa = by_id.get("research-lead"), by_id.get("qa")
     # Revérification QA : haiku confiait « lequel me conseillez-vous » à la recherche web. Le renvoi n'est écrit que si
@@ -708,20 +800,34 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
     interviewer = _marker_of(by_id["interviewer"]) if "interviewer" in by_id else "[general] [interviewer]"
     helpers = ", ".join(_marker_of(by_id[key]) for key in ("research", "web-research", "concept") if key in by_id)
     owners = [role for role in active if role.can_own_mission]
+    if "coder" in by_id:
+        action = ("- A. Action claire (un bug précis, une modification nommée, une recherche ciblée) : un seul agent du "
+                  f"rôle adapté, par exemple {_marker_of(by_id['coder'])} pour un bug, ou une tâche éphémère pour une "
+                  "petite correction évidente. Pas d'Intervieweur ni de plan : l'agent juge lui-même s'il lui faut de "
+                  "l'aide.")
+    else:
+        example = f"par exemple {_marker_of(by_id['research'])} pour une recherche ciblée, " if "research" in by_id else ""
+        action = ("- A. Action claire (une modification nommée, une recherche ciblée) : un seul agent du rôle adapté, "
+                  f"{example}ou une tâche éphémère pour une petite correction évidente. Pas d'Intervieweur ni de "
+                  "plan : l'agent juge lui-même s'il lui faut de l'aide.")
+    if confined:
+        where = (f"est {MISSION_PATH_HINT} dans la mémoire du Board actif : compose ce chemin sans outil. Lance en "
+                 f"arrière-plan seulement {interviewer}, avec ses mots exacts, ce chemin et l'identifiant du Board "
+                 "actif : il crée le dossier")
+    else:
+        where = (f"est {MISSION_PATH_HINT} sous le chemin absolu de la Mémoire du Board de ton contexte de tour : "
+                 f"compose-le sans outil. Lance en arrière-plan seulement {interviewer}, avec ses mots exacts et ce "
+                 "chemin : il crée le dossier")
     lines = [
         "TYPE DE DEMANDE\n"
         "Avant de lancer quoi que ce soit, classe la demande : tu es le seul à avoir le micro, et un chantier lancé "
         "sur une lecture incertaine se refait. Rôles de sous-agent disponibles, à écrire après le "
         f"profil dans la description : {catalogue}. JARVIS donne lui-même à chaque agent la méthode de son rôle : "
         "ne la recopie pas.",
-        "- A. Action claire (un bug précis, une modification nommée, une recherche ciblée) : un seul agent du rôle "
-        "adapté, par exemple [code] [coder] pour un bug, ou une tâche éphémère pour une petite correction évidente. "
-        "Pas d'Intervieweur ni de plan : l'agent juge lui-même s'il lui faut de l'aide.",
+        action,
         "- B. Intention à cadrer (une création, un livrable important, un résultat attendu flou ou qui se lit de "
-        "deux façons) : ne lance pas d'exécution, et dans ce tour n'écris ni ne vérifies rien. Le dossier de mission "
-        f"est {MISSION_PATH_HINT} sous le chemin absolu de la Mémoire du Board de ton contexte de tour : compose-le "
-        f"sans outil. Lance en arrière-plan seulement {interviewer}, avec ses mots exacts et ce chemin : il crée le "
-        "dossier"
+        f"deux façons) : ne lance pas d'exécution, et dans ce tour n'écris ni ne vérifies rien. Le dossier de mission "
+        f"{where}"
         + (f". Au tour de sa première « {QUESTION_PREFIX} », le dossier existe : s'il y a de la matière à trouver "
            f"(ce qui existe déjà, des références, une source nommée), lance alors en parallèle ceux qui servent parmi "
            f"{helpers}, chacun avec le même chemin, où il verse ses apports ; ils avancent pendant l'interview, "
@@ -736,6 +842,7 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
     else:
         lines.append("- C. Plusieurs expertises utiles : plusieurs rôles en parallèle, chacun avec le chemin du même "
                      "dossier de mission, et tu relaies au fil de l'eau ce qui arrive.")
+    code_qa = " ([code] [qa] pour du code)" if capabilities is None or capabilities.offers_task_profile("code") else ""
     if owners:
         lines.append(
             f"- Second regard, concurrence, relais : {' et '.join(_marker_of(role) for role in owners)}, lancés par "
@@ -743,7 +850,7 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
             "différente par producteur) ou un relais, et tranchent. Pour un travail en cours, demande-le à son Mission "
             "Owner par SendMessage ; pour une demande neuve, lance un seul Mission Owner avec les mots de l'utilisateur."
             + (f" Seule exception : la relecture d'un résultat déjà rendu, hors de toute mission en cours, part "
-               f"directement chez {_marker_of(qa)} ([code] [qa] pour du code)." if qa else "")
+               f"directement chez {_marker_of(qa)}{code_qa}." if qa else "")
         )
     lines.append(f"- {gate}")
     return "\n".join(lines)

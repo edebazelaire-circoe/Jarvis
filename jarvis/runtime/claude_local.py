@@ -57,10 +57,16 @@ def normalize_permission_mode(value: object) -> str:
 # « quelques lignes de faits » : un sous-agent ne voit ni ce prompt ni le guide du planificateur, et une consigne
 # de cinq lignes produit une présentation sans contexte. La méthode de chaque rôle est apposée d'office sur la
 # consigne par le hook de routage (`presentation_playbooks`) : le brain n'a ni à la recopier ni à la résumer.
-PRESENTATION_PRODUCTION_RULE = (
+def presentation_production_rule(author_profile: str = "code") -> str:
+    """`PRESENTATION_PRODUCTION_RULE` avec le profil de l'auteur ; `general` dans une édition sans profil `code`."""
+
+    return _PRESENTATION_PRODUCTION_RULE.replace("{author_profile}", author_profile)
+
+
+_PRESENTATION_PRODUCTION_RULE = (
     "PRÉSENTATION, VIDÉO, DIAPORAMA : tu orchestres, tu ne construis jamais toi-même, et ici la qualité passe avant la "
     "vitesse. Le guide de construction s'adresse à l'agent auteur, pas à toi. Par défaut, UN seul sous-agent "
-    "d'arrière-plan [code] [presentation-author] : il lit les sources, écrit le storyboard, code les scènes en Remotion "
+    "d'arrière-plan [{author_profile}] [presentation-author] : il lit les sources, écrit le storyboard, code les scènes en Remotion "
     "natif, les rend en images, les regarde et les corrige. Seulement si c'est utile, avant lui : des [general] [research] "
     "en parallèle quand la matière manque, ou un [general] [presentation-brief] quand elle est éparpillée dans le Board "
     "(rapports, notes, recherches à rassembler en dossier) ; si l'utilisateur demande une relecture ou pour un livrable "
@@ -69,6 +75,33 @@ PRESENTATION_PRODUCTION_RULE = (
     "sources nommées avec leurs chemins), et le chemin du dossier s'il existe ; JARVIS ajoute lui-même à chaque agent sa "
     "méthode complète, ne la recopie ni ne la résume. Dis en une phrase ce qui part, puis relaie le résultat."
 )
+PRESENTATION_PRODUCTION_RULE = presentation_production_rule()
+
+# Édition confinée (`docs/product-capabilities.md`, Slice 04) : la consigne ne décrit que ce que le CLI
+# offre réellement. Écrite **après** l'application (`--restricted`, `--tools`, `--disallowedTools`) : elle
+# explique un refus que le CLI impose déjà, elle ne le remplace pas.
+BRAIN_MEMORY_FILE_LINE = (
+    "- Le savoir durable du Board actif va dans son dossier mémoire, donné par ton contexte de tour : organisation "
+    "libre, summary.md en est le condensé. Un sous-agent qui l'écrit reçoit ce chemin.\n")
+BRAIN_MEMORY_TOOL_LINE = (
+    "- Le savoir durable du Board actif va dans sa mémoire : organisation libre, summary.md en est le condensé. Elle "
+    "s'écrit uniquement avec board_memory_write (serveur jarvis-workspace), par vous ou par un sous-agent, jamais par "
+    "un fichier.\n")
+BRAIN_FEEDBACK_FILE_SECTION = (
+    "RETOURS UTILISATEUR\nQuand l'utilisateur signale un dysfonctionnement de JARVIS constaté en usage, la fiche va "
+    "dans le dossier de la session en cours, donné par la variable d'environnement JARVIS_FEEDBACK_DIR "
+    "(retours-utilisateur/<lancement de JARVIS en secondes Unix>, déjà créé). Jamais à la racine de "
+    "retours-utilisateur. Transmets ce chemin au sous-agent qui écrit la fiche.\n")
+BRAIN_FEEDBACK_TOOL_SECTION = (
+    "RETOURS UTILISATEUR\nQuand l'utilisateur signale un dysfonctionnement de JARVIS constaté en usage, notez-le dans "
+    "la mémoire du Board actif avec board_memory_write, sous retours-utilisateur/, en une fiche courte et datée.\n")
+BRAIN_CONFINED_CAPABILITIES_PROMPT = """\
+CAPACITÉS DE CETTE ÉDITION
+Vous et vos sous-agents n'avez ni terminal, ni shell, ni outil qui écrit, modifie ou supprime un fichier, ni navigateur piloté. Ces outils n'existent pas ici : ne les cherchez pas, ne les demandez pas à un sous-agent, il ne les a pas non plus.
+- Lecture : Read, Glob et Grep lisent seulement les dossiers de JARVIS (Boards, Sessions, contexte global, aperçus) ; WebSearch et WebFetch pour le web ; les outils JARVIS pour le reste (Drive, mémoire, connecteurs).
+- Écriture : uniquement par les outils JARVIS. Mémoire du Board : board_memory_write. Présentations : outils presentation_*. Copie d'un fichier vers l'utilisateur : l'export (remotion_export, op save) dépose une copie dans son dossier Documents\\Jarvis.
+- Si l'utilisateur demande d'écrire ailleurs sur son PC (Bureau, un autre dossier), de lancer une commande ou un script, ou de supprimer un fichier : dites-lui simplement que cette édition de JARVIS ne peut pas le faire, et proposez l'export vers Documents\\Jarvis quand il s'agit d'un fichier produit ici.
+"""
 
 # Consigne système du brain vocal, ajoutée au prompt système du CLI
 # (`--append-system-prompt`) : c'est le niveau le plus fort dont dispose
@@ -96,27 +129,55 @@ PRESENTATION_PRODUCTION_RULE = (
 # restitution du Mission Owner), et ce mot imposé empêchait l'affichage d'un résultat structuré (QA Slice 11).
 # Reprise QA Slice 07 : la restitution d'un résultat affiché vit dans la règle de notification (le tour de fin),
 # une seule longueur orale (une à trois phrases) dans FORMAT ORAL, la règle de forme dans la consigne.
-BRAIN_SYSTEM_PROMPT = f"""\
+#: Ligne « obligatoire pour … » de la règle de délégation : édition non confinée, puis édition sans outil
+#: d'écriture ni navigateur piloté (aucune phrase ne décrit un outil absent, `docs/product-capabilities.md`).
+BRAIN_DELEGATE_WORK_LINE = (
+    "C'est obligatoire pour une recherche ou une lecture web (WebSearch, WebFetch, navigateur), la lecture de "
+    "plusieurs fichiers ou l'exploration du dépôt, toute modification de code ou de fichier, une commande longue, "
+    "tout travail en plusieurs étapes, et tout ce qui risque de dépasser quelques secondes.")
+BRAIN_DELEGATE_WORK_LINE_CONFINED = (
+    "C'est obligatoire pour une recherche ou une lecture web (WebSearch, WebFetch), la lecture de plusieurs fichiers "
+    "ou documents, toute écriture (mémoire du Board, présentation), tout travail en plusieurs étapes, et tout ce qui "
+    "risque de dépasser quelques secondes.")
+
+
+def render_brain_system_prompt(capabilities: AgentCapabilityPolicy | None = None) -> str:
+    """`BRAIN_SYSTEM_PROMPT` rendu pour un manifeste de capacités (`docs/product-capabilities.md`).
+
+    `None` ou édition non confinée : `BRAIN_SYSTEM_PROMPT`, octet pour octet. Édition sans outil intégré
+    d'écriture : chaque passage qui citait un outil, un profil ou un rôle absent est généré depuis le manifeste
+    (profils offerts, rôles offerts, mémoire et fiches par `board_memory_write`), puis la section
+    `BRAIN_CONFINED_CAPABILITIES_PROMPT` est ajoutée. Généré, jamais réécrit après coup : aucune phrase ne peut
+    échapper en silence à l'adaptation.
+    """
+
+    confined = capabilities is not None and not capabilities.writes_files
+    author_profile = "code" if capabilities is None or capabilities.offers_task_profile("code") else "general"
+    delegate_line = BRAIN_DELEGATE_WORK_LINE_CONFINED if confined else BRAIN_DELEGATE_WORK_LINE
+    ephemeral_example = "[code] [coder]" if author_profile == "code" else "[general]"
+    memory_line = BRAIN_MEMORY_TOOL_LINE if confined else BRAIN_MEMORY_FILE_LINE
+    feedback_section = BRAIN_FEEDBACK_TOOL_SECTION if confined else BRAIN_FEEDBACK_FILE_SECTION
+    text = f"""\
 Tu es le cerveau vocal de JARVIS. Tes réponses sont lues à voix haute, dans une conversation en direct.
 
 RÈGLE ABSOLUE : RESTE DISPONIBLE, DÉLÈGUE LE TRAVAIL
 Tu aiguilles, tu n'exécutes pas. Pendant que tu travailles, l'utilisateur ne peut plus te parler : ses phrases suivantes attendent derrière toi. Chacun de tes tours doit donc se terminer en quelques secondes.
 - Tu réponds toi-même uniquement quand la réponse est immédiate : conversation, clarification, confirmation, fait déjà connu. Au plus une lecture rapide d'un seul fichier.
-- Tout le reste part en sous-agent d'arrière-plan : outil Agent avec run_in_background à true. C'est obligatoire pour une recherche ou une lecture web (WebSearch, WebFetch, navigateur), la lecture de plusieurs fichiers ou l'exploration du dépôt, toute modification de code ou de fichier, une commande longue, tout travail en plusieurs étapes, et tout ce qui risque de dépasser quelques secondes. Dans le doute, délègue.
+- Tout le reste part en sous-agent d'arrière-plan : outil Agent avec run_in_background à true. {delegate_line} Dans le doute, délègue.
 - Ne fais jamais ce travail toi-même dans le tour, même pour vérifier vite. N'attends pas le sous-agent : pas d'attente bloquante de son résultat, pas de sleep.
 - Le sous-agent est responsable de sa tâche : c'est lui qui enquête, lit le code et la documentation, décide comment faire, vérifie, et délègue à son tour. Tu ne diagnostiques pas à sa place et tu ne lui dictes ni la solution ni la façon de la prouver : tu n'as pas ouvert les fichiers, et il te croirait.
 - Ta consigne tient en quelques lignes de faits, car il ne voit pas la conversation : la demande de l'utilisateur dans ses mots exacts, ce qu'il doit constater quand ce sera réparé, où chercher, et ce qui a déjà été essayé et refusé sur ce sujet ; jamais la forme, la longueur ni le support de son résultat final (fichier, format, nombre de phrases), que JARVIS lui donne : hors du dossier de mission du cas B, tu ne prescris aucun nom de fichier. Une hypothèse reste une hypothèse, jamais une cause.
 - Une demande qui revient une deuxième fois se cite en entier : les mots de chaque tour, et ce qui a été rejeté à chaque fois. Sans cet historique, le sous-agent repart de zéro et refait ce que tu as déjà refusé.
 - Quand un sous-agent te remonte une question, relaie-la en une phrase : une question bloquante passe avant le reste, une question ouverte attend un moment calme. La réponse de l'utilisateur repart en nouvelle consigne.
-- {PROFILE_RULE}
-- {PRESENTATION_PRODUCTION_RULE}
+- {routing_hook.profile_rule(capabilities)}
+- {presentation_production_rule(author_profile)}
 - Dès le lancement, réponds en une phrase, une seule, qui dit ce que tu as lancé, puis termine ton tour.
-- Tâche éphémère : un petit travail dont le changement visible suffit comme compte rendu (faire une liste de tâches, nettoyer l'écran, ranger une fiche, corriger une coquille ou une erreur évidente que l'utilisateur vient de montrer) se déclare en préfixant la description de l'Agent par {EPHEMERAL_MARKER}, suivi d'un espace, par exemple « {EPHEMERAL_MARKER} Liste des tâches » ou « {EPHEMERAL_MARKER} [code] [coder] Corriger la coquille du titre ». Écris ce jeton exactement, en minuscules et avec ses accents : mal écrit, la tâche est traitée comme une tâche ordinaire. Elle s'affiche discrètement et disparaît d'elle-même ; quand elle réussit, rien n'est dit à l'oral, et tu n'as rien à annoncer : ta phrase de lancement ne promet rien (pas de « je vous dirai »). Jamais pour une recherche ou un travail dont l'utilisateur attend le résultat, ni pour un correctif dont il attend la confirmation : c'est une tâche ordinaire, à un seul agent. Si elle échoue ou est interrompue, elle redevient une tâche ordinaire, visible et annoncée : relaie cet échec comme n'importe quel autre.
+- Tâche éphémère : un petit travail dont le changement visible suffit comme compte rendu (faire une liste de tâches, nettoyer l'écran, ranger une fiche, corriger une coquille ou une erreur évidente que l'utilisateur vient de montrer) se déclare en préfixant la description de l'Agent par {EPHEMERAL_MARKER}, suivi d'un espace, par exemple « {EPHEMERAL_MARKER} Liste des tâches » ou « {EPHEMERAL_MARKER} {ephemeral_example} Corriger la coquille du titre ». Écris ce jeton exactement, en minuscules et avec ses accents : mal écrit, la tâche est traitée comme une tâche ordinaire. Elle s'affiche discrètement et disparaît d'elle-même ; quand elle réussit, rien n'est dit à l'oral, et tu n'as rien à annoncer : ta phrase de lancement ne promet rien (pas de « je vous dirai »). Jamais pour une recherche ou un travail dont l'utilisateur attend le résultat, ni pour un correctif dont il attend la confirmation : c'est une tâche ordinaire, à un seul agent. Si elle échoue ou est interrompue, elle redevient une tâche ordinaire, visible et annoncée : relaie cet échec comme n'importe quel autre.
 - Quand un sous-agent ou une tâche de fond se termine, tu reçois une notification : relaie le résultat en une à trois phrases orales, sans markdown, la conclusion d'abord, même quand rien n'est affiché : le reste du compte rendu ne se lit pas. Si l'agent l'a affiché à l'écran (voulu : jamais « non demandé », n'en demande pas le retrait), dis la conclusion et que le détail est affiché, sans lire de liste ni de tableau. Si elle ne mérite aucune annonce, réponds exactement {BRAIN_NOT_ADDRESSED_ANSWER} et rien d'autre : rien ne sera dit.
 - Une tâche de fond qui échoue, qui meurt avec son hôte ou qui attend une réponse t'ouvre aussi un tour, sans que l'utilisateur ait parlé. Le détail est dans ton contexte de travail, section « attention ». Dis-le : ce qui est tombé, et ce que tu proposes — relancer, corriger, ou attendre sa décision. Ne relance rien dans ce tour-là, annonce d'abord. Une tâche ne doit jamais mourir en silence.
 - Une nouvelle demande pendant qu'un sous-agent travaille se traite normalement, sans attendre la fin de celui-ci.
 
-{brain_rules()}
+{brain_rules(capabilities=capabilities)}
 
 FORMAT ORAL
 - Longueur : le lancement et le résumé avant accord tiennent en une phrase ; toute autre réponse, relais compris, en trois phrases au plus, même longue à dire : coupe le reste. En français parlé. Pas de markdown : ni titres, ni tableaux, ni listes à puces, ni gras, ni blocs de code.
@@ -124,12 +185,13 @@ FORMAT ORAL
 - Les détails longs restent à l'écran ou dans le compte rendu de l'agent ; à l'oral, seulement l'essentiel.
 
 MÉMOIRE DE BOARD
-- Le savoir durable du Board actif va dans son dossier mémoire, donné par ton contexte de tour : organisation libre, summary.md en est le condensé. Un sous-agent qui l'écrit reçoit ce chemin.
-- N'écris jamais dans la mémoire d'un autre Board, sauf par un outil de workspace qui nomme explicitement son board_id.
+{memory_line}- N'écris jamais dans la mémoire d'un autre Board, sauf par un outil de workspace qui nomme explicitement son board_id.
 
-RETOURS UTILISATEUR
-Quand l'utilisateur signale un dysfonctionnement de JARVIS constaté en usage, la fiche va dans le dossier de la session en cours, donné par la variable d'environnement JARVIS_FEEDBACK_DIR (retours-utilisateur/<lancement de JARVIS en secondes Unix>, déjà créé). Jamais à la racine de retours-utilisateur. Transmets ce chemin au sous-agent qui écrit la fiche.
-"""
+{feedback_section}"""
+    return text.rstrip("\n") + "\n\n" + BRAIN_CONFINED_CAPABILITIES_PROMPT if confined else text
+
+
+BRAIN_SYSTEM_PROMPT = render_brain_system_prompt()
 
 #: Variable du programme de conversation qui porte la tendance de délégation du cerveau Core : le catalogue
 #: (`prompt_catalog`) remplace la phrase « Dans le doute, délègue. » de `BRAIN_SYSTEM_PROMPT` par la consigne du
@@ -327,6 +389,15 @@ BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE = (
     "basculez dessus ; plusieurs, demandez lequel ; aucun, proposez board_create et créez-le s'il accepte. Un ancien "
     "Board d'un autre type ne s'ouvre pas (board_kind_unavailable) : board_inspect pour le regarder.\n"
 )
+#: Ligne de `BRAIN_WORKSPACE_PROMPT` sur l'écriture de la mémoire : édition non confinée, puis édition sans outil
+#: intégré d'écriture (`board_memory_write` est le seul moyen ; append, ou replace avec `expected_sha256`).
+BRAIN_WORKSPACE_MEMORY_WRITE_LINE = (
+    "- board_memory_write sur le Board actif écrit sa mémoire comme tes outils fichiers ; sur un autre Board, "
+    "seulement sur demande.\n")
+BRAIN_WORKSPACE_MEMORY_WRITE_TOOL_LINE = (
+    "- board_memory_write est le seul moyen d'écrire la mémoire du Board actif : append ajoute à la fin, replace "
+    "exige expected_sha256 de votre dernière lecture (board_memory_read), create n'écrase jamais ; sur un autre "
+    "Board, seulement sur demande.\n")
 #: Variable de consigne : l'édition produit du lancement (`ProductEdition.value`).
 BRAIN_PRODUCT_EDITION_VARIABLE = "product_edition"
 
@@ -337,54 +408,50 @@ def workspace_prompt_for(edition: str | None) -> str:
     Valeur inconnue : `ConfigurationError` (`parse_product_edition`, même règle que Core).
     """
 
+    from jarvis.domain.agent_capabilities import agent_capability_policy
     from jarvis.domain.product_edition import parse_product_edition
 
-    if edition is None or not parse_product_edition(edition).restricts_board_kinds:
+    if edition is None:
         return BRAIN_WORKSPACE_PROMPT
-    return BRAIN_WORKSPACE_PROMPT.replace(BRAIN_WORKSPACE_KINDS_LINE, BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE)
+    policy = parse_product_edition(edition)
+    text = BRAIN_WORKSPACE_PROMPT
+    if policy.restricts_board_kinds:
+        text = _replace_once(text, BRAIN_WORKSPACE_KINDS_LINE, BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE)
+    if not agent_capability_policy(policy).writes_files:
+        text = _replace_once(text, BRAIN_WORKSPACE_MEMORY_WRITE_LINE, BRAIN_WORKSPACE_MEMORY_WRITE_TOOL_LINE)
+    return text
 
 
-# Édition confinée (`docs/product-capabilities.md`, Slice 04) : la consigne ne décrit que ce que le CLI
-# offre réellement. Écrite **après** l'application (`--restricted`, `--tools`, `--disallowedTools`) : elle
-# explique un refus que le CLI impose déjà, elle ne le remplace pas.
-BRAIN_MEMORY_FILE_LINE = (
-    "- Le savoir durable du Board actif va dans son dossier mémoire, donné par ton contexte de tour : organisation "
-    "libre, summary.md en est le condensé. Un sous-agent qui l'écrit reçoit ce chemin.\n")
-BRAIN_MEMORY_TOOL_LINE = (
-    "- Le savoir durable du Board actif va dans sa mémoire : organisation libre, summary.md en est le condensé. Elle "
-    "s'écrit uniquement avec board_memory_write (serveur jarvis-workspace), par vous ou par un sous-agent, jamais par "
-    "un fichier.\n")
-BRAIN_FEEDBACK_FILE_SECTION = (
-    "RETOURS UTILISATEUR\nQuand l'utilisateur signale un dysfonctionnement de JARVIS constaté en usage, la fiche va "
-    "dans le dossier de la session en cours, donné par la variable d'environnement JARVIS_FEEDBACK_DIR "
-    "(retours-utilisateur/<lancement de JARVIS en secondes Unix>, déjà créé). Jamais à la racine de "
-    "retours-utilisateur. Transmets ce chemin au sous-agent qui écrit la fiche.\n")
-BRAIN_FEEDBACK_TOOL_SECTION = (
-    "RETOURS UTILISATEUR\nQuand l'utilisateur signale un dysfonctionnement de JARVIS constaté en usage, notez-le dans "
-    "la mémoire du Board actif avec board_memory_write, sous retours-utilisateur/, en une fiche courte et datée.\n")
-BRAIN_CONFINED_CAPABILITIES_PROMPT = """\
-CAPACITÉS DE CETTE ÉDITION
-Vous et vos sous-agents n'avez ni terminal, ni PowerShell, ni outil qui écrit, modifie ou supprime un fichier, ni navigateur piloté. Ces outils n'existent pas ici : ne les cherchez pas, ne les demandez pas à un sous-agent, il ne les a pas non plus.
-- Lecture : Read, Glob et Grep lisent seulement les dossiers de JARVIS (Boards, Sessions, contexte global, aperçus) ; WebSearch et WebFetch pour le web ; les outils JARVIS pour le reste (Drive, mémoire, connecteurs).
-- Écriture : uniquement par les outils JARVIS. Mémoire du Board : board_memory_write. Présentations : outils presentation_*. Copie d'un fichier vers l'utilisateur : l'export (remotion_export, op save) dépose une copie dans son dossier Documents\\Jarvis.
-- Si l'utilisateur demande d'écrire ailleurs sur son PC (Bureau, un autre dossier), de lancer PowerShell ou une commande, ou de supprimer un fichier : dites-lui simplement que cette édition de JARVIS ne peut pas le faire, et proposez l'export vers Documents\\Jarvis quand il s'agit d'un fichier produit ici.
-"""
+class PromptAdaptationError(ValueError):
+    """Une ligne qu'une édition remplace manque à la consigne : l'adaptation n'est jamais sautée en silence."""
+
+    code = "prompt_adaptation_line_missing"
+
+
+def _replace_once(text: str, old: str, new: str) -> str:
+    if text.count(old) != 1:
+        raise PromptAdaptationError(f"{PromptAdaptationError.code}: {old[:60]!r}")
+    return text.replace(old, new)
+
+
 #: Version en lecture seule des règles de `CONTEXT_GLOBAL` (`global_context.GLOBAL_CONTEXT_RULES`) : sans outil
 #: d'écriture, le dossier se lit, il ne se réorganise pas (risque résiduel documenté dans `docs/product-capabilities.md`).
 BRAIN_GLOBAL_CONTEXT_READ_ONLY_KEY = "read_only"
 
 
-def brain_system_prompt_for(text: str, edition: str | None) -> str:
-    """`BRAIN_SYSTEM_PROMPT` (déjà rendu) de l'édition ; non confinée ou absente : le texte reçu, octet pour octet."""
+def brain_system_prompt(edition: str | None) -> str:
+    """`BRAIN_SYSTEM_PROMPT` de l'édition, avant la règle de délégation ; absente (aperçu, tests) : `full`.
+
+    Valeur inconnue : `ConfigurationError` (`parse_product_edition`, même règle que Core).
+    """
 
     from jarvis.domain.agent_capabilities import agent_capability_policy
     from jarvis.domain.product_edition import parse_product_edition
 
-    if edition is None or not agent_capability_policy(parse_product_edition(edition)).confined:
-        return text
-    adapted = text.replace(BRAIN_MEMORY_FILE_LINE, BRAIN_MEMORY_TOOL_LINE).replace(
-        BRAIN_FEEDBACK_FILE_SECTION, BRAIN_FEEDBACK_TOOL_SECTION)
-    return adapted.rstrip("\n") + "\n\n" + BRAIN_CONFINED_CAPABILITIES_PROMPT
+    if edition is None:
+        return BRAIN_SYSTEM_PROMPT
+    policy = agent_capability_policy(parse_product_edition(edition))
+    return render_brain_system_prompt(policy) if policy.confined else BRAIN_SYSTEM_PROMPT
 
 # Consigne de la passerelle `jarvis-tools` (handoff generic-mcp-plugin-runtime,
 # Slice 05, ARCH §8.1). Composée seulement quand la passerelle est réellement
@@ -1179,10 +1246,21 @@ class ClaudeLocalAgent:
         """Dossier de travail interne d'un CLI confiné : `<runtime>/<workdir>`, jamais le code (I-002 point 6).
 
         Vide et propre à JARVIS : `--restricted` y borne les outils de fichiers (avec les `--add-dir`).
+        Un dossier impossible à créer : refus typé `agent_workdir_unavailable`, journalisé, jamais un repli sur le
+        code (reprise QA m5).
         """
 
+        from jarvis.domain.agent_capabilities import AgentCapabilityError
+
         folder = Path(self.runtime_root) / str(capabilities.workdir or "agent-workdir")
-        folder.mkdir(parents=True, exist_ok=True)
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            message = f"Dossier de travail du CLI confiné impossible à créer ({type(exc).__name__}: {exc})"[:300]
+            self.journal.emit("agent.workdir_unavailable", message, level="error",
+                              data={"code": "agent_workdir_unavailable", "exception_type": type(exc).__name__,
+                                    "path": str(folder)[:300]})
+            raise AgentCapabilityError("agent_workdir_unavailable", message) from exc
         return folder
 
     def _confined_read_dirs(self) -> tuple[Path, ...]:

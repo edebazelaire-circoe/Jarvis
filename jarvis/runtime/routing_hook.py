@@ -37,6 +37,7 @@ from typing import Any, Mapping, Sequence
 from jarvis.domain import (
     agent_markers, agent_orchestration, delivery_quality, model_family, relation_runtime, role_routing, routing,
 )
+from jarvis.domain.agent_capabilities import SUBAGENT_CONFINED_MARK, AgentCapabilityPolicy
 from jarvis.domain.agent_charter import sign_brief
 from jarvis.domain.brain_config import DelegationTendency
 from jarvis.domain.loadout_view import MANIFEST_MARK
@@ -44,7 +45,8 @@ from jarvis.domain.agent_relations import QA_REVIEWER_ROLE_IDS
 from jarvis.domain.mission_history import MissionHistoryError, fact_from_hook_event
 from jarvis.domain.work_methods import WorkMethod, builtin_method
 from jarvis.domain.subagent_roles import (
-    ROLE_MARK, SubagentRole, effective_method, instructions_for, resolve_role, role_for, with_role_instructions,
+    ROLE_MARK, SubagentRole, adapt_instructions, effective_method, instructions_for, resolve_role, role_for,
+    with_role_instructions,
 )
 # `ANNOUNCED_ROLES` : les rôles qu'une description peut annoncer (loadout, registre, alias), réexporté ici.
 from jarvis.domain.agent_markers import ANNOUNCED_ROLES, WORD_PATTERN  # noqa: F401
@@ -90,15 +92,34 @@ HOST_AGENT = "claude"
 PROFILE_PATTERN = re.compile(r"^\s*\[\s*(" + WORD_PATTERN + r")\s*\]\s*")
 _BRACKET = re.compile(r"\[\s*(" + WORD_PATTERN + r")\s*\]\s*")
 
-PROFILE_RULE = (
-    "Commence la description de chaque sous-agent par son profil entre crochets : "
-    "[code] pour écrire ou corriger du code, [desktop] pour piloter le navigateur ou "
-    "des fichiers ouverts, [fast] pour résumer, classer ou reformuler, [general] "
-    "sinon. JARVIS choisit le modèle à partir de ce profil et de tes réglages. "
-    "Pour une relecture, ajoute [qa] après le profil ([code] [qa] ...) ; "
-    "pour une recherche documentaire, [research] ([general] [research] ...) : "
-    "JARVIS donne alors au sous-agent les savoirs de ce rôle."
+#: Ce que dit la règle des profils de chacun, dans l'ordre où elle les cite.
+_PROFILE_USES = (
+    ("code", "[code] pour écrire ou corriger du code"),
+    ("desktop", "[desktop] pour piloter le navigateur ou des fichiers ouverts"),
+    ("fast", "[fast] pour résumer, classer ou reformuler"),
 )
+
+
+def profile_rule(capabilities: AgentCapabilityPolicy | None = None) -> str:
+    """La règle des profils du prompt du cerveau. `None` ou édition non confinée : `PROFILE_RULE`, octet pour octet.
+
+    Édition confinée (`docs/product-capabilities.md`) : seuls les profils offerts par le manifeste
+    (`AgentCapabilityPolicy.offers_task_profile`) sont cités ; `[code]` et `[desktop]` disparaissent sans outil
+    d'écriture ni navigateur piloté.
+    """
+    offered = [use for profile, use in _PROFILE_USES if capabilities is None or capabilities.offers_task_profile(profile)]
+    qa_profile = "code" if capabilities is None or capabilities.offers_task_profile("code") else "general"
+    return (
+        "Commence la description de chaque sous-agent par son profil entre crochets : "
+        f"{', '.join(offered)}, [general] "
+        "sinon. JARVIS choisit le modèle à partir de ce profil et de tes réglages. "
+        f"Pour une relecture, ajoute [qa] après le profil ([{qa_profile}] [qa] ...) ; "
+        "pour une recherche documentaire, [research] ([general] [research] ...) : "
+        "JARVIS donne alors au sous-agent les savoirs de ce rôle."
+    )
+
+
+PROFILE_RULE = profile_rule()
 
 
 def read_profile(tool_input: Mapping[str, Any]) -> str:
@@ -208,7 +229,7 @@ def orchestration_of(event: Mapping[str, Any]) -> Orchestration:
 
 def charter_input(
     event: Mapping[str, Any], role_overrides: Mapping[str, str] | None = None,
-    promoted: Mapping[str, WorkMethod] | None = None,
+    promoted: Mapping[str, WorkMethod] | None = None, capabilities: AgentCapabilityPolicy | None = None,
 ) -> dict[str, Any] | None:
     """La consigne signée de la charte du chantier, ou `None` si rien à changer.
 
@@ -222,7 +243,10 @@ def charter_input(
     surcharges des méthodes de rôle (`role_overrides`, `{id: texte}`) sont lues
     par l'appelant ; sans elles, chaque rôle prend le défaut du code. De même les
     versions promues des Work Methods (`promoted`, Slice 12) : sans elles, la
-    version livrée.
+    version livrée. De même le manifeste de capacités de l'édition (`capabilities`,
+    `docs/product-capabilities.md`) : confiné, méthode du rôle, mission et relations
+    ne citent que ce qui existe, et `subagent_note` dit les outils réels ; `None`
+    ou non confiné : la consigne d'avant.
     """
     if str(event.get("tool_name") or "") not in AGENT_TOOLS:
         return None
@@ -249,18 +273,24 @@ def charter_input(
     # La méthode du rôle annoncé (`subagent_roles`), pour la même raison : texte enregistré par l'utilisateur,
     # sinon défaut du code ; Work Method choisie par l'appelant si le rôle la permet. Jamais doublée.
     signed = with_role_instructions(signed, read_role(tool_input), role_overrides,
-                                    method=orchestration.method.method_id, promoted=promoted) or signed
+                                    method=orchestration.method.method_id, promoted=promoted,
+                                    capabilities=capabilities) or signed
     # La responsabilité de mission d'un Mission Owner (Slice 05), apposée en dernier. Jamais doublée.
-    mission = agent_orchestration.mission_brief(orchestration.mission)
+    mission = agent_orchestration.mission_brief(orchestration.mission, capabilities=capabilities)
     if mission and agent_orchestration.MISSION_MARK not in signed:
         signed = f"{signed.rstrip()}\n\n{mission}"
     # Slice 06 : les relations entre agents, en bloc distinct après la responsabilité de mission ; et la revue
     # asymétrique pour un relecteur QA. Jamais doublés.
     if orchestration.mission.mission_owner and relation_runtime.RELATIONS_MARK not in signed:
-        signed = f"{signed.rstrip()}\n\n{relation_runtime.relations_brief()}"
+        qa_profile = "code" if capabilities is None or capabilities.offers_task_profile("code") else "general"
+        signed = f"{signed.rstrip()}\n\n{relation_runtime.relations_brief(qa_profile)}"
     if (orchestration.role is not None and orchestration.role.id in QA_REVIEWER_ROLE_IDS
             and relation_runtime.REVIEWER_MARK not in signed):
         signed = f"{signed.rstrip()}\n\n{relation_runtime.reviewer_brief()}"
+    # Édition confinée : les outils réels, après tout le reste (la charte et une méthode éditée parlent de code).
+    note = capabilities.subagent_note() if capabilities is not None else None
+    if note and SUBAGENT_CONFINED_MARK not in signed:
+        signed = f"{signed.rstrip()}\n\n{note}"
     return None if signed == brief else {"prompt": signed}
 
 
@@ -544,6 +574,44 @@ def hook_settings(runtime_root: Path, *, python: str | None = None) -> str:
 GUARD_NOTE = "Type d'agent restreint imposé : ce rôle ne lance aucun autre agent."
 
 
+def _edition_capabilities(journal: RuntimeJournal) -> AgentCapabilityPolicy | None:
+    """Le manifeste de l'édition de ce processus (hérité de Core par le CLI), ou `None` s'il est illisible.
+
+    Illisible (valeur d'édition inconnue) : la consigne part comme en `full`, et le journal le dit. Le
+    confinement réel n'en dépend pas : il est imposé au lancement du CLI (`claude_local`), pas par ce texte.
+    """
+    from jarvis.domain.agent_capabilities import agent_capability_policy
+    from jarvis.runtime.product_edition_env import process_edition
+
+    try:
+        return agent_capability_policy(process_edition())
+    except Exception as exc:  # noqa: BLE001 - capture : une édition illisible ne vaut pas un outil perdu
+        _emit(journal, "agent.capabilities.unreadable",
+              f"Édition produit illisible ({type(exc).__name__}) : consignes des sous-agents non adaptées.",
+              level="warning", data={"code": "agent_capabilities_unreadable", "exception_type": type(exc).__name__})
+        return None
+
+
+def _log_confined_adaptation(journal: RuntimeJournal, event: Mapping[str, Any], role: SubagentRole,
+                             role_overrides: Mapping[str, str], capabilities: AgentCapabilityPolicy | None) -> None:
+    """Consigne les passages d'une méthode de rôle que l'édition confinée n'a pas pu réécrire (surcharge modifiée).
+
+    Jamais en silence (reprise QA Slice 04, m6) : la méthode part avec le paragraphe confiné du dossier ajouté,
+    mais une phrase éditée par l'utilisateur peut encore décrire un outil absent ; le code dit laquelle.
+    """
+    try:
+        _text, missed = adapt_instructions(role, instructions_for(role, role_overrides), capabilities)
+    except Exception as exc:  # noqa: BLE001 - capture : le diagnostic ne retient jamais l'appel
+        missed = (f"adaptation_failed:{type(exc).__name__}",)
+    if missed:
+        _emit(journal, "agent.role.confined_adaptation_missed",
+              f"Méthode du rôle « {role.id} » : passage(s) non adapté(s) à l'édition ({', '.join(missed)}).",
+              level="warning",
+              data={"code": "role_confined_adaptation_missed", "role_id": role.id, "missed": list(missed),
+                    "source": "override" if role.id in role_overrides else "default",
+                    "tool_use_id": str(event.get("tool_use_id") or "")[:128]})
+
+
 def run(event: Mapping[str, Any], runtime_root: Path, *, spawn_guard: bool = False) -> dict[str, Any]:
     """Décider et consigner. Toute panne interne se solde par un silence.
 
@@ -585,10 +653,13 @@ def run(event: Mapping[str, Any], runtime_root: Path, *, spawn_guard: bool = Fal
             return _output("deny", refusal)
     role_overrides = _role_overrides(event, runtime_root, journal)
     promoted = _promoted_methods(event, runtime_root, journal)
+    capabilities = _edition_capabilities(journal)
     try:
-        charter = charter_input(event, role_overrides, promoted)
+        charter = charter_input(event, role_overrides, promoted, capabilities)
     except Exception:  # noqa: BLE001 - une charte qui lève ne vaut pas un outil perdu
         charter = None
+    if orchestration is not None and orchestration.role is not None:
+        _log_confined_adaptation(journal, event, orchestration.role, role_overrides, capabilities)
     if ticket is not None:
         charter = _with_handoff_packet(event, charter, ticket)
     role = _log_role(journal, event, charter, role_overrides, promoted)

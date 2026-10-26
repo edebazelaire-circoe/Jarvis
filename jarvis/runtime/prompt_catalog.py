@@ -118,8 +118,8 @@ def _brain_system(values: Mapping[str, object]) -> str:
         level = DEFAULT_DELEGATION
     # Édition confinée (Slice 04, `docs/product-capabilities.md`) : mémoire et fiches par outil, capacités réelles dites.
     raw_edition = values.get(claude_local.BRAIN_PRODUCT_EDITION_VARIABLE)
-    return claude_local.brain_system_prompt_for(apply_delegation_rule(claude_local.BRAIN_SYSTEM_PROMPT, level),
-                                                None if raw_edition is None else str(raw_edition))
+    return apply_delegation_rule(
+        claude_local.brain_system_prompt(None if raw_edition is None else str(raw_edition)), level)
 
 
 def _brain_workspace(values: Mapping[str, object]) -> str:

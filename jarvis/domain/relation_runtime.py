@@ -403,15 +403,18 @@ def _tool(name: str) -> str:
     return f"mcp__{RELATION_SERVER}__{name}"
 
 
-def relations_brief() -> str:
-    """Bloc apposé après la responsabilité de mission d'un Mission Owner. Une boîte à outils, pas un ordre."""
+def relations_brief(qa_profile: str = "code") -> str:
+    """Bloc apposé après la responsabilité de mission d'un Mission Owner. Une boîte à outils, pas un ordre.
+
+    `qa_profile` : le profil cité pour lancer un relecteur (`general` dans une édition sans profil `code`).
+    """
 
     return "\n".join((
         RELATIONS_MARK,
         "Des outils explicites nouent une relation entre agents quand elle sert la mission ; aucune n'est obligatoire "
         "et aucune n'impose de tours. Chargez-les avec ToolSearch au besoin. Un agent se désigne par l'agentId que "
         "rend l'outil Agent (« agentId: … ») ; « self » vous désigne.",
-        f"- Second regard sur un résultat : lancez un relecteur ([code] [qa] …) en lui donnant l'agentId du travail "
+        f"- Second regard sur un résultat : lancez un relecteur ([{qa_profile}] [qa] …) en lui donnant l'agentId du travail "
         f"à relire ; il ouvre la relation QA ({_tool('relation_start')}, kind qa) et rend son verdict "
         f"({_tool('relation_close')}).",
         "- Approches concurrentes : lancez au moins deux producteurs, chacun avec une approche différente nommée "

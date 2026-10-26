@@ -15,7 +15,7 @@ edition offers), [export.md](export.md) (the only way a file leaves Jarvis),
 | Codex refused | `codex_local.py` (`_ensure_edition_allows_codex`), `back_brain_worker.create_job_agent` | same |
 | Debug console refused | `claude_local.open_console`, `codex_local.open_console` | same |
 | Self-development refused | `self_dev_service.py` (`gate`, `_ensure_edition`) | same |
-| Brain prompt describes only real capabilities | `claude_local.brain_system_prompt_for`, renderer `prompt_catalog._brain_system`; read-only `CONTEXT_GLOBAL` rules `global_context.GLOBAL_CONTEXT_READ_ONLY_RULES` | same, plus `test_product_edition.py` |
+| Brain prompt, sub-agent methods and routing hook describe only real capabilities | `claude_local.render_brain_system_prompt` / `brain_system_prompt` / `workspace_prompt_for`, renderer `prompt_catalog._brain_system`; `subagent_roles.brain_rules` / `role_brief` / `adapt_instructions`; `routing_hook.profile_rule` / `charter_input` (`capabilities`), `AgentCapabilityPolicy.subagent_note`; read-only `CONTEXT_GLOBAL` rules `global_context.GLOBAL_CONTEXT_READ_ONLY_RULES` | same, plus `test_product_edition.py` |
 
 ## Vocabulary
 
@@ -66,7 +66,7 @@ not know are ignored in `--tools`/`--disallowedTools` (probed).
 | Launch | `presentation` |
 | --- | --- |
 | Conversation brain (`execution_profile="conversation"`, every Board brain of the pool) | confined |
-| Back Brain job (`job_result`, `back_brain_worker.create_job_agent`) | confined (no MCP) ; a Codex job is refused `agent_cli_unavailable_in_edition` |
+| Back Brain job (`job_result`, `back_brain_worker.create_job_agent`) | confined (no MCP, no `--add-dir`): it reads **no Jarvis folder** (only its empty `agent-workdir`) and the web; a job needing Board or Session material must receive it in its brief. A Codex job is refused `agent_cli_unavailable_in_edition` |
 | `speculative_analysis`, `presentation_preparation` | unchanged: already stricter (`--restricted`, `--tools ""` or the granted read tools, no MCP, no session) |
 | Sub-agents (`Agent`/`Task`, any depth, incl. `general-purpose`, `claude`, `jarvis-no-spawn`) | inherit the session's tool pool and refusals: nothing to widen (probe and real trace below) |
 | Debug console (`/api/agent/console/open`) | refused before any process |
@@ -126,13 +126,54 @@ Consequence: in `presentation` the brain cannot reorganise `CONTEXT_GLOBAL`
 ## Brain prompt
 
 Written after enforcement, and only describing it
-(`BRAIN_CONFINED_CAPABILITIES_PROMPT`, `vous`): no terminal, PowerShell, file
+(`BRAIN_CONFINED_CAPABILITIES_PROMPT`, `vous`): no terminal, shell, file
 write/delete or piloted browser for the brain and its sub-agents; reading
 limited to Jarvis folders; writing only through Jarvis tools; for « écris sur
 le Bureau », « lance PowerShell », « supprime ce fichier »: say this edition
 cannot, and offer the export to `Documents\Jarvis`. Board memory and user
 feedback notes go through `board_memory_write`. In `full` the prompt is
 unchanged byte for byte.
+
+### Derived prompts (no second list)
+
+Every model-visible text is **rendered from the manifest**, never patched
+after the fact:
+
+- **Task profiles** (`routing.TASK_PROFILES`): a profile is offered when the
+  manifest provides every capability it requires
+  (`AgentCapabilityPolicy.offers_task_profile`): `code` needs a built-in write
+  tool (`NATIVE_WRITE_TOOLS`), `desktop` needs `--chrome`. In `presentation`
+  only `[fast]` and `[general]` remain; `profile_rule`, the Presentation author
+  (`[general] [presentation-author]`), the ephemeral example, QA (`[general]
+  [qa]`), the Mission Owner and relation briefs follow.
+- **Sub-agent roles**: a role is offered when its default profile is
+  (`subagent_roles.offers_role`); `[coder]` disappears from `brain_rules`,
+  from the spawn catalogue of `research-lead` and from the Mission Owner list.
+- **Mission dossier** (case B): without a built-in write tool, `_DOSSIER`
+  becomes `_DOSSIER_TOOL`: read with `board_memory_read`, written only with
+  `board_memory_write` (`create` once, `append` to add at the end, `replace`
+  with the `expected_sha256` of the last read to insert), path relative to the
+  Board memory (`missions/…/mission.md`). The brain passes the path and the
+  active Board id to the Interviewer.
+- **Brain lines**: the delegation line (`BRAIN_DELEGATE_WORK_LINE_CONFINED`:
+  no browser, code, command), memory and feedback lines, and the workspace
+  line on `board_memory_write` (`BRAIN_WORKSPACE_MEMORY_WRITE_TOOL_LINE`).
+  The workspace adaptation replaces exact lines of a read-only constant and
+  raises `PromptAdaptationError` (`prompt_adaptation_line_missing`) when one is
+  missing, instead of skipping it.
+- **Edited role methods**: user overrides (`subagent_role.<id>`) are adapted
+  passage by passage (`CONFINED_REWRITES`); a passage the override changed is
+  logged by the routing hook as `agent.role.confined_adaptation_missed`
+  (`role_confined_adaptation_missed`, with the codes), and the confined dossier
+  paragraph is appended anyway. Every confined sub-agent also receives
+  `subagent_note()` (`CAPACITÉS DE CETTE ÉDITION (SOUS-AGENT)`), which lists
+  the built-in tools from the manifest. An unreadable edition in the hook is
+  logged `agent_capabilities_unreadable` (texts then as in `full`; enforcement
+  is at launch, unaffected).
+- Conformance: `tests/unit/test_agent_capabilities.py` renders the
+  `presentation` brain prompt, every offered role brief and the hook output,
+  and checks that no `--disallowedTools` name, no `[code]`, `[coder]` or
+  `[desktop]` appears; `full` texts are compared to their constants.
 
 ## Observability
 

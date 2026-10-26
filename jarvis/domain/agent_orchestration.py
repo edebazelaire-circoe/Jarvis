@@ -44,7 +44,8 @@ from typing import Any
 
 from jarvis.domain import delivery_quality
 from jarvis.domain.agent_markers import HeadMarkers
-from jarvis.domain.subagent_roles import ROLES, SPAWN_TOOL, SubagentRole
+from jarvis.domain.agent_capabilities import AgentCapabilityPolicy
+from jarvis.domain.subagent_roles import ROLES, SPAWN_TOOL, SubagentRole, offers_role
 
 #: Type d'agent restreint déclaré au CLI (`--agents`) : mêmes outils que `general-purpose`, sans `Agent`/`Task`.
 NO_SPAWN_AGENT_TYPE = "jarvis-no-spawn"
@@ -230,16 +231,21 @@ def _owner_markers(roles: Sequence[SubagentRole]) -> str:
     return ", ".join(f"[{role.default_profile}] [{role.marker}]" for role in owners)
 
 
-def mission_brief(decision: MissionDecision, roles: Sequence[SubagentRole] = ROLES) -> str | None:
+def mission_brief(decision: MissionDecision, roles: Sequence[SubagentRole] = ROLES,
+                  capabilities: AgentCapabilityPolicy | None = None) -> str | None:
     """Le bloc apposé sur la consigne d'un Mission Owner, ou `None` pour tout autre agent.
 
     Il enseigne quand les outils peuvent servir, jamais un ordre ni un nombre d'agents (D05) ; il rappelle que
     seul ce qui est réellement lancé laisse une trace (D15). La restitution (Slice 11, `delivery_quality`) vient
     en tête, juste après la portée : en fin de consigne elle pesait moins que les consignes de compte rendu.
+    `capabilities` (édition confinée, `docs/product-capabilities.md`) : seuls les rôles et profils de l'édition
+    sont cités ; `None` : le texte d'avant.
     """
 
     if not decision.mission_owner:
         return None
+    roles = [role for role in roles if offers_role(role, capabilities)]
+    qa_profile = "code" if capabilities is None or capabilities.offers_task_profile("code") else "general"
     scope = ("Votre prédécesseur vous passe sa mission par un relais : vous l'organisez vous-même et lui en rendez "
              "le résultat." if decision.handoff else
              "Votre appelant vous confie une sous-mission : vous l'organisez vous-même et lui en rendez le résultat."
@@ -263,7 +269,7 @@ def mission_brief(decision: MissionDecision, roles: Sequence[SubagentRole] = ROL
         "- Gardez la main sur ce que vous lancez : SendMessage pour réorienter un agent, TaskStop pour arrêter un "
         "agent lancé en fond, et relisez chaque compte rendu avant de vous en servir.",
         "- Avant de rendre, jugez si la preuve suffit à l'enjeu. Sinon cherchez encore, demandez un second regard "
-        "([code] [qa] …) ou comparez des approches : ne vous arrêtez pas à la première réponse plausible.",
+        f"([{qa_profile}] [qa] …) ou comparez des approches : ne vous arrêtez pas à la première réponse plausible.",
         "- Rendez le résultat sous une forme lisible pour son usage ; une réponse simple reste simple.",
         "JARVIS retient les agents que vous lancez réellement, rien de ce que vous ne faites qu'envisager.",
     ))

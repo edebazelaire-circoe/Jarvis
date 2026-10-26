@@ -422,11 +422,13 @@ def test_the_resolved_conversation_program_follows_the_edition():
     assert claude_local.BRAIN_WORKSPACE_KINDS_LINE in full
     assert claude_local.BRAIN_WORKSPACE_KINDS_LINE not in presentation
     assert claude_local.BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE in presentation
-    # Slice 04 (`docs/product-capabilities.md`) : la consigne du cerveau confiné change aussi la mémoire de Board,
-    # les fiches de retour et ajoute ses capacités réelles ; rien d'autre ne bouge.
-    undone = (presentation.replace("\n\n" + claude_local.BRAIN_CONFINED_CAPABILITIES_PROMPT, "\n")
-              .replace(claude_local.BRAIN_MEMORY_TOOL_LINE, claude_local.BRAIN_MEMORY_FILE_LINE)
-              .replace(claude_local.BRAIN_FEEDBACK_TOOL_SECTION, claude_local.BRAIN_FEEDBACK_FILE_SECTION))
+    # Slice 04 (`docs/product-capabilities.md`) : la consigne du cerveau confiné est rendue depuis le manifeste
+    # (`render_brain_system_prompt`) et la ligne d'écriture de la mémoire du workspace change ; rien d'autre ne bouge.
+    from jarvis.domain.agent_capabilities import PRESENTATION_CAPABILITIES
+
+    undone = (presentation.replace(claude_local.render_brain_system_prompt(PRESENTATION_CAPABILITIES),
+                                   claude_local.BRAIN_SYSTEM_PROMPT)
+              .replace(claude_local.BRAIN_WORKSPACE_MEMORY_WRITE_TOOL_LINE, claude_local.BRAIN_WORKSPACE_MEMORY_WRITE_LINE))
     assert undone.replace(claude_local.BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE,
                           claude_local.BRAIN_WORKSPACE_KINDS_LINE) == full, "seules les lignes de l'édition changent"
 

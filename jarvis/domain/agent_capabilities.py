@@ -21,6 +21,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from jarvis.domain import routing
 from jarvis.domain.product_edition import ProductEdition, ProductEditionPolicy
 
 #: Mode de permission imposé à un agent confiné : refuse tout outil non listé dans `--allowedTools`,
@@ -43,6 +44,18 @@ FORBIDDEN_NATIVE_TOOLS = (
     "CronCreate", "CronDelete", "ScheduleWakeup", "RemoteTrigger", "Workflow", "EnterWorktree", "ExitWorktree",
     "Skill", "DesignSync", "PushNotification",
 )
+
+#: Outils intégrés qui écrivent un fichier : sans l'un d'eux, un agent n'écrit que par les outils JARVIS
+#: (`board_memory_write`, `presentation_*`), et la capacité de routage `code` n'existe pas.
+NATIVE_WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+
+#: Ce qu'il faut au manifeste pour offrir chaque capacité de routage (`routing.CAPABILITIES`) qu'exige un profil de
+#: tâche (`routing.TASK_PROFILES`) : `code` écrit des fichiers, `computer_use` pilote le navigateur (`--chrome`).
+#: Une capacité absente de cette table ne dépend pas des outils de l'agent.
+_CAPABILITY_NEEDS = {
+    routing.CODE: lambda policy: any(tool in policy.native_tools for tool in NATIVE_WRITE_TOOLS),
+    routing.COMPUTER_USE: lambda policy: policy.chrome,
+}
 
 
 class AgentCapabilityError(RuntimeError):
@@ -91,6 +104,28 @@ class AgentCapabilityPolicy:
                 f"{capability}_unavailable_in_edition",
                 f"{_LABELS[capability]} n'est pas disponible dans l'édition {self.edition.value}.")
 
+    @property
+    def writes_files(self) -> bool:
+        """Vrai : l'agent a un outil intégré qui écrit un fichier. Faux en confiné : il écrit par les outils JARVIS."""
+
+        return not self.confined or any(tool in self.native_tools for tool in NATIVE_WRITE_TOOLS)
+
+    def offers_task_profile(self, profile: str) -> bool:
+        """Le profil de tâche (`[code]`, `[desktop]`, …) a-t-il un sens ici ? Dérivé de ses capacités exigées.
+
+        Non confiné : tous. Confiné : un profil dont une capacité exigée manque au manifeste n'est ni proposé au
+        cerveau ni cité dans une consigne (`docs/product-capabilities.md`, « Consignes dérivées »).
+        """
+
+        if not self.confined:
+            return True
+        spec = routing.profile_spec(profile)
+        return all(_CAPABILITY_NEEDS.get(need, lambda _policy: True)(self) for need in spec.requires)
+
+    @property
+    def offered_task_profiles(self) -> tuple[str, ...]:
+        return tuple(profile for profile in routing.TASK_PROFILE_IDS if self.offers_task_profile(profile))
+
     def allowed_rules(self, mcp_servers: Iterable[str]) -> tuple[str, ...]:
         """`--allowedTools` : les outils intégrés offerts, puis chaque serveur MCP de JARVIS déclaré au lancement."""
 
@@ -108,6 +143,23 @@ class AgentCapabilityPolicy:
                 "--allowedTools", ",".join(self.allowed_rules(mcp_servers)),
                 "--disallowedTools", ",".join(denied)]
 
+    def subagent_note(self) -> str | None:
+        """Bloc apposé par le hook d'aiguillage sur la consigne de chaque sous-agent confiné, ou `None`.
+
+        Un sous-agent ne voit pas la consigne du cerveau : sans ce bloc, la charte (« lis le code, l'historique
+        git ») et une méthode éditée par l'utilisateur pourraient lui faire chercher un outil qui n'existe pas.
+        """
+
+        if self.writes_files:
+            return None
+        return (f"{SUBAGENT_CONFINED_MARK}\n"
+                "Cette édition de JARVIS ne vous donne ni terminal, ni outil qui écrit, modifie ou supprime un fichier, "
+                f"ni navigateur piloté. Outils intégrés : {', '.join(self.native_tools)} ; la lecture se limite aux "
+                "dossiers de JARVIS. Vous écrivez uniquement par les outils JARVIS : board_memory_write pour la mémoire "
+                "du Board (dossier de mission compris), les outils presentation_* pour une présentation. Ce que votre "
+                "consigne dit du code, des tests, de git ou d'un fichier à modifier ne se fait que par ces outils ; "
+                "sinon, dites dans votre compte rendu ce qui manque, sans chercher d'autre moyen.")
+
     def to_payload(self) -> dict[str, object]:
         """Ce que l'interface affiche (réglages verrouillés) et ce que les diagnostics citent."""
 
@@ -117,6 +169,9 @@ class AgentCapabilityPolicy:
                 "chrome": self.chrome, "agent_clis": list(self.agent_clis), "debug_console": self.debug_console,
                 "self_development": self.self_development}
 
+
+#: Tête du bloc `subagent_note` : présent dans une consigne, il n'est pas doublé.
+SUBAGENT_CONFINED_MARK = "CAPACITÉS DE CETTE ÉDITION (SOUS-AGENT)"
 
 _LABELS = {"debug_console": "La console de debug du CLI", "self_development": "L'auto-développement"}
 
