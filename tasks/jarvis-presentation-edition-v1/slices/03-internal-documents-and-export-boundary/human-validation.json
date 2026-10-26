@@ -3,6 +3,10 @@
     {
       "id": "HV-EXPORT-01",
       "description": "Export a real Presentation to Documents\\Jarvis, delete or move the exported file, then reopen and re-export from Jarvis; internal state must remain complete."
+    },
+    {
+      "id": "HV-EXPORT-02",
+      "description": "On a workstation whose Documents folder is synchronised by OneDrive (files on demand), export a Presentation: the copy must arrive in Documents\\Jarvis without an export_destination_unsafe refusal."
     }
   ]
 }

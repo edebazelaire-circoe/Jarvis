@@ -91,3 +91,11 @@ Implementation agents append durable execution notes here. This handoff intentio
 - Counter-review and runtime counter-check: no blocker, B1-B4 confirmed fixed, a hostile real trace resisted. Final polish `b55aae8b`.
 - Decision: **Slice 05 APPROVED** (IGuard part pending its contract). Merged into the task branch (conflicts `protocol/client.py` and `core/v2_app.py` resolved by agent 0: `is_forwardable` + `ForwardRefused`, both `v2_app` parameters kept). Post-merge batches: 215 + 346 passed, 1 known failure (`test_app` tools_gateway_target, present on main).
 - Known failures present on main 2d6ca879 (not caused by the task): `test_brain_capability_parity`, `test_tool_brain_choices::test_ui_projection…`, `test_app::…tools_gateway_target…`, `test_surface_reflex_policy::test_no_provider_model_id…`, `test_control_center_mcp_api` (6), `test_connections_settings_browser` (3).
+
+## 2026-10-26 — Slice 03 QA and decision (agent 0)
+- Code review: no blocking finding (6 non-blocking). Runtime with real Remotion renders: Core PASS; **blocking**: relay `/v1/exports` missing from the `forward_json` whitelist (button inoperative). Major: `save` unreachable when the brain delegates.
+- Rework `1fc5dc88`: whitelist + generic guard `test_control_center_relay_whitelist.py`, main-brain export prompt, override ignored when installed, deduplication, re-check after rename, Unicode `Cf`, UI `display_path`.
+- Runtime counter-check: relay 201 then `already_exported`, real Variantes button (CDP harness), real brain turn calling `remotion_export save` itself (4 calls, 9.1 s, $0.42). PASS.
+- Incident: the sandbox brain (native PowerShell/Write tools, Slice 04 not yet done) wrote 3 times outside the sandbox (real Documents twice, C:\Users\Public once). Each file was checked and deleted; real `Documents\JARVIS` is unchanged. Recorded in I-003 as a critical input for Slice 04.
+- Decision: **Slice 03 APPROVED**. HV-EXPORT-02 (real OneDrive) added.
+- Next: Slice 04 in `pev1`; Slice 08 in parallel in worktree `pev1u` (branch `task/jarvis-presentation-edition-v1-s08`).

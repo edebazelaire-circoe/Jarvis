@@ -5,7 +5,8 @@
     — canonical Presentation product policy + Core/API/MCP Board enforcement.
 3. [x] `02-windows-data-root-context-global` — **APPROVED** on 2026-10-26 (`f239e91c`, rework `797ba070`). Leftovers: `Issues/I-002-s02-leftovers.md`.
     — stable AppData root, migration and permanent `CONTEXT_GLOBAL`.
-4. `03-internal-documents-and-export-boundary` — internal canonical documents + explicit `Documents\Jarvis` export contract.
+4. [x] `03-internal-documents-and-export-boundary` — **APPROVED** on 2026-10-26 (`ef514a5a`, rework `1fc5dc88`). Leftovers: `Issues/I-003-s03-leftovers.md` (incl. HV OneDrive).
+    — internal canonical documents + explicit `Documents\Jarvis` export contract.
 5. `04-agent-confinement-capability-policy` — remove general shell/filesystem write authority from product brain/sub-agents.
 6. [x] `05-connectors-secrets-and-iguard-hook` — **APPROVED** on 2026-10-26 (branch `-s05`: `5fad8d8f`..`b55aae8b`, merged). IGuard part pending its contract. Leftovers: `Issues/I-004-s05-leftovers.md`.
     — allowed connectors, credentials, Drive/CIRCOE integration and IGuard seam.
