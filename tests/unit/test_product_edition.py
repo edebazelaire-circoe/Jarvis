@@ -396,3 +396,134 @@ def test_the_prompt_registry_renders_the_edition_line():
     assert _brain_workspace({}) == claude_local.BRAIN_WORKSPACE_PROMPT
     assert _brain_workspace({claude_local.BRAIN_PRODUCT_EDITION_VARIABLE: "presentation"}) \
         == claude_local.workspace_prompt_for("presentation")
+
+
+# ------------------------------------------------------------------ reprise QA : résolution réelle et cohérence
+
+
+_PROGRAM = "conversation_display_studio_barehands_session"
+
+
+def _append_prompt(variables: dict) -> str:
+    from jarvis.domain.prompt_registry import PromptTarget
+    from jarvis.runtime.prompt_runtime import prompt_channel, resolve_prompt
+
+    resolved = resolve_prompt(PromptTarget("backend", None, "claude", None, None, _PROGRAM), variables=variables)
+    return prompt_channel(resolved, "cli.append_system_prompt")
+
+
+def test_the_resolved_conversation_program_follows_the_edition():
+    from jarvis.runtime import claude_local
+
+    plain, full, presentation = _append_prompt({}), _append_prompt({"product_edition": "full"}), \
+        _append_prompt({"product_edition": "presentation"})
+    assert full == plain, "full : la consigne résolue est celle d'avant, octet pour octet"
+    assert claude_local.BRAIN_WORKSPACE_PROMPT in full
+    assert claude_local.BRAIN_WORKSPACE_KINDS_LINE in full
+    assert claude_local.BRAIN_WORKSPACE_KINDS_LINE not in presentation
+    assert claude_local.BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE in presentation
+    assert presentation.replace(claude_local.BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE,
+                                claude_local.BRAIN_WORKSPACE_KINDS_LINE) == full, "seule la ligne des types change"
+
+
+def test_an_unknown_edition_in_the_prompt_is_an_error_like_in_core():
+    from jarvis.runtime import claude_local
+    from jarvis.runtime.product_edition_env import process_edition
+
+    with pytest.raises(ConfigurationError):
+        claude_local.workspace_prompt_for("presentaton")
+    with pytest.raises(ConfigurationError):
+        process_edition({PRODUCT_EDITION_ENV: "presentaton"})
+    assert process_edition({}) is FULL_EDITION
+
+
+@pytest.mark.parametrize("edition", ["full", "presentation"])
+async def test_the_control_center_launch_passes_the_edition_to_the_prompt_and_the_mcp_config(
+        monkeypatch, tmp_path, edition):
+    from jarvis.runtime import claude_local
+    from jarvis.runtime.claude_local import ClaudeLocalAgent, launched_append_prompt
+    from jarvis.runtime.workspace_mcp import SERVER_NAME, WorkspaceMcpTarget
+    from tests.unit.test_claude_tools_gateway_args import _Process
+
+    monkeypatch.setenv(PRODUCT_EDITION_ENV, edition)
+    started: list[list[str]] = []
+
+    async def fake_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        started.append([str(arg) for arg in args])
+        return _Process()
+
+    monkeypatch.setattr(claude_local.asyncio, "create_subprocess_exec", fake_exec)
+    runtime = tmp_path / "runtime"
+    agent = ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path, execution_profile="conversation",
+                             workspace_mcp=WorkspaceMcpTarget("127.0.0.1", 47002, runtime))
+    if agent._process_tree is not None:
+        monkeypatch.setattr(agent._process_tree, "attach_and_resume", lambda pid: None)
+    await agent.start()
+    agent.process.returncode = 0  # type: ignore[union-attr]
+    await agent.stop()
+    prompt = launched_append_prompt(started[0])
+    expected = (claude_local.BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE if edition == "presentation"
+                else claude_local.BRAIN_WORKSPACE_KINDS_LINE)
+    assert expected.strip() in prompt
+    import json as _json
+    config = _json.loads((runtime / "workspace-mcp.json").read_text(encoding="utf-8"))
+    assert config["mcpServers"][SERVER_NAME]["env"][PRODUCT_EDITION_ENV] == edition
+
+
+def test_the_interaction_mode_refusal_follows_the_edition():
+    from jarvis.domain.interaction_mode import INTERACTION_MODE_DERIVED_MESSAGE
+    from jarvis.runtime.settings_mcp import interaction_mode_refusal
+
+    full = interaction_mode_refusal(FULL_EDITION)
+    assert full.startswith(INTERACTION_MODE_DERIVED_MESSAGE) and "board_kind « presentation »" in full
+    presentation = interaction_mode_refusal(PRESENTATION_EDITION)
+    assert "assistant" not in presentation.lower() and "board_kind" not in presentation
+    assert "board_create" in presentation and "Présentation" in presentation
+
+
+async def test_the_console_tool_refuses_interaction_mode_with_the_edition_sentence(tmp_path):
+    from jarvis.runtime.settings_mcp import (
+        INTERACTION_MODE_PRESENTATION_EDITION_MESSAGE, ConsoleMcpTarget, ConsoleSettingsTools, ConsoleToolError,
+    )
+
+    tools = ConsoleSettingsTools(ConsoleMcpTarget("127.0.0.1", 1, tmp_path), edition=PRESENTATION_EDITION)
+    with pytest.raises(ConsoleToolError) as refused:
+        await tools.set("interaction_mode", "presentation")
+    assert str(refused.value) == INTERACTION_MODE_PRESENTATION_EDITION_MESSAGE
+    await tools.close()
+
+
+def test_the_tool_brain_only_offers_available_boards():
+    from datetime import datetime, timezone
+
+    from jarvis.runtime.tool_brain_choices import BOARD_KIND_UNAVAILABLE, PROVIDERS, UiState
+    from jarvis.domain.workspace_board import create_board, default_board
+
+    now = datetime(2026, 10, 26, tzinfo=timezone.utc)
+    legacy = default_board(now=now)
+    deck = create_board("Pitch", now=now, board_kind=BoardKind.PRESENTATION)
+    provider = PROVIDERS["board.switchable"]
+    full = UiState(scene=None, epoch=None, boards=(legacy, deck), active_board_id=deck.board_id)
+    assert {c.value for c in provider.list_choices(full)} == {legacy.board_id, deck.board_id}
+    locked = UiState(scene=None, epoch=None, boards=(legacy, deck), active_board_id=deck.board_id,
+                     edition=PRESENTATION_EDITION)
+    assert {c.value for c in provider.list_choices(locked)} == {deck.board_id}
+    assert provider.refusal(locked, legacy.board_id) == BOARD_KIND_UNAVAILABLE
+    # Lire un Board hérité reste permis : seule l'activation est fermée.
+    assert legacy.board_id in {c.value for c in PROVIDERS["board.readable"].list_choices(locked)}
+
+
+async def test_the_tool_brain_reads_the_edition_from_core(tmp_path):
+    from jarvis.runtime.tool_brain_choices import read_ui_state
+
+    core = await _core(tmp_path, PRESENTATION_EDITION)
+    try:
+        state = await read_ui_state(None, core.boards)
+        assert state.edition is PRESENTATION_EDITION
+    finally:
+        await core.stop()
+
+
+async def test_the_board_create_description_says_the_limit_is_the_edition():
+    description = (await _tools(PRESENTATION_EDITION))["board_create"].description
+    assert "dans cette édition" in description and "quel que soit le Board actif" in description

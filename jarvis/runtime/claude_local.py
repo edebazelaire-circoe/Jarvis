@@ -329,15 +329,14 @@ BRAIN_PRODUCT_EDITION_VARIABLE = "product_edition"
 
 
 def workspace_prompt_for(edition: str | None) -> str:
-    """`BRAIN_WORKSPACE_PROMPT` de l'édition ; `full`, absente ou inconnue : la consigne d'avant, octet pour octet."""
+    """`BRAIN_WORKSPACE_PROMPT` de l'édition ; `full` ou absente (aperçu, tests) : la consigne d'avant, octet pour octet.
 
-    from jarvis.domain.product_edition import PRODUCT_EDITIONS, ProductEdition
+    Valeur inconnue : `ConfigurationError` (`parse_product_edition`, même règle que Core).
+    """
 
-    try:
-        policy = PRODUCT_EDITIONS[ProductEdition(edition)] if isinstance(edition, str) else None
-    except ValueError:
-        policy = None
-    if policy is None or not policy.restricts_board_kinds:
+    from jarvis.domain.product_edition import parse_product_edition
+
+    if edition is None or not parse_product_edition(edition).restricts_board_kinds:
         return BRAIN_WORKSPACE_PROMPT
     return BRAIN_WORKSPACE_PROMPT.replace(BRAIN_WORKSPACE_KINDS_LINE, BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE)
 
@@ -1195,8 +1194,8 @@ class ClaudeLocalAgent:
             if self.execution_profile == "conversation":
                 prompt_variables[BRAIN_DELEGATION_VARIABLE] = delegation.value
                 # Édition produit (`docs/product-edition.md`) : la consigne Boards ne propose que les types disponibles.
-                from jarvis.domain.product_edition import resolve_product_edition
-                prompt_variables[BRAIN_PRODUCT_EDITION_VARIABLE] = resolve_product_edition(os.environ).edition.value
+                from jarvis.runtime.product_edition_env import process_edition
+                prompt_variables[BRAIN_PRODUCT_EDITION_VARIABLE] = process_edition().edition.value
             if self.execution_profile == "conversation" and self.global_context_dir is not None:
                 # Relu à chaque lancement : c'est ainsi qu'une modification faite
                 # par l'agent devient son prochain prompt initial. Hors de la boucle.

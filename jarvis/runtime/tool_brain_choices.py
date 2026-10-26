@@ -31,6 +31,7 @@ from jarvis.domain.browser_surface import (
     UNKNOWN_SURFACE, UNSAFE_URL, Surface, SurfaceError, check_surface_url, surfaces_of,
 )
 from jarvis.domain.scene import SceneObject, SceneRelation, SceneSnapshot, is_runtime_owned_relation
+from jarvis.domain.product_edition import FULL_EDITION, ProductEditionPolicy
 from jarvis.domain.workspace_board import Board, BoardStatus
 from jarvis.ports.scene import SceneUnavailableError
 from jarvis.runtime.mcp_tool_meta import UI_PRECONDITIONS, tool_meta
@@ -52,6 +53,8 @@ UNKNOWN_RELATION = "unknown_relation"
 RUNTIME_OWNED = "runtime_owned"
 BOARD_NOT_FOUND = "board_not_found"
 BOARD_ARCHIVED = "board_archived"
+#: Board d'un type que l'édition produit ne rend pas disponible (`docs/product-edition.md`).
+BOARD_KIND_UNAVAILABLE = "board_kind_unavailable"
 INVALID_CHOICE_TYPE = "invalid_choice_type"
 STALE_SCENE_EPOCH = "stale_scene_epoch"
 STALE_ACTIVE_BOARD = "stale_active_board"
@@ -87,6 +90,8 @@ class UiState:
     epoch: str | None
     boards: tuple[Board, ...]
     active_board_id: str | None
+    #: Édition produit de Core (`BoardService.edition`) : `board.switchable` n'offre que ses types disponibles.
+    edition: ProductEditionPolicy = FULL_EDITION
 
     @property
     def surfaces(self) -> tuple[Surface, ...]:
@@ -132,10 +137,12 @@ async def read_ui_state(scene: SceneStateSource | None, boards: BoardStateSource
             snapshot, epoch = None, None  # dit par `scene_unavailable` au validateur, jamais deviné
     listed: tuple[Board, ...] = ()
     active: str | None = None
+    # `BoardService.edition` ; une source sans édition (doublures de test d'avant S01) est en `full`.
+    edition: ProductEditionPolicy = getattr(boards, "edition", FULL_EDITION)
     if boards is not None:
         listed = tuple(await boards.list(include_archived=True))
         active = await boards.active_board_id()
-    return UiState(scene=snapshot, epoch=epoch, boards=listed, active_board_id=active)
+    return UiState(scene=snapshot, epoch=epoch, boards=listed, active_board_id=active, edition=edition)
 
 
 # ------------------------------------------------------------------ choix
@@ -220,7 +227,7 @@ def _board_choice(board: Board, active_id: str | None) -> Choice:
 
 def _switchable_boards(state: UiState) -> tuple[Choice, ...]:
     return tuple(_board_choice(board, state.active_board_id) for board in state.boards
-                 if board.status is BoardStatus.ACTIVE)
+                 if board.status is BoardStatus.ACTIVE and state.edition.allows(board.board_kind))
 
 
 def _readable_boards(state: UiState) -> tuple[Choice, ...]:
@@ -229,6 +236,8 @@ def _readable_boards(state: UiState) -> tuple[Choice, ...]:
 
 def _board_refusal(state: UiState, value: str) -> str:
     known = next((board for board in state.boards if board.board_id == value), None)
+    if known is not None and known.status is BoardStatus.ACTIVE and not state.edition.allows(known.board_kind):
+        return BOARD_KIND_UNAVAILABLE
     return BOARD_ARCHIVED if known is not None and known.status is BoardStatus.ARCHIVED else BOARD_NOT_FOUND
 
 

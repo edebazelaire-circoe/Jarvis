@@ -122,7 +122,7 @@ def _brain_system(values: Mapping[str, object]) -> str:
 def _brain_workspace(values: Mapping[str, object]) -> str:
     # Édition absente (aperçu, tests) : `full`, la consigne d'avant (`docs/product-edition.md`).
     raw = values.get(claude_local.BRAIN_PRODUCT_EDITION_VARIABLE)
-    return claude_local.workspace_prompt_for(raw if isinstance(raw, str) else None)
+    return claude_local.workspace_prompt_for(None if raw is None else str(raw))
 
 
 def _request_text(values: Mapping[str, object]) -> str:
@@ -193,8 +193,10 @@ def default_prompt_registry() -> PromptRegistry:
                     claude_local.BRAIN_CAPTURE_PROMPT, apply_policy="read_only"),
         # Boards, Sessions et mémoire (board-memory-workspace-inspector, Slice 06) : dans tous les
         # programmes de conversation, `jarvis-workspace` étant déclaré sans interrupteur.
+        # Dynamique (jarvis-presentation-edition-v1 S01) : la ligne des types de Board suit l'édition produit
+        # (variable `product_edition`, renderer `_brain_workspace`) ; sans variable : le texte d'avant.
         _descriptor("backend.claude.conversation.workspace", claude_local, "BRAIN_WORKSPACE_PROMPT",
-                    claude_local.BRAIN_WORKSPACE_PROMPT, apply_policy="read_only"),
+                    claude_local.BRAIN_WORKSPACE_PROMPT, dynamic=True, apply_policy="read_only"),
         # Passerelle `jarvis-tools` (plugins MCP, Slice 05 ; ARCH E20) : composée
         # **seulement** quand la passerelle est réellement déclarée — les programmes
         # Claude `tools_*` (fichier `--mcp-config` écrit) et le tour Codex

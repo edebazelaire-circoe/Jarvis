@@ -58,7 +58,9 @@ SCENE_UNAVAILABLE = "scene_unavailable"
 UNAVAILABLE = "unavailable"
 
 #: Refus de `BoardService.switch` qui disent « l'état a changé depuis le plan » (le reste est une panne).
-_BOARD_REFUSALS = frozenset({BoardErrorCode.BOARD_NOT_FOUND, BoardErrorCode.BOARD_ARCHIVED, BoardErrorCode.INVALID_BOARD})
+#: `board_kind_unavailable` (édition produit, `docs/product-edition.md`) : un refus du propriétaire, pas une panne.
+_BOARD_REFUSALS = frozenset({BoardErrorCode.BOARD_NOT_FOUND, BoardErrorCode.BOARD_ARCHIVED, BoardErrorCode.INVALID_BOARD,
+                             BoardErrorCode.BOARD_KIND_UNAVAILABLE})
 
 
 @dataclass(frozen=True)

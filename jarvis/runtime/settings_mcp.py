@@ -55,6 +55,27 @@ import aiohttp
 
 from jarvis.domain.barehands_calibration import CALIBRATION_ACTIVE
 from jarvis.domain.interaction_mode import INTERACTION_MODE_DERIVED, INTERACTION_MODE_DERIVED_MESSAGE
+from jarvis.domain.product_edition import PRODUCT_EDITION_ENV, ProductEditionPolicy
+from jarvis.runtime.product_edition_env import process_edition
+
+#: Suite du refus `interaction_mode_derived` : quels outils mènent au mode voulu, en édition `full`.
+INTERACTION_MODE_TOOLS_HINT = (" Outils : board_switch vers un Board de type « presentation » (ou « assistant »), "
+                               "sinon board_create avec board_kind « presentation ».")
+#: Le même refus quand l'édition n'a qu'un type, Présentation (`docs/product-edition.md`) : ni Assistant, ni
+#: `board_kind` à proposer.
+INTERACTION_MODE_PRESENTATION_EDITION_MESSAGE = (
+    "Le mode d'interaction suit le type du Board actif : il ne se règle plus à part. Dans cette édition de "
+    "JARVIS, tout Board est un Board Présentation. Rien n'a été changé. Outils : board_switch vers un Board "
+    "Présentation, sinon board_create (aucun type à choisir)."
+)
+
+
+def interaction_mode_refusal(edition: ProductEditionPolicy) -> str:
+    """Texte du refus `interaction_mode_derived` rendu au cerveau, selon l'édition produit."""
+
+    if edition.restricts_board_kinds:
+        return INTERACTION_MODE_PRESENTATION_EDITION_MESSAGE
+    return INTERACTION_MODE_DERIVED_MESSAGE + INTERACTION_MODE_TOOLS_HINT
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.mcp_tool_meta import tool_annotations, tool_names
 from jarvis.v2_config import validate_loopback_host
@@ -230,7 +251,8 @@ def mcp_config(target: ConsoleMcpTarget, *, python: str | None = None) -> dict[s
                 "type": "stdio",
                 "command": python or sys.executable,
                 "args": ["-m", "jarvis", "console-mcp"],
-                "env": target.env(),
+                # Édition produit transmise explicitement, comme pour `jarvis-workspace`.
+                "env": {**target.env(), PRODUCT_EDITION_ENV: process_edition().edition.value},
             }
         }
     }
@@ -320,11 +342,14 @@ class ConsoleSettingsTools:
         *,
         journal: RuntimeJournal | None = None,
         session_factory: Any = None,
+        edition: ProductEditionPolicy | None = None,
     ) -> None:
         self.target = target
         self.journal = journal
         self._session_factory = session_factory
         self._session: Any = None
+        #: Édition produit du serveur (`docs/product-edition.md`) : le refus `interaction_mode` la suit.
+        self.edition = edition or process_edition()
 
     async def close(self) -> None:
         if self._session is not None:
@@ -659,11 +684,7 @@ class ConsoleSettingsTools:
         self._emit("settings.tool_refused", f"{tool} : interaction_mode refusé (mode dérivé du Board)",
                    level="warning", data={"tool": tool, "option_id": INTERACTION_MODE_ID,
                                           "code": INTERACTION_MODE_DERIVED})
-        return ConsoleToolError(
-            INTERACTION_MODE_DERIVED,
-            f"{INTERACTION_MODE_DERIVED_MESSAGE} Outils : board_switch vers un Board de type "
-            "« presentation » (ou « assistant »), sinon board_create avec board_kind « presentation ».",
-        )
+        return ConsoleToolError(INTERACTION_MODE_DERIVED, interaction_mode_refusal(self.edition))
 
     async def set(self, option_id: str, value: Any) -> dict[str, Any]:
         option_id = str(option_id or "").strip()

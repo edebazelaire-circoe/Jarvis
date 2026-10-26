@@ -12,7 +12,10 @@ reusable policy implementation and conformance tests. Handoff
 | Startup restore fallback | `jarvis/core/session_manager.py` (`_start_board`, `_edition_fallback_board`) | same, plus `test_session_manager.py` |
 | Protocol and relay | `GET /v1/boards/edition` (`jarvis/protocol/server.py`), `GET /api/boards/edition` (`jarvis/runtime/board_routes.py`) | same, plus `test_board_protocol.py` |
 | MCP `jarvis-workspace` | `jarvis/runtime/workspace_mcp.py` (`build_server(edition=…)`, `mcp_config`), `jarvis/runtime/workspace_boards.py` (`switch_board` pre-check) | same, plus `test_workspace_mcp.py` |
-| Brain prompt | `jarvis/runtime/claude_local.py` (`workspace_prompt_for`), renderer `prompt_catalog._brain_workspace` | same, plus `test_prompt_registry.py` |
+| Process reading (every process) | `jarvis/runtime/product_edition_env.py` (`process_edition`) | same |
+| Brain prompt | `jarvis/runtime/claude_local.py` (`workspace_prompt_for`), dynamic descriptor + renderer `prompt_catalog._brain_workspace` | same (resolution of the real conversation program and a real launch), plus `test_prompt_registry.py` |
+| `jarvis-console` refusal of `interaction_mode` | `jarvis/runtime/settings_mcp.py` (`interaction_mode_refusal`) | same |
+| Tool Brain choices | `jarvis/runtime/tool_brain_choices.py` (`board.switchable`, `UiState.edition`), `tool_brain_executor.py` | same |
 
 ## Editions
 
@@ -44,12 +47,14 @@ An empty value counts as absent. An unknown value raises `ConfigurationError`:
 Core refuses to start (resolved in `app.py:_run_core_v2` before anything is
 written). It never falls back to `full`, which would reopen the locked kinds.
 
-The value is read from the environment by every process that needs it: Core
-(admission, the authority), the Control Center (brain prompt variable, the
-`--mcp-config` document) and the `jarvis-workspace` MCP server. The Control
-Center writes it **explicitly** into `runtime/workspace-mcp.json`
-(`env.JARVIS_PRODUCT_EDITION`), so the tool schema the brain sees follows the
-Control Center's edition whatever the CLI's environment. Core stays the
+Every process reads it through **one** function,
+`jarvis.runtime.product_edition_env.process_edition()` (same rule everywhere,
+invalid value = `ConfigurationError`): Core (admission, the authority), the
+Control Center (brain prompt variable, the `--mcp-config` documents) and the
+`jarvis-workspace` / `jarvis-console` MCP servers. The Control Center writes it
+**explicitly** into `runtime/workspace-mcp.json` and `runtime/console-mcp.json`
+(`env.JARVIS_PRODUCT_EDITION`), so the tools the brain sees follow the Control
+Center's edition whatever the CLI's environment. Core stays the
 authority: a process started with another edition can show a wider schema, it
 cannot create or activate a refused kind.
 
@@ -82,6 +87,7 @@ availability from its `board_kind` and this payload.
 | `BoardService.create` (`POST /v1/boards`, `POST /api/boards`, MCP `board_create`) | requested kind not available; `empty` (deprecated alias of `assistant`) included | nothing written; trace `core.board.kind_unavailable_refused` (warning, `action: create`) |
 | `BoardService.switch` (`POST /v1/boards/switch`, `/api/boards/switch`, MCP and Tool Brain `board_switch`) | target Board's kind not available — checked after `board_not_found` / `board_archived`, before the no-op branch and before any host activation | nothing written, active Board unchanged; trace `core.board.kind_unavailable_refused` (`action: switch`, `origin`) |
 | MCP `board_switch` (`BoardTools.switch_board`) | the Board read before sending has an unavailable kind | refused **before** sending, like an archived Board: a brain switch deferred during a turn would only report Core's refusal to the journal; trace `board.tool_failed` |
+| Tool Brain `board_switch` choices (`board.switchable`) | Board of an unavailable kind | not offered (the edition is read from `BoardService.edition` in `read_ui_state`); a forged value is refused `board_kind_unavailable`; `board.readable` still lists it; the executor treats Core's 409 as a refusal, not a failure |
 
 The brain reads `ERROR_SENTENCES["board_kind_unavailable"]`: not available in
 this edition, nothing written, do not offer it again, `board_inspect` to look
@@ -126,16 +132,22 @@ changes no stored data, so no schema migration exists for it.
 ## Brain prompt
 
 The Boards instruction (`BRAIN_WORKSPACE_PROMPT`) carries one line about Board
-kinds. The conversation launch passes the edition as prompt variable
-`product_edition`; the renderer `backend.claude.conversation.workspace`
-(`prompt_catalog._brain_workspace` → `claude_local.workspace_prompt_for`)
+kinds. The Control Center's conversation launch (`ClaudeLocalAgent`, profile
+`conversation`) passes the edition as prompt variable `product_edition` before
+resolving the program; the descriptor `backend.claude.conversation.workspace`
+is **dynamic** (the registry calls a renderer only for a dynamic descriptor),
+its renderer `prompt_catalog._brain_workspace` → `claude_local.workspace_prompt_for`
 replaces that line by `BRAIN_WORKSPACE_PRESENTATION_KINDS_LINE` when the
 edition restricts kinds: every Board is a Presentation Board, Assistant and
 Réunion are not offered, an old Board of another kind does not open
-(`board_kind_unavailable`). `full`, absent or unknown: the prompt is byte for
-byte the previous one. The MCP schema of `board_create` follows the same
+(`board_kind_unavailable`). `full` or absent (preview, tests): the resolved
+prompt is byte for byte the previous one. An unknown value is a
+`ConfigurationError`, like in Core. The `jarvis-console` refusal of
+`interaction_mode` (`interaction_mode_refusal`) follows the edition too: in
+`presentation` it names neither Assistant nor `board_kind`. The MCP schema of `board_create` follows the same
 edition: with a single available kind it has **no** `board_kind` argument (an
-attempt is « Arguments inconnus », nothing sent) and the tool sends that kind.
+attempt is « Arguments inconnus », nothing sent) and the tool sends that kind;
+its description says the limit is the edition's, whatever the active Board.
 
 ## Out of scope (later Slices)
 

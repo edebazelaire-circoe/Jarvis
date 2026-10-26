@@ -130,13 +130,25 @@ def resolve_product_edition(environ: Mapping[str, str], *,
     """Politique de l'édition active : `JARVIS_PRODUCT_EDITION`, sinon `installed_default`, sinon `full`.
 
     Valeur vide = absente. Valeur inconnue : `ConfigurationError` (voir l'en-tête).
+    Chaque processus la lit par `jarvis.runtime.product_edition_env.process_edition`.
     """
 
-    raw = str(environ.get(PRODUCT_EDITION_ENV) or "").strip().casefold()
+    raw = str(environ.get(PRODUCT_EDITION_ENV) or "").strip()
     if not raw:
         return PRODUCT_EDITIONS[installed_default or ProductEdition.FULL]
+    return parse_product_edition(raw)
+
+
+def parse_product_edition(value: object) -> ProductEditionPolicy:
+    """Valeur d'édition transportée (environnement, variable de consigne) -> politique. Stricte.
+
+    Casse et espaces de bord ignorés. Toute autre valeur : `ConfigurationError`, jamais `full` en silence.
+    """
+
+    raw = value.strip().casefold() if isinstance(value, str) else ""
     try:
         return PRODUCT_EDITIONS[ProductEdition(raw)]
     except ValueError:
         raise ConfigurationError(
-            f"{PRODUCT_EDITION_ENV} doit valoir {[e.value for e in ProductEdition]}, reçu {raw[:40]!r}") from None
+            f"{PRODUCT_EDITION_ENV} doit valoir {[e.value for e in ProductEdition]}, "
+            f"reçu {str(value)[:40]!r}") from None

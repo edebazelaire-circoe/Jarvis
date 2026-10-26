@@ -54,7 +54,8 @@ from urllib.parse import quote
 
 import aiohttp
 
-from jarvis.domain.product_edition import PRODUCT_EDITION_ENV, ProductEditionPolicy, resolve_product_edition
+from jarvis.domain.product_edition import PRODUCT_EDITION_ENV, ProductEditionPolicy
+from jarvis.runtime.product_edition_env import process_edition
 from jarvis.domain.relation_runtime import CALLER_STAMP_KEY, RELATION_TOOLS
 from jarvis.runtime.capture_mcp import artifact_item
 from jarvis.runtime.relations_mcp_tools import CURRENT_CALLER, RelationTools
@@ -142,7 +143,7 @@ def mcp_config(target: ConsoleMcpTarget, *, python: str | None = None,
     schéma de `board_create` que voit le cerveau suit l'édition, quel que soit l'environnement du CLI.
     """
 
-    edition = edition or resolve_product_edition(os.environ)
+    edition = edition or process_edition()
     env = {**target.env(), PRODUCT_EDITION_ENV: edition.edition.value}
     return {"mcpServers": {SERVER_NAME: {"type": "stdio", "command": python or sys.executable,
                                          "args": ["-m", "jarvis", "workspace-mcp"], "env": env}}}
@@ -203,7 +204,7 @@ class WorkspaceTools:
         self._session_factory = session_factory
         self._session: Any = None
         self.boards = BoardTools(target.base_url, http=self._http, error=WorkspaceToolError, emit=self._emit,
-                                 edition=edition or resolve_product_edition(os.environ))
+                                 edition=edition or process_edition())
 
     async def close(self) -> None:
         if self._session is not None:
@@ -562,7 +563,7 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
         SessionNewResult, output_contract_fields,
     )
 
-    edition = edition or resolve_product_edition(os.environ)
+    edition = edition or process_edition()
     if tools is None:
         target = target or ConsoleMcpTarget.from_env()
         journal = RuntimeJournal(target.runtime_root) if target.runtime_root is not None else None
@@ -680,8 +681,9 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
         ) -> BoardResult:
             """Créer un Board Présentation (un nouvel espace de travail). Ne bascule pas dessus.
 
-            C'est le seul type de Board disponible ici : il n'y a pas de type à choisir. Si l'utilisateur veut
-            aussi y aller, appelle ensuite board_switch avec l'identifiant rendu.
+            C'est le seul type de Board disponible dans cette édition de JARVIS, quel que soit le Board actif :
+            il n'y a pas de type à choisir. Si l'utilisateur veut aussi y aller, appelle ensuite board_switch
+            avec l'identifiant rendu.
             """
             return await ws.boards.create_board(title, board_kind=only_kind, context_summary=context_summary,
                                                 task_refs=task_refs, artifact_refs=artifact_refs,
@@ -924,7 +926,7 @@ async def serve_stdio() -> int:
     if journal is not None:
         journal.emit("workspace.server_started", "Serveur MCP du workspace démarré",
                      data={"host": target.host, "port": target.port, "pid": os.getpid(),
-                           "product_edition": resolve_product_edition(os.environ).edition.value})
+                           "product_edition": process_edition().edition.value})
     tools = WorkspaceTools(target, journal=journal)
     try:
         await build_server(target, tools=tools).run_stdio_async()

@@ -812,9 +812,9 @@ async def _run_core_v2() -> int:
     from jarvis.runtime import credentials as creds
     from jarvis.v2_config import V2Settings
     # Édition produit (`docs/product-edition.md`) : valeur illisible = Core ne démarre pas (ConfigurationError).
-    from jarvis.domain.product_edition import resolve_product_edition
+    from jarvis.runtime.product_edition_env import process_edition
     settings = _adopt_legacy_data_root(V2Settings.load())
-    product_edition = resolve_product_edition(os.environ)
+    product_edition = process_edition()
     token = generate_session_token()
     _write_session_token(settings.token_file, token)
     delivery = WindowsNotificationDelivery() if os.name == "nt" and os.getenv("JARVIS_WINDOWS_NOTIFICATIONS", "0") in {"1", "true", "yes"} else NullNotificationDelivery()
