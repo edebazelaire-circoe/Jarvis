@@ -870,6 +870,33 @@ Framing reduces, it does not eliminate, prompt injection; the call-time refusal 
 line. Proof: `tests/unit/test_product_connectors.py` (hostile text framed, follow-up write refused,
 nothing sent).
 
+### 24. Presentation Edition agent confinement: no model-callable shell, write or process
+
+Decision D08 of `tasks/jarvis-presentation-edition-v1/`. Contract and evidence:
+[product-capabilities.md](product-capabilities.md). In the `presentation` edition the
+conversation brain and the Back Brain jobs are launched **by the CLI itself** with one
+manifest (`jarvis/domain/agent_capabilities.py`), never with prompt discipline alone:
+`--restricted` (no Bash/PowerShell/code tools, user/project/local settings ignored,
+file tools confined to the working directories, `bypassPermissions` refused),
+`--tools` naming only `Read, Glob, Grep, WebSearch, WebFetch, Agent, ToolSearch, TaskStop,
+SendMessage`, `--disallowedTools` naming every writing/executing/scheduling built-in (a
+session rule, inherited by every sub-agent), `--permission-mode dontAsk`,
+`--permission-prompts none`, `--strict-mcp-config` (Jarvis servers only, each allowed by name),
+no `--chrome`, no skills, and a working directory inside the runtime
+(`<runtime>/agent-workdir`), not the code. Sub-agents (`general-purpose`, `claude`,
+`jarvis-no-spawn`, any depth) inherit that pool: probed on CLI 2.1.310 and in real
+sandbox traces, a delegated agent finds no `Write`, `Edit`, `Bash` or `PowerShell`.
+Codex, the debug console and self-development are refused with typed codes; settings
+cannot widen the profile (CLI and permission mode locked, `GET /api/settings`
+`agent_capabilities`). Writes go only through Jarvis services; the only exit is the
+export ([export.md](export.md)). The `full` (development) edition is unchanged.
+
+Residual: `WebFetch` can carry what the brain can read to any URL (read scope limited to
+Jarvis folders; connector content framed as untrusted); Jarvis-owned subprocesses (Remotion,
+FFmpeg, `npm` for the pinned capability, MCP servers, routing hook) run with the user's
+rights and are bounded by their own controls (18, 19, 21), not by the CLI; the confinement
+relies on the CLI honouring `--restricted` (re-probe on any CLI upgrade, Slice 06).
+
 ## Residual risks / non-goals
 
 - Bare Hands traces are never pruned and are not encrypted at rest; a user who recorded a diagnostic session leaves scalar interaction data in `runtime/barehands-traces/` until they delete it by hand.
@@ -887,7 +914,7 @@ nothing sent).
 - Board placement is an ephemeral UI write and intentionally does not require confirmation.
 - V1 has no destructive memory delete tool, no messaging/email tool, no browser navigation tool and no general filesystem writer. **Exception since 2026-09-30:** a managed MCP plugin the user adds may expose such tools (e.g. send mail); they run under the CLI permission mode with no extra confirmation gate (control 15).
 - Managed MCP plugins: DPAPI CurrentUser does not protect plugin secrets from a malicious same-user process; DNS rebinding between the endpoint check and the connection is not pinned; prose-form secrets unknown to the vault are not redacted (control 15).
-- The Claude conversation brain is launched without `--strict-mcp-config` (pre-existing): the operator's user-level MCP servers (`jarvis-drive`, claude.ai connectors, `claude-in-chrome`) load in the conversation brain with the operator's own authority, outside Jarvis's plugin vault and policy.
+- The Claude conversation brain is launched without `--strict-mcp-config` (pre-existing): the operator's user-level MCP servers (`jarvis-drive`, claude.ai connectors, `claude-in-chrome`) load in the conversation brain with the operator's own authority, outside Jarvis's plugin vault and policy In the `full` (development) edition only: the `presentation` edition passes `--strict-mcp-config` and no `--chrome` (control 24).
 - v0.2 constellation scene: the brain's display tool is write-capable and, by the user's own rule, holds the same scene hand as the user — archive, pin and unpin included, bounded at 128 designated objects per call and journalled as `display.tool`. Scene actors are declared, not authenticated; a brain that ignores its instructions can impersonate `user` with `runtime/core.token` (see control 13). Scene text (runtime star titles from sub-agent labels) reaches the brain and is marked as data only; injection resistance is not guaranteed.
 
 ## Release rule

@@ -308,3 +308,13 @@ def test_the_global_context_rules_are_read_only_when_confined():
     assert "Tu peux ajouter" in render_global_context_prompt(value)
     read_only = render_global_context_prompt({**value, "read_only": True})
     assert "vous ne pouvez pas le modifier" in read_only and "Tu peux ajouter" not in read_only
+
+
+async def test_the_console_route_answers_a_typed_conflict(monkeypatch, tmp_path):
+    from aiohttp import web
+    from jarvis.runtime.control_center import SETTINGS_ERROR_CODE_HEADER, ControlCenter
+    monkeypatch.setenv("JARVIS_PRODUCT_EDITION", "presentation")
+    fake = SimpleNamespace(agent=ClaudeLocalAgent(runtime_root=tmp_path, cwd=tmp_path))
+    with pytest.raises(web.HTTPConflict) as refused:
+        await ControlCenter.agent_console_open(fake, None)
+    assert refused.value.headers[SETTINGS_ERROR_CODE_HEADER] == "debug_console_unavailable_in_edition"

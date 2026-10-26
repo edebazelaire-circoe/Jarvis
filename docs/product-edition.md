@@ -160,8 +160,14 @@ Which connectors an edition offers, the call-time policy for external tool side 
 framing of untrusted connector content and the sealing of local secrets derive from the edition
 through `connector_policy(edition)`: [product-connectors.md](product-connectors.md) (Slice 05).
 
+## Agent capabilities
+
+What the brain, its sub-agents and the Back Brain jobs may call in an edition (no shell,
+write or process tool in `presentation`, Codex/console/self-dev refused, settings locked)
+derives from the edition through `agent_capability_policy(edition)`:
+[product-capabilities.md](product-capabilities.md) (Slice 04).
+
 ## Out of scope (later Slices)
 
 - product UI for unavailable kinds (Slice 08); the current Boards control still
   offers the three kinds in `full` and gets the 409 in `presentation`;
-- agent confinement (Slice 04).

@@ -6375,8 +6375,12 @@ class ControlCenter:
     async def agent_console_open(self, request: web.Request) -> web.Response:
         """Ouvrir la véritable console sur la conversation en cours."""
         del request
+        from jarvis.domain.agent_capabilities import AgentCapabilityError
         try:
             return web.json_response(await self.agent.open_console())
+        except AgentCapabilityError as exc:
+            # Édition confinée (Slice 04) : refus typé, aucune console lancée.
+            raise web.HTTPConflict(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
         except RuntimeError as exc:
             raise web.HTTPServiceUnavailable(text=str(exc)) from exc
 
