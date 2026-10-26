@@ -210,6 +210,9 @@ migration** (`jarvis.sqlite3` stays v8). What this page now guarantees about a d
 - `describe_source` / `sources_of_board` list each render with `width`, `height`, `duration_ms`, `scene_id`, `settings_sha256` and `flat` besides `artifact_id`, `kind`, `state`,
   `format`, `size_bytes`, `error_code`, `board_ids`.
 
+A `complete` render can then be copied to `Documents\Jarvis` by an explicit export ([export.md](export.md)): a user-facing copy, never a source, never recorded on the
+derivative.
+
 Conformance: `tests/unit/test_presentation_render_service.py`, `test_presentation_render_domain.py`, `test_presentation_render_real.py` (opt-in, real browser).
 
 ## Backward compatibility

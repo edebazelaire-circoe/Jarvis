@@ -355,6 +355,9 @@ the rules above, unchanged: `pending` at the request, payload through the spool,
 interrupted render by the **owner** (`recover_pending(owned=...)` leaves them) as `failed` or, if the final file already existed, `partial`. Their lineage is one `rendered_from`
 relation to the snapshot; the render settings are acquisition metadata. They are flat exports and say so (`render_flat`).
 
+A `complete` derivative can be **copied** to the user's `Documents\Jarvis` on an explicit request (`POST /v1/exports {artifact_id}`): the payload is only read, the
+Artifact is not changed and the exported path is never recorded ([export.md](export.md)). Every other kind is internal and never exported.
+
 ## Boundaries
 
 - **Conversation events** (`docs/conversation-events.md`) stay the truth of the

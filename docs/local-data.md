@@ -345,6 +345,17 @@ casse aucun enregistrement.
 
 Détail : [artifacts.md](artifacts.md).
 
+## Interne et export : `Documents\Jarvis` n'est jamais un espace de travail
+
+Tout ce qui est écrit sous la racine de données (sources, variantes, prefabs,
+assets, brouillons, mémoire des Boards, Sessions, `CONTEXT_GLOBAL`, snapshots,
+payloads des Artifacts) et sous le runtime (dossiers de rendu, aperçus) est
+**interne** et canonique. `Documents\Jarvis` (dossier Documents résolu par
+l'API des dossiers connus de Windows) ne reçoit qu'une **copie** d'un fichier
+final (MP4, image, PDF), sur un geste explicite de l'utilisateur ; Jarvis ne la
+relit jamais, l'effacer ou la déplacer ne change rien. Aucun démarrage, rendu ni
+brouillon n'y écrit. Contrat : [export.md](export.md).
+
 ## Mémoire des Boards : `boards/`
 
 `boards/<board_id>/memory/` contient la mémoire libre d'un Board : notes,

@@ -40,6 +40,7 @@ from jarvis.runtime.presentation_studio_mcp_support import MAX_LISTED, Presentat
 from jarvis.runtime.presentation_studio_mcp_tools import PresentationTools, _drop_none
 
 JOB_ID = re.compile(r"rj_[0-9a-f]{12}\Z")
+ARTIFACT_ID = re.compile(r"jart_[A-Za-z0-9_]{1,59}\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 #: Les seules clés de réglage d'export que le cerveau peut poser. `concurrency` (mémoire du poste) et tout le reste : à l'utilisateur.
 #: `scope` (master-project-studio-export Slice 07, `docs/remotion-master-project.md` § 10, § 12) : `master` = la vidéo entière de la
@@ -237,11 +238,34 @@ class RemotionTools(PresentationTools):
     # ------------------------------------------------------------------ export
 
     async def export(self, op: str, *, format: str | None = None, settings: Mapping[str, Any] | None = None, presentation_id: str | None = None,
-                     variant_id: str | None = None, job_id: str | None = None, user_request: str | None = None) -> dict[str, Any]:
+                     variant_id: str | None = None, job_id: str | None = None, artifact_id: str | None = None,
+                     user_request: str | None = None) -> dict[str, Any]:
         async def body() -> dict[str, Any]:
+            if op == "save":
+                return await self._save(artifact_id, user_request)
             return await self._export(op, format, settings, presentation_id, variant_id, job_id, user_request)
 
-        return await self._run("remotion_export", op, {"presentation_id": presentation_id, "variant_id": variant_id, "job_id": job_id}, body)
+        return await self._run("remotion_export", op, {"presentation_id": presentation_id, "variant_id": variant_id, "job_id": job_id,
+                                                       "artifact_id": artifact_id}, body)
+
+    async def _save(self, artifact_id: str | None, user_request: str | None) -> dict[str, Any]:
+        """Copie d'un export terminé dans Documents\\Jarvis (presentation-edition-v1 Slice 03, `docs/export.md`) : l'id seul, jamais
+        un chemin ni un nom de dossier ; Core choisit la racine, le nom et refuse ce qui n'est pas un fichier final."""
+
+        tool = "remotion_export"
+        if not isinstance(artifact_id, str) or not ARTIFACT_ID.fullmatch(artifact_id):
+            raise self._refuse(tool, "invalid_id", "artifact_id mal formé : prends-le dans remotion_status (target exports), export complete.")
+        await self._user_gate(tool, "save", user_request)
+        try:
+            answer = await self._core.call(lambda c: c.document_export(artifact_id))
+        except CoreProtocolError as exc:
+            raise await self._explain(exc) from None
+        done = answer.get("export") or {}
+        where = (done.get("destination") or {}).get("display_path") or "Documents\\Jarvis"
+        renamed = " (nom déjà pris : numéroté, rien n'est écrasé)" if done.get("renamed") else ""
+        return self._ok("say", status="saved", file_name=done.get("file_name"), destination=where, size_bytes=done.get("size_bytes"),
+                        say=f"Copie enregistrée dans {where}{renamed}.",
+                        note="Une copie : l'export reste dans Jarvis ; effacer ou déplacer ce fichier ne change rien à la présentation.")
 
     async def _export(self, op: str, fmt: str | None, settings: Mapping[str, Any] | None, pid: str | None, vid: str | None, job_id: str | None,
                       user_request: str | None) -> dict[str, Any]:

@@ -52,7 +52,7 @@ class FakeRemotionCore:
         return [args for n, args in self.calls if n == name]
 
     WRITES = ("local_capability_action", "remotion_render_create", "remotion_render_cancel", "remotion_import_plan", "remotion_import",
-              "presentation_studio_upgrade_try")
+              "presentation_studio_upgrade_try", "document_export")
 
     @property
     def writes(self) -> list[str]:
@@ -89,6 +89,12 @@ class FakeRemotionCore:
     async def remotion_render_cancel(self, job_id: str) -> dict[str, Any]:
         self._record("remotion_render_cancel", job_id)
         return {"job": {**JOB_VIEW, "state": "cancelled", "can_cancel": False}}
+
+    async def document_export(self, artifact_id: str) -> dict[str, Any]:
+        self._record("document_export", artifact_id)
+        return {"export": {"artifact_id": artifact_id, "format": "mp4", "file_name": "Atelier - video (2).mp4", "renamed": True,
+                           "destination": {"root": "Documents\\Jarvis", "display_path": "Documents\\Jarvis\\Atelier - video (2).mp4"},
+                           "size_bytes": 1234, "copy": True}}
 
     async def local_capability_action(self, capability_id: str, operation: str) -> dict[str, Any]:
         self._record("local_capability_action", capability_id, operation)

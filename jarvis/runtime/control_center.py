@@ -143,6 +143,7 @@ from jarvis.runtime.workspace_relay import GUARDED_PREFIXES as WORKSPACE_GUARDED
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
 from jarvis.runtime.presentation_render_relay import PresentationRenderRelayRoutes
+from jarvis.runtime.export_relay import GUARDED_PREFIXES as EXPORT_GUARDED_PREFIXES, ExportRelayRoutes
 from jarvis.runtime.remotion_studio_relay import GUARDED_PREFIXES as REMOTION_STUDIO_GUARDED_PREFIXES, RemotionStudioRelayRoutes
 from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, BoardKind, board_kind_mode
 from jarvis.runtime.work_view import CORE_UNREACHABLE, NOT_CONFIGURED, CoreWorkView, unavailable_payload
@@ -327,7 +328,9 @@ READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_RO
                        *PREFAB_GUARDED_PREFIXES, *REMOTION_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES,
                        *REMOTION_STUDIO_GUARDED_PREFIXES, *CHAT_GUARDED_PREFIXES, *DOSSIER_GUARDED_PREFIXES,
                        # Historique des missions (Slice 05) : objectifs et libellés viennent des demandes de l'utilisateur.
-                       MISSIONS_ROUTE, WORK_METHODS_ROUTE)
+                       MISSIONS_ROUTE, WORK_METHODS_ROUTE,
+                       # Export explicite vers Documents\Jarvis (presentation-edition-v1 Slice 03) : écrit chez l'utilisateur.
+                       *EXPORT_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -1480,6 +1483,8 @@ class ControlCenter:
         self.remotion_studio_routes = RemotionStudioRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Export d'une présentation gelée (Slice 16) : relais de la vue Artefacts d'un Board vers le rendu de Core.
         self.presentation_render_routes = PresentationRenderRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Export explicite d'un dérivé final vers Documents\Jarvis (presentation-edition-v1 Slice 03, `docs/export.md`).
+        self.export_routes = ExportRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Contexts, captures, Artifacts (Slice 09 session-context-recording) : relais
         # vers Core, sans état propre ; transport relu à chaque requête.
         self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
@@ -1647,6 +1652,7 @@ class ControlCenter:
             web.get("/api/agent/notices", self.agent_notices),
             *self.board_routes.routes(),
             *self.capture_routes.routes(),
+            *self.export_routes.routes(),
             *self.workspace_routes.routes(),
             *self.chat_routes.routes(),
             *self.memory_routes.routes(),

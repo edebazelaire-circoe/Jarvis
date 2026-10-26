@@ -691,7 +691,8 @@ REMOTION = ServerMeta(
         "remotion_export": ToolMeta(
             "Exporter ou annuler un export", "write", False, "single_request", "untyped",
             parameter_rules=(_USER_TURN_RULE, "start : format mp4, still ou pdf ; réglages en liste fermée (pas de concurrency) ; aucun Board lu",
-                             "cancel exige job_id lu avec remotion_status"),
+                             "cancel exige job_id lu avec remotion_status",
+                             "save : artifact_id d'un export complete"),
             output_notes=("job : état, phase, pourcentage ; révisions lues dans Core à l'appel",)),
         "remotion_import": ToolMeta(
             "Importer un modèle amont", "write", False, "single_request", "untyped",

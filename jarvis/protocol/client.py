@@ -1481,6 +1481,12 @@ class LocalCoreClient:
 
         return await self._remotion("POST", "/v1/local-capabilities/remotion/render/jobs", body=body, timeout_s=65.0)
 
+    async def document_export(self, artifact_id: str) -> dict[str, Any]:
+        """`POST /v1/exports` (presentation-edition-v1 Slice 03) : copie d'un dérivé final dans Documents\\Jarvis, pour le cerveau
+        (`actor: brain`). L'id seul ; jamais un chemin."""
+
+        return await self._remotion("POST", "/v1/exports", body={"artifact_id": artifact_id, "actor": "brain"}, timeout_s=125.0)
+
     async def remotion_render_preview(self, body: Mapping[str, Any]) -> dict[str, Any]:
         """`POST .../render/preview` (Slice 13 native-studio-playback-fix): a few frames of one scene of the current variant, rendered by the
         guarded host and kept as JPEG files (paths in the answer). Synchronous: the timeout covers bundling and the browser."""

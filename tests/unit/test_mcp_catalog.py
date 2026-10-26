@@ -271,10 +271,13 @@ PRESENTATION_INSTRUCTIONS_BUDGET_BYTES = 700
 #: Fusion wheel-dossier-refactor (outils Dossier, +2 621 o) et des deux purges (+694 o) : 117 048 o mesurés, plafond 117 300 o.
 #: Organic-agent-orchestration Slice 06 : les outils de relation de `jarvis-workspace` (+4 381 o, voir
 #: WORKSPACE_CONTEXT_BUDGET_BYTES) : 121 429 o mesurés, plafond 121 500 o ; aucun autre serveur ne change.
-DECLARED_CONTEXT_BUDGET_BYTES = 121_500
+#: Presentation-edition-v1 Slice 03 : `remotion_export` op `save` + `artifact_id` (copie d'un export dans Documents, `docs/export.md`),
+#: +93 o : 121 589 o mesurés, plafond 121 700 o ; aucun nouvel outil.
+DECLARED_CONTEXT_BUDGET_BYTES = 121_700
 #: `jarvis-remotion` : 5 178 o mesurés, plafond 5 400 o ; consigne du serveur (plafond 330 o). Master-project Slice 07 : `scope` (scene | master)
-#: dans les réglages de `remotion_export` : 5 335 o mesurés, plafond inchangé.
-REMOTION_CONTEXT_BUDGET_BYTES = 5_400
+#: dans les réglages de `remotion_export` : 5 335 o mesurés, plafond inchangé. Presentation-edition-v1 Slice 03 : op `save` +
+#: `artifact_id` (copie explicite dans Documents\Jarvis, l'id seul) : 5 493 o mesurés, plafond 5 600 o.
+REMOTION_CONTEXT_BUDGET_BYTES = 5_600
 REMOTION_INSTRUCTIONS_BUDGET_BYTES = 330
 
 

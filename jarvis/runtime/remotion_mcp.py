@@ -164,17 +164,19 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Remotion
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "remotion_export"))
     async def remotion_export(
-        op: Literal["start", "cancel"],
+        op: Literal["start", "cancel", "save"],
         format: Annotated[Literal[EXPORT_FORMATS] | None, Field(description="start")] = None,  # type: ignore[valid-type]
         settings: ExportSettings | None = None,
         presentation_id: PresentationId = None,
         variant_id: VariantId = None,
         job_id: Annotated[str | None, Field(max_length=20, description="cancel : rj_…")] = None,
+        artifact_id: Annotated[str | None, Field(max_length=64, description="save : jart_…")] = None,
         user_request: UserRequest = None,
     ) -> dict[str, Any]:
-        """Exporter ou annuler, sur demande. « la vidéo » : scope master ; sinon une scène. Aucun Board lu."""
+        """Exporter ou annuler, sur demande. « la vidéo » : scope master ; sinon une scène. Aucun Board lu. save : copie dans Documents."""
         return await remotion.export(op, format=format, settings=None if settings is None else settings.model_dump(exclude_none=True),
-                                     presentation_id=presentation_id, variant_id=variant_id, job_id=job_id, user_request=user_request)
+                                     presentation_id=presentation_id, variant_id=variant_id, job_id=job_id, artifact_id=artifact_id,
+                                     user_request=user_request)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "remotion_import"))
     async def remotion_import(
