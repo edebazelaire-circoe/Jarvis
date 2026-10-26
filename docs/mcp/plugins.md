@@ -800,6 +800,7 @@ revision (§6.3).
 | `mcp_arguments_invalid` | 400 |
 | `mcp_cursor_invalid` | 400 |
 | `mcp_tool_name_invalid` / `mcp_tool_schema_too_large` / `mcp_tool_schema_invalid` / `mcp_tool_list_too_large` | ingestion rejections (in `rejected_tools`, no HTTP answer) |
+| `mcp_tool_side_effect_refused` / `mcp_tool_confirmation_required` (edition policy at call time, before any network; [product-connectors.md](../product-connectors.md) › *Outils externes à l'appel*; never raised in `full`) | 403 |
 
 Not in this table on purpose — **UI-only codes** of the Control Center tab
 (§9.1), never sent by Core nor by the relay: `bad_response` (a 2xx whose body

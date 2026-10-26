@@ -42,6 +42,13 @@ sert `GET /v1/mcp/tools` (révision entière, `unchanged` par `since_revision`) 
 résultat (`call_outcome`). Le classement n'est pas ici (C2) : il tourne dans
 la passerelle `jarvis-tools`, qui voit le catalogue natif.
 
+Slice 05 jarvis-presentation-edition-v1 (`docs/product-connectors.md`) : la politique de
+connecteurs de l'édition (`connector_policy`) s'applique **à l'appel**, avant tout réseau : un
+outil dont le `side_effect` n'est pas permis est refusé (`mcp_tool_side_effect_refused`,
+`mcp_tool_confirmation_required`) et retiré du catalogue `external_tools` ; en édition
+`presentation`, chaque texte de résultat est cadré comme donnée non fiable (`frame_outcome`).
+Édition `full` (défaut) : rien ne change.
+
 Journal (`DiagnosticSink`) : `plugin_id`, opération, codes stables, durées ;
 **jamais** une valeur d'identifiant, un jeton, un en-tête, une URL
 d'autorisation ni un texte distant.
@@ -61,6 +68,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from jarvis.core.credential_vault import CredentialVault
+from jarvis.domain.connector_content import frame_outcome
 from jarvis.domain.mcp_endpoint import validate_endpoint
 from jarvis.domain.mcp_plugins import (
     STATIC_STRATEGIES, AuthStatus, AuthStrategy, ConnectionStatus, McpErrorCode, McpPlugin, McpPluginError,
@@ -69,6 +77,8 @@ from jarvis.domain.mcp_plugins import (
     normalize_remote_tools, oauth_needs_reauthorization, parse_tool_id, plugin_id_for, rename,
     reset_interrupted_connect, server_identity_from, set_enabled,
 )
+from jarvis.domain.product_connectors import CONNECTOR_POLICIES, ConnectorPolicy, RemoteToolDisposition
+from jarvis.domain.product_edition import ProductEdition
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.mcp_plugins import (
     AuthMaterial, McpPluginRepository, McpPluginStoreError, RemoteMcpConnector, RemoteMcpError, RemoteMcpSession,
@@ -120,6 +130,7 @@ PLUGIN_OAUTH_COMPLETED = "mcp.plugin.oauth_completed"
 PLUGIN_EXPIRED_AT_BOOT = "mcp.plugin.expired_at_boot"
 PLUGIN_TOOLS_CHANGED = "mcp.plugin.tools_changed"
 PLUGIN_TOOL_CALLED = "mcp.plugin.tool_called"
+PLUGIN_TOOL_POLICY_REFUSED = "mcp.plugin.tool_policy_refused"
 PLUGIN_REVOKED = "mcp.plugin.revoked"
 PLUGIN_REVOCATION_FAILED = "mcp.plugin.revocation_failed"
 PLUGIN_OWNER_CRASHED = "mcp.plugin.owner_crashed"
@@ -257,8 +268,10 @@ class McpPluginService:
                  allow_loopback_http: bool = False, clock: Callable[[], datetime] = utc_now,
                  revision_base: int | None = None, monotonic: Callable[[], float] = time.monotonic,
                  backoff_s: Sequence[float] = BACKOFF_S, connect_wait_s: float = CONNECT_WAIT_S,
-                 authorization_ttl_s: float = AUTHORIZATION_TTL_S) -> None:
+                 authorization_ttl_s: float = AUTHORIZATION_TTL_S,
+                 connector_policy: ConnectorPolicy = CONNECTOR_POLICIES[ProductEdition.FULL]) -> None:
         self._repository = repository
+        self._policy = connector_policy
         self._vault = vault
         self._connector = connector
         self._diagnostics = diagnostics
@@ -1021,7 +1034,11 @@ class McpPluginService:
 
         started = self._monotonic()
         async with self._operation("invoke", plugin_id):
-            session = self._ready_session(await self._require(plugin_id))
+            plugin = await self._require(plugin_id)
+            session = self._ready_session(plugin)
+            # Même politique d'édition que `call` : un outil absent du catalogue compte comme destructeur.
+            descriptor = next((tool for tool in plugin.tools if tool.get("name") == name), {})
+            self._check_side_effect(plugin_id, name, descriptor, "internal")
             code: McpErrorCode | None = None
             try:
                 return await self._call_session(session, name, arguments, timeout_s)
@@ -1063,13 +1080,40 @@ class McpPluginService:
             for plugin in sorted(plugins, key=lambda item: item.plugin_id):
                 exposed = plugin.enabled and plugin.connection_status is ConnectionStatus.CONNECTED
                 payload_tools = plugin.to_payload()["tools"] if exposed else []
-                summaries.append({"plugin_id": plugin.plugin_id, "display_name": plugin.display_name,
-                                  "enabled": plugin.enabled, "connection_status": plugin.connection_status.value,
-                                  "auth_status": plugin.auth_status.value, "tool_count": len(payload_tools)})
-                tools.extend(payload_tools)
+                permitted = [tool for tool in payload_tools if self._permitted(tool)]
+                summary = {"plugin_id": plugin.plugin_id, "display_name": plugin.display_name,
+                           "enabled": plugin.enabled, "connection_status": plugin.connection_status.value,
+                           "auth_status": plugin.auth_status.value, "tool_count": len(permitted)}
+                if self._policy.restricts_remote_tools:
+                    # Outils que l'édition refuserait à l'appel : retirés de la découverte, comptés ici.
+                    summary["withheld_tool_count"] = len(payload_tools) - len(permitted)
+                summaries.append(summary)
+                tools.extend(permitted)
             # Révision lue avant la lecture du registre : un changement concurrent
             # donne au pire une révision plus ancienne que les données, relue au prochain appel.
             return {"catalog_revision": revision, "unchanged": False, "plugins": summaries, "tools": tools}
+
+    def _permitted(self, descriptor: dict[str, Any]) -> bool:
+        return self._policy.remote_tool_disposition(descriptor.get("side_effect")) is RemoteToolDisposition.ALLOW
+
+    def _check_side_effect(self, plugin_id: str, name: str, descriptor: dict[str, Any], agent: str) -> None:
+        """Politique d'édition à l'appel (`docs/product-connectors.md` › *Outils externes*) ; avant tout réseau."""
+
+        side_effect = descriptor.get("side_effect", "destructive")
+        disposition = self._policy.remote_tool_disposition(side_effect)
+        if disposition is RemoteToolDisposition.ALLOW:
+            return
+        code = (McpErrorCode.TOOL_CONFIRMATION_REQUIRED if disposition is RemoteToolDisposition.CONFIRM
+                else McpErrorCode.TOOL_SIDE_EFFECT_REFUSED)
+        self._emit(PLUGIN_TOOL_POLICY_REFUSED, "outil externe refusé par la politique de l'édition",
+                   level="warning", data={"plugin_id": plugin_id, "tool": name[:128], "code": code.value,
+                                          "side_effect": str(side_effect)[:16], "agent": agent,
+                                          "edition": self._policy.edition.value})
+        if code is McpErrorCode.TOOL_CONFIRMATION_REQUIRED:
+            raise McpPluginError(code, "this tool would change data in the external service and needs the "
+                                       "user's confirmation, which this edition cannot collect yet: nothing was sent")
+        raise McpPluginError(code, "this tool may delete or overwrite data in the external service and is "
+                                   "not allowed in this edition: nothing was sent")
 
     async def call(self, tool_id: object, arguments: object, *, caller: dict[str, Any] | None = None,
                    timeout_s: float | None = None) -> dict[str, Any]:
@@ -1094,6 +1138,7 @@ class McpPluginService:
             descriptor = next((tool for tool in plugin.tools if tool.get("name") == name), None)
             if descriptor is None:
                 raise McpPluginError(McpErrorCode.TOOL_UNKNOWN, f"unknown plugin tool {str(tool_id)[:200]!r}")
+            self._check_side_effect(plugin_id, name, descriptor, agent)
             check_tool_arguments(descriptor.get("input_schema") or {}, arguments)
             bounded = DEFAULT_CALL_TIMEOUT_S if timeout_s is None else timeout_s
             code: McpErrorCode | None = None
@@ -1103,6 +1148,8 @@ class McpPluginService:
                 outcome = call_outcome(result, known_secrets=await self._known_secrets(plugin))
                 code = None if outcome["ok"] else McpErrorCode(outcome["code"])
                 size = sum(len(block["text"].encode("utf-8")) for block in outcome["content"])
+                if self._policy.frame_untrusted_content:
+                    outcome = frame_outcome(outcome, source=plugin.display_name or plugin.plugin_id)
                 return outcome
             except McpPluginError as exc:
                 code = exc.code

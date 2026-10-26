@@ -109,6 +109,10 @@ class McpErrorCode(StrEnum):
     TOOL_SCHEMA_TOO_LARGE = "mcp_tool_schema_too_large"
     TOOL_SCHEMA_INVALID = "mcp_tool_schema_invalid"
     TOOL_LIST_TOO_LARGE = "mcp_tool_list_too_large"
+    #: Politique d'édition à l'appel (jarvis-presentation-edition-v1, Slice 05, `docs/product-connectors.md`) :
+    #: outil destructeur (ou non annoté) refusé ; outil d'écriture qui exige une confirmation absente.
+    TOOL_SIDE_EFFECT_REFUSED = "mcp_tool_side_effect_refused"
+    TOOL_CONFIRMATION_REQUIRED = "mcp_tool_confirmation_required"
 
 
 #: Statut HTTP de chaque code. Les refus d'ingestion n'ont pas de réponse HTTP
@@ -144,6 +148,8 @@ HTTP_STATUS: Mapping[McpErrorCode, int] = MappingProxyType({
     McpErrorCode.TOOL_SCHEMA_TOO_LARGE: 400,
     McpErrorCode.TOOL_SCHEMA_INVALID: 400,
     McpErrorCode.TOOL_LIST_TOO_LARGE: 400,
+    McpErrorCode.TOOL_SIDE_EFFECT_REFUSED: 403,
+    McpErrorCode.TOOL_CONFIRMATION_REQUIRED: 403,
 })
 
 

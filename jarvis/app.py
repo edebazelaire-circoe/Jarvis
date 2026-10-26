@@ -176,7 +176,10 @@ async def _drive_auth() -> int:
     print(f"Autorisation Google Drive : un navigateur va s'ouvrir.\nSecret client : {secret}\nJeton : {token}")
     # `run_local_server` bloque jusqu'au consentement : hors du fil principal,
     # la boucle asyncio reste libre d'être interrompue au clavier.
-    backend = await asyncio.to_thread(GoogleDriveBackend.from_oauth_files, secret, token)
+    from jarvis.runtime.local_secrets import google_token_options
+
+    backend = await asyncio.to_thread(lambda: GoogleDriveBackend.from_oauth_files(secret, token,
+                                                                                  **google_token_options()))
     files = await backend.list_files(DriveQuery(limit=1))
     print(f"Drive autorisé. Jeton écrit dans {token}.")
     print(f"Vérification : {len(files)} fichier(s) visible(s) dans le Drive.")
@@ -313,6 +316,12 @@ def _write_session_token(path: Path, token: str) -> None:
             time.sleep(0.05)
 
 
+def _process_edition_value() -> str:
+    from jarvis.runtime.product_edition_env import process_edition
+
+    return process_edition().edition.value
+
+
 def _calendar_backend_from_env():
     provider = os.getenv("JARVIS_CALENDAR_PROVIDER", "fake").strip().lower()
     if provider in {"", "fake", "none"}:
@@ -324,7 +333,11 @@ def _calendar_backend_from_env():
     token = os.getenv("GOOGLE_CALENDAR_TOKEN")
     if not secret or not token:
         raise RuntimeError("Google Calendar requires GOOGLE_CALENDAR_CLIENT_SECRET and GOOGLE_CALENDAR_TOKEN paths")
-    return GoogleCalendarBackend.from_oauth_files(Path(secret), Path(token), calendar_id=os.getenv("GOOGLE_CALENDAR_ID", "primary"))
+    from jarvis.runtime.local_secrets import google_token_options
+
+    # Édition produit / produit installé : portées minimales et jeton scellé (`docs/product-connectors.md`).
+    return GoogleCalendarBackend.from_oauth_files(Path(secret), Path(token), calendar_id=os.getenv("GOOGLE_CALENDAR_ID", "primary"),
+                                                  **google_token_options())
 
 
 def _drive_backend_from_env():
@@ -340,7 +353,9 @@ def _drive_backend_from_env():
     token = os.getenv("GOOGLE_DRIVE_TOKEN")
     if not secret or not token:
         raise RuntimeError("Google Drive requires GOOGLE_DRIVE_CLIENT_SECRET and GOOGLE_DRIVE_TOKEN paths")
-    return GoogleDriveBackend.from_oauth_files(Path(secret), Path(token))
+    from jarvis.runtime.local_secrets import google_token_options
+
+    return GoogleDriveBackend.from_oauth_files(Path(secret), Path(token), **google_token_options())
 
 
 def _mcp_allow_loopback_http() -> bool:
@@ -1781,7 +1796,9 @@ async def _run_control_center_v2() -> int:
                              token_file=settings.token_file, runtime_root=runtime_root),
             ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root)),
         # `jarvis-drive` en lecture seule (2026-10-07) : Core sait chercher et lire, le cerveau doit pouvoir aussi.
-        drive_mcp=DriveMcpTarget(runtime_root=runtime_root, read_only=True),
+        # Édition écrite dans l'environnement du serveur (Slice 05 presentation-edition) : cadrage de `drive_read`.
+        drive_mcp=DriveMcpTarget(runtime_root=runtime_root, read_only=True,
+                                 edition=_process_edition_value()),
         tools_mcp=ToolsGatewayTarget(
             core_host=settings.core_host, core_port=settings.core_port,
             token_file=settings.token_file, runtime_root=runtime_root,

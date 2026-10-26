@@ -17,6 +17,7 @@ Core directement.
 | `GET /api/sessions` | `GET /v1/sessions` |
 | `POST /api/sessions/new` | `POST /v1/sessions/new` |
 | `GET /api/boards/edition` | `GET /v1/boards/edition` |
+| `GET /api/edition/connectors` | `GET /v1/edition/connectors` |
 
 **Relais transparent.** Statut et corps JSON de Core rendus tels quels, erreurs
 comprises (`{"error": {"code", "message"}}`, codes `BoardErrorCode`). Core
@@ -131,6 +132,8 @@ class BoardSessionRoutes:
             web.get("/api/boards/active", self.relay("/v1/boards/active")),
             # Disponibilité des types de Board pour l'interface (`docs/product-edition.md`) : Core décide.
             web.get("/api/boards/edition", self.relay("/v1/boards/edition")),
+            # Connecteurs de l'édition (`docs/product-connectors.md`) : onboarding et santé (Slice 07).
+            web.get("/api/edition/connectors", self.relay("/v1/edition/connectors")),
             # Avant `{board_id}` : « pending » n'est pas un identifiant de Board.
             web.get("/api/boards/pending", self.pending),
             web.post("/api/boards/switch", self.switch_board),

@@ -1266,8 +1266,16 @@ class ControlCenter:
         agent_factory: Callable[[str], Any] | None = None,
         global_context_dir: Path | None = None,
         boards_dir: Path | None = None,
+        seal_local_secrets: bool | None = None,
+        secret_sealer: Any = None,
     ) -> None:
         self.runtime_root = runtime_root
+        # Secrets locaux (Slice 05 presentation-edition, `jarvis/runtime/local_secrets.py`) : édition produit ou
+        # produit installé => clés API scellées par DPAPI à chaque écriture, clair d'avant migré au démarrage.
+        from jarvis.runtime import local_secrets
+
+        self._seal_secrets = local_secrets.local_secrets_sealed() if seal_local_secrets is None else seal_local_secrets
+        self._secret_sealer = secret_sealer
         self.project_root = project_root
         #: `<data_root>/CONTEXT_GLOBAL` (docs/context-global.md) : remis à chaque
         #: cerveau Claude, qui l'assemble dans sa consigne système à son lancement.
@@ -2415,6 +2423,7 @@ class ControlCenter:
 
     async def start(self, *, host: str = "127.0.0.1", port: int = 17654) -> None:
         self.runtime_root.mkdir(parents=True, exist_ok=True)
+        self._migrate_local_secrets()
         self._apply_agent_settings(self._settings())
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
@@ -3304,7 +3313,51 @@ class ControlCenter:
         data.setdefault("voice_arch", "")
         return data
 
+    def _credential_sealer(self) -> Any:
+        from jarvis.runtime import local_secrets
+
+        if self._secret_sealer is None:
+            self._secret_sealer = local_secrets.credential_sealer()
+        return self._secret_sealer
+
+    def _seal_settings(self, settings: dict[str, Any]) -> None:
+        """Édition produit : aucune clé ne part en clair sur disque (refus 503 si le coffre manque)."""
+
+        if not self._seal_secrets:
+            return
+        from jarvis.runtime import local_secrets
+
+        try:
+            count = local_secrets.seal_settings(settings, self._credential_sealer())
+        except local_secrets.LocalSecretsError as exc:
+            self.journal.emit("secrets.seal_refused", str(exc), level="error", data={"code": exc.code})
+            raise web.HTTPServiceUnavailable(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from None
+        if count:
+            self.journal.emit("secrets.sealed", "Clé API scellée dans le coffre local", data={"sealed": count})
+
+    def _migrate_local_secrets(self) -> None:
+        """Démarrage, édition produit : clés en clair des réglages (et `.env` du produit installé) scellées."""
+
+        if not self._seal_secrets:
+            return
+        from jarvis.installation import detect_installation
+        from jarvis.runtime import local_secrets
+
+        sealer = self._credential_sealer()
+        try:
+            local_secrets.migrate_settings_file(self.settings_path, sealer, self.journal.emit)
+            installation = detect_installation()
+            if installation.installed and installation.home is not None:
+                local_secrets.migrate_env_file(installation.home.config / ".env", self.settings_path, sealer,
+                                               self.journal.emit)
+        except (OSError, ValueError, local_secrets.LocalSecretsError) as exc:
+            # Argued: startup continues (keys keep working from their current place); the failure is an
+            # error line naming its cause, never a value, and the next start retries (copy-first: nothing lost).
+            self.journal.emit("secrets.migration_failed", "Clés locales non scellées", level="error",
+                              data={"error": type(exc).__name__, "code": getattr(exc, "code", None)})
+
     def _write_settings(self, settings: dict[str, Any]) -> None:
+        self._seal_settings(settings)
         self.runtime_root.mkdir(parents=True, exist_ok=True)
         tmp = self.settings_path.with_suffix(self.settings_path.suffix + ".tmp")
         tmp.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")

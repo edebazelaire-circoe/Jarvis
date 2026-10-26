@@ -807,6 +807,58 @@ Status: code since handoff `jarvis-unified-chat-and-board-drop` (Slices 03 to 09
 - **Inert URLs.** A URL dropped on the Board becomes an Artifact `kind = link` (`http`/`https` only, ≤ 2048 characters, no credentials, no control characters; else 400 `link_invalid`). It is **never fetched**: no request, no DNS lookup, no preview, by Core, the Control Center or the page (test under a network transport that fails on any outbound connection or lookup). The page shows it as text.
 - **A drop is never a turn.** A Board drop creates no conversation event, no Brain turn and no scene object; only the displayed (active) Board takes it (409 `board_drop_target_inactive`).
 
+### 23. Presentation Edition connectors: sealed local secrets, external side effects, untrusted content
+
+Handoff `jarvis-presentation-edition-v1`, Slice 05. Contract:
+[product-connectors.md](product-connectors.md).
+
+**Local secrets (before / after).** Before: API keys lived in plain text in
+`runtime/control-center-settings.json` (`credentials[].value`, legacy flat fields such as
+`openai_api_key`) and in `.env`; Google OAuth tokens were plain JSON files named by `.env`. In the
+**product** (edition `presentation`, or any installed product whatever its edition —
+`local_secrets.local_secrets_sealed`), they are sealed with **Windows DPAPI CurrentUser**
+(`jarvis/adapters/dpapi_sealer.py`) under a per-purpose entropy (`jarvis-credentials-v1`,
+`jarvis-google-oauth-v1`, distinct from the MCP vault's `jarvis-mcp-v1`): a blob from one purpose
+does not unseal as another. A key entry keeps only `sealed {scheme, purpose, blob}` and its `hint`;
+a Google token lives in `<token>.dpapi`; the installed product's `.env` loses the provider key
+variables once they are in the sealed store. The Control Center seals at every settings write
+(`_write_settings`), so no other path writes a plaintext key.
+
+**Migration, copy first.** At Control Center start: the original file is first saved **sealed as a
+whole** (`<file>.plain-backup.dpapi`, re-read and compared), each value is sealed and re-read, and
+only then is the plaintext removed (atomic replace). A plaintext Google token is copied into its
+blob, re-read and compared, then deleted. Any failure leaves the plaintext as it was and journals
+`secrets.migration_failed` (code, never a value); the next start retries. Rollback on the same
+Windows account: `local_secrets.unseal_backup`.
+
+**No plaintext fallback.** No vault (non-Windows, DPAPI unavailable): nothing is migrated
+(`secrets.migration_skipped`, error), and a settings write that would put a key on disk in clear is
+refused `503 credential_vault_unavailable`. An unreadable sealed key (copied from another account)
+reads as absent and is listed `readable: false`.
+
+**Development unchanged.** A source checkout in `full` keeps the plaintext store and plain token
+files exactly as before; it still *reads* sealed entries.
+
+**Same threat model as control 15:** DPAPI protects against other OS users and copies of the files,
+not against a malicious process of the same user. No secret in public views
+(`list_credentials`/`credentials_state` carry the hint only), journals or prompts. Proof:
+`tests/unit/test_local_secrets.py` (sentinel absent from files, backups, views and journal).
+
+**External tool side effects at call time.** The `side_effect` of a remote MCP tool
+(`mcp_plugins.normalize_remote_tool`: `read` / `write` / `destructive`, unannotated = destructive)
+is enforced by Core in `McpPluginService.call`/`invoke`, before arguments and any network: in
+`presentation`, `write` is refused `mcp_tool_confirmation_required` and `destructive`
+`mcp_tool_side_effect_refused` (403), and both are withheld from `GET /v1/mcp/tools`. The prompt is
+not the boundary. Residual: a remote server that lies in its annotations (`readOnlyHint` on a
+writing tool) is not detectable.
+
+**Untrusted connector content.** In `presentation`, every text a connector returns (remote tool
+result, `drive_read`) is framed by `connector_content.frame_untrusted`: a notice, then markers
+carrying a per-block random token the connector cannot predict, marker look-alikes neutralized.
+Framing reduces, it does not eliminate, prompt injection; the call-time refusal above is the hard
+line. Proof: `tests/unit/test_product_connectors.py` (hostile text framed, follow-up write refused,
+nothing sent).
+
 ## Residual risks / non-goals
 
 - Bare Hands traces are never pruned and are not encrypted at rest; a user who recorded a diagnostic session leaves scalar interaction data in `runtime/barehands-traces/` until they delete it by hand.

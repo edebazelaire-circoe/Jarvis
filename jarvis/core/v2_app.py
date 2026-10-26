@@ -36,6 +36,7 @@ from jarvis.core.artifact_service import ArtifactService
 from jarvis.core.upload_service import BoardDropSeam, UploadService
 from jarvis.domain.artifacts import ARTIFACTS_DIR
 from jarvis.domain.uploads import upload_bounds
+from jarvis.domain.product_connectors import ConnectorFacts, connector_policy, connectors_payload
 from jarvis.domain.product_edition import FULL_EDITION, ProductEditionPolicy
 from jarvis.core.capture_service import CaptureAssociation, CaptureService, NoCaptureSources
 from jarvis.core.recording_transcriber import RecordingTranscriber
@@ -225,9 +226,13 @@ class JarvisCoreApplication:
         # sealer, aucun identifiant n'est accepté (`mcp_vault_unavailable`) ;
         # sans connecteur, `connect` répond `mcp_connector_unavailable`.
         mcp_store = SQLiteMcpPluginRepository(self.state)
+        # Connecteurs de l'édition (Slice 05 presentation-edition, `docs/product-connectors.md`) : la politique
+        # des outils externes (`side_effect`) et le cadrage des résultats s'appliquent dans ce service, à l'appel.
+        self.connector_policy = connector_policy(product_edition)
         self.mcp_plugins = McpPluginService(
             mcp_store, CredentialVault(mcp_store, sealer, diagnostics=diagnostics), connector=connector,
             diagnostics=diagnostics, allow_loopback_http=mcp_allow_loopback_http,
+            connector_policy=self.connector_policy,
         )
         # Capacités locales installables (Remotion ; handoff jarvis-remotion-presentation-integration, Slice 04,
         # `docs/local-capabilities.md`) : AUCUN lancement au démarrage (l'installation est une action explicite
@@ -906,6 +911,18 @@ class JarvisCoreApplication:
             except Exception:
                 pass
             raise
+
+    async def connector_status(self) -> dict[str, object]:
+        """`GET /v1/edition/connectors` : manifeste des connecteurs de l'édition et leur état produit.
+
+        Faits lus ici, rien d'autre : Drive relié, agenda persistant, vue publique des plugins MCP
+        (`public_view`, jamais `credential_ref`). Aucun réseau : l'état est celui que Core connaît.
+        """
+
+        plugins = [plugin.public_view() for plugin in await self.mcp_plugins.list_plugins()]
+        facts = ConnectorFacts(drive_available=self.drive.available,
+                               calendar_persisted=bool(self.calendar.storage.get("persisted")), plugins=plugins)
+        return connectors_payload(self.connector_policy, facts)
 
     async def _authorised_boards(self) -> frozenset[str]:
         """Boards a presentation's live references may read (Remotion Slice 15, `docs/presentation-live-refs.md`): the Board the user is

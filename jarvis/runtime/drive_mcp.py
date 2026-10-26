@@ -12,6 +12,11 @@ enregistre lui-même (`claude mcp add`). `build_server(read_only=True)` est celu
 que **JARVIS déclare au cerveau** (2026-10-07, `write_mcp_config`) : recherche,
 métadonnées et lecture seulement, aucun outil d'écriture n'est même enregistré.
 L'écriture sur le Drive de l'utilisateur reste une décision à lui.
+
+Édition (Slice 05 presentation-edition, `docs/product-connectors.md`) : le Control Center écrit
+`JARVIS_PRODUCT_EDITION` dans l'environnement du serveur (comme `jarvis-workspace`). En
+`presentation`, le texte rendu par `drive_read` est cadré comme donnée non fiable
+(`connector_content.frame_untrusted`) et le jeton OAuth suit les portées minimales du produit.
 """
 
 from __future__ import annotations
@@ -25,7 +30,10 @@ import tempfile
 from typing import Any
 
 from jarvis.adapters.google_drive import GoogleDriveBackend
+from jarvis.domain.connector_content import frame_untrusted
 from jarvis.domain.drive import DriveQuery
+from jarvis.domain.product_connectors import connector_policy
+from jarvis.domain.product_edition import PRODUCT_EDITION_ENV, ProductEditionPolicy
 from jarvis.environment import load_project_environment
 from jarvis.runtime.mcp_tool_meta import tool_annotations
 
@@ -59,9 +67,13 @@ def backend() -> GoogleDriveBackend:
     global _backend
     if _backend is None:
         secret, token = credential_paths()
-        if not token.is_file():
+        from jarvis.adapters.google_oauth import token_present
+
+        if not token_present(token):
             raise RuntimeError(f"Aucun jeton Drive dans {token}. Lancez d'abord : python -m jarvis drive-auth")
-        _backend = GoogleDriveBackend.from_oauth_files(secret, token)
+        from jarvis.runtime.local_secrets import google_token_options
+
+        _backend = GoogleDriveBackend.from_oauth_files(secret, token, **google_token_options())
     return _backend
 
 
@@ -78,8 +90,12 @@ def _file(item: Any) -> dict[str, Any]:
     }
 
 
-def build_server(*, read_only: bool = False):
+def build_server(*, read_only: bool = False, edition: ProductEditionPolicy | None = None):
     from mcp.server.fastmcp import FastMCP
+
+    from jarvis.runtime.product_edition_env import process_edition
+
+    frame = connector_policy(edition or process_edition()).frame_untrusted_content
 
     if read_only:
         instructions = ("Accès en lecture seule au Google Drive de l'utilisateur : drive_search, drive_get, drive_read. "
@@ -108,6 +124,11 @@ def build_server(*, read_only: bool = False):
     async def drive_read(file_id: str, max_chars: int = 20000) -> dict[str, Any]:
         """Contenu texte d'un fichier. Docs, Sheets et Slides sont exportés (markdown, csv, texte)."""
         content = await backend().read_file(file_id, max_chars=max_chars)
+        if frame:
+            # Le nom du fichier vient du Drive, donc il est cadré lui aussi (dans le texte), jamais en source.
+            text = frame_untrusted(content.text, source="Google Drive")
+            return {"file": _file(content.file), "text": text, "truncated": content.truncated,
+                    "exported_as": content.exported_as, "untrusted": True}
         return {"file": _file(content.file), "text": content.text, "truncated": content.truncated, "exported_as": content.exported_as}
 
     if read_only:
@@ -146,9 +167,14 @@ class DriveMcpTarget:
 
     runtime_root: Path | None = None
     read_only: bool = True
+    #: Édition écrite dans l'environnement du serveur (`None` : rien, le serveur lit la sienne).
+    edition: str | None = None
 
     def env(self) -> dict[str, str]:
-        return {ENV_READ_ONLY: "1"} if self.read_only else {}
+        env = {ENV_READ_ONLY: "1"} if self.read_only else {}
+        if self.edition:
+            env[PRODUCT_EDITION_ENV] = self.edition
+        return env
 
 
 def read_only_from_env(environ: "os._Environ[str] | dict[str, str] | None" = None) -> bool:

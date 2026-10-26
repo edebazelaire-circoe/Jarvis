@@ -231,7 +231,9 @@ def test_a_core_oauth_timeout_offers_to_relaunch_the_authorization_not_a_token(t
 def test_every_management_code_reads_as_a_french_sentence(tmp_path):
     tool_only = {"mcp_remote_tool_error", "mcp_tool_unknown", "native_tool_call_directly", "mcp_arguments_invalid",
                  "mcp_cursor_invalid", "mcp_tool_name_invalid", "mcp_tool_schema_too_large", "mcp_tool_schema_invalid",
-                 "mcp_tool_list_too_large"}
+                 "mcp_tool_list_too_large",
+                 # Politique d'édition à l'appel (Slice 05 presentation-edition) : codes d'appel, jamais de gestion.
+                 "mcp_tool_side_effect_refused", "mcp_tool_confirmation_required"}
     codes = sorted({code.value for code in McpErrorCode} - tool_only
                    | {"mcp_plugin_store_unreadable", "mcp_plugin_store_failed", "core_unreachable",
                       "core_unconfigured", "core_timeout", "forbidden_origin", "method_not_allowed", "not_found",

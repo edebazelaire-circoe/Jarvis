@@ -107,6 +107,12 @@ _NEXT_STEP: dict[str, str] = {
     McpErrorCode.ARGUMENTS_INVALID.value: "corrige les arguments selon input_schema (rappelle list_tools au besoin)",
     McpErrorCode.CURSOR_INVALID.value: "rappelle list_tools sans curseur",
     McpErrorCode.REMOTE_TIMEOUT.value: "le service distant n'a pas répondu à temps",
+    # Politique de l'édition (Slice 05 presentation-edition, `docs/product-connectors.md`) : rien n'a été envoyé.
+    McpErrorCode.TOOL_CONFIRMATION_REQUIRED.value: ("rien n'a été envoyé : cette édition ne permet pas encore "
+                                                    "de modifier les données d'un service externe ; dis-le à "
+                                                    "l'utilisateur, ne réessaie pas"),
+    McpErrorCode.TOOL_SIDE_EFFECT_REFUSED.value: ("rien n'a été envoyé : cet outil peut supprimer ou écraser des "
+                                                  "données et n'est pas permis dans cette édition ; ne réessaie pas"),
     "core_unreachable": "Core ne répond pas : les outils des plugins sont indisponibles pour l'instant",
 }
 
