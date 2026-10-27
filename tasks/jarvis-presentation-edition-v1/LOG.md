@@ -307,3 +307,108 @@ Implementation agents append durable execution notes here. This handoff intentio
 - Preuves : `C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\448345f0-a514-4023-9dde-33aed523cf61\scratchpad\s10\final2\` (rapports des quatre phases et `smoke-report.json`, `smoke-state.json`, `release-info.json`, `launcher.log`, paquet de support réel, issues de l'installeur, bases copiées sous `db-copies\` avant suppression de `%TEMP%\s10smoke`), premier essai sous `…\s10\final\` et `…\s10\evidence\`, verdicts de la porte sous `…\s10\gates\`, journaux de build `…\s10\build-final.log`, `actionlint` sous `…\s10\actionlint-1.7.7\`. Paquet `%TEMP%\s10pkg` et installeur `%TEMP%\s10out\JARVIS-Setup.exe` gardés pour la QA (supprimables). Le JARVIS vivant n'a été ni lancé ni touché ; rien lancé depuis `C:/Projects/jarvis/jarvis` ; aucun registre réel, Program Files, `%LOCALAPPDATA%\Programs`, Bureau ni menu Démarrer réel écrit ; aucun processus non lancé par l'essai arrêté ; aucun tour du cerveau payant (0 $). Disque C : 42 Go libres avant et après.
 - **Table des portes** (`docs/release.md` › *Release gates*) : automatisé vert ici — A1 vérificateur, A2 suite `release`, A3 suite `unit` complète, A5 paquet d'un commit connu, A6 installeur, A7 essai installé 12 étapes, A8 mise à jour/migration/frontière du retour arrière, A9 capacités interdites et repli PATH, A11 persistance de l'export ; partiel — A4 navigateur (19/185 fichiers), A10 plantage du moteur de rendu dans le produit installé (matrice de pannes unitaire seulement : l'installation de Remotion demande le réseau) ; **non vérifié** — A12 CI sur un runner GitHub, toutes les portes physiques HV-STORAGE-01, HV-EXPORT-01/02, HV-SECURITY-01, HV-CONNECTORS-01, HV-PACKAGE-01, HV-INSTALL-01, HV-UI-01, HV-EDIT-01..05, HV-RECOVERY-01, HV-UPDATE-01, HV-E2E-01, HV-AUDIO-01, HV-PILOT-01 ; prérequis externes ouverts (défaut sûr) — licences HV-PACKAGE-02..09, signature et technologie HV-PACKAGE-10/HV-INSTALL-04 (installeur **non signé**), icône HV-INSTALL-05, client OAuth Google HV-INSTALL-02, contrat IGuard X1, annotations Circuit Toolbox ; non livré en V1 par décision — remplacement de visuel, annulation durable, PPTX, Boards Assistant/Réunion, mot d'éveil (F9), capture d'écran, mise à jour automatique, télémétrie, macOS/Linux.
 - Reste (`Issues/I-010-s10-leftovers.md`) : premier passage de la CI sur GitHub (versions d'actions par tag, Python 3.14.6 du runner, durée des parts navigateur), confirmation des deux décisions de pipeline, bouton du paquet de support, moteur de rendu et Voix dans l'essai installé, jeton du script de désinstallation différée (I-009 mn1), I-004 point 5, I-005 point 1, I-008 points 3 et 7, reproductibilité entre deux machines, robustesse du Studio face à un dossier de Presentation illisible. I-002 point 5 mesuré et clos (181 caractères au plus pour un nom d'utilisateur de 20 caractères). Aucune migration ; aucun redémarrage du JARVIS vivant nécessaire (les changements du produit ne touchent que le produit installé, le lanceur et la préparation, plus un port sans effet de comportement).
+
+## 2026-10-27 — Slice 10, reprise QA (agent d'implémentation)
+
+Reprise des constats de `slices/10-production-readiness-recovery-ci/qa/code-review.md` (FAIL : B1, M1, M2, m1-m10) et de
+l'essai réel indépendant (PASS avec réserves : R1, R2, R3, lenteur du masquage, doc du retour arrière, tests Remotion
+sautés). Worktree `pev1`, commits `8968850c` (corrections) et `63697cfa` (instabilité de mon propre test, trouvée par le
+balayage), puis ce LOG. La Slice n'est **pas** marquée approuvée : la décision revient au PM.
+
+Preuves : `C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\448345f0-a514-4023-9dde-33aed523cf61\scratchpad\s10rw\evidence\`
+(`sweep\` rapports de la porte, `candidate\` identité et journaux du build, `smoke\` essai du paquet installé,
+`r3\` essai de l'amorce tuée, `db-copies\` bases de l'essai copiées avant suppression, `r2-refusals.txt`,
+`r1-five-runs.txt`, `b1-mutation.txt`, `m2-m3-mutation.txt`, `jwt-mutation.txt`).
+
+| Constat | Correction | Preuve |
+| --- | --- | --- |
+| **B1** porte verte après une session interrompue | `release_test_gate.py` : `session_problems` rend la porte ROUGE si le code de pytest n'est ni 0 ni 1, si 1 sans échec vu, session interrompue (`shouldstop`), moins de tests exécutés que collectés (`collected` écrit par le greffon), rapport absent, aucun test passé ; une relance d'intermittent doit aussi finir proprement | `test_release_tooling.py` : faux tests jetables lancés par la vraie porte (`pytest.exit`, `KeyboardInterrupt` suivis d'un échec jamais lancé : code 2, ROUGE ; import cassé ; tout sauté ; échec connu : VERT) + table de cas ; contre-épreuve : sans la règle, 5 tests échouent (`b1-mutation.txt`) |
+| **m1** échec connu sauté = passage vide | un test `failing` listé dont le fichier a tourné sans échouer ni passer est « non vu » : ROUGE ; le rapport porte `skipped`, `collected`, `exitstatus`, `duration_seconds`, `source_revision` | `test_a_listed_failure_that_was_skipped_is_not_seen…` ; balayage : chaque part affiche ses sautés |
+| **M1** parts navigateur de 60 min, `package` bloqué | 10 parts navigateur, `timeout-minutes: 75` ; `needs` gardé ; calcul dans `docs/release.md` › *Shard sizing* (0,9 min/fichier en moyenne, 2,2 pour les réglages ; 19 fichiers par part : ~17 min, 42 au pire) | `test_every_ci_shard_fits_its_timeout_with_margin` (l'ancien découpage échoue : 47 × 2,2 × 1,5 > 60) ; `actionlint` 1.7.7 vert |
+| **M2** jetons opaques du `.env` et `core.token` en clair | `support_bundle.known_secrets` : valeurs de `.env` d'un nom sensible (TOKEN, KEY, SECRET, PASSWORD, PWD, PASS, CREDENTIAL, AUTH, COOKIE, SESSION, PRIVATE, SIGNATURE), et par prudence toute valeur ≥ 8 sans espace qui mêle lettres et chiffres ou fait 20 caractères ; contenu de `core.token` (`JARVIS_CORE_TOKEN_FILE` sinon `runtime\core.token`) | `test_an_opaque_token_of_the_env_or_of_core_token_is_masked…` (`INFOMANIAK_TOKEN` opaque, identifiant sans nom sensible, jeton local ; `presentation` reste lisible) ; contre-épreuve sans `known_secrets` : échec (`m2-m3-mutation.txt`) |
+| **m2** formes manquantes | URL `schéma://utilisateur:mot de passe@hôte` (sans domaine aussi), `GOCSPX-`, `4/0…`, `AKIA`/`ASIA`, Stripe, paires `pwd`, `passphrase`, `private_key`, `aws_secret_access_key`, `aws_session_token` | `test_generic_secret_forms_are_masked_too` (10 cas) |
+| Lenteur du masquage (2 min 38 s) | `_JWT` (masquage canonique, `mcp_plugins.py`) ancré par un regard arrière au début d'une suite : il était quadratique ; `_EMAIL` ancré aussi sur `%` ; ligne coupée à 16 000 caractères avant masquage | `test_masking_stays_linear_on_long_runs_of_one_character` (15 suites de 100 000 caractères : 1,7 s) ; contre-épreuve sans le regard arrière : 132 s et échec (`jwt-mutation.txt`) |
+| **m3** contenu par liste noire | `data` du journal d'erreurs filtré par LISTE BLANCHE après masquage (nombres, booléens, identifiants sans espace ≤ 120, texte des seules clés de diagnostic, 300 caractères) ; `message` borné à 500 après masquage | `test_error_data_keeps_diagnostics_by_allowlist_and_drops_user_text` (titre, requête, mots retirés ; `error`, `reason`, identifiants gardés) ; contre-épreuve : échec |
+| **m5** noms d'exclusion exacts | noms du verrou normalisés (PEP 503) et cherchés par préfixe | `test_an_excluded_wheel_back_in_the_lock_fails_the_release` (`sherpa_onnx`, `onnxruntime-directml`, `onnxruntime_gpu`, `MediaPipe`, `openWakeWord[full]`, `imageio.ffmpeg`) ; le vrai verrou reste propre ; `verify_release.py` : `Release verification passed.` |
+| **m7 / R2** identité sans lien entre paquet, installeur, essai et portes | `release_info.py` : `--smoke-report` obligatoire, vert, fait sur CET installeur (SHA-256) et ayant installé CE paquet ; au moins un `--gate-report`, chacun vert et de la révision du paquet ; paquet EMBARQUÉ (manifeste lu dans le zip accolé, sans extraction) égal au paquet déclaré ; `GITHUB_SHA` égal à la révision | `test_release_info_refuses_a_package_and_an_installer_that_do_not_belong_together` (11 refus) ; en vrai (`r2-refusals.txt`) : paquet neuf + installeur du paquet `75921f58` (et l'inverse) → « l'installeur embarque un autre paquet » ; second installeur du même paquet → « a installé un autre installeur » ; essai de l'ancien candidat → idem ; sans porte → refus ; porte de `8968850c` → refus ; sans essai → `argparse` code 2 ; aucune identité écrite |
+| **m9** commentaire faux (`-shm` créé) | ouverture `mode=ro` seulement si le `-shm` existe ; sinon `immutable=1` et `wal_not_read: true` ; doc corrigée | `test_a_base_with_a_wal_but_no_shm_is_read_without_creating_anything` (base et `-wal` identiques à l'octet, aucun `-shm`) |
+| **m10** + essai réel : noms du retour arrière | noms EXACTS : `<db>.v<new>.before-rollback-<UTC>.bak` (+ `-wal`/`-shm` en `.bak-wal`/`.bak-shm`), puis `<db>.v<old>.restored-<UTC>.bak` avant de remonter ; l'heure évite la collision d'un second retour arrière | `test_release_update_profile.py` suit ces noms et prouve la remontée (`.v10.bak` / `.v1.bak` neufs écrits) |
+| **R1** test navigateur instable non listé | cause : le TEST. (1) l'attente `includes('enregistré')` était vraie avec « n’est pas enregistrée » → attente exacte « enregistré sur la scène » sans « pas enregistrée » ; (2) un `preview_failed` (aperçu de frappe envoyé à la route bloquée exprès, selon le rythme de frappe) n'était pas dans les messages attendus. Produit non en cause (l'avertissement part bien une fois enregistré) ; rien listé | 1 échec sur 4 avant (`preview_failed`) ; après : **5 passages consécutifs seul** (`r1-five-runs.txt`) ; le fichier entier par la porte : 7 passés |
+| **R3** dossier d'amorce tuée (448 Mo) | amorce : `.jarvis-setup-<PID de l'amorce>-<hex>` ; `product_setup.remove_orphan_setup_dirs` appelé après une installation réussie et par la désinstallation : jamais le dossier en cours, jamais celui d'une amorce vivante (PID vivant ET créé avant le dossier ; un PID réemployé n'est pas un propriétaire), sonde de renommage d'abord (fichier ouvert = gardé), ancien nom sans PID seulement après 1 h ; la désinstallation (directe et script différé, `rmdir` sans `/s`) retire `Programs\CIRCOE` vide, jamais la maison | 6 tests (`test_product_setup.py`, dont un vrai fichier tenu par un autre processus et un vrai PID plus jeune) ; **essai réel** (`r3\r3-state.json`) : amorce lancée par l'essai (PID 35140), tuée par son propre `Popen` en pleine copie → `.jarvis-setup-35140-5ef84de0` (442 Mo) laissé ; relance → `ok`, `setup_work_removed: [.jarvis-setup-35140-5ef84de0]`, maison identique ; désinstallation → programme, clé et `Programs\CIRCOE` retirés, `Programs` gardé, maison identique |
+| Essai réel : tests Remotion sautés | documenté (`docs/release.md` › *Known failures*) : ~40 tests sautés sans `JARVIS_REMOTION_RUNTIME_DIR` / `JARVIS_VARIANTS_REMOTION_EVIDENCE_DIR`, comptés comme sautés, jamais comme passés | rapports de la porte : champ `skipped` |
+
+**Vérifications d'ensemble**
+
+- Porte `release` à `63697cfa` : VERTE, 29 fichiers, 720 passés, 2 sautés (223 s). Lots ciblés (MCP, masquage, CLI du
+  cerveau, installeur) : 274 passés.
+- Balayage `unit` complet par la porte, au premier plan, 16 parts (dont 9 en moitiés) : **845 fichiers, 22 013 passés,
+  10 échecs connus vus, 2 intermittents listés tolérés (passés seuls), 96 sautés, tout VERT** (86 min). Il a trouvé une
+  instabilité de MON test `release_info` (zip daté à l'heure courante) : corrigée (`63697cfa`, dates fixes, preuve de
+  déterminisme), part relancée verte.
+- Build depuis un clone propre de `63697cfa` sous `%TEMP%\s10rw` : paquet **`c9fca483f309f9c85ae7b2971da6e2b4edaa66a6e0f106d75481460a8a9478d9`**
+  (sonde PATH Windows verte), `verify` intact, installeur **`47e9fbd4e056acb61a1c714c4bafd2f0a19f3424b794d2d99e5ff7a208755c97`**
+  (145 Mo, non signé, payload `a9337b9d…` ; un second installeur du même paquet a le même payload). `package_smoke.py`
+  en quatre phases, ports 45653-45656 : **12/12 VERT** (installation 409 s), et après la désinstallation
+  `Programs\CIRCOE` simulé a disparu. `release_info.py` : identité **`jarvis-0.2.0-63697cfa6ffc-47e9fbd4e056`** avec 13
+  rapports de porte de `63697cfa` et l'essai vert de cet installeur ; refus prouvés ci-dessus.
+- Aucun caractère de contrôle, index en `i/lf` ; fichiers Python compilés sans avertissement d'échappement.
+
+**Consigné dans I-010** (points 11 à 19, non corrigés) : noms de fichiers dans le texte libre des messages gardés par le
+paquet de support ; libellés « Réparation » / `mode` trompeurs ; préparation « Dossier de JARVIS : Prêt » malgré une
+`presentation.json` tronquée (ajout au point 11) ; un Python d'installation privé de son amorce échoue à sa ligne de
+progression suivante (`Errno 22`) et laisse le programme copié et son état (revu dans l'essai R3, la relance finit) ;
+m4 (contrôle textuel des primitives), m6 (actions par étiquette, pas d'attestation), m8 (matrice Python,
+`ResourceWarning`), observations (annulation de la CI sur `main`, `_cap` en octets, `\\?\`) ; une porte faite à une autre
+révision ne peut plus être jointe.
+
+**Non vérifié** : la CI sur un runner GitHub (A12 : durée réelle des 10 parts, Python 3.14.6 du runner) ; la suite
+navigateur complète (seuls le fichier R1 entier et le test R1 seul 5 fois ont tourné ici ; 65 fichiers par l'essai
+réel indépendant) ; reproductibilité entre deux machines ; poste Windows vierge et toutes les portes HV-*.
+
+**Machine et nettoyage** : le JARVIS vivant n'a été ni lancé, ni arrêté, ni touché ; rien lancé depuis
+`C:/Projects/jarvis/jarvis` (seul son `.venv` a servi d'interpréteur) ; seule l'amorce lancée par l'essai R3 a été
+arrêtée, par son propre `Popen` (PID exact, sans `/T`) ; son Python enfant a fini seul ; plus aucun processus issu de
+`%TEMP%\s10rw`. Bases créées par l'essai copiées (empreintes vérifiées) sous `evidence\db-copies\`, puis `%TEMP%\s10rw`
+supprimé (clones, paquets, installeurs, essais). Aucune migration, aucun changement de schéma ; aucun tour payant du
+cerveau. Aucun redémarrage du JARVIS vivant n'est nécessaire (produit installé, outillage de release et masquage
+canonique seulement). Disque C : 42 Go libres au départ, 38 Go à la fin.
+
+## 2026-10-27 — Slice 10, seconde reprise (agent d'implémentation)
+
+Demandée par le PM après la contre-relecture `slices/10-production-readiness-recovery-ci/qa/rework-review.md`
+(`d509ed23`, FAIL : X1, X2 majeurs ; x3-x6 mineurs). Worktree `pev1`, commit `f6e397e4`, puis ce LOG. La Slice n'est
+**pas** marquée approuvée. Preuves sous
+`C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\448345f0-a514-4023-9dde-33aed523cf61\scratchpad\s10rw\evidence\`
+(`mutations-second-rework.txt`, `x2-five-runs.txt`, `gate-release-f6e397e4.*`, `gate-touched*-f6e397e4.*`).
+
+| Constat | Correction | Preuve |
+| --- | --- | --- |
+| **X1** `.env` relu par une copie d'analyseur (commentaire, guillemets + commentaire, BOM : jeton en clair) | `support_bundle.env_items` passe par `jarvis.environment.parse_environment_lines` (`utf-8-sig`), une ligne à la fois : une ligne refusée est comptée (`secret_sources.env.unreadable_lines`), jamais copiée, et ne fait perdre ni les autres noms ni les autres secrets | 4 cas paramétrés (commentaire, guillemets + commentaire, `export` + guillemets doubles, BOM) : jeton absent de `logs/core.log`, clé sans BOM dans `config-keys.json` ; la sonde `probe_m2.py` du relecteur donne « masked » dans les 4 cas ; mutations « lecture `utf-8` » et « ancien découpage » tuées |
+| **X2** test de l'installeur intermittent (script `.cmd` pas encore effacé) | côté test : l'attente bornée (40 s) porte aussi sur l'effacement du script, qui s'efface en dernier ; produit inchangé | `test_product_setup.py` entier 5 fois de suite : 33 passés × 5 ; porte `release` verte (ci-dessous) |
+| **x3** docstring « inconnu = vivant », code « inconnu = mort » | choix sûr, code et docstring alignés : `probe_process` ouvre avec le seul droit `PROCESS_QUERY_LIMITED_INFORMATION` ; `ERROR_ACCESS_DENIED` = le processus existe = VIVANT, son dossier est gardé | `test_an_owner_that_exists_but_cannot_be_read_is_alive…` (sonde simulée, nettoyage qui garde le dossier, et vraie sonde : PID 4 existant, PID 0 mort, ce processus lisible) ; mutation tuée |
+| **x4** valeur triviale ou réglage ordinaire pris pour un secret | noms jugés par MOTS (`KEYBOARD_LAYOUT`, `BYPASS_HOST` ne sont plus sensibles), mots descriptifs exclus (`TYPE`, `FILE`, `MAX`, `TIMEOUT`…), `enabled`/`disabled` triviaux ; un vrai `DB_PASSWORD_2=hunter2x`, `OPENAI_APIKEY` restent secrets | `test_ordinary_settings_with_a_sensitive_looking_name_stay_readable` ; mutations « trivial accepté » et « morceau de nom » tuées |
+| **x6** clés scellées DPAPI hors du masqueur | `secret_sources` : clés des réglages locaux (`control-center-settings.json`, en clair ou scellées, `unseal_value`) et identifiants du coffre MCP (`mcp_credentials` lu comme les versions de schéma, `immutable=1` sans `-shm`, charge `static`/`oauth` descellée), en mémoire seulement ; `bundle.json` › `secret_sources` ne porte que des comptes et `degraded` (coffre indisponible, blob d'un autre compte) ; le paquet se fait toujours ; « Bearer » d'un en-tête n'est pas pris pour un secret | `test_sealed_local_keys_and_mcp_vault_credentials_are_known_secrets_unsealed_in_memory_only` (faux descelleur réversible : clé locale, jeton et en-tête du coffre absents du zip ; blob illisible compté ; coffre indisponible puis descelleur qui lève : paquet écrit, dégradation dite) ; mutation « sources ignorées » tuée |
+| **x5** reste de m7 | consigné : I-010 point 20 | — |
+
+**Vérifications** : `test_support_bundle.py` + `test_diagnostic_redaction.py` 24 passés ; 6 mutations sur 6 tuées ;
+`verify_release.py` : `Release verification passed.` ; porte `release` à `f6e397e4` : **VERTE, 29 fichiers, 727 passés,
+2 sautés** ; balayage des fichiers touchés et de leurs voisins (`local_secrets`, `credential_vault`, `mcp_plugin*`,
+`mcp_oauth_adapter`, `product_*`, `product_connectors`, `local_capability_host`, `support_bundle`, `diagnostic*`,
+`windows_installer`, `release_*`, `app`, `control_center_mcp_plugins_api`) : 22 fichiers, 823 passés, 1 échec connu
+(`test_app` listé), VERT. Index en `i/lf`, aucun caractère de contrôle, aucun avertissement d'échappement.
+
+**Non refait** : pas de rebuild du paquet (aucun fichier de packaging touché ; `setup_stub.cs` inchangé depuis le
+candidat `63697cfa`) ; le produit installé du candidat précédent n'embarque donc pas ces corrections du paquet de
+support et de l'installeur (`product_setup.py`) : un prochain build les prendra. Pas de balayage `unit` complet ni de
+suite navigateur. CI GitHub (A12) toujours non vérifiée.
+
+**Machine** : JARVIS vivant non touché ; aucun processus lancé hors pytest ; aucune base hors `tmp_path` ; aucun tour
+payant ; aucune migration ; aucun redémarrage requis.
+
+## 2026-10-27 — Slice 10, QA et décision (agent 0)
+- Relecture de code (`75921f58`) : FAIL (B1 porte verte sur session interrompue, M1 délai CI, M2 jetons opaques en clair). Essai réel indépendant : PASS avec réserves (R1 test instable, R2 identité sans lien paquet/installeur, R3 dossiers `.jarvis-setup-*` orphelins) ; build indépendant identique à l'octet hors révision, retour arrière réel sur l'ancien code, profil réel inchangé.
+- Première reprise (`8968850c`, `63697cfa`, `79eca5bb`) : tout corrigé avec preuves ; nouveau candidat `63697cfa`, essai du paquet 12/12, balayage `unit` complet vert (22 013 passés, 10 échecs connus).
+- Contre-relecture (`d509ed23`) : FAIL, X1 (parseur `.env` maison, jeton avec commentaire en clair), X2 (test de désinstallation intermittent qui rougit la porte), x3, x4, x6 ; 22/23 mutations tuées.
+- Seconde reprise (`f6e397e4`, `82779e18`) : X1, X2, x3, x4 et x6 (secrets scellés DPAPI et coffre MCP donnés au masqueur, en mémoire seulement) corrigés ; 6/6 mutations tuées ; porte `release` verte au commit final. Vérification de l'agent 0 : 78 tests (paquet de support, installeur, outils de release, masquage) verts, sonde `probe_m2.py` du relecteur « masked » sur les quatre formes.
+- Restes : paquet non reconstruit depuis `63697cfa` (le prochain build, S11, embarquera les corrections) ; CI GitHub jamais exécutée (A12, push réservé au Human) ; I-010 points 11-20.
+- Décision : **APPROUVÉE**.

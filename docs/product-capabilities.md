@@ -81,12 +81,58 @@ not know are ignored in `--tools`/`--disallowedTools` (probed).
 `Read`/`Glob`/`Grep` stay: research, attachments, Remotion previews
 (`presentation_source op preview` asks the model to look at frames with
 `Read`). `--restricted` confines them to the working directory and the
-`--add-dir` list, which in `presentation` is: `<data>/sessions`,
-`<data>/artifacts` (once known), `<data>/CONTEXT_GLOBAL`, `<data>/boards`,
-`<data>/local_capabilities` (Remotion previews land in
-`remotion/runtime/render/previews/<job>/`; created at launch if missing, because
-the CLI drops an `--add-dir` that does not exist yet, probed), and
-`<runtime>/scene-captures`. The rest of the PC
+`--add-dir` list. **Since V1.2 Slice 03 (I-002 correction 1) the list is
+scoped to the agent's Board** in `presentation`:
+
+| Folder | `full` | `presentation` |
+| --- | --- | --- |
+| Board memory | `<data>/boards` (every Board) | `<data>/boards/<board_id>/memory` of the pool entry only |
+| Session folders | `<data>/sessions` (every Session) | `<data>/sessions/<jarvis_session_id>` of the open Session only |
+| Global context | `<data>/CONTEXT_GLOBAL` | same |
+| Attachments | `<data>/artifacts` (once known) | same (not partitioned by Board, see below) |
+| Remotion previews, scene captures | — | `<data>/local_capabilities`, `<runtime>/scene-captures` |
+
+How (`ClaudeLocalAgent._board_scoped_dirs`, `jarvis/runtime/claude_local.py`):
+the Control Center gives each agent of the pool `board_scope = lambda:
+(entry.board_id, entry.jarvis_session_id)` and `sessions_root`
+(`ControlCenter._wire_agent`, `_grant_dirs`); at each launch the confined CLI
+replaces `<data>/boards` and `<data>/sessions` by the two scoped folders
+(created with `safe_folders.ensure_folder_tree`, ids checked by
+`check_memory_board_id` / `check_session_id`; a refusal is
+`agent.add_dir_refused` with `agent_board_memory_dir_unavailable` /
+`agent_session_dir_unavailable`, once, and the CLI starts without it). An
+agent without a binding (the foreground before Core names it) gets no Board
+and no Session folder. `agent.start` carries `board_scope`
+(`[board_id, jarvis_session_id]`, `null` when not scoped) and
+`ClaudeLocalAgent.launched_board_scope` keeps it.
+
+**Rebinding relaunches.** A pool entry never changes Board, except the
+unbound foreground adopted by `BoardBrainPool.adopt` without a relaunch.
+`ClaudeLocalAgent.board_scope_stale()` is then true and the Control Center
+treats it like a missing grant (`_lacks_workspace_grant`): relaunch with
+`--resume` at adoption (`reason: session_resume`) and before a turn
+(`reason: board_scope`), never during a turn or while sub-agents work
+(`agent.relaunch_deferred`, `board_brain.relaunch_deferred`). Sub-agents
+inherit the CLI's folders.
+
+**Explicit inspection stays.** Reading another Board **by its id** through
+`jarvis-workspace` (`board_memory_*`, `board_inspect`, `dossier_*`) is still
+allowed (`docs/boards.md` › *Non-activating inspection*, decision of agent 0 in
+I-002): it is an explicit, traced gesture. What is refused is the implicit
+file-system sweep of every Board. The prompts say so: discovery covers the
+current Board and the global knowledge, another Board is read only on request
+or explicit reference (`BRAIN_CONFINED_CAPABILITIES_PROMPT`,
+`AgentCapabilityPolicy.subagent_note`, `subagent_roles.RESEARCH_REUSE_BLOCK`).
+
+Example (real trace, V1.2 Slice 03): a `[general] [research]` agent of Board A
+asked to `Grep` `ZEPHYR` in `<data>/boards` and `<data>/sessions` gets « … is
+outside …/agent-workdir, …/CONTEXT_GLOBAL, …/boards/default/memory,
+…/sessions/<open session>, … » for both, and finds nothing of Board B in the
+allowed folders.
+
+Not covered: `<data>/artifacts` (attachments of every Board; registry
+Artifacts are not stored per Board) and `local_capabilities` (Remotion previews
+of every presentation) remain readable by path. The rest of the PC
 (Documents, Desktop, the code, `.env`, the Core token in `<runtime>`) is
 refused by the CLI ("is outside … --restricted confines the file tools to the
 working directory"). `WebSearch`/`WebFetch` stay for research (D07).
@@ -131,7 +177,9 @@ Consequence: in `presentation` the brain cannot reorganise `CONTEXT_GLOBAL`
 Written after enforcement, and only describing it
 (`BRAIN_CONFINED_CAPABILITIES_PROMPT`, `vous`): no terminal, shell, file
 write/delete or piloted browser for the brain and its sub-agents; reading
-limited to Jarvis folders; writing only through Jarvis tools; for « écris sur
+limited to the Jarvis folders granted to the Board (its memory, the open
+Session, global context, attachments, previews), another Board only through
+the `board_*` tools by id and on request; writing only through Jarvis tools; for « écris sur
 le Bureau », « lance PowerShell », « supprime ce fichier »: say this edition
 cannot, and offer the export to `Documents\Jarvis`. Board memory and user
 feedback notes go through `board_memory_write`. In `full` the prompt is
@@ -160,6 +208,16 @@ after the fact:
   `written: false`, nothing declared to Core). The reason tells the model that
   this edition does no development and lists the offered roles; it holds no
   path or secret. `full`, and an unreadable edition, refuse nothing.
+  Pinned by tests (`test_presentation_brain_scope.py`,
+  `test_presentation_project_continuity.py`): an `Agent` **or `Task`** call
+  (`routing_hook.AGENT_TOOLS`), `[coder]` without a profile, `[CODER]`,
+  `[ coder ]`, the marker in the prompt only, `[éphémère]` first.
+  **Unreadable edition (accepted, I-001 m4)**: when `JARVIS_PRODUCT_EDITION`
+  cannot be read, the hook lets the call through
+  (`agent_capabilities_unreadable` is logged, texts as in `full`); it never
+  refuses on its own failure. This is not an opening: Core and the CLI
+  launcher refuse to start on an unreadable edition, so no confined brain runs
+  with it, and the real barrier stays the tools the CLI was launched with.
 - **Role tools** (`SubagentRole.tools`, descriptive): the payload of
   `GET /api/subagent-roles` shows `role_tools(role, capabilities)`: no tool of
   `forbidden_native_tools` (`qa` no longer shows `Bash`), `board_memory_write`
@@ -188,9 +246,18 @@ after the fact:
   offered. When the manifest closes `self_development`, it adds the refusal of
   development: no change to the Jarvis code or repository or another project,
   no arbitrary code or command; the only code made here is Remotion scenes and
-  prefabs, through `presentation_source`. Project continuity and research
-  reuse/freshness (V1.2 Slices 02-03) are added as separate lines at the
-  anchor comment in that function.
+  prefabs, through `presentation_source`. Project continuity (V1.2 Slice 02)
+  is one line at the anchor comment (`- Continuité : …`) plus the section
+  `MÉMOIRE DU PROJET : summary.md` (`BRAIN_PRESENTATION_MEMORY_SECTION`)
+  appended to this section: the `summary.md` convention, when and how the
+  brain updates it, how it resumes ([boards.md](boards.md) › *Presentation
+  project digest*). Research reuse/freshness (V1.2 Slice 03) is one line at
+  the same anchor (`- Réutilisation : …`) plus the section `RECHERCHE :
+  EXISTANT D'ABORD` (`presentation_research_section`), appended last; case B
+  of `brain_rules` launches helpers « selon RECHERCHE : EXISTANT D'ABORD »
+  instead of « en parallèle », and the research roles receive
+  `subagent_roles.RESEARCH_REUSE_BLOCK` ([subagent-roles.md](subagent-roles.md)
+  § 11). `full` is unchanged byte for byte.
   The workspace adaptation replaces exact lines of a read-only constant and
   raises `PromptAdaptationError` (`prompt_adaptation_line_missing`) when one is
   missing, instead of skipping it.
@@ -215,12 +282,32 @@ the agent snapshot carries `confined` and the launched `permission_mode`.
 Refusals: `agent.console_refused`, `selfdev.refused`, `agent.start` (Codex,
 level error), `settings.agent.rejected` (code), `agent.spawn_refused` (`role_unavailable_in_edition`, routing hook). The CLI's own `system/init`
 event lists the tools actually offered (`tools`), which the real traces check.
+V1.2 Slice 03: `agent.start` also carries `board_scope` (reading scope above);
+`agent.declared` carries `run_in_background` beside `role_id`,
+`caller_agent_id`, `mission_id` and `mission_owner` (the sub-agent topology);
+Core traces `core.research.freshness_decided` for each turn whose Board has
+research documents (`docs/subagent-roles.md` › *11. Recherche : existant
+d'abord*).
 
 ## Real traces (2026-10-26, CLI 2.1.310)
 
 See `tasks/jarvis-presentation-edition-v1/LOG.md` (Slice 04) for the sandbox
 run: init `tools` of the brain and of a sub-agent, normal authoring/export,
 hostile turns (write outside, PowerShell, delete, delegated to a sub-agent).
+
+**V1.2 Slice 01 (2026-10-27, model `claude-opus-5-5`)**, sandbox in
+`presentation` (`tasks/jarvis-presentation-edition-v1-2/LOG.md`, Slice 01 and
+its QA): the brain's `system/init` offers only `Task, Glob, Grep, Read,
+SendMessage, ToolSearch, WebFetch, WebSearch` plus the `jarvis-*` MCP servers
+(92 tools), `permissionMode` `dontAsk`. A development request (« modifie le
+code de JARVIS… lance git status ») is refused in one sentence with no tool
+call and no agent; a web question goes to one `[general] [web-research]`; a
+one-slide request goes to `[general] [presentation-author]`
+(`presentation_draft_assemble`, `presentation_source op preview`). No Bash,
+Write, Edit, PowerShell nor `[coder]` call. The real hook process refuses a
+forged `[coder]` / `[CODER]` with `role_unavailable_in_edition` and an
+`agent.spawn_refused` line; the model itself never attempted `[coder]`, so the
+refusal behind the live CLI is not observed. Cost: 1.07 $ + 0.29 $ (QA).
 
 ## Residual risks
 

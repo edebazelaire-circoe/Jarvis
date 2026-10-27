@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import sqlite3
@@ -103,13 +104,15 @@ def test_the_rollback_boundary_an_older_core_refuses_the_newer_base_until_its_ba
     monkeypatch.setattr(sqlite_state, "_SCHEMA_VERSION", manifest["state_from"])  # l'ancien Core
     with pytest.raises(RuntimeError, match="newer than supported"):
         asyncio.run(start_core_stores(t.home))
-    # Procédure documentée, JARVIS arrêté : mettre la base migrée de côté (copie), puis remettre la sauvegarde.
+    # Procédure documentée (noms EXACTS de docs/release.md › Rollback), JARVIS arrêté : mettre la base migrée de côté
+    # sous `<db>.v<new>.before-rollback-<UTC>.bak`, puis remettre la sauvegarde.
+    stamp = "20261027T101500Z"
     migrated = state_dir / "jarvis.sqlite3"
-    aside = state_dir / f"jarvis.sqlite3.v{manifest['state_current']}.before-rollback.bak"
+    aside = state_dir / f"jarvis.sqlite3.v{manifest['state_current']}.before-rollback-{stamp}.bak"
     shutil.copy2(migrated, aside)
     shutil.copy2(state_dir / "jarvis.sqlite3.v10.bak", migrated)
     monkeypatch.setattr(sqlite_scene, "_SCHEMA_VERSION", manifest["scene_from"])
-    shutil.copy2(state_dir / "scene.sqlite3", state_dir / f"scene.sqlite3.v{manifest['scene_current']}.before-rollback.bak")
+    shutil.copy2(state_dir / "scene.sqlite3", state_dir / f"scene.sqlite3.v{manifest['scene_current']}.before-rollback-{stamp}.bak")
     shutil.copy2(state_dir / "scene.sqlite3.v1.bak", state_dir / "scene.sqlite3")
     assert asyncio.run(start_core_stores(t.home)) == ["board_seed_ancien", "board_seed_rapport", "default"]
     # Rien de la maison n'a été perdu : fichiers semés intacts, base migrée gardée à côté.
@@ -117,6 +120,17 @@ def test_the_rollback_boundary_an_older_core_refuses_the_newer_base_until_its_ba
         assert hashlib.sha256((t.home / relative).read_bytes()).hexdigest() == digest
     with sqlite3.connect(f"file:{aside.as_posix()}?mode=ro&immutable=1", uri=True) as conn:
         assert max(row[0] for row in conn.execute("SELECT version FROM schema_version")) > manifest["state_from"]
+    # Remonter plus tard (QA S10 m10) : l'ancien `.v<old>.bak` renommé d'abord en `<db>.v<old>.restored-<UTC>.bak` ;
+    # la migration suivante écrit alors une sauvegarde NEUVE de la base telle que l'ancienne version l'a laissée.
+    os.replace(state_dir / "jarvis.sqlite3.v10.bak", state_dir / f"jarvis.sqlite3.v10.restored-{stamp}.bak")
+    os.replace(state_dir / "scene.sqlite3.v1.bak", state_dir / f"scene.sqlite3.v1.restored-{stamp}.bak")
+    monkeypatch.setattr(sqlite_state, "_SCHEMA_VERSION", manifest["state_current"])
+    monkeypatch.setattr(sqlite_scene, "_SCHEMA_VERSION", manifest["scene_current"])
+    assert asyncio.run(start_core_stores(t.home)) == ["board_seed_ancien", "board_seed_rapport", "default"]
+    for fresh, version in ((state_dir / "jarvis.sqlite3.v10.bak", 10), (state_dir / "scene.sqlite3.v1.bak", 1)):
+        with sqlite3.connect(f"file:{fresh.as_posix()}?mode=ro&immutable=1", uri=True) as conn:
+            assert max(row[0] for row in conn.execute("SELECT version FROM schema_version")) == version, fresh.name
+    assert (state_dir / f"jarvis.sqlite3.v10.restored-{stamp}.bak").is_file() and aside.is_file()
 
 
 def test_the_seed_tool_refuses_a_non_empty_home(tmp_path):

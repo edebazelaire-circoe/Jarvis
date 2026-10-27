@@ -621,6 +621,81 @@ def _confined(capabilities: AgentCapabilityPolicy | None) -> bool:
     return capabilities is not None and not capabilities.writes_files
 
 
+#: Renvoi ajouté, en édition `presentation` seulement, aux règles qui interdisent au cerveau d'écrire (délégation de
+#: toute écriture, cas B) : le condensé du projet est tenu par le cerveau (V1.2 Slice 02, reprise QA m1).
+PRESENTATION_SUMMARY_EXCEPTION = "sauf summary.md, que tu tiens toi-même (MÉMOIRE DU PROJET)"
+
+
+def keeps_project_digest(capabilities: AgentCapabilityPolicy | None) -> bool:
+    """Vrai en édition `presentation` confinée : le cerveau y tient lui-même `summary.md` (`docs/boards.md`)."""
+
+    from jarvis.domain.product_edition import ProductEdition
+
+    return _confined(capabilities) and capabilities.edition is ProductEdition.PRESENTATION
+
+
+#: Rôles de recherche qui reçoivent, en édition `presentation`, la discipline « existant d'abord » (V1.2 Slice 03).
+RESEARCH_ROLE_IDS = ("research", "web-research", "research-lead")
+#: Tête du bloc apposé à ces rôles.
+RESEARCH_REUSE_MARK = "SOURCES EXISTANTES ET FRAÎCHEUR"
+#: Le gabarit des métadonnées d'un document de recherche (`research_freshness`, relu à chaque tour par Core).
+RESEARCH_FRONT_MATTER_TEMPLATE = (
+    "---\n"
+    "topic: <sujet>\n"
+    "scope: <ce que couvre le document>\n"
+    "checked_at: <AAAA-MM-JJ de votre vérification>\n"
+    "volatility: <low | medium | high>\n"
+    "uncertainty: <ce qui reste incertain>\n"
+    "sources:\n"
+    "  - <lien ou chemin> | date: <AAAA-MM-JJ de la source> | checked: <AAAA-MM-JJ>\n"
+    "---"
+)
+RESEARCH_REUSE_BLOCK = (
+    f"{RESEARCH_REUSE_MARK}\n"
+    "- L'existant d'abord : les documents de recherche du Board de votre consigne (board_memory_tree puis "
+    "board_memory_read sous documents/research/), ses missions et son Dossier, les connaissances de JARVIS "
+    "(knowledge_search), et les documents partagés approuvés quand ils sont connectés (drive_search, drive_read). "
+    "Vos lectures directes de fichiers se limitent à la mémoire de ce Board et à la Session ouverte ; un autre Board "
+    "ne se lit, par son identifiant, que si votre consigne le demande ou le nomme.\n"
+    "- Un document n'est pas vrai parce qu'il existe : la décision de fraîcheur donnée par votre consigne dit s'il se "
+    "réutilise, se rafraîchit en partie (seules les sources nommées) ou se revérifie entièrement. Une demande de "
+    "l'état actuel (dernier, actuel, aujourd'hui) se revérifie sur le web ; une ancienne note n'est jamais présentée "
+    "comme actuelle.\n"
+    "- Le web pour ce qui manque ou est périmé : sources primaires et récentes, pages ouvertes, date de chaque "
+    "source gardée, contradictions et incertitudes dites.\n"
+    "- Une recherche substantielle crée ou met à jour documents/research/<sujet-court>.md (board_memory_write ; "
+    "mettre à jour : relire puis replace avec expected_sha256), qui commence par ces métadonnées :\n"
+    f"{RESEARCH_FRONT_MATTER_TEMPLATE}\n"
+    "volatility : high si le sujet change en semaines (modèles, prix, versions), medium en mois, low s'il est stable. "
+    "Après un rafraîchissement partiel, seules les sources revérifiées prennent la nouvelle date checked."
+)
+#: En plus, pour la direction de recherche : orchestrer selon le besoin, jamais un graphe figé.
+RESEARCH_LEAD_REUSE_LINE = (
+    "- Vous orchestrez selon la question : lisez l'existant vous-même ou confiez-le à [general] [research], "
+    "confiez au web ([general] [web-research]) ce qui manque ou est périmé, en parallèle quand les angles sont "
+    "indépendants ; une confrontation (relation adversary) quand l'écart entre options est mince, un contrôle "
+    "qualité (relation qa) avant une synthèse qui engage, un échange (relation communication) entre agents qui "
+    "partagent un angle. Pas pour chaque question : une question étroite se traite seul. La synthèse finale va dans "
+    "documents/research/ avec ses métadonnées."
+)
+
+
+def reuses_research(capabilities: AgentCapabilityPolicy | None) -> bool:
+    """Vrai en édition `presentation` confinée : la recherche part de l'existant et de sa fraîcheur (V1.2 S03)."""
+
+    return keeps_project_digest(capabilities)
+
+
+def research_reuse_text(role: SubagentRole, capabilities: AgentCapabilityPolicy | None) -> str | None:
+    """Le bloc « existant d'abord » apposé à un rôle de recherche en `presentation`, ou `None` (ailleurs : rien)."""
+
+    if role.id not in RESEARCH_ROLE_IDS or not reuses_research(capabilities):
+        return None
+    if role.id == "research-lead" and role.can_spawn:
+        return f"{RESEARCH_REUSE_BLOCK}\n{RESEARCH_LEAD_REUSE_LINE}"
+    return RESEARCH_REUSE_BLOCK
+
+
 def offers_role(role: SubagentRole, capabilities: AgentCapabilityPolicy | None) -> bool:
     """Le rôle a-t-il un sens dans l'édition ? Son profil par défaut doit y être offert (`[coder]` exige `code`)."""
 
@@ -776,7 +851,11 @@ def role_brief(role: SubagentRole, overrides: Mapping[str, str] | None = None, *
     """
 
     instructions, _missed = adapt_instructions(role, instructions_for(role, overrides), capabilities)
-    parts = [f"{ROLE_MARK} ({role.name})\n{instructions.strip()}", capabilities_text(role, capabilities=capabilities)]
+    parts = [f"{ROLE_MARK} ({role.name})\n{instructions.strip()}"]
+    reuse = research_reuse_text(role, capabilities)
+    if reuse:
+        parts.append(reuse)
+    parts.append(capabilities_text(role, capabilities=capabilities))
     text = method_text(role, method, promoted)
     if text:
         parts.append(text)
@@ -833,6 +912,11 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
     """
 
     confined = _confined(capabilities)
+    # V1.2 Slice 03 : en `presentation`, le web ne part que pour ce qui manque ou est périmé (RECHERCHE : EXISTANT
+    # D'ABORD du prompt Presentation) ; ailleurs, le texte d'avant, octet pour octet.
+    launch = ("selon RECHERCHE : EXISTANT D'ABORD (le web seulement pour ce qui manque ou est périmé)"
+              if reuses_research(capabilities) else "en parallèle")
+    digest_exception = f" ({PRESENTATION_SUMMARY_EXCEPTION})" if keeps_project_digest(capabilities) else ""
     active = [role for role in roles if role.enabled and role.offered_to_brain and offers_role(role, capabilities)]
     by_id = {role.id: role for role in active}
     lead, qa = by_id.get("research-lead"), by_id.get("qa")
@@ -870,10 +954,11 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
         "ne la recopie pas.",
         action,
         "- B. Intention à cadrer (une création, un livrable important, un résultat attendu flou ou qui se lit de "
-        f"deux façons) : ne lance pas d'exécution, et dans ce tour n'écris ni ne vérifies rien. Le dossier de mission "
+        f"deux façons) : ne lance pas d'exécution, et dans ce tour n'écris ni ne vérifies rien{digest_exception}. Le "
+        f"dossier de mission "
         f"{where}"
         + (f". Au tour de sa première « {QUESTION_PREFIX} », le dossier existe : s'il y a de la matière à trouver "
-           f"(ce qui existe déjà, des références, une source nommée), lance alors en parallèle ceux qui servent parmi "
+           f"(ce qui existe déjà, des références, une source nommée), lance alors {launch} ceux qui servent parmi "
            f"{helpers}, chacun avec le même chemin, où il verse ses apports ; ils avancent pendant l'interview, "
            "l'Intervieweur ne cherche pas" if helpers else "")
         + f". Chaque « {QUESTION_PREFIX} » de l'Intervieweur se relaie en une phrase. La réponse repart à "

@@ -19,7 +19,7 @@ def pytest_runtest_logreport(report) -> None:
     if report.failed:
         row[report.when] = "failed"
     elif report.skipped:
-        row.setdefault(report.when, "skipped")
+        row.setdefault(report.when, "skipped")  # setup skip (`pytest.skip`, `skipif`) or call skip: counted by the gate
     elif report.when == "call":
         row["call"] = "passed"
 
@@ -35,4 +35,9 @@ def pytest_sessionfinish(session, exitstatus) -> None:
         return
     path = Path(target)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"exitstatus": int(exitstatus), "tests": _OUTCOMES}, indent=1) + "\n", encoding="utf-8")
+    # Also written after an interruption (`KeyboardInterrupt`, `pytest.exit`): the gate reads `exitstatus`,
+    # `interrupted` and `collected` to tell a finished session from a cut one (QA S10 B1).
+    payload = {"exitstatus": int(exitstatus), "collected": int(getattr(session, "testscollected", 0) or 0),
+               "interrupted": bool(getattr(session, "shouldstop", False) or getattr(session, "shouldfail", False)),
+               "tests": _OUTCOMES}
+    path.write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")

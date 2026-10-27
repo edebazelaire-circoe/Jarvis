@@ -415,6 +415,7 @@ gives back A's memory.
 | `memory.summary` | head of `summary.md` read **by name** (case ignored, even when the 40-entry manifest stops before it), at most `MAX_BRAIN_BOARD_SUMMARY_BYTES = 2 048` UTF-8 bytes, cut on a whole character; `summary_clipped: true` when the file goes on |
 | `memory.error` | stable code when the memory cannot be read (`board_memory_unsafe`, `board_memory_failed`, a `memory_*` code): no entries, no summary |
 | `memory.summary_error` | only `summary.md` is unreadable (binary, invalid UTF-8): the manifest stays |
+| `memory.research` | `presentation` only (V1.2 Slice 03): `{documents[], recency[]}`, at most 8 `.md` files of `documents/research/` with their freshness decision for the turn's text (`research_freshness.decide`); absent otherwise. Rendered « Recherches du Board … » ([subagent-roles.md](subagent-roles.md) § 11) |
 
 Budget: the Board part keeps its own 2 048 characters (memory **not**
 counted there); the memory adds at most 40 entries / 2 048 serialized
@@ -453,8 +454,12 @@ the Board line:
 `jarvis/app.py`, `ClaudeLocalAgent.boards_dir`, created with
 `safe_folders.ensure_folder_tree` before each launch; refused or impossible:
 `agent.add_dir_refused` / `agent_boards_dir_unavailable` once, and the CLI
-starts without it). Constant for the Control Center's life: a Board switch
-relaunches nothing. Same caveat as `sessions/`: with `bypassPermissions` it is
+starts without it). Constant for the Control Center's life in `full`: a Board
+switch relaunches nothing. In a confined edition (`presentation`, V1.2 Slice
+03, I-002 correction 1) the grant is scoped to the pool entry: only
+`<data_root>/boards/<board_id>/memory` and `<data_root>/sessions/<jarvis_session_id>`,
+and the unbound foreground is relaunched (`--resume`) once adopted
+([product-capabilities.md](product-capabilities.md) › *Reading scope*). Same caveat as `sessions/`: with `bypassPermissions` it is
 a grant, not a security boundary. Codex gets no `writable_roots` entry for it
 (its default `danger-full-access` writes anywhere; `workspace-write` cannot
 write Board memory — accepted limit: Codex never receives the native MCP
@@ -470,6 +475,77 @@ through a workspace tool that names its `board_id` explicitly. Those tools are
 a Board switch creates, switches and copies no Context, and creating or
 reactivating a Context changes neither `active_board_id` nor the foreground
 binding (`tests/unit/test_board_memory_hydration.py`).
+
+### Presentation project digest
+
+**V1.2 Slice 02 of `jarvis-presentation-edition-v1-2`.** A convention layered
+on the free-form Board memory, for the `presentation` edition only: generic
+Board memory keeps no imposed schema, and the `full` prompt is unchanged byte
+for byte. No table, no new field: the digest is the existing `summary.md`,
+hydrated at every turn as above.
+
+| Section (in this order) | Holds |
+| --- | --- |
+| `# <title>` | the project's name |
+| `## Finalité` | why this presentation exists and for whom, one sentence |
+| `## Objectifs` | concrete goals: deliverable, length, expected result |
+| `## État actuel` | where the project stands, one or two sentences |
+| `## Décisions` | decisions in force, dated (`AAAA-MM-JJ : …`) |
+| `## Questions ouvertes` | open questions, each with the default chosen meanwhile |
+| `## Prochaines étapes` | the next actions |
+| `## Documents clés` | links: `documents/…`, `missions/…`, `presentation/production_brief.md`, the Board's presentations |
+
+An empty section keeps its heading followed by `(rien)`. Template and rules:
+`claude_local.PRESENTATION_SUMMARY_SECTIONS`, `PRESENTATION_SUMMARY_TEMPLATE`,
+`BRAIN_PRESENTATION_MEMORY_SECTION` (section `MÉMOIRE DU PROJET : summary.md`
+of the Presentation brain prompt, after `VOTRE RÔLE : LE PROJET DE
+PRÉSENTATION`; [product-capabilities.md](product-capabilities.md) › *Derived
+prompts*).
+
+- **Size**: the brain keeps it under `PRESENTATION_SUMMARY_TARGET_BYTES`
+  (1 800 bytes), below the 2 048-byte hydration cap, which is **not** raised:
+  a rich project (3 goals, 4 decisions, 2 questions, 2 steps, 5 documents)
+  measures 1 405 bytes (`test_a_rich_structured_digest_fits_the_hydration_cap_without_being_cut`).
+  Detail (research, sources, plan, storyboard) lives in `documents/…` or the
+  mission files and is linked; only decisions in force are kept; a digest
+  received `coupé` is condensed at the next update.
+- **When**: from the first turn, after a meaningful change (purpose or goal
+  set or changed, decision, step reached, next step fixed, key document
+  created, question pending), not at every sentence. A `QUESTION :` relayed
+  from a sub-agent (the Interviewer) enters *Questions ouvertes* and leaves it
+  once answered, so it survives a new Session. The brain writes it itself, in
+  the turn, without a sub-agent (it alone has the conversation) and silently
+  (never announced aloud). This is the only exception to the confined rule
+  that delegates every write and to the « write nothing » of case B: in
+  `presentation` both rules cite it inline
+  (`subagent_roles.PRESENTATION_SUMMARY_EXCEPTION`, `keeps_project_digest`);
+  `full` is unchanged byte for byte.
+- **How**: `board_memory_read summary.md` -> `sha256`, then
+  `board_memory_write mode replace` with that `expected_sha256` and the whole
+  updated file; `memory_not_found` -> `mode create`; `memory_conflict` ->
+  read again, merge into the new version, write with the new hash. Never
+  overwrite without a read.
+- **Resume**: on a Board's first turn after a restart, a new Session or a
+  switch, the brain starts from the hydrated digest, says where the project
+  stands and proposes the next step; it never asks the user « where were
+  we? ». Key documents and the Dossier are opened only when the request needs
+  them. The previous conversation is not the project store.
+- **Degradation**: no `summary.md` -> empty memory, no failure; the first
+  meaningful change creates it. Unreadable `summary.md` (binary, invalid
+  UTF-8) -> `summary_error`, rendered `summary.md illisible (<code>)`: the
+  brain does not trust it and tells the user once; only with their consent
+  it rewrites the whole file with `replace` **without** `expected_sha256`
+  (an unreadable file has no hash; the store accepts it). Memory `INDISPONIBLE` or `board_archived` -> no write, no
+  retry (an archived Board refuses every mutation, *Board memory mutations*
+  below; the active Board is never archived).
+- **`context_summary` stays management metadata**: one line (the purpose),
+  edited by `board_update`; never a copy of `summary.md`, which is the only
+  detailed project truth.
+- **Isolation**: hydration reads the turn's Board only; A -> B -> A returns
+  each Board its own digest
+  (`test_a_b_a_gives_each_presentation_board_its_own_digest`).
+
+Tests: `tests/unit/test_presentation_project_continuity.py`.
 
 
 ## Workspace inspection API

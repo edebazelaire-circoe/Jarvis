@@ -1,8 +1,8 @@
 # Slice execution queue — Presentation Edition V1.2
 
 1. [x] `00-project-manager` — **READY** le 2026-10-27 (READINESS.md) — blind audit/reconciliation/readiness gate; runs first and must reach `READY`.
-2. `01-presentation-product-brain-scope` — enforce Presentation-focused brain/tool/role scope without breaking research/connectors/Presentation authoring.
-3. `02-board-project-continuity` — make Board resume behave as project resume using durable Board memory.
+2. [x] `01-presentation-product-brain-scope` — **APPROUVÉE** le 2026-10-27 (I-001) — — enforce Presentation-focused brain/tool/role scope without breaking research/connectors/Presentation authoring.
+3. [x] `02-board-project-continuity` — **APPROUVÉE** le 2026-10-27 (I-002) — — make Board resume behave as project resume using durable Board memory.
 4. `03-research-reuse-freshness-orchestration` — force existing-source lookup, freshness decision and proper use of Research Lead/sub-agents/relations.
 5. `04-research-documents-and-dossier` — turn substantial research into durable reusable Board documents visible in Dossier.
 6. `05-voice-lifecycle-wake-chat` — launch/close lifecycle and Voice Off/Sleep/Active + chat contract.

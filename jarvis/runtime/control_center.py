@@ -1821,6 +1821,11 @@ class ControlCenter:
             agent.global_context_dir = self.global_context_dir
         if self.boards_dir is not None and hasattr(agent, "boards_dir"):
             agent.boards_dir = self.boards_dir
+        if hasattr(agent, "board_scope"):
+            # I-002 correction 1 (V1.2 Slice 03) : en édition confinée, l'agent ne lit directement que la mémoire du
+            # Board de son entrée et le dossier de sa Session ; lu à chaque lancement (l'adoption change l'entrée).
+            agent.board_scope = lambda: (entry.board_id, entry.jarvis_session_id)
+            agent.sessions_root = self._sessions_root
         if entry is not self.board_brains.foreground:
             # Le foreground reçoit ses réglages par `_apply_agent_settings` ;
             # un agent créé pour une autre liaison les reçoit ici, à sa naissance.
@@ -2137,6 +2142,8 @@ class ControlCenter:
             for agent in entry.agents.values():
                 if hasattr(agent, "add_dirs"):
                     agent.add_dirs = self._granted_dirs()
+                if hasattr(agent, "sessions_root"):
+                    agent.sessions_root = self._sessions_root
 
     def _lacks_workspace_grant(self, agent: Any) -> bool:
         """Le CLI vivant n'a pas été **lancé avec la demande** `--add-dir <sessions_root>` (Claude seulement).
@@ -2147,6 +2154,10 @@ class ControlCenter:
         changement de racine, jamais à chaque tour (reprise QA Slice 03).
         """
 
+        stale = getattr(agent, "board_scope_stale", None)
+        if callable(stale) and stale():
+            # I-002 correction 1 : CLI confiné lancé pour un autre Board ou une autre Session (adoption sans relance).
+            return True
         granted = self._granted_dirs()
         if not granted or not hasattr(agent, "launched_add_dirs"):
             return False
@@ -7093,6 +7104,12 @@ class ControlCenter:
         # et le panneau navigateur appellent sans, et reçoivent alors exactement
         # le texte d'avant. Seul Core, qui connaît l'état public, le remplit.
         context = payload.get("context")
+        stale_scope = getattr(self.agent, "board_scope_stale", None)
+        if callable(stale_scope) and stale_scope():
+            # I-002 correction 1 (V1.2 Slice 03) : le CLI confiné vivant a été lancé pour un autre Board ou une autre
+            # Session (adoption sans relance) ; relancé avec `--resume` avant le tour, sinon au prochain point sûr.
+            async with self._agent_lock:
+                await self._refresh_foreground_launch(self.board_brains.foreground, reason="board_scope")
         if isinstance(context, dict) and context.get("session_context") is not None:
             # Context actif (Slice 03 session-context) : son dossier doit être
             # accordé au CLI qui sert ce tour. Relancé avant le tour seulement si

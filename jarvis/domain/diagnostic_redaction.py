@@ -6,7 +6,9 @@ ici :
 
 1. les secrets par le masquage canonique des plugins MCP (`mcp_plugins.redact` / `redact_structured` : `Bearer`,
    JWT, `Authorization`, cookies, toute paire `token=` / `api_key:` / `password`…), plus les FORMES de clés nues
-   connues (`sk-…`, `sk-ant-…`, `AIza…`, `ya29.…`, `ghp_…`, `xox?-…`) ;
+   connues (`sk-…`, `sk-ant-…`, `AIza…`, `ya29.…`, `ghp_…`, `xox?-…`, `GOCSPX-…`, `4/0…`, `AKIA…`, `sk_live_…`), le mot
+   de passe d'une URL `schéma://utilisateur:mot de passe@hôte`, et les paires que le masquage canonique ne nomme pas
+   (`pwd`, `passphrase`, `private_key`, `aws_secret_access_key`, `aws_session_token`) ;
 2. les adresses électroniques → `<email>` ;
 3. les racines personnelles connues (`LOCALAPPDATA`, `APPDATA`, `TEMP`, `USERPROFILE`…) → leur nom de variable
    (`%LOCALAPPDATA%`…), puis tout `C:\\Users\\<nom>` restant → `C:\\Users\\<user>`, puis le nom d'utilisateur seul.
@@ -31,8 +33,17 @@ _KEY_SHAPES = (
     re.compile(r"\b1//0[0-9A-Za-z_-]{20,}"),                   # Google OAuth refresh token
     re.compile(r"\b(?:ghp|gho|ghs|ghu|github_pat)_[A-Za-z0-9_]{20,}"),
     re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
+    re.compile(r"\bGOCSPX-[A-Za-z0-9_-]{20,}"),               # Google OAuth client secret (HV-INSTALL-02)
+    re.compile(r"\b4/0[A-Za-z0-9_-]{20,}"),                   # Google OAuth authorization code
+    re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),             # AWS access key id
+    re.compile(r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}"),     # Stripe
 )
-_EMAIL = re.compile(r"(?<![\w.+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
+#: `schéma://utilisateur:mot de passe@hôte` (postgres, https, smtp…) : le mot de passe, quel que soit l'hôte (QA S10 m2).
+_URL_PASSWORD = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{1,20}://[^\s:/@'\"<>]{1,128}:)(?!\[secret masqué\])[^\s@/'\"<>]{1,256}@")
+#: Paires `clé=valeur` / `clé: valeur` que le masquage canonique ne nomme pas.
+_EXTRA_PAIRS = re.compile(r"(?i)(?<![A-Za-z0-9])(pwd|passphrase|private[_-]?key|(?:aws_)?secret_access_key|aws_session_token)"
+                          r"([\"']?\s*[:=]\s*[\"']?)(?!\[secret masqué\])[^\s\"',;]+")
+_EMAIL = re.compile(r"(?<![\w.%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 _USERS_DIR = re.compile(r"(?i)\b([A-Z]:[\\/]+Users[\\/]+)(?!<user>)[^\\/\s\"'<>|:]+")
 #: Variables dont la valeur est une racine personnelle, de la plus précise à la plus large.
 PATH_VARIABLES = ("LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "ONEDRIVE", "USERPROFILE")
@@ -69,6 +80,8 @@ class DiagnosticRedactor:
         """Une chaîne sans secret, sans adresse, sans racine personnelle ni nom d'utilisateur."""
 
         text = redact(str(value if value is not None else ""), self._secrets)
+        text = _URL_PASSWORD.sub(lambda match: f"{match.group(1)}{REDACTED}@", text)
+        text = _EXTRA_PAIRS.sub(lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}", text)
         for shape in _KEY_SHAPES:
             text = shape.sub(REDACTED, text)
         text = _EMAIL.sub(EMAIL_MASK, text)

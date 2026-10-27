@@ -270,10 +270,16 @@ def product_release_findings(root: Path = ROOT) -> list[str]:
             resolved = PR.which(tool, layout=layout, fallback=lambda name: f"PATH:{name}")
             if resolved is not None:
                 found.append(f"installed product resolves {tool} outside its package: {resolved}")
-    lock = (root / "packaging" / "windows" / "requirements.lock").read_text(encoding="utf-8").lower()
+    lock = (root / "packaging" / "windows" / "requirements.lock").read_text(encoding="utf-8")
+    # Names normalised as pip does (PEP 503: case, `-`, `_`, `.`), and variants of the same project caught by prefix
+    # (`onnxruntime-gpu`, `onnxruntime-directml`, `sherpa_onnx`) (QA S10 m5).
+    locked = {re.sub(r"[-_.]+", "-", match.group(1)).lower()
+              for match in re.finditer(r"(?m)^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*(?:==|===|>=|~=|@)", lock)}
     for name in EXCLUDED_WHEELS:
-        if re.search(rf"(?m)^{re.escape(name)}==", lock):
-            found.append(f"excluded component {name} is back in packaging/windows/requirements.lock")
+        canonical = re.sub(r"[-_.]+", "-", name).lower()
+        hits = sorted(entry for entry in locked if entry == canonical or entry.startswith(canonical + "-"))
+        if hits:
+            found.append(f"excluded component {name} is back in packaging/windows/requirements.lock ({', '.join(hits)})")
     return found
 
 

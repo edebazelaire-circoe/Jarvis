@@ -42,7 +42,13 @@ per-user installer, no administrator rights, no UAC prompt:
   to the bootstrap, followed by a 24-byte trailer: `JVSETUP1` + offset (int64 LE) + length (int64 LE);
 - the bootstrap only extracts and shows progress; the installation itself is done by the **package's
   own Python** (`python -B -m jarvis.product_setup install`), so one tested implementation serves the
-  graphical installer, unattended deployment and repair.
+  graphical installer, unattended deployment and repair;
+- the bootstrap extracts next to the target, into `.jarvis-setup-<bootstrap PID>-<hex>` (for example
+  `%LOCALAPPDATA%\Programs\CIRCOE\.jarvis-setup-14820-3fa1c2d9`), and removes it when it ends. A
+  bootstrap that is killed leaves it (about 450 MB): the next successful install and the uninstall
+  remove every such folder whose bootstrap is dead (`product_setup.remove_orphan_setup_dirs`: never the
+  current one, never one of a live bootstrap, never one whose files are still open), and the uninstall
+  removes `Programs\CIRCOE` once it is empty ([release.md](release.md#crash-recovery), QA S10 R3).
 
 The executable is **unsigned** (HV-PACKAGE-10: signing identity to choose; SmartScreen will warn until
 it is signed). The C# 4.x compiler has no deterministic mode: the bootstrap bytes change from one build

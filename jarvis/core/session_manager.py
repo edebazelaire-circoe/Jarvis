@@ -76,7 +76,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from jarvis.core.board_hydration import read_board_memory
+from jarvis.core.board_hydration import read_board_memory, with_board_research
 from jarvis.domain.artifacts import ARTIFACTS_DIR
 from jarvis.core.board_service import BoardService, activate_on_host, publish_voice_binding, restore_on_host
 from jarvis.core.session_contexts import ensure_context
@@ -181,8 +181,12 @@ class SessionManager:
         workspaces: ContextWorkspaceStore | None = None,
         board_memory: BoardMemoryStore | None = None,
         data_root: Path | None = None,
+        research_freshness: bool = False,
     ) -> None:
         self._repo = repository
+        #: Édition Presentation (V1.2 Slice 03) : le bloc mémoire porte les documents de `documents/research/` et
+        #: leur décision de fraîcheur pour la demande du tour (`board_hydration.with_board_research`).
+        self._research_freshness = bool(research_freshness)
         # Mémoire de Board dans le bloc `board` (handoff board-memory-workspace-inspector,
         # Slice 03, R3). Absente (tests d'avant) : le bloc n'a pas de `memory`.
         if (board_memory is None) != (data_root is None):
@@ -668,18 +672,39 @@ class SessionManager:
 
         return self._board_of.get(conversation_id)
 
-    async def board_context(self, conversation_id: str | None) -> BrainBoardContext | None:
+    async def board_context(self, conversation_id: str | None, *, request: str | None = None) -> BrainBoardContext | None:
         """Bloc `board` d'un tour : le Board de sa conversation, borné (`BrainBoardContext.from_board`).
 
         `None` pour une conversation liée à aucun Board. Lève sur une base
         illisible : l'orchestrateur le trace et le tour part sans bloc.
+        `request` : le texte du tour, qui décide de la fraîcheur des recherches du Board (édition Presentation).
         """
 
         board_id = await self.board_of(conversation_id)
         if board_id is None:
             return None
         board = await self._boards.get(board_id)
-        return BrainBoardContext.from_board(board, memory=await self._board_memory_block(board.board_id))
+        memory = await self._board_memory_block(board.board_id)
+        if memory is not None and self._research_freshness:
+            memory = await self._with_research(memory, board.board_id, conversation_id, request)
+        return BrainBoardContext.from_board(board, memory=memory)
+
+    async def _with_research(self, memory: BrainBoardMemory, board_id: str, conversation_id: str | None,
+                             request: str | None) -> BrainBoardMemory:
+        """Les recherches du Board et leur décision de fraîcheur ; tracées `core.research.freshness_decided`."""
+
+        today = self._clock().astimezone().date()
+        memory, unread = await asyncio.to_thread(with_board_research, memory, self._board_memory, board_id,
+                                                 request=request, today=today)
+        if memory.research:
+            self._trace("core.research.freshness_decided",
+                        f"Fraîcheur de {len(memory.research)} recherche(s) du Board décidée pour le tour",
+                        data={"board_id": board_id, "conversation_id": conversation_id, "today": today.isoformat(),
+                              "recency": list(memory.research_recency), "unread": unread,
+                              "documents": [{"path": item.path, "action": item.action.value, "reason": item.reason,
+                                             "checked_at": item.checked_at.isoformat() if item.checked_at else None,
+                                             "stale_count": item.stale_count} for item in memory.research]})
+        return memory
 
     async def _board_memory_block(self, board_id: str) -> BrainBoardMemory | None:
         """La mémoire du Board, bornée (R3) ; dégradée sur un refus du magasin, dite au changement d'état.
