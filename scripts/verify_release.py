@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import ast
 import importlib.util
 import json
@@ -8,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -183,15 +185,132 @@ def remotion_release_findings(root: Path = ROOT) -> list[str]:
     return found
 
 
-def main() -> None:
-    result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q"],
-        cwd=ROOT,
-        text=True,
-        check=False,
-    )
+#: Fichiers du paquet `jarvis/` autorisés à appeler `subprocess.run(` (revus, liste d'arguments, jamais de shell). La
+#: règle d'origine (« aucun `subprocess.run` ») était périmée depuis l'arrivée de Remotion, de la capture et de la CLI du
+#: cerveau, et la CI qui l'exécutait n'avait jamais tourné : la Slice 10 la remplace par cette liste revue. Un nouveau
+#: fichier est un constat jusqu'à sa revue ; `os.system(` et `shell=True` restent interdits partout.
+SUBPROCESS_RUN_REVIEWED = frozenset({
+    "jarvis/adapters/knowledge_codegraph.py",      # outil d'indexation, liste d'arguments fixe
+    "jarvis/adapters/process_tree.py",             # `ps -o lstart=` (identité d'un PID hors Windows)
+    "jarvis/adapters/remotion_media_tools.py",     # ffprobe du compositor Remotion
+    "jarvis/adapters/remotion_render_runner.py",   # rendu Remotion (Node privé), recherche d'orphelins par job_id
+    "jarvis/adapters/screen_capture.py",           # FFmpeg de la capture (exclu du paquet Presentation)
+    "jarvis/runtime/barehands_replay.py",          # rejeu Barehands (développement)
+    "jarvis/runtime/brain_cli.py",                 # `claude --version` / `claude auth status --json`
+})
+
+
+#: Outillage de mesure hors du chemin d'exécution (banc locuteur, voir `main`) : `subprocess.run(` y est permis,
+#: `os.system(` et `shell=True` non.
+BENCHMARK_TOOLING = frozenset({"jarvis/runtime/speaker_benchmark.py", "jarvis/runtime/speaker_benchmark_fixtures.py"})
+
+
+def execution_primitive_findings(root: Path = ROOT) -> list[str]:
+    """`os.system(` / `shell=True` interdits dans `jarvis/` ; `subprocess.run(` seulement dans les fichiers revus."""
+
+    found = []
+    for path in sorted((root / "jarvis").rglob("*.py")):
+        relative = path.relative_to(root).as_posix()
+        source = path.read_text(encoding="utf-8")
+        for needle in ("os.system(", "shell=True"):
+            if needle in source:
+                found.append(f"dangerous execution primitive {needle} in {relative}")
+        if "subprocess.run(" in source and relative not in SUBPROCESS_RUN_REVIEWED | BENCHMARK_TOOLING:
+            found.append(f"subprocess.run( in {relative}, not in the reviewed list SUBPROCESS_RUN_REVIEWED (review it, then add it)")
+    for relative in sorted(SUBPROCESS_RUN_REVIEWED):
+        path = root / relative
+        if not path.is_file() or "subprocess.run(" not in path.read_text(encoding="utf-8"):
+            found.append(f"stale entry {relative} in SUBPROCESS_RUN_REVIEWED (file gone or no subprocess.run any more)")
+    return found
+
+
+#: Outils que le cerveau du produit ne doit JAMAIS recevoir (Slice 04, `docs/product-capabilities.md`).
+PRODUCT_FORBIDDEN_TOOLS = ("Bash", "PowerShell", "Write", "Edit", "MultiEdit", "NotebookEdit", "REPL")
+#: Outils que le paquet possède : en produit installé, jamais résolus sur le PATH (Slice 06).
+PACKAGE_OWNED_TOOLS = ("node", "npm", "npx", "python", "py", "ffmpeg", "ffprobe")
+#: Composants exclus du paquet Presentation qui ne doivent jamais revenir dans le verrou des roues (HV-PACKAGE-03..06).
+EXCLUDED_WHEELS = ("openwakeword", "onnxruntime", "imageio-ffmpeg", "pvporcupine", "sherpa-onnx", "mediapipe")
+
+
+def product_release_findings(root: Path = ROOT) -> list[str]:
+    """Garde de l'édition produit (Slice 10, étape 9) : capacités interdites revenues, ou repli sur le PATH."""
+
+    sys.path.insert(0, str(root))
+    try:
+        from jarvis import private_runtime as PR
+        from jarvis.domain.agent_capabilities import agent_capability_policy
+        from jarvis.domain.product_edition import PRODUCT_EDITIONS, ProductEdition, resolve_product_edition
+        from jarvis.domain.workspace_board import BoardKind
+    finally:
+        sys.path.pop(0)
+    found: list[str] = []
+    edition = PRODUCT_EDITIONS[ProductEdition.PRESENTATION]
+    if edition.available_board_kinds != (BoardKind.PRESENTATION,) or edition.default_board_kind is not BoardKind.PRESENTATION:
+        found.append(f"presentation edition offers Board kinds {[k.value for k in edition.available_board_kinds]}")
+    if edition.developer_surfaces:
+        found.append("presentation edition shows developer surfaces by default")
+    if resolve_product_edition({}, installed_default=ProductEdition.PRESENTATION).edition is not ProductEdition.PRESENTATION:
+        found.append("an installed product does not default to the presentation edition")
+    policy = agent_capability_policy(ProductEdition.PRESENTATION)
+    if not policy.confined or policy.permission_mode != "dontAsk":
+        found.append(f"presentation agents are not confined (confined={policy.confined}, mode={policy.permission_mode})")
+    leaked = sorted(set(policy.native_tools) & set(PRODUCT_FORBIDDEN_TOOLS))
+    if leaked:
+        found.append(f"presentation agents receive forbidden native tools {leaked}")
+    undeclared = sorted(set(PRODUCT_FORBIDDEN_TOOLS) - set(policy.forbidden_native_tools))
+    if undeclared:
+        found.append(f"presentation agents do not deny {undeclared} in --disallowedTools")
+    if policy.agent_clis != ("claude",) or policy.chrome or policy.debug_console or policy.self_development:
+        found.append("presentation agents regained Codex, --chrome, the debug console or self-development")
+    with tempfile.TemporaryDirectory(prefix="jarvis-release-") as empty:
+        layout = PR.PackageLayout(Path(empty))  # a package whose runtimes are missing
+        for tool in PACKAGE_OWNED_TOOLS:
+            if tool not in PR.OWNED_TOOLS:
+                found.append(f"{tool} is not owned by the package (private_runtime.OWNED_TOOLS)")
+            resolved = PR.which(tool, layout=layout, fallback=lambda name: f"PATH:{name}")
+            if resolved is not None:
+                found.append(f"installed product resolves {tool} outside its package: {resolved}")
+    lock = (root / "packaging" / "windows" / "requirements.lock").read_text(encoding="utf-8").lower()
+    for name in EXCLUDED_WHEELS:
+        if re.search(rf"(?m)^{re.escape(name)}==", lock):
+            found.append(f"excluded component {name} is back in packaging/windows/requirements.lock")
+    return found
+
+
+#: Phrase exacte de `ARTIFACT_INFO.json` qui renvoie aux informations de release générées.
+ARTIFACT_INFO_POINTER = "generated by scripts/release_info.py next to each built installer"
+
+
+def artifact_info_findings(root: Path = ROOT) -> list[str]:
+    """`ARTIFACT_INFO.json` décrit la version de `pyproject.toml` (Slice 00 E7 : il était resté à 0.1.0-rc1)."""
+
+    project = re.search(r'(?m)^version\s*=\s*"([^"]+)"', (root / "pyproject.toml").read_text(encoding="utf-8"))
+    try:
+        info = json.loads((root / "ARTIFACT_INFO.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [f"ARTIFACT_INFO.json unreadable: {exc}"]
+    found = []
+    if not project or info.get("version") != project[1]:
+        found.append(f"ARTIFACT_INFO.json version {info.get('version')!r} differs from pyproject {project[1] if project else None!r}")
+    if info.get("release_info") != ARTIFACT_INFO_POINTER:
+        found.append("ARTIFACT_INFO.json does not point at the generated release info")
+    return found
+
+
+def run_test_gate() -> None:
+    result = subprocess.run([sys.executable, str(ROOT / "scripts" / "release_test_gate.py"), "--suite", "all"], cwd=ROOT,
+                            check=False)
     if result.returncode:
-        fail("pytest failed")
+        fail("test gate failed (scripts/release_test_gate.py --suite all, known failures: tests/known_failures.json)")
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Release verifier (static gates; --with-tests also runs the test gate)")
+    parser.add_argument("--with-tests", action="store_true",
+                        help="also run scripts/release_test_gate.py --suite all (the CI runs the suites as their own jobs)")
+    args = parser.parse_args(argv)
+    if args.with_tests:
+        run_test_gate()
 
     forbidden_core_imports = ("openai", "httpx", "sounddevice", "pynput")
     for path in (ROOT / "jarvis" / "core").glob("*.py"):
@@ -247,15 +366,10 @@ def main() -> None:
         if any(module in source for module in tooling_modules):
             fail(f"benchmark tooling named outside its allow-list: {path}")
 
-    source = "\n".join(p.read_text(encoding="utf-8") for p in (ROOT / "jarvis").rglob("*.py") if p not in tooling)
-    dangerous = ["subprocess.run(", "os.system(", "shell=True"]
-    for needle in dangerous:
-        if needle in source:
-            fail(f"dangerous execution primitive in Jarvis package: {needle}")
-    tooling_source = "\n".join(p.read_text(encoding="utf-8") for p in sorted(tooling))
-    for needle in ("os.system(", "shell=True"):
-        if needle in tooling_source:
-            fail(f"dangerous execution primitive in the benchmark tooling: {needle}")
+    if {path.relative_to(ROOT).as_posix() for path in tooling} != BENCHMARK_TOOLING:
+        fail("BENCHMARK_TOOLING and the benchmark allow-list of main() differ")
+    for finding in execution_primitive_findings(ROOT):
+        fail(finding)
 
     lock = json.loads((ROOT / "third_party" / "LOCK.json").read_text(encoding="utf-8"))
     if not lock["runtime_sources"]["barehands"]["commit"] or not lock["runtime_sources"]["ai-visualizer"]["commit"]:
@@ -269,6 +383,10 @@ def main() -> None:
         fail(f"presentation studio: {finding}")
     for finding in remotion_release_findings():
         fail(f"remotion release: {finding}")
+    for finding in product_release_findings():
+        fail(f"product edition: {finding}")
+    for finding in artifact_info_findings():
+        fail(f"artifact info: {finding}")
 
     print("Release verification passed.")
 

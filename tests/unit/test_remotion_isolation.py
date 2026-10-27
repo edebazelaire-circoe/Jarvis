@@ -560,9 +560,11 @@ def test_every_rule_stays_fast_on_newline_separated_adversarial_input(fragment):
     body = (fragment * (256 * 1024 // len(fragment)))[: 256 * 1024]
     body = "\n".join(body[i:i + 40_000] for i in range(0, len(body), 40_000))  # under the line cap, so the rules do run
     for name, scan in (("module", lambda: iso.scan_module("src/a.ts", body)), ("svg", lambda: iso.scan_asset("public/a.svg", ("<svg>" + body).encode()))):
-        started = time.monotonic()
+        # CPU time of this thread, not wall time (I-007 point 3): catastrophic backtracking burns CPU, while a loaded
+        # machine only delays the wall clock, which made this test fail in large batches and pass alone.
+        started = time.thread_time()
         scan()
-        assert time.monotonic() - started < 1.0, (name, fragment)
+        assert time.thread_time() - started < 1.0, (name, fragment)
 
 
 def test_a_scan_that_exceeds_its_budget_is_refused_not_accepted(monkeypatch):

@@ -57,6 +57,14 @@ async def finished(service, job_id, timeout=10.0):
     raise AssertionError(f"job {job_id} did not finish: {service.get(job_id)}")
 
 
+async def cleaned_up(runner, job_id, timeout=5.0):
+    end = asyncio.get_running_loop().time() + timeout
+    while ("cleanup", job_id) not in runner.calls:
+        if asyncio.get_running_loop().time() >= end:
+            raise AssertionError(f"job {job_id} was never cleaned up in {timeout} s: {runner.calls}")
+        await asyncio.sleep(0.01)
+
+
 async def derivatives(rig):
     return (await rig.world.artifacts.query(ArtifactQuery(kinds=RENDER_KINDS, limit=50))).items
 
@@ -100,7 +108,9 @@ async def test_the_runner_receives_the_frozen_source_the_frozen_props_and_the_de
     assert spec["frames"] == [12] and spec["format"] == "still" and spec["composition_id"] == "Scene"
     root = files["studio-root.tsx"].decode()
     assert r"Valeur fig\u00e9e" in root  # the generated root also carries the frozen props (ASCII-escaped JSON)
-    assert ("cleanup", done["job_id"]) in rig.runner.calls
+    # I-007 point 3 : le service appelle `cleanup` APRÈS avoir publié l'état final ; l'attendre (borné), jamais le
+    # supposer déjà fait quand l'état est `complete`.
+    await cleaned_up(rig.runner, done["job_id"])
 
 
 async def test_a_pdf_of_page_images_is_a_flat_export_and_says_so(rig):

@@ -251,7 +251,9 @@ def build_python(out: Path, runtimes: dict, cache: Path) -> Path:
 def install_wheels(out: Path, runtimes: dict, cache: Path) -> Path:
     wheels = cache / "wheels"
     wheels.mkdir(parents=True, exist_ok=True)
-    common = ["--disable-pip-version-check", "--require-hashes", "--no-deps", "-r", str(LOCK_FILE), *pip_target_args(runtimes)]
+    # `--no-cache-dir` (I-007 point 2) : pip n'écrit rien dans le cache de l'utilisateur ; le seul cache est `wheels`.
+    common = ["--disable-pip-version-check", "--no-cache-dir", "--require-hashes", "--no-deps", "-r", str(LOCK_FILE),
+              *pip_target_args(runtimes)]
     subprocess.run([sys.executable, "-m", "pip", "download", "-d", str(wheels), *common], check=True)
     site = out / PR.RUNTIME_DIR / PR.PYTHON_DIR / "Lib" / "site-packages"
     subprocess.run([sys.executable, "-m", "pip", "install", "--no-index", "--find-links", str(wheels), "--no-compile",
