@@ -84,7 +84,7 @@ def test_report_from_the_errors_view_requires_consent_then_creates_and_sends(tmp
         ["eval", "wait", "1", 1400],
         ["eval", "sent", DIALOG, 50],
         *_shot("support-sent-1440x900"),
-        ["key", "esc", "Escape", 300],
+        ["click", "close", "#jvSupport .sp-send", 300],
         ["eval", "closed", "document.getElementById('jvSupport').hidden", 50],
     ]
     step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed, "actions": actions}], "presentation")[0]
@@ -100,6 +100,7 @@ def test_report_from_the_errors_view_requires_consent_then_creates_and_sends(tmp
     assert "Préparation du paquet et du rapport…" in creating["status"] and "(au plus 3 min 30 s)" in creating["status"]
     assert r["sent"]["said"].startswith("Brouillon ouvert dans Outlook") and NAME in r["sent"]["result"]
     assert "rapport IA écrit" in r["sent"]["result"] and "1 élément(s) omis" in r["sent"]["result"]
+    assert r["sent"]["send"] == "Fermer", "sent: the main button closes, never a second send by reflex"
     assert r["closed"] is True
     calls = _support_calls(step)
     assert calls[0] == "GET /api/support/preview" and calls[1:] == ["POST /api/support/reports", f"POST /api/support/reports/{NAME}/send"]
@@ -162,6 +163,8 @@ def test_save_creates_then_offers_both_ways_and_the_readiness_footer_opens_the_r
         ["click", "save", "#jvSupport .sp-save", 900],
         ["eval", "offered", DIALOG, 50],
         *_shot("support-save-offered-600x800", 50),
+        ["key", "esc", "Escape", 300],
+        ["eval", "closed", "document.getElementById('jvSupport').hidden", 50],
     ]
     step = _drive(tmp_path, [{"width": 600, "height": 800, "seed": seed, "actions": actions}], "presentation")[0]
     _no_errors(step)
@@ -169,4 +172,4 @@ def test_save_creates_then_offers_both_ways_and_the_readiness_footer_opens_the_r
     assert r["opened"]["readiness"] is True and r["opened_dialog"]["shown"] is True
     offered = r["offered"]
     assert offered["said"] == "Paquet prêt. Choisissez où l’enregistrer." and offered["roles"] == ["save-documents", "download"]
-    assert _support_calls(step)[-1] == "POST /api/support/reports"
+    assert _support_calls(step)[-1] == "POST /api/support/reports" and r["closed"] is True

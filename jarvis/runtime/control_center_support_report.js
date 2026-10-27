@@ -150,9 +150,8 @@
     const every=d.setInterval||((fn,ms)=>setInterval(fn,ms)),stopEvery=d.clearInterval||(id=>clearInterval(id));
     const now=d.now||(()=>Date.now());
     const sink=d.console||null;
-    const notify=d.toast||null;
     const S={open:false,preview:null,previewError:null,loading:false,consent:false,description:'',busy:null,bundle:null,
-      said:null,status:null,editing:false,tick:0,returnFocus:null,pending:null,saveOffered:false};
+      said:null,status:null,editing:false,tick:0,returnFocus:null,pending:null,saveOffered:false,sent:false};
     let host=null,ui=null;
 
     function log(level,key,data){
@@ -218,6 +217,7 @@
     }
 
     async function act(kind){
+      if(kind==='send'&&S.sent){close('done');return}
       const reason=blockedReason(S,kind);
       if(reason){S.status={kind:'failed',text:reason};render();log('info','blocked',{act:kind,reason});return}
       S.said=null;S.status=null;S.pending=kind; /* l'acte qui demande la création : son bouton est marqué occupé */
@@ -227,8 +227,9 @@
           S.busy={kind:'send',since:now(),label:'Remise à votre messagerie',limit:SEND_DEADLINE_MS};render();
           const outcome=await call('POST',`${CREATE_ROUTE}/${encodeURIComponent(S.bundle.name)}/send`,SEND_DEADLINE_MS,{});
           S.said={kind:outcome.status==='waiting'?'info':'ok',text:text(outcome.message)};
+          /* Remis : le bouton principal devient « Fermer » (jamais un second envoi du même paquet par réflexe). */
+          S.sent=outcome.status!=='waiting';
           log('info','sent',{name:S.bundle.name,status:text(outcome.status)});
-          if(notify&&outcome.status!=='waiting')notify({title:'Rapport de problème',sub:text(outcome.message),kind:'ok'});
         }else{
           S.said={kind:'ok',text:'Paquet prêt. Choisissez où l’enregistrer.'};S.saveOffered=true;
         }
@@ -295,7 +296,7 @@
       const field=el('label','sp-field');field.append(el('span','','Que s’est-il passé ?'));
       const area=el('textarea');area.id='jvSupportDescription';area.maxLength=DESCRIPTION_MAX;area.rows=3;
       area.placeholder='Ce que vous faisiez, ce que vous attendiez, ce qui s’est passé.';
-      area.addEventListener('input',()=>{S.description=area.value;if(S.bundle){S.bundle=null;S.saveOffered=false;S.said=null;render()}});
+      area.addEventListener('input',()=>{S.description=area.value;if(S.bundle){S.bundle=null;S.saveOffered=false;S.said=null;S.sent=false;render()}});
       field.append(area,el('small','','Facultatif. Évitez d’y écrire un mot de passe.'));
       const content=el('section','sp-content');content.setAttribute('aria-label','Contenu du paquet');
       const dest=el('div','sp-dest');
@@ -402,7 +403,7 @@
         if(blocked)button.setAttribute('aria-disabled','true');else button.removeAttribute('aria-disabled');
         if(busy&&((busy.kind==='create'&&S.pending===kind)||busy.kind===kind))button.setAttribute('aria-busy','true');else button.removeAttribute('aria-busy');
       }
-      ui.send.textContent=busy&&busy.kind==='send'?'Envoi…':S.bundle&&S.said&&S.said.kind==='failed'?'Réessayer l’envoi':'Envoyer';
+      ui.send.textContent=busy&&busy.kind==='send'?'Envoi…':S.sent?'Fermer':S.bundle&&S.said&&S.said.kind==='failed'?'Réessayer l’envoi':'Envoyer';
       ui.status.textContent='';ui.status.dataset.kind='';
       if(busy){
         const secs=(now()-busy.since)/1000;
@@ -427,7 +428,7 @@
       S.open=false;if(host)host.hidden=true;
       if(S.tick){stopEvery(S.tick);S.tick=0}
       /* Un paquet déjà créé reste au dossier de support (rétention) ; la prochaine ouverture repart d'un formulaire neuf. */
-      if(!S.busy){S.bundle=null;S.said=null;S.saveOffered=false;S.consent=false;S.editing=false}
+      if(!S.busy){S.bundle=null;S.said=null;S.saveOffered=false;S.consent=false;S.editing=false;S.sent=false}
       log('info','closed',{reason,busy:!!S.busy});
       const back=S.returnFocus;S.returnFocus=null;
       if(back&&back.isConnected&&typeof back.focus==='function')back.focus({preventScroll:true});

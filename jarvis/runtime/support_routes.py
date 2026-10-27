@@ -146,13 +146,16 @@ class SupportReportService:
                     memory_state = str(exc)
                 except OSError as exc:
                     memory_state = f"unreadable:{type(exc).__name__}"
-            logs = sum(_size(sources.runtime_root / "logs" / f"{role}.log") for role in SB.LOG_ROLES)
+            # Bounded tails: each log, the error journal and the trace are cut at `MAX_FILE_BYTES` in the bundle.
+            logs = sum(min(_size(path), SB.MAX_FILE_BYTES) for path in (
+                *(sources.runtime_root / "logs" / f"{role}.log" for role in SB.LOG_ROLES),
+                sources.runtime_root / "errors.jsonl", sources.runtime_root / "trace.jsonl"))
             return {"databases": databases, "memory": (memory_bytes, memory_state), "logs": logs}
 
         found = await asyncio.to_thread(sizes)
         db_bytes = sum(item["bytes"] for item in found["databases"].values() if item["included"])
         memory_bytes, memory_state = found["memory"]
-        logs_bytes = min(found["logs"], len(SB.LOG_ROLES) * SB.MAX_FILE_BYTES) + 2 * SB.MAX_FILE_BYTES // 4
+        logs_bytes = found["logs"]
         approx = db_bytes + min(memory_bytes, MEMORY_BUDGET_BYTES) + logs_bytes
         included = [
             {"id": "report", "label": "Rapport de diagnostic (report.md) et manifeste", "masked": True},
