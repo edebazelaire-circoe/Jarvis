@@ -132,3 +132,72 @@ dans un build interne :
 - En développement (sans lanceur), repasser de `off` à `sleep` ne relance pas Voice : la projection dit
   `voice_not_running` ; il faut relancer Voice (`project jarvis restart` côté Human). Choix assumé : seul le lanceur
   supervise des processus.
+
+## Reprise QA (rapport `qa/qa-report.md`, `7d43e87f` ; décisions du PM du 2026-10-27)
+
+- **M1 (mot de réveil vocal non livré)** : reporté par le PM à une Slice de suivi, après la fusion de la branche
+  parente V1 (le packaging y est en cours de modification). Elle couvrira le packaging openWakeWord des builds
+  internes et le mot d'éveil activé par défaut quand le moteur est présent. Rien de plus ici ; la section « Travail de
+  packaging à faire » reste la liste de départ. HV-V12-VOICE-01 ne peut réveiller par la voix qu'après cette Slice
+  (F9 d'ici là).
+- **m1 (bloc illisible)** :
+  - bloc absent : veille, comme avant ;
+  - bloc présent mais illisible (`"Off"`, autre version, pas un objet) : préférence `unreadable`. Le lanceur tient
+    Voice (`voice_preference_unreadable`, avertissement). Voice refuse de démarrer, ou se libère si elle tournait. La
+    projection est `degraded` avec un message lisible, journalisée en avertissement avec `problem` ;
+  - l'interrupteur est décoché ; un clic écrit `sleep`. L'écriture remplace désormais un bloc illisible :
+    `voice_lifecycle_foreign_version` est retiré, le bloc ne porte qu'un choix ;
+  - trouvé en bac : juste après la réécriture, la projection montrait encore la tenue périmée du lanceur. Une tenue due
+    à la préférence est maintenant ignorée dès que la préférence lue dit « veille ».
+- **m2 (bascules rapides)** :
+  - une sortie de Voice avec le code 0 n'est plus un plantage (`voice_exited_clean`), même quand le Off qui l'a causée
+    a été trop bref pour le lanceur. Aucun redémarrage de plantage n'est consommé ; la relance suit la préférence
+    courante ;
+  - garde-fou : plus de `VOICE_CLEAN_EXITS_MAX` (10) sorties propres en 120 s abandonnent quand même Voice.
+- **m3** (boucle de veille bloquée pendant l'arrêt de Voice, au plus 15 + 5 s, mesuré 0,5 s) : accepté, noté dans
+  `docs/voice-lifecycle.md`.
+- **m4 (sans lanceur)** :
+  - nouvel état produit `not_running` (code `voice_not_running`) : la roue affiche « à relancer », ton neutre et non
+    erreur, avec le message « La voix est rallumée mais ne tourne pas : relancez Voice (ou JARVIS) pour l'utiliser. Le
+    chat reste disponible. » ;
+  - `docs/voice-lifecycle.md` › Who applies it le dit ;
+  - `project jarvis` et les scripts de l'utilisateur ne sont pas modifiés. À signaler au Human avant la fusion : son
+    JARVIS quotidien (édition `full`) a l'interrupteur, Off y arrête Voice, Sleep demande une relance à la main.
+
+### Preuves de la reprise
+
+- Tests ajoutés dans `test_voice_lifecycle.py` (54 au total, tous verts) :
+  - bloc illisible (3 formes) : jamais de Voice ; avec une clé, lanceur tenu au départ ; arrêt à chaud quand le bloc
+    devient illisible ;
+  - Voice seule : sortie 0 avec `voice_preference_unreadable` et `problem` ;
+  - route : état, journal en avertissement, réécriture par l'interrupteur ;
+  - projection : `not_running`, `unreadable`, tenues périmées ignorées ;
+  - **cinq bascules Off→Sleep plus brèves que la relecture** : 5 `voice_exited_clean`, aucun `child_exited` ni
+    abandon, 6 incarnations, aucun redémarrage de plantage consommé ;
+  - une Voice qui sort 0 en boucle est abandonnée après 10 sorties ;
+  - mutation : sans le correctif m2, les deux derniers tests échouent.
+- JS (`test_jarvis_wheel_js.py`, 9/9) : « à relancer » et choix illisible.
+- Navigateur (`test_jarvis_wheel_browser.py`, 7/7) : un choix illisible s'affiche « indisponible », décoché, avec son
+  code ; un clic envoie `{"preference": "sleep"}`, puis la case est cochée.
+- Balayage voisin (152 fichiers + chat) : 3 492 passés. Seuls échecs : les 6 de `test_control_center_mcp_api.py`
+  connus (`known_failures.json`).
+- **Harnais de course du QA** (`scratchpad\v12s05qa\harness\race.py`, vraie classe `Launcher`, Voice factice qui
+  reprend `run_until_released`, Job Object réel), sur ce code, cinq bascules de 0,25 s : `voice_exited_clean` ×2,
+  `voice_exited_held` ×1, Off vu ×1. Bilan : `abandoned False`, `restarts 0`, Voice en marche, puis arrêt propre
+  (`child_stopped_cleanly`). Avant la reprise, le QA mesurait 2 `child_exited` sur 5.
+- **Bac à sable avec le lanceur produit** (`%TEMP%\v12s05`, marqueur produit, ports 48653/48654, aucune clé), bloc
+  `{"preference": "Off"}` posé avant le lancement :
+  - `launcher.json` `held: voice_preference_unreadable` ;
+  - `/api/voice/lifecycle` `unreadable/degraded/voice_preference_unreadable`, `problem:
+    voice_lifecycle_preference_invalid`, message lisible ; préparation `optional` ;
+  - trace `voice.lifecycle.state` en avertissement avec `problem` ;
+  - POST `sleep` : bloc réécrit `{"schema_version": 1, "preference": "sleep"}`, réponse
+    `degraded/voice_provider_key_missing` (la vraie raison suivante, sans clé), `launcher.json` à
+    `voice_provider_key_missing` ;
+  - Quitter : code 0, ui et core arrêtés proprement, ports libres ;
+  - `python -m jarvis voice` avec un bloc de version 3 : code 0, « Choix de voix illisible », trace
+    `start_refused_off` en avertissement.
+
+  Preuves dans `scratchpad\v12s05\evidence-qa\`, bases du bac copiées dans `scratchpad\v12s05\sandbox-dbs-qa\` avant
+  la suppression du bac (`%TEMP%\v12s05` et `%TEMP%\v12s05r` supprimés, aucun processus restant).
+- Non exercé réellement : la bascule rapide avec une **vraie** Voice (clé + micro) → HV-V12-VOICE-01.
