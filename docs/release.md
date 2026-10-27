@@ -267,19 +267,22 @@ act. There is no telemetry backend (out of scope).
 
 ## Release gates
 
-Status of the candidate built from a clean clone of `fa89e894` on 2026-10-27 (package `1621617d…`, installer
-`8c18977d…`, artifact `jarvis-0.2.0-fa89e894059d-8c18977dae8e`; later commits of the Slice change no build
-input). « Automated » means run on this Windows 11 workstation, not on a clean machine.
+Status of the candidate built from a clean clone of `63697cfa` on 2026-10-27, after the QA rework of the Slice
+(package `c9fca483…`, installer `47e9fbd4…`, payload `a9337b9d…`, artifact
+`jarvis-0.2.0-63697cfa6ffc-47e9fbd4e056`; its `release-info.json` joins 13 green gate reports of that revision
+and the green package smoke of that installer; later commits of the Slice change no build input). The
+previous candidate (`fa89e894`, package `1621617d…`) is superseded. « Automated » means run on this
+Windows 11 workstation, not on a clean machine.
 
 | Id | Gate | Kind | Status |
 | --- | --- | --- | --- |
 | A1 | static release verifier | automated | green |
-| A2 | test gate, `release` suite (product, packaging, installer, edition, confinement, export, migrations, support) | automated | green |
-| A3 | test gate, `unit` suite (all non-browser tests) | automated | green: 845 files in 19 parts, 21 998 passed, 10 listed failures, 2 intermittents now listed |
-| A4 | test gate, `browser` suite | automated | **partial**: 19 of 185 files run locally (product, edition, launcher, export, rail, one shard of 7, and the files of the listed failures, which fail exactly as listed); the full suite is for the CI shards |
-| A5 | package built from a clean clone of a known commit, private runtimes, probe with PATH reduced to Windows | automated | green (`package_sha256` `1621617d…`); reproducibility across two builds proven in Slice 06 on one machine only |
-| A6 | installer built from the verified package | automated | green (unsigned) |
-| A7 | installed-product smoke, 12 steps (above) | automated | green |
+| A2 | test gate, `release` suite (product, packaging, installer, edition, confinement, export, migrations, support) | automated | green at `63697cfa`: 29 files, 720 passed, 2 skipped |
+| A3 | test gate, `unit` suite (all non-browser tests) | automated | green after the rework: 845 files in 16 parts (some halved), 22 013 passed, 10 listed failures seen, 2 listed intermittents tolerated, 96 skipped |
+| A4 | test gate, `browser` suite | automated | **partial**: 19 files by the implementation, 65 by the independent real trial (2026-10-27: one unlisted unstable test found, fixed in the test and passed 5 times in a row alone); the full suite is for the 10 CI shards |
+| A5 | package built from a clean clone of a known commit, private runtimes, probe with PATH reduced to Windows | automated | green (`package_sha256` `c9fca483…`); two installers of that package carry the same payload `a9337b9d…`; reproducibility across two machines not proven |
+| A6 | installer built from the verified package | automated | green (unsigned); `release_info.py` refuses an installer that embeds another package, another installer than the smoked one, a gate report of another revision, or no gate report |
+| A7 | installed-product smoke, 12 steps (above) | automated | green (ports 45653-45656) |
 | A8 | update over a seeded older profile, migrations with backups, rollback boundary | automated | green (pytest and package smoke) |
 | A9 | forbidden capabilities / PATH fallback regression | automated | green (`verify_release`, release suite) |
 | A10 | Remotion renderer crash/recovery in the installed product | automated (unit fault matrix) | partial: not in the package smoke (network install) |

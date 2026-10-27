@@ -46,3 +46,48 @@ Human, or a gate that cannot be run from this workstation. Owners in brackets.
     Presentation through the Studio service and the smoke fails on any `corrupt` error; the product behaviour itself
     (one damaged folder blocking operations on the others, e.g. after a disk fault) is unchanged and worth a
     recovery path (« mettre de côté » the unreadable folder, keep the others working).
+    **Added by the QA rework (independent real trial, 2026-10-27)**: with a truncated `presentation.json`, the
+    readiness window still says « Dossier de JARVIS : Prêt » — the readiness check does not look at the Studio's
+    own documents, so the user is told everything is ready while the Studio is degraded. Same owner; the readiness
+    line should name the unreadable folder count (no title).
+
+## QA rework of Slice 10 (2026-10-27)
+
+Fixed by the rework (LOG « 2026-10-27 — Slice 10, reprise QA ») : B1, M1, M2, m1, m2, m3, m5, m7 (with R2), m9, m10,
+R1, R2, R3, the quadratic masking (`_JWT`), the exact rollback names, the skipped-test count. The following are
+**recorded, not fixed** (decision of the PM, or minor findings of `slices/10-…/qa/code-review.md` not in the rework
+list). Owners in brackets.
+
+12. **File names in the free text of messages** [support / post-V1]: the support bundle keeps the `message` of
+    `errors.jsonl` (now bounded to 500 characters after masking) and each log line; a file name written there
+    (`%USERPROFILE%\Documents\Bilan secret.pptx`, `…\CONTEXT_GLOBAL\préférences élève.md`, seen in the real
+    trial) stays readable after the personal roots are masked. Structured `data` is now filtered by allowlist (m3);
+    free text is not. Fix: a path rule that keeps the folder kind and masks the last segment, or no file names in
+    error messages at the source.
+13. **Misleading installer labels** [installer / Slice 11 wording pass]: after a first install killed during its copy,
+    the next run says « Réparation de JARVIS… » / `mode: repair` (the killed run had already copied the program);
+    the real trial also saw `mode: install` on a run that then failed and rolled back. The labels describe the folder
+    state, not what the user did. Reword (« Reprise de l'installation… ») from `resumed`/state, not `folder_kind`.
+14. **A killed bootstrap makes its Python fail at its next progress line** [installer, post-V1]: seen again in the R3
+    real trial of the rework. The bootstrap is killed during the copy; its child `product_setup` keeps running
+    without a standard output, fails at its next echo with `OSError: [Errno 22] Invalid argument` (phase
+    `verify_target`), reports `rollback` but leaves the copied `Jarvis` and its `Jarvis.setup-state.json`, and writes
+    no `result.json`. Nothing is lost (the home is untouched) and the next install recognises the folder and
+    finishes (`ok`, mode `repair`), and now removes the bootstrap's work folder (R3). Fix: `Progress` must never
+    fail on a closed stdout (catch `OSError` on the echo), so a lone child either finishes or rolls back fully.
+15. **m4 — execution primitives checked as text** [`verify_release`, post-V1]: `from subprocess import run`,
+    `shell = True`, `os.system (`, `os.popen(`, `Popen`, `asyncio.create_subprocess_*` pass. Not a weakening
+    (same needles as before). Fix: an AST check.
+16. **m6 — actions pinned by tag, no provenance attestation** [agent 0 / Human, with A12]: `@v4`/`@v5` in the job
+    that builds the installer; no `attest-build-provenance`, no signature. Already in `docs/release.md` › Out of scope.
+17. **m8 — Python matrix** [agent 0]: only 3.14.6 is tested while `pyproject.toml` says `requires-python = ">=3.11"`;
+    the dropped `-W error::ResourceWarning` run has no follow-up. Decide: raise `requires-python`, or keep a light
+    3.11 job; open a follow-up for `ResourceWarning` (the gate runs show `Unclosed client session` warnings).
+18. **Review observations** [CI / support, post-V1]: `cancel-in-progress: true` on `github.ref` also cancels a
+    release build in progress on `main` at each push; `_cap` cuts a file in bytes (possibly inside a UTF-8 character
+    or a JSON line) and a `.tmp` may remain if `write_bytes` fails midway; the leading `\\?\` of a long path is
+    reduced to one backslash by the masking (no privacy effect).
+19. **Gate reports of a sweep made across two commits** [process]: `release_info.py` now refuses a gate report of
+    another revision (m7). A local sweep interrupted by a commit must be rerun at the final revision before its
+    reports can be joined (seen in the rework: the parts made at `8968850c` were refused for the `63697cfa`
+    package; 13 reports of `63697cfa` were joined).
