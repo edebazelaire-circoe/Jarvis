@@ -6,7 +6,7 @@
 4. [x] `03-research-reuse-freshness-orchestration` — **APPROUVÉE** le 2026-10-27 (I-002, I-003) — force existing-source lookup, freshness decision and proper use of Research Lead/sub-agents/relations.
 5. [x] `04-research-documents-and-dossier` — **APPROUVÉE** le 2026-10-27 (I-004) — turn substantial research into durable reusable Board documents visible in Dossier.
 6. [x] `05-voice-lifecycle-wake-chat` — **APPROUVÉE** le 2026-10-27 (fusion `321bcdd1` ; suivi 05b packaging du mot de réveil en cours) — — launch/close lifecycle and Voice Off/Sleep/Active + chat contract.
-7. `06-settings-and-novice-ui` — simplify normal UX while retaining complete Settings/debug/transcription surfaces.
+7. [x] `06-settings-and-novice-ui` — **APPROUVÉE** le 2026-10-27 (`c0c10c54`) — simplify normal UX while retaining complete Settings/debug/transcription surfaces.
 8. [x] `07-bug-report-diagnostic-bundle` — **APPROUVÉE** le 2026-10-27 (I-005) — user-facing diagnostic report + sanitized AppData ZIP + send/fallback.
 9. [x] `08-macos-portability-build-validation` — **APPROUVÉE** le 2026-10-27, sans paquet macOS (écart déclaré, I-005) — platform-path/packaging portability and macOS CI/real-device gate.
 10. `09-v1-2-integration-e2e` — whole amendment E2E, regression and Human acceptance package.

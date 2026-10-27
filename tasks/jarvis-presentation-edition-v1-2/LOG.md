@@ -211,3 +211,9 @@ Reserved for implementation agents and the Project Manager. Do not treat plannin
 - Tests : sous-agents js, roue js, édition produit js, mode support, registre/shell js, rail js : 116 verts avec les nouveaux cas ; navigateur : parcours novice (dont le nouveau test « Ajouter la clé vocale ») + Sous-agents 17 verts, édition presentation + roue 22 verts, shell des Réglages + rail 31 verts.
 - Preuves : `C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\448345f0-a514-4023-9dde-33aed523cf61\scratchpad\v12s06\qa-fix\` (`mutation-m2.txt`, `mutation-m3.txt`, `shots\`).
 - Non vérifié : ces finitions dans un bac réel (navigateur avec double `fetch` seulement).
+
+## 2026-10-27 — Slice 06, QA et décision (agent 0)
+- QA (`qa/qa-report.md`, `bbc1d13e`) : PASS avec réserves, 0 bloquant, 0 majeur, 6 mineurs. Aucun réglage supprimé (12 sections en presentation, 22 avec le mode support ; `full` identique, hub identique au pixel) ; mode support sans capacité de plus (arguments de lancement et projections identiques, origines étrangères refusées) ; parcours novice, bande d'aide visible à 1366×768, « Signaler un problème » branché ; I-004 M1-M3 corrigés ; 5/7 mutations.
+- Finitions (`c0c10c54`) : les 6 mineurs corrigés, mutations m2/m3 tuées. Vérification de l'agent 0 : `test_support_mode.py` vert.
+- Checks Human : HV-V12-UI-02 (navigation novice, voix), HV-V12-UI-03 (passage support en moins d'une minute), HV-V12-UI-04 (bande d'aide sur un vrai portable 1366×768).
+- Décision : **APPROUVÉE**.
