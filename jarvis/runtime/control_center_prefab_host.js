@@ -537,6 +537,7 @@
         case 'ready':
           cancel(rec.readyTimer);
           if(status.composition)fitComposition(rec,status.composition);
+          if(status.composition)rec.composition=status.composition;
           rec.incarnation=++incarnations;
           rec.clock=null;rec.ordered=false;
           rec.ready=true;
@@ -1075,6 +1076,13 @@
       return rec&&rec.remotion&&rec.incarnation?rec.incarnation:null;
     }
 
+    /* The representative still of the live Player of `objectId` (its composition and the `rest_ms` it was mounted with), or `null` before its
+       first `ready`: the frame a paused scene shows when it is held at its start (Variants' sequencer, presentation-edition-v1 Slice 09). */
+    function restFrame(objectId){
+      const rec=frames.get(objectId);
+      return rec&&rec.remotion&&rec.composition?representativeFrame(rec.composition,rec.restMs):null;
+    }
+
     function clock(objectId){
       const rec=frames.get(objectId);
       return rec&&rec.remotion&&rec.clock?Object.assign({},rec.clock):null;
@@ -1112,7 +1120,7 @@
       for(const objectId of Array.from(frames.keys()))unmount(objectId);
     }
 
-    return Object.freeze({mount,preload,update,unmount,pause,resume,touch,reload,stats,destroy,control,cue,clock,frame,sound,
+    return Object.freeze({mount,preload,update,unmount,pause,resume,touch,reload,stats,destroy,control,cue,clock,restFrame,frame,sound,
       soundWanted:()=>soundMuted===null?null:!soundMuted,
       audio:(objectId)=>{const rec=frames.get(objectId);return rec&&rec.audio?Object.assign({},rec.audio):null},
       has:(objectId)=>frames.has(objectId),

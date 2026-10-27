@@ -315,7 +315,8 @@
     if(code==='presentation_studio_limit_reached')return {kind:'refused',text:limitText(ctx&&ctx.op),code};
     if(REFUSALS[code])return Object.assign({code},REFUSALS[code]);
     if(code==='timeout')return {kind:'failed',code,text:`Core ne répond pas depuis ${Math.round((e.after||REQUEST_TIMEOUT_MS)/1000)} s : l'action a peut-être été prise en compte. Relisez la liste avant de recommencer.`};
-    if(code==='network'||e.status===503||e.status===504||e.status===502)return {kind:'failed',code:code||'unreachable',text:`Core est injoignable (${cleanLine(e.message||'réseau',100)}). Rien n'est affirmé : réessayez dans un instant.`};
+    /* The user's words only (Slice 09 QA): Core's transport text (« Core is unreachable: ClientConnectorError… ») stays in the journal. */
+    if(code==='network'||e.status===503||e.status===504||e.status===502)return {kind:'failed',code:code||'unreachable',text:'Core est injoignable. Rien n’est affirmé : réessayez dans un instant.'};
     if(e.status===403||code==='forbidden_origin')return {kind:'failed',code:code||'forbidden',text:"Le Control Center a refusé cette requête (origine non autorisée)."};
     const detail=cleanLine(e.message||'',200);
     return {kind:e.status>=500?'failed':'refused',code:code||`http_${e.status||'?'}`,

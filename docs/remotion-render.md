@@ -44,8 +44,9 @@ Clés **fermées** (`settings`), types stricts ; une clé qui ne s'applique pas 
 montre l'instant où l'entrée de la scène est terminée, que la scène déclare par sa **première ancre datée** (`at_ms`, le moment où son
 contenu est révélé) ; une scène qui n'en déclare pas donne son **image du milieu** (`duration_in_frames // 2`) ; borné à la scène, arrondi
 au plus proche (moitié vers le haut). L'image 0 n'est plus le défaut : une scène qui apparaît en fondu y est vide. La même règle fait
-reposer l'aperçu de Variantes à l'arrêt (`control_center_prefab_host.js` › `representativeFrame`, option `rest` de l'hôte ; jamais pendant
-une lecture ni une présentation) ; `presentation_render_plan.representative_frame`, test de parité `tests/unit/test_representative_still_js.py`.
+reposer l'aperçu de Variantes à l'arrêt (`control_center_prefab_host.js` › `representativeFrame` / `restFrame`, option `rest` de l'hôte, et
+le séquenceur qui tient une scène choisie à l'arrêt sur cette image, son horloge restant au début de la scène ; jamais pendant une lecture
+ni une présentation) ; `presentation_render_plan.representative_frame`, test de parité `tests/unit/test_representative_still_js.py`.
 Un `frame` / `frames` nommé est rendu tel quel (identité de rendu inchangée). **Une image ou un PDF est d'UNE scène** : le PDF d'un deck
 entier n'est pas livré (la vidéo entière est la seule portée de variante, MP4) ; une page qui offre l'export d'une image ou d'un PDF fait
 choisir la scène (Sessions & Boards › Artefacts : liste `stills` de la lecture ci-dessous, la première par défaut, aucune question pour une

@@ -236,9 +236,18 @@
       return ok;
     }
 
+    /* Held at the START of a scene (a scene chosen while nothing plays), the Player shows the scene's representative still, not its first frame,
+       which is blank for a scene that fades in (presentation-edition-v1 Slice 09, PM decision). The clock stays at the start: « Lire » plays
+       the scene from its beginning. Never during a run (`d.rest()` false) and never for a position inside the scene. */
     function hold(native){
       const h=host();
-      if(h)h.control(objectId,'pause',native);
+      if(!h)return;
+      let shown=native;
+      if(native===0&&typeof d.rest==='function'&&typeof h.restFrame==='function'){
+        try{if(d.rest()===true){const f=h.restFrame(objectId);if(Number.isInteger(f))shown=f}}
+        catch(error){log('sequencer_rest_failed',{error:describe(error)},'warn')}
+      }
+      h.control(objectId,'pause',shown);
     }
 
     /* The scene after `index`, loaded beside the live one, paused on frame 0. Only once `index` itself is the live Player. */

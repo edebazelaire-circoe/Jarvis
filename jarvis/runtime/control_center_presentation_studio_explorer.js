@@ -57,6 +57,8 @@
     describeRefusal,planModel,sameSet,readPrefs,writePrefs,MAX_RATIONALE_BYTES,AUTO_DWELL_DEFAULT,AUTO_TICK_MS,AUTO_SKIP_MS,autoStep,leftKeyAction,nextDwell,dwellLabel}=Core;
 
   const GRAPH_POLL_MS=10000;
+  /* Sequencer phases in which a mounted scene is about to play from its start: no representative rest then (Slice 09). */
+  const RESTLESS=new Set(['playing','waiting','loading']);
   const EDIT_TITLE='Modifier la scène à l’écran (texte, couleurs, mouvement) : le panneau s’ouvre à droite, l’aperçu suit';
   const COMMAND_POLL_WAIT_S=25;
   const COMMAND_POLL_TIMEOUT_MS=30000;
@@ -651,7 +653,7 @@
            lecture continue écoute (Player devenu vivant, position du Player, échec d'une scène). */
         /* `autoplay: false`, `embed: 'variants'` (Slice 06): the Player opens paused on frame 0 and only the transport below plays it (§ 4.1);
            the stage page shows no bar of its own (§ 2). */
-        previewHost=api.createPrefabHost({mode:'preview',document:doc,window:win,swapPrefix:'presentation-studio.',autoplay:false,embed:'variants',rest:()=>!S.run&&!(seq&&seq.active()),
+        previewHost=api.createPrefabHost({mode:'preview',document:doc,window:win,swapPrefix:'presentation-studio.',autoplay:false,embed:'variants',rest:()=>!S.run&&!(seq&&RESTLESS.has(seq.view().phase)),
           fetchBundle:api.bundleFetcher((path,options)=>fetchImpl(path,Object.assign({cache:'no-store'},options))),
           onPreviewEvent:()=>{/* intentional: the preview frame writes nothing anywhere; its events are dropped */},
           onLive:(id)=>{if(runAdapter.owns(id))runAdapter.onLive(id);else if(seq)seq.onLive(id)},
@@ -679,6 +681,7 @@
         selectedIndex:()=>Math.max(0,S.preview.scenes.findIndex(s=>s.id===S.preview.sceneId)),
         fetchClock:()=>call('GET',variantPath(S.preview.variantId,'/composition-clock'),undefined,{timeoutMs:READ_TIMEOUT_MS}),
         show:(index)=>{const scene=S.preview.scenes[index];if(scene)showScene(scene.id)},
+        rest:()=>!S.run,
         variantChanged:()=>{say('info',"La variante a changé : l'aperçu est relu. Relancez la lecture.");schedulePreview()},
         changed:()=>renderPlayback()});
       return seq;

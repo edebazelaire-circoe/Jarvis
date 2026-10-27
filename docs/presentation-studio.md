@@ -2773,8 +2773,9 @@ edited_event_failed`, `history_applied {scenes, moved}`.
 
 **Representative still** (PM decision, Slice 09 QA). A paused scene in Variants rests on its representative frame, and an image or PDF
 of a scene without a named frame is that frame: the end of its entrance, which the scene declares with its first timed anchor (`at_ms`),
-else the middle of the scene ([remotion-render.md](remotion-render.md) › *Image représentative*). Never during a play or a presentation run
-(scenes start at 0 there). An image or a PDF is of ONE scene: Sessions & Boards › Artefacts asks which one (the first by default) and
+else the middle of the scene ([remotion-render.md](remotion-render.md) › *Image représentative*): at the first mount of a scene (host option
+`rest`), and when a scene is chosen while nothing plays (the sequencer holds the Player on the host's `restFrame` while its clock stays at
+the scene's start, so « Lire » plays the scene from its beginning). Never during a play or a presentation run (scenes start at 0 there). An image or a PDF is of ONE scene: Sessions & Boards › Artefacts asks which one (the first by default) and
 says nothing for a copy of one scene.
 
 **Known limits of V1.**
