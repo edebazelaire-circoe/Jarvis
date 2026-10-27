@@ -41,18 +41,33 @@ the repository `.env` (`jarvis/environment.py` root; values in memory only, QA S
 
 Masking rules added by the QA rework of the Slice (`jarvis/domain/diagnostic_redaction.py`):
 
-- **Named secrets** (`sensitive_name` / `named_secret`): a key or variable whose name has a word `TOKEN`, `KEY`,
-  `SECRET`, `PASSWORD`, `PASS`, `CREDENTIAL(S)`, `COOKIE`, `SIGNATURE`, `AUTHORIZATION`, `BEARER`, or ends with
-  `TOKEN`, `SECRET`, `PASSWORD`, `APIKEY` (camelCase split: `refreshToken`, `X-Api-Key`, `OPENAI_API_KEY`), unless a
-  descriptive word makes it a setting (`TYPE`, `FILE`, `MAX`, `HINT`…). Its non-trivial value (6 characters or more)
-  is masked: in JSON (any depth), in free text `NAME=value`, `export NAME=value`, `NAME: value` (quoted or not), and
-  in escaped JSON pairs (`\"refresh_token\": \"…\"`, any number of escapes). Identifiers and timestamps under an
-  ordinary name stay readable.
-- **JSON cells and files** (`DiagnosticRedactor.cell` / `deep`): a database text cell or a memory file that parses
-  as JSON is masked as a structure, and a string that is itself JSON is parsed and masked again (6 levels); the
-  content is kept (conversations stay readable), only the secrets go.
+- **Named secrets** (`sensitive_name` / `named_secret`, explicit tested list since the second rework): a name is a
+  secret when one of its words (split on `_ . -` and camelCase) is `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `PWD`,
+  `PASSPHRASE`, `CREDENTIAL(S)`, `COOKIE`, `AUTHORIZATION`, `BEARER` (or a glued `APIKEY`, `ACCESSTOKEN`,
+  `CLIENTSECRET`, `PRIVATEKEY`…), or when `KEY` follows a qualifier (`API`, `ACCESS`, `PRIVATE`, `SECRET`, `SESSION`,
+  `SUBSCRIPTION`, `CLIENT`, `AUTH`, `SERVICE`… or a provider: `OPENAI`, `ELEVENLABS`, `DEEPGRAM`…), and never when a
+  descriptive word is present (`TYPE`, `COUNT`, `MAX`, `ID`, `REF`, `PUBLIC`, `ERROR`, `IDEMPOTENCY`, `SUPERSEDES`,
+  `OUTPUT`, `SORT`, `PARTITION`, `PRIMARY`, `CACHE`, `DEDUPE`, `HAS`, `SET`…). So `OPENAI_API_KEY`, `refreshToken`,
+  `x-api-key`, `client_secret`, `sessionKey` are secrets; `supersedes_key`, `idempotency_key`, `output_key`, a bare
+  `key`, `token_count`, `KeyError` stay readable. A secret name's non-trivial value (6 characters or more) is masked
+  in free text `NAME=value`, `NAME: value`, with the shell prefixes `export `, `$env:` (PowerShell), `set ` / `set "`
+  (cmd) and `setx NAME value`; a refused name never swallows what follows (the search resumes inside its value);
+  in JSON pairs `"NAME": "value"` whatever the escape depth (JSON in a string in a string); and in name/value objects
+  `{"name"|"key"|"header": "NAME", "value": "…"}` in either order (variable arrays, HAR headers, MCP or Docker
+  configuration). Identifiers and timestamps under an ordinary name stay readable.
+- **Database cells and memory files** (`DiagnosticRedactor.cell`): one pass of `text` on the raw cell, JSON or not:
+  the JSON forms above are recognised by the expressions, the JSON is never parsed nor rewritten, a cell without a
+  secret is left byte for byte, and `text_values_masked` counts the cells really changed. Measured on this
+  workstation: a copy of a real 18.6 MB base in 10.4 s (1 cell changed), a synthetic 62 MB base in 43 s. The
+  dialog's creation deadline grows with the announced database size (`createDeadline`: 210 s at least, then
+  150 s + 1.5 s per MB).
 - **Private-key blocks**: PEM (PKCS#1/#8, OpenSSH, legacy encrypted with `Proc-Type`/`DEK-Info`), PGP (`… PRIVATE KEY
-  BLOCK`), PuTTY (`PuTTY-User-Key-File-…` or `Private-Lines:` up to `Private-MAC:`), short JWT (`eyJ…`).
+  BLOCK`), PuTTY (`PuTTY-User-Key-File-…` or `Private-Lines:` up to `Private-MAC:`), short JWT (`eyJ…`). A block
+  without its end line stops at the next start marker (still masked); the cost stays linear whatever the repetition.
+- **Known limits** (not masked, recorded): URL-encoded pairs (`client_secret%3D…`), a YAML list under a secret key
+  (`tokens:\n  - …`), base64 of a JSON of secrets, a secret under an ordinary name with no recognisable shape. The
+  canonical MCP masking (shared, unchanged here) also masks a `signature` pair, the word after `Bearer ` and long
+  dotted identifiers of the JWT shape (`<plugin>.<namespace>.<tool>` ids in `mcp_plugins`).
 
 | Path | Content |
 | --- | --- |
@@ -131,9 +146,10 @@ Transport `JARVIS_SUPPORT_TRANSPORT`:
 Why MAPI: it needs no extra secret and carries the attachment; the user's own client sends it, after one more look.
 The CIRCOE Mail connector (Circuit Toolbox) classes sending as `destructive`, refused at call time in V1
 (`docs/product-connectors.md`), and takes no local attachment. A zip over 20 MiB is not mailed
-(`413 support_bundle_too_large`): save it. **A send failure never deletes the zip.** While a send of a bundle is
-still running (mail client not returned, `waiting`), a second send of it is refused (`409 support_send_in_progress`)
-and the dialog shows « En attente de la messagerie… » with « Envoyer » disabled. Nothing is sent without the
+(`413 support_bundle_too_large`): save it. **A send failure never deletes the zip.** While a send is still running
+(mail client not returned, `waiting`), any other send, of this bundle or of another one, is refused
+(`409 support_send_in_progress`); the preview says `send_in_progress`, so the dialog keeps « En attente de la
+messagerie… » with « Envoyer » disabled even after the description is edited or the dialog is reopened. Nothing is sent without the
 user's click on « Envoyer » with the consent box checked; there is no automatic upload or telemetry.
 
 ## Retention

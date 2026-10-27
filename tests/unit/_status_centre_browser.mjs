@@ -206,7 +206,8 @@ const SERVER=`(()=>{
       const sp=S.support,step=async a=>{if(!a)return json(404,{error:{code:'http_error',message:'not stubbed '+url}});
         if(a.delayMs)await new Promise(r=>setTimeout(r,a.delayMs));
         if((a.status||200)>=400)return json(a.status,{error:a.answer});return json(a.status||200,a.answer)};
-      if(url==='/api/support/preview')return sp.preview?json(sp.previewStatus||200,sp.preview):json(404,{error:{code:'http_error',message:'no preview'}});
+      if(url==='/api/support/preview'){if(sp.previewQueue&&sp.previewQueue.length)sp.preview=sp.previewQueue.shift();
+        return sp.preview?json(sp.previewStatus||200,sp.preview):json(404,{error:{code:'http_error',message:'no preview'}})}
       if(url==='/api/support/reports'&&method==='POST')return step(sp.create);
       if(url.endsWith('/send')&&method==='POST')return step(sp.sendQueue&&sp.sendQueue.length?sp.sendQueue.shift():sp.send);
       if(url.endsWith('/save')&&method==='POST')return step(sp.save);

@@ -134,7 +134,6 @@ def snapshot_database(source: Path, target: Path, mask: Callable[[str], str]) ->
 def _scrub(conn: sqlite3.Connection, mask: Callable[[str], str]) -> dict[str, Any]:
     """Sur la COPIE : déclencheurs retirés, coffre vidé, BLOB vidés, texte masqué. Rend des comptes."""
 
-    conn.create_function("jv_mask", 1, lambda value: mask(value) if isinstance(value, str) else value, deterministic=True)
     conn.execute("PRAGMA journal_mode=DELETE")
     conn.execute("PRAGMA foreign_keys=OFF")
     conn.execute("PRAGMA ignore_check_constraints=ON")
@@ -158,18 +157,32 @@ def _scrub(conn: sqlite3.Connection, mask: Callable[[str], str]) -> dict[str, An
         for column in columns:
             q_table, q_col = _quote(table), _quote(column)
             blobs += conn.execute(f"UPDATE {q_table} SET {q_col} = X'' WHERE typeof({q_col}) = 'blob' AND length({q_col}) > 0").rowcount
-            changed = f"WHERE typeof({q_col}) = 'text' AND jv_mask({q_col}) <> {q_col}"
-            if without_rowid:  # no rowid to keep colliding values apart: a collision fails the snapshot (said)
-                masked += conn.execute(f"UPDATE {q_table} SET {q_col} = jv_mask({q_col}) {changed}").rowcount
-                continue
-            masked += conn.execute(f"UPDATE OR IGNORE {q_table} SET {q_col} = jv_mask({q_col}) {changed}").rowcount
-            # A masked value that collides with another row of a UNIQUE column is kept distinct by its rowid; never
-            # left unmasked.
-            masked += conn.execute(f"UPDATE {q_table} SET {q_col} = jv_mask({q_col}) || ' <' || rowid || '>' "
-                                   f"WHERE typeof({q_col}) = 'text' AND jv_mask({q_col}) <> {q_col}").rowcount
+            masked += _mask_column(conn, q_table, q_col, mask, without_rowid)
     conn.execute("COMMIT")
     return {"tables": len(tables), "triggers_removed": len(triggers), "virtual_tables_removed": len(virtual),
             "vault_rows_removed": vault_rows, "blob_values_emptied": blobs, "text_values_masked": masked}
+
+
+def _mask_column(conn: sqlite3.Connection, q_table: str, q_col: str, mask: Callable[[str], str],
+                 without_rowid: bool) -> int:
+    """Masque chaque valeur texte de la colonne en UNE passe du masqueur par cellule (seconde reprise m-b) et rend le
+    nombre EXACT de cellules changées. Une valeur masquée qui heurte une contrainte `UNIQUE` reçoit son rowid
+    (jamais laissée en clair) ; sans rowid, la collision fait échouer l'instantané (dit au manifeste)."""
+
+    key = "rowid" if not without_rowid else q_col
+    changes: list[tuple[Any, str]] = []
+    for ident, old in conn.execute(f"SELECT {key}, {q_col} FROM {q_table} WHERE typeof({q_col}) = 'text'"):
+        if len(old) < 3:
+            continue  # intentional: nothing secret, no address, no path and no user name fits in two characters
+        new = mask(old)
+        if new != old:
+            changes.append((ident, new))
+    for ident, new in changes:
+        if without_rowid:
+            conn.execute(f"UPDATE {q_table} SET {q_col} = ? WHERE {q_col} = ?", (new, ident))
+        elif conn.execute(f"UPDATE OR IGNORE {q_table} SET {q_col} = ? WHERE rowid = ?", (new, ident)).rowcount == 0:
+            conn.execute(f"UPDATE {q_table} SET {q_col} = ? WHERE rowid = ?", (f"{new} <{ident}>", ident))
+    return len(changes)
 
 
 def active_board_from_state(database: Path) -> dict[str, Any] | None:

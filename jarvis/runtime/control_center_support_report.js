@@ -24,6 +24,9 @@
   const DESTINATION_ROUTE='/api/support/destination';
   const PREVIEW_DEADLINE_MS=15000;
   const CREATE_DEADLINE_MS=210000;
+  /* Seconde reprise m-b : masquer une base prend ~0,7 s par Mo sur ce poste (62 Mo : 43 s) ; l'échéance de création
+     grandit avec la taille des bases annoncée par l'aperçu (1,5 s par Mo au-delà du socle : rapport IA et collecte). */
+  const CREATE_MS_PER_DB_MB=1500;
   const SEND_DEADLINE_MS=50000;
   const SAVE_DEADLINE_MS=30000;
   const HOST_ID='jvSupport';
@@ -47,7 +50,7 @@
       transport:Object.freeze({name:text(transport.name),available:transport.available===true,label:text(transport.label)}),
       board:board?Object.freeze({id:text(board.board_id),title:text(board.title),kind:text(board.board_kind)}):null,
       included:Object.freeze(payload.included.filter(isObject).map(row)),excluded:Object.freeze(payload.excluded.filter(isObject).map(row)),
-      approxBytes:Number.isFinite(payload.approx_bytes)?payload.approx_bytes:null,
+      approxBytes:Number.isFinite(payload.approx_bytes)?payload.approx_bytes:null,sendInProgress:payload.send_in_progress===true,
       sendLimit:Number.isFinite(payload.send_limit_bytes)?payload.send_limit_bytes:null,
       retention:isObject(payload.retention)?Object.freeze({...payload.retention}):null,
       recent:Array.isArray(payload.recent)?payload.recent.filter(isObject).map(r=>Object.freeze({name:text(r.name),bytes:Number(r.bytes)||0})):[]})};
@@ -66,6 +69,13 @@
     return s<60?`${s} s`:`${Math.floor(s/60)} min ${String(s%60).padStart(2,'0')} s`;
   }
 
+  /* Échéance de création pour cet aperçu : jamais sous `CREATE_DEADLINE_MS`. */
+  function createDeadline(preview){
+    const db=preview&&preview.included?preview.included.find(i=>i.id==='state_databases'):null;
+    const mb=db&&Number.isFinite(db.bytes)?db.bytes/(1024*1024):0;
+    return Math.max(CREATE_DEADLINE_MS,150000+Math.round(mb*CREATE_MS_PER_DB_MB));
+  }
+
   /* Pourquoi un acte est refusé avant tout appel (ou `null`). */
   function blockedReason(state,act){
     if(state.busy)return 'Une action est déjà en cours.';
@@ -77,7 +87,8 @@
     return null;
   }
 
-  const pure={PREVIEW_ROUTE,CREATE_ROUTE,CREATE_DEADLINE_MS,SEND_DEADLINE_MS,parsePreview,formatBytes,elapsed,blockedReason};
+  const pure={PREVIEW_ROUTE,CREATE_ROUTE,CREATE_DEADLINE_MS,SEND_DEADLINE_MS,parsePreview,formatBytes,elapsed,blockedReason,
+    createDeadline};
 
   /* ------------------------------------------------ page */
 
@@ -193,6 +204,8 @@
         const parsed=parsePreview(await call('GET',PREVIEW_ROUTE,PREVIEW_DEADLINE_MS));
         if(!parsed.ok)throw Object.assign(new Error('aperçu illisible'),{code:parsed.code});
         S.preview=parsed.preview;S.previewError=null;
+        /* Seconde reprise m-d : un envoi encore en attente (même ouvert d'une autre fois) bloque « Envoyer ». */
+        if(S.preview.sendInProgress)S.waiting=true;
         log('info','preview',{board:!!S.preview.board,approx_bytes:S.preview.approxBytes,transport:S.preview.transport.name});
       }catch(error){
         S.previewError={code:text(error&&error.code)||'network',message:text(error&&error.message)};
@@ -208,8 +221,9 @@
 
     async function ensureBundle(){
       if(S.bundle)return S.bundle;
-      S.busy={kind:'create',since:now(),label:'Préparation du paquet et du rapport',limit:CREATE_DEADLINE_MS};render();
-      const answer=await call('POST',CREATE_ROUTE,CREATE_DEADLINE_MS,{consent:true,description:S.description.slice(0,DESCRIPTION_MAX)});
+      const limit=createDeadline(S.preview);
+      S.busy={kind:'create',since:now(),label:'Préparation du paquet et du rapport',limit};render();
+      const answer=await call('POST',CREATE_ROUTE,limit,{consent:true,description:S.description.slice(0,DESCRIPTION_MAX)});
       const b=isObject(answer.bundle)?answer.bundle:null;
       if(!b||typeof b.name!=='string')throw Object.assign(new Error('réponse sans paquet'),{code:'support_payload_invalid'});
       S.bundle={name:b.name,bytes:Number(b.bytes)||0,reportKind:text(b.report_kind),aiStatus:text(b.ai_status),aiDetail:text(b.ai_detail),
@@ -298,7 +312,7 @@
       const field=el('label','sp-field');field.append(el('span','','Que s’est-il passé ?'));
       const area=el('textarea');area.id='jvSupportDescription';area.maxLength=DESCRIPTION_MAX;area.rows=3;
       area.placeholder='Ce que vous faisiez, ce que vous attendiez, ce qui s’est passé.';
-      area.addEventListener('input',()=>{S.description=area.value;if(S.bundle){S.bundle=null;S.saveOffered=false;S.said=null;S.sent=false;S.waiting=false;render()}});
+      area.addEventListener('input',()=>{S.description=area.value;if(S.bundle){S.bundle=null;S.saveOffered=false;S.said=null;S.sent=false;render()}});
       field.append(area,el('small','','Facultatif. Évitez d’y écrire un mot de passe.'));
       const content=el('section','sp-content');content.setAttribute('aria-label','Contenu du paquet');
       const dest=el('div','sp-dest');

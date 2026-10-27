@@ -87,7 +87,8 @@ class SupportReportService:
         self._export_destination = export_destination
         self._busy: asyncio.Lock = asyncio.Lock()
         self._started: float | None = None
-        #: Envois en cours par paquet : un second « Envoyer » pendant qu'une messagerie attend est refusé (QA S07 m3).
+        #: Envois en cours : un second « Envoyer », de ce paquet ou d'un autre, est refusé tant qu'une messagerie attend
+        #: (QA S07 m3, seconde reprise m-d).
         self._sending: dict[str, asyncio.Future] = {}
         swept = SB.sweep_work_folders(self.support_dir)  # raw base copies left by a hard stop (QA S07 m4)
         if swept:
@@ -184,7 +185,7 @@ class SupportReportService:
                 "included": included, "excluded": excluded, "approx_bytes": approx,
                 "send_limit_bytes": SS.MAX_SEND_BYTES,
                 "retention": {"keep": SB.KEEP_BUNDLES, "max_age_days": SB.MAX_BUNDLE_AGE_S // 86400},
-                "recent": self._recent(), "busy": self._busy.locked(),
+                "recent": self._recent(), "busy": self._busy.locked(), "send_in_progress": self.send_in_progress(),
                 "busy_elapsed_s": round(time.monotonic() - self._started, 1) if self._started and self._busy.locked() else None}
 
     # ------------------------------------------------------------ création
@@ -296,10 +297,9 @@ class SupportReportService:
             raise SupportRouteError(413, "support_bundle_too_large",
                                     "Ce paquet est trop gros pour un courriel : enregistrez-le et transmettez-le autrement.",
                                     f"{size} bytes > {SS.MAX_SEND_BYTES}")
-        running = self._sending.get(name)
-        if running is not None and not running.done():
+        if self.send_in_progress():  # any bundle (seconde reprise m-d): one mail client draft at a time
             raise SupportRouteError(409, "support_send_in_progress",
-                                    "Un envoi de ce paquet attend encore votre messagerie : terminez-le dans sa fenêtre.")
+                                    "Un envoi attend encore votre messagerie : terminez-le dans sa fenêtre de rédaction.")
         subject, body = SS.mail_text(path, description=_description_of(path))
         self._emit("support.report.send_started", f"Envoi demandé ({self._transport.name})", name=name,
                    transport=self._transport.name)
@@ -351,6 +351,11 @@ class SupportReportService:
         self._emit("support.report.saved", "Paquet copié dans le dossier d'export", name=name, file_name=outcome.file_name)
         return {"status": "saved", "file_name": outcome.file_name, "root": label,
                 "message": f"Paquet enregistré dans {label} sous le nom {outcome.file_name}."}
+
+    def send_in_progress(self) -> bool:
+        """Un envoi (de n'importe quel paquet) n'a pas encore rendu la main."""
+
+        return any(not task.done() for task in self._sending.values())
 
     def _pending(self, name: str, pending: bool) -> None:
         try:

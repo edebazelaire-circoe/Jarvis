@@ -62,3 +62,11 @@ def test_the_module_parses_with_node():
         pytest.skip("node absent")
     done = subprocess.run([exe, "--check", str(MODULE)], capture_output=True, text=True, timeout=30, check=False)
     assert done.returncode == 0, done.stderr
+
+
+def test_the_creation_deadline_grows_with_the_databases():
+    """Seconde reprise m-b : deux bases de 64 Mo dépassent le socle de 210 s, l'échéance suit leur taille."""
+
+    out = node("const p=mb=>({included:[{id:'state_databases',bytes:mb*1048576}]});"
+               "return [J.createDeadline(null),J.createDeadline(p(1)),J.createDeadline(p(128)),J.CREATE_DEADLINE_MS]")
+    assert out[0] == out[1] == out[3] == 210000 and out[2] == 150000 + 128 * 1500

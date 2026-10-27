@@ -181,8 +181,10 @@ def test_a_send_waiting_for_the_mail_client_blocks_a_second_send(tmp_path):
     waiting = {"answer": {"status": "waiting", "bundle": NAME,
                           "message": "La messagerie n'a pas répondu après 30 s : si une fenêtre de rédaction est ouverte, "
                                      "terminez l'envoi depuis celle-ci. Le paquet reste disponible."}}
+    preview = _preview(tmp_path)
     seed = {"edition": PRESENTATION, "rail": False, "boards": _boards(("default", "Budget 2027", "presentation")),
-            "support": {"preview": _preview(tmp_path), "create": {**_created(), "delayMs": 100}, "send": waiting}}
+            "support": {"previewQueue": [preview, {**preview, "send_in_progress": True}],
+                        "create": {**_created(), "delayMs": 100}, "send": waiting}}
     actions = [
         ["eval", "settle", "1", 1500],
         ["eval", "open", "window.JarvisSupportReport.open({reason:'test'}).then(()=>true)", 700],
@@ -191,10 +193,24 @@ def test_a_send_waiting_for_the_mail_client_blocks_a_second_send(tmp_path):
         ["eval", "waiting", DIALOG, 50],
         ["click", "again", "#jvSupport .sp-send", 400],
         ["eval", "again_state", DIALOG, 50],
+        # Seconde reprise m-d : modifier la description (nouveau paquet) ne débloque pas « Envoyer »…
+        ["eval", "describe", "(e=>{e.value='autre chose';e.dispatchEvent(new Event('input',{bubbles:true}));return 1})"
+                             "(document.getElementById('jvSupportDescription'))", 100],
+        ["click", "after_edit", "#jvSupport .sp-send", 400],
+        ["eval", "edited", DIALOG, 50],
+        # … ni fermer puis rouvrir : l'aperçu du serveur dit l'envoi en cours.
+        ["key", "esc", "Escape", 300],
+        ["eval", "reopen", "window.JarvisSupportReport.open({reason:'test'}).then(()=>true)", 700],
+        ["click", "consent2", "#jvSupportConsent", 200],
+        ["click", "after_reopen", "#jvSupport .sp-send", 400],
+        ["eval", "reopened", DIALOG, 50],
     ]
     step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed, "actions": actions}], "presentation")[0]
     _no_errors(step)
     r = step["results"]
     assert r["waiting"]["send"] == "En attente de la messagerie…" and r["waiting"]["sendDisabled"] == "true"
     assert r["again_state"]["status"].startswith("Un envoi attend encore votre messagerie")
-    assert _support_calls(step).count(f"POST /api/support/reports/{NAME}/send") == 1
+    assert r["edited"]["sendDisabled"] == "true" and r["edited"]["status"].startswith("Un envoi attend encore")
+    assert r["reopened"]["send"] == "En attente de la messagerie…" and r["reopened"]["sendDisabled"] == "true"
+    calls = _support_calls(step)
+    assert calls.count(f"POST /api/support/reports/{NAME}/send") == 1 and calls.count("POST /api/support/reports") == 1

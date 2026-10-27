@@ -292,3 +292,173 @@ def test_the_service_marks_a_failed_send_pending_and_clears_it_on_save(tmp_path)
     assert "30 jours" in str(failed.value) and SB.pending_bundles(svc.support_dir) == {name}
     asyncio.run(svc.save(name))
     assert SB.pending_bundles(svc.support_dir) == set()
+
+
+# ------------------------------------------------------------------ seconde reprise (contre-relecture `qa/rework-review.md`)
+
+
+def CR(n: int) -> str:
+    return f"CRZ{n}q7Lm2Vx9Pw4Tn8Bk3"  # the counter-review's canary shape (`v12s07cr/probe_redact.py`)
+
+
+@pytest.mark.parametrize("source, canary", [
+    (f'$env:OPENAI_API_KEY="{CR(62)}"', CR(62)),
+    (f'$env:DEEPGRAM_API_KEY = "{CR(63)}"', CR(63)),
+    (f"$env:GITHUB_TOKEN={CR(64)}", CR(64)),
+    (f'setx ANTHROPIC_API_KEY "{CR(65)}"', CR(65)),
+    (f"setx ELEVENLABS_API_KEY {CR(66)}", CR(66)),
+    (f"set OPENAI_API_KEY={CR(6)}", CR(6)),
+    (f'set "ELEVENLABS_API_KEY={CR(61)}"', CR(61)),
+    (f"export ELEVENLABS_API_KEY={CR(67)}", CR(67)),
+    (json.dumps([{"name": "OPENAI_API_KEY", "value": CR(3)}, {"name": "LANG", "value": "fr"}]), CR(3)),
+    (json.dumps({"headers": [{"name": "X-Api-Key", "value": CR(31)}]}), CR(31)),
+    (json.dumps([{"key": "DB_PASSWORD", "value": CR(32)}]), CR(32)),
+    ('env: [{"name": "GITHUB_TOKEN", "value": "' + CR(33) + '"}]', CR(33)),
+    (json.dumps([{"value": CR(34), "name": "client_secret"}]), CR(34)),
+    (json.dumps({"out": json.dumps([{"name": "API_TOKEN", "value": CR(35)}])}), CR(35)),
+    (json.dumps({"sessionKey": CR(36), "privateKey": CR(37)}), CR(36)),
+    (json.dumps({"sessionKey": CR(36), "privateKey": CR(37)}), CR(37)),
+    (json.dumps({"a": json.dumps({"b": json.dumps({"GITHUB_TOKEN": CR(1)})})}), CR(1)),
+])
+def test_shell_prefixes_and_name_value_pairs_are_masked(source, canary):
+    r = DiagnosticRedactor({})
+    assert canary not in r.text(source) and canary not in r.cell(source)
+    assert canary not in json.dumps(r.structured({"x": source}))
+
+
+def test_a_powershell_secret_never_reaches_the_zip_nor_the_prompt(tmp_path):
+    sources = seeded(tmp_path)
+    secret, setx = CR(80), CR(81)
+    sources.description = f'$env:OPENAI_API_KEY="{secret}" puis setx GITHUB_TOKEN "{setx}"'
+    with sqlite3.connect(sources.data_root / "state" / "jarvis.sqlite3") as conn:
+        conn.execute("INSERT INTO conversations(id, updated_at, data) VALUES (?,?,?)",
+                     ("ps", "t", json.dumps({"cmd": f'$env:OPENAI_API_KEY="{secret}"',
+                                             "pairs": [{"name": "X-Api-Key", "value": setx}]})))
+    conn.close()
+    path = SB.write_bundle(sources, tmp_path / "out")
+    with zipfile.ZipFile(path) as bundle:
+        for name in bundle.namelist():
+            body = bundle.read(name)
+            assert secret.encode() not in body and setx.encode() not in body, name
+    collected = SB.collect_bundle(sources, Path(tempfile.mkdtemp(dir=tmp_path)))
+    prompt = collected.redact("".join(SR.build_prompt(collected.evidence)))
+    assert secret not in prompt and setx not in prompt
+
+
+#: Échantillons de la contre-relecture (`probe_fp.py`, base réelle) qui doivent ressortir à l'identique.
+ORDINARY = [
+    json.dumps({"token_count": 1234, "max_tokens": 4096, "input_tokens": 812, "output_tokens": 90}),
+    json.dumps({"board_id": "brd_7f3a9c21e4", "session_id": "ses_01HZX8Q2", "ts": "2026-10-27T10:11:12Z"}),
+    json.dumps({"key": "ui.theme", "value": "dark"}),
+    json.dumps({"key": "presentation.default_layout", "value": "16:9"}),
+    json.dumps({"idempotency_key": "req-2026-10-27-abc123", "dedupe_key": "board:42:msg:7"}),
+    json.dumps({"sort_key": "2026-10-27#0007", "partition_key": "boards"}),
+    json.dumps({"supersedes_key": "evt_2026_0001_abcdef", "output_key": "out_9f8e7d6c5b"}),
+    json.dumps({"public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabc"}),
+    json.dumps({"error": "KeyError: 'board_id'", "path": "boards/brd_1/memory/summary.md"}),
+    json.dumps({"credential_ref": "cred_0123456789abcdef", "key_id": "kid_2026abc"}),
+    "Traceback: KeyError: 'presentation_slides'",
+    "InvalidTokenError: Signature has expired",
+    "Primary key: board_id must be unique",
+    "pass: first_attempt",
+    "settings key=ui.theme changed",
+    "tokens=512 used of max_tokens=4096",
+    json.dumps({"password_set": True, "has_token": False, "token_expires_at": "2026-10-28T00:00:00Z"}),
+    json.dumps({"keyboard_layout": "fr-FR", "hotkey": "ctrl+alt+j", "passage": "intro"}),
+    json.dumps({"cache_key": "slides:v3:abcd1234", "primary_key": "board_id"}),
+    "Using model claude-sonnet with key_id=kid_2026abc",
+]
+
+
+@pytest.mark.parametrize("sample", ORDINARY)
+def test_ordinary_identifiers_named_key_stay_readable(sample):
+    assert DiagnosticRedactor({}).cell(sample) == sample
+
+
+def test_secret_names_are_an_explicit_tested_list():
+    from jarvis.domain.diagnostic_redaction import sensitive_name
+    secret = ["OPENAI_API_KEY", "api_key", "apiKey", "x-api-key", "client_secret", "refreshToken", "access_token",
+              "DB_PASSWORD", "private_key", "privateKey", "sessionKey", "Ocp-Apim-Subscription-Key", "ELEVENLABS_KEY",
+              "elevenlabs_key", "PRIVATE-TOKEN", "x-auth-token", "GITHUB_TOKEN", "passphrase", "Authorization", "cookie",
+              "APIKEY", "clientSecret"]
+    ordinary = ["key", "supersedes_key", "output_key", "idempotency_key", "cache_key", "public_key", "primary_key",
+                "token_count", "max_tokens", "token_type", "KeyError", "InvalidTokenError", "credential_ref", "key_id",
+                "keyboard_layout", "pass", "has_token", "password_set", "tokens", "monkey", "signature"]
+    assert [name for name in secret if not sensitive_name(name)] == []
+    assert [name for name in ordinary if sensitive_name(name)] == []
+
+
+@pytest.mark.parametrize("marker, times", [("-----BEGIN A PRIVATE KEY-----", 8000), ("Private-Lines: ", 16000),
+                                           ("PuTTY-User-Key-File-2: ", 8000)], ids=["pem", "putty_lines", "putty_header"])
+def test_repeated_key_start_markers_stay_linear(marker, times):
+    started = time.process_time()
+    DiagnosticRedactor({}).text(marker * times)
+    assert time.process_time() - started < 2.0
+
+
+def test_a_key_block_without_end_followed_by_another_is_still_masked():
+    out = DiagnosticRedactor({}).text("-----BEGIN PRIVATE KEY-----\nFirstBody123\n-----BEGIN RSA PRIVATE KEY-----\n"
+                                      "SecondBody456\n-----END RSA PRIVATE KEY-----\nfin")
+    assert "FirstBody123" not in out and "SecondBody456" not in out and out.endswith("fin")
+
+
+def test_key_files_are_excluded_whatever_the_case_of_their_extension(tmp_path):
+    sources, _env = profile(tmp_path)
+    memory = sources.data_root / "boards" / "b1" / "memory"
+    memory.mkdir(parents=True)
+    for name in ("ID_RSA.PEM", "client.Key", "vault.P12"):
+        (memory / name).write_text("x", encoding="utf-8")
+    files, entries = SNAP.board_memory(sources.data_root, "b1", str)
+    assert files == {} and sorted(e.reason for e in entries) == ["key_file_never_included"] * 3
+
+
+def test_the_masked_cell_count_is_exact_and_untouched_cells_are_not_rewritten(tmp_path):
+    base = tmp_path / "c.sqlite3"
+    with sqlite3.connect(base) as conn:
+        conn.execute("CREATE TABLE t(id INTEGER PRIMARY KEY, data TEXT)")
+        conn.executemany("INSERT INTO t(data) VALUES (?)", [(json.dumps({"a": i, "b": "texte ordinaire"}, indent=1),)
+                                                             for i in range(50)])
+        conn.execute("INSERT INTO t(data) VALUES (?)", (json.dumps({"api_key": "Zq7Lm2Vx9Kp4Rt8W"}),))
+    conn.close()
+    report = SNAP.snapshot_database(base, tmp_path / "s.sqlite3", DiagnosticRedactor({}).cell)
+    assert report["text_values_masked"] == 1
+    with sqlite3.connect(tmp_path / "s.sqlite3") as snap:
+        first = snap.execute("SELECT data FROM t WHERE id = 1").fetchone()[0]
+    snap.close()
+    assert first == json.dumps({"a": 0, "b": "texte ordinaire"}, indent=1), "an untouched cell keeps its exact text"
+
+
+def test_a_send_in_progress_blocks_a_send_of_another_bundle(tmp_path, monkeypatch):
+    sources = seeded(tmp_path)
+    release = threading.Event()
+
+    class Slow:
+        name = "fake"
+
+        def describe(self):
+            return {"name": "fake", "available": True, "label": "lent"}
+
+        def send(self, bundle, *, to, subject, body):
+            release.wait(10)
+            return SS.SendOutcome("draft_opened", "Brouillon ouvert.")
+
+    import jarvis.runtime.support_routes as routes
+    monkeypatch.setattr(routes, "SEND_TIMEOUT_S", 0.2)
+    svc = service(tmp_path, sources, transport=Slow())
+
+    async def run():
+        first_name = (await svc.create({"consent": True}))["bundle"]["name"]
+        await asyncio.sleep(1.1)  # another second: another bundle name
+        second_name = (await svc.create({"consent": True, "description": "autre"}))["bundle"]["name"]
+        assert first_name != second_name
+        await svc.send(first_name)
+        preview = await svc.preview()
+        with pytest.raises(SupportRouteError) as refused:
+            await svc.send(second_name)
+        release.set()
+        await asyncio.sleep(0.3)
+        return preview, refused.value, await svc.preview()
+
+    during, refused, after = asyncio.run(run())
+    assert during["send_in_progress"] is True and refused.code == "support_send_in_progress"
+    assert after["send_in_progress"] is False
