@@ -49,7 +49,9 @@ jobs:
           python-version: ${{ env.JARVIS_CI_PYTHON }}
           cache: pip
       - name: Install Jarvis and its development tools
-        run: python -m pip install -e ".[dev]"
+        # Same extras as setup.ps1, the environment tests/known_failures.json was measured in. `dev` carries numpy,
+        # which tests/conftest.py needs through jarvis.core.v2_app.
+        run: python -m pip install -e ".[voice,dev]"
       - name: Release verifier (edition guard, execution primitives, Remotion and Studio evidence, artifact info)
         run: python scripts/verify_release.py
 
@@ -73,7 +75,9 @@ jobs:
         with:
           node-version: ${{ env.JARVIS_CI_NODE }}
       - name: Install Jarvis and its development tools
-        run: python -m pip install -e ".[dev]"
+        # Same extras as setup.ps1, the environment tests/known_failures.json was measured in. `dev` carries numpy,
+        # which tests/conftest.py needs through jarvis.core.v2_app.
+        run: python -m pip install -e ".[voice,dev]"
       - name: Test gate (known failures from tests/known_failures.json)
         run: python scripts/release_test_gate.py --suite unit --shard ${{ matrix.shard }}/4 --report gate/unit-${{ matrix.shard }}.json
       - uses: actions/upload-artifact@v4
@@ -107,7 +111,9 @@ jobs:
         with:
           node-version: ${{ env.JARVIS_CI_NODE }}
       - name: Install Jarvis and its development tools
-        run: python -m pip install -e ".[dev]"
+        # Same extras as setup.ps1, the environment tests/known_failures.json was measured in. `dev` carries numpy,
+        # which tests/conftest.py needs through jarvis.core.v2_app.
+        run: python -m pip install -e ".[voice,dev]"
       - name: Test gate, browser suite (Chrome of the runner)
         run: python scripts/release_test_gate.py --suite browser --shard ${{ matrix.shard }}/10 --report gate/browser-${{ matrix.shard }}.json
       - uses: actions/upload-artifact@v4
@@ -131,7 +137,9 @@ jobs:
           python-version: ${{ env.JARVIS_CI_PYTHON }}
           cache: pip
       - name: Install Jarvis and its development tools
-        run: python -m pip install -e ".[dev]"
+        # Same extras as setup.ps1, the environment tests/known_failures.json was measured in. `dev` carries numpy,
+        # which tests/conftest.py needs through jarvis.core.v2_app.
+        run: python -m pip install -e ".[voice,dev]"
       - name: Build download cache (pinned runtimes and wheels, re-verified by SHA-256 at every build)
         uses: actions/cache@v4
         with:
@@ -176,7 +184,7 @@ jobs:
   macos:
     name: macOS portability (${{ matrix.arch }}) - not a supported platform
     runs-on: ${{ matrix.runner }}
-    # Sizing: install about 4 min (pip, no wheel cache on the first run), hard gate under 1 min (46 tests, 2.6 s on
+    # Sizing: install about 4 min (pip, no wheel cache on the first run), hard gate under 1 min (54 tests, 3 s on
     # Windows), discovery suite about 3 min, Core smoke bounded by its own 2 x 180 s waits plus 15 s per stop. Worst case
     # about 20 min; 35 leaves a margin for a cold runner without hiding a hang.
     timeout-minutes: 35
@@ -201,9 +209,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.JARVIS_CI_NODE }}
-      - name: Install Jarvis and its development tools
+      - name: Install Jarvis and its test tools
+        # `dev` alone (pytest + numpy for tests/conftest.py): the hard gate must not depend on the voice wheels.
         run: python -m pip install -e ".[dev]"
-      - name: macOS runtime pins (shape, SHA-256, aligned with the Windows package)
+      - name: Discovery - voice extra on macOS (pynput pulls pyobjc, sounddevice bundles PortAudio)
+        continue-on-error: true
+        run: python -m pip install -e ".[voice,dev]"
+      - name: macOS runtime pins (https URLs, 64-hex SHA-256 form, sizes, versions aligned with Windows; no download)
         run: python packaging/macos/macos_package.py check-pins
       - name: macOS bundle plan for this architecture (no package is built)
         run: python packaging/macos/macos_package.py plan --arch ${{ matrix.arch }}

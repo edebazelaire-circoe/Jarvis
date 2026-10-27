@@ -18,6 +18,6 @@
   "windows_file_suffixes": [".exe", ".dll", ".cmd", ".bat", ".ps1", ".pyd"],
   "locks": {
     "arm64": "requirements-macos-arm64.lock (à générer sur macos-latest, --platform macosx_11_0_arm64)",
-    "x64": "requirements-macos-x64.lock (à générer sur macos-13, --platform macosx_10_13_x86_64)"
+    "x64": "requirements-macos-x64.lock (à générer sur macos-26-intel, --platform macosx_10_13_x86_64)"
   }
 }

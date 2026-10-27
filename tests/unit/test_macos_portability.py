@@ -10,6 +10,7 @@ Chaque test Windows fige la valeur d'AVANT la Slice 08, à l'octet.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -215,6 +216,13 @@ def test_macos_site_packages_without_runtime_is_a_missing_path_never_a_guess(tmp
     layout = PR.PackageLayout(tmp_path, MAC)
     assert not layout.site_packages.exists()
     assert layout.site_packages.relative_to(tmp_path).as_posix() == "runtime/python/lib/python3/site-packages"
+
+
+def test_macos_site_packages_picks_the_highest_minor_numerically_not_alphabetically(tmp_path):
+    layout = PR.PackageLayout(tmp_path, MAC)
+    for minor in ("python3.9", "python3.14", "python3.x"):
+        (layout.python_dir / "lib" / minor / "site-packages").mkdir(parents=True)
+    assert layout.site_packages.relative_to(tmp_path).as_posix() == "runtime/python/lib/python3.14/site-packages"
 
 
 def test_a_simulated_macos_package_verifies_clean_and_a_tampered_one_does_not(tmp_path):
@@ -612,3 +620,35 @@ def test_core_smoke_refuses_a_folder_that_already_has_content(tmp_path, capsys):
     (tmp_path / "state").mkdir()
     assert S.main(["--work", str(tmp_path)]) == 2
     assert "not empty" in capsys.readouterr().err
+
+
+# -- sites de lancement des CLI : arguments de l'arbre possédé, par plateforme ---------------------------------------------
+
+from tests.unit.test_back_brain_worker import harness, job, until  # noqa: E402,F401 - fixture `harness` réutilisée
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("windows", [True, False])
+async def test_owned_cli_sites_pass_the_tree_spawn_arguments_of_their_platform(harness, monkeypatch, provider, windows):
+    """`claude_local` et `codex_local` passent `spawn_kwargs(tree)` : supprimer l'argument, ou le figer sur une seule
+    plateforme, est vu ici (Windows : `creationflags` exact d'avant la Slice 08 ; POSIX : session propre)."""
+
+    monkeypatch.setattr(OPT, "IS_WINDOWS", windows)
+    worker = harness.worker(provider)
+
+    class Progress:
+        async def emit(self, job_id, value):
+            pass
+
+    running = asyncio.create_task(worker.execute_with_progress(job(), Progress()))
+    try:
+        await until(lambda: harness.calls)
+        _argv, kwargs = harness.calls[0]
+        if windows:
+            assert kwargs["creationflags"] == 0x08000004 and "start_new_session" not in kwargs
+        else:
+            assert kwargs["start_new_session"] is True and "creationflags" not in kwargs
+        assert harness.trees and harness.trees[0].pid is not None  # l'enfant est rattaché à SON arbre
+    finally:
+        await worker.cancel_owned("job-a")
+        await asyncio.gather(running, return_exceptions=True)

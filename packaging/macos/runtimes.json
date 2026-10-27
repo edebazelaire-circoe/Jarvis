@@ -12,7 +12,7 @@
         "size": 26170048,
         "checksum_source": "https://github.com/astral-sh/python-build-standalone/releases/download/20260804/SHA256SUMS",
         "license": "PSF-2.0 (CPython) ; bibliothèques liées listées par python-build-standalone",
-        "license_file": "to-verify-on-first-build",
+        "license_file": "lib/python3.14/LICENSE.txt",
         "strip_components": 1,
         "executable": "bin/python3"
       },
@@ -37,7 +37,7 @@
         "size": 26133103,
         "checksum_source": "https://github.com/astral-sh/python-build-standalone/releases/download/20260804/SHA256SUMS",
         "license": "PSF-2.0 (CPython) ; bibliothèques liées listées par python-build-standalone",
-        "license_file": "to-verify-on-first-build",
+        "license_file": "lib/python3.14/LICENSE.txt",
         "strip_components": 1,
         "executable": "bin/python3"
       },

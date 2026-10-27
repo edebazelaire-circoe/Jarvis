@@ -55,7 +55,7 @@ mécanisme), **outillage** (développement et essais seulement, hors produit).
 | Balayage des restes d'un rendu | `remotion_render_runner.sweep` | gardé | PowerShell sous Windows, `pgrep -f` ailleurs |
 | Arbre de processus borné | `adapters/process_tree.py` | gardé | Toolhelp + heure de création sous Windows ; `killpg` + `start_new_session` ailleurs ; jamais `taskkill /T` |
 | Confinement des enfants (Job Object) | `runtime/owned_process_tree.py` | adapté | `PosixProcessGroupAPI` : session propre + `killpg` ; plus faible qu'un Job (voir *Processus*) |
-| Enfants du lanceur, CLI Claude/Codex | `product_launcher.py`, `claude_local.py`, `codex_local.py` | adapté | `spawn_kwargs(tree)` : `creationflags` identique sous Windows, `start_new_session` ailleurs |
+| Enfants du lanceur, CLI Claude/Codex | `product_launcher.py`, `claude_local.py`, `codex_local.py` | adapté | CLI : `spawn_kwargs(tree)` ; lanceur : `start_new_session` seulement si l'arbre le demande (`tree.start_new_session`). `creationflags` identique sous Windows |
 | Verrou d'instance unique | `product_launcher.InstanceLock` | adapté (tests) | `msvcrt.locking` / `fcntl.flock` : la branche POSIX existait sans test ; testée en simulé, et en réel dans le job macOS |
 | Boîte de dialogue d'erreur du lanceur | `product_launcher.default_notify` | à adapter | `MessageBoxW` sous Windows ; ailleurs stderr, invisible pour une app lancée du Finder (`osascript` à prévoir) |
 | Adresse de Core `127.77.0.1`, bac à sable `127.77.0.2` | `v2_config.py`, `remotion_sandbox_server.py`, `display_mcp.py` | à adapter | voir *Boucle locale* : bloquant probable sur Mac |
@@ -80,9 +80,11 @@ mécanisme), **outillage** (développement et essais seulement, hors produit).
 ## Processus
 
 `OwnedProcessTree` choisit son moteur par plateforme (`default_api`) : Job Object `KILL_ON_JOB_CLOSE` sous Windows
-(inchangé), groupe de processus ailleurs (`PosixProcessGroupAPI`). Le lanceur, les CLI Claude/Codex en profil restreint
-passent `spawn_kwargs(tree)` à leur `Popen` : sous Windows exactement l'ancien `creationflags`, ailleurs
+(inchangé), groupe de processus ailleurs (`PosixProcessGroupAPI`). Les CLI Claude/Codex en profil restreint passent
+`spawn_kwargs(tree)` à leur lancement : sous Windows exactement l'ancien `creationflags`, ailleurs
 `start_new_session=True` (l'enfant devient chef de session et de groupe ; `assign` refuse un enfant qui ne l'est pas).
+Le lanceur garde ses `creationflags` (arbre + `CREATE_NO_WINDOW`) et ajoute `start_new_session=True` seulement si
+l'arbre l'annonce (`tree.start_new_session`, faux sous Windows) : même effet, autre écriture.
 
 Ce que le groupe POSIX ne garantit PAS, à la différence d'un Job :
 
@@ -121,7 +123,7 @@ comme hôte canonique et distinct de `127.0.0.1`. À trancher avant tout essai p
   archives officielles `nodejs.org` (`SHASUMS256.txt`). Python : python.org ne publie pas de Python relocalisable pour
   macOS ; la source est python-build-standalone (Astral, `install_only`, `SHA256SUMS` de la release `20260804`).
   Les quatre empreintes ont été relevées dans les fichiers de sommes ET recalculées sur les archives téléchargées le
-  2026-10-27 (archives supprimées ensuite). Fichier de licence de Python : à vérifier au premier build.
+  2026-10-27 (archives supprimées ensuite). Fichier de licence de Python : `lib/python3.14/LICENSE.txt` (vu dans l'archive arm64 par la QA).
 - `platform_policy.json` : `pywin32` jamais dans un paquet Mac ; `pyobjc-*` (MIT) attendus pour `pynput` ; verrous
   `requirements-macos-{arm64,x64}.lock` à générer sur un runner macOS ; macOS 13.5 minimum (Node 24).
 - `Info.plist` (modèle) : `com.circoe.jarvis`, `NSMicrophoneUsageDescription`, `NSAppleEventsUsageDescription`,
@@ -172,6 +174,26 @@ Permissions `contents: read`, aucun secret. Étapes :
   installation, processus, lanceur, export, Board, recherche, compilation Presentation), smoke Core + Control Center
   (`scripts/core_smoke.py`, bac à sable, `127.0.0.1`).
 - **absente** : construction, installation et smoke d'un paquet macOS (le packager n'existe pas).
+
+Installation : le job `macos` installe `.[dev]` (pytest, pytest-asyncio et numpy, que `tests/conftest.py` exige par
+`jarvis.core.v2_app`), puis tente `.[voice,dev]` en découverte. Les jobs Windows installent `.[voice,dev]`, comme
+`setup.ps1` (environnement où `tests/known_failures.json` a été mesuré). Preuve locale (2026-10-27, WSL Ubuntu,
+Python 3.14.4, venv neuf, étapes du job) : `.[dev]` s'installe, `check-pins` et `plan` passent, porte de portabilité
+52 passés / 2 sautés (Windows seulement), tests `posix_only` compris ; `.[voice]` échoue sous Linux (`evdev` à
+compiler pour `pynput`), d'où l'étape de découverte séparée sur macOS (où `pynput` tire `pyobjc`, en roues).
+
+### Écart déclaré au critère d'acceptation de la Slice 08
+
+Le critère de `SLICE.md` (« produire et éprouver un paquet macOS depuis la CI ») n'est **pas** atteint : décision du PM
+(MA2), aucun paquet macOS n'est construit dans cette Slice. Prérequis avant de l'écrire :
+
+1. le job CI `macos` a tourné au moins une fois et ses rapports sont lus (en particulier la sonde de `127.77.0.1`) ;
+2. l'adresse de Core et du bac à sable Remotion sur Mac est tranchée (*Boucle locale*) ;
+3. le scellement des secrets par le Trousseau est écrit et éprouvé (*Secrets*).
+
+Ensuite : packager (`build` dans `macos_package.py`), verrous `requirements-macos-*.lock`, artefact non signé de la CI,
+smoke du paquet sans Python/Node système et smoke de rendu Remotion ; signature et notarisation quand les
+identifiants existeront.
 
 Vérifiée par `actionlint` 1.7.12 (binaire Windows officiel, SHA-256 contrôlé) ; jamais exécutée sur GitHub.
 

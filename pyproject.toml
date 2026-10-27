@@ -63,9 +63,12 @@ mcp = [
 capture = [
   "imageio-ffmpeg==0.6.0",
 ]
+# Ce que la suite de tests exige sur toute plateforme : `tests/conftest.py` importe `jarvis.core.v2_app`, qui tire
+# numpy (`jarvis/audio/duplex.py`). Sans lui, chaque test échoue à la collecte (QA Slice 08 V1.2, MA1).
 dev = [
   "pytest>=8,<10",
   "pytest-asyncio>=0.24,<2",
+  "numpy>=2.0,<3",
 ]
 
 [project.scripts]

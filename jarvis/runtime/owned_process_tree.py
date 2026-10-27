@@ -4,7 +4,7 @@ This owns process lifetime, not action permissions or external-service effects.
 No breakaway flag is enabled.
 
 POSIX (macOS, Slice 08 of V1.2, `docs/macos-portability.md`): `PosixProcessGroupAPI` puts the child in its own
-session/process group (`start_new_session`, see `OwnedProcessTree.popen_kwargs`) and kills the whole group
+session/process group (`start_new_session`, see `spawn_kwargs(tree)`) and kills the whole group
 (`killpg`). It is weaker than a job object and says so: the child runs from its first instruction (no suspended
 start), a descendant that calls `setsid()` leaves the group, and nothing kills the group if the owner itself dies
 (no `KILL_ON_JOB_CLOSE`). Written and tested with simulated platform only; never executed on a Mac.
@@ -184,7 +184,7 @@ class PosixProcessGroupAPI:
 
     def assign(self, handle, pid):
         # `start_new_session=True` made the child a session and group leader: its group id IS its pid. Anything
-        # else means the child was not started by `popen_kwargs()`, and killing "its" group could hit ours.
+        # else means the child was not started with `spawn_kwargs(tree)`, and killing "its" group could hit ours.
         if self._getpgid(pid) != pid:
             raise OSError("owned_process_tree_not_isolated")
         handle.pgid = pid

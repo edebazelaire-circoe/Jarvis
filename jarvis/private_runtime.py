@@ -150,8 +150,10 @@ class PackageLayout:
             return self.python_dir / "Lib" / "site-packages"
         # `lib/python3.X/site-packages` : la mineure vient du runtime livré ; sans lui, un chemin qui n'existe pas
         # (les vérifications de présence restent fausses, jamais une autre arborescence devinée).
-        found = sorted(self.python_dir.glob("lib/python3.*/site-packages"))
-        return found[-1] if found else self.python_dir / "lib" / "python3" / "site-packages"
+        # Plus haute mineure par valeur numérique (`python3.14` après `python3.9`), jamais par ordre alphabétique.
+        found = [(int(minor), path) for path in self.python_dir.glob("lib/python3.*/site-packages")
+                 if (minor := path.parent.name.removeprefix("python3.")).isdigit()]
+        return max(found)[1] if found else self.python_dir / "lib" / "python3" / "site-packages"
 
     @property
     def wake_models_dir(self) -> Path:

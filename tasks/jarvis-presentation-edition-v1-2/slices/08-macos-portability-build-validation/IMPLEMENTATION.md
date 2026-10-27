@@ -75,3 +75,46 @@ Preuves : `C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\
 - Pousser la branche, lire les rapports du job `macos` (arm64, x64).
 - Trancher la boucle locale sur Mac ; fournir les identifiants Apple Developer quand un paquet existera.
 - `HV-V12-MAC-01` sur le Mac d'un collègue (`HUMAN-CHECKS.md`), après les prérequis.
+
+## Reprise QA (rapport `qa/qa-report.md`, décisions du PM)
+
+| Finding | Décision | Traitement |
+|---|---|---|
+| MA1 jobs CI sans numpy (macOS et Windows, défaut hérité de la V1) | à corriger | `pyproject.toml` : `numpy>=2.0,<3` ajouté à l'extra `dev` (ce que la suite exige partout). Jobs Windows : `.[voice,dev]`, comme `setup.ps1`/`setup.sh` (environnement de `known_failures.json`). Job macOS : `.[dev]` pour la porte dure, puis `.[voice,dev]` en découverte (`continue-on-error`) |
+| MA2 aucun paquet macOS construit | accepté, pas de code | écart déclaré au critère d'acceptation, avec ses prérequis (CI macOS exécutée et sonde de boucle locale lue, adresse `127.77.0.1` tranchée, Trousseau écrit) : `docs/macos-portability.md` › *Écart déclaré*, et ci-dessous |
+| m1 docstring `popen_kwargs` | corrigé | `owned_process_tree.py` cite `spawn_kwargs(tree)` |
+| m2 doc du lanceur | corrigé | le lanceur lit `tree.start_new_session` ; les CLI passent `spawn_kwargs(tree)` (inventaire et § *Processus*) |
+| m3 `macos-13` | corrigé | `platform_policy.json` : verrou x64 sur `macos-26-intel` |
+| m4 nom d'étape et nombre de tests | corrigé | « https URLs, 64-hex SHA-256 form, sizes, versions aligned with Windows; no download » ; 54 tests |
+| m7 tri lexicographique | corrigé | plus haute mineure par valeur numérique ; test `python3.9`/`python3.14`/`python3.x` |
+| Test des sites CLI | ajouté | `test_owned_cli_sites_pass_the_tree_spawn_arguments_of_their_platform` (Claude et Codex × Windows et POSIX simulés). Mutations (suppression de l'argument dans `claude_local`, puis dans `codex_local`) : 2 échecs chacune, toutes deux tuées |
+| m5 suite de découverte bruyante sur POSIX | consigné | `test_owned_process_tree.py:47` exige les drapeaux Windows sans condition, et 7 autres tests supposent Windows ou les extras Google (8 échecs sur 141 sous WSL). L'étape est `continue-on-error` ; à trier au premier rapport macOS, sans retoucher ces tests dans cette Slice |
+| m6 capture d'écran sur macOS | consigné | `screen_capture.FfmpegProcess` lance ffmpeg sans `start_new_session` : sur POSIX, `assign` refuse l'enfant (refus `SOURCE_UNAVAILABLE` au lieu de `UNSUPPORTED_PLATFORM`, en amont). À reprendre avec une future capture Mac (`spawn_kwargs`) |
+| Info : licence Python | renseigné | `license_file` = `lib/python3.14/LICENSE.txt` (vu par la QA dans l'archive arm64) |
+
+### Écart déclaré au critère d'acceptation (MA2)
+
+« Produire et éprouver un paquet macOS depuis la CI » n'est pas atteint : aucun paquet macOS n'est construit dans cette
+Slice, par décision du PM. Prérequis avant d'écrire le packager :
+
+1. le job CI `macos` a tourné et ses rapports sont lus (sonde `127.77.0.1`) ;
+2. l'adresse de boucle locale de Core et du bac à sable Remotion sur Mac est tranchée ;
+3. le Trousseau est écrit et éprouvé.
+
+### Preuves de la reprise
+
+- WSL Ubuntu (Python 3.14.4), venv neuf, arbre de travail de la reprise, étapes du job `macos` :
+  - `.[dev]` s'installe (numpy 2.5.4, pytest 9.1.1) ;
+  - `.[voice,dev]` échoue sous Linux (`evdev`), ce qui est attendu : c'est une étape de découverte ;
+  - `check-pins` et `plan` passent ;
+  - `test_macos_portability.py` : **52 passés, 2 sautés** (Windows seulement). Les tests `posix_only`, verrou
+    `flock` réel et `killpg` réel, passent.
+  - Venv et sources supprimés. Journal : `wsl-proof.log`.
+- Windows, ciblé :
+  - `test_macos_portability.py` : 52 passés, 2 sautés (`posix_only`) ;
+  - lot voisin (release tooling, private runtime, owned process tree, back brain worker et speculative, launcher,
+    windows packaging) : 260 passés.
+- `actionlint` 1.7.12 : vert. `verify_release.py` : vert.
+- Porte `release` : 31 fichiers, 823 passés, 0 échec, 4 sautés, **VERT**.
+
+Preuves dans le dossier `scratchpad\v12s08\` de la session (`wsl-proof.log`, `wsl_proof.sh`, `gate-release-rework.json`).
