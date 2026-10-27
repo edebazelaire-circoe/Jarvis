@@ -404,3 +404,11 @@ suite navigateur. CI GitHub (A12) toujours non vérifiée.
 
 **Machine** : JARVIS vivant non touché ; aucun processus lancé hors pytest ; aucune base hors `tmp_path` ; aucun tour
 payant ; aucune migration ; aucun redémarrage requis.
+
+## 2026-10-27 — Slice 10, QA et décision (agent 0)
+- Relecture de code (`75921f58`) : FAIL (B1 porte verte sur session interrompue, M1 délai CI, M2 jetons opaques en clair). Essai réel indépendant : PASS avec réserves (R1 test instable, R2 identité sans lien paquet/installeur, R3 dossiers `.jarvis-setup-*` orphelins) ; build indépendant identique à l'octet hors révision, retour arrière réel sur l'ancien code, profil réel inchangé.
+- Première reprise (`8968850c`, `63697cfa`, `79eca5bb`) : tout corrigé avec preuves ; nouveau candidat `63697cfa`, essai du paquet 12/12, balayage `unit` complet vert (22 013 passés, 10 échecs connus).
+- Contre-relecture (`d509ed23`) : FAIL, X1 (parseur `.env` maison, jeton avec commentaire en clair), X2 (test de désinstallation intermittent qui rougit la porte), x3, x4, x6 ; 22/23 mutations tuées.
+- Seconde reprise (`f6e397e4`, `82779e18`) : X1, X2, x3, x4 et x6 (secrets scellés DPAPI et coffre MCP donnés au masqueur, en mémoire seulement) corrigés ; 6/6 mutations tuées ; porte `release` verte au commit final. Vérification de l'agent 0 : 78 tests (paquet de support, installeur, outils de release, masquage) verts, sonde `probe_m2.py` du relecteur « masked » sur les quatre formes.
+- Restes : paquet non reconstruit depuis `63697cfa` (le prochain build, S11, embarquera les corrections) ; CI GitHub jamais exécutée (A12, push réservé au Human) ; I-010 points 11-20.
+- Décision : **APPROUVÉE**.
