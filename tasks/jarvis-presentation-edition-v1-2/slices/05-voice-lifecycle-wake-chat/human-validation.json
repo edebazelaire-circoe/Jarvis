@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-V12-VOICE-01",
+      "description": "On a real microphone machine, launch Jarvis from a fresh profile, confirm it is wake-ready but not actively conversing, wake it by the configured wake word, return to idle, set Voice Off, restart, and verify Off persists while chat still works without re-enabling audio."
+    }
+  ]
+}

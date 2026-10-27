@@ -1,0 +1,11 @@
+{
+  "slice_id": "05-voice-lifecycle-wake-chat",
+  "title": "05 — Voice lifecycle, wake word and chat",
+  "task_type": null,
+  "task_type_blocker": "Slice 00 must resolve a valid existing Workspace Task Type before dispatch; do not invent one.",
+  "frontend": true,
+  "code": true,
+  "required_qa": ["qa-verification", "code-review", "runtime-validation", "agent-trace-analysis"],
+  "required_skills": ["/caveman", "/coding-guideline", "/impeccable"],
+  "agent_routing": "Use a Claude Work Agent for frontend/state-surface implementation or review where supported by the host."
+}

@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-V12-MAC-01",
+      "description": "Before declaring macOS supported, install the CI-produced package on a real supported Mac and validate first-launch permissions, microphone/wake behavior, chat, Board resume, research, Presentation preview/render/export, shutdown and relaunch."
+    }
+  ]
+}

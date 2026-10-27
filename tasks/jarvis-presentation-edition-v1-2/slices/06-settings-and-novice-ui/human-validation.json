@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-V12-UI-01",
+      "description": "Give the packaged product to a non-expert and verify they can resume/create a Presentation project, find research/documents and start Presentation work without developer guidance; then verify a support/debug pass can still reach transcription and advanced Settings quickly."
+    }
+  ]
+}

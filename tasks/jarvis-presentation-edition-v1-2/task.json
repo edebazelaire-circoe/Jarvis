@@ -1,0 +1,30 @@
+{
+  "project_name": "Jarvis",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "handoff_slug": "jarvis-presentation-edition-v1-2",
+  "title": "Jarvis Presentation Edition V1.2 — amendments",
+  "source_branch": "main",
+  "source_sha": "2d6ca879afac7a0e773598cff0872b4f819fa876",
+  "created_on": "2026-10-26",
+  "parent_handoff": "Jarvis/task/to-do/jarvis-presentation-edition-v1/",
+  "drive_destination": "Jarvis/task/to-do/jarvis-presentation-edition-v1-2/",
+  "slices": [
+    "00-project-manager",
+    "01-presentation-product-brain-scope",
+    "02-board-project-continuity",
+    "03-research-reuse-freshness-orchestration",
+    "04-research-documents-and-dossier",
+    "05-voice-lifecycle-wake-chat",
+    "06-settings-and-novice-ui",
+    "07-bug-report-diagnostic-bundle",
+    "08-macos-portability-build-validation",
+    "09-v1-2-integration-e2e"
+  ],
+  "planning_blockers": [
+    "Slice 00 must resolve valid existing Workspace Task Types before implementation dispatch.",
+    "Automatic bug-report sending needs a configured support destination/channel; bundle generation and manual save remain implementable without it.",
+    "IGuard-specific connector details remain conditional on the real endpoint/transport/auth contract.",
+    "Wake-word licensing must be distributable before shipping.",
+    "macOS support cannot be claimed before signing/notarization requirements and a real-Mac acceptance pass are satisfied."
+  ]
+}

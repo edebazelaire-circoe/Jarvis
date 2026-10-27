@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-V12-DOC-01",
+      "description": "Run a substantial research mission, then open the Board Dossier and verify the resulting research document is readable, well sourced, freshness-dated and useful as direct source material for a later Presentation request."
+    }
+  ]
+}

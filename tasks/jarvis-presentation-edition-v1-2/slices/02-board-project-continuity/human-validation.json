@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-V12-PROJECT-01",
+      "description": "Create a Presentation project, make several decisions and stop Jarvis. Reopen it later and judge whether Jarvis naturally resumes the project's purpose, current state and next step without asking the user to reconstruct the previous conversation."
+    }
+  ]
+}

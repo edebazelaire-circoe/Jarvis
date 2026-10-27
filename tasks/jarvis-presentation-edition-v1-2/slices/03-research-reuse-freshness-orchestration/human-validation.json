@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-V12-RESEARCH-01",
+      "description": "In a real Presentation Board, ask for a substantial current-topic research task while continuing to discuss the project. Verify that Jarvis searches existing Board/shared material first, research continues in background, and the final answer clearly distinguishes reused facts from refreshed/current findings."
+    }
+  ]
+}

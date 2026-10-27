@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-V12-REPORT-01",
+      "description": "Trigger a real controlled failure, use Report a problem, inspect the preview and generated ZIP, confirm the report is useful and the bundle contains the relevant Board/log context but no credentials, then verify the configured send path or manual-save fallback is understandable."
+    }
+  ]
+}

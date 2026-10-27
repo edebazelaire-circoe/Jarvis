@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-V12-E2E-01",
+      "description": "Use the packaged Windows candidate as an end user: resume a project, continue by voice and chat, run research while conversing, inspect the durable research document, create/edit/present/export a presentation, open advanced Settings, and file a diagnostic report after a controlled failure."
+    }
+  ]
+}
