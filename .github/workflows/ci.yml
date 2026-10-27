@@ -1,47 +1,166 @@
-name: Jarvis quality gates
+# Jarvis release pipeline (presentation-edition-v1 Slice 10, docs/release.md).
+#
+# Every step calls a script of the repository, so each one can be run locally exactly as here:
+#   static   -> scripts/verify_release.py
+#   tests    -> scripts/release_test_gate.py --suite unit --shard K/4
+#   browser  -> scripts/release_test_gate.py --suite browser --shard K/4
+#   package  -> packaging/windows/build_package.py build|installer, scripts/package_smoke.py, scripts/release_info.py
+# Known failures are an explicit, dated list (tests/known_failures.json), never a global ignore.
+# Status on 2026-10-27: written and validated locally only (YAML parsed, every script run on Windows 11); its first
+# execution on a clean GitHub-hosted Windows runner is NOT verified yet (docs/release.md, release gates).
+
+name: Jarvis release pipeline
 
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
-  pull-requests: write
+
+concurrency:
+  group: jarvis-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUTF8: "1"
+  # Same version as the pinned private runtime (packaging/windows/runtimes.json): the build compiles the package
+  # bytecode with this interpreter.
+  JARVIS_CI_PYTHON: "3.14.6"
+  JARVIS_CI_NODE: "24.21.0"
 
 jobs:
-  test:
+  static:
+    name: Static release gates
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.JARVIS_CI_PYTHON }}
+          cache: pip
+      - name: Install Jarvis and its development tools
+        run: python -m pip install -e ".[dev]"
+      - name: Release verifier (edition guard, execution primitives, Remotion and Studio evidence, artifact info)
+        run: python scripts/verify_release.py
+
+  tests:
+    name: Unit and integration tests (shard ${{ matrix.shard }}/4)
+    runs-on: windows-latest
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
-    runs-on: ubuntu-latest
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: ${{ env.JARVIS_CI_PYTHON }}
           cache: pip
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[dev]"
-      - name: Run pytest with ResourceWarning gate
-        run: |
-          set +e
-          python -W error::ResourceWarning -m pytest -q 2>&1 | tee pytest.log
-          status=${PIPESTATUS[0]}
-          exit $status
-      - name: Publish Python 3.11 failure details
-        if: failure() && matrix.python-version == '3.11' && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+      - uses: actions/setup-node@v4
         with:
-          script: |
-            const fs = require('fs');
-            const raw = fs.existsSync('pytest.log') ? fs.readFileSync('pytest.log', 'utf8') : 'pytest.log missing';
-            const tail = raw.slice(-12000);
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: `CI diagnostic (Python 3.11):\n\n\`\`\`text\n${tail}\n\`\`\``
-            });
-      - run: python scripts/verify_release.py
+          node-version: ${{ env.JARVIS_CI_NODE }}
+      - name: Install Jarvis and its development tools
+        run: python -m pip install -e ".[dev]"
+      - name: Test gate (known failures from tests/known_failures.json)
+        run: python scripts/release_test_gate.py --suite unit --shard ${{ matrix.shard }}/4 --report gate/unit-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-unit-${{ matrix.shard }}
+          path: gate/
+          if-no-files-found: error
+
+  browser:
+    name: Browser tests (shard ${{ matrix.shard }}/4)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.JARVIS_CI_PYTHON }}
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.JARVIS_CI_NODE }}
+      - name: Install Jarvis and its development tools
+        run: python -m pip install -e ".[dev]"
+      - name: Test gate, browser suite (Chrome of the runner)
+        run: python scripts/release_test_gate.py --suite browser --shard ${{ matrix.shard }}/4 --report gate/browser-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-browser-${{ matrix.shard }}
+          path: gate/
+          if-no-files-found: error
+
+  package:
+    name: Windows package, installer, installed smoke and release info
+    needs: [static, tests, browser]
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.JARVIS_CI_PYTHON }}
+          cache: pip
+      - name: Install Jarvis and its development tools
+        run: python -m pip install -e ".[dev]"
+      - name: Build download cache (pinned runtimes and wheels, re-verified by SHA-256 at every build)
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/jarvis-build-cache
+          key: jarvis-build-${{ hashFiles('packaging/windows/runtimes.json', 'packaging/windows/requirements.lock') }}
+      - name: Build the package from the checked-out commit
+        run: python packaging/windows/build_package.py build --out "${{ runner.temp }}/jarvis-package" --cache "${{ runner.temp }}/jarvis-build-cache" --rev "${{ github.sha }}"
+      - name: Verify the package
+        run: python packaging/windows/build_package.py verify "${{ runner.temp }}/jarvis-package"
+      - name: Build the per-user installer
+        run: python packaging/windows/build_package.py installer --package "${{ runner.temp }}/jarvis-package" --out "${{ runner.temp }}/release/JARVIS-Setup.exe"
+      - name: Installed-product smoke (simulated LOCALAPPDATA, PATH reduced to Windows, owned children only)
+        run: python scripts/package_smoke.py --installer "${{ runner.temp }}/release/JARVIS-Setup.exe" --work "${{ runner.temp }}/smoke" --report "${{ runner.temp }}/release/package-smoke.json"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gate-*
+          path: ${{ runner.temp }}/gates
+          merge-multiple: true
+      - name: Release identity (commit, package and installer SHA-256, build inputs, verdicts)
+        shell: pwsh
+        run: |
+          $reports = Get-ChildItem "${{ runner.temp }}/gates" -Filter *.json | ForEach-Object { "--gate-report"; $_.FullName }
+          python scripts/release_info.py --package "${{ runner.temp }}/jarvis-package" --installer "${{ runner.temp }}/release/JARVIS-Setup.exe" --smoke-report "${{ runner.temp }}/release/package-smoke.json" --out "${{ runner.temp }}/release/release-info.json" @reports
+          $name = (Get-Content "${{ runner.temp }}/release/release-info.json" -Raw | ConvertFrom-Json).artifact_name
+          "ARTIFACT_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/release/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: package-smoke-diagnostics
+          path: |
+            ${{ runner.temp }}/smoke/logs/
+            ${{ runner.temp }}/smoke/inst/*.log
+            ${{ runner.temp }}/smoke/inst/*.json
+            ${{ runner.temp }}/smoke/home/Local/CIRCOE/Jarvis/runtime/logs/
+          if-no-files-found: ignore

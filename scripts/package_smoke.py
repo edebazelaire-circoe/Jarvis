@@ -358,22 +358,50 @@ class Smoke:
         check(after == self.real_before, f"le vrai profil a changé : avant {self.real_before}, après {after}")
         return {"real_profile_unchanged": True}
 
-    def run(self) -> bool:
-        plan = [("snapshot_before", self.s_snapshot_before), ("seed", self.s_seed), ("install", self.s_install),
+    def plan(self) -> list[tuple[str, Callable[[], dict | None]]]:
+        return [("snapshot_before", self.s_snapshot_before), ("seed", self.s_seed), ("install", self.s_install),
                 ("launch", self.s_launch), ("crash_core", lambda: self.crash("core")), ("crash_ui", lambda: self.crash("ui")),
                 ("support_bundle", self.s_support_bundle), ("quit", self.s_quit), ("repair", self.s_repair),
                 ("kill_launcher", self.s_kill_launcher), ("uninstall", self.s_uninstall),
                 ("snapshot_after", self.s_snapshot_after)]
+
+    # Phases : la même suite découpée pour une machine où une commande ne peut pas durer plus de quelques minutes ;
+    # l'état (instantané du vrai profil, manifeste du profil semé, étapes) passe d'une phase à l'autre par
+    # `smoke-state.json` dans le dossier de travail. Chaque phase laisse JARVIS arrêté.
+    PHASES = {"install": ("snapshot_before", "seed", "install"),
+              "run": ("launch", "crash_core", "crash_ui", "support_bundle", "quit"),
+              "repair": ("repair", "kill_launcher"),
+              "finish": ("uninstall", "snapshot_after")}
+    BLOCKING = ("seed", "install", "launch")
+
+    def state_path(self) -> Path:
+        return self.work / "smoke-state.json"
+
+    def load_state(self) -> None:
+        state = json.loads(self.state_path().read_text(encoding="utf-8"))
+        self.real_before, self.seed_manifest, self.steps = state["real_before"], state["seed_manifest"], state["steps"]
+
+    def save_state(self) -> None:
+        self.state_path().write_text(json.dumps({"real_before": getattr(self, "real_before", None),
+                                                 "seed_manifest": self.seed_manifest, "steps": self.steps},
+                                                indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    def run(self, names: tuple[str, ...] | None = None) -> bool:
+        plan = self.plan()
+        wanted = [(name, action) for name, action in plan if names is None or name in names]
+        blocked = any(not row["ok"] and row["step"] in self.BLOCKING for row in self.steps)
         try:
-            for name, action in plan:
-                if not self.step(name, action) and name in ("seed", "install", "launch"):
+            for name, action in wanted:
+                if blocked:
                     break  # the following steps need what failed; they are reported as not run
+                if not self.step(name, action) and name in self.BLOCKING:
+                    blocked = True
         finally:
             if self.launcher is not None and self.launcher.poll() is None:
                 self.launcher.kill()  # our own Popen only; its Job Objects take its children
                 self.launcher.wait(timeout=60)
         done = {row["step"] for row in self.steps}
-        for name, _action in plan:
+        for name, _action in wanted:
             if name not in done:
                 self.steps.append({"step": name, "ok": False, "failure": "non lancée (une étape préalable a échoué)"})
         return all(row["ok"] for row in self.steps)
@@ -385,6 +413,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--work", required=True)
     parser.add_argument("--report")
     parser.add_argument("--ports", type=int, default=43653, help="port de Core ; UI +1, bac à sable Remotion +2, visage +3")
+    parser.add_argument("--phase", choices=("all", *Smoke.PHASES), default="all",
+                        help="une partie de l'essai (install, run, repair, finish, dans cet ordre) ; all = tout")
     args = parser.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -393,14 +423,22 @@ def main(argv: list[str] | None = None) -> int:
         print("[smoke] ÉCHEC : l'essai du paquet Windows ne tourne que sous Windows", file=sys.stderr)
         return 2
     work = Path(args.work).resolve()
-    if work.exists() and any(work.iterdir()):
+    first = args.phase in ("all", "install")
+    if first and work.exists() and any(work.iterdir()):
         print(f"[smoke] ÉCHEC : {work} n'est pas vide", file=sys.stderr)
         return 2
     if work == ROOT or ROOT in work.parents:
         print("[smoke] ÉCHEC : le dossier de travail ne peut pas être dans le dépôt", file=sys.stderr)
         return 2
     smoke = Smoke(Path(args.installer).resolve(), work, args.ports)
-    green = smoke.run()
+    if not first:
+        if not smoke.state_path().is_file():
+            print(f"[smoke] ÉCHEC : {smoke.state_path()} absent : lancez d'abord la phase install", file=sys.stderr)
+            return 2
+        smoke.load_state()
+    work.mkdir(parents=True, exist_ok=True)
+    green = smoke.run(None if args.phase == "all" else Smoke.PHASES[args.phase])
+    smoke.save_state()
     report = {"schema": SCHEMA, "schema_version": 1, "green": green, "installer": str(smoke.installer),
               "installer_sha256": hashlib.sha256(smoke.installer.read_bytes()).hexdigest(),
               "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "steps": smoke.steps}
