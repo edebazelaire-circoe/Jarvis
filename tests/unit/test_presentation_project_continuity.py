@@ -20,12 +20,14 @@ from jarvis.adapters.board_memory_store import FileBoardMemoryStore
 from jarvis.core.board_hydration import read_board_memory
 from jarvis.domain.agent_capabilities import PRESENTATION_CAPABILITIES, UNCONFINED
 from jarvis.domain.brain_context import MAX_BRAIN_BOARD_SUMMARY_BYTES, BrainBoardContext
-from jarvis.domain.subagent_roles import ROLE_UNAVAILABLE_CODE
+from jarvis.domain.subagent_roles import (
+    PRESENTATION_SUMMARY_EXCEPTION, ROLE_UNAVAILABLE_CODE, brain_rules, keeps_project_digest,
+)
 from jarvis.domain.workspace_board import DEFAULT_BOARD_ID
 from jarvis.runtime import claude_local, routing_hook
 from jarvis.runtime.board_brief import BOARD_SUMMARY_BEGIN, BRIEF_MEMORY_EMPTY
 from jarvis.runtime.claude_local import (
-    BRAIN_PRESENTATION_MEMORY_MARK, BRAIN_PRESENTATION_MEMORY_SECTION, PRESENTATION_SUMMARY_SECTIONS,
+    BRAIN_DELEGATE_ANY_WRITE, BRAIN_PRESENTATION_MEMORY_MARK, BRAIN_PRESENTATION_MEMORY_SECTION, PRESENTATION_SUMMARY_SECTIONS,
     PRESENTATION_SUMMARY_TARGET_BYTES, PRESENTATION_SUMMARY_TEMPLATE, presentation_project_section,
     render_brain_system_prompt,
 )
@@ -98,20 +100,45 @@ def test_the_template_lists_the_stable_sections_in_order():
 
 def test_the_prompt_states_when_how_and_how_to_resume():
     section = BRAIN_PRESENTATION_MEMORY_SECTION
-    # Quand : changement significatif, pas chaque phrase ; par le cerveau lui-même.
-    assert "changement significatif" in section and "pas à chaque phrase" in section and "sans sous-agent" in section
-    # Comment : lecture → empreinte → replace conditionnel ; create si absent ; conflit → relire et fusionner.
-    for needle in ("board_memory_read", "board_memory_write", "mode replace", "expected_sha256",
-                   "memory_not_found", "mode create", "memory_conflict", "relisez-le"):
+    # Quand : dès le premier tour, changement significatif, pas chaque phrase ; par le cerveau, en silence.
+    assert "dès le premier tour" in section and "Pas pour une simple phrase" in section
+    assert "sans sous-agent" in section and "sans l'annoncer" in section
+    # Reprise QA M1 : une question relayée d'un sous-agent entre dans le condensé et en sort une fois répondue.
+    assert "« QUESTION : » de sous-agent relayée entre dans Questions ouvertes" in section
+    assert "en sort une fois répondue" in section and "reposez la question en attente" in section
+    # Comment : lecture -> empreinte -> replace conditionnel ; create si absent ; conflit -> relire et fusionner.
+    for needle in ("board_memory_read", "board_memory_write replace", "expected_sha256",
+                   "memory_not_found : create", "memory_conflict : relisez, fusionnez"):
         assert needle in section, needle
     # Reprise sans demander où on en était, documents seulement si besoin.
-    assert "Ne demandez jamais à l'utilisateur où vous en étiez" in section
-    assert "que si la demande en a besoin" in section
-    # Robustesse et frontière avec context_summary.
-    assert "illisible" in section and "INDISPONIBLE" in section and "board_archived" in section
+    assert "ne demandez jamais où vous en étiez" in section and "seulement si besoin" in section
+    # Reprise QA m2 : condensé illisible -> accord puis replace entier sans empreinte.
+    assert "avec l'accord de l'utilisateur seulement, réécrivez-le en entier par replace sans expected_sha256" in section
+    assert "INDISPONIBLE ou board_archived : n'écrivez rien" in section
     assert "context_summary" in section and "jamais une copie de summary.md" in section
-    assert "un autre Board" in section
+    assert "Rien d'un autre Board" in section
     assert f"moins de {PRESENTATION_SUMMARY_TARGET_BYTES} octets" in section
+
+
+def test_the_section_stays_compact():
+    """Reprise QA m4 : la section coûte à chaque tour (prompt `presentation` : +2 215 octets au total, contre +3 164)."""
+
+    assert len(BRAIN_PRESENTATION_MEMORY_SECTION.encode("utf-8")) <= 2_048
+
+
+def test_the_write_rules_name_the_digest_exception_in_presentation_only():
+    """Reprise QA m1 : la délégation de toute écriture et le cas B citent l'exception, en `presentation` seulement."""
+
+    prompt = render_brain_system_prompt(PRESENTATION_CAPABILITIES)
+    exception = f" ({PRESENTATION_SUMMARY_EXCEPTION})"
+    assert f"{BRAIN_DELEGATE_ANY_WRITE}{exception}" in prompt
+    assert f"dans ce tour n'écris ni ne vérifies rien{exception}" in brain_rules(capabilities=PRESENTATION_CAPABILITIES)
+    assert prompt.count(PRESENTATION_SUMMARY_EXCEPTION) == 2
+    assert keeps_project_digest(PRESENTATION_CAPABILITIES)
+    for capabilities in (UNCONFINED, None):
+        assert not keeps_project_digest(capabilities)
+        assert PRESENTATION_SUMMARY_EXCEPTION not in render_brain_system_prompt(capabilities)
+        assert PRESENTATION_SUMMARY_EXCEPTION not in brain_rules(capabilities=capabilities)
 
 
 # ------------------------------------------------------------------ 2. hydratation du condensé structuré
@@ -218,6 +245,23 @@ async def test_the_brain_write_cycle_creates_then_replaces_conditionally_and_mer
         assert status == 200 and done["sha256"] != still["sha256"]
         _, final, _, _ = await _read_summary(stack, board)
         assert "Public : direction." in final["text"] and "Rédiger les slides 1 à 6." in final["text"]
+
+
+async def test_an_unreadable_digest_is_replaced_whole_without_a_hash_after_consent(tmp_path):
+    """Reprise QA m2 : un condensé illisible ne donne pas d'empreinte ; la voie consentie est `replace` sans elle."""
+
+    async with CaptureStack(tmp_path) as stack:
+        w = await build(stack)
+        status, _ = await _write_summary(stack, w.board_b, "provisoire", "create")
+        assert status == 201
+        (stack.data_root / "boards" / w.board_b / "memory" / "summary.md").write_bytes(b"\xff\xfe\x00binaire")
+        status, unreadable, _, _ = await _read_summary(stack, w.board_b)
+        assert unreadable["error"]["code"] == "memory_not_text", (status, unreadable)
+        rebuilt = _digest("Projet", "Reprendre le cadrage.", "Redire la finalité.")
+        status, done = await _write_summary(stack, w.board_b, rebuilt, "replace")
+        assert status == 200 and done["created"] is False
+        _, read, _, _ = await _read_summary(stack, w.board_b)
+        assert read["text"] == rebuilt
 
 
 async def test_an_archived_board_refuses_the_digest_write_and_keeps_it_readable(tmp_path):

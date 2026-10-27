@@ -504,10 +504,17 @@ prompts*).
   Detail (research, sources, plan, storyboard) lives in `documents/…` or the
   mission files and is linked; only decisions in force are kept; a digest
   received `coupé` is condensed at the next update.
-- **When**: after a meaningful change (purpose or goal set or changed,
-  decision, step reached, next step fixed, key document created), not at every
-  sentence. The brain writes it itself, in the turn, without a sub-agent: it
-  alone has the conversation.
+- **When**: from the first turn, after a meaningful change (purpose or goal
+  set or changed, decision, step reached, next step fixed, key document
+  created, question pending), not at every sentence. A `QUESTION :` relayed
+  from a sub-agent (the Interviewer) enters *Questions ouvertes* and leaves it
+  once answered, so it survives a new Session. The brain writes it itself, in
+  the turn, without a sub-agent (it alone has the conversation) and silently
+  (never announced aloud). This is the only exception to the confined rule
+  that delegates every write and to the « write nothing » of case B: in
+  `presentation` both rules cite it inline
+  (`subagent_roles.PRESENTATION_SUMMARY_EXCEPTION`, `keeps_project_digest`);
+  `full` is unchanged byte for byte.
 - **How**: `board_memory_read summary.md` -> `sha256`, then
   `board_memory_write mode replace` with that `expected_sha256` and the whole
   updated file; `memory_not_found` -> `mode create`; `memory_conflict` ->
@@ -521,8 +528,9 @@ prompts*).
 - **Degradation**: no `summary.md` -> empty memory, no failure; the first
   meaningful change creates it. Unreadable `summary.md` (binary, invalid
   UTF-8) -> `summary_error`, rendered `summary.md illisible (<code>)`: the
-  brain does not trust it, tells the user once and replaces it only with
-  their consent. Memory `INDISPONIBLE` or `board_archived` -> no write, no
+  brain does not trust it and tells the user once; only with their consent
+  it rewrites the whole file with `replace` **without** `expected_sha256`
+  (an unreadable file has no hash; the store accepts it). Memory `INDISPONIBLE` or `board_archived` -> no write, no
   retry (an archived Board refuses every mutation, *Board memory mutations*
   below; the active Board is never archived).
 - **`context_summary` stays management metadata**: one line (the purpose),

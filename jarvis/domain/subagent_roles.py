@@ -621,6 +621,19 @@ def _confined(capabilities: AgentCapabilityPolicy | None) -> bool:
     return capabilities is not None and not capabilities.writes_files
 
 
+#: Renvoi ajouté, en édition `presentation` seulement, aux règles qui interdisent au cerveau d'écrire (délégation de
+#: toute écriture, cas B) : le condensé du projet est tenu par le cerveau (V1.2 Slice 02, reprise QA m1).
+PRESENTATION_SUMMARY_EXCEPTION = "sauf summary.md, que tu tiens toi-même (MÉMOIRE DU PROJET)"
+
+
+def keeps_project_digest(capabilities: AgentCapabilityPolicy | None) -> bool:
+    """Vrai en édition `presentation` confinée : le cerveau y tient lui-même `summary.md` (`docs/boards.md`)."""
+
+    from jarvis.domain.product_edition import ProductEdition
+
+    return _confined(capabilities) and capabilities.edition is ProductEdition.PRESENTATION
+
+
 def offers_role(role: SubagentRole, capabilities: AgentCapabilityPolicy | None) -> bool:
     """Le rôle a-t-il un sens dans l'édition ? Son profil par défaut doit y être offert (`[coder]` exige `code`)."""
 
@@ -833,6 +846,7 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
     """
 
     confined = _confined(capabilities)
+    digest_exception = f" ({PRESENTATION_SUMMARY_EXCEPTION})" if keeps_project_digest(capabilities) else ""
     active = [role for role in roles if role.enabled and role.offered_to_brain and offers_role(role, capabilities)]
     by_id = {role.id: role for role in active}
     lead, qa = by_id.get("research-lead"), by_id.get("qa")
@@ -870,7 +884,8 @@ def brain_rules(roles: Sequence[SubagentRole] = ROLES, *, gate: str = EXECUTION_
         "ne la recopie pas.",
         action,
         "- B. Intention à cadrer (une création, un livrable important, un résultat attendu flou ou qui se lit de "
-        f"deux façons) : ne lance pas d'exécution, et dans ce tour n'écris ni ne vérifies rien. Le dossier de mission "
+        f"deux façons) : ne lance pas d'exécution, et dans ce tour n'écris ni ne vérifies rien{digest_exception}. Le "
+        f"dossier de mission "
         f"{where}"
         + (f". Au tour de sa première « {QUESTION_PREFIX} », le dossier existe : s'il y a de la matière à trouver "
            f"(ce qui existe déjà, des références, une source nommée), lance alors en parallèle ceux qui servent parmi "
