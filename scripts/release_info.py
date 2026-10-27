@@ -39,7 +39,7 @@ from jarvis import private_runtime as PR  # noqa: E402 - après le chemin du dé
 SCHEMA = "jarvis.release-info"
 #: Entrées du build dont l'empreinte identifie la recette (lues à la révision du paquet).
 BUILD_INPUTS = ("pyproject.toml", "packaging/windows/runtimes.json", "packaging/windows/requirements.lock",
-                "packaging/windows/third_party_policy.json", "packaging/windows/setup_stub.cs",
+                "packaging/windows/requirements-internal.lock", "packaging/windows/third_party_policy.json", "packaging/windows/setup_stub.cs",
                 "packaging/windows/build_package.py")
 SETUP_MAGIC = b"JVSETUP1"
 CI_VARIABLES = ("GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_SHA", "GITHUB_REF", "GITHUB_WORKFLOW",
@@ -168,6 +168,7 @@ def build(package: Path, installer: Path, *, gate_reports: list[Path], smoke_rep
     payload = installer_payload(installer)
     installer_sha = sha256_file(installer)
     version = str(product.get("version") or "unknown")
+    channel = PR.package_channel(manifest)
     embedded = embedded_manifest(installer, payload)
     embedded_product = embedded.get("product") or {}
     if embedded.get("package_sha256") != manifest["package_sha256"] or embedded_product.get("source_revision") != revision:
@@ -197,7 +198,8 @@ def build(package: Path, installer: Path, *, gate_reports: list[Path], smoke_rep
     info = {
         "schema": SCHEMA, "schema_version": 1,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "product": {"name": product.get("name"), "edition": product.get("edition"), "version": version},
+        "product": {"name": product.get("name"), "edition": product.get("edition"), "version": version,
+                    "channel": channel},
         "source_revision": revision,
         "package_sha256": manifest["package_sha256"],
         "runtimes": {name: {"version": entry.get("version"), "tree_sha256": entry.get("tree_sha256")}
@@ -211,10 +213,19 @@ def build(package: Path, installer: Path, *, gate_reports: list[Path], smoke_rep
         "verdicts": verdicts,
         "package_smoke": {"green": True, "installer_sha256": smoke.get("installer_sha256"),
                           "finished_at": smoke.get("finished_at"), "steps": [step.get("step") for step in smoke.get("steps", [])]},
-        "artifact_name": f"jarvis-{version}-{revision[:12]}-{installer_sha[:12]}",
+        # Un build interne se reconnaît à son nom : il n'est jamais confondu avec un candidat de production.
+        "artifact_name": (f"jarvis-{version}-{revision[:12]}-{installer_sha[:12]}" if channel == PR.CHANNEL_PRODUCTION
+                          else f"jarvis-{version}-{channel}-{revision[:12]}-{installer_sha[:12]}"),
         "unverified": ["code signing (HV-PACKAGE-10 / HV-INSTALL-04: installer unsigned)",
                        "clean Windows machine trial (HV-PACKAGE-01, HV-INSTALL-01, HV-E2E-01)"],
     }
+    if channel != PR.CHANNEL_PRODUCTION:
+        info["production_blockers"] = [
+            "internal build (HD-V12-01): openWakeWord and its CC BY-NC-SA 4.0 models are bundled for non-commercial "
+            "internal testing only; replace the wake word technology and rebuild with --channel production before any "
+            "production release"]
+        if product.get("channel_warning"):
+            info["channel_warning"] = product["channel_warning"]
     return info
 
 

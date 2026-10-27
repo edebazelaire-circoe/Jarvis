@@ -58,6 +58,8 @@ Its first run is the gate `A12` below.
 
 Static, no model, no browser (`--with-tests` also runs the full test gate):
 
+- **internal wheels** (`internal_lock_findings`): every wheel of `requirements-internal.lock` is reserved to the
+  internal channel by the policy and none duplicates a production wheel (HD-V12-01);
 - **edition guard** (`product_release_findings`): the `presentation` edition offers only Presentation
   Boards and hides developer surfaces; an installed product defaults to it; its agents are confined
   (`dontAsk`), receive none of Bash, PowerShell, Write, Edit, MultiEdit, NotebookEdit, REPL and deny them
@@ -109,7 +111,7 @@ timing test measures the CPU time of its thread instead of the wall clock.
 
 ### Release info (`scripts/release_info.py`)
 
-`release-info.json` is the identity of a candidate: product version and edition, `source_revision`,
+`release-info.json` is the identity of a candidate: product version, edition and channel (`production_blockers` for an internal build), `source_revision`,
 `package_sha256` (after `verify_package`), runtime versions and tree hashes, installer SHA-256, size,
 stub and zip payload (read from the `JVSETUP1` trailer), the SHA-256 of each build input **at the
 package revision** (`git show`, never the working tree), build host, CI context (`GITHUB_*`), the
@@ -303,15 +305,36 @@ Windows 11 workstation, not on a clean machine.
 | — | HV-PACKAGE-02 (Claude Code CLI distribution), -03 (FFmpeg GPL), -04 (openWakeWord), -05 (Picovoice), -06 (AGPL Barehands/visualizer), -07 (legal review of the manifest), -08 (Remotion company licence), -09 (system Chrome/Edge) | external prerequisite: licence | open, safe default applied |
 | — | HV-PACKAGE-10 / HV-INSTALL-04 (code signing certificate, installer technology), HV-INSTALL-05 (icon) | external prerequisite: signing | open: the installer is **unsigned** |
 | — | HV-INSTALL-02 (CIRCOE Google OAuth client), X1 IGuard contract, Circuit Toolbox tool annotations (I-004 point 6) | external prerequisite: contract | open |
+| P1 | spoken wake word technology replaced (openWakeWord models are CC BY-NC-SA 4.0), HD-V12-01 | production blocker | **open**: only the `internal` channel ships it; `production` keeps F9 |
 | — | visual replacement in the editor, durable undo, PPTX export, Assistant/Meeting Boards, wake word (F9 instead), screen recording, auto-update, telemetry, macOS/Linux | not delivered in V1 | by decision (handoff, Slices 06/09) |
 
 A missing physical gate is reported as unverified, never assumed passed.
 
 ### Voice lifecycle and wake word (v1-2)
 
-Off / Sleep / Active and the launcher's voice gate: [voice-lifecycle.md](voice-lifecycle.md). HD-V12-01: internal
-V1.2 builds may ship openWakeWord and its CC BY-NC-SA models for the spoken wake word; **replacing that technology is a
-production blocker** before any commercial release. Physical check: HV-V12-VOICE-01 (real microphone).
+Off / Sleep / Active and the launcher's voice gate: [voice-lifecycle.md](voice-lifecycle.md). Physical checks:
+HV-V12-VOICE-01 (real microphone), HV-V12-VOICE-02 (« Hey Jarvis » on an installed internal build).
+
+### Build channels and the production blocker (HD-V12-01)
+
+A candidate is built in one of two channels ([windows-packaging.md](windows-packaging.md) › *Channels*):
+
+| Channel | How | Wake word | May be released |
+| --- | --- | --- | --- |
+| `production` | `build_package.py build` (default) | F9 only; no openWakeWord, no onnxruntime, no model | yes, once the gates above are green |
+| `internal` | `build_package.py build --channel internal` (explicit) | « Hey Jarvis » armed in Sleep by default, plus F9; openWakeWord + onnxruntime + the three CC BY-NC-SA 4.0 models shipped and pinned | **no**: internal, non-commercial testing only |
+
+The channel is carried by `runtime-manifest.json` (`product.channel`), the third-party manifest and
+`release-info.json` (`product.channel`). An internal identity is named apart
+(`jarvis-<version>-internal-<commit 12>-<installer 12>`) and carries `production_blockers` and the
+`channel_warning` « Usage interne non commercial ; à remplacer avant production ». `verify` (and the installer,
+which shares `verify_package`) refuses a production package that holds any internal component.
+
+**Production blocker P1 (HD-V12-01).** The spoken wake word technology (openWakeWord, whose pre-trained models are
+CC BY-NC-SA 4.0, non-commercial) must be **replaced by another technology** before any production release. Until
+then, only the `production` channel (keyboard wake, F9) may leave the company; the internal channel exists for
+V1.2 internal testing. Closing P1 means: a new engine and its models with a commercial-compatible licence, a policy
+entry for it in the production channel, and the removal of the internal-only openWakeWord entries.
 
 ## Out of scope / open
 

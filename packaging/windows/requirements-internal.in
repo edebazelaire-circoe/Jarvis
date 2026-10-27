@@ -1,0 +1,12 @@
+# Dépendances AJOUTÉES par le build INTERNE de l'édition `presentation` (canal `internal`, HD-V12-01).
+# Jamais dans un build de production : `third_party_policy.json` les réserve au canal interne et
+# `build_package.py verify` refuse un paquet de production qui les porterait.
+#
+# Extra `wakeword` (pyproject.toml) : openWakeWord (code Apache-2.0 ; ses modèles CC BY-NC-SA 4.0,
+# usage interne non commercial, sont livrés à part, épinglés par jarvis/adapters/wakeword_model_catalog.py)
+# et onnxruntime. Versions de tête = celles mesurées sous Python 3.14 (pyproject.toml).
+# Résolu avec `requirements.lock` comme contrainte : une dépendance partagée (numpy, requests…) garde la
+# version de la production. Le verrou `requirements-internal.lock` ne liste que les roues EN PLUS ;
+# régénéré par `build_package.py lock --channel internal`.
+openwakeword==0.6.0
+onnxruntime==1.30.0

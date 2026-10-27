@@ -9,8 +9,9 @@ paquet pose à côté du code :
         app/                    CODE_ROOT : paquet `jarvis/` + marqueur `jarvis-product.json`
         runtime/python/         Python embarquable épinglé (+ `Lib/site-packages` verrouillé)
         runtime/node/           Node.js épinglé (npm livré avec lui)
-        runtime-manifest.json   manifeste machine (versions, empreintes, composants exclus)
+        runtime-manifest.json   manifeste machine (versions, empreintes, composants exclus, canal)
         licenses/, third-party-manifest.json
+        models/wake-word/       build INTERNE seulement (HD-V12-01) : modèles openWakeWord épinglés
 
 - **Développement** (pas de marqueur) : `which` = `shutil.which`, rien ne change
   (`setup.ps1`, `.venv`, PATH du développeur).
@@ -23,6 +24,11 @@ paquet pose à côté du code :
   ce sont des dépendances externes déclarées comme telles dans le manifeste.
 - `child_path` place `runtime/node` en tête du PATH des processus enfants, pour
   qu'un `node` cherché par npm ou Remotion soit le Node privé.
+
+**Canal du build** (`product.channel` du manifeste, `docs/windows-packaging.md` › *Canaux*) : `production`
+(défaut ; un manifeste sans canal, ceux de la V1, en est un) ou `internal` (HD-V12-01 : openWakeWord, onnxruntime et
+leurs modèles CC BY-NC-SA 4.0, usage interne non commercial). `verify_package` refuse un paquet de production qui
+porterait l'un d'eux (`channel_problems`).
 
 Lecture seule ; aucune écriture. Le hachage complet (`verify_runtimes`) n'est
 fait qu'à la demande (diagnostic, réparation), jamais au démarrage.
@@ -48,6 +54,15 @@ RUNTIME_DIR = "runtime"
 PYTHON_DIR = "python"
 NODE_DIR = "node"
 FFMPEG_DIR = "ffmpeg"
+#: Arbre des modèles livrés (build interne seulement) et son sous-dossier du mot de réveil.
+MODELS_DIR = "models"
+WAKE_MODELS_SUBDIR = "wake-word"
+#: Canaux de build (HD-V12-01). Un manifeste sans `product.channel` est de production.
+CHANNEL_PRODUCTION = "production"
+CHANNEL_INTERNAL = "internal"
+CHANNELS = (CHANNEL_PRODUCTION, CHANNEL_INTERNAL)
+#: Modules réservés au build interne : leur présence dans un paquet de production est un refus de `verify_package`.
+INTERNAL_ONLY_MODULES = ("openwakeword", "onnxruntime")
 RUNTIME_MANIFEST = "runtime-manifest.json"
 RUNTIME_MANIFEST_SCHEMA = "jarvis.runtime-manifest"
 RUNTIME_MANIFEST_VERSION = 1
@@ -106,6 +121,16 @@ class PackageLayout:
     @property
     def ffmpeg_exe(self) -> Path:
         return self.install_root / RUNTIME_DIR / FFMPEG_DIR / "ffmpeg.exe"
+
+    @property
+    def site_packages(self) -> Path:
+        return self.python_dir / "Lib" / "site-packages"
+
+    @property
+    def wake_models_dir(self) -> Path:
+        """`models/wake-word` : modèles openWakeWord livrés par un build interne (absent en production)."""
+
+        return self.install_root / MODELS_DIR / WAKE_MODELS_SUBDIR
 
     @property
     def manifest_path(self) -> Path:
@@ -294,6 +319,7 @@ def diagnostics(layout: object = PROCESS) -> dict:
     problems = [problem.to_payload() for problem in _presence_problems(current, runtimes)]
     return payload | {"status": "ok" if not problems else "degraded",
                       "edition": (manifest.get("product") or {}).get("edition"),
+                      "channel": package_channel(manifest),
                       "version": (manifest.get("product") or {}).get("version"),
                       "runtimes": {name: (entry or {}).get("version") for name, entry in sorted(runtimes.items())},
                       "excluded": sorted((entry or {}).get("id") for entry in manifest.get("excluded") or [] if entry),
@@ -364,6 +390,8 @@ def unexpected_entries(install_root: Path, manifest: Mapping) -> list[str]:
 
     root = Path(install_root)
     top = {APP_DIR, RUNTIME_DIR, LICENSES_DIR, RUNTIME_MANIFEST, THIRD_PARTY_MANIFEST}
+    if isinstance(manifest.get("models"), dict):  # arbre suivi seulement si le manifeste le déclare (build interne)
+        top.add(MODELS_DIR)
     found = [entry.name for entry in root.iterdir() if entry.name not in top]
     roots = {str(entry.get("root", "")).replace("\\", "/").rstrip("/").split("/")[-1]
              for entry in (manifest.get("runtimes") or {}).values() if isinstance(entry, dict)}
@@ -373,11 +401,49 @@ def unexpected_entries(install_root: Path, manifest: Mapping) -> list[str]:
     return sorted(found)
 
 
+def package_channel(manifest: Mapping) -> str:
+    """Canal déclaré par le manifeste ; absent = `production` (paquets V1). Une valeur inconnue est rendue telle quelle."""
+
+    product = manifest.get("product") if isinstance(manifest.get("product"), Mapping) else {}
+    channel = product.get("channel", CHANNEL_PRODUCTION)
+    return channel if isinstance(channel, str) else repr(channel)
+
+
+def channel_problems(install_root: Path, manifest: Mapping) -> list[str]:
+    """Écarts au canal du paquet (HD-V12-01) : un paquet de production ne porte NI openWakeWord, NI onnxruntime, NI
+    modèle du mot de réveil, ni composant que le manifeste tiers réserve à un autre canal. Lu sur le disque ET dans
+    le manifeste tiers : une politique mal éditée au build ne suffit pas à faire passer un composant interne."""
+
+    channel = package_channel(manifest)
+    if channel not in CHANNELS:
+        return [f"channel: canal inconnu {channel!r} (attendu : {', '.join(CHANNELS)})"]
+    if channel != CHANNEL_PRODUCTION:
+        return []
+    root = Path(install_root)
+    problems = []
+    if isinstance(manifest.get("models"), dict) or (root / MODELS_DIR).exists():
+        problems.append(f"production: modèles livrés ({MODELS_DIR}/) réservés au build interne (HD-V12-01)")
+    site = PackageLayout(root).site_packages
+    for module in INTERNAL_ONLY_MODULES:
+        if (site / module).exists() or any(site.glob(f"{module}-*.dist-info")):
+            problems.append(f"production: {module} présent, réservé au build interne (HD-V12-01)")
+    try:
+        third_party = json.loads((root / THIRD_PARTY_MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        third_party = {}  # capture : son absence ou son altération est dite par `verify_package` (empreinte)
+    for component in third_party.get("components") or [] if isinstance(third_party, dict) else []:
+        channels = component.get("channels") if isinstance(component, dict) else None
+        if isinstance(channels, list) and CHANNEL_PRODUCTION not in channels:
+            problems.append(f"production: {component.get('id')} réservé aux canaux {channels}")
+    return problems
+
+
 def verify_package(layout: PackageLayout) -> tuple[dict | None, list[str]]:
     """Vérification complète d'un paquet (build `verify`, installeur, réparation de la Slice 07).
 
     Rend `(manifeste, problèmes)` ; aucun problème = paquet intact. Recalcule chaque arbre suivi (`app`, `licenses`,
-    chaque runtime), l'empreinte du manifeste tiers et `package_sha256`, et nomme tout fichier ou dossier en trop.
+    `models` s'il est déclaré, chaque runtime), l'empreinte du manifeste tiers et `package_sha256`, nomme tout fichier
+    ou dossier en trop et tout écart au canal du paquet (`channel_problems`).
     Lecture seule ; un manifeste illisible est un problème, jamais une exception.
     """
 
@@ -389,7 +455,10 @@ def verify_package(layout: PackageLayout) -> tuple[dict | None, list[str]]:
         return None, [f"manifest: {RuntimeProblemCode.MANIFEST_MISSING.value} ({RUNTIME_MANIFEST} absent)"]
     root = layout.install_root
     problems = [f"{p.component}: {p.code.value} ({p.detail})" for p in verify_runtimes(layout)]
-    for key, sub in (("app", APP_DIR), ("licenses", LICENSES_DIR)):
+    tracked = [("app", APP_DIR), ("licenses", LICENSES_DIR)]
+    if "models" in manifest:
+        tracked.append(("models", MODELS_DIR))
+    for key, sub in tracked:
         block = manifest.get(key)
         actual = tree_sha256(root / sub)[0] if (root / sub).is_dir() else ""
         if not isinstance(block, dict) or actual != block.get("tree_sha256"):
@@ -398,6 +467,7 @@ def verify_package(layout: PackageLayout) -> tuple[dict | None, list[str]]:
     if not third_party.is_file() or file_sha256(third_party) != manifest.get("third_party_manifest_sha256"):
         problems.append(f"{THIRD_PARTY_MANIFEST} modifié")
     problems += [f"{name}: fichier ou dossier inattendu" for name in unexpected_entries(root, manifest)]
+    problems += channel_problems(root, manifest)
     body = {key: value for key, value in manifest.items() if key != "package_sha256"}
     if package_digest(body) != manifest.get("package_sha256"):
         problems.append("package_sha256 ne correspond pas au manifeste")

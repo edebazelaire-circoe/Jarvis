@@ -1,23 +1,30 @@
 #!/usr/bin/env python3
 """Paquet Windows de JARVIS Presentation Edition (docs/windows-packaging.md, Slice 06).
 
-Trois commandes, aucune ne touche au JARVIS vivant ni à `%LOCALAPPDATA%\\CIRCOE\\Jarvis` :
+Quatre commandes, aucune ne touche au JARVIS vivant ni à `%LOCALAPPDATA%\\CIRCOE\\Jarvis` :
 
-    python packaging/windows/build_package.py lock  [--cache DIR] [--constraints FILE]
+    python packaging/windows/build_package.py lock  [--channel production|internal] [--cache DIR] [--constraints FILE]
         Résout `requirements.in` en roues Windows cp314 et réécrit `requirements.lock`
         (chaque dépendance transitive, version exacte, SHA-256). Maintenance seulement (réseau).
+        `--channel internal` : résout `requirements-internal.in` sous la contrainte de `requirements.lock` et écrit
+        `requirements-internal.lock` (seulement les roues EN PLUS du build interne).
 
-    python packaging/windows/build_package.py build --out DIR [--cache DIR] [--rev HEAD]
+    python packaging/windows/build_package.py build --out DIR [--channel production|internal] [--cache DIR] [--rev HEAD]
         Construit le dossier d'installation : Python embarquable et Node épinglés (SHA-256
         vérifié), roues installées depuis le verrou (`--require-hashes`, roues seulement),
         code `jarvis/` tiré de git (`git archive`, rien de non versionné), marqueur produit,
         bytecode précompilé (`unchecked-hash` : rien n'est écrit dans le dossier du programme
         à l'exécution), licences, `third-party-manifest.json` et `runtime-manifest.json`.
+        Canal (HD-V12-01, docs/windows-packaging.md › Canaux) : `production` par défaut, sans openWakeWord ;
+        `internal` sur demande explicite, qui ajoute l'extra `wakeword` (verrou `requirements-internal.lock`) et les
+        trois modèles du catalogue épinglés SHA-256 sous `models/wake-word`, avec leurs avis de licence. Le canal
+        est écrit dans `runtime-manifest.json` (`product.channel`) et `third-party-manifest.json`.
         Termine par une sonde du paquet lancé avec un PATH réduit à Windows. Exige un dépôt git (pas une archive des
         sources) et refuse un arbre de travail qui diffère de `--rev` sur `jarvis/`, `packaging/windows/`, `pyproject.toml`.
 
     python packaging/windows/build_package.py verify DIR
-        Recalcule les empreintes des arbres et les compare au manifeste.
+        Recalcule les empreintes des arbres et les compare au manifeste ; refuse un paquet de production qui
+        porterait un composant réservé au build interne (`private_runtime.channel_problems`).
 
     python packaging/windows/build_package.py installer --package DIR --out FILE.exe
         Installeur par utilisateur (Slice 07, docs/product-install.md) : amorce C# compilée par le compilateur du
@@ -53,11 +60,32 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from jarvis import private_runtime as PR  # noqa: E402 - après le chemin du dépôt
+from jarvis.adapters import wakeword_model_catalog as WAKE_MODELS  # noqa: E402 - modèles épinglés du build interne
 from jarvis.installation import PRODUCT_MARKER, marker_payload  # noqa: E402
 
 RUNTIMES_FILE = HERE / "runtimes.json"
 REQUIREMENTS_IN = HERE / "requirements.in"
 LOCK_FILE = HERE / "requirements.lock"
+INTERNAL_REQUIREMENTS_IN = HERE / "requirements-internal.in"
+INTERNAL_LOCK_FILE = HERE / "requirements-internal.lock"
+CHANNELS = PR.CHANNELS
+DEFAULT_CHANNEL = PR.CHANNEL_PRODUCTION
+#: Avis livré avec les modèles du build interne (CC BY-NC-SA 4.0 § 3(a)(1) : attribution, licence par URI,
+#: modifications indiquées).
+WAKE_MODELS_NOTICE = """openWakeWord pre-trained models - internal build of JARVIS only (HD-V12-01)
+
+Files: melspectrogram.onnx, embedding_model.onnx, hey_jarvis_v0.1.onnx (models/wake-word/)
+Source: https://github.com/dscripka/openWakeWord/releases/tag/v0.5.1 (release v0.5.1), unmodified;
+size and SHA-256 pinned by jarvis/adapters/wakeword_model_catalog.py.
+Author: David Scripka and the openWakeWord contributors.
+License: Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)
+         https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode
+The openWakeWord code itself is Apache-2.0 (licenses/python-packages/openwakeword).
+
+WARNING: non-commercial internal use only. These models must be replaced by another technology
+before any production release of JARVIS (release blocker, docs/release.md).
+Avertissement : usage interne non commercial ; à remplacer avant production.
+"""
 POLICY_FILE = HERE / "third_party_policy.json"
 THIRD_PARTY_MANIFEST = "third-party-manifest.json"
 LICENSES_DIR = "licenses"
@@ -127,10 +155,15 @@ def parse_lock(text: str) -> list[dict]:
     return rows
 
 
-def render_lock(rows: list[dict]) -> str:
-    header = ("# Verrou de l'édition presentation (docs/windows-packaging.md) : NE PAS ÉDITER À LA MAIN.\n"
-              "# Généré par `python packaging/windows/build_package.py lock` depuis requirements.in.\n"
-              "# Une roue Windows cp314 par dépendance, transitives comprises ; pip l'installe avec --require-hashes.\n")
+def render_lock(rows: list[dict], channel: str = DEFAULT_CHANNEL) -> str:
+    if channel == DEFAULT_CHANNEL:
+        header = ("# Verrou de l'édition presentation (docs/windows-packaging.md) : NE PAS ÉDITER À LA MAIN.\n"
+                  "# Généré par `python packaging/windows/build_package.py lock` depuis requirements.in.\n"
+                  "# Une roue Windows cp314 par dépendance, transitives comprises ; pip l'installe avec --require-hashes.\n")
+    else:
+        header = ("# Verrou du build INTERNE (HD-V12-01, docs/windows-packaging.md › Canaux) : NE PAS ÉDITER À LA MAIN.\n"
+                  "# Généré par `python packaging/windows/build_package.py lock --channel internal` depuis\n"
+                  "# requirements-internal.in, sous la contrainte de requirements.lock : seulement les roues EN PLUS.\n")
     body = "".join(f"{row['name']}=={row['version']} \\\n    --hash=sha256:{row['sha256']}\n"
                    for row in sorted(rows, key=lambda r: r["name"]))
     return header + body
@@ -138,11 +171,20 @@ def render_lock(rows: list[dict]) -> str:
 
 def command_lock(args: argparse.Namespace) -> int:
     runtimes = load_json(RUNTIMES_FILE)
+    channel = getattr(args, "channel", DEFAULT_CHANNEL)
+    internal = channel == PR.CHANNEL_INTERNAL
     Path(args.cache).mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="lock-", dir=str(args.cache)) as tmp:
-        target = Path(tmp)
-        argv = [sys.executable, "-m", "pip", "download", "--disable-pip-version-check", "-r", str(REQUIREMENTS_IN),
-                "-d", str(target), *pip_target_args(runtimes)]
+        target = Path(tmp) / "wheels"
+        target.mkdir()
+        argv = [sys.executable, "-m", "pip", "download", "--disable-pip-version-check", "-r",
+                str(INTERNAL_REQUIREMENTS_IN if internal else REQUIREMENTS_IN), "-d", str(target), *pip_target_args(runtimes)]
+        base = {row["name"]: row for row in parse_lock(LOCK_FILE.read_text(encoding="utf-8"))} if internal else {}
+        if internal:  # une dépendance partagée garde la version (et l'empreinte) de la production
+            constraints = Path(tmp) / "production-constraints.txt"
+            constraints.write_text("".join(f"{name}=={row['version']}\n" for name, row in sorted(base.items())),
+                                   encoding="utf-8")
+            argv += ["-c", str(constraints)]
         if args.constraints:
             argv += ["-c", str(args.constraints)]
         log("résolution : " + " ".join(argv[3:]))
@@ -156,9 +198,53 @@ def command_lock(args: argparse.Namespace) -> int:
         others = [p.name for p in target.iterdir() if p.suffix != ".whl"]
         if others:
             raise BuildError(f"fichiers qui ne sont pas des roues: {others}")
-    LOCK_FILE.write_text(render_lock(rows), encoding="utf-8")
-    log(f"{len(rows)} roues verrouillées dans {LOCK_FILE.name}")
+    if internal:
+        drift = [f"{row['name']} {row['version']}" for row in rows if row["name"] in base
+                 and (base[row["name"]]["version"], base[row["name"]]["sha256"]) != (row["version"], row["sha256"])]
+        if drift:
+            raise BuildError(f"le build interne changerait des roues de la production : {drift}")
+        rows = [row for row in rows if row["name"] not in base]
+    destination = INTERNAL_LOCK_FILE if internal else LOCK_FILE
+    destination.write_text(render_lock(rows, channel), encoding="utf-8")
+    log(f"{len(rows)} roues verrouillées dans {destination.name}")
     return 0
+
+
+# ---------------------------------------------------------------------- canaux (HD-V12-01)
+
+def in_channel(entry: dict, channel: str) -> bool:
+    """Une entrée de politique sans `channels` vaut pour tous les canaux."""
+
+    return channel in entry.get("channels", CHANNELS)
+
+
+def channel_policy(policy: dict, channel: str) -> dict:
+    """La politique telle qu'elle s'applique à `channel` : roues, modèles et exclusions de ce canal seulement."""
+
+    if channel not in CHANNELS or channel not in (policy.get("channels") or {}):
+        raise BuildError(f"canal inconnu {channel!r} (attendu : {', '.join(CHANNELS)})")
+    return {**policy, "channel": channel,
+            "python_packages": {name: entry for name, entry in policy["python_packages"].items() if in_channel(entry, channel)},
+            "models": {name: entry for name, entry in (policy.get("models") or {}).items() if in_channel(entry, channel)},
+            "excluded": [entry for entry in policy["excluded"] if in_channel(entry, channel)]}
+
+
+def channel_locks(policy: dict, channel: str) -> list[Path]:
+    """Les verrous que ce canal installe (`channels.<canal>.locks`), la production d'abord."""
+
+    names = ((policy.get("channels") or {}).get(channel) or {}).get("locks") or [LOCK_FILE.name]
+    return [HERE / name for name in names]
+
+
+def read_locks(locks: list[Path]) -> list[dict]:
+    rows: list[dict] = []
+    for lock in locks:
+        rows += parse_lock(lock.read_text(encoding="utf-8"))
+    names = [row["name"] for row in rows]
+    duplicated = sorted({name for name in names if names.count(name) > 1})
+    if duplicated:
+        raise BuildError(f"roues verrouillées deux fois : {duplicated}")
+    return rows
 
 
 # ---------------------------------------------------------------------- téléchargements
@@ -248,11 +334,12 @@ def build_python(out: Path, runtimes: dict, cache: Path) -> Path:
     return target
 
 
-def install_wheels(out: Path, runtimes: dict, cache: Path) -> Path:
+def install_wheels(out: Path, runtimes: dict, cache: Path, locks: list[Path] | None = None) -> Path:
     wheels = cache / "wheels"
     wheels.mkdir(parents=True, exist_ok=True)
+    requirements = [arg for lock in (locks or [LOCK_FILE]) for arg in ("-r", str(lock))]
     # `--no-cache-dir` (I-007 point 2) : pip n'écrit rien dans le cache de l'utilisateur ; le seul cache est `wheels`.
-    common = ["--disable-pip-version-check", "--no-cache-dir", "--require-hashes", "--no-deps", "-r", str(LOCK_FILE),
+    common = ["--disable-pip-version-check", "--no-cache-dir", "--require-hashes", "--no-deps", *requirements,
               *pip_target_args(runtimes)]
     subprocess.run([sys.executable, "-m", "pip", "download", "-d", str(wheels), *common], check=True)
     site = out / PR.RUNTIME_DIR / PR.PYTHON_DIR / "Lib" / "site-packages"
@@ -283,6 +370,23 @@ def install_pywin32_dlls(site: Path) -> None:
 
     for dll in sorted((site / "pywin32_system32").glob("*.dll")):
         shutil.copyfile(dll, site.parents[1] / dll.name)
+
+
+def build_wake_models(out: Path, cache: Path) -> Path:
+    """Build interne : les trois modèles du catalogue, vérifiés (taille, SHA-256) dans le cache puis copiés là où le
+    produit installé les lit (`PackageLayout.wake_models_dir`). Le produit ne télécharge rien au premier lancement."""
+
+    source = cache / "wake-word-models"
+    target = out / PR.MODELS_DIR / PR.WAKE_MODELS_SUBDIR
+    target.mkdir(parents=True, exist_ok=True)
+    for spec in WAKE_MODELS.MODELS:
+        try:
+            cached = WAKE_MODELS.download_spec(spec, source)
+            shutil.copyfile(cached, spec.path(target))
+            WAKE_MODELS.verify_spec(spec, target)
+        except WAKE_MODELS.WakeModelError as exc:
+            raise BuildError(f"modèle {spec.filename} : {exc.code} : {exc}") from exc
+    return target
 
 
 def build_node(out: Path, runtimes: dict, cache: Path) -> Path:
@@ -392,8 +496,11 @@ def read_metadata(dist_info: Path) -> dict:
             "home_page": message.get("Home-page") or ""}
 
 
-def collect_licenses(out: Path, site: Path, runtimes: dict) -> dict[str, list[str]]:
-    """Copie les textes de licence sous `licenses/<composant>/` ; rend les chemins relatifs par composant."""
+def collect_licenses(out: Path, site: Path, runtimes: dict, policy: dict | None = None) -> dict[str, list[str]]:
+    """Copie les textes de licence sous `licenses/<composant>/` ; rend les chemins relatifs par composant.
+
+    `policy` (celle du canal construit) ajoute les textes qu'une roue range hors de `dist-info` (`license_files`,
+    relatifs à `site-packages`, ex. onnxruntime) et l'avis des modèles livrés (`models`)."""
 
     licenses = out / LICENSES_DIR
     copied: dict[str, list[str]] = {}
@@ -416,12 +523,47 @@ def collect_licenses(out: Path, site: Path, runtimes: dict) -> dict[str, list[st
                  or re.match(r"(?i)^(licen[cs]e|copying|notice|authors)", p.name))]
         if files:
             copy(f"python-packages/{name}", files, dist_info)
+    for name, entry in sorted(((policy or {}).get("python_packages") or {}).items()):
+        extra = [site / relative for relative in entry.get("license_files") or []]
+        missing = [path.relative_to(site).as_posix() for path in extra if not path.is_file()]
+        if missing:
+            raise BuildError(f"{name}: textes de licence déclarés absents de la roue : {missing}")
+        if extra:
+            copy(f"python-packages/{normalize(name)}", extra, site)
+    packages = (policy or {}).get("python_packages") or {}
+    for name, entry in sorted(packages.items()):
+        # Roue sans texte de licence (flatbuffers) : le même texte (même SPDX) repris d'une autre roue livrée, et dit.
+        source = entry.get("license_text_from")
+        if not source:
+            continue
+        if (packages.get(source) or {}).get("license") != entry.get("license"):
+            raise BuildError(f"{name}: license_text_from {source!r} n'a pas la même licence ({entry.get('license')})")
+        texts = [out / relative for relative in copied.get(f"python-packages/{normalize(source)}", [])
+                 if Path(relative).name.upper().startswith("LICEN")]
+        if not texts:
+            raise BuildError(f"{name}: aucun texte de licence chez {source}")
+        component = f"python-packages/{normalize(name)}"
+        copy(component, texts, texts[0].parent)
+        notice = licenses / component / "NOTICE.txt"
+        notice.write_text(f"{name}: the wheel ships no licence file. Its metadata declares {entry['license']}; the "
+                          f"licence text above is reproduced from the {source} wheel (same licence).\n",
+                          encoding="utf-8", newline="\n")
+        copied[component].append(notice.relative_to(out).as_posix())
+    for name in sorted(((policy or {}).get("models") or {})):
+        notice = licenses / name / "NOTICE.txt"
+        notice.parent.mkdir(parents=True, exist_ok=True)
+        notice.write_text(WAKE_MODELS_NOTICE, encoding="utf-8", newline="\n")
+        copied.setdefault(name, []).append(notice.relative_to(out).as_posix())
     return copied
 
 
 def third_party_manifest(site: Path, lock_rows: list[dict], policy: dict, runtimes: dict,
-                         licenses: dict[str, list[str]]) -> dict:
-    """Une ligne par composant livré (runtime, roue), plus les exclus et les dépendances externes ; refuse un trou."""
+                         licenses: dict[str, list[str]], models_dir: Path | None = None) -> dict:
+    """Une ligne par composant livré (runtime, roue, modèle), plus les exclus et les dépendances externes ; refuse un
+    trou.
+
+    `policy` est celle du canal construit (`channel_policy`) : une roue réservée à un autre canal n'y a pas d'entrée,
+    donc est refusée. Un composant réservé à certains canaux porte `channels`, que `verify` relit."""
 
     locked = {row["name"]: row for row in lock_rows}
     declared = {normalize(name): entry for name, entry in policy["python_packages"].items()}
@@ -438,6 +580,13 @@ def third_party_manifest(site: Path, lock_rows: list[dict], policy: dict, runtim
                  if name in installed and entry.get("status") != "bundled"]
     excluded = {normalize(item["id"]) for item in policy["excluded"] if item.get("kind") == "python-package"}
     problems += [f"{name}: composant exclu présent dans le paquet" for name in installed if name in excluded]
+    problems += [f"{name}: aucun texte de licence livré" for name, entry in declared.items()
+                 if name in installed and "channels" in entry and not licenses.get(f"python-packages/{name}")]
+    models = policy.get("models") or {}
+    if models and (models_dir is None or not models_dir.is_dir()):
+        problems.append("modèles déclarés par la politique du canal mais non livrés")
+    if not models and models_dir is not None and models_dir.exists():
+        problems.append("modèles livrés alors que la politique du canal n'en déclare aucun")
     if problems:
         raise BuildError("manifeste tiers incomplet:\n  " + "\n  ".join(problems))
     components = []
@@ -451,10 +600,22 @@ def third_party_manifest(site: Path, lock_rows: list[dict], policy: dict, runtim
                            "license_classifiers": meta["license_classifiers"], "status": "bundled",
                            "source": f"https://pypi.org/project/{name}/{meta['version']}/",
                            "sha256": locked[name]["sha256"], "notes": declared[name].get("notes", ""),
-                           "license_files": licenses.get(f"python-packages/{name}", [])})
-    return {"schema": "jarvis.third-party-manifest", "schema_version": 1, "edition": EDITION,
-            "components": components, "excluded": policy["excluded"], "external": policy["external"],
-            "provisioned": policy["provisioned"]}
+                           "license_files": licenses.get(f"python-packages/{name}", []),
+                           **({"channels": declared[name]["channels"]} if "channels" in declared[name] else {})})
+    for name, entry in sorted(models.items()):
+        for spec in WAKE_MODELS.MODELS:
+            components.append({"id": f"{name}/{spec.key}", "kind": "model", "file": f"{entry['destination']}/{spec.filename}",
+                               "license": entry["license"], "status": "bundled", "source": spec.url, "sha256": spec.sha256,
+                               "size": spec.size, "channels": entry["channels"], "warning": entry.get("warning", ""),
+                               "notes": entry.get("notes", ""), "license_files": licenses.get(name, [])})
+    channel = policy.get("channel", DEFAULT_CHANNEL)
+    payload = {"schema": "jarvis.third-party-manifest", "schema_version": 1, "edition": EDITION, "channel": channel,
+               "components": components, "excluded": policy["excluded"], "external": policy["external"],
+               "provisioned": policy["provisioned"]}
+    warning = ((policy.get("channels") or {}).get(channel) or {}).get("warning")
+    if warning:
+        payload["warning"] = warning
+    return payload
 
 
 def node_npm_version(node_dir: Path) -> str:
@@ -462,6 +623,8 @@ def node_npm_version(node_dir: Path) -> str:
 
 
 def runtime_manifest(out: Path, runtimes: dict, revision: str, policy: dict) -> dict:
+    """Manifeste du paquet ; `policy` est celle du canal construit (`product.channel`, bloc `models` si livrés)."""
+
     project = re.search(r'(?m)^version\s*=\s*"([^"]+)"', (REPO / "pyproject.toml").read_text(encoding="utf-8"))
     entries = {}
     for name, executable in (("python", "python.exe"), ("node", "node.exe")):
@@ -473,9 +636,19 @@ def runtime_manifest(out: Path, runtimes: dict, revision: str, policy: dict) -> 
     entries["node"]["npm_version"] = node_npm_version(out / PR.RUNTIME_DIR / PR.NODE_DIR)
     app_tree, app_files = PR.tree_sha256(out / PR.APP_DIR)
     lic_tree, lic_files = PR.tree_sha256(out / LICENSES_DIR)
+    channel = policy.get("channel", DEFAULT_CHANNEL)
+    product = {"name": PRODUCT_NAME, "edition": EDITION, "version": project[1] if project else "unknown",
+               "source_revision": revision, "channel": channel}
+    warning = ((policy.get("channels") or {}).get(channel) or {}).get("warning")
+    if warning:
+        product["channel_warning"] = warning
+    extra = {}
+    if (out / PR.MODELS_DIR).is_dir():
+        models_tree, models_files = PR.tree_sha256(out / PR.MODELS_DIR)
+        extra["models"] = {"root": PR.MODELS_DIR, "tree_sha256": models_tree, "files": models_files,
+                           "wake_word": f"{PR.MODELS_DIR}/{PR.WAKE_MODELS_SUBDIR}"}
     return {"schema": PR.RUNTIME_MANIFEST_SCHEMA, "schema_version": PR.RUNTIME_MANIFEST_VERSION,
-            "product": {"name": PRODUCT_NAME, "edition": EDITION, "version": project[1] if project else "unknown",
-                        "source_revision": revision},
+            "product": product, **extra,
             "app": {"root": PR.APP_DIR, "tree_sha256": app_tree, "files": app_files},
             "licenses": {"root": LICENSES_DIR, "tree_sha256": lic_tree, "files": lic_files},
             "third_party_manifest_sha256": PR.file_sha256(out / THIRD_PARTY_MANIFEST),
@@ -500,45 +673,90 @@ def probe_env(out: Path) -> dict[str, str]:
     return env
 
 
+#: Modules jamais importables d'un paquet, par canal (le build interne livre openWakeWord et onnxruntime).
+PROBE_EXCLUDED_MODULES = {
+    PR.CHANNEL_PRODUCTION: ("onnxruntime", "openwakeword", "imageio_ffmpeg", "pvporcupine", "sherpa_onnx"),
+    PR.CHANNEL_INTERNAL: ("imageio_ffmpeg", "pvporcupine", "sherpa_onnx"),
+}
+
+#: Sonde lancée avec le Python du paquet : `argv[1]` = canal, `argv[2:]` = modules qui ne doivent pas s'importer.
+#: Réveil vocal (les deux canaux) : défaut d'un profil vierge (`wake_word_settings.load({})`) ; build interne : le
+#: détecteur openWakeWord est construit depuis les modèles du paquet et nourri de silence (trames de zéros), sans
+#: jamais ouvrir de périphérique audio.
 PROBE_SCRIPT = r"""
 import json, shutil, subprocess, sys
 import aiohttp, httpx, numpy, sounddevice, mcp, googleapiclient, google_auth_oauthlib, livekit.rtc, pynput, tzdata
 import jarvis, jarvis.app
 from jarvis import private_runtime as pr
 from jarvis.installation import detect_installation
+from jarvis.runtime import wake_word_settings
+channel = sys.argv[1]
 layout = pr.package_layout()
 node = pr.which("node")
 version = subprocess.run([node, "--version"], capture_output=True, text=True, check=True).stdout.strip()
 missing = {name: shutil.which(name) for name in ("python", "node", "npm", "ffmpeg", "git")}
 import importlib.util
-excluded = {name: importlib.util.find_spec(name) is not None for name in ("onnxruntime", "openwakeword", "imageio_ffmpeg", "pvporcupine", "sherpa_onnx")}
+excluded = {name: importlib.util.find_spec(name) is not None for name in sys.argv[2:]}
 import win32api, pywintypes, mcp.client.stdio
 outside = [p for p in sys.path if not p.lower().startswith(str(layout.install_root).lower())]
+blank = wake_word_settings.load({})
+wake = {"default_enabled": blank.enabled, "default_provider": blank.provider}
+if channel == "internal":
+    from jarvis.adapters import wakeword_model_catalog as catalog
+    from jarvis.adapters.wakeword_openwakeword import openwakeword_engine_factory
+    model_dir = catalog.default_model_dir()
+    engine = openwakeword_engine_factory(keyword="hey_jarvis")()
+    silence = [engine.process([0] * engine.frame_length) for _ in range(5)]
+    engine.delete()
+    wake |= {"model_dir_in_package": str(model_dir).lower().startswith(str(layout.wake_models_dir).lower()),
+             "models_verified": sorted(catalog.verified_paths()), "detector": type(engine).__name__,
+             "silence_detections": silence}
 print(json.dumps({"python": sys.version.split()[0], "executable_in_package": sys.executable.lower().startswith(str(layout.install_root).lower()),
                   "installed": detect_installation().installed, "node": version, "node_private": node.lower().startswith(str(layout.node_dir).lower()),
                   "ffmpeg": pr.which("ffmpeg"), "no_site": sys.flags.no_site == 1, "sys_path_outside_package": outside,
                   "excluded_importable": excluded, "py_launcher_on_path": shutil.which("py"),
-                  "path_tools": missing, "diagnostics": pr.diagnostics()}))
+                  "path_tools": missing, "diagnostics": pr.diagnostics(), "channel": channel, "wake": wake}))
 """
 
 
-def probe(out: Path) -> dict:
+def probe(out: Path, channel: str = DEFAULT_CHANNEL) -> dict:
     python = out / PR.RUNTIME_DIR / PR.PYTHON_DIR / "python.exe"
     env = probe_env(out) | {"LOCALAPPDATA": str(out / "_probe-localappdata")}
-    result = subprocess.run([str(python), "-c", PROBE_SCRIPT], capture_output=True, text=True, env=env, cwd=str(out),
+    result = subprocess.run([str(python), "-c", PROBE_SCRIPT, channel, *PROBE_EXCLUDED_MODULES[channel]],
+                            capture_output=True, text=True, env=env, cwd=str(out),
                             encoding="utf-8", errors="replace", timeout=300)
     shutil.rmtree(out / "_probe-localappdata", ignore_errors=True)
     if result.returncode != 0:
         raise BuildError("sonde du paquet en échec:\n" + (result.stdout + result.stderr)[-3000:])
     report = json.loads(result.stdout.strip().splitlines()[-1])
-    problems = probe_problems(report)
+    problems = probe_problems(report, channel)
     if problems:
         raise BuildError(f"sonde du paquet inattendue ({'; '.join(problems)}): {json.dumps(report)}")
     return report
 
 
-def probe_problems(report: dict) -> list[str]:
-    """Écarts du rapport de sonde au contrat du paquet ; vide = paquet conforme."""
+def wake_probe_problems(wake: dict | None, channel: str) -> list[str]:
+    """Le réveil vocal selon le canal : production = défaut F9 seul ; interne = armé par défaut, moteur chargé depuis
+    les modèles du paquet, aucune détection sur du silence."""
+
+    wake = wake or {}
+    if channel == PR.CHANNEL_PRODUCTION:
+        return [] if wake.get("default_enabled") is False else ["production : mot de réveil vocal armé par défaut"]
+    problems = []
+    if wake.get("default_enabled") is not True or wake.get("default_provider") != "openwakeword":
+        problems.append("interne : le mot de réveil openWakeWord n'est pas armé par défaut")
+    if not wake.get("model_dir_in_package"):
+        problems.append("interne : les modèles ne sont pas lus dans le paquet")
+    if sorted(wake.get("models_verified") or []) != sorted(spec.key for spec in WAKE_MODELS.MODELS):
+        problems.append("interne : modèles non vérifiés")
+    detections = wake.get("silence_detections")
+    if not detections or any(value >= 0 for value in detections):
+        problems.append(f"interne : détecteur non chargé ou déclenché par du silence ({detections!r})")
+    return problems
+
+
+def probe_problems(report: dict, channel: str = DEFAULT_CHANNEL) -> list[str]:
+    """Écarts du rapport de sonde au contrat du paquet du canal ; vide = paquet conforme."""
 
     problems = [f"{key} faux" for key in ("installed", "executable_in_package", "node_private", "no_site")
                 if not report.get(key)]
@@ -547,6 +765,7 @@ def probe_problems(report: dict) -> list[str]:
     importable = sorted(name for name, present in (report.get("excluded_importable") or {}).items() if present)
     if importable:
         problems.append(f"composants exclus importables : {importable}")
+    problems += wake_probe_problems(report.get("wake"), channel)
     if report.get("ffmpeg") is not None:
         problems.append("ffmpeg résolu alors que l'édition ne le livre pas")
     on_path = sorted(name for name, found in (report.get("path_tools") or {}).items() if found)
@@ -565,24 +784,36 @@ def command_build(args: argparse.Namespace) -> int:
         raise BuildError(f"{out} n'est pas vide : un build part toujours d'un dossier vide")
     if out == REPO or REPO in out.parents:
         raise BuildError("le dossier de sortie ne peut pas être dans le dépôt")
+    channel = getattr(args, "channel", DEFAULT_CHANNEL)
     revision = git_revision(args.rev)
     ensure_inputs_match(revision)
-    runtimes, policy = load_json(RUNTIMES_FILE), load_json(POLICY_FILE)
-    lock_rows = parse_lock(LOCK_FILE.read_text(encoding="utf-8"))
+    runtimes = load_json(RUNTIMES_FILE)
+    full_policy = load_json(POLICY_FILE)
+    policy = channel_policy(full_policy, channel)
+    locks = channel_locks(full_policy, channel)
+    lock_rows = read_locks(locks)
     out.mkdir(parents=True, exist_ok=True)
-    log(f"révision {revision} → {out}")
-    python_dir = build_python(out, runtimes, cache)
-    site = install_wheels(out, runtimes, cache)
+    log(f"révision {revision}, canal {channel} → {out}")
+    warning = (full_policy["channels"][channel]).get("warning")
+    if warning:
+        log(f"AVERTISSEMENT ({channel}) : {warning}")
+    build_python(out, runtimes, cache)
+    site = install_wheels(out, runtimes, cache, locks)
     build_node(out, runtimes, cache)
+    models_dir = build_wake_models(out, cache) if policy["models"] else None
     app = build_app(out, revision)
     precompile(out, runtimes["runtimes"]["python"]["version"], [app, site])
-    licenses = collect_licenses(out, site, runtimes)
-    write_json(out / THIRD_PARTY_MANIFEST, third_party_manifest(site, lock_rows, policy, runtimes, licenses))
+    licenses = collect_licenses(out, site, runtimes, policy)
+    write_json(out / THIRD_PARTY_MANIFEST, third_party_manifest(site, lock_rows, policy, runtimes, licenses,
+                                                                models_dir or out / PR.MODELS_DIR))
     manifest = runtime_manifest(out, runtimes, revision, policy)
     manifest["package_sha256"] = package_digest(manifest)
     write_json(out / PR.RUNTIME_MANIFEST, manifest)
-    report = probe(out)
-    log(f"sonde OK : Python {report['python']}, Node {report['node']}, aucun outil du PATH")
+    problems = PR.channel_problems(out, manifest)
+    if problems:
+        raise BuildError("canal du paquet non respecté:\n  " + "\n  ".join(problems))
+    report = probe(out, channel)
+    log(f"sonde OK : Python {report['python']}, Node {report['node']}, aucun outil du PATH, réveil {report['wake']}")
     log(f"package_sha256 {manifest['package_sha256']}")
     print(json.dumps({"out": str(out), "package_sha256": manifest["package_sha256"], "probe": report}, ensure_ascii=False))
     return 0
@@ -601,7 +832,11 @@ def command_verify(args: argparse.Namespace) -> int:
         raise BuildError(f"paquet altéré : {problems[0] if problems else PR.RUNTIME_MANIFEST + ' absent'}")
     if problems:
         raise BuildError("paquet altéré:" + "".join(f"\n  {problem}" for problem in problems))
-    log(f"paquet intact : {manifest['package_sha256']}")
+    channel = PR.package_channel(manifest)
+    log(f"paquet intact : {manifest['package_sha256']} (canal {channel})")
+    warning = (manifest.get("product") or {}).get("channel_warning")
+    if warning:
+        log(f"AVERTISSEMENT ({channel}) : {warning}")
     return 0
 
 
@@ -710,8 +945,11 @@ def main(argv: list[str] | None = None) -> int:
     lock = sub.add_parser("lock")
     lock.add_argument("--cache", default=str(default_cache()))
     lock.add_argument("--constraints")
+    lock.add_argument("--channel", choices=CHANNELS, default=DEFAULT_CHANNEL)
     build = sub.add_parser("build")
     build.add_argument("--out", required=True)
+    build.add_argument("--channel", choices=CHANNELS, default=DEFAULT_CHANNEL,
+                       help="production (défaut, sans openWakeWord) ou internal (HD-V12-01 : mot de réveil livré)")
     build.add_argument("--cache", default=str(default_cache()))
     build.add_argument("--rev", default="HEAD")
     verify = sub.add_parser("verify")

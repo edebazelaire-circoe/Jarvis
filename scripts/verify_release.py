@@ -280,6 +280,31 @@ def product_release_findings(root: Path = ROOT) -> list[str]:
         hits = sorted(entry for entry in locked if entry == canonical or entry.startswith(canonical + "-"))
         if hits:
             found.append(f"excluded component {name} is back in packaging/windows/requirements.lock ({', '.join(hits)})")
+    found += internal_lock_findings(root)
+    return found
+
+
+def internal_lock_findings(root: Path = ROOT) -> list[str]:
+    """Build interne (HD-V12-01) : chaque roue de `requirements-internal.lock` est réservée au canal interne par la
+    politique (`channels: ["internal"]`) ; aucune ne double une roue de la production."""
+
+    windows = root / "packaging" / "windows"
+    path = windows / "requirements-internal.lock"
+    if not path.is_file():
+        return []
+    def names(text: str) -> set[str]:
+        return {re.sub(r"[-_.]+", "-", match.group(1)).lower()
+                for match in re.finditer(r"(?m)^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*==", text)}
+    internal = names(path.read_text(encoding="utf-8"))
+    production = names((windows / "requirements.lock").read_text(encoding="utf-8"))
+    try:
+        policy = json.loads((windows / "third_party_policy.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [f"packaging/windows/third_party_policy.json unreadable: {exc}"]
+    declared = {re.sub(r"[-_.]+", "-", name).lower(): entry for name, entry in (policy.get("python_packages") or {}).items()}
+    found = [f"internal wheel {name} is also in the production lock" for name in sorted(internal & production)]
+    found += [f"internal wheel {name} is not reserved to the internal channel by the policy"
+              for name in sorted(internal) if (declared.get(name) or {}).get("channels") != ["internal"]]
     return found
 
 

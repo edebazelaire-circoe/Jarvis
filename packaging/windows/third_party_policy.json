@@ -1,7 +1,26 @@
 {
   "schema": "jarvis.third-party-policy",
   "schema_version": 1,
-  "_comment": "Politique de distribution des composants tiers de l'édition presentation (docs/windows-packaging.md). Chaque roue du verrou doit avoir une entrée ; le build et tests/unit/test_windows_packaging.py refusent un trou. Les licences sont des expressions SPDX vérifiées sur les métadonnées des roues le 2026-10-26.",
+  "_comment": "Politique de distribution des composants tiers de l'édition presentation (docs/windows-packaging.md). Chaque roue des verrous du canal construit doit avoir une entrée ; le build et tests/unit/test_windows_packaging.py refusent un trou. Une entrée sans `channels` vaut pour tous les canaux ; `channels: [\"internal\"]` la réserve au build interne (HD-V12-01), `channels: [\"production\"]` sur une exclusion ne s'applique qu'à la production. Les licences sont des expressions SPDX vérifiées sur les métadonnées des roues le 2026-10-26 (base) et le 2026-10-27 (extra wakeword du build interne).",
+  "channels": {
+    "production": {
+      "default": true,
+      "description": "Build distribuable : aucun composant à licence non commerciale. Réveil vocal du produit = raccourci clavier (F9).",
+      "locks": [
+        "requirements.lock"
+      ]
+    },
+    "internal": {
+      "default": false,
+      "description": "Build de test interne : la production, plus l'extra wakeword (openWakeWord, onnxruntime et leurs dépendances) et les trois modèles du mot « hey jarvis », épinglés SHA-256 et livrés dans models/wake-word.",
+      "locks": [
+        "requirements.lock",
+        "requirements-internal.lock"
+      ],
+      "decision": "HD-V12-01",
+      "warning": "Usage interne non commercial ; à remplacer avant production (modèles openWakeWord CC BY-NC-SA 4.0, HD-V12-01)."
+    }
+  },
   "python_packages": {
     "aiofiles": {
       "license": "Apache-2.0",
@@ -48,10 +67,34 @@
       "license": "BSD-3-Clause",
       "status": "bundled"
     },
+    "cloudpickle": {
+      "license": "BSD-3-Clause",
+      "status": "bundled",
+      "channels": [
+        "internal"
+      ]
+    },
+    "colorama": {
+      "license": "BSD-3-Clause",
+      "status": "bundled",
+      "channels": [
+        "internal"
+      ],
+      "notes": "Dépendance Windows de tqdm."
+    },
     "cryptography": {
       "license": "Apache-2.0 OR BSD-3-Clause",
       "status": "bundled",
       "notes": "La roue embarque OpenSSL 3 (Apache-2.0)."
+    },
+    "flatbuffers": {
+      "license": "Apache-2.0",
+      "status": "bundled",
+      "channels": [
+        "internal"
+      ],
+      "license_text_from": "requests",
+      "notes": "La roue ne contient aucun texte de licence : le texte Apache-2.0 est repris de la roue requests (même licence), avec un NOTICE.txt qui le dit."
     },
     "frozenlist": {
       "license": "Apache-2.0",
@@ -105,6 +148,13 @@
       "license": "BSD-3-Clause",
       "status": "bundled"
     },
+    "joblib": {
+      "license": "BSD-3-Clause",
+      "status": "bundled",
+      "channels": [
+        "internal"
+      ]
+    },
     "jsonschema": {
       "license": "MIT",
       "status": "bundled"
@@ -126,6 +176,13 @@
       "license": "Apache-2.0",
       "status": "bundled"
     },
+    "narwhals": {
+      "license": "MIT",
+      "status": "bundled",
+      "channels": [
+        "internal"
+      ]
+    },
     "numpy": {
       "license": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
       "status": "bundled",
@@ -135,9 +192,36 @@
       "license": "BSD-3-Clause",
       "status": "bundled"
     },
+    "onnxruntime": {
+      "license": "MIT",
+      "status": "bundled",
+      "channels": [
+        "internal"
+      ],
+      "license_files": [
+        "onnxruntime/LICENSE",
+        "onnxruntime/ThirdPartyNotices.txt"
+      ],
+      "notes": "Moteur d'inférence d'openWakeWord. Licence et avis tiers dans le dossier du paquet (pas dans dist-info) : copiés sous licenses/python-packages/onnxruntime."
+    },
     "opentelemetry-api": {
       "license": "Apache-2.0",
       "status": "bundled"
+    },
+    "openwakeword": {
+      "license": "Apache-2.0",
+      "status": "bundled",
+      "channels": [
+        "internal"
+      ],
+      "notes": "Code Apache-2.0 ; ses modèles préentraînés sont CC BY-NC-SA 4.0 (voir `models`). Usage interne non commercial ; à remplacer avant production (modèles openWakeWord CC BY-NC-SA 4.0, HD-V12-01)."
+    },
+    "packaging": {
+      "license": "Apache-2.0 OR BSD-2-Clause",
+      "status": "bundled",
+      "channels": [
+        "internal"
+      ]
     },
     "propcache": {
       "license": "Apache-2.0",
@@ -217,6 +301,21 @@
       "license": "MIT",
       "status": "bundled"
     },
+    "scikit-learn": {
+      "license": "BSD-3-Clause",
+      "status": "bundled",
+      "channels": [
+        "internal"
+      ]
+    },
+    "scipy": {
+      "license": "BSD-3-Clause",
+      "status": "bundled",
+      "channels": [
+        "internal"
+      ],
+      "notes": "La roue Windows embarque OpenBLAS (BSD-3-Clause) et la bibliothèque d'exécution GCC/gfortran (GPL-3.0 avec GCC Runtime Library Exception) : textes dans licenses/python-packages/scipy."
+    },
     "six": {
       "license": "MIT",
       "status": "bundled"
@@ -233,6 +332,21 @@
     "starlette": {
       "license": "BSD-3-Clause",
       "status": "bundled"
+    },
+    "threadpoolctl": {
+      "license": "BSD-3-Clause",
+      "status": "bundled",
+      "channels": [
+        "internal"
+      ]
+    },
+    "tqdm": {
+      "license": "MPL-2.0 AND MIT",
+      "status": "bundled",
+      "channels": [
+        "internal"
+      ],
+      "notes": "MPL-2.0 (copyleft au niveau du fichier) : livré non modifié, source sur PyPI."
     },
     "types-protobuf": {
       "license": "Apache-2.0",
@@ -268,24 +382,49 @@
       "status": "bundled"
     }
   },
+  "models": {
+    "openwakeword-models": {
+      "license": "CC-BY-NC-SA-4.0",
+      "status": "bundled",
+      "channels": [
+        "internal"
+      ],
+      "catalog": "jarvis/adapters/wakeword_model_catalog.py",
+      "destination": "models/wake-word",
+      "warning": "Usage interne non commercial ; à remplacer avant production (modèles openWakeWord CC BY-NC-SA 4.0, HD-V12-01).",
+      "notes": "melspectrogram.onnx, embedding_model.onnx, hey_jarvis_v0.1.onnx de la publication openWakeWord v0.5.1 (David Scripka), taille et SHA-256 épinglés par le catalogue ; jamais téléchargés au premier lancement. Avis d'attribution et de licence : licenses/openwakeword-models/NOTICE.txt."
+    }
+  },
   "excluded": [
     {
       "id": "openwakeword",
       "kind": "python-package",
-      "reason": "Modèles pré-entraînés (hey_jarvis, melspectrogram, embedding) sous CC BY-NC-SA 4.0 : non commercial. Mot d'éveil du produit = raccourci clavier (F9) tant que la décision HV-PACKAGE-04 n'est pas prise.",
-      "decision": "HV-PACKAGE-04"
+      "reason": "Modèles pré-entraînés (hey_jarvis, melspectrogram, embedding) sous CC BY-NC-SA 4.0 : non commercial. Exclu du build de PRODUCTION (réveil = F9) ; livré par le build interne seulement (HD-V12-01), et à remplacer par une autre technologie avant toute mise en production.",
+      "decision": "HV-PACKAGE-04",
+      "channel_decision": "HD-V12-01",
+      "channels": [
+        "production"
+      ]
     },
     {
       "id": "onnxruntime",
       "kind": "python-package",
       "reason": "Tiré seulement par openwakeword (extra wakeword).",
-      "decision": "HV-PACKAGE-04"
+      "decision": "HV-PACKAGE-04",
+      "channel_decision": "HD-V12-01",
+      "channels": [
+        "production"
+      ]
     },
     {
       "id": "openwakeword-models",
       "kind": "model",
-      "reason": "CC BY-NC-SA 4.0 ; jamais livrés ni téléchargés par le paquet (le catalogue reste du code de développement).",
-      "decision": "HV-PACKAGE-04"
+      "reason": "CC BY-NC-SA 4.0 ; jamais livrés ni téléchargés par un paquet de production. Le build interne les livre (section `models`).",
+      "decision": "HV-PACKAGE-04",
+      "channel_decision": "HD-V12-01",
+      "channels": [
+        "production"
+      ]
     },
     {
       "id": "imageio-ffmpeg",
