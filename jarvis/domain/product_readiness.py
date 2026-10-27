@@ -309,6 +309,14 @@ def _render_item(facts: ReadinessFacts) -> ReadinessItem:
     view = facts.render.value or {}
     status = str(view.get("status") or "")
     cause = " ".join(str(part) for part in (view.get("last_error_code"), view.get("last_error_detail")) if part) or None
+    missing = _render_runtime_problems(facts)
+    if missing and status not in ("installing", "uninstalling", "starting", "stopping"):
+        # QA runtime m2 : « Prêt » alors que le Node privé manquait. La capacité ne peut pas tourner sans lui, et
+        # la réparer ne le remet pas : seule une réinstallation de JARVIS le fait.
+        return ReadinessItem("render", ItemGroup.ESSENTIALS, label, True, ReadinessState.ACTION_NEEDED,
+                             "Un composant du moteur de rendu manque. Relancez l'installation de JARVIS pour le "
+                             "remettre : vos présentations sont conservées.", missing,
+                             (ReadinessAction(ActionId.VERIFY_INSTALLATION, primary=False),))
     if status in ("ready", "running"):
         if view.get("update_required"):
             return ReadinessItem("render", ItemGroup.ESSENTIALS, label, True, ReadinessState.ACTION_NEEDED,
@@ -321,8 +329,10 @@ def _render_item(facts: ReadinessFacts) -> ReadinessItem:
                              "À préparer une fois (une à deux minutes, connexion Internet nécessaire).", None,
                              (ReadinessAction(ActionId.RENDER_INSTALL),))
     if status in ("installing", "uninstalling", "starting", "stopping"):
+        # Aucun mot brut (« installing ») : la ligne dit ce qui se passe (QA runtime m1).
         return ReadinessItem("render", ItemGroup.ESSENTIALS, label, True, ReadinessState.IN_PROGRESS,
-                             "Le moteur de rendu se prépare.", status, (ReadinessAction(ActionId.RECHECK, False),))
+                             _RENDER_BUSY_SENTENCE.get(status, "Le moteur de rendu se prépare."), None,
+                             (ReadinessAction(ActionId.RECHECK, False),))
     if status == "disabled":
         return ReadinessItem("render", ItemGroup.ESSENTIALS, label, True, ReadinessState.ACTION_NEEDED,
                              "Le moteur de rendu a été désactivé.", None, (ReadinessAction(ActionId.RENDER_ENABLE),))
@@ -330,6 +340,28 @@ def _render_item(facts: ReadinessFacts) -> ReadinessItem:
     return ReadinessItem("render", ItemGroup.ESSENTIALS, label, True, ReadinessState.ACTION_NEEDED,
                          _render_failure_sentence(view.get("last_error_code")), cause or status,
                          (ReadinessAction(ActionId.RENDER_REPAIR),))
+
+
+_RENDER_BUSY_SENTENCE = {
+    "installing": "Le moteur de rendu se prépare (une à deux minutes, connexion Internet nécessaire).",
+    "uninstalling": "Le moteur de rendu est en cours de retrait.",
+    "starting": "Le moteur de rendu démarre.",
+    "stopping": "Le moteur de rendu s'arrête.",
+}
+#: Composants livrés dont le moteur de rendu dépend (`runtimes` de `/v1/health`, Slice 06).
+_RENDER_COMPONENTS = frozenset({"node"})
+
+
+def _render_runtime_problems(facts: ReadinessFacts) -> str | None:
+    """`node: private_runtime_missing`… si un composant livré dont dépend le rendu manque (produit installé)."""
+
+    if not facts.installed or not facts.core.ok:
+        return None
+    block = ((facts.core.value or {}).get("installation") or {}).get("runtimes")
+    problems = block.get("problems") if isinstance(block, Mapping) else None
+    found = [f"{p.get('component')}: {p.get('code')}" for p in problems or []
+             if isinstance(p, Mapping) and p.get("component") in _RENDER_COMPONENTS]
+    return ", ".join(found) or None
 
 
 def _render_failure_sentence(code: object) -> str:

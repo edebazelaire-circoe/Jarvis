@@ -238,3 +238,101 @@ def test_voice_can_be_left_out(monkeypatch, value, tmp_path):
     built = L.plan_from_environment({"JARVIS_LAUNCH_VOICE": value, "JARVIS_UI_PORT": "40654", "JARVIS_OPEN_BROWSER": "0"})
     assert [role.name for role in built.roles] == ["core", "ui"] and built.open_browser is False
     assert built.ui_url == "http://127.0.0.1:40654/"
+
+
+class CleanProcess(FakeProcess):
+    """Un rôle qui lit la demande d'arrêt propre (`JARVIS_STOP_REQUEST_FILE`) et sort de lui-même."""
+
+    def poll(self):
+        stop = ((getattr(self, "kwargs", {}) or {}).get("env") or {}).get("JARVIS_STOP_REQUEST_FILE")
+        if self.returncode is None and stop and Path(stop).exists():
+            self.returncode = 0
+        return super().poll()
+
+
+def test_quit_asks_core_and_control_center_to_stop_cleanly_before_any_terminate(tmp_path):
+    """Revue m6 : « Quitter JARVIS » était un `TerminateProcess` immédiat de Core et du Control Center."""
+
+    instance, spawned, notices, _ = launcher(tmp_path, stop_after=2.0)
+    original = instance.spawn
+
+    def spawn(argv, **kwargs):
+        process = original(argv, **kwargs)
+        if argv[-1] in ("core", "control-center"):
+            process.__class__ = CleanProcess
+        return process
+
+    instance.spawn = spawn
+    assert instance.run() == 0 and notices == []
+    by_role = {p.argv[-1]: p for p in spawned}
+    assert by_role["core"].kwargs["env"]["JARVIS_STOP_REQUEST_FILE"].endswith("stop-core.request")
+    assert by_role["control-center"].kwargs["env"]["JARVIS_STOP_REQUEST_FILE"].endswith("stop-ui.request")
+    assert "JARVIS_STOP_REQUEST_FILE" not in by_role["voice"].kwargs["env"]
+    assert not by_role["core"].terminated and not by_role["control-center"].terminated
+    assert by_role["voice"].terminated  # la Voix ne lit pas la demande : arrêtée comme avant
+    clean = [row["data"]["role"] for row in events(tmp_path) if row["kind"] == "child_stopped_cleanly"]
+    assert clean == ["ui", "core"]
+    assert not list((tmp_path / "runtime").glob("stop-*.request"))
+
+
+def test_a_role_that_ignores_the_stop_request_is_terminated_after_the_grace_delay(tmp_path):
+    instance, spawned, notices, _ = launcher(tmp_path, stop_after=2.0, voice=False)
+    assert instance.run() == 0
+    assert all(p.terminated for p in spawned)
+    timeouts = [row for row in events(tmp_path) if row["kind"] == "child_stop_timeout"]
+    assert [row["data"]["role"] for row in timeouts] == ["ui", "core"] and timeouts[0]["level"] == "warning"
+
+
+def test_a_stale_stop_request_never_stops_the_next_launch(tmp_path):
+    instance, spawned, _notices, _ = launcher(tmp_path, stop_after=2.0, voice=False)
+    (tmp_path / "runtime" / "stop-core.request").write_text("old", encoding="utf-8")
+    instance.start_role(instance.plan.roles[0])
+    assert not (tmp_path / "runtime" / "stop-core.request").exists()
+
+
+def test_launch_refuses_a_development_checkout_instead_of_using_its_ports(tmp_path, monkeypatch):
+    """Revue m5 / QA runtime m4 : sans marqueur, `launch` démarrait sur les ports du JARVIS de développement."""
+
+    from jarvis.installation import Installation, InstallMode
+
+    monkeypatch.setattr(L.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(L, "detect_installation", lambda environ=None: Installation(InstallMode.DEVELOPMENT, tmp_path))
+    monkeypatch.setattr(L, "plan_from_environment", lambda environ=None: pytest.fail("no plan without a marker"))
+    notices = []
+    assert L.main(notify=lambda title, text: notices.append(text)) == 1
+    assert "n'est pas un JARVIS installé" in notices[0] and "menu Démarrer" in notices[0]
+    row = json.loads((tmp_path / L.FALLBACK_LOG).read_text(encoding="utf-8").splitlines()[-1])
+    assert row["code"] == "not_installed_product"
+
+
+def test_run_until_stop_requested_returns_on_the_request_and_cancels_the_main_wait(tmp_path):
+    import asyncio
+
+    from jarvis.runtime.stop_request import run_until_stop_requested
+
+    stop = tmp_path / "stop.request"
+    cancelled = []
+
+    async def forever():
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+
+    async def scenario():
+        asyncio.get_running_loop().call_later(0.1, lambda: stop.write_text("now", encoding="utf-8"))
+        return await run_until_stop_requested(forever(), stop, poll_s=0.02)
+
+    assert asyncio.run(scenario()) is True and cancelled == [True]
+
+    async def finishes():
+        return 7
+
+    assert asyncio.run(run_until_stop_requested(finishes(), stop.with_name("never"), poll_s=0.02)) is False
+
+    async def fails():
+        raise RuntimeError("core died")
+
+    with pytest.raises(RuntimeError, match="core died"):
+        asyncio.run(run_until_stop_requested(fails(), None))

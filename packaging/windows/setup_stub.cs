@@ -7,8 +7,11 @@
 // PAQUET faire l'installation (`python -B -m jarvis.product_setup install`), dont elle lit la progression et l'issue.
 //
 // Ligne de commande (déploiement silencieux, CI, essais en dossiers simulés) :
-//   /S | --silent        aucune fenêtre ; code de sortie 0 = installé
-//   --target DIR         dossier d'installation (défaut %LOCALAPPDATA%\Programs\CIRCOE\Jarvis)
+//   /S | --silent        aucune fenêtre, aucune boîte ; code de sortie 0 = installé, 1 = échec (issue dans --result et
+//                        --log), 2 = argument refusé (écrit dans --log, sinon %TEMP%\jarvis-setup-error.log),
+//                        3 = installé mais JARVIS n'a pas pu être ouvert (--launch)
+//   --target DIR         dossier d'installation (défaut %LOCALAPPDATA%\Programs\CIRCOE\Jarvis, LOCALAPPDATA lu dans
+//                        l'environnement d'abord : un essai qui le redirige ne vise jamais le vrai profil)
 //   --start-menu DIR, --desktop DIR, --no-desktop, --registry-file FILE, --result FILE, --log FILE
 //                        transmis à product_setup (cibles injectables : jamais le vrai registre dans un essai)
 //   --launch             ouvre JARVIS à la fin (mode silencieux)
@@ -77,26 +80,60 @@ namespace Circoe.Jarvis.Setup
                 else if (a == "--no-desktop") o.Passthrough.Add(a);
                 else if ((a == "--target" || a == "--log" || a == "--result" || a == "--start-menu" || a == "--desktop" || a == "--registry-file") && i + 1 < args.Length)
                 {
-                    string v = args[++i];
-                    if (a == "--target") o.Target = Path.GetFullPath(v);
-                    else if (a == "--log") o.LogFile = Path.GetFullPath(v);
-                    else if (a == "--result") o.ResultFile = Path.GetFullPath(v);
-                    else { o.Passthrough.Add(a); o.Passthrough.Add(Path.GetFullPath(v)); }
+                    string v = Full(args[++i]);
+                    if (a == "--target") o.Target = v;
+                    else if (a == "--log") o.LogFile = v;
+                    else if (a == "--result") o.ResultFile = v;
+                    else { o.Passthrough.Add(a); o.Passthrough.Add(v); }
                 }
                 else throw new ArgumentException("argument inconnu : " + a);
             }
-            if (o.Target == null)
-            {
-                string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                o.Target = Path.Combine(local, "Programs", "CIRCOE", "Jarvis");
-            }
+            if (o.Target == null) o.Target = DefaultTarget();
             return o;
+        }
+
+        // Chemin complet SANS séparateur final (`D:\Apps\Jarvis\` → `D:\Apps\Jarvis`) : une barre oblique inverse finale
+        // avalait le guillemet fermant de la ligne de commande de Python (revue m2). Une racine (`D:\`) reste telle quelle.
+        public static string Full(string value)
+        {
+            string full = Path.GetFullPath(value);
+            string root = Path.GetPathRoot(full) ?? "";
+            while (full.Length > root.Length && (full.EndsWith("\\") || full.EndsWith("/"))) full = full.Substring(0, full.Length - 1);
+            return full;
+        }
+
+        // `%LOCALAPPDATA%` de l'environnement d'abord (essais en dossiers simulés, QA runtime m3), sinon le dossier connu de
+        // Windows : même règle que `product_setup.default_target`.
+        public static string DefaultTarget()
+        {
+            string local = Environment.GetEnvironmentVariable("LOCALAPPDATA");
+            if (string.IsNullOrWhiteSpace(local) || !Path.IsPathRooted(local))
+                local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            return Path.Combine(local, "Programs", "CIRCOE", "Jarvis");
+        }
+
+        // Mode silencieux demandé ? Lu AVANT l'analyse : un argument refusé en `/S` ne doit jamais ouvrir de boîte.
+        public static bool WantsSilent(string[] args)
+        {
+            foreach (string a in args) if (a == "/S" || a == "--silent") return true;
+            return false;
+        }
+
+        // `--log` tel que donné (même si un autre argument est refusé), pour y écrire le refus.
+        public static string LogFileOf(string[] args)
+        {
+            for (int i = 0; i + 1 < args.Length; i++)
+                if (args[i] == "--log") { try { return Path.GetFullPath(args[i + 1]); } catch (Exception) { return null; } }
+            return null;
         }
     }
 
     sealed class Outcome
     {
         public bool Ok; public string Message; public string Detail; public string Target; public string Mode;
+        // Vrai quand l'issue vient de `product_setup` (son message dit ce qui est vrai après coup : retour arrière fait
+        // ou non) ; faux quand l'amorce a échoué elle-même.
+        public bool FromSetup;
     }
 
     sealed class Installer
@@ -152,7 +189,22 @@ namespace Circoe.Jarvis.Setup
             }
         }
 
-        static string Quote(string value) { return "\"" + value.Replace("\"", "") + "\""; }
+        // Un argument cité selon les règles de `CommandLineToArgvW` (celles du Python lancé) : les barres obliques inverses
+        // qui précèdent un guillemet, ou la fin, sont doublées ; un guillemet intérieur (jamais dans un chemin Windows)
+        // est retiré. Revue m2 : `"D:\Apps\Jarvis\"` avalait les arguments suivants.
+        public static string Quote(string value)
+        {
+            string v = value.Replace("\"", "");
+            var sb = new StringBuilder("\"");
+            int slashes = 0;
+            foreach (char c in v)
+            {
+                if (c == '\\') { slashes++; continue; }
+                sb.Append('\\', slashes); slashes = 0; sb.Append(c);
+            }
+            sb.Append('\\', slashes * 2);
+            return sb.Append('"').ToString();
+        }
 
         string LastProgress(string path)
         {
@@ -185,6 +237,7 @@ namespace Circoe.Jarvis.Setup
             string package = Path.Combine(work, "package");
             string progress = Path.Combine(work, "progress.jsonl");
             string result = options.ResultFile ?? Path.Combine(work, "result.json");
+            bool pythonStarted = false;
             try
             {
                 Directory.CreateDirectory(package);
@@ -206,6 +259,7 @@ namespace Circoe.Jarvis.Setup
                 DataReceivedEventHandler keep = (s, e) => { if (e.Data == null) return; lock (tail) { tail.Enqueue(e.Data); while (tail.Count > 40) tail.Dequeue(); } };
                 using (var process = Process.Start(start))
                 {
+                    pythonStarted = true;
                     process.OutputDataReceived += keep; process.ErrorDataReceived += keep;
                     process.BeginOutputReadLine(); process.BeginErrorReadLine();
                     while (!process.WaitForExit(400))
@@ -224,7 +278,10 @@ namespace Circoe.Jarvis.Setup
             catch (Exception exc)
             {
                 Log("ÉCHEC " + exc);
-                Result = new Outcome { Ok = false, Message = "L'installation a échoué.", Detail = exc.GetType().Name + ": " + exc.Message };
+                // Avant Python, rien n'a touché au dossier de JARVIS (extraction à côté, dans un dossier de travail).
+                Result = new Outcome { Ok = false, Detail = exc.GetType().Name + ": " + exc.Message,
+                                       Message = pythonStarted ? "L'installation s'est interrompue. Relancez-la : elle reprend ou répare JARVIS si besoin."
+                                                               : "L'installation a échoué avant de toucher au dossier de JARVIS : rien n'y a été modifié." };
             }
             finally
             {
@@ -236,12 +293,13 @@ namespace Circoe.Jarvis.Setup
 
         static Outcome ReadResult(string path)
         {
-            if (!File.Exists(path)) return new Outcome { Ok = false, Message = "L'installation s'est arrêtée sans rendre son issue." };
+            if (!File.Exists(path))
+                return new Outcome { Ok = false, Message = "L'installation s'est arrêtée sans rendre son issue. Relancez-la : elle reprend ou répare JARVIS si besoin." };
             var row = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(path, Encoding.UTF8));
             Func<string, string> text = key => { object v; return row.TryGetValue(key, out v) && v != null ? v.ToString() : null; };
             object ok;
             return new Outcome { Ok = row.TryGetValue("ok", out ok) && ok is bool && (bool)ok, Message = text("message"),
-                                 Detail = text("detail") ?? text("code"), Target = text("target"), Mode = text("mode") };
+                                 Detail = text("detail") ?? text("code"), Target = text("target"), Mode = text("mode"), FromSetup = true };
         }
 
         public static void LaunchJarvis(string target)
@@ -307,7 +365,9 @@ namespace Circoe.Jarvis.Setup
             else
             {
                 title.Text = "L'installation n'a pas abouti";
-                body.Text = (r != null && r.Message != null ? r.Message : "Erreur inconnue.") + "\n\nRien n'a été effacé : une installation précédente reste en place.";
+                // Le message de `product_setup` dit lui-même ce qui est vrai après coup (ancienne version remise en place,
+                // rien d'installé, ou retour arrière impossible) : aucune phrase ajoutée ici (revue m9).
+                body.Text = r != null && r.Message != null ? r.Message : "L'installation s'est arrêtée sans rendre son issue. Relancez-la : elle reprend ou répare JARVIS si besoin.";
                 status.Text = r != null && r.Detail != null ? "Détail : " + (r.Detail.Length > 160 ? r.Detail.Substring(0, 160) + "…" : r.Detail) : "";
                 primary.Text = "Fermer";
             }
@@ -334,18 +394,39 @@ namespace Circoe.Jarvis.Setup
         {
             Options options;
             try { options = Options.Parse(args); }
-            catch (ArgumentException exc) { MessageBox.Show(exc.Message, "JARVIS", MessageBoxButtons.OK, MessageBoxIcon.Error); return 2; }
+            catch (ArgumentException exc)
+            {
+                if (!Options.WantsSilent(args)) { MessageBox.Show(exc.Message, "JARVIS", MessageBoxButtons.OK, MessageBoxIcon.Error); return 2; }
+                // Silencieux (déploiement, CI) : jamais de boîte qui bloquerait sans personne pour la fermer (QA runtime m3).
+                Refuse(Options.LogFileOf(args), "argument refusé : " + exc.Message);
+                return 2;
+            }
             if (options.Silent)
             {
                 var installer = new Installer(options);
                 installer.Run();
-                if (installer.Result != null && installer.Result.Ok && options.Launch) Installer.LaunchJarvis(installer.Result.Target ?? options.Target);
-                return installer.Result != null && installer.Result.Ok ? 0 : 1;
+                bool ok = installer.Result != null && installer.Result.Ok;
+                if (ok && options.Launch)
+                {
+                    // Installé, mais l'ouverture peut échouer : dit et journalisé, jamais un plantage muet (revue m8).
+                    try { Installer.LaunchJarvis(installer.Result.Target ?? options.Target); }
+                    catch (Exception exc) { Refuse(options.LogFile, "JARVIS est installé mais n'a pas pu être ouvert : " + exc.GetType().Name + ": " + exc.Message); return 3; }
+                }
+                return ok ? 0 : 1;
             }
             try { SetProcessDPIAware(); } catch (Exception) { }
             Application.EnableVisualStyles();
             Application.Run(new SetupForm(options));
             return 0;
+        }
+
+        // Refus en mode silencieux : `--log` s'il est donné, sinon `%TEMP%\jarvis-setup-error.log`, et la sortie d'erreur.
+        static void Refuse(string logFile, string line)
+        {
+            string path = logFile ?? Path.Combine(Path.GetTempPath(), "jarvis-setup-error.log");
+            try { File.AppendAllText(path, DateTime.UtcNow.ToString("o") + " " + line + Environment.NewLine, Encoding.UTF8); }
+            catch (Exception) { }
+            try { Console.Error.WriteLine(line); } catch (Exception) { }
         }
     }
 }

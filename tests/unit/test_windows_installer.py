@@ -86,6 +86,85 @@ def test_the_installer_is_stub_plus_zip_plus_trailer_and_extracts_for_real(tmp_p
     assert not (tmp_path / "hive.json").exists()
 
 
+ECHO_SOURCE = """using System; using System.IO;
+class Echo { static int Main(string[] args) {
+  File.WriteAllLines(Environment.GetEnvironmentVariable("JV_ECHO_OUT"), args); return 0; } }
+"""
+
+
+def compile_echo(folder: Path) -> Path:
+    """Un « python.exe » qui écrit les arguments reçus (un par ligne) : ce que Python verrait dans `sys.argv`."""
+
+    source, exe = folder / "echo.cs", folder / "echo.exe"
+    folder.mkdir(parents=True, exist_ok=True)
+    source.write_text(ECHO_SOURCE, encoding="utf-8")
+    subprocess.run([str(B.find_csc()), "/nologo", "/target:exe", f"/out:{exe}", str(source)], check=True,
+                   capture_output=True, timeout=120)
+    return exe
+
+
+def build_installer(package: Path, out: Path) -> Path:
+    assert B.command_installer(type("A", (), {"package": str(package), "out": str(out)})()) == 0
+    return out
+
+
+@pytest.mark.skipif(not csc_available(), reason="compilateur C# du .NET Framework absent")
+def test_the_stub_passes_a_target_with_a_trailing_backslash_intact_to_python(tmp_path):
+    """Revue m2 / sonde P4 : `"D:\\Apps\\Jarvis\\"` avalait `--progress … --result …` dans un seul argument."""
+
+    echo = compile_echo(tmp_path / "echo")
+    setup = build_installer(make_package(tmp_path / "pkg", python_exe=echo.read_bytes()), tmp_path / "out" / "setup.exe")
+    target = tmp_path / "Programs with space" / "CIRCOE" / "Jarvis"
+    seen = tmp_path / "argv.txt"
+    done = subprocess.run([str(setup), "/S", "--target", str(target) + "\\", "--registry-file", str(tmp_path / "hive.json"),
+                           "--start-menu", str(tmp_path / "Start Menu") + "\\", "--no-desktop", "--log", str(tmp_path / "s.log")],
+                          env={**os.environ, "JV_ECHO_OUT": str(seen)}, timeout=120)
+    assert done.returncode == 1  # l'écho ne rend pas d'issue : échec dit
+    argv = seen.read_text(encoding="utf-8").splitlines()
+    assert argv[:4] == ["-B", "-m", "jarvis.product_setup", "install"]
+    pairs = dict(zip(argv[4::2], argv[5::2]))
+    assert pairs["--target"] == str(target) and pairs["--start-menu"] == str(tmp_path / "Start Menu")
+    assert pairs["--progress"].endswith("progress.jsonl") and pairs["--result"].endswith("result.json")
+    assert "--no-desktop" in argv and "--registry-file" in pairs
+
+
+@pytest.mark.skipif(not csc_available(), reason="compilateur C# du .NET Framework absent")
+def test_the_stub_refuses_a_zip_entry_that_leaves_the_extraction_folder(tmp_path):
+    """Revue m10 : `SafeEntry` (zip slip) n'était éprouvé par aucun essai."""
+
+    stub = tmp_path / "stub.exe"
+    B.compile_stub(stub)
+    payload = tmp_path / "evil.zip"
+    with zipfile.ZipFile(payload, "w") as bundle:
+        bundle.writestr("runtime-manifest.json", "{}")
+        bundle.writestr("../../escaped.txt", "pwned")
+    setup = tmp_path / "out" / "setup.exe"
+    setup.parent.mkdir()
+    offset, length = stub.stat().st_size, payload.stat().st_size
+    setup.write_bytes(stub.read_bytes() + payload.read_bytes() + B.SETUP_MAGIC + offset.to_bytes(8, "little")
+                      + length.to_bytes(8, "little"))
+    target = tmp_path / "Programs" / "CIRCOE" / "Jarvis"
+    log = tmp_path / "setup.log"
+    done = subprocess.run([str(setup), "/S", "--target", str(target), "--registry-file", str(tmp_path / "hive.json"),
+                           "--no-desktop", "--log", str(log)], timeout=120)
+    assert done.returncode == 1
+    assert "nom refusé dans le paquet : ../../escaped.txt" in log.read_text(encoding="utf-8")
+    assert not list(tmp_path.rglob("escaped.txt")) and not target.exists()
+    assert not list(target.parent.glob(".jarvis-setup-*"))
+
+
+@pytest.mark.skipif(not csc_available(), reason="compilateur C# du .NET Framework absent")
+def test_an_unknown_argument_in_silent_mode_never_opens_a_dialog(tmp_path):
+    """QA runtime m3 : `/S --bogus` ouvrait une boîte de dialogue qu'aucune personne ne fermerait (CI, déploiement)."""
+
+    stub = tmp_path / "stub.exe"
+    B.compile_stub(stub)
+    log = tmp_path / "setup.log"
+    done = subprocess.run([str(stub), "/S", "--bogus", "--log", str(log)], timeout=60, capture_output=True)
+    assert done.returncode == 2
+    assert "argument refusé : argument inconnu : --bogus" in log.read_text(encoding="utf-8")
+
+
 def test_read_trailer_refuses_a_file_without_payload(tmp_path):
     plain = tmp_path / "plain.exe"
     plain.write_bytes(b"MZ" + b"\0" * 100)

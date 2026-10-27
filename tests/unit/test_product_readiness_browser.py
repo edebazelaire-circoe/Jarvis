@@ -60,7 +60,8 @@ def test_first_launch_opens_the_preparation_runs_a_named_repair_and_starts_on_a_
             "readinessActions": {
                 "brain_sign_in": {"answer": {"status": "started", "message": "Terminez la connexion dans la fenêtre de Claude."},
                                   "next": halfway},
-                "render_install": {"delayMs": 2300, "answer": {"status": "started", "message": "Moteur de rendu : installing"},
+                "render_install": {"delayMs": 2300, "answer": {"status": "started",
+                                                               "message": "Préparation du moteur de rendu lancée : une à deux minutes."},
                                    "next": ready}}}
     actions = [
         ["eval", "settle", "1", 1600],
@@ -106,12 +107,15 @@ def test_first_launch_opens_the_preparation_runs_a_named_repair_and_starts_on_a_
 def test_a_refused_action_says_its_cause_in_the_line_and_escape_gives_focus_back(tmp_path):
     seed = {"edition": PRESENTATION, "rail": False, "boards": _boards(("default", "Pitch", "presentation")),
             "readiness": report(render=Probe({"status": "install_failed", "last_error_code": "local_capability_install_offline"})),
-            "readinessActions": {"render_repair": {"status": 503, "answer": {"code": "core_unreachable",
-                                                                             "message": "Core is unreachable: ConnectionRefusedError"}}}}
+            "readinessActions": {"render_repair": {"status": 503, "answer": {
+                "code": "core_unreachable", "detail": "Core is unreachable: ConnectionRefusedError",
+                "message": "Le moteur de JARVIS ne répond pas. Il redémarre en général seul ; sinon, quittez puis relancez JARVIS."}}}}
+    detail = "(document.querySelector('#jvReadiness li[data-item=render] .rd-said + details code')||{}).textContent||null"
     actions = [
         ["eval", "settle", "1", 1600],
         ["click", "repair", '#jvReadiness li[data-item=render] button[data-action=render_repair]', 700],
         ["eval", "refused", DIALOG, 50],
+        ["eval", "detail", detail, 50],
         *_shot("after-refused-repair-1440x900"),
         ["key", "esc", "Escape", 300],
         ["eval", "closed", "document.getElementById('jvReadiness').hidden", 50],
@@ -119,7 +123,10 @@ def test_a_refused_action_says_its_cause_in_the_line_and_escape_gives_focus_back
     step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed, "actions": actions}], "presentation")[0]
     r = step["results"]
     row = r["refused"]["rows"]["render"]
-    assert row["role"] == "alert" and "core_unreachable" in row["said"] and "ConnectionRefusedError" in row["said"]
+    # Revue m3 : la phrase du produit dans la ligne, le code et la cause technique sous « Détails ».
+    assert row["role"] == "alert" and row["said"].startswith("Le moteur de JARVIS ne répond pas")
+    assert "core_unreachable" not in row["said"] and "Error" not in row["said"]
+    assert r["detail"] == "core_unreachable : Core is unreachable: ConnectionRefusedError"
     assert "Internet" in r["refused"]["text"]
     assert r["closed"] is True
 
@@ -184,3 +191,81 @@ def test_full_edition_never_reads_nor_opens_the_preparation(tmp_path):
     step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed, "actions": actions}], "full")[0]
     assert step["results"]["opened"] is False
     assert not [call for call in step["calls"] if "/api/product/" in call]
+
+
+def _with_running(payload: dict, running: dict) -> dict:
+    return {**payload, "running_elapsed_s": running}
+
+
+def test_a_render_that_keeps_running_shows_a_live_counter_then_ready_and_a_coherent_footer(tmp_path):
+    """QA runtime m1 : pendant un vrai rendu, aucun compteur après la réponse, mot brut « installing », ligne figée,
+    et un pied « terminez d'abord… » à côté d'un « Commencer » actif."""
+
+    from jarvis.domain.product_readiness import ActionId
+
+    busy = report(render=Probe({"status": "installing"}))
+    busy_running = _with_running(R.report_payload(facts(render=Probe({"status": "installing"}),
+                                                        running={ActionId.RENDER_INSTALL.value: 5.0}),
+                                                  checked_at="2026-10-26T10:11:12+00:00", onboarding={"completed": False},
+                                                  launcher={"managed": True}), {"render_install": 5.0})
+    seed = {"edition": PRESENTATION, "rail": False, "boards": _boards(("default", "Pitch", "presentation")),
+            "readiness": report(render=Probe({"status": "not_installed"})),
+            "readinessActions": {"render_install": {"answer": {"status": "started",
+                                                               "message": "Préparation du moteur de rendu lancée : une à deux minutes."},
+                                                    "next": busy_running}}}
+    row = "(document.querySelector('#jvReadiness li[data-item=render]')||{}).textContent||''"
+    actions = [
+        ["eval", "settle", "1", 1600],
+        ["click", "start_too_early", "#jvReadiness .rd-start", 200],
+        ["eval", "hint", "document.querySelector('#jvReadiness .rd-status').textContent", 50],
+        ["click", "prepare", '#jvReadiness li[data-item=render] button[data-action=render_install]', 200],
+        ["eval", "first", row, 2400],
+        ["eval", "later", row, 50],
+        ["eval", "ready", f"window.__sc.readiness={json.dumps(report())},1", 3600],
+        ["eval", "after", DIALOG, 50],
+    ]
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed, "actions": actions}], "presentation")[0]
+    _no_errors(step)
+    r = step["results"]
+    assert "Terminez d’abord" in r["hint"]
+    assert "En cours depuis" in r["first"] and "installing" not in r["first"]
+    first = int(r["first"].split("En cours depuis ")[1].split(" s")[0])
+    later = int(r["later"].split("En cours depuis ")[1].split(" s")[0])
+    # Pas de relecture entre les deux (relecture toutes les 3 s) : le compteur avance seul.
+    assert first >= 5 and later >= first + 1, (r["first"], r["later"])
+    after = r["after"]
+    assert after["rows"]["render"]["state"] == "ready" and after["rows"]["render"]["said"] is None
+    assert after["start"] is None and "Terminez" not in after["status"]
+    assert busy["ready"] is False
+
+
+def test_a_page_blocked_by_the_browser_is_offered_as_a_link(tmp_path):
+    """Revue m4 : `window.open` après un `await` pouvait être bloqué en silence."""
+
+    from jarvis.domain.product_readiness import ActionId  # noqa: F401 - documents the action under test
+
+    seed = {"edition": PRESENTATION, "rail": False, "boards": _boards(("default", "Pitch", "presentation")),
+            "readiness": report(brain=BrainFacts(found=False, error="claude_cli_not_found: x")),
+            "readinessActions": {"brain_install_guide": {"answer": {
+                "status": "open", "url": "https://code.claude.com/docs/en/setup",
+                "message": "Installez Claude Code depuis la page d'Anthropic, puis revenez ici et vérifiez à nouveau."}}}}
+    link = ("(a=>a?{href:a.href,target:a.target,rel:a.rel}:null)"
+            "(document.querySelector('#jvReadiness li[data-item=brain] .rd-said a'))")
+    actions = [
+        ["eval", "settle", "1", 1600],
+        ["eval", "block", "window.__opens=[];window.open=(u,t)=>{window.__opens.push(u);return null},1", 50],
+        ["click", "guide", '#jvReadiness li[data-item=brain] button[data-action=brain_install_guide]', 900],
+        ["eval", "link", link, 50],
+        ["eval", "opens", "window.__opens", 50],
+        ["eval", "reserve", "window.__w={closed:false,location:{href:''},close(){this.closed=true}};"
+                            "window.open=(u,t)=>{window.__opens.push(u);return window.__w},1", 50],
+        ["click", "again", '#jvReadiness li[data-item=brain] button[data-action=brain_install_guide]', 900],
+        ["eval", "reserved", "({href:window.__w.location.href,closed:window.__w.closed,opens:window.__opens})", 50],
+    ]
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed, "actions": actions}], "presentation")[0]
+    r = step["results"]
+    assert r["link"] == {"href": "https://code.claude.com/docs/en/setup", "target": "_blank", "rel": "noopener noreferrer"}
+    # La fenêtre est réservée AU CLIC (about:blank), avant la réponse du serveur ; bloquée, la page tente encore l'URL.
+    assert r["opens"][0] == "about:blank" and r["opens"][1] == "https://code.claude.com/docs/en/setup"
+    assert r["reserved"]["href"] == "https://code.claude.com/docs/en/setup" and r["reserved"]["closed"] is False
+    assert r["reserved"]["opens"][-1] == "about:blank"

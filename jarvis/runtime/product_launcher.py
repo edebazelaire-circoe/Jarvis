@@ -15,7 +15,13 @@ Le raccourci du menu Démarrer lance `runtime\\python\\pythonw.exe -B -m jarvis 
 5. veille : un enfant essentiel mort est relancé (au plus `MAX_RESTARTS` fois en `RESTART_WINDOW_S`), au-delà tout
    s'arrête et la cause est dite ; la Voix morte trop souvent est abandonnée sans emporter le reste ;
 6. s'arrête proprement sur « Quitter JARVIS » (fichier `runtime\\launcher-stop.request`, écrit par
-   `POST /api/product/quit`) ou Ctrl+C : Control Center et Voix d'abord, Core ensuite, puis le Job ferme le reste.
+   `POST /api/product/quit`) ou Ctrl+C : Control Center et Voix d'abord, Core ensuite. Core et le Control Center
+   reçoivent d'abord une DEMANDE d'arrêt (`runtime\\stop-<rôle>.request`, chemin donné par
+   `JARVIS_STOP_REQUEST_FILE`, `jarvis/runtime/stop_request.py`) et sortent par leur chemin normal ; passé
+   `STOP_GRACE_S`, et pour la Voix (qui ne la lit pas), `terminate` puis le Job ferme le reste.
+
+`launch` ne sert qu'au produit installé : sans marqueur (checkout de développement), il refuse
+(`not_installed_product`) au lieu de démarrer sur les ports et les données du JARVIS de développement.
 
 Variables (tests, administration) : `JARVIS_LAUNCH_VOICE=0` (pas de Voix), `JARVIS_LAUNCHER_START_TIMEOUT_S`,
 plus celles de Core et du Control Center, transmises telles quelles.
@@ -38,7 +44,8 @@ import urllib.error
 import urllib.request
 import webbrowser
 
-from jarvis.installation import Installation, detect_installation
+from jarvis.installation import Installation, InstallMode, detect_installation
+from jarvis.runtime.stop_request import STOP_REQUEST_ENV
 
 STATE_FILE = "launcher.json"
 STOP_FILE = "launcher-stop.request"
@@ -50,7 +57,11 @@ MAX_RESTARTS = 3
 RESTART_WINDOW_S = 120.0
 DEFAULT_START_TIMEOUT_S = 120.0
 POLL_S = 0.5
-STOP_GRACE_S = 10.0
+STOP_GRACE_S = 15.0
+#: Après `terminate` : délai avant `kill`.
+KILL_GRACE_S = 5.0
+#: Rôles qui lisent la demande d'arrêt propre (`stop_request.py`) ; la Voix est arrêtée par `terminate`.
+GRACEFUL_ROLES = frozenset({"core", "ui"})
 CREATE_NO_WINDOW = 0x08000000
 TITLE = "JARVIS"
 
@@ -119,7 +130,8 @@ def fallback_log(exc: BaseException) -> Path:
     try:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps({"ts": utc_now(), "kind": "launcher.refused", "level": "error",
-                                     "message": str(exc), "exception_type": type(exc).__name__},
+                                     "message": str(exc), "exception_type": type(exc).__name__,
+                                     "code": getattr(exc, "code", None)},
                                     ensure_ascii=False) + "\n")
     except OSError:
         pass  # intentional: the visible notice is the remaining channel
@@ -302,8 +314,13 @@ class Launcher:
         tree = self.tree_factory()
         flags = (getattr(tree, "creationflags", 0) or 0) | (CREATE_NO_WINDOW if os.name == "nt" else 0)
         argv = [self.plan.python, "-B", "-m", "jarvis", *role.args]
+        env = {**self.plan.env, **role.env}
+        if role.name in GRACEFUL_ROLES:
+            stop_file = self.role_stop_path(role)
+            stop_file.unlink(missing_ok=True)  # une demande d'un arrêt précédent ne doit jamais arrêter ce lancement
+            env[STOP_REQUEST_ENV] = str(stop_file)
         try:
-            process = self.spawn(argv, env={**self.plan.env, **role.env}, stdin=subprocess.DEVNULL, stdout=role.log,
+            process = self.spawn(argv, env=env, stdin=subprocess.DEVNULL, stdout=role.log,
                                  stderr=subprocess.STDOUT, creationflags=flags)
         except OSError as exc:
             raise LaunchError("child_unstartable", f"JARVIS n'a pas pu démarrer ({role.name}).",
@@ -430,20 +447,58 @@ class Launcher:
                 return
             self.sleep(0.1)
 
+    def role_stop_path(self, role: Role) -> Path:
+        return self.plan.runtime_root / f"stop-{role.name}.request"
+
+    def request_stop(self, role: Role) -> bool:
+        """Demande d'arrêt propre (Core, Control Center) ; faux si le rôle ne la lit pas ou si l'écriture échoue."""
+
+        if role.name not in GRACEFUL_ROLES:
+            return False
+        try:
+            self.role_stop_path(role).write_text(utc_now() + "\n", encoding="utf-8")
+            return True
+        except OSError as exc:
+            self.log.emit("child_stop_request_failed", f"{role.name} : demande d'arrêt non écrite ({exc})",
+                          level="warning", role=role.name)
+            return False
+
+    def stop_role(self, role: Role) -> None:
+        """Demande d'arrêt, attente bornée (`STOP_GRACE_S`), puis seulement `terminate` et `kill` (revue m6)."""
+
+        process = role.process
+        if process is None or process.poll() is not None:
+            return
+        if self.request_stop(role):
+            deadline = self.clock() + STOP_GRACE_S
+            while process.poll() is None and self.clock() < deadline:
+                self.sleep(POLL_S)
+            if process.poll() is not None:
+                self.log.emit("child_stopped_cleanly", f"{role.name} arrêté proprement (code {process.poll()})",
+                              role=role.name)
+                return
+            self.log.emit("child_stop_timeout", f"{role.name} ne s'est pas arrêté en {STOP_GRACE_S:.0f} s : arrêt forcé",
+                          level="warning", role=role.name)
+        try:
+            process.terminate()
+            process.wait(timeout=KILL_GRACE_S)
+        except subprocess.TimeoutExpired:
+            process.kill()
+        except OSError as exc:
+            self.log.emit("child_stop_failed", f"{role.name} : {exc}", level="warning", role=role.name)
+
     def stop_all(self) -> None:
         self.stopping = True
         order = [role for role in self.plan.roles if role.name != "core"] + [r for r in self.plan.roles if r.name == "core"]
         for role in order:
-            process = role.process
-            if process is not None and process.poll() is None:
-                try:
-                    process.terminate()
-                    process.wait(timeout=STOP_GRACE_S)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                except OSError as exc:
-                    self.log.emit("child_stop_failed", f"{role.name} : {exc}", level="warning", role=role.name)
+            self.stop_role(role)
             self._close_tree(role)
+            if role.name in GRACEFUL_ROLES:
+                try:
+                    self.role_stop_path(role).unlink(missing_ok=True)
+                except OSError as exc:  # the next launch deletes it before starting this role (start_role)
+                    self.log.emit("state_cleanup_failed", f"demande d'arrêt de {role.name} non effacée : {exc}",
+                                  level="warning", role=role.name)
             if role.log is not None:
                 role.log.close()
                 role.log = None
@@ -497,6 +552,13 @@ def main(*, notify: Callable[[str, str], None] = default_notify, environ: Mappin
 
     try:
         installation = detect_installation(os.environ if environ is None else environ)
+        if installation.mode is not InstallMode.INSTALLED:
+            # Revue m5 : sans marqueur, `launch` visait les ports et les données du JARVIS de développement (sur ce
+            # poste, celui de l'utilisateur : Errno 10048 en boucle). Le développement garde ses propres commandes.
+            raise LaunchError("not_installed_product",
+                              "ce dossier n'est pas un JARVIS installé (marqueur du produit absent). Ouvrez JARVIS "
+                              "depuis le menu Démarrer ; en développement, lancez « python -m jarvis core » et "
+                              "« python -m jarvis control-center ».", str(installation.code_root))
         created = ensure_home(installation)
         plan = plan_from_environment(environ)
     except Exception as exc:  # noqa: BLE001 - surfaced: visible notice + %TEMP% log, then exit 1

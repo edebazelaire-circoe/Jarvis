@@ -321,6 +321,8 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: texte et pièces jointes — toutes les méthodes gardées.
 #: Lecture de l'historique des missions (organic-agent-orchestration, Slice 05).
 MISSIONS_ROUTE = "/api/missions"
+#: Préparation, premier lancement et « Quitter JARVIS » (`product_readiness.ProductReadinessRoutes`).
+PRODUCT_ROUTE_PREFIX = "/api/product"
 #: Work Methods, candidats appris et promotion (organic-agent-orchestration, Slice 12) : toutes les méthodes gardées
 #: comme l'historique des missions dont les candidats sont tirés.
 WORK_METHODS_ROUTE = "/api/work-methods"
@@ -332,7 +334,10 @@ READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_RO
                        # Historique des missions (Slice 05) : objectifs et libellés viennent des demandes de l'utilisateur.
                        MISSIONS_ROUTE, WORK_METHODS_ROUTE,
                        # Export explicite vers Documents\Jarvis (presentation-edition-v1 Slice 03) : écrit chez l'utilisateur.
-                       *EXPORT_GUARDED_PREFIXES)
+                       *EXPORT_GUARDED_PREFIXES,
+                       # Préparation de JARVIS (Slice 07) : version de la CLI, méthode de connexion, comptes, lanceur ;
+                       # rien à lire pour une page étrangère (DNS rebinding, O1 de la revue de la Slice 07).
+                       PRODUCT_ROUTE_PREFIX)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après

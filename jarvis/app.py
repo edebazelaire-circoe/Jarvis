@@ -942,7 +942,11 @@ async def _run_core_v2() -> int:
         if tool_brain is not None:
             tool_brain[0].start(); tool_brain[1].start()
         print(f"Jarvis Core v0.2 ready on http://{settings.core_host}:{settings.core_port}")
-        await core.wait()
+        # Lancé par le lanceur du produit : « Quitter JARVIS » demande l'arrêt par fichier, et Core sort par ce
+        # `finally` (docs/product-install.md › Launcher). Sans la variable : attente comme avant.
+        from jarvis.runtime.stop_request import run_until_stop_requested, stop_request_path
+        if await run_until_stop_requested(core.wait(), stop_request_path()):
+            RuntimeJournal(settings.runtime_root).emit("core.stop_requested", "Arrêt propre demandé par le lanceur")
     finally:
         # Le backend est fermé après Core : `core.stop()` annule d'abord les
         # tâches cerveau, qui tiennent encore la session HTTP à cet instant.
@@ -1878,7 +1882,12 @@ async def _run_control_center_v2() -> int:
             webbrowser.open(url)
         else:
             journal.emit("ui.browser", "onglet non ouvert (JARVIS_OPEN_BROWSER=0)", data={"url": url, "opened": False})
-        stop = asyncio.create_task(asyncio.Event().wait(), name="jarvis-control-center-wait")
+        # Lancé par le lanceur du produit : « Quitter JARVIS » demande l'arrêt par fichier (docs/product-install.md ›
+        # Launcher) ; le `finally` ci-dessous arrête alors le Control Center proprement. Sinon : attente sans fin.
+        from jarvis.runtime.stop_request import stop_request_path, wait_for_stop_request
+        stop_file = stop_request_path()
+        stop = asyncio.create_task(wait_for_stop_request(stop_file) if stop_file is not None else asyncio.Event().wait(),
+                                   name="jarvis-control-center-wait")
         watched = {stop}
         waiter = None
         if visualizer is not None:
@@ -1888,6 +1897,8 @@ async def _run_control_center_v2() -> int:
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
+        if stop in done and stop_file is not None:
+            journal.emit("ui.stop_requested", "Arrêt propre demandé par le lanceur")
         if waiter is not None and waiter in done and visualizer.returncode not in (None, 0):
             raise RuntimeError(f"ai-visualizer exited with code {visualizer.returncode}")
         return 0

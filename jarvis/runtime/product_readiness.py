@@ -69,21 +69,46 @@ AUDIO_CACHE_S = 60.0
 SIGN_IN_DEADLINE_S = 600.0
 CIRCOE_DISPLAY_NAME = "Compte CIRCOE (messagerie et agenda)"
 PRESENTATION_BOARD_TITLE = "Mes présentations"
+#: Statuts de la capacité `remotion` pendant lesquels Core travaille encore.
+RENDER_BUSY = frozenset({"installing", "uninstalling", "starting", "stopping"})
+RENDER_ACTIONS = frozenset({ActionId.RENDER_INSTALL.value, ActionId.RENDER_REPAIR.value, ActionId.RENDER_UPDATE.value,
+                            ActionId.RENDER_ENABLE.value})
+#: Au-delà, une préparation du moteur de rendu n'est plus comptée « en cours » (la ligne relit l'état de Core).
+RENDER_RUNNING_DEADLINE_S = 900.0
+RENDER_STARTED = {"install": "Préparation du moteur de rendu lancée : une à deux minutes.",
+                  "repair": "Réparation du moteur de rendu lancée : une à deux minutes.",
+                  "update": "Mise à jour du moteur de rendu lancée : une à deux minutes.",
+                  "enable": "Réactivation du moteur de rendu lancée."}
+RENDER_DONE = {"ready": "Moteur de rendu prêt.", "running": "Moteur de rendu prêt.",
+               "disabled": "Le moteur de rendu reste désactivé.",
+               "not_installed": "Le moteur de rendu n'est pas encore préparé."}
+#: Actions qui créent quelque chose : jamais deux à la fois (double clic, deux onglets ; O4 de la revue).
+SERIALIZED_ACTIONS = frozenset({ActionId.CONNECT_CIRCOE, ActionId.BRAIN_SIGN_IN})
+NOT_INSTALLED = "Cette action ne concerne que le JARVIS installé."
 
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _error(status: int, code: str, message: str) -> web.Response:
-    return web.json_response({"error": {"code": code, "message": message}}, status=status)
+def _error(status: int, code: str, message: str, detail: str = "") -> web.Response:
+    return web.json_response({"error": {"code": code, "message": message, "detail": detail}}, status=status)
 
 
 class ReadinessActionError(RuntimeError):
-    def __init__(self, status: int, code: str, message: str) -> None:
+    """Refus d'une action : `message` en mots de produit (montré dans la ligne), `detail` technique (sous
+    « Détails » et au journal), `code` stable (revue m3 : la ligne montrait « Core is unreachable: … »)."""
+
+    def __init__(self, status: int, code: str, message: str, detail: str = "") -> None:
         super().__init__(message)
         self.status = status
         self.code = code
+        self.detail = detail
+
+
+#: Phrase de produit d'un refus de Core relayé (le texte de Core, en anglais technique, va dans `detail`).
+CORE_REFUSED = "Le moteur de JARVIS a refusé cette action. Réessayez ; si cela recommence, quittez puis relancez JARVIS."
+CORE_UNREACHABLE = "Le moteur de JARVIS ne répond pas. Il redémarre en général seul ; sinon, quittez puis relancez JARVIS."
 
 
 class ProductReadinessService:
@@ -228,6 +253,7 @@ class ProductReadinessService:
         if export_root.ok:
             export_root = Probe(value=(export_root.value or {}).get("root"))
         now = self._monotonic()
+        self._settle_render(render, now)
         running = {key: round(now - started, 1) for key, started in self._running.items()}
         if self._signing_in():
             running[ActionId.BRAIN_SIGN_IN.value] = round(now - self._sign_in.started_at, 1)
@@ -235,6 +261,19 @@ class ProductReadinessService:
                               connectors=connectors, render=render, brain=brain, browser=self._browser(), audio=audio,
                               disk_free=self._disk(), layout_missing=self._layout_missing(), export_root=export_root,
                               integrity=self._integrity, running=running)
+
+    def _settle_render(self, render: Probe, now: float) -> None:
+        """Retire la marque d'une préparation du moteur de rendu quand Core a fini (QA runtime m1), ou passé
+        `RENDER_RUNNING_DEADLINE_S` : une marque ne survit jamais à son travail."""
+
+        status = str((render.value or {}).get("status") or "") if render.ok else ""
+        for key in [key for key in self._running if key in RENDER_ACTIONS]:
+            finished = render.ok and status not in RENDER_BUSY
+            if finished or now - self._running[key] > RENDER_RUNNING_DEADLINE_S:
+                self._running.pop(key, None)
+                self._journal.emit("product.readiness.render_settled", f"Moteur de rendu : {status or 'illisible'}",
+                                   level="info" if finished else "warning",
+                                   data={"action_id": key, "capability_status": status, "deadline": not finished})
 
     async def report(self, *, force: bool = False) -> dict[str, Any]:
         facts = await self.facts(force=force)
@@ -271,7 +310,7 @@ class ProductReadinessService:
 
         report = await self.report()
         if not report["ready"]:
-            raise ReadinessActionError(409, "readiness_not_ready",
+            raise ReadinessActionError(409, "readiness_not_ready", "Terminez d'abord les étapes indispensables (en orange).",
                                        f"required items not ready: {', '.join(report['blocking'])}")
         board = await self._ensure_presentation_board()
         record = {"schema": ONBOARDING_SCHEMA, "schema_version": 1, "completed_at": utc_now_iso(),
@@ -287,24 +326,27 @@ class ProductReadinessService:
     async def _core(self, method: str, path: str, body: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
         transport = self._transport()
         if transport is None:
-            raise ReadinessActionError(503, "core_unconfigured", "the control center does not know Core")
+            raise ReadinessActionError(503, "core_unconfigured", CORE_UNREACHABLE, "the control center does not know Core")
         raw = json.dumps(body).encode("utf-8") if body is not None else None
         try:
             status, payload = await transport.forward(method, path, body=raw)
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError as exc:
-            raise ReadinessActionError(504, "core_timeout", f"Core did not answer {method} {path} in time") from exc
+            raise ReadinessActionError(504, "core_timeout", "Le moteur de JARVIS n'a pas répondu à temps. Réessayez "
+                                       "dans un instant.", f"Core did not answer {method} {path} in time") from exc
         except ForwardRefused as exc:
-            raise ReadinessActionError(500, "relay_path_not_forwardable", str(exc)[:300]) from exc
+            raise ReadinessActionError(500, "relay_path_not_forwardable", "Cette action n'est pas permise par le "
+                                       "Control Center.", str(exc)[:300]) from exc
         except Exception as exc:  # noqa: BLE001 - re-raised typed with its cause
-            raise ReadinessActionError(503, "core_unreachable",
+            raise ReadinessActionError(503, "core_unreachable", CORE_UNREACHABLE,
                                        f"Core is unreachable: {type(exc).__name__}: {str(exc)[:200]}") from exc
         if not isinstance(payload, Mapping):
-            raise ReadinessActionError(502, "http_error", f"Core answered HTTP {status} without JSON")
+            raise ReadinessActionError(502, "http_error", "Le moteur de JARVIS a rendu une réponse illisible.",
+                                       f"Core answered HTTP {status} without JSON")
         if status >= 400:
             error = payload.get("error") if isinstance(payload.get("error"), Mapping) else {}
-            raise ReadinessActionError(status, str(error.get("code") or f"http_{status}"),
+            raise ReadinessActionError(status, str(error.get("code") or f"http_{status}"), CORE_REFUSED,
                                        str(error.get("message") or f"Core answered HTTP {status}")[:300])
         return payload
 
@@ -321,7 +363,8 @@ class ProductReadinessService:
                                                                "board_kind": "presentation"})
             target = created.get("board") if isinstance(created.get("board"), Mapping) else None
             if target is None:
-                raise ReadinessActionError(502, "board_create_unreadable", "Core created a Board without returning it")
+                raise ReadinessActionError(502, "board_create_unreadable", "Le Board Présentation a été créé mais n'a pas "
+                                           "pu être ouvert. Réessayez.", "Core created a Board without returning it")
             self._journal.emit("product.onboarding.board_created", "Board Présentation créé au premier lancement",
                                data={"board_id": target.get("board_id")})
         switched = await self._core("POST", "/v1/boards/switch", {"board_id": target.get("board_id")})
@@ -344,7 +387,8 @@ class ProductReadinessService:
 
     def request_quit(self) -> dict[str, Any]:
         if not self.launcher().get("managed"):
-            raise ReadinessActionError(409, "launcher_not_running",
+            raise ReadinessActionError(409, "launcher_not_running", "JARVIS n'a pas été ouvert par son raccourci : "
+                                       "fermez ses fenêtres pour l'arrêter.",
                                        "JARVIS was not started by its launcher; close its windows instead")
         path = self._runtime_root / LAUNCHER_STOP_FILE
         path.write_text(utc_now_iso() + "\n", encoding="utf-8")
@@ -357,11 +401,18 @@ class ProductReadinessService:
         try:
             action = ActionId(action_id)
         except ValueError:
-            raise ReadinessActionError(404, "readiness_action_unknown", f"unknown readiness action {action_id[:40]!r}") from None
+            raise ReadinessActionError(404, "readiness_action_unknown", "Cette action n'existe pas dans cette version de "
+                                       "JARVIS.", f"unknown readiness action {action_id[:40]!r}") from None
         if action.value in self._running:
-            raise ReadinessActionError(409, "readiness_action_running", f"{action.value} is already running")
+            raise ReadinessActionError(409, "readiness_action_running", "Cette action est déjà en cours.",
+                                       f"{action.value} is already running")
         self._journal.emit("product.readiness.action", f"Action de préparation : {action.value}",
                            data={"action_id": action.value})
+        # Un double clic (ou deux onglets) ne lance jamais deux fois une action qui crée quelque chose (O4 de la revue :
+        # `connect_circoe` enregistrait deux fois le compte). Les actions de fond tiennent leur propre marque.
+        held = action in SERIALIZED_ACTIONS
+        if held:
+            self._running[action.value] = self._monotonic()
         handler = {
             ActionId.RECHECK: self._recheck,
             ActionId.PREPARE_DATA: self._prepare_data,
@@ -379,8 +430,12 @@ class ProductReadinessService:
             outcome = await handler()
         except ReadinessActionError as exc:
             self._journal.emit("product.readiness.action_failed", f"Action {action.value} refusée : {exc}",
-                               level="error", data={"action_id": action.value, "code": exc.code, "status": exc.status})
+                               level="error", data={"action_id": action.value, "code": exc.code, "status": exc.status,
+                                                    "detail": exc.detail[:300]})
             raise
+        finally:
+            if held:
+                self._running.pop(action.value, None)
         outcome = {"action_id": action.value, **outcome}
         self._journal.emit("product.readiness.action_done", f"Action {action.value} : {outcome.get('status')}",
                            data={"action_id": action.value, "status": outcome.get("status")})
@@ -395,7 +450,7 @@ class ProductReadinessService:
     async def _prepare_data(self) -> dict[str, Any]:
         home = self._installation.home
         if home is None:
-            raise ReadinessActionError(409, "not_installed_product",
+            raise ReadinessActionError(409, "not_installed_product", NOT_INSTALLED,
                                        "a development checkout has no product home to prepare")
         created = []
         try:
@@ -404,15 +459,17 @@ class ProductReadinessService:
                     path.mkdir(parents=True, exist_ok=True)
                     created.append(name)
         except OSError as exc:
-            raise ReadinessActionError(500, "product_home_not_writable",
-                                       f"{type(exc).__name__}: {exc.strerror or exc}"[:300]) from exc
+            raise ReadinessActionError(500, "product_home_not_writable", "Windows refuse l'écriture dans le dossier de "
+                                       "JARVIS (antivirus ou dossier protégé). Réessayez ; si cela recommence, "
+                                       "redémarrez Windows.", f"{type(exc).__name__}: {exc.strerror or exc}"[:300]) from exc
         return {"status": "done", "message": "Dossier préparé." if created else "Dossier déjà complet.",
                 "created": created}
 
     async def _verify_installation(self) -> dict[str, Any]:
         layout = self._layout
         if not isinstance(layout, PackageLayout):
-            raise ReadinessActionError(409, "not_installed_product", "a development checkout has no package to verify")
+            raise ReadinessActionError(409, "not_installed_product", NOT_INSTALLED,
+                                       "a development checkout has no package to verify")
         self._running[ActionId.VERIFY_INSTALLATION.value] = self._monotonic()
 
         async def run() -> None:
@@ -440,12 +497,19 @@ class ProductReadinessService:
         self._running[key] = self._monotonic()
         try:
             payload = await self._core("POST", f"/v1/local-capabilities/remotion/{operation}", {})
-        finally:
+        except BaseException:
             self._running.pop(key, None)
+            raise
         view = payload.get("capability") if isinstance(payload.get("capability"), Mapping) else {}
         status = str(view.get("status") or "")
-        return {"status": "started" if status in ("installing", "uninstalling", "starting") else "done",
-                "message": "Moteur de rendu : " + (status or "état inconnu"), "capability_status": status}
+        if status in RENDER_BUSY:
+            # QA runtime m1 : la marque reste tant que Core prépare le moteur (relevé suivant : `facts` la retire),
+            # pour que la ligne garde son compteur de secondes jusqu'à « Prêt ».
+            return {"status": "started", "message": RENDER_STARTED.get(operation, "Préparation du moteur de rendu lancée."),
+                    "capability_status": status}
+        self._running.pop(key, None)
+        return {"status": "done", "message": RENDER_DONE.get(status, "Moteur de rendu : état relevé, voyez la ligne."),
+                "capability_status": status}
 
     async def _brain_install_guide(self) -> dict[str, Any]:
         return {"status": "open", "url": brain_cli.INSTALL_GUIDE_URL,
@@ -456,12 +520,13 @@ class ProductReadinessService:
             return {"status": "started", "message": "Une connexion est déjà ouverte dans sa fenêtre."}
         cli = await asyncio.to_thread(self._locate_brain)
         if cli is None:
-            raise ReadinessActionError(409, "claude_cli_not_found", "Claude Code is not installed yet")
+            raise ReadinessActionError(409, "claude_cli_not_found", "Claude Code n'est pas encore installé : ouvrez "
+                                       "d'abord la page d'installation.", "Claude Code is not installed yet")
         try:
             self._sign_in = await asyncio.to_thread(self._start_sign_in, cli)
         except OSError as exc:
-            raise ReadinessActionError(500, "claude_sign_in_unstartable",
-                                       f"{type(exc).__name__}: {exc}"[:300]) from exc
+            raise ReadinessActionError(500, "claude_sign_in_unstartable", "La fenêtre de connexion de Claude n'a pas "
+                                       "pu s'ouvrir. Réessayez.", f"{type(exc).__name__}: {exc}"[:300]) from exc
         self._brain_cache = None
         return {"status": "started", "message": "Terminez la connexion dans la fenêtre de Claude."}
 
@@ -474,16 +539,20 @@ class ProductReadinessService:
                                                                    "display_name": CIRCOE_DISPLAY_NAME})
             plugin = created.get("plugin") if isinstance(created.get("plugin"), Mapping) else None
             if plugin is None:
-                raise ReadinessActionError(502, "plugin_create_unreadable", "Core registered the account without returning it")
+                raise ReadinessActionError(502, "plugin_create_unreadable", "Le compte CIRCOE n'a pas pu être relié. "
+                                           "Réessayez.", "Core registered the account without returning it")
         plugin_id = str(plugin.get("plugin_id") or plugin.get("id") or "")
         if not plugin_id:
-            raise ReadinessActionError(502, "plugin_id_missing", "the CIRCOE account has no identifier")
+            raise ReadinessActionError(502, "plugin_id_missing", "Le compte CIRCOE n'a pas pu être relié. Réessayez.",
+                                       "the CIRCOE account has no identifier")
         answer = await self._core("POST", f"/v1/mcp/plugins/{plugin_id}/connect", {"strategy": "auto"})
         if answer.get("status") == "authorizing" and answer.get("authorization_url"):
             return {"status": "open", "url": str(answer["authorization_url"]),
                     "message": "Autorisez JARVIS dans la page CIRCOE qui s'ouvre, puis revenez ici."}
-        return {"status": "done", "message": "Compte CIRCOE relié." if answer.get("status") == "connected"
-                else f"Connexion : {answer.get('status') or 'état inconnu'}"}
+        if answer.get("status") == "connected":
+            return {"status": "done", "message": "Compte CIRCOE relié."}
+        return {"status": "done", "message": "Le compte CIRCOE n'est pas encore relié : ouvrez Connexions pour voir où "
+                "il en est.", "connection_status": str(answer.get("status") or "")}
 
     async def _open_connections(self) -> dict[str, Any]:
         return {"status": "navigate", "target": "connections", "message": "Ouverture de Connexions."}
@@ -541,17 +610,18 @@ class ProductReadinessRoutes:
         try:
             return web.json_response(await call())
         except ReadinessActionError as exc:
-            return _error(exc.status, exc.code, str(exc))
+            return _error(exc.status, exc.code, str(exc), exc.detail)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - surfaced: 500 with its cause, journaled at error
             self._journal.emit(f"product.{name}.failed", f"{name} : {type(exc).__name__}: {str(exc)[:200]}",
                                level="error", data={"code": f"product_{name}_failed", "exception_type": type(exc).__name__})
-            return _error(500, f"product_{name}_failed", f"{type(exc).__name__}: {str(exc)[:200]}")
+            return _error(500, f"product_{name}_failed", "Une erreur inattendue est survenue. Réessayez ; le détail est "
+                          "dans le journal de JARVIS.", f"{type(exc).__name__}: {str(exc)[:200]}")
 
     async def readiness(self, request: web.Request) -> web.Response:
         if set(request.query) - {"force"}:
-            return _error(400, "invalid_request", "unexpected query parameters")
+            return _error(400, "invalid_request", "Demande mal formée.", "unexpected query parameters")
         return await self._guard("readiness", lambda: self._service.report(force=request.query.get("force") == "1"))
 
     async def action(self, request: web.Request) -> web.Response:

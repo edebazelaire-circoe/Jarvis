@@ -154,6 +154,7 @@
 #${HOST_ID} .rd-said{grid-column:2/4;margin:4px 0 0;font-size:12.5px;color:var(--sem-working,#4da3ff)}
 #${HOST_ID} .rd-said[data-kind=failed]{color:var(--danger,#ff6577)}
 #${HOST_ID} .rd-said[data-kind=ok]{color:var(--ok,#68e0a0)}
+#${HOST_ID} .rd-link{color:var(--accent,#6ee7ff);text-decoration:underline;text-underline-offset:3px}
 #${HOST_ID} details{grid-column:2/4;margin-top:2px;font-size:12px;color:var(--muted,#7190a0)}
 #${HOST_ID} summary{cursor:pointer;width:max-content}
 #${HOST_ID} details code{display:block;margin-top:4px;white-space:pre-wrap;word-break:break-word;color:#9fb8c5}
@@ -190,7 +191,12 @@
     const every=d.setInterval||((fn,ms)=>setInterval(fn,ms)),stopEvery=d.clearInterval||(id=>clearInterval(id));
     const now=d.now||(()=>Date.now());
     const sink=d.console||null;
-    const openUrl=d.openUrl||(url=>win.open(url,'_blank','noopener'));
+    /* Ouvrir une adresse : rend la fenêtre, ou `null` si le navigateur l'a bloquée (sans `noopener`, qui rendrait
+       toujours `null` : l'opener est coupé à la main). */
+    const openUrl=d.openUrl||(url=>{const w=win.open(url,'_blank');if(w){try{w.opener=null}catch(_e){/* intentional: cross-origin already */}}return w});
+    /* Revue m4 : une fenêtre ouverte APRÈS un `await` peut être bloquée (activation de l'utilisateur expirée). Une action
+       qui ouvre une page réserve donc sa fenêtre AU CLIC, puis la dirige ; bloquée quand même, la ligne donne un lien. */
+    const preOpen=d.preOpen||(d.openUrl?null:(()=>{try{const w=win.open('about:blank','_blank');if(w){try{w.opener=null}catch(_e){/* intentional */}}return w}catch(_e){return null}}));
     const navigate=d.navigate||(target=>{if(target==='connections'&&typeof win.openSettingsTab==='function')win.openSettingsTab('connections')});
     const notify=d.toast||null;
     const S={report:null,error:null,loading:null,open:false,dismissed:false,busy:null,said:{},status:null,poll:0,tick:0,
@@ -222,7 +228,7 @@
         let body=null;try{body=await response.json()}catch(_e){body=null /* intentional: reported as unreadable below */}
         if(!response.ok){
           const e=isObject(body)&&isObject(body.error)?body.error:{};
-          throw Object.assign(new Error(text(e.message)||`HTTP ${response.status}`),{code:text(e.code)||`http_${response.status}`});
+          throw Object.assign(new Error(text(e.message)||`HTTP ${response.status}`),{code:text(e.code)||`http_${response.status}`,detail:text(e.detail)});
         }
         return body;
       })();
@@ -236,6 +242,13 @@
       const parsed=parse(payload);
       if(!parsed.ok)throw Object.assign(new Error('rapport illisible'),{code:parsed.code});
       S.report=parsed.report;S.error=null;S.lastRead=now();
+      /* Une consigne d'action ne survit pas au changement de sa ligne (QA runtime m1 : « Moteur de rendu : installing »
+         restait affiché sous une ligne déjà « Prêt »). Un échec reste jusqu'à la prochaine action. */
+      for(const id of Object.keys(S.said)){
+        const said=S.said[id],item=parsed.report.items.find(i=>i.id===id);
+        if(!said||!item)continue;
+        if(item.state==='ready'||(said.kind!=='failed'&&said.state&&said.state!==item.state))S.said[id]=null;
+      }
       return parsed.report;
     }
 
@@ -267,22 +280,36 @@
       if(S.busy)return;
       S.busy={item:item.id,action:action.id,since:now(),label:action.label};
       S.said[item.id]=null;render();
+      /* Fenêtre réservée au clic (activation de l'utilisateur encore valable), dirigée quand l'adresse arrive. */
+      let reserved=action.kind==='open'&&preOpen?preOpen():null;
       try{
         const outcome=await call('POST',ACTION_ROUTE+encodeURIComponent(action.id),ACTION_DEADLINE_MS);
         if(outcome&&outcome.report)accept(outcome.report);
         const status=text(outcome&&outcome.status);
-        if(status==='open'&&outcome.url){openUrl(text(outcome.url))}
+        let blocked=null;
+        if(status==='open'&&outcome.url){
+          const url=text(outcome.url);
+          let shown=null;
+          if(reserved&&!reserved.closed){try{reserved.location.href=url;shown=reserved;reserved=null}catch(_e){shown=null}}
+          if(!shown)shown=openUrl(url);
+          if(!shown){blocked=url;log('warn','open_blocked',{action:action.id})}
+        }
         if(status==='navigate'){close('navigate');navigate(text(outcome.target));}
         /* La ligne est déjà prête dans le rapport rendu : sa phrase dit tout, une consigne « en cours » serait périmée. */
         const after=S.report&&S.report.items.find(i=>i.id===item.id);
-        S.said[item.id]=after&&after.state==='ready'&&status!=='open'?null
-          :{kind:status==='done'?'ok':'info',text:text(outcome&&outcome.message)};
+        S.said[item.id]=blocked?{kind:'info',state:after&&after.state,url:blocked,
+            text:`${text(outcome&&outcome.message)} Votre navigateur a bloqué l’ouverture de la page : ouvrez-la avec ce lien.`}
+          :after&&after.state==='ready'&&status!=='open'?null
+          :{kind:status==='done'?'ok':'info',state:after&&after.state,text:text(outcome&&outcome.message)};
         log('info','action_done',{action:action.id,status});
       }catch(error){
         const code=text(error&&error.code)||'network';
-        S.said[item.id]={kind:'failed',text:`${text(error&&error.message)||'Échec'} (${code})`};
-        log('error','action_failed',{action:action.id,code,message:text(error&&error.message)});
+        /* La phrase du serveur (mots de produit) dans la ligne ; le code et la cause technique sous « Détails » (revue m3). */
+        S.said[item.id]={kind:'failed',text:text(error&&error.message)||'L’action n’a pas abouti.',
+          detail:[code,text(error&&error.detail)].filter(Boolean).join(' : ')};
+        log('error','action_failed',{action:action.id,code,message:text(error&&error.message),detail:text(error&&error.detail)});
       }finally{
+        if(reserved){try{reserved.close()}catch(_e){/* intentional: the reserved window is already gone */}}
         S.busy=null;render();schedulePoll();
         if(button&&button.isConnected)button.focus({preventScroll:true});
       }
@@ -300,7 +327,7 @@
         await refresh(false);
       }catch(error){
         const code=text(error&&error.code)||'network';
-        S.status={kind:'failed',text:`Le Board Présentation n’a pas pu s’ouvrir : ${text(error&&error.message)} (${code})`};
+        S.status={kind:'failed',text:`Le Board Présentation n’a pas pu s’ouvrir : ${text(error&&error.message)}`};
         log('error','onboarding_failed',{code,message:text(error&&error.message)});
       }finally{S.starting=false;render()}
     }
@@ -309,7 +336,7 @@
       if(S.quitting)return;
       S.quitting=true;S.status={kind:'info',text:'Arrêt de JARVIS demandé…'};render();
       try{await call('POST',QUIT_ROUTE,ACTION_DEADLINE_MS);S.status={kind:'info',text:'JARVIS s’arrête. Vous pouvez fermer cet onglet.'};log('info','quit_requested',{})}
-      catch(error){S.status={kind:'failed',text:`Arrêt impossible : ${text(error&&error.message)}`};log('error','quit_failed',{code:text(error&&error.code)})}
+      catch(error){S.status={kind:'failed',text:`Arrêt impossible : ${text(error&&error.message)}`};log('error','quit_failed',{code:text(error&&error.code),detail:text(error&&error.detail)})}
       finally{S.quitting=false;render()}
     }
 
@@ -349,7 +376,7 @@
       const startBtn=el('button','rd-start','Commencer');startBtn.type='button';startBtn.addEventListener('click',()=>{
         /* Premier lancement déjà fait : le bouton ferme seulement (jamais une bascule de Board non demandée). */
         if(S.report&&S.report.onboarded){close('done');return}
-        if(startBtn.getAttribute('aria-disabled')==='true'){S.status={kind:'info',text:'Terminez d’abord les étapes indispensables (en orange).'};render();return}
+        if(startBtn.getAttribute('aria-disabled')==='true'){S.status={kind:'info',hint:true,text:'Terminez d’abord les étapes indispensables (en orange).'};render();return}
         start();
       });
       actions.append(quitBtn,startBtn);footer.append(status,actions);
@@ -388,9 +415,16 @@
       const said=S.said[item.id];
       const key=RUNNING_KEYS[item.id]?Object.keys(running).find(k=>RUNNING_KEYS[item.id].test(k)):null;
       const serverRunning=item.state==='in_progress'&&key?running[key]:null;
-      if(said&&said.text){const p=el('p','rd-said',said.text);p.dataset.kind=said.kind;p.setAttribute('role',said.kind==='failed'?'alert':'status');li.append(p)}
-      else if(item.state==='in_progress'&&serverRunning!==undefined&&serverRunning!==null){
-        li.append(el('p','rd-said',`En cours depuis ${elapsed(serverRunning)}.`));
+      const since=serverRunning!==undefined&&serverRunning!==null?Number(serverRunning)+Math.max(0,(now()-S.lastRead)/1000):null;
+      if(said&&said.text){
+        const p=el('p','rd-said',said.text);p.dataset.kind=said.kind;p.setAttribute('role',said.kind==='failed'?'alert':'status');
+        if(said.url){const a=el('a','rd-link','Ouvrir la page');a.href=said.url;a.target='_blank';a.rel='noopener noreferrer';p.append(' ',a)}
+        li.append(p);
+        if(said.detail){const det=el('details');det.append(el('summary','','Détails'),el('code','',said.detail));li.append(det)}
+      }
+      /* Compteur vivant tant que la ligne est « En cours » (QA runtime m1), même après la fin de la requête. */
+      if(item.state==='in_progress'&&since!==null){
+        li.append(el('p','rd-said',`En cours depuis ${elapsed(since)}.`));
       }
       if(item.detail){const det=el('details');det.append(el('summary','', 'Détails'),el('code','',item.detail));li.append(det)}
       return li;
@@ -429,6 +463,8 @@
       }
       if(keep){const again=host.querySelector(`li[data-item="${keep.item}"] button[data-action="${keep.action}"]`);if(again)again.focus({preventScroll:true})}
       const can=!!(r&&(r.ready||r.onboarded))&&!S.starting;
+      /* Le pied ne contredit jamais le bouton : la consigne « terminez d'abord… » disparaît quand « Commencer » est actif. */
+      if(can&&S.status&&S.status.hint)S.status=null;
       if(can)ui.startBtn.removeAttribute('aria-disabled');else ui.startBtn.setAttribute('aria-disabled','true');
       ui.startBtn.textContent=S.starting?'Ouverture…':r&&r.onboarded?'Fermer':'Commencer';
       ui.quitBtn.hidden=!(r&&r.managed);
@@ -441,7 +477,7 @@
     function open(options){
       install();
       if(!S.open){S.returnFocus=doc.activeElement;S.open=true;host.hidden=false;S.status=null}
-      if(!S.tick)S.tick=every(()=>{if(S.busy)render()},1000);
+      if(!S.tick)S.tick=every(()=>{if(S.busy||(S.report&&S.report.items.some(i=>i.state==='in_progress')))render()},1000);
       render();
       const fresh=S.report&&now()-S.lastRead<2000;
       const read=fresh?Promise.resolve(S.report):refresh(!!(options&&options.force));

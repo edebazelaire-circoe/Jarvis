@@ -289,7 +289,7 @@ async def test_brain_sign_in_opens_once_and_reads_in_progress(tmp_path):
 
 async def test_brain_install_guide_opens_the_official_page_and_downloads_nothing(tmp_path):
     outcome = await service(tmp_path, FakeCore()).act("brain_install_guide")
-    assert outcome["status"] == "open" and outcome["url"].startswith("https://docs.anthropic.com/")
+    assert outcome["status"] == "open" and outcome["url"] == "https://code.claude.com/docs/en/setup"
 
 
 async def test_connect_circoe_registers_the_circuit_toolbox_account_then_returns_the_consent_page(tmp_path):
@@ -345,7 +345,7 @@ async def test_onboarding_is_refused_while_a_required_item_is_open(tmp_path):
     svc = service(tmp_path, core)
     with pytest.raises(ReadinessActionError) as refused:
         await svc.complete_onboarding()
-    assert refused.value.status == 409 and refused.value.code == "readiness_not_ready" and "render" in str(refused.value)
+    assert refused.value.status == 409 and refused.value.code == "readiness_not_ready" and "render" in refused.value.detail
     assert not any(call[1].startswith("/v1/boards") and call[1] != "/v1/boards/edition" for call in core.calls)
     assert not (tmp_path / "runtime" / "product-onboarding.json").exists()
 
@@ -391,3 +391,81 @@ async def test_the_control_center_serves_the_readiness_routes(tmp_path):
         assert (await client.get("/api/product/readiness?x=1")).status == 400
     finally:
         await client.close()
+
+
+# ---------------------------------------------------------------------- reprise QA de la Slice 07
+
+
+async def test_a_refused_action_speaks_product_words_and_keeps_the_technical_cause_as_detail(tmp_path):
+    """Revue m3 : la ligne montrait « Core is unreachable: ConnectionRefusedError (core_unreachable) »."""
+
+    core = FakeCore({("POST", "/v1/local-capabilities/remotion/repair"): ConnectionRefusedError("refused")})
+    with pytest.raises(ReadinessActionError) as refused:
+        await service(tmp_path, core).act("render_repair")
+    error = refused.value
+    assert error.code == "core_unreachable" and str(error).startswith("Le moteur de JARVIS ne répond pas")
+    assert "Core is unreachable: ConnectionRefusedError" in error.detail
+    assert not any(word in str(error) for word in ("Core is", "unreachable", "Error"))
+
+
+async def test_a_double_click_on_connect_circoe_registers_the_account_once(tmp_path):
+    """O4 de la revue : deux clics rapides enregistraient deux fois le compte CIRCOE."""
+
+    from jarvis.domain.product_connectors import CIRCUIT_TOOLBOX_ENDPOINT
+
+    gate = asyncio.Event()
+    core = FakeCore({("GET", "/v1/mcp/plugins"): (200, {"plugins": []}),
+                     ("POST", "/v1/mcp/plugins"): (201, {"plugin": {"plugin_id": "p1", "endpoint": CIRCUIT_TOOLBOX_ENDPOINT}}),
+                     ("POST", "/v1/mcp/plugins/p1/connect"): (202, {"status": "connected"})})
+    original = core.forward
+
+    async def forward(method, path, **kwargs):
+        if (method, path) == ("GET", "/v1/mcp/plugins"):
+            await gate.wait()
+        return await original(method, path, **kwargs)
+
+    core.forward = forward
+    svc = service(tmp_path, core)
+    first = asyncio.ensure_future(svc.act("connect_circoe"))
+    await asyncio.sleep(0)
+    with pytest.raises(ReadinessActionError) as busy:
+        await svc.act("connect_circoe")
+    assert busy.value.code == "readiness_action_running" and busy.value.status == 409
+    gate.set()
+    outcome = await first
+    assert outcome["message"] == "Compte CIRCOE relié."
+    assert len([call for call in core.calls if call[:2] == ("POST", "/v1/mcp/plugins")]) == 1
+    assert "connect_circoe" not in svc._running  # libéré après coup : un nouveau clic est possible
+
+
+async def test_a_real_render_install_keeps_its_counter_until_core_says_ready(tmp_path):
+    """QA runtime m1 : pendant un vrai rendu, ni compteur ni « Prêt » ; le mot brut « installing » s'affichait."""
+
+    state = {"status": "installing"}
+    core = FakeCore({("POST", "/v1/local-capabilities/remotion/install"): (202, {"capability": {"status": "installing"}}),
+                     ("GET", "/v1/local-capabilities/remotion"): lambda body: (200, {"capability": dict(state)})})
+    clock = [100.0]
+    svc = service(tmp_path, core, monotonic=lambda: clock[0])
+    outcome = await svc.act("render_install")
+    assert outcome["status"] == "started" and "installing" not in outcome["message"]
+    clock[0] += 42
+    payload = await svc.report()
+    render = next(item for item in payload["items"] if item["item_id"] == "render")
+    assert render["state"] == "in_progress" and payload["running_elapsed_s"]["render_install"] == 42.0
+    assert "installing" not in render["summary"] and render["detail"] is None
+    state["status"] = "ready"
+    payload = await svc.report()
+    render = next(item for item in payload["items"] if item["item_id"] == "render")
+    assert render["state"] == "ready" and "render_install" not in payload["running_elapsed_s"]
+
+
+def test_render_is_not_ready_when_the_private_node_is_missing():
+    """QA runtime m2 : `runtime\node` retiré, la ligne du moteur de rendu disait « Prêt »."""
+
+    health = {**HEALTH_OK, "installation": {**HEALTH_OK["installation"], "runtimes": {
+        "mode": "installed", "status": "degraded",
+        "problems": [{"component": "node", "code": "private_runtime_missing"}]}}}
+    render = by_id(facts(core=Probe(health)))["render"]
+    assert render.state is ReadinessState.ACTION_NEEDED and render.detail == "node: private_runtime_missing"
+    assert "Relancez l'installation de JARVIS" in render.summary
+    assert by_id(facts())["render"].state is ReadinessState.READY

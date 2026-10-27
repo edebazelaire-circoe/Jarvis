@@ -12,6 +12,7 @@ Slice 05) and [product-edition.md](product-edition.md); it does not repeat them.
 | Install, update, repair, uninstall (data kept) | `jarvis/product_setup.py` (`python -m jarvis.product_setup`) | `tests/unit/test_product_setup.py` |
 | Package verification shared by build, installer and repair | `jarvis/private_runtime.py` (`verify_package`) | `tests/unit/test_windows_packaging.py`, `test_product_setup.py` |
 | Single launcher (Core, Control Center, Voice; one instance; no orphan) | `jarvis/runtime/product_launcher.py` (`python -B -m jarvis launch`) | `tests/unit/test_product_launcher.py` |
+| Clean stop request of a launched role | `jarvis/runtime/stop_request.py` (`JARVIS_STOP_REQUEST_FILE`, read by `jarvis/app.py` Core and Control Center) | `tests/unit/test_product_launcher.py` |
 | Readiness matrix (pure, product words) | `jarvis/domain/product_readiness.py` | `tests/unit/test_product_readiness.py` |
 | Readiness facts, named actions, first run | `jarvis/runtime/product_readiness.py` (`/api/product/*`) | same |
 | Claude Code CLI: locate, sign-in state, official sign-in | `jarvis/runtime/brain_cli.py`, `cli_catalog.resolve_command` | `tests/unit/test_brain_cli.py` |
@@ -63,21 +64,58 @@ product home; the export guard refuses an overlap). Start menu and Desktop short
 `EstimatedSize`, `NoModify`, `NoRepair`). Windows « Installed apps » runs
 `pythonw.exe -B -m jarvis.product_setup uninstall` (confirmation, then a final message).
 
+**Nothing is deleted without proof that it is JARVIS** (`product_setup.folder_kind`). A program
+folder is JARVIS only with **both** proofs: the Slice 02 product marker `app\jarvis-product.json`
+(schema, vendor `CIRCOE`, product `Jarvis`) **and** a readable `runtime-manifest.json` of the known
+schema whose `product.name` is `Jarvis`. The only other folder the installer may replace or delete is
+a **leftover** of its own unfinished operation: an operation state `<target>.setup-state.json`
+(`jarvis.setup-state` v1, written **next to** the target before any destructive step, removed when the
+step has succeeded) that names this exact target, and every entry of the folder is one it listed.
+Anything else is foreign: install refuses `target_not_empty`, uninstall refuses
+`not_a_jarvis_folder` (S07 QA: a folder with an unreadable manifest used to be deleted).
+
 **Steps** (`product_setup.install`): verify the source package (every tree, `package_sha256`) →
-refuse a running JARVIS (`runtime\launcher.json` of a living launcher) → rename the current program to
-`<target>.previous-<UTC>` (a file still in use refuses with `jarvis_running`) → copy the new one →
-verify the copy → shortcuts → uninstall key → delete the previous folder. Any failure after the
-rename puts the previous program back. Progress is one JSON line per step (`--progress`), the
+refuse a running JARVIS (`runtime\launcher.json` of a living launcher) → write the operation state →
+rename the current program (or a recognised leftover) to `<target>.previous-<UTC>` (a file still in
+use refuses with `jarvis_running`) → copy the new one → verify the copy → shortcuts → uninstall key →
+remove the operation state → delete the previous folder (and the previous program left aside by an
+earlier failed rollback, when it is JARVIS). Progress is one JSON line per step (`--progress`), the
 outcome a JSON file (`--result`): the bootstrap shows both, with a live seconds counter.
 
-**Refusals** (`SetupError.code`, a product sentence, a technical `detail`): `package_damaged`,
-`target_not_empty` (a folder that is not JARVIS is never overwritten), `target_overlaps_home`,
-`target_unsafe` (`" % ! ^ & | < >` in the path), `jarvis_running`, `installed_copy_damaged`,
-`not_a_jarvis_folder` (uninstall never deletes a foreign folder), `not_installed`.
+**Rollback** (any failure after the rename): the failed copy is first **renamed aside**
+(`<target>.failed-<UTC>`, with retries ~7 s for an antivirus or a file still open), the previous
+program is renamed back, and only then the failed copy is deleted — never a delete before the
+restore. The refusal says what is true afterwards: « L'ancienne version de JARVIS est remise en
+place » (`rolled_back: true, had_previous: true`), « Rien n'a été installé » (first install), or
+`rollback_failed` when a locked file prevents the restore: « Redémarrez Windows, puis relancez
+l'installation : elle réparera JARVIS », with the target and the previous folder in `detail`
+(`rolled_back: false`, `previous`). The operation state stays, so the next install recognises the
+half copy as a leftover, replaces it and deletes the previous folder after success. A first install
+that fails also removes the shortcuts it wrote.
 
-**Uninstall from the program itself**: the running Python lives in the folder it removes, so the
-folder deletion is handed to a detached `cmd.exe` that waits ~3 s (`ping`) then `rmdir /s /q`.
-Shortcuts and key are removed first, synchronously.
+**Refusals** (`SetupError.code`, a product sentence, a technical `detail`, extra fields in the
+result): `package_damaged`, `target_not_empty` (a folder that is not JARVIS is never overwritten),
+`target_overlaps_home` (the target is the home, inside it, or one of its ancestors), `target_unsafe`
+(`" % ! ^ & | < >` in the path), `target_unusable`, `jarvis_running`, `installed_copy_damaged`,
+`rollback_failed`, `not_a_jarvis_folder` (uninstall never deletes a foreign folder),
+`uninstall_incomplete`, `not_installed`, `setup_failed` (unexpected; its message names install or
+uninstall).
+
+**Uninstall** (`product_setup.uninstall`), repairable at every step: shortcuts are removed first
+(they would start a half-deleted program); the operation state is written; the folder is deleted
+with retries; **only then** are the uninstall key and the operation state removed. If files stay
+locked, `uninstall_incomplete` says so, the key stays (Windows still offers the uninstall) and a new
+uninstall or install recognises the leftover.
+
+**Uninstall from the program itself** (« Installed apps », `pythonw.exe`): the running Python lives in
+the folder it removes, and the final message box keeps it alive as long as the user reads it. The
+deletion is handed to a script `%TEMP%\jarvis-uninstall-<pid>-<UTC>.cmd` run by `cmd.exe` in a hidden
+console (`CREATE_NO_WINDOW`; not `DETACHED_PROCESS`: without a console its `tasklist | find` pipe
+never returns, measured) that **waits for the real end of that process** (`tasklist /fi "PID eq …"`,
+once per second, at most 30 min), then deletes the folder with up to 40 attempts ~3 s apart, then
+removes the uninstall key and the operation state, logs each step to `%TEMP%\jarvis-uninstall.log`
+and deletes itself. If the folder cannot be removed, the log says `ECHEC`, the key stays and the
+leftover stays recognisable.
 
 ### Unattended, CI and simulated installs
 
@@ -92,14 +130,23 @@ python -B -m jarvis.product_setup status --registry-file <hive.json>
 ```
 
 `--registry-file` replaces `HKCU` by a JSON hive and, without `--start-menu`/`--desktop`, writes no
-shortcut at all. Exit code 0 = done.
+shortcut at all. Without `--target`, the bootstrap reads `LOCALAPPDATA` from its environment first
+(a trial that redirects it never aims at the real profile), then the Windows known folder. Paths lose
+their trailing separator and are quoted with the `CommandLineToArgvW` rules (a trailing `\` used to
+swallow the following arguments). Bootstrap exit codes in `/S`: 0 = installed, 1 = failed (outcome in
+`--result`/`--log`), 2 = refused argument (written to `--log`, else `%TEMP%\jarvis-setup-error.log`;
+**never a dialog box in silent mode**), 3 = installed but JARVIS could not be opened (`--launch`,
+logged). `product_setup` exit code 0 = done. `product_setup status` also reports `folder`
+(`folder_kind`) and `pending` (the operation state).
 
 ## Launcher
 
 `python -B -m jarvis launch` (the shortcut uses `pythonw.exe`: no console):
 
 1. checks the installation (marker, `LOCALAPPDATA`) and creates `data\`, `runtime\`, `config\` under
-   the product home (I-002 point 3). A refusal is **visible** (a Windows message box without console;
+   the product home (I-002 point 3). **Without the product marker it refuses** (`not_installed_product`,
+   « ce dossier n'est pas un JARVIS installé ») instead of starting on the ports and data of the
+   development JARVIS. A refusal is **visible** (a Windows message box without console;
    `JARVIS_LAUNCHER_NOTIFY=stderr` for unattended runs) and **durable**: `runtime\logs\launcher.log`
    (one JSON line per event) and `errors.jsonl`; before any home is known,
    `%TEMP%\jarvis-launcher-error.log` (I-002 point 4);
@@ -118,10 +165,18 @@ shortcut at all. Exit code 0 = done.
    (`child_abandoned`) without stopping the rest. A Core that dies at start because its port is taken
    says so (« une autre application utilise son port »);
 6. stops on « Quitter JARVIS » (`POST /api/product/quit` writes `runtime\launcher-stop.request`) or
-   Ctrl+C: Control Center and Voice first, Core last, each Job closed, the state files removed.
+   Ctrl+C: Control Center and Voice first, Core last. **Core and the Control Center are asked to stop
+   first**: each was started with `JARVIS_STOP_REQUEST_FILE=runtime\stop-<role>.request`
+   (`jarvis/runtime/stop_request.py`); the launcher writes that file, the role leaves its main wait and
+   runs its normal shutdown (`finally`: servers stopped, Core stopped, sessions closed, token removed;
+   journal `core.stop_requested` / `ui.stop_requested`); the launcher waits up to 15 s
+   (`child_stopped_cleanly`), and only then `terminate`, 5 s, `kill` (`child_stop_timeout`, warning).
+   Voice does not read the request: it is terminated as before. Each Job is then closed and the state
+   and request files removed; a stale request is deleted before each start.
 
 The development path is unchanged: `project jarvis start`, `scripts/supervisor_v2.py` and
-`python -m jarvis core|control-center|voice` keep their behaviour; `launch` is a new command.
+`python -m jarvis core|control-center|voice` keep their behaviour (no `JARVIS_STOP_REQUEST_FILE`, no
+change); `launch` is a new command for the installed product only.
 
 ## Readiness
 
@@ -138,7 +193,7 @@ cached (CLI 30 s, 3 s while a sign-in is open; audio 60 s); `?force=1` re-reads.
 | `data` | essentials | yes | `data\`, `runtime\`, `config\` exist; data root from the product home | `prepare_data` |
 | `runtimes` (installed only) | essentials | yes | private runtimes `ok`; last `verify_installation` clean | `verify_installation` |
 | `brain` | essentials | yes | Claude Code found and signed in | `brain_install_guide`, `brain_sign_in`, `recheck` |
-| `render` | essentials | yes | Remotion capability `ready`/`running`, pinned versions | `render_install`, `render_repair`, `render_update`, `render_enable` |
+| `render` | essentials | yes | Remotion capability `ready`/`running`, pinned versions, and (installed) the private Node present | `render_install`, `render_repair`, `render_update`, `render_enable`; `verify_installation` when the private Node is missing (a reinstall puts it back) |
 | `browser` | essentials | yes | Edge or Chrome found (HV-PACKAGE-09) | `recheck` |
 | `connector:<id>` | services | no | Core says `ready` | `connect_circoe` (Circuit Toolbox), `open_connections` |
 | `audio` | computer | no | at least one input and one output | `recheck` |
@@ -155,8 +210,19 @@ it); the exact cause is kept in `detail` (« Détails »).
 
 The only way the readiness view changes something. Each answer is
 `{action_id, status: done|started|open|navigate, message, url?, report}`; refusals are
-`{"error": {"code", "message"}}` (404 unknown action, 409 already running / not applicable, 5xx with
-the real cause from Core), journaled `product.readiness.action_failed` at `error`.
+`{"error": {"code", "message", "detail"}}` — `message` a product sentence shown in the line, `detail`
+the technical cause (Core's own words) shown under « Détails » with the code — (404 unknown action,
+409 already running / not applicable, 5xx with the real cause), journaled
+`product.readiness.action_failed` at `error` with the detail. `connect_circoe` and `brain_sign_in`
+are held while they run: a second click (or a second tab) gets 409 `readiness_action_running`, the
+account is never registered twice. A render operation that Core is still running keeps its mark
+(`running_elapsed_s.render_*`) until a later read sees Core done (or 15 min): the line stays
+« En cours » with a live seconds counter until it turns « Prêt ». `/api/product/*` is in
+`READ_GUARDED_ROUTES` (loopback Host and Origin, also for reads).
+
+**Pages to open** (`kind: open`): the page reserves a blank window **at the click** (the browser's user
+activation is still valid), then points it at the URL the server returns; if the browser blocks it
+anyway, the line offers the URL as a link (« Ouvrir la page »), journaled `open_blocked`.
 
 | Action | Effect | Never |
 | --- | --- | --- |
@@ -164,7 +230,7 @@ the real cause from Core), journaled `product.readiness.action_failed` at `error
 | `prepare_data` | creates the missing home folders | deletes or moves anything |
 | `verify_installation` | full package verification in the background (`verify_package`) | repairs the program folder (a reinstall does) |
 | `render_install` / `render_repair` / `render_update` / `render_enable` | the Remotion local capability operation on Core (`docs/remotion-runtime.md`); `repair` reinstalls at the pinned versions — this is how a capability left `install_failed` after its runtime came back recovers (I-007 point 1) | touches presentations or the compiled cache of another capability |
-| `brain_install_guide` | returns Anthropic's official setup page to open | downloads or runs anything (HV-PACKAGE-02) |
+| `brain_install_guide` | returns Anthropic's official setup page to open (`https://code.claude.com/docs/en/setup`) | downloads or runs anything (HV-PACKAGE-02) |
 | `brain_sign_in` | opens `claude auth login` in its own console window; the line reads « En cours » until the CLI says signed in (deadline 10 min) | reads or writes inside that window |
 | `connect_circoe` | registers the Circuit Toolbox account if absent, starts its connection, returns the consent page to open | stores a secret outside the vault (`docs/mcp/plugins.md` §3.3) |
 | `open_connections` | page navigation to Réglages › Connexions | — |
@@ -217,6 +283,9 @@ the window.
 | « Claude : À faire » | CLI missing or signed out | official setup page, then « Se connecter » |
 | Compte CIRCOE « Facultatif » | not linked / authorisation expired | « Relier le compte CIRCOE » |
 | JARVIS stopped by itself | message box `child_crash_loop` with the role | read `runtime\logs\<role>.log`; restart JARVIS |
+| Installer: « l'état d'avant n'a pas pu être remis en place » (`rollback_failed`) | a locked file blocked the rollback | restart Windows, run the installer again: it recognises the half copy and repairs; data kept |
+| JARVIS still in « Installed apps » after an uninstall | the deferred removal could not delete every file (`%TEMP%\jarvis-uninstall.log` says `ECHEC`) | close what uses the files (or restart Windows), uninstall again — or reinstall over it |
+| Installer refuses « Ce dossier contient déjà autre chose que JARVIS » | the target folder is not JARVIS (no marker or unreadable manifest) and no operation state names it | choose another folder, or move the user's files away; the installer never deletes them |
 
 ## Out of scope / open
 

@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import time
 
 import pytest
@@ -18,13 +20,15 @@ from jarvis import product_setup as S
 from jarvis.installation import PRODUCT_MARKER, marker_payload
 
 
-def make_package(root: Path, version: str = "0.2.0", extra: bytes = b"") -> Path:
+def make_package(root: Path, version: str = "0.2.0", extra: bytes = b"", python_exe: bytes | None = None) -> Path:
     (root / "app" / "jarvis").mkdir(parents=True)
     (root / "app" / "jarvis" / "__init__.py").write_text(f"VERSION = {version!r}\n", encoding="utf-8")
     (root / "app" / PRODUCT_MARKER).write_text(json.dumps(marker_payload()), encoding="utf-8")
     for name, exe in (("python", "python.exe"), ("node", "node.exe")):
         (root / "runtime" / name).mkdir(parents=True)
         (root / "runtime" / name / exe).write_bytes(b"MZ" + name.encode() + extra)
+    if python_exe is not None:  # un vrai exécutable à la place de Python (essais de l'amorce)
+        (root / "runtime" / "python" / "python.exe").write_bytes(python_exe)
     (root / "runtime" / "python" / "pythonw.exe").write_bytes(b"MZw")
     (root / "licenses").mkdir()
     (root / "licenses" / "LICENSE.txt").write_text("MIT\n", encoding="utf-8")
@@ -129,8 +133,9 @@ def test_a_failure_after_the_swap_puts_the_previous_program_back(tmp_path):
         S.install(make_package(tmp_path / "v2", "0.3.0"), t, move=False, progress=quiet(),
                   shortcuts=RecordingShortcuts(), verify_copy=lambda source, target: ["app/jarvis/x.py: taille différente"])
     assert refused.value.code == "installed_copy_damaged"
+    assert refused.value.extra["rolled_back"] is True and "L'ancienne version de JARVIS est remise en place" in str(refused.value)
     assert "0.2.0" in (t.target / "app" / "jarvis" / "__init__.py").read_text(encoding="utf-8")
-    assert not list(t.target.parent.glob("Jarvis.previous-*"))
+    assert sorted(p.name for p in t.target.parent.iterdir()) == ["Jarvis"]  # ni .previous-*, ni .failed-*, ni état
 
 
 def test_refusals_running_foreign_folder_overlap_and_unsafe_names(tmp_path):
@@ -170,16 +175,217 @@ def test_uninstall_removes_program_shortcuts_and_key_and_keeps_the_home(tmp_path
     assert precious.read_text(encoding="utf-8") == '{"title": "Atelier"}'
 
 
-def test_uninstall_from_inside_the_program_defers_the_folder_removal(tmp_path):
+def hold_file(path: Path, seconds: float) -> subprocess.Popen:
+    """Un AUTRE processus qui garde `path` ouvert `seconds` secondes (comme `pythonw.exe` tient son image et ses DLL
+    pendant que la boîte « JARVIS est désinstallé » reste ouverte : sonde P1 de la QA de la Slice 07)."""
+
+    code = ("import sys,time; h=open(sys.argv[1],'rb'); print('held', flush=True); time.sleep(float(sys.argv[2])); "
+            "h.close()")
+    child = subprocess.Popen([sys.executable, "-c", code, str(path), str(seconds)], stdout=subprocess.PIPE, text=True)
+    assert child.stdout.readline().strip() == "held"
+    return child
+
+
+def wait_until(predicate, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.2)
+    return predicate()
+
+
+def test_uninstall_from_inside_the_program_defers_the_folder_removal_to_a_script_that_waits_for_the_process(tmp_path):
     t = targets(tmp_path)
     S.install(make_package(tmp_path / "src"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
     spawned = []
-    result = S.uninstall(t, progress=quiet(), running_from=t.target / "runtime" / "python",
-                         spawn=lambda argv, **kwargs: spawned.append((argv, kwargs)))
+    result = S.uninstall(t, progress=quiet(), running_from=t.target / "runtime" / "python", script_dir=tmp_path / "tmp",
+                         pid=4242, image="pythonw.exe", spawn=lambda argv, **kwargs: spawned.append((argv, kwargs)))
     assert result["deferred_removal"] and t.target.exists()
     command, kwargs = spawned[0]
-    assert command.startswith('cmd.exe /d /s /c "') and f'rmdir /s /q "{t.target}""' in command
-    assert kwargs["cwd"] == str(t.target.parent)
+    script = Path(result["removal_script"])
+    assert command == f'cmd.exe /d /s /c ""{script}""' and kwargs["cwd"] == str(tmp_path / "tmp")
+    body = script.read_text(encoding="utf-8")
+    # Attente de la FIN du processus, puis suppression avec reprises, puis seulement la clé et l'état.
+    assert '/fi "PID eq 4242"' in body and '/i "pythonw.exe"' in body
+    assert body.index(":wait") < body.index(":remove") < body.index("rmdir /s /q") < body.index(":removed")
+    assert body.index(":removed") < body.index(t.registry.removal_command()) < body.index(":failed")
+    # Les raccourcis partent tout de suite ; la clé et l'état d'opération restent jusqu'à la suppression effective.
+    assert not (t.start_menu / "JARVIS.lnk").exists() and t.registry.read() is not None
+    assert S.read_state(t.target)["operation"] == "uninstall"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="cmd.exe")
+def test_the_deferred_removal_waits_for_the_real_end_of_the_process_then_removes_key_and_state(tmp_path):
+    """Sonde P1 de la QA : le processus qui désinstalle reste vivant plus de 3 s (boîte de fin ouverte) et tient un
+    fichier du programme. Avant : dossier à moitié effacé, clé retirée, réinstallation refusée."""
+
+    t = targets(tmp_path / "with space é")
+    S.install(make_package(tmp_path / "src"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
+    holder = hold_file(t.target / "runtime" / "python" / "pythonw.exe", 5)
+    try:
+        result = S.uninstall(t, progress=quiet(), running_from=t.target / "runtime" / "python",
+                             script_dir=tmp_path / "tmp", pid=holder.pid, image=Path(sys.executable).name)
+        time.sleep(3.5)
+        assert holder.poll() is None
+        # Le processus vit encore : rien n'est effacé, rien n'est retiré.
+        assert (t.target / PR.RUNTIME_MANIFEST).exists() and t.registry.read() is not None
+    finally:
+        holder.wait(timeout=30)
+    assert wait_until(lambda: not t.target.exists() and t.registry.read() is None, 40)
+    assert not S.state_path(t.target).exists() and not Path(result["removal_script"]).exists()
+    assert "dossier supprime" in (tmp_path / "tmp" / S.UNINSTALL_LOG).read_text(encoding="utf-8")
+    again = S.install(make_package(tmp_path / "src2"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
+    assert again["ok"] and again["mode"] == "install"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="cmd.exe")
+def test_a_deferred_removal_that_cannot_finish_keeps_the_key_and_the_next_install_resumes_over_the_leftover(tmp_path):
+    t = targets(tmp_path)
+    S.install(make_package(tmp_path / "src"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
+    locked = t.target / "runtime" / "python" / "pythonw.exe"
+    holder = hold_file(locked, 12)
+    try:
+        exited = subprocess.Popen([sys.executable, "-c", "pass"])
+        exited.wait(timeout=30)
+        result = S.uninstall(t, progress=quiet(), running_from=t.target / "runtime" / "python",
+                             script_dir=tmp_path / "tmp", pid=exited.pid, image=Path(sys.executable).name,
+                             deferred_attempts=1)
+        assert wait_until(lambda: not Path(result["removal_script"]).exists(), 30)
+        log = (tmp_path / "tmp" / S.UNINSTALL_LOG).read_text(encoding="utf-8")
+        assert "ECHEC" in log and "cle de desinstallation gardee" in log
+        # Reste réparable : la clé (désinstallation encore proposée) et l'état d'opération sont gardés.
+        assert locked.exists() and not (t.target / PR.RUNTIME_MANIFEST).exists()
+        assert t.registry.read() is not None and S.folder_kind(t.target) == "leftover"
+    finally:
+        holder.wait(timeout=30)
+    again = S.install(make_package(tmp_path / "src2"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
+    assert again["ok"] and again["resumed"] and again["leftovers"] == []
+    assert PR.verify_package(PR.PackageLayout(t.target))[1] == [] and not S.state_path(t.target).exists()
+    assert sorted(p.name for p in t.target.parent.iterdir()) == ["Jarvis"]
+
+
+def test_a_direct_uninstall_blocked_by_a_locked_file_keeps_the_key_and_can_be_run_again(tmp_path, monkeypatch):
+    monkeypatch.setattr(S, "RETRY_DELAYS_S", (0.0,))
+    t = targets(tmp_path)
+    S.install(make_package(tmp_path / "src"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
+    handle = open(t.target / "runtime" / "node" / "node.exe", "rb")
+    try:
+        with pytest.raises(S.SetupError) as refused:
+            S.uninstall(t, progress=quiet())
+        assert refused.value.code == "uninstall_incomplete" and "relancez la désinstallation" in str(refused.value)
+        assert t.registry.read() is not None and S.folder_kind(t.target) == "leftover"
+    finally:
+        handle.close()
+    result = S.uninstall(t, progress=quiet())
+    assert result["removed"] and not t.target.exists() and t.registry.read() is None
+    assert not S.state_path(t.target).exists()
+
+
+@pytest.mark.parametrize("damage", ["unreadable_manifest", "no_marker", "other_product"])
+def test_a_folder_without_both_proofs_is_never_deleted_nor_replaced(tmp_path, damage):
+    """Sonde P2 / M1 de la QA runtime : un dossier au `runtime-manifest.json` illisible était effacé (désinstallation)
+    ou « mis à jour » puis vidé (installation)."""
+
+    t = targets(tmp_path)
+    t.target.mkdir(parents=True)
+    (t.target / "thesis.docx").write_text("precious", encoding="utf-8")
+    if damage == "unreadable_manifest":
+        (t.target / PR.RUNTIME_MANIFEST).write_text("not json", encoding="utf-8")
+        (t.target / "app").mkdir()
+        (t.target / "app" / PRODUCT_MARKER).write_text(json.dumps(marker_payload()), encoding="utf-8")
+    else:
+        package = make_package(tmp_path / "pkg")
+        (t.target / PR.RUNTIME_MANIFEST).write_bytes((package / PR.RUNTIME_MANIFEST).read_bytes())
+        if damage == "other_product":
+            (t.target / "app").mkdir()
+            (t.target / "app" / PRODUCT_MARKER).write_text(json.dumps({**marker_payload(), "product": "Other"}),
+                                                           encoding="utf-8")
+    before = {p.relative_to(t.target).as_posix(): p.read_bytes() for p in t.target.rglob("*") if p.is_file()}
+    with pytest.raises(S.SetupError) as uninstall_refused:
+        S.uninstall(t, progress=quiet())
+    assert uninstall_refused.value.code == "not_a_jarvis_folder"
+    with pytest.raises(S.SetupError) as install_refused:
+        S.install(make_package(tmp_path / "src"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
+    assert install_refused.value.code == "target_not_empty"
+    after = {p.relative_to(t.target).as_posix(): p.read_bytes() for p in t.target.rglob("*") if p.is_file()}
+    assert after == before and not S.state_path(t.target).exists()
+
+
+def test_a_state_file_never_turns_a_foreign_folder_into_a_leftover(tmp_path):
+    t = targets(tmp_path)
+    t.target.mkdir(parents=True)
+    (t.target / "runtime").mkdir()
+    S.write_state(t.target, "uninstall", entries={"runtime", "app"})
+    assert S.folder_kind(t.target) == "leftover"
+    (t.target / "thesis.docx").write_text("mine", encoding="utf-8")  # une entrée que JARVIS n'a jamais notée
+    assert S.folder_kind(t.target) == "foreign"
+    other = targets(tmp_path / "other")
+    other.target.mkdir(parents=True)
+    (other.target / "runtime").mkdir()
+    S.state_path(other.target).write_text(S.state_path(t.target).read_text(encoding="utf-8"), encoding="utf-8")
+    assert S.folder_kind(other.target) == "foreign"  # état d'une AUTRE cible : aucune preuve
+
+
+def test_a_rollback_blocked_by_a_locked_file_says_so_and_the_next_install_repairs(tmp_path, monkeypatch):
+    """Sonde P3 de la QA : la copie ratée ne pouvait pas être effacée (fichier verrouillé) ; `os.replace` levait
+    `PermissionError`, l'ancienne version restait sous `Jarvis.previous-*` et l'amorce disait « rien n'a été effacé »."""
+
+    monkeypatch.setattr(S, "RETRY_DELAYS_S", (0.0, 0.05))
+    t = targets(tmp_path)
+    S.install(make_package(tmp_path / "v1"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
+    locks = []
+
+    def bad_copy(source, target):
+        locks.append(open(target / "app" / "jarvis" / "__init__.py", "rb"))
+        return ["simulated: copy differs"]
+
+    try:
+        with pytest.raises(S.SetupError) as refused:
+            S.install(make_package(tmp_path / "v2", "0.3.0"), t, move=False, progress=quiet(),
+                      shortcuts=RecordingShortcuts(), verify_copy=bad_copy)
+        error = refused.value
+        assert error.code == "rollback_failed" and error.extra["rolled_back"] is False
+        assert "Redémarrez Windows, puis relancez l'installation" in str(error)
+        previous = Path(error.extra["previous"])
+        assert previous.name.startswith("Jarvis.previous-") and S.is_jarvis_program(previous)
+        assert S.read_state(t.target)["previous"] == str(previous) and S.folder_kind(t.target) == "leftover"
+    finally:
+        for handle in locks:
+            handle.close()
+    repaired = S.install(make_package(tmp_path / "v3", "0.3.0"), t, move=False, progress=quiet(),
+                         shortcuts=RecordingShortcuts())
+    assert repaired["ok"] and repaired["resumed"] and repaired["leftovers"] == []
+    assert "0.3.0" in (t.target / "app" / "jarvis" / "__init__.py").read_text(encoding="utf-8")
+    assert sorted(p.name for p in t.target.parent.iterdir()) == ["Jarvis"]  # ni .previous-*, ni .failed-*, ni état
+
+
+def test_a_failed_first_install_says_nothing_was_installed_and_leaves_no_shortcut(tmp_path):
+    t = targets(tmp_path)
+
+    class BrokenRegistry(S.FileRegistry):
+        def write(self, values):
+            raise OSError("registry refused")
+
+    t.registry = BrokenRegistry(tmp_path / "hive.json")
+    with pytest.raises(S.SetupError) as refused:
+        S.install(make_package(tmp_path / "src"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
+    assert refused.value.code == "setup_failed" and refused.value.extra["had_previous"] is False
+    assert "Rien n'a été installé" in str(refused.value) and "précédente" not in str(refused.value)
+    assert not t.target.exists() and not (t.start_menu / "JARVIS.lnk").exists() and not S.state_path(t.target).exists()
+
+
+def test_the_target_may_not_be_an_ancestor_of_the_home(tmp_path):
+    """Mutation M1 de la QA (survivante) : ce refus protège la maison à la désinstallation."""
+
+    home = tmp_path / "Local" / "CIRCOE" / "Jarvis"
+    for target in (tmp_path / "Local", tmp_path / "Local" / "CIRCOE", home, home / "data"):
+        with pytest.raises(S.SetupError) as refused:
+            S.check_target(S.Targets(target=target.resolve(), start_menu=None, desktop=None,
+                                     registry=S.FileRegistry(tmp_path / "h.json"), home=home))
+        assert refused.value.code == "target_overlaps_home", target
+    S.check_target(S.Targets(target=(tmp_path / "Local" / "Programs" / "CIRCOE" / "Jarvis").resolve(), start_menu=None,
+                             desktop=None, registry=S.FileRegistry(tmp_path / "h.json"), home=home))
 
 
 @pytest.mark.skipif(os.name != "nt", reason="cmd.exe")
@@ -188,12 +394,12 @@ def test_the_deferred_removal_really_deletes_a_folder_with_spaces(tmp_path):
 
     t = targets(tmp_path / "with space")
     S.install(make_package(tmp_path / "src"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
-    S.uninstall(t, progress=quiet(), running_from=t.target / "runtime" / "python")
-    for _ in range(100):
-        if not t.target.exists():
-            break
-        time.sleep(0.2)
-    assert not t.target.exists() and t.target.parent.exists()
+    exited = subprocess.Popen([sys.executable, "-c", "pass"])
+    exited.wait(timeout=30)
+    S.uninstall(t, progress=quiet(), running_from=t.target / "runtime" / "python", script_dir=tmp_path / "tmp",
+                pid=exited.pid, image=Path(sys.executable).name)
+    assert wait_until(lambda: not t.target.exists(), 30)
+    assert t.target.parent.exists() and wait_until(lambda: t.registry.read() is None, 10)
 
 
 def test_uninstall_refuses_a_folder_that_is_not_jarvis(tmp_path):

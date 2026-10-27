@@ -36,7 +36,7 @@ from jarvis.domain.product_readiness import BrainFacts
 CLI_ENV = "JARVIS_CLAUDE_CLI"
 DEFAULT_COMMAND = "claude"
 #: Page officielle d'installation de Claude Code (ouverte par « Ouvrir la page d'installation »).
-INSTALL_GUIDE_URL = "https://docs.anthropic.com/en/docs/claude-code/setup"
+INSTALL_GUIDE_URL = "https://code.claude.com/docs/en/setup"
 VERSION_TIMEOUT_S = 15.0
 STATUS_TIMEOUT_S = 20.0
 CREATE_NEW_CONSOLE = 0x00000010
