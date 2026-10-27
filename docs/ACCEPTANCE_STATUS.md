@@ -1,5 +1,13 @@
 # Jarvis V1 acceptance status
 
+> **Presentation Edition V1 (Windows), 2026-10-27**: the release gates of the distributable edition
+> (automated, physical Human, licence/signing prerequisites, not delivered) are in
+> [release.md](release.md#release-gates). Automated on the workstation: static release verifier, dated
+> test gate, package built from a known commit, unsigned installer, installed-product smoke with update
+> over an older profile, crash recovery of owned children and support bundle redaction. **Not verified**:
+> the CI workflow on a GitHub-hosted runner, a clean Windows machine and every HV-* physical gate.
+> The sections below describe the earlier V1/v0.2 builds and stay as history.
+
 > Realtime + async brain revalidation, **2026-09-12**: 1,891 tests passed,
 > 4 expected skips with warnings treated as errors; release verifier passed.
 > The real Realtime speech smoke also passed separately. Four behavioral

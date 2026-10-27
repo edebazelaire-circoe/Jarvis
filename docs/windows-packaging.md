@@ -192,7 +192,8 @@ Steps: download (or reuse from the cache, default
 `%LOCALAPPDATA%\Temp\jarvis-build-cache`) and **re-verify** the SHA-256 of each
 runtime archive; extract Python and write `._pth`; `pip download` then
 `pip install --no-index --require-hashes --no-deps --only-binary :all: --target`
-of the lock (Windows `cp314` wheels only, no sdist); drop the console-script
+(both with `--no-cache-dir`: pip writes nothing to the user's cache, the only
+cache is the declared one, Slice 10) of the lock (Windows `cp314` wheels only, no sdist); drop the console-script
 launchers (they embed the build path) and their `RECORD` lines; copy the
 pywin32 DLLs; extract Node; `git archive <rev> jarvis` + marker; precompile;
 licences and manifests; then a **probe**: the packaged `python.exe` started with
@@ -251,8 +252,10 @@ tester's own browser. Then `python.exe -B -m jarvis core` (and
   never on `sys.path` (a `plantedmod.py` in the current folder is not found by
   `python.exe -m plantedmod`, checked on the real package), so the Slice 07
   launcher may start processes from any folder.
-- No updater (Slice 10). `verify_runtimes` detects a changed runtime tree; it
-  does not repair it.
+- No updater. `verify_runtimes` detects a changed runtime tree; it does not
+  repair it (the installer does). The CI build of a release candidate, its
+  identity (`release-info.json`) and the installed-product smoke are
+  [release.md](release.md).
 - Excluded components stay unreachable from the product, not only absent:
   in the `presentation` edition the Control Center does not declare the
   `jarvis-barehands` MCP server (no `barehands-mcp.json` is written), and an

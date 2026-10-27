@@ -74,8 +74,14 @@ step has succeeded) that names this exact target, and every entry of the folder 
 Anything else is foreign: install refuses `target_not_empty`, uninstall refuses
 `not_a_jarvis_folder` (S07 QA: a folder with an unreadable manifest used to be deleted).
 
-**Steps** (`product_setup.install`): verify the source package (every tree, `package_sha256`) →
-refuse a running JARVIS (`runtime\launcher.json` of a living launcher) → write the operation state →
+**Steps** (`product_setup.install`): refuse a running JARVIS (`runtime\launcher.json` of a living
+launcher: PID **and** creation time, `product_launcher.launcher_alive`, so a PID reused after a launcher
+crash never blocks the installer — Slice 10, I-009 point 2) → **rename probe** of an installed program
+(`probe_swappable`, Slice 10, I-009 point 1: the program is renamed to `<target>.previous-<UTC>` and
+straight back, the operation state naming it; a file held by an antivirus or an editor refuses
+`jarvis_running` in seconds instead of after the verification; a failed rename back is
+`rollback_failed`, resumed by the next install) → verify the source package (every tree,
+`package_sha256`) → write the operation state →
 rename the current program (or a recognised leftover) to `<target>.previous-<UTC>` (a file still in
 use refuses with `jarvis_running`) → copy the new one → verify the copy → shortcuts → uninstall key →
 remove the operation state → delete the previous folder (and the previous program left aside by an
@@ -159,7 +165,10 @@ logged). `product_setup` exit code 0 = done. `product_setup status` also reports
    servers, Remotion, the Claude CLI) — no orphan; deadline `JARVIS_LAUNCHER_START_TIMEOUT_S`
    (default 120 s), its expiry is said with the role;
 4. opens the page once (`JARVIS_OPEN_BROWSER=0`: not), publishes `runtime\launcher.json`
-   (`pid`, `ui_url`, roles);
+   (`pid`, `process_ref` = `pid:creation time` since Slice 10, `ui_url`, roles). Readers
+   (`launcher_alive`: installer, uninstaller, « Quitter JARVIS ») compare the creation time when
+   `process_ref` is present; a state without it (older launcher) or an unreadable one falls back to
+   the PID alone, the safe default;
 5. watches: Core or Control Center that dies is restarted, at most 3 times in 120 s, then everything
    stops and the cause is shown (`child_crash_loop`); Voice that dies 3 times is abandoned
    (`child_abandoned`) without stopping the rest. A Core that dies at start because its port is taken
@@ -285,6 +294,8 @@ the window.
 | JARVIS stopped by itself | message box `child_crash_loop` with the role | read `runtime\logs\<role>.log`; restart JARVIS |
 | Installer: « l'état d'avant n'a pas pu être remis en place » (`rollback_failed`) | a locked file blocked the rollback | restart Windows, run the installer again: it recognises the half copy and repairs; data kept |
 | JARVIS still in « Installed apps » after an uninstall | the deferred removal could not delete every file (`%TEMP%\jarvis-uninstall.log` says `ECHEC`) | close what uses the files (or restart Windows), uninstall again — or reinstall over it |
+| Installer: « Des fichiers de JARVIS sont encore utilisés (JARVIS, un antivirus ou un autre programme) » | the rename probe found a file of the program held open | close that program (or wait for the antivirus), run the installer again |
+| Support asks for diagnostics | — | `<install>\runtime\python\python.exe -B -m jarvis support-bundle`: a bounded, redacted zip under `runtime\support\` ([release.md](release.md#support-bundle)) |
 | Installer refuses « Ce dossier contient déjà autre chose que JARVIS » | the target folder is not JARVIS (no marker or unreadable manifest) and no operation state names it | choose another folder, or move the user's files away; the installer never deletes them |
 
 ## Out of scope / open
@@ -293,5 +304,7 @@ the window.
 - Google Drive linking from the onboarding needs a CIRCOE Google OAuth client: HV-INSTALL-02; until
   then the Drive line says it is not offered in this version;
 - the official Claude Code installer run by JARVIS on the user's click: HV-PACKAGE-02;
-- auto-update: none (Slice 10); the installer is update-compatible (same command, newer package);
+- auto-update: none; the installer is update-compatible (same command, newer package). Update over an
+  existing profile, migrations, rollback boundary, support bundle and crash recovery:
+  [release.md](release.md);
 - clean-machine trial: HV-PACKAGE-01 / HV-INSTALL-01.

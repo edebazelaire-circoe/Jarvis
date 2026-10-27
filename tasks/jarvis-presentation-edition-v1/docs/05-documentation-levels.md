@@ -45,3 +45,13 @@ A Level 3 requirement means not only prose documentation but a reusable implemen
 | Single launcher / child ownership | **3**: `jarvis/runtime/product_launcher.py` (Job Objects, one instance, bounded restarts, visible and durable refusals), `tests/unit/test_product_launcher.py`. |
 | Product readiness / repair | **3**: pure matrix `jarvis/domain/product_readiness.py`, facts and named actions `jarvis/runtime/product_readiness.py`, page `control_center_product_readiness.js`, node + browser tests. |
 | Brain CLI provisioning | **2-3**: located, read and signed in through `jarvis/runtime/brain_cli.py`; never redistributed (HV-PACKAGE-02). |
+
+## Slice 10 (2026-10-27)
+| Concept | Level reached |
+|---|---|
+| Release pipeline (CI) | **3** (CI execution unverified): `docs/release.md`, `.github/workflows/ci.yml` calling only repository scripts, `scripts/verify_release.py` (edition guard, reviewed execution primitives, artifact info), `tests/unit/test_release_tooling.py`. Never run on a GitHub runner. |
+| Known test failures | **3**: dated explicit list `tests/known_failures.json`, judged by `scripts/release_test_gate.py` (stale, expired, intermittent rerun), conformance in `test_release_tooling.py`. |
+| Release identity | **3**: `scripts/release_info.py` (`release-info.json`), `ARTIFACT_INFO.json` reduced to the source version and checked against `pyproject.toml`. |
+| Update over an existing profile / rollback boundary | **3**: `docs/release.md`, `scripts/release_seed_profile.py`, `tests/unit/test_release_update_profile.py`, package smoke on the real installer. |
+| Installed-product smoke and crash recovery of owned children | **3**: `scripts/package_smoke.py` (12 steps, real run green), launcher identity `process_ref` (`product_launcher.launcher_alive`). |
+| Support bundle and diagnostic redaction | **3**: `jarvis/runtime/support_bundle.py`, `jarvis/domain/diagnostic_redaction.py` (reuses the MCP plugin secret masking), `test_support_bundle.py`, `test_diagnostic_redaction.py`. UI button: not delivered. |

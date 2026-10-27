@@ -120,7 +120,12 @@ profil](#reprise-dun-profil-vers-une-racine-vide).
 `development`), `product_home`, et pour `data_root` / `runtime_root` une
 `source` (`product_home`, `override`, `development_default`, `followed`) et un
 `label` sans chemin d'utilisateur (`%LOCALAPPDATA%\CIRCOE\Jarvis\data`, le seul
-nom `<dépôt>-<empreinte>`, ou `null`).
+nom `<dépôt>-<empreinte>`, ou `null`). Le paquet de support
+(`python -B -m jarvis support-bundle`, Slice 10) ne lit de cette maison que des
+compteurs, les versions de schéma (lecture seule) et la fin masquée des journaux
+de `runtime\` ; jamais une base, l'historique, la mémoire, `CONTEXT_GLOBAL` ni
+une présentation : [release.md](release.md#support-bundle). Mise à jour sur un
+profil existant et frontière du retour arrière : [release.md](release.md#update-over-an-existing-profile).
 
 ## Pourquoi hors du dépôt
 
