@@ -24,7 +24,7 @@
 | `voice_output` · Voix & transcription | modèles de conversation (selon l'architecture), modèle et voix des piles, transcription, catalogue comparatif des modèles vocaux (replié) |
 | `microphone_sound` · Micro & son | micro, haut-parleur, réduction de bruit, annulation d'écho, test sur les périphériques choisis, erreurs de détection avec « réessayer » |
 | `turns_interruptions` · Tours & interruptions | fin de tour, type de détection de parole, qui coupe la voix de JARVIS ; touche `wake_toggle` en lecture seule + lien |
-| `wake_word` · Mot d'éveil | activer, moteur, phrase, sensibilité, pause après un réveil ; avis de redémarrage de Voice |
+| `wake_word` · Mot d'éveil | activer, moteur, phrase, sensibilité, pause après un réveil ; avis de redémarrage de Voice ; « Moteur absent » quand le moteur choisi manque sur ce poste (`engine`, [../voice-lifecycle.md](../voice-lifecycle.md)) |
 
 - Les quatre premières sont `save: 'footer'` : elles écrivent dans le brouillon partagé (`SET.draft`) et le bouton
   « Enregistrer » envoie `/api/settings` exactement comme l'ancien onglet (charge utile inchangée, champs inconnus
@@ -36,6 +36,9 @@
   gagne, refus traduits, saisie gardée). La saisie survit à un changement de section.
 - La ligne « Réglages de la voix » de la roue Jarvis ouvre la catégorie `voice_audio` (Conversation à la première
   ouverture). Les anciens ID `voice` et `wakeword` ne sont plus des alias depuis la Slice 09 (aucun appelant).
+
+Couper ou rallumer la voix (Off / Sleep) n'est pas un réglage de cette page : c'est l'interrupteur « Voix activée » de la
+roue JARVIS, contrat [../voice-lifecycle.md](../voice-lifecycle.md).
 
 ## 2. Ce qui part dans Avancé & Diagnostics
 

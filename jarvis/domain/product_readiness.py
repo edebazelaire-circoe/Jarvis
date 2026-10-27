@@ -193,6 +193,8 @@ class ReadinessFacts:
     integrity: Probe | None = None
     #: Actions nommées en cours (`ActionId` → secondes écoulées).
     running: Mapping[str, float] = field(default_factory=dict)
+    #: Projection Off / Sleep / Active de la voix (`voice_lifecycle.project`, `docs/voice-lifecycle.md`).
+    voice: Probe = field(default_factory=lambda: Probe(error="voice_lifecycle_unavailable"))
 
 
 # ---------------------------------------------------------------------- assemblage
@@ -444,6 +446,42 @@ def _audio_item(facts: ReadinessFacts) -> ReadinessItem:
                          (ReadinessAction(ActionId.RECHECK),))
 
 
+def _voice_item(facts: ReadinessFacts) -> ReadinessItem:
+    """Ligne « Voix » : clé du fournisseur présente ? état produit (coupée, veille, active, dégradée) ? Jamais requise :
+    le chat suffit à JARVIS."""
+
+    label = "Voix"
+    if not facts.voice.ok:
+        return ReadinessItem("voice", ItemGroup.COMPUTER, label, False, ReadinessState.UNAVAILABLE,
+                             "L'état de la voix n'a pas pu être lu. Le chat reste disponible.", _err(facts.voice))
+    view = facts.voice.value or {}
+    state, code = str(view.get("state") or ""), view.get("code")
+    key = view.get("provider_key") if isinstance(view.get("provider_key"), Mapping) else {}
+    wake = (view.get("wake") or {}) if isinstance(view.get("wake"), Mapping) else {}
+    word = wake.get("voice_word") if isinstance(wake.get("voice_word"), Mapping) else {}
+    manual = str(wake.get("manual_key") or "F9")
+    key_text = (f"Clé {key.get('label')} présente." if key.get("present") and key.get("label")
+                else "Clé du fournisseur vocal présente." if key.get("present") else "Clé du fournisseur vocal absente.")
+    if state == "off":
+        return ReadinessItem("voice", ItemGroup.COMPUTER, label, False, ReadinessState.OPTIONAL,
+                             f"Voix coupée par vous : aucun micro ouvert, le chat reste disponible. {key_text}",
+                             str(code or "voice_off"))
+    if state in ("sleep", "active"):
+        how = (f"{manual} ou « {str(word.get('keyword') or '').replace('_', ' ')} »" if word.get("armed") else manual)
+        now = "en conversation" if state == "active" else f"en veille : {how} la réveille"
+        extra = f" {word.get('message')}" if word.get("configured") and not word.get("available") and word.get("message") else ""
+        return ReadinessItem("voice", ItemGroup.COMPUTER, label, False, ReadinessState.READY,
+                             f"Voix {now}. {key_text}{extra}", word.get("code") if extra else None)
+    if state in ("starting", "stopping"):
+        return ReadinessItem("voice", ItemGroup.COMPUTER, label, False, ReadinessState.IN_PROGRESS,
+                             str(view.get("message") or "La voix change d'état…"), str(code or state))
+    actions = (ReadinessAction(ActionId.OPEN_CONNECTIONS),) if code == "voice_provider_key_missing" else ()
+    return ReadinessItem("voice", ItemGroup.COMPUTER, label, False,
+                         ReadinessState.ACTION_NEEDED if actions else ReadinessState.OPTIONAL,
+                         str(view.get("message") or "La voix est indisponible ; le chat reste disponible."),
+                         str(code or "voice_degraded"), actions)
+
+
 def _disk_item(facts: ReadinessFacts) -> ReadinessItem:
     label = "Espace disque"
     if not facts.disk_free.ok:
@@ -489,7 +527,7 @@ def assemble(facts: ReadinessFacts) -> list[ReadinessItem]:
         items.append(runtimes)
     items += [_brain_item(facts), _render_item(facts), _browser_item(facts)]
     items += _connector_items(facts)
-    items += [_audio_item(facts), _disk_item(facts), _export_item(facts)]
+    items += [_audio_item(facts), _voice_item(facts), _disk_item(facts), _export_item(facts)]
     return items
 
 

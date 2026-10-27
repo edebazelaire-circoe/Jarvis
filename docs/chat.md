@@ -376,6 +376,9 @@ retention** and **before** `_speech_gate`:
 
 ## Voice channel
 
+Product states Off / Sleep / Active, the persisted « voix coupée » preference and what the Chat does in each:
+[voice-lifecycle.md](voice-lifecycle.md). Off reads as `absent` here (no Voice process), Sleep as `background`.
+
 The real voice state lives in the Voice process
 (`VoiceLifecycleState{background, active, connecting, error}`); Core knew
 nothing of it. `VoiceChannelService` (`jarvis/core/voice_channel.py`, pure

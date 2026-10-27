@@ -173,10 +173,42 @@ def test_inserted_after_the_wheel_and_fed_by_the_one_status_beat():
     # Le rappel de la touche d'éveil vit dans le sous-menu : plus de `#wakeHint` caché.
     assert 'id="wakeHint"' not in html and "setWakeHint" not in html
     source = MODULE.read_text(encoding="utf-8")
-    assert "fetch(" not in source and "setInterval" not in source and "setTimeout" not in source, "aucun second sondage"
+    # Seule écriture : l'interrupteur de la voix (un POST sur clic, borné par un délai), jamais un sondage.
+    toggle = source[source.index("async function toggleVoice("):source.index("function items(){")]
+    assert toggle.count("fetch(") == 1 and "method:'POST'" in toggle and toggle.count("setTimeout") == 1
+    rest = source.replace(toggle, "")
+    assert "fetch(" not in rest and "setInterval" not in source and "setTimeout" not in rest, "aucun second sondage"
     # Les deux portes sont les routes existantes : le bouton Agents et le modal des réglages.
     assert "getElementById('agentsButton')" in source and "root.openSettingsTab(" in source
     # « Réglages de la voix » : la section Conversation (Personnalisation s'ouvre sur Thème & scène depuis le hub).
     assert "const VOICE_SETTINGS_TARGET='conversation';" in source
     assert "openSettingsAt(VOICE_SETTINGS_TARGET," in source and "openSettingsAt('voice'" not in source
     assert re.search(r"function openSettingsTab\(tab,options\)\{", html) and re.search(r"function settingsTabs\(\)\{", html)
+
+
+def test_the_voice_switch_projects_the_server_state_and_never_the_hoped_one(tmp_path):
+    """Slice 05 presentation-edition-v1-2 (`docs/voice-lifecycle.md`) : l'interrupteur Off / Sleep de la voix."""
+
+    got = run(tmp_path, """
+      const L=(o)=>({...S,voice_online:o.online===true,voice_lifecycle:o});
+      const item=s=>J.jarvisItemsOf(J.factsOf(s,'ok')).find(r=>r.id==='voice_power')||null;
+      out({sleep:item(L({preference:'sleep',state:'sleep',code:null,message:'',online:true})),
+        off:item(L({preference:'off',state:'off',code:'voice_off',message:'Voix coupée : aucun micro n’est ouvert.'})),
+        offRows:J.jarvisItemsOf(J.factsOf(L({preference:'off',state:'off',code:'voice_off'}),'ok')).map(r=>r.id),
+        offVoice:J.jarvisItemsOf(J.factsOf(L({preference:'off',state:'off',code:'voice_off'}),'ok'))[0],
+        starting:item(L({preference:'sleep',state:'starting',code:'voice_starting',message:'La voix démarre…'})),
+        degraded:item(L({preference:'sleep',state:'degraded',code:'voice_provider_key_missing',message:'Clé absente.'})),
+        pending:J.voicePowerItemOf(J.factsOf(L({preference:'sleep',state:'sleep',online:true}),'ok'),true),
+        none:item(S),
+        cat:J.categoryStatusOf(J.factsOf(L({preference:'off',state:'off'}),'ok'))})""")
+    assert got["none"] is None, "sans `voice_lifecycle`, aucun interrupteur n'est dessiné"
+    assert got["sleep"]["toggle"] is True and got["sleep"]["checked"] is True and got["sleep"]["note"] == "veille · SLEEP"
+    assert "couper la voix" in got["sleep"]["detail"]
+    assert got["off"]["checked"] is False and got["off"]["note"] == "coupée · OFF" and got["off"]["tone"] == "off"
+    assert "rallumer" in got["off"]["detail"] and "(voice_off)" not in got["off"]["detail"]
+    assert got["offRows"] == ["voice", "voice_power", "wake", "agent", "subagents", "voice_settings"]
+    assert got["offVoice"]["note"] == "coupée"
+    assert got["starting"]["tone"] == "busy" and got["starting"]["checked"] is True
+    assert got["degraded"]["tone"] == "error" and "(voice_provider_key_missing)" in got["degraded"]["detail"]
+    assert got["pending"]["disabled"] is True and got["pending"]["note"] == "enregistrement…"
+    assert got["cat"] == {"tone": None, "text": "voix coupée · 2 sous-agents"}

@@ -158,7 +158,10 @@ logged). `product_setup` exit code 0 = done. `product_setup status` also reports
    `%TEMP%\jarvis-launcher-error.log` (I-002 point 4);
 2. one instance per home (`runtime\launcher.lock`, `msvcrt.locking`): a second click reopens the page;
 3. starts Core, waits for `/v1/health` (with its token), then the Control Center (`JARVIS_OPEN_BROWSER=0`
-   for it), waits for `/api/status`, then Voice (optional, `JARVIS_LAUNCH_VOICE=0` leaves it out); each
+   for it), waits for `/api/status`, then Voice (optional, `JARVIS_LAUNCH_VOICE=0` leaves it out) **unless the
+   user's persisted preference is Off or the voice provider key is missing**: Voice is then *held* with its code
+   (`voice_off`, `voice_provider_key_missing`) instead of crashing three times ([voice-lifecycle.md](voice-lifecycle.md));
+   the preference is re-read while JARVIS runs (Off stops Voice, Sleep starts it again); each
    child runs `python -B -m jarvis <role>` (no bytecode written in the program folder), its output in
    `runtime\logs\<role>.log`, **inside its own Job Object** `KILL_ON_JOB_CLOSE`
    (`owned_process_tree.OwnedProcessTree`): if the launcher dies, Windows ends the whole tree (MCP
@@ -180,7 +183,7 @@ logged). `product_setup` exit code 0 = done. `product_setup status` also reports
    runs its normal shutdown (`finally`: servers stopped, Core stopped, sessions closed, token removed;
    journal `core.stop_requested` / `ui.stop_requested`); the launcher waits up to 15 s
    (`child_stopped_cleanly`), and only then `terminate`, 5 s, `kill` (`child_stop_timeout`, warning).
-   Voice does not read the request: it is terminated as before. Each Job is then closed and the state
+   Voice reads the request too since Slice 05 of v1-2 (session and microphone closed by its `finally`). Each Job is then closed and the state
    and request files removed; a stale request is deleted before each start.
 
 The development path is unchanged: `project jarvis start`, `scripts/supervisor_v2.py` and
@@ -206,6 +209,7 @@ cached (CLI 30 s, 3 s while a sign-in is open; audio 60 s); `?force=1` re-reads.
 | `browser` | essentials | yes | Edge or Chrome found (HV-PACKAGE-09) | `recheck` |
 | `connector:<id>` | services | no | Core says `ready` | `connect_circoe` (Circuit Toolbox), `open_connections` |
 | `audio` | computer | no | at least one input and one output | `recheck` |
+| `voice` | computer | no | Sleep or Active ([voice-lifecycle.md](voice-lifecycle.md)); Off is optional, a missing provider key is « À faire » | `open_connections` (key missing) |
 | `disk` | computer | below 512 MB only | ≥ 2 GB free (below: optional warning) | `recheck` |
 | `export` | computer | no | `Documents\Jarvis` usable (created at the first export, [export.md](export.md)) | — |
 

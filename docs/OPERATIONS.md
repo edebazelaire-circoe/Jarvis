@@ -1920,8 +1920,10 @@ Approchez la souris du bord gauche (ou Entrée sur l'ancre de la roue) :
   dans l'infobulle), puis deux raccourcis : **Sous-agents** (ouvre le panneau
   Agents) et **Réglages de la voix**. Si le Control Center ne répond plus,
   chaque ligne dit « état inconnu » : ce n'est jamais le dernier état connu.
-  Il n'y a pas de bouton Veille / Réveil : aucune route ne le permet
-  aujourd'hui ; la touche d'éveil reste le geste.
+  Il n'y a pas de bouton Réveil : la touche d'éveil reste le geste. Depuis la
+  Slice 05 de presentation-edition-v1-2, la ligne **Voix activée** coupe ou
+  rallume la voix (Off / Sleep, préférence persistée, `docs/voice-lifecycle.md`)
+  et montre l'état que le serveur projette.
 - **Capture** propose **Capture d'écran**, **Enregistrer l'écran** et
   **Enregistrer l'audio** (clic droit ou flèche droite sur une ligne : les
   cibles réelles). Les deux enregistrements peuvent tourner ensemble.

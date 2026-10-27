@@ -952,3 +952,25 @@ async def test_le_dernier_rendu_gagne_et_une_reponse_perimee_est_ignoree(served)
     # L'écran ET l'état en mémoire disent la lecture la plus récente.
     assert seen == {"gets": 2, "sens": "0.9", "provider": True, "model": 0.9, "form": "0.9"}, seen
     assert_clean(out)
+
+
+async def test_an_enabled_word_without_its_engine_says_it_does_not_listen(served, tmp_path, monkeypatch):
+    """Slice 05 presentation-edition-v1-2 : moteur absent sur ce poste -> « Moteur absent », jamais « Activé » seul."""
+
+    from jarvis.runtime import wake_word_install
+
+    monkeypatch.setattr(wake_word_install, "package_installed", lambda: False)
+    served.settings_file.write_text(json.dumps(
+        {"wake_word": {"schema_version": 1, "enabled": True, "provider": "openwakeword"}}), encoding="utf-8")
+    plan = [{"name": "engine", "width": 1280, "height": 900, "actions": [
+        *OPEN,
+        wait("!!document.querySelector('#wwState')"),
+        eval_("(()=>({state:document.getElementById('wwState').dataset.wwState,"
+              "pill:document.getElementById('wwPill').textContent,"
+              "engine:(document.querySelector('[data-ww-engine]')||{}).textContent||null,"
+              "code:(document.querySelector('[data-ww-engine]')||{dataset:{}}).dataset.wwEngine||null}))()", id="engine"),
+    ]}]
+    step = (await drive(served.url, plan))["steps"][0]
+    seen = got(step, "engine")
+    assert seen["state"] == "engine_missing" and seen["pill"] == "Moteur absent"
+    assert seen["code"] == "wake_package_missing" and "seul F9" in seen["engine"]

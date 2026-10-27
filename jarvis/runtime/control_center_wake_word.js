@@ -221,6 +221,15 @@
     if(state.unreadable||problems.length)return {...base,kind:'unreadable',tone:'bad',pill:'Bloc illisible',
       title:'Le réglage enregistré est illisible',
       detail:'Les valeurs par défaut sont affichées et appliquées, mot d’éveil du bloc inactif. Enregistrer remplace le bloc par les valeurs ci-dessous.'};
+    /* Le moteur choisi manque sur ce poste (`engine`, `voice_lifecycle.wake_engine`) : jamais « activé » tout court,
+       la page dit qu'il n'écoute pas et pourquoi (Slice 05 de presentation-edition-v1-2). */
+    const engine=state.engine&&typeof state.engine==='object'?state.engine:null;
+    if(state.enabled&&engine&&engine.configured&&engine.available===false){
+      const code=typeof engine.code==='string'&&SAFE_CODE.test(engine.code)?engine.code:null;
+      return {...base,kind:'engine_missing',tone:'bad',pill:'Moteur absent',code,
+        title:'Activé, mais le moteur manque : le mot d’éveil n’écoute pas',
+        detail:`${typeof engine.message==='string'&&engine.message?engine.message:'Le moteur du mot d’éveil manque sur ce poste.'}${code?` (${code})`:''} La touche manuelle reste utilisable.`};
+    }
     if(state.enabled)return {...base,kind:'enabled',tone:'warn',pill:'Activé dans le réglage',
       title:'Activé dans le réglage',
       detail:'Il s’applique au prochain démarrage de Voice. Cette page ne sait pas si Voice a redémarré depuis : elle ne dit pas que le détecteur écoute.'};
@@ -375,6 +384,7 @@
     foreign:'Réglage d’une version plus récente : lecture seule.',
     unreadable:'Réglage illisible : valeurs par défaut.',
     enabled:'Activé. S’applique au prochain démarrage de Voice.',
+    engine_missing:'Moteur absent sur ce poste : seul le raccourci clavier réveille JARVIS.',
     disabled:'Désactivé. Le micro reste fermé au repos.',
     unknown:'Réglage illisible.',
   });
@@ -447,6 +457,7 @@
         help('État',model.detail+(model.serverState?' Selon le serveur : '+model.serverState+'.':'')),
       ]),
       node('div',{className:'hint',text:STATE_SHORT[model.kind]||model.title}),
+      model.kind==='engine_missing'?node('div',{className:'hint','data-ww-engine':model.code||'missing',text:model.detail}):null,
     ]));
     /* Diagnostic du bloc lu (clés ignorées, version illisible) : dans Avancé & diagnostic, un lien ici. */
     if(model.problems.length||model.ignored.length){
