@@ -59,3 +59,8 @@ rendu ses fichiers aussi.
   d'un serveur MCP tué en pleine écriture), 3 dans celle de la QA. Les lecteurs (`read_jsonl_tail`, outils de QA)
   doivent ignorer une ligne invalide ; à vérifier pour chaque lecteur, et envisager une écriture par ligne entière
   (`O_APPEND` + une seule écriture) côté journal.
+
+## Décision de l'agent 0 (2026-10-27)
+- **Correction 1 (dossiers `--add-dir`) : confiée à la Slice 03.** En édition confinée, les lectures directes de fichiers (Read/Grep/Glob) sont limitées à la mémoire du Board de l'agent et au dossier de la Session ouverte (plus les connaissances globales nécessaires), avec relance ou reconfiguration de la CLI au rattachement à un autre Board. La Slice 03 possède la découverte des sources existantes et doit poser ces frontières.
+- **Correction 2 (outils MCP par identifiant) : non retenue.** L'inspection non activante d'un autre Board par son identifiant (`board_memory_*`, `board_inspect`, `dossier_*`) est un geste explicite, tracé et documenté (`docs/boards.md`), utile pour réutiliser la recherche d'un autre projet de l'utilisateur à sa demande. Ce qui est refusé, c'est le balayage implicite de tous les Boards par le système de fichiers. La Slice 03 précise dans la consigne de recherche que la découverte porte sur le Board courant et les connaissances globales, et qu'un autre Board n'est lu que sur demande ou référence explicite.
+- `origin: "brain"` des écritures de sous-agents et lignes invalides de `trace.jsonl` : restent ouverts ici, non bloquants.

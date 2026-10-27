@@ -68,3 +68,10 @@ Reserved for implementation agents and the Project Manager. Do not treat plannin
   - **Coût : 0,82 $** (0,683 $ cumulés pour la première CLI, deux relais compris, + 0,139 $ pour la reprise) : 0,02 $ au-dessus du budget de 0,80 $.
   - Rien hors du bac (Documents, Bureau, `C:\Users\Public`, profondeur 5, aucun fichier plus récent que le marqueur ; export vide). 34 PID exacts arrêtés par `Stop-Process -Id`, sans `/T` ; aucun processus restant. Preuves et bases (avec `-wal`/`-shm`, copiées avant suppression du bac) : `C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\448345f0-a514-4023-9dde-33aed523cf61\scratchpad\v12s02\rework\` (`evidence\trace.jsonl`, journaux, PID, `trace-rework-resume.jsonl`, `board-memory\`, `db-copies\`). Le JARVIS vivant n'a été ni lancé ni touché.
 - Non vérifié : retrait d'une question une fois répondue, observé en vrai (l'essai s'arrête avant la réponse, faute de budget) ; réécriture d'un condensé illisible après accord derrière la CLI ; latence d'un tour qui met à jour le condensé.
+
+## 2026-10-27 — Slice 02, QA, reprise et décision (agent 0)
+- QA indépendante (`slices/02-board-project-continuity/qa/qa-report.md`, `6c448f0e`) : PASS avec réserves, 1 majeur (question d'entretien perdue à la reprise), 4 mineurs ; mutations 5/5 tuées ; essai réel 0,535 $.
+- Reprise (`8232f7e0`, `5fa7de82`) : M1 et m1-m4 corrigés ; essai réel 0,82 $ (question relayée inscrite dans Questions ouvertes puis reposée dans une nouvelle Session) ; `full` identique à l'octet. Vérification de l'agent 0 : relecture du diff, 99 tests (continuité, périmètre, prompts confinés) verts.
+- Fuite entre Boards (signalée par la QA) : antérieure à la V1.2 (`--add-dir` de tout `data/boards` et `data/sessions` depuis la S04 V1). Décision dans I-002 : restriction des lectures directes confiée à la Slice 03 ; l'inspection explicite par identifiant reste permise.
+- Coût total de la Slice : 1,05 + 0,535 + 0,82 = 2,41 $.
+- Décision : **APPROUVÉE**.
