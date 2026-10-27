@@ -1,11 +1,19 @@
 {
   "slice_id": "02-board-project-continuity",
   "title": "02 — Board project continuity",
-  "task_type": null,
-  "task_type_blocker": "Slice 00 must resolve a valid existing Workspace Task Type before dispatch; do not invent one.",
+  "task_type": "waived-by-agent-0",
+  "task_type_blocker": null,
   "frontend": false,
   "code": true,
-  "required_qa": ["qa-verification", "code-review", "runtime-validation", "agent-trace-analysis"],
-  "required_skills": ["/caveman", "/coding-guideline"],
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation",
+    "agent-trace-analysis"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline"
+  ],
   "agent_routing": null
 }

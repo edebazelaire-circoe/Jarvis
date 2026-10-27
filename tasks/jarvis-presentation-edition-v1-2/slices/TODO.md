@@ -1,6 +1,6 @@
 # Slice execution queue — Presentation Edition V1.2
 
-1. `00-project-manager` — blind audit/reconciliation/readiness gate; runs first and must reach `READY`.
+1. [x] `00-project-manager` — **READY** le 2026-10-27 (READINESS.md) — — blind audit/reconciliation/readiness gate; runs first and must reach `READY`.
 2. `01-presentation-product-brain-scope` — enforce Presentation-focused brain/tool/role scope without breaking research/connectors/Presentation authoring.
 3. `02-board-project-continuity` — make Board resume behave as project resume using durable Board memory.
 4. `03-research-reuse-freshness-orchestration` — force existing-source lookup, freshness decision and proper use of Research Lead/sub-agents/relations.
