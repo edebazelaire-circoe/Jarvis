@@ -172,14 +172,15 @@ function makeCore(options){
     }
     const changed=JSON.stringify(next)!==JSON.stringify(st.values);
     if(body.mode==='commit'&&changed){
-      st.undo.push({entry_id:'psh_'+(st.undo.length+1),actor:body.actor||'user',before:st.values});st.redo=[];
+      st.undo.push({entry_id:'psh_'+(st.undo.length+1),actor:body.actor||'user',before:st.values,
+        scene_ids:[...new Set(body.ops.map((o)=>o.scene_id).filter(Boolean))]});st.redo=[];
       st.values=next;st.revision++;st.commits++;
     }else if(body.mode==='preview')st.previews++;
     return {status:200,body:{status:'applied',mode:body.mode,revision:st.revision,committed:body.mode==='commit'&&changed,changed,ops:results,tier:'control'}};
   }
   function history(){
     const h={revision:st.revision,tracked:st.undo.length>0||st.redo.length>0,undo_count:st.undo.length,redo_count:st.redo.length,
-      next_undo:st.undo.length?{entry_id:st.undo[st.undo.length-1].entry_id,actor:st.undo[st.undo.length-1].actor}:null,
+      next_undo:st.undo.length?{entry_id:st.undo[st.undo.length-1].entry_id,actor:st.undo[st.undo.length-1].actor,scene_ids:st.undo[st.undo.length-1].scene_ids||[]}:null,
       next_redo:st.redo.length?{entry_id:st.redo[st.redo.length-1].entry_id,actor:'user'}:null};
     if(!h.tracked){h.reason='not_recorded_since_start';h.message='history is kept in memory only: nothing was recorded for this variant since Core started'}
     return h;

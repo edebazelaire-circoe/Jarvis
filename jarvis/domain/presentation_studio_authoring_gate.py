@@ -56,7 +56,7 @@ from jarvis.domain.presentation_studio_authoring_tsx import (
 )
 from jarvis.domain.presentation_studio_checks import PresentationStudioError
 from jarvis.domain.presentation_studio_playback import ARM_LOOKAHEAD
-from jarvis.domain.presentation_studio_scene import effective_bounds, node_of, value_at
+from jarvis.domain.presentation_studio_scene import ControlGroup, effective_bounds, node_of, value_at
 from jarvis.domain.presentation_studio_score import ActionKind, Presenter, ambiguous_phrases, normalise_phrase, phrase_weakness
 
 # ------------------------------------------------------------------ thresholds (the rule table quotes them)
@@ -101,6 +101,8 @@ class Rule:
 
         if native:
             base = self.level(workflow, strict)
+            if base != OFF and self.code in NATIVE_REQUIRED:
+                return ERROR
             if base == OFF or self.code in NATIVE_BLOCKING:
                 return base
             return OFF if self.code in NATIVE_OFF else WARNING
@@ -275,12 +277,19 @@ NATIVE_BLOCKING: frozenset[str] = frozenset({
 })
 
 
+#: presentation-edition-v1 Slice 09 (QA: a deck written by the real author exposed no setting, so « Modifier » in Variants had nothing to
+#: change): what a native deck must ALSO pass to be delivered, at ERROR whatever the workflow's own level. A native scene keeps its free
+#: React/TSX, but its visible texts are props declared by its bundle, read by the source and exposed as scene controls (group `content`;
+#: its main colours too, group `visual`): the same door the voice and the editor use. This is an editability floor, not a style rule.
+NATIVE_REQUIRED: frozenset[str] = frozenset({"scene_no_controls"})
+
+
 #: Slice 13: rules that judge the GUIDED model itself (text in props, colours in the `theme` prop, curated controls, cues, spoken lines,
 #: declared transitions) and say nothing about native code: off in native, so the author is not pushed back to the guided model by a wall
 #: of irrelevant warnings (the first native trace returned 23 of them). The text rules read props/data only, which native code leaves empty.
 NATIVE_OFF: frozenset[str] = frozenset({
-    "tsx_theme_unread", "tsx_color_hardcoded", "tsx_text_hardcoded", "tsx_props_unread", "tsx_props_undeclared",
-    "scene_no_controls", "scene_unbound", "controls_too_many", "control_unlabelled", "control_label_meaningless", "control_no_meaning",
+    "tsx_theme_unread", "tsx_color_hardcoded", "tsx_text_hardcoded", "tsx_props_undeclared",
+    "scene_unbound", "controls_too_many", "control_unlabelled", "control_label_meaningless", "control_no_meaning",
     "control_unbounded", "cue_weak", "cue_stopword_phrase", "cue_nested", "cues_sparse", "jarvis_line_missing", "notes_missing",
     "transition_missing", "contrast_low", "content_thin", "text_density", "text_dense",
 })
@@ -465,7 +474,12 @@ def _structure(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, man
     for scene in scenes:
         if sink.ran("scene_unbound") and not scene.scene.controls and not scene.scene.props and not scene.scene.data:
             sink.add("scene_unbound", f"scene:{scene.key}", "no control and no content value: the scene shows nothing and cannot be edited")
-        if sink.ran("scene_no_controls") and not scene.scene.controls:
+        if sink.ran("scene_no_controls") and sink.native:
+            if not any(c.group is ControlGroup.CONTENT for c in scene.scene.controls):
+                sink.add("scene_no_controls", f"scene:{scene.key}",
+                         "not editable from « Modifier »: make its texts (and main colour) bundle props with a default, read them "
+                         "(props.<name>), value them in the scene and add scene controls (path props.<name>, group content; colour: visual)")
+        elif sink.ran("scene_no_controls") and not scene.scene.controls:
             sink.add("scene_no_controls", f"scene:{scene.key}", "no curated control: nothing to tune by voice or in the inspector")
     if sink.ran("transition_missing") and len(scenes) > 1:
         declared = any(d.profile is not None and d.profile.motion.transition is not TransitionStyle.NONE for d in draft.directions)

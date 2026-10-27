@@ -39,7 +39,7 @@
   'use strict';
   const Core=root.JarvisStudioInspectorCore||(typeof require==='function'?require('./control_center_presentation_studio_inspector_core.js'):null);
   const Widgets=root.JarvisStudioInspectorWidgets||(typeof require==='function'?require('./control_center_presentation_studio_inspector_widgets.js'):null);
-  const {ROUTE,GROUPS,GROUP_LABEL,PANEL_ID,BUTTON_ID,STYLE_ID,PREVIEW_OBJECT_ID,STORAGE_KEY,PLAYBACK_EVENT,PREVIEW_MIN_MS,TEXT_PREVIEW_MS,IDLE_COMMIT_MS,REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,POLL_MS,AVAILABILITY_MS,SAVED_FLASH_MS,RELOAD_RETRY_MS,UNSAFE_KEYS,HEX_COLOR,APPLIED_THEME,NOT_APPLIED_THEME,CSS,describe,clip,cloneJson,canonical,sameJson,pathParts,setAtPath,previewValues,widgetSpec,stepFor,decimalsOf,roundTo,formatValue,validateValue,diffControls,luminance,contrastRatio,PROVENANCE,describeRefusal,HISTORY_TEXT,InspectorError}=Core;
+  const {ROUTE,GROUPS,GROUP_LABEL,PANEL_ID,BUTTON_ID,STYLE_ID,PREVIEW_OBJECT_ID,STORAGE_KEY,PLAYBACK_EVENT,PREVIEW_MIN_MS,TEXT_PREVIEW_MS,IDLE_COMMIT_MS,REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,POLL_MS,AVAILABILITY_MS,SAVED_FLASH_MS,RELOAD_RETRY_MS,UNSAFE_KEYS,HEX_COLOR,APPLIED_THEME,NOT_APPLIED_THEME,CSS,describe,clip,cloneJson,canonical,sameJson,pathParts,setAtPath,previewValues,widgetSpec,stepFor,decimalsOf,roundTo,formatValue,validateValue,diffControls,luminance,contrastRatio,PROVENANCE,describeRefusal,isUnreachable,UNSAVED_TEXT,HISTORY_TEXT,InspectorError}=Core;
 
   /* ------------------------------------------------------------------ contrôleur */
   function createStudioInspector(deps){
@@ -177,7 +177,7 @@
       /* Porte graphique de l'explorateur de variantes (Slice 18) : même appel que la voix, depuis la présentation réglée ici. */
       ui.explore=button('Variantes','jvi-icon jvi-explore',()=>{openExplorer()},{"aria-label":"Ouvrir les variantes",title:"Variantes : l'arbre des branches de cette présentation"});
       ui.explore.disabled=true;
-      ui.close=button('×','jvi-icon',()=>{close({restoreFocus:true})},{'aria-label':'Fermer l\'inspecteur',title:'Fermer (Échap)'});
+      ui.close=button('×','jvi-icon',()=>{closeByUser()},{'aria-label':'Fermer l\'inspecteur',title:'Fermer (Échap)'});
       const bar=el('div','jvi-bar');
       [ui.title,ui.explore,ui.undo,ui.redo,ui.close].forEach((n)=>bar.appendChild(n));
       ui.live=el('div','jvi-sr');attrs(ui.live,{role:'status','aria-live':'polite'});
@@ -207,7 +207,8 @@
       ui.top=el('div','jvi-top');
       /* The source line (versions of the scene's model, last hot reload) is an engine detail: a developer surface (Slice 09). */
       ui.srcline.setAttribute('data-surface','developer');
-      [ui.context,ui.pick,ui.status,ui.reloadBanner,ui.srcline].forEach((n)=>ui.top.appendChild(n));
+      ui.histNote=el('p','jvi-histnote');ui.histNote.hidden=true;ui.histNote.setAttribute('data-role','undo-scene');
+      [ui.context,ui.histNote,ui.pick,ui.status,ui.reloadBanner,ui.srcline].forEach((n)=>ui.top.appendChild(n));
       [ui.da,ui.empty,ui.issues,ui.panels].forEach((n)=>ui.main.appendChild(n));
       [bar,ui.live,ui.top,ui.stage,ui.tabs,ui.main].forEach((n)=>panel.appendChild(n));
       panel.addEventListener('keydown',onPanelKey);
@@ -274,6 +275,7 @@
     function setStatus(kind,title,text,actions){
       S.status=kind?{kind,title,text,actions:actions||[],at:now()}:null;
       renderStatus();
+      return S.status;
     }
 
     function renderStatus(){
@@ -427,6 +429,7 @@
       stats.polls++;
       try{
         const body=await read(`${base()}/reloads`,'Rechargements');
+        retryUnsaved();       /* Core answers again: a value kept while it was unreachable is saved now (Slice 09 QA) */
         S.reload.pending=Array.isArray(body.pending)?body.pending:[];
         S.reload.rows=Array.isArray(body.reloads)?body.reloads:[];
         const mine=S.sceneId;
@@ -476,7 +479,7 @@
           if(p.presentation_id===S.presentationId)o.selected=true;
           select.appendChild(o);
         }
-        select.addEventListener('change',()=>{selectPresentation(select.value).catch((error)=>{setFatal(error,()=>{loadPresentations()});log('presentation_failed',{error:describe(error)},'error')})});
+        select.addEventListener('change',()=>{const id=select.value;requestMove({kind:'presentation',apply:()=>selectPresentation(id).catch((error)=>{setFatal(error,()=>{loadPresentations()});log('presentation_failed',{error:describe(error)},'error')})})});
         label.appendChild(select);ui.pick.appendChild(label);
       }
       const scenes=(S.variant&&S.variant.scenes)||[];
@@ -500,14 +503,93 @@
         row.appendChild(field);row.appendChild(prev);row.appendChild(next);ui.pick.appendChild(row);
       }else{ui.pick.appendChild(field);ui.pick.appendChild(prev);ui.pick.appendChild(next)}
     }
+    /* Another scene (picker, ‹ ›, Variants, « Modifier »): never before what was typed on this one is saved (`requestMove`). */
     function chooseScene(id,options){
-      if(id===S.sceneId)return;
-      abandonDrafts('scene');
+      if(id===S.sceneId&&!move.target)return;
+      requestMove({kind:'scene',sceneId:id,apply:()=>switchScene(id,options)});
+    }
+    function switchScene(id,options){
+      if(id===S.sceneId)return null;
+      abandonDrafts('scene');          /* nothing left: `settleDrafts` saved it, or the user chose to drop it */
       S.sceneId=id;S.reload.degraded=null;renderReloadBanner(null);
       renderPick();
       /* Slice 09: a scene chosen HERE while Variants shows this variant brings Variants to it (one scene on screen, never two). */
       if(!(options&&options.fromExplorer))followInExplorer(id);
-      loadScene().then(()=>pollReloads());
+      return loadScene().then(()=>pollReloads());
+    }
+    /* ------------------------------------------------------------ leaving a scene with a draft (presentation-edition-v1 Slice 09 QA, B1)
+       Variants changes the scene on screen by itself (continuous play) and the editor follows it. A value typed and not yet released used to
+       be dropped in silence there, and the field kept the focus over the NEXT scene's value. Now every move (scene, variant, presentation)
+       first saves what is typed on the scene it was typed on and waits for the write queue; only then does the editor move. A save that
+       fails (refused, Core unreachable) keeps the editor on its scene with the draft and says so, with a way out; Variants may show another
+       scene meanwhile. The latest move asked wins; the focus leaves a field whose scene changed under it. */
+    const move={target:null,running:false,held:false};
+    function hasUnsaved(){
+      for(const s of sessions.values())if(s.committing||(s.dirty&&s.draft!==undefined))return true;
+      return queue.pending.size>0;
+    }
+    async function settleDrafts(){
+      const dirty=[...sessions.values()].filter((s)=>s.dirty&&s.draft!==undefined&&!s.committing&&widgets.get(s.id));
+      const items=dirty.map((s)=>({id:s.id,value:s.draft,label:widgets.get(s.id).ctx.row.label}));
+      const jobs=dirty.map((s)=>{const w=widgets.get(s.id);s.unsaved=null;return onCommit(w.ctx,s.draft,{immediate:true})});
+      await Promise.all(jobs);
+      for(let i=0;i<8&&queue.pending.size;i++)await queue.tail;   /* a stale rebase queues once more behind itself */
+      const kept=items.filter((it)=>{const w=widgets.get(it.id),x=sessions.get(it.id);return (x&&x.dirty)||!w||!sameJson(w.ctx.row.current,it.value)});
+      const left=[...sessions.values()].some((x)=>x.dirty&&x.draft!==undefined);
+      return {ok:!kept.length&&!left,saved:items.filter((it)=>!kept.includes(it)),kept};
+    }
+    function requestMove(target){
+      move.target=target;
+      if(!move.running)runMove().catch((error)=>{log('move_failed',{error:describe(error)},'error');setStatus('bad','Changement de scène impossible',describe(error))});
+    }
+    /* A held move goes on once nothing is left unsaved (checked after the write that just ended has left the queue). */
+    function resumeMove(){
+      if(!move.held)return;
+      later(()=>{
+        if(!move.held||hasUnsaved()||move.running)return;
+        move.held=false;
+        if(move.target)requestMove(move.target);
+      },0);
+    }
+    async function runMove(){
+      move.running=true;
+      try{
+        for(;;){
+          const t=move.target;
+          if(!t)return;
+          let saved=null;
+          if(hasUnsaved()){
+            const origin=sceneLabel(S.sceneId)||'scène en cours';
+            const typing=!!(ui.root&&doc.activeElement&&ui.root.contains(doc.activeElement)&&inTextField(doc.activeElement));
+            setStatus('info','Enregistrement de votre saisie…',` Sur la ${origin}, avant de changer de scène.`);
+            log('move_saving',{kind:t.kind,from:S.sceneId,to:t.sceneId||null});
+            const r=await settleDrafts();
+            if(!r.ok){
+              move.held=true;
+              const names=r.kept.map((k)=>`« ${clip(k.label,40)} »`).join(', ')||'une valeur';
+              setStatus('warn',`L’éditeur reste sur la ${origin}`,
+                ` Votre saisie (${names}) n’est pas enregistrée : l’éditeur ne change pas de scène tant qu’elle n’est ni enregistrée ni abandonnée.`,
+                [{label:'Abandonner ma saisie et continuer',run:()=>{const target=move.target;abandonDrafts('user');move.held=false;setStatus(null);if(target)requestMove(target)}}]);
+              announce(`Saisie non enregistrée : l’éditeur reste sur la ${origin}.`);
+              log('move_held',{kind:t.kind,kept:r.kept.map((k)=>k.id)},'warn');
+              return;
+            }
+            saved={origin,count:r.saved.length,typing};
+            if(move.target!==t)continue;      /* a newer move arrived while saving: that one is applied (the draft is saved) */
+          }
+          move.target=null;
+          await t.apply();
+          if(saved){
+            const where=sceneLabel(S.sceneId);
+            const said=setStatus('ok',`Saisie enregistrée sur la ${saved.origin}`,where?` · l’éditeur montre maintenant la ${where}.`:'');
+            later(()=>{if(S.status===said)setStatus(null)},5000);
+            announce(`Saisie enregistrée sur la ${saved.origin}.${where?` L’éditeur montre maintenant la ${where}.`:''}`);
+            log('move_after_save',{kind:t.kind,saved:saved.count});
+            /* The field now shows another scene's value: the caret never stays there (the next key would edit that scene). */
+            if(saved.typing&&ui.title)ui.title.focus();
+          }
+        }
+      }finally{move.running=false}
     }
     /* ------------------------------------------------------------ Variants and the editor (presentation-edition-v1 Slice 09) */
     function explorerApi(){return root.JarvisStudioExplorer||null}
@@ -529,14 +611,18 @@
     function renderContext(){
       if(!ui.context)return;
       const v=S.variant;
+      const scenes=v&&Array.isArray(v.scenes)?v.scenes:[];
+      const index=scenes.findIndex((s)=>s.scene_id===S.sceneId);
+      const isActive=!!v&&!!S.activeVariantId&&v.variant_id===S.activeVariantId;
+      const n=!v?null:Number.isInteger(v.variant_number)?v.variant_number:S.variantNumbers&&S.variantNumbers.get(v.variant_id);
+      const number=Number.isInteger(n)?`variante #${n}`:'variante';
+      /* A polite live region: rewritten only when its words change (a new scene, variant or active state), never after each save (QA m2). */
+      const key=v?`${index}|${scenes.length}|${number}|${isActive}`:'';
+      if(key===ui.contextKey)return;
+      ui.contextKey=key;
       ui.context.hidden=!v;
       clear(ui.context);
       if(!v)return;
-      const scenes=Array.isArray(v.scenes)?v.scenes:[];
-      const index=scenes.findIndex((s)=>s.scene_id===S.sceneId);
-      const isActive=!!S.activeVariantId&&v.variant_id===S.activeVariantId;
-      const n=Number.isInteger(v.variant_number)?v.variant_number:S.variantNumbers&&S.variantNumbers.get(v.variant_id);
-      const number=Number.isInteger(n)?`variante #${n}`:'variante';
       ui.context.appendChild(document_text('Vous modifiez '));
       ui.context.appendChild(el('strong',null,index>=0?`la scène ${index+1} sur ${scenes.length}`:'cette variante'));
       ui.context.appendChild(document_text(` de la ${number}`));
@@ -546,10 +632,12 @@
     }
     function document_text(text){return doc.createTextNode(text)}
     /* Said to the page after every committed change (edit, undo, redo): Variants re-reads the variant from Core. */
-    function sayEdited(revision,sceneId){
+    /* `bring` (undo / redo only): Variants brings that scene on screen. A plain save never moves Variants: a value saved while Variants had
+       already moved on (its continuous play, Slice 09 QA B1) must not pull it back. */
+    function sayEdited(revision,sceneId,bring){
       if(typeof win.dispatchEvent!=='function'||typeof win.CustomEvent!=='function'||!S.variant)return;
       try{win.dispatchEvent(new win.CustomEvent('jarvis:studio-variant-edited',{detail:{presentation_id:S.presentationId,variant_id:S.variant.variant_id,
-        revision:Number.isInteger(revision)?revision:null,scene_id:sceneId||S.sceneId||null}}))}
+        revision:Number.isInteger(revision)?revision:null,scene_id:sceneId||S.sceneId||null,bring:bring===true}}))}
       catch(error){log('edited_event_failed',{error:describe(error)},'warn')}
     }
     /* Variants changed the scene (or the variant) on screen: the editor follows, when it edits the same presentation. */
@@ -557,21 +645,26 @@
       const d=event&&event.detail||{};
       if(!S.open||!d.presentation_id||d.presentation_id!==S.presentationId)return;
       if(S.variant&&d.variant_id===S.variant.variant_id){
-        if(d.scene_id&&d.scene_id!==S.sceneId)chooseScene(d.scene_id,{fromExplorer:true});
+        if(d.scene_id&&(d.scene_id!==S.sceneId||move.target))chooseScene(d.scene_id,{fromExplorer:true});
         return;
       }
       log('follow_variant',{variant_id:d.variant_id,scene_id:d.scene_id});
-      selectPresentation(d.presentation_id,{variantId:d.variant_id,sceneId:d.scene_id})
-        .catch((error)=>{setFatal(error,()=>{loadPresentations()});log('follow_failed',{code:error.code,error:describe(error)},'error')});
+      requestMove({kind:'variant',sceneId:d.scene_id,apply:()=>selectPresentation(d.presentation_id,{variantId:d.variant_id,sceneId:d.scene_id})
+        .catch((error)=>{setFatal(error,()=>{loadPresentations()});log('follow_failed',{code:error.code,error:describe(error)},'error')})});
     }
     /* « Modifier » in Variants: open beside it on that variant and that scene. */
     async function edit(request){
       const r=request||{};
       if(typeof r.presentation_id!=='string'||typeof r.variant_id!=='string')return {state:'refused',reason:'présentation ou variante manquante'};
       log('edit_requested',{via:r.via||'api',variant_id:r.variant_id,scene_id:r.scene_id||null});
+      /* Closing the editor gives the focus back to what opened it (« Modifier » in Variants), when it is still there (Slice 09 QA m1). */
+      S.opener=r.opener&&typeof r.opener.focus==='function'?r.opener:null;
       if(S.open){
         if(S.presentationId===r.presentation_id&&S.variant&&S.variant.variant_id===r.variant_id){
           if(r.scene_id&&r.scene_id!==S.sceneId)chooseScene(r.scene_id,{fromExplorer:true});
+        }else if(hasUnsaved()){
+          requestMove({kind:'variant',sceneId:r.scene_id,apply:()=>selectPresentation(r.presentation_id,{variantId:r.variant_id,sceneId:r.scene_id})
+            .catch((error)=>{setFatal(error,()=>{loadPresentations()});log('edit_select_failed',{code:error.code,error:describe(error)},'error')})});
         }else{
           try{await selectPresentation(r.presentation_id,{variantId:r.variant_id,sceneId:r.scene_id})}
           catch(error){setFatal(error,()=>{loadPresentations()});log('edit_select_failed',{code:error.code,error:describe(error)},'error');return {state:'failed',reason:describe(error)}}
@@ -603,6 +696,13 @@
       /* The name stays the action (« Annuler la dernière modification »); the scene it changes is its description. */
       const describe_=(node,text)=>{if(text)node.setAttribute('aria-description',text.replace(/^, /,''));else node.removeAttribute('aria-description')};
       describe_(ui.undo,canUndo?on(h.next_undo):'');describe_(ui.redo,canRedo?on(h.next_redo):'');
+      /* Seen, not only in a tooltip (Slice 09 QA): the scene the next undo changes, under the bar. */
+      if(ui.histNote){
+        const sid=canUndo&&h.next_undo&&Array.isArray(h.next_undo.scene_ids)?h.next_undo.scene_ids[0]:null;
+        const label=sid?sceneLabel(sid):null;
+        ui.histNote.hidden=!label;
+        ui.histNote.textContent=label?`↶ Annuler changera la ${label}${sid!==S.sceneId?' (autre scène : elle s’affichera)':''}`:'';
+      }
       if(!canUndo)ui.undo.title=h&&h.tracked===false?'Rien à annuler : l\'historique ne garde que les modifications faites depuis le démarrage de Core':'Rien à annuler';
     }
 
@@ -897,13 +997,14 @@
       }catch(error){
         if(epoch!==s.epoch)return;
         stats.failures++;
-        setRowMessage(ctx.row.control_id,'bad',`Aperçu non validé : ${describe(error)}`);
+        setRowMessage(ctx.row.control_id,'bad',isUnreachable(error.code,error.status)?PREVIEW_UNREACHABLE:`Aperçu non validé : ${describe(error)}`);
         log('preview_failed',{control_id:ctx.row.control_id,code:error.code,error:describe(error)},'warn');
       }finally{
         s.inflight=false;
         if(epoch===s.epoch&&s.hasLatest)schedulePreview(ctx,s,s.minMs||PREVIEW_MIN_MS);
       }
     }
+    const PREVIEW_UNREACHABLE='Jarvis ne joint pas son moteur (Core) : l’aperçu attend, votre saisie est gardée.';
     /* Clavier et ± : le dernier appui arme un seul enregistrement après une courte pause. */
     function onIdle(ctx,value){
       onPreview(ctx,value);
@@ -950,10 +1051,12 @@
       setRowMessage(ctx.row.control_id,'info','');
       syncPreview();
       announce(`${ctx.row.label} : modification abandonnée.`);
+      resumeMove();
     }
     function abandonDrafts(reason){
+      const dirty=[...sessions.values()].filter((x)=>x.dirty&&x.draft!==undefined).length;
       for(const s of sessions.values()){clearTimers(s);s.epoch++;s.dirty=false;s.draft=undefined;s.hasLatest=false}
-      if(sessions.size)log('drafts_abandoned',{count:sessions.size,reason});
+      if(sessions.size)log('drafts_abandoned',{count:sessions.size,dirty,reason},dirty?'warn':undefined);
       sessions.clear();
       for(const task of queue.pending.values())task.superseded=true;
       queue.pending.clear();
@@ -965,7 +1068,7 @@
     function enqueue(key,run,label){
       const prior=queue.pending.get(key);
       if(prior){prior.superseded=true;stats.writesSuperseded++;if(prior.wake)prior.wake()}
-      const task={key,superseded:false,label};
+      const task={key,superseded:false,label,sceneId:S.sceneId};
       queue.pending.set(key,task);
       const job=queue.tail.then(()=>{
         if(task.superseded)return null;
@@ -1001,6 +1104,13 @@
         let attempt=0;
         for(;;){
           if(task.superseded){return null}
+          /* Slice 09 QA (m3): a write belongs to the scene it was typed on. Every scene change waits for the queue first (`settleDrafts`), so
+             this never fires; if it ever did, nothing is written to another scene and it is said. */
+          if(task.sceneId&&task.sceneId!==S.sceneId){
+            log('commit_scene_moved',{control_id:id,from:task.sceneId,to:S.sceneId},'error');
+            setStatus('bad','Modification non enregistrée','La scène a changé avant l’enregistrement : rien n’a été écrit sur une autre scène.');
+            return null;
+          }
           /* L'opération est construite ICI, à partir de la valeur relue après l'enregistrement précédent : jamais sur la base que
              notre propre écriture vient de périmer (une file de pas de clavier ne se rend pas `stale` à elle-même). */
           const fresh=widgets.get(id);
@@ -1016,6 +1126,7 @@
             outcome=await postEdit('commit',[op]);
           }catch(error){
             stats.failures++;
+            if(isUnreachable(error.code,error.status)){keepUnsaved(ctx,s,value,why,{code:error.code,message:describe(error)});return null}
             restoreDisplay(id);
             setRowMessage(id,'bad',`Enregistrement impossible : ${describe(error)}`,[{label:'Réessayer',run:()=>retryCommit(ctx,value,why)}]);
             log('commit_failed',{control_id:id,code:error.code,error:describe(error)},'error');
@@ -1051,10 +1162,30 @@
         const w=widgets.get(id);if(w){w.ctx.chrome.li.classList.remove('is-busy');w.ctx.chrome.reset.disabled=!w.ctx.row.is_set}
       }
     }
+    /* Core did not answer (Slice 09 QA): the typed value stays in the field and in the draft, the message is the product's, « Réessayer »
+       saves it, and the next answer of Core (`pollReloads`) saves it on its own; the message goes away once it is saved. */
+    function keepUnsaved(ctx,s,value,why,error){
+      const id=ctx.row.control_id;
+      s.dirty=true;s.draft=value;s.hasLatest=false;s.lastSent=undefined;s.unsaved={why};
+      const w=widgets.get(id);if(w)w.update(w.ctx.row);
+      setRowMessage(id,'bad',UNSAVED_TEXT,[{label:'Réessayer',run:()=>retryCommit(ctx,value,why)}]);
+      log('commit_unreachable',{control_id:id,code:error&&error.code||null,error:clip(error&&error.message||'',200)},'error');
+      tell('Modification non enregistrée','Core ne répond pas : votre saisie est gardée.','bad');
+    }
+    function retryUnsaved(){
+      for(const s of sessions.values()){
+        if(!s.unsaved||!s.dirty||s.committing||s.draft===undefined)continue;
+        const w=widgets.get(s.id);if(!w)continue;
+        const why=s.unsaved.why;s.unsaved=null;
+        log('commit_retry_after_core_back',{control_id:s.id});
+        retryCommit(w.ctx,s.draft,why);
+      }
+    }
     function retryCommit(ctx,value,why){
       const w=widgets.get(ctx.row.control_id);
       const row=w?w.ctx.row:ctx.row;
       setRowMessage(row.control_id,'info','');
+      const s=sessions.get(row.control_id);if(s)s.unsaved=null;
       if(why==='reset')resetControl(row);else onCommit(w?w.ctx:ctx,value,{immediate:true});
     }
     /* Rien n'a été enregistré : le widget montre de nouveau la valeur de Core (jamais celle d'un brouillon abandonné). */
@@ -1088,9 +1219,16 @@
         sayEdited(result.revision,ctx.row.scene_id||S.sceneId);
         flashSaved(id);
         announce(`${ctx.row.label} : enregistré.`);
+        /* Seen, not only heard (Slice 09 QA): a short visible line, unless a warning or an error is on screen. */
+        if(!S.status||S.status.kind==='ok'||S.status.kind==='info'){
+          const said=setStatus('ok',`« ${clip(ctx.row.label,60)} » enregistré`,sceneLabel(S.sceneId)?` · ${sceneLabel(S.sceneId)}`:'');
+          later(()=>{if(S.status===said)setStatus(null)},4000);
+        }
+        resumeMove();
         return result;
       }
       if(outcome.kind==='stale'){return handleStale(ctx,s,value,'commit',op,ver)}
+      if(outcome.kind==='error'&&isUnreachable(outcome.code,outcome.http)){keepUnsaved(ctx,s,value,op.op==='control.reset'?'reset':'set',outcome);return null}
       if(outcome.kind==='refused'||outcome.kind==='error'){
         if(latest){s.dirty=false;s.draft=undefined}
         s.lastSent=undefined;
@@ -1107,7 +1245,7 @@
     }
     function showRefusal(ctx,outcome,value){
       const id=ctx.row.control_id;
-      const text=describeRefusal(outcome.code,outcome.message);
+      const text=isUnreachable(outcome.code,outcome.http)?PREVIEW_UNREACHABLE:describeRefusal(outcome.code,outcome.message);
       stats.failures++;
       setRowMessage(id,'bad',text);
       log('edit_refused',{control_id:id,code:outcome.code,status:outcome.kind,http:outcome.http||null},'warn');
@@ -1167,8 +1305,23 @@
     }
     async function runHistory(direction){
       if(!S.variant||!S.available)return;
-      const h=S.history,entry=h&&(direction==='undo'?h.next_undo:h.next_redo);
+      const trigger=ui.root&&doc.activeElement&&(doc.activeElement===ui.undo||doc.activeElement===ui.redo)?doc.activeElement:null;
       discardDrafts();      /* règle : annuler / rétablir abandonne d'abord les brouillons en attente, jamais ils ne s'enregistrent après */
+      /* Slice 09 QA (m3): a write already queued belongs to the scene on screen; it lands BEFORE the undo may bring another scene, and the step
+         to undo is read after it (it is the latest change). */
+      if(queue.pending.size){ui.undo.disabled=true;ui.redo.disabled=true;for(let i=0;i<8&&queue.pending.size;i++)await queue.tail}
+      const h=S.history,entry=h&&(direction==='undo'?h.next_undo:h.next_redo);
+      try{return await runHistoryStep(direction,entry)}
+      finally{
+        /* The button pressed by Enter is disabled while it runs: the focus comes back to it, or to the title (never to the page, where Échap
+           would close Variants instead of the editor; Slice 09 QA). */
+        if(trigger&&S.open&&ui.root&&!ui.root.hidden){
+          const back=!trigger.disabled?trigger:(trigger===ui.undo&&!ui.redo.disabled?ui.redo:(trigger===ui.redo&&!ui.undo.disabled?ui.undo:ui.title));
+          if(back&&(doc.activeElement===doc.body||doc.activeElement===null||doc.activeElement===trigger||!ui.root.contains(doc.activeElement)))back.focus();
+        }
+      }
+    }
+    async function runHistoryStep(direction,entry){
       const body={};
       if(entry&&entry.entry_id)body.expected_entry_id=entry.entry_id;
       stats[direction]++;
@@ -1188,10 +1341,11 @@
               log('history_applied',{direction,revision:result.revision,scenes:touched.length,moved:!!(touched[0]&&touched[0]!==S.sceneId)});
               setStatus(null);
               if(touched[0]&&touched[0]!==S.sceneId&&((S.variant&&S.variant.scenes)||[]).some((s)=>s.scene_id===touched[0])){
+                abandonDrafts('history');       /* the queue is empty (awaited above): nothing typed on the old scene can follow it */
                 S.sceneId=touched[0];renderPick();followInExplorer(touched[0]);
               }
               await Promise.all([loadScene({quiet:true}),loadHistory()]);
-              sayEdited(result.revision,touched[0]||S.sceneId);
+              sayEdited(result.revision,touched[0]||S.sceneId,true);
               const said=`${direction==='undo'?'Modification annulée':'Modification rétablie'}${where?` : ${where}`:''}`;
               setStatus('ok',said,'');
               later(()=>{if(S.status&&S.status.kind==='ok')setStatus(null)},4000);
@@ -1308,7 +1462,7 @@
         const id=row?row.getAttribute('data-control-id'):null;
         const s=id?sessions.get(id):null;
         if(s&&s.dirty&&widgets.get(id)){revertDraft(widgets.get(id).ctx);return}     /* d'abord abandonner le brouillon, ensuite fermer */
-        close({restoreFocus:true});
+        closeByUser();
         return;
       }
       /* Aucune touche non modifiée ne sort du panneau : ni raccourcis de la page (s, e, t, a…), ni navigation de la scène. Tab reste libre. */
@@ -1385,10 +1539,26 @@
       unmountPreview();
       if(ui.root)ui.root.hidden=true;
       if(ui.dock){ui.dock.classList.remove('active');ui.dock.setAttribute('aria-expanded','false')}
-      if(options&&options.restoreFocus&&ui.dock&&!ui.dock.disabled)ui.dock.focus();
+      if(options&&options.restoreFocus){
+        const opener=S.opener;
+        const usable=opener&&opener.isConnected!==false&&!opener.disabled&&!(typeof opener.closest==='function'&&opener.closest('[inert],[hidden]'));
+        if(usable)opener.focus();
+        else if(ui.dock&&!ui.dock.disabled)ui.dock.focus();
+      }
+      S.opener=null;
       log('closed',{});
     }
-    function toggle(){S.open?close({restoreFocus:true}):open()}
+    function toggle(){S.open?closeByUser():open()}
+    /* × , Échap, the dock button: a value typed elsewhere in the panel and not yet saved is saved first (Slice 09 QA: never dropped in silence);
+       if it cannot be, the editor stays open and says so, with « Fermer sans enregistrer ». */
+    async function closeByUser(){
+      if(!hasUnsaved()){close({restoreFocus:true});return}
+      setStatus('info','Enregistrement de votre saisie…',' Avant de fermer l’éditeur.');
+      const r=await settleDrafts();
+      if(r.ok){setStatus(null);close({restoreFocus:true});return}
+      setStatus('warn','L’éditeur reste ouvert',' Votre saisie n’est pas enregistrée.',[{label:'Fermer sans enregistrer',run:()=>{abandonDrafts('user');close({restoreFocus:true})}}]);
+      log('close_held',{kept:r.kept.map((k)=>k.id)},'warn');
+    }
 
     function install(){
       ui.dock=doc.getElementById(BUTTON_ID);

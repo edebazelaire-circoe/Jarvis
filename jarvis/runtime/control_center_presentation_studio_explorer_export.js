@@ -87,6 +87,7 @@
     presentation_studio_stale_revision:{text:'La variante a changé depuis sa lecture : elle est relue, relancez l’export.',retry:true},
     presentation_render_queue_full:{text:'La file d’export de Core est pleine : réessayez quand un export en cours sera fini.',retry:true},
     presentation_render_no_job:{text:'Core n’a rendu aucun travail d’export.',retry:true},
+    presentation_render_snapshot_invalid:{text:'Jarvis n’a pas pu préparer la copie figée de cette variante : rien n’a été exporté. Le motif de Core est noté à côté.',retry:false,detail:true},
   });
   /* A failed render job whose failure a retry of the same frozen variant would repeat (Slice 09 polish, R3): no « Réessayer », the sentence
      says what to change. Any other job failure (crash, timeout, interruption, full disk, …) stays retryable. */
@@ -119,7 +120,7 @@
       return {code,text:info.reason&&C?C.masterReasonSentence(info.reason,info.detail):'La vidéo entière n’est pas prête : rien n’a été exporté.',detail:'',retry:false};
     }
     const known=EXPORT_ERRORS[code];
-    if(known)return {code,text:known.text,detail:'',retry:known.retry};
+    if(known)return {code,text:known.text,detail:known.detail?cleanLine(error&&error.message,160):'',retry:known.retry};
     const detail=cleanLine(error&&error.message,160);
     if(code==='timeout')return {code,text:`Core n’a pas répondu à temps (${detail}) : l’export a peut-être démarré ; réessayer reprend le même.`,detail:'',retry:true};
     if(TRANSIENT.has(code)||!(error&&error.status)||error.status>=500)return {code,text:'La demande d’export n’a pas abouti : Core est injoignable ou en erreur.',detail,retry:true};
@@ -370,6 +371,11 @@
       const level=job.state==='complete'?undefined:job.state==='cancelled'?'warn':'error';
       log('video_export_finished',{job:job.job_id,state:job.state,artifact:job.artifact_id,code:job.error_code||null,deduplicated:!!job.deduplicated},level);
       if(job.state==='complete')announce('Vidéo entière exportée.');
+      /* Said to the page (Sessions & Boards › Artefacts re-reads the Board's renders: the new one appears there without a reload). */
+      if(typeof root.dispatchEvent==='function'&&typeof root.CustomEvent==='function'){
+        try{root.dispatchEvent(new root.CustomEvent('jarvis:presentation-render-finished',{detail:{job_id:job.job_id||null,state:job.state||null,artifact_id:job.artifact_id||null}}))}
+        catch(error){log('render_finished_event_failed',{error:cleanLine(error&&error.message,120)},'warn')}
+      }
       render();
     }
     async function cancel(options){

@@ -297,7 +297,9 @@ def test_a_scene_being_reloaded_retries_on_a_bounded_schedule_and_says_so_while_
     assert out["first"]["view"] == {"attempt": 1, "max": 5} and "Rechargement en cours" in out["first"]["status"]
     assert "tentative 1/5" in out["first"]["status"] and out["first"]["commits"] == 0
     assert out["second"]["view"] == {"attempt": 2, "max": 5} and out["second"]["commits"] == 0
-    assert out["done"] == {"view": None, "commits": 1, "glow": True, "status": []}
+    assert {k: v for k, v in out["done"].items() if k != "status"} == {"view": None, "commits": 1, "glow": True}
+    # Slice 09 QA: the save is SEEN (a short status line naming the control and its scene), not only announced to a screen reader.
+    assert len(out["done"]["status"]) == 1 and "enregistré" in out["done"]["status"][0] and "scène 1" in out["done"]["status"][0]
     assert out["retries"] == 2 and out["total"] <= 20000, "bounded: at most 5 attempts in about 15 seconds"
 
 

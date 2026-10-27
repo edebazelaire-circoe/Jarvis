@@ -282,7 +282,10 @@ class PresentationPackager:
 
         presentation = view.presentation.to_document()
         # Only what the frozen variant needs: its index entry (no sibling variants, no archive history); `resources` stay.
-        presentation["variants"] = [e for e in presentation["variants"] if e["variant_id"] == variant.variant_id]
+        # Its lineage stays behind too: `sources` name variants the copy does not carry, and the package's own check (every source is a
+        # variant of the document) refused every branch made by « Nouvelle variante… » (presentation-edition-v1 Slice 09 QA). The live
+        # index keeps the lineage; a frozen copy renders one variant and needs none.
+        presentation["variants"] = [{**e, "sources": []} for e in presentation["variants"] if e["variant_id"] == variant.variant_id]
         presentation["archived"] = []
         presentation["active_variant_id"] = variant.variant_id
         files: dict[str, bytes] = {

@@ -238,7 +238,7 @@ def test_a_refused_open_notice_is_a_live_alert_and_is_brought_into_view():
 RENDER_JOBS = "/api/local-capabilities/remotion/render/jobs"
 EXPORT_SEED = r"""
 const SNAPID='jart_ps_'+'a'.repeat(32)+'_'+'b'.repeat(32)+'_p1_v1_a1';
-const JOBS='/api/local-capabilities/remotion/render/jobs',JOBID='rj_0123456789ab';
+const JOBS='/api/local-capabilities/remotion/render/jobs',JOBID='rj_0123456789ab',MASTER_READ='/api/local-capabilities/remotion/render/master';
 const job=(over)=>Object.assign({job_id:JOBID,artifact_id:'jart_'+'e'.repeat(32),snapshot_id:SNAPID,state:'queued',phase:'queued',format:'mp4',
   frames_done:0,frames_total:60,percent:0,elapsed_s:0,timeout_s:360,queue_position:null,cancel_requested:false,can_cancel:true,error_code:null,error_detail:null},over||{});
 /* Un gestionnaire dont les minuteries sont tenues à la main : une interrogation par `step()`. */
@@ -312,6 +312,7 @@ def test_a_finished_export_reads_the_presentations_again_and_a_failure_says_its_
       await e.manager.act('export-dismiss',{snapshot:SNAPID});
       const dismissed=e.html();
       e.w.server.plan[JOBS]={status:202,body:{job:job({job_id:'rj_ffffffffffff'})}};
+      e.w.server.plan[MASTER_READ]={status:200,body:{master:{status:'ready',stills:[{scene_id:'pss_'+'1'.repeat(32),position:1,title:'Seule'}]}}};
       e.start('pdf');await settle();
       e.w.server.plan[JOBS+'/rj_ffffffffffff']={status:200,body:{job:job({job_id:'rj_ffffffffffff',state:'failed',phase:'failed',error_code:'presentation_render_timeout',error_detail:'the render exceeded its 360 s limit'})}};
       await e.step();await settle();
@@ -324,6 +325,58 @@ def test_a_finished_export_reads_the_presentations_again_and_a_failure_says_its_
     failed = _text(seen["failed"])
     assert "Export échoué" in failed and "presentation_render_timeout" in failed and "the render exceeded its 360 s limit" in failed
     assert "workspace.export_finished" in seen["warned"], "a failed export is logged as a warning, not only shown"
+
+
+def test_an_image_or_pdf_asks_which_scene_then_posts_it_and_one_scene_needs_no_question(tmp_path):
+    """presentation-edition-v1 Slice 09 QA: « Exporter » an image or a PDF of a copy of several scenes failed (`pass settings.scene_id`).
+    The page now reads the frozen copy's scenes from Core (`master.stills`), asks which one (first by default), and posts it."""
+
+    seen = run_node(tmp_path, SEED + EXPORT_SEED + r"""
+      const e=exporter();await e.openBoard();
+      const S1='pss_'+'1'.repeat(32),S2='pss_'+'2'.repeat(32);
+      e.w.server.plan[MASTER_READ]={status:200,body:{master:{status:'ready',stills:[{scene_id:S1,position:1,title:'Ouverture'},{scene_id:S2,position:2,title:'Les <chiffres>'}]}}};
+      e.w.server.plan[JOBS]={status:202,body:{job:job({format:'still'})}};
+      e.start('still');await settle();
+      const asking=e.html(),postsAsking=e.posts().length;
+      e.manager.act('export-start',{snapshot:SNAPID,format:'still',scene:S2});await settle();
+      const posted=e.posts().map(p=>p.body);
+      e.w.server.plan[JOBS+'/'+JOBID]={status:200,body:{job:job({state:'complete',phase:'complete',format:'still'})}};
+      await e.step();await settle();
+      await e.manager.act('export-dismiss',{snapshot:SNAPID});
+      e.w.server.plan[MASTER_READ]={status:200,body:{master:{status:'incompatible',stills:[{scene_id:S1,position:1,title:'Seule'}]}}};
+      e.start('pdf');await settle();
+      const one=e.posts().map(p=>p.body).slice(-1)[0];
+      await e.step();await settle();
+      await e.manager.act('export-dismiss',{snapshot:SNAPID});
+      e.w.server.plan[MASTER_READ]={status:200,body:{master:{status:'ready',stills:[]}}};
+      e.start('still');await settle();
+      const none=e.html();
+      out({asking,postsAsking,posted,one,none,events:e.logs.map(l=>l.event)});
+    """)
+    asking = _text(seen["asking"])
+    assert seen["postsAsking"] == 0, "nothing is rendered before the scene is chosen"
+    assert "Scène pour l’image" in asking
+    assert "Scène 1 — Ouverture" in asking and "Scène 2 — Les &lt;chiffres&gt;" in asking
+    assert "&lt;chiffres&gt;" in seen["asking"] and 'name="scene"' in seen["asking"] and "Exporter cette scène" in asking and "Annuler" in asking
+    assert seen["posted"][-1] == {"snapshot_id": f"jart_ps_{'a' * 32}_{'b' * 32}_p1_v1_a1", "format": "still", "settings": {"scene_id": "pss_" + "2" * 32}}
+    assert seen["one"] == {"snapshot_id": f"jart_ps_{'a' * 32}_{'b' * 32}_p1_v1_a1", "format": "pdf", "settings": {"scene_id": "pss_" + "1" * 32}}
+    assert "aucune scène Remotion" in _text(seen["none"])
+    assert "workspace.export_scenes_read" in seen["events"]
+
+
+def test_the_copy_button_stays_after_a_copy_and_a_render_finished_elsewhere_rereads_the_board(tmp_path):
+    seen = run_node(tmp_path, SEED + EXPORT_SEED + r"""
+      const e=exporter();await e.openBoard();
+      e.w.server.plan['/api/exports']={status:200,body:{export:{file_name:'Atelier - vidéo.mp4',destination:{display_path:'Documents\Jarvis\Atelier - vidéo.mp4'}}}};
+      await e.manager.act('artifact-save-copy',{id:RENDER});await settle();
+      const saved=e.html();
+      const before=e.w.server.calls.filter(c=>c.path.includes('presentation-sources')).length;
+      await e.manager.act('renders-changed',{job_id:'rj_1',state:'complete'});await settle();
+      const after=e.w.server.calls.filter(c=>c.path.includes('presentation-sources')).length;
+      out({saved,before,after});
+    """)
+    assert "Copie enregistrée" in _text(seen["saved"]) and 'data-act="artifact-save-copy"' in seen["saved"], "the button stays after a copy"
+    assert seen["after"] == seen["before"] + 1, "a render finished in Variants is read without « Actualiser »"
 
 
 def test_cancel_posts_to_the_job_and_shows_cancelling_until_core_says_it_is_done(tmp_path):

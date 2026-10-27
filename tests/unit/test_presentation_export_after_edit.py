@@ -70,3 +70,27 @@ async def test_an_edited_deck_exports_its_edit_and_reopens_from_the_canonical_st
     payload_before = Path(world.artifacts.payload_path(exported)).read_bytes()
     await _edit(edits, world, pid, vid, "Un")
     assert Path(world.artifacts.payload_path(await world.artifacts.get(new["artifact_id"]))).read_bytes() == payload_before
+
+
+async def test_a_branch_made_by_new_variant_exports_like_the_active_one(rig):  # noqa: F811
+    """« Nouvelle variante… » records its lineage (`sources`) in the live index; the frozen copy holds one variant only, so it must not
+    carry that lineage (the package check refused every such export: `source psv_… is not a variant of this presentation`, Slice 09 QA)."""
+
+    from jarvis.core.presentation_studio_variants import PresentationStudioVariants
+
+    world = rig.world
+    pid, vid, _ = await deck(rig, freeze=False)
+    variants = PresentationStudioVariants(world.studio)
+    branch = (await variants.create_branch(pid, {"title": "Autre piste", "source_variant_id": vid}))["node"]
+    view = await world.studio.get(pid)
+    entry = next(e for e in view.presentation.to_document()["variants"] if e["variant_id"] == branch["variant_id"])
+    assert entry["sources"] == [vid], "the live index keeps the lineage"
+    live = next(v for v in view.variants if v.variant_id == branch["variant_id"])
+    frozen = await world.packager.freeze(pid, live.variant_id, expected_presentation_revision=view.presentation.revision,
+                                         expected_variant_revision=live.revision, authorised_boards=frozenset({"default"}))
+    package = await world.packager.read_snapshot(frozen["artifact_id"])
+    import json
+    doc = json.loads(package.files["presentation/presentation.json"])
+    assert [(e["variant_id"], e["sources"]) for e in doc["variants"]] == [(live.variant_id, [])]
+    done = await finished(rig.service, (await rig.service.submit(frozen["artifact_id"], "mp4", {"scope": "master"}))["job_id"])
+    assert done["state"] == "complete", done

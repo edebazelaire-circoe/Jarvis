@@ -2,7 +2,7 @@
   "checks": [
     {
       "id": "HV-EDIT-01",
-      "description": "Edit a real generated deck: change text, replace a visual, create/select a variant, undo one action, preview, and export. Confirm the active scene/variant and saved result are always understandable."
+      "description": "Edit a real generated deck (written by Jarvis): change a text and a colour from « Modifier », create/select a variant, undo one action, preview, and export (video, and an image or PDF of a scene). Confirm the active scene/variant and saved result are always understandable. Replacing a visual is deferred after V1 (Issues/I-008)."
     },
     {
       "id": "HV-EDIT-02",

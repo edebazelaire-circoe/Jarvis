@@ -15,8 +15,11 @@ Proved (contract `docs/presentation-studio.md` › *Editing from Variants (V1)*)
   scene's value goes back (the other scenes are byte-identical in Core);
 - in the `presentation` edition without developer mode Variants offers neither « Remotion Studio » nor its scene door nor its state line,
   and the editor hides the engine's source line; with `JARVIS_DEVELOPER_MODE=1` they are back (I-006);
-- three window sizes keep « Modifier » reachable and the editor whole.
+- three window sizes keep « Modifier » reachable and the editor whole;
+- (QA rework) a value typed and not released when Variants changes the scene by itself is saved on ITS scene, said, and the caret leaves
+  the field (B1); Variants' re-read is proved with its 10 s poll neutralised; the `full` edition edits a branch the same way.
 """
+
 
 from __future__ import annotations
 
@@ -25,11 +28,14 @@ from pathlib import Path
 
 import pytest
 
-from tests.fakes.explorer_browser import PREVIEW_OBJECT, S1, S2, ExplorerRig, drive
+from tests.fakes.explorer_browser import PREVIEW_OBJECT, S1, S2, S3, ExplorerRig, drive
 from tests.unit.test_presentation_studio_explorer_browser import noise, shots_dir
 
 pytestmark = pytest.mark.asyncio
 
+#: Variants' 10 s graph poll skips a hidden page: with this the only re-read after an edit is `onVariantEdited` (QA M3: the old 20 s wait
+#: let the poll prove it instead). The editor's own reads do not look at `visibilityState`.
+NO_POLL = {"eval": "Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>'hidden'})"}
 HOST = "#jvStudioExplorer"
 PANEL = "#jvStudioInspector"
 EDIT = f"{HOST} [data-act=edit_scene]"
@@ -66,6 +72,7 @@ async def test_modifier_edits_the_variant_and_scene_on_screen_and_variants_reads
     async with ExplorerRig(tmp_path, variants=2) as rig:
         # #2 is a NON-active branch: « Modifier » must edit it (the one on screen), never the active #1.
         before_active = stored_scenes(rig, rig.vids[1])
+        before_branch = stored_scenes(rig, rig.vids[2])
         shots = shots_dir(tmp_path)
         result = await drive(rig.url, [
             open_variants(rig, 2), READY,
@@ -85,12 +92,15 @@ async def test_modifier_edits_the_variant_and_scene_on_screen_and_variants_reads
             {"click": scene_button(S1)},
             {"until": f"JarvisStudioInspector.instance.view().scene_id==='{S1}'&&!JarvisStudioInspector.instance.view().loading", "ms": 10000},
             {"value": "followed", "expr": CONTEXT},
-            # A real edit of the title of S1 on #2.
+            # A real edit of the title of S1 on #2; Variants' periodic poll is neutralised, so only `onVariantEdited` can re-read Core.
+            NO_POLL,
+            {"value": "graph_before", "expr": "JarvisStudioExplorer.stats().graphLoads"},
             {"focus": f"{PANEL} input[type=text]"}, {"eval": f"document.querySelector('{PANEL} input[type=text]').select()"},
             {"type": "Titre modifié S09"}, {"key": "Enter"},
             {"until": "(()=>{const h=JarvisStudioInspector.instance.view().history;return !!h&&h.undo>0})()", "ms": 15000},
             {"frameUntil": {"object_id": PREVIEW_OBJECT, "expr": "!!document.querySelector('h2')&&document.querySelector('h2').textContent==='Titre modifié S09'", "ms": 20000}},
             {"value": "frame_after_edit", "expr": "JarvisStudioExplorer.state().preview.status"},
+            {"value": "graph_after", "expr": "JSON.stringify({loads:JarvisStudioExplorer.stats().graphLoads,polls:JarvisStudioExplorer.stats().polls})"},
             # Editor -> Variants: the editor's scene picker brings Variants along; then undo the S1 change from S2.
             {"eval": f"(s=>{{s.value='{S2}';s.dispatchEvent(new Event('change'))}})(document.getElementById('jviScene'))"},
             {"until": f"JarvisStudioExplorer.state().preview.scene==='{S2}'&&!JarvisStudioInspector.instance.view().loading", "ms": 10000},
@@ -114,11 +124,15 @@ async def test_modifier_edits_the_variant_and_scene_on_screen_and_variants_reads
         assert layer["onTop"] and not layer["inert"], layer
         assert layer["stage"] <= layer["left"], ("Variants makes room for the editor", layer)
         assert "scène 1 sur 3" in reads["followed"]
+        # QA M3: the poll is neutralised (0 polls), so the graph read after the edit is `onVariantEdited`'s re-read of Core.
+        graph_after = json.loads(reads["graph_after"])
+        assert graph_after["polls"] == 0 and graph_after["loads"] > reads["graph_before"], (reads["graph_before"], graph_after)
         assert "scène 1" in reads["undo_label"] and "autre scène" in reads["undo_label"], reads["undo_label"]
         assert "Modification annulée : scène 1" in reads["undone"], reads["undone"]
         # Core holds the truth: #2's S1 went back, S2 and S3 untouched; the active #1 never moved.
         after = stored_scenes(rig, rig.vids[2])
         assert after[S1]["props"]["title"] != "Titre modifié S09"
+        assert after[S2] == before_branch[S2] and after[S3] == before_branch[S3], "the other scenes of the branch are byte-identical"
         assert stored_scenes(rig, rig.vids[1]) == before_active, "editing a branch never touches the active variant"
         assert not noise(result, ("Failed to load resource: the server responded with a status of 4",)), noise(result)
 
@@ -159,3 +173,61 @@ async def test_the_editor_stays_whole_and_modifier_reachable_at_every_size(tmp_p
         assert layer["onTop"] and not layer["inert"] and layer["right"] <= layer["vw"] and layer["left"] >= 0, layer
         assert reads["scroll"] is True
         assert reads["variants_open"] is True, "Escape in the editor closes the editor only"
+
+
+async def test_a_value_typed_when_variants_changes_the_scene_is_saved_on_its_scene_and_the_caret_leaves_the_field(tmp_path, monkeypatch):
+    """QA B1, the reproduced scenario: « Modifier » on scene 1, a title typed and NOT released, then Variants changes the scene by itself
+    (what its continuous play does: `showScene`). Before the rework the typed text vanished, the field showed scene 2's title and kept the
+    focus. Now: the text is saved on scene 1 (Core's file), the editor then follows to scene 2, says so, and the caret is on the title."""
+
+    monkeypatch.setenv("JARVIS_PRODUCT_EDITION", "presentation")
+    monkeypatch.delenv("JARVIS_DEVELOPER_MODE", raising=False)
+    async with ExplorerRig(tmp_path, variants=1) as rig:
+        before = stored_scenes(rig, rig.vids[1])
+        result = await drive(rig.url, [
+            open_variants(rig), READY,
+            {"until": f"{SHOWN}('{EDIT}')", "ms": 10000},
+            {"click": EDIT}, EDITOR_READY,
+            {"until": f"JarvisStudioInspector.instance.view().scene_id==='{S1}'", "ms": 5000},
+            {"focus": f"{PANEL} input[type=text]"}, {"eval": f"document.querySelector('{PANEL} input[type=text]').select()"},
+            {"type": "Brouillon QA"},
+            {"value": "typed", "expr": "JSON.stringify(JarvisStudioInspector.instance.view().pendingDrafts)"},
+            {"eval": f"JarvisStudioExplorer.showScene('{S2}')"},
+            {"until": f"JarvisStudioInspector.instance.view().scene_id==='{S2}'&&!JarvisStudioInspector.instance.view().loading", "ms": 15000},
+            {"until": f"(document.querySelector('{PANEL} .jvi-status')||{{}}).textContent.includes('Saisie enregistrée')", "ms": 5000},
+            {"value": "status", "expr": f"document.querySelector('{PANEL} .jvi-status').textContent"},
+            {"value": "focus", "expr": "document.activeElement&&document.activeElement.id"},
+            {"value": "field", "expr": f"document.querySelector('{PANEL} input[type=text]').value"},
+        ])
+        reads = result["reads"]
+        assert "failed" not in reads, reads.get("failed")
+        assert json.loads(reads["typed"]) == ["title"], "the value was typed and not released"
+        after = stored_scenes(rig, rig.vids[1])
+        assert after[S1]["props"]["title"] == "Brouillon QA", "saved on the scene it was typed on"
+        assert after[S2] == before[S2] and after[S3] == before[S3], "nothing written on the other scenes"
+        assert "scène 1" in reads["status"] and "scène 2" in reads["status"], reads["status"]
+        assert reads["focus"] == "jviTitle", "the caret left the field that now shows scene 2"
+        assert reads["field"] != "Brouillon QA", "the field shows scene 2's own value"
+
+
+async def test_the_full_edition_edits_a_branch_the_same_way(tmp_path, monkeypatch):
+    """QA m6: the `full` edition (developer surfaces shown) keeps « Modifier » on a non-active branch and Core's read-back."""
+
+    monkeypatch.setenv("JARVIS_PRODUCT_EDITION", "full")
+    monkeypatch.delenv("JARVIS_DEVELOPER_MODE", raising=False)
+    async with ExplorerRig(tmp_path, variants=2) as rig:
+        result = await drive(rig.url, [
+            open_variants(rig, 2), READY,
+            {"until": f"{SHOWN}('{EDIT}')", "ms": 10000},
+            {"value": "surfaces", "expr": "document.documentElement.getAttribute('data-developer-surfaces')"},
+            {"click": EDIT}, EDITOR_READY,
+            {"value": "context", "expr": CONTEXT},
+            {"focus": f"{PANEL} input[type=text]"}, {"eval": f"document.querySelector('{PANEL} input[type=text]').select()"},
+            {"type": "Titre full"}, {"key": "Enter"},
+            {"until": "(()=>{const h=JarvisStudioInspector.instance.view().history;return !!h&&h.undo>0})()", "ms": 15000},
+        ])
+        reads = result["reads"]
+        assert "failed" not in reads, reads.get("failed")
+        assert reads["surfaces"] == "visible"
+        assert "variante #2" in reads["context"] and "non active" in reads["context"], reads["context"]
+        assert stored_scenes(rig, rig.vids[2])[S1]["props"]["title"] == "Titre full"

@@ -10,25 +10,26 @@ from __future__ import annotations
 import pytest
 
 from jarvis.domain.presentation_studio_authoring import Authoring, SceneRole, native_role, parse_brief, parse_draft
-from jarvis.domain.presentation_studio_authoring_gate import ERROR, NATIVE_BLOCKING, NATIVE_OFF, OFF, RULES, WARNING
+from jarvis.domain.presentation_studio_authoring_gate import ERROR, NATIVE_BLOCKING, NATIVE_OFF, NATIVE_REQUIRED, OFF, RULES, WARNING
 from jarvis.domain.presentation_studio_authoring import Workflow
 from jarvis.domain.presentation_studio_checks import PresentationStudioError
 from tests.fakes.presentation_studio_authoring_env import AuthoringEnv
 from tests.fakes.remotion_authoring import BROKEN_MARKER, engine_pin
 
-#: What a Claude agent writes in a plain Remotion project: literal French text, literal colours, no props, its own helper module.
+#: What a Claude agent writes in a plain Remotion project: literal French text, literal colours, its own helper module; since
+#: presentation-edition-v1 Slice 09 the headline is a prop the scene exposes as a control (« Modifier » edits it), the rest stays literal.
 NATIVE_TSX = """import React from "react";
 import {AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig} from "remotion";
 import {Title} from "./lib/Title";
 
-export default function Scene() {
+export default function Scene(props: {titre: string}) {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   const enter = spring({frame, fps, config: {damping: 200}});
   const glow = interpolate(frame, [0, 60], [0, 1], {extrapolateRight: "clamp"});
   return (
     <AbsoluteFill style={{background: "#05070d", color: "#f4f6fb", justifyContent: "center", padding: 120}}>
-      <Title text="Un assistant vocal qui reste sur votre poste" progress={enter} />
+      <Title text={props.titre} progress={enter} />
       <div style={{color: "#7cf0c4", opacity: glow, fontSize: 42}}>Appuyez, parlez, il agit.</div>
       <div style={{borderTop: "2px solid #1d2433", marginTop: 40}} />
     </AbsoluteFill>
@@ -43,16 +44,21 @@ export const Title: React.FC<{text: string; progress: number}> = ({text, progres
 """
 
 
+TITRE_PROPS = {"type": "object", "properties": {"titre": {"type": "string", "max_length": 80, "default": "Titre"}}}
+TITRE_CONTROL = {"control_id": "titre", "path": "props.titre", "label": "Titre de la scène", "group": "content", "meaning": "Le grand titre"}
+
+
 def native_bundle(key: str, *, tsx: str = NATIVE_TSX, frames: int = 300) -> dict:
     return {"key": key, "remotion": {"title": f"Scène {key}", "composition": {"width": 1920, "height": 1080, "fps": 30,
                                                                                "duration_in_frames": frames},
-                                     "files": {"src/Scene.tsx": tsx, "src/lib/Title.tsx": TITLE_TSX}}}
+                                     "files": {"src/Scene.tsx": tsx, "src/lib/Title.tsx": TITLE_TSX}, "props": TITRE_PROPS}}
 
 
 def native_request(count: int = 3, **brief_extra) -> tuple[dict, dict]:
     brief = {"title": "JARVIS en quelques scènes", "workflow": "directed", "authoring": "native", "language": "fr", **brief_extra}
     draft = {"prefabs": [native_bundle(f"s{i}", frames=240 + 30 * i) for i in range(count)],
-             "scenes": [{"key": f"s{i}", "title": f"Scène {i + 1}", "prefab": {"bundle": f"s{i}"}} for i in range(count)]}
+             "scenes": [{"key": f"s{i}", "title": f"Scène {i + 1}", "prefab": {"bundle": f"s{i}"},
+                         "props": {"titre": f"Un assistant vocal, scène {i + 1}"}, "controls": [dict(TITRE_CONTROL)]} for i in range(count)]}
     return brief, draft
 
 
@@ -74,13 +80,16 @@ def test_native_keeps_only_validity_and_safety_blocking_and_reports_the_rest():
             base, native = rule.level(workflow), rule.level(workflow, native=True)
             if base == OFF:
                 assert native == OFF, rule.code                       # native never switches a rule ON
+            elif rule.code in NATIVE_REQUIRED:
+                assert native == ERROR, rule.code                     # Slice 09: an editable scene is a delivery condition
             elif rule.code in NATIVE_BLOCKING:
                 assert native == base, rule.code
             elif rule.code in NATIVE_OFF:
                 assert native == OFF, rule.code                       # judges the guided model, silent on native code
             else:
                 assert native == WARNING, rule.code
-    assert not NATIVE_BLOCKING & NATIVE_OFF
+    assert not NATIVE_BLOCKING & NATIVE_OFF and not NATIVE_REQUIRED & NATIVE_OFF
+    assert NATIVE_REQUIRED == {"scene_no_controls"}
     creative = {"tsx_text_hardcoded", "tsx_color_hardcoded", "tsx_theme_unread", "tsx_props_unread", "tsx_monolith", "content_thin",
                 "text_density", "cue_weak", "controls_too_many", "notes_missing", "must_cover_missing", "duration_off", "arc_incomplete",
                 "scene_unbound", "transition_missing", "da_missing", "contrast_low", "placeholder_text"}
@@ -138,6 +147,33 @@ async def test_native_code_is_delivered_with_its_creative_findings_as_warnings(e
     variant = await env.studio.get_variant(body["presentation_id"], body["active_variant_id"])
     score = (await env.studio.get_score(body["presentation_id"], variant.variant_id))["score"]
     assert [item["presenter"] for item in score["items"]] == ["none"] * 3
+
+
+async def test_a_native_scene_without_a_content_control_is_refused_and_says_how_to_make_it_editable(env):
+    """presentation-edition-v1 Slice 09 QA: a deck written by the real author exposed no setting, so « Modifier » had nothing to change.
+    A native scene now exposes at least its text as a control (group content); a colour alone is not enough. Nothing is written."""
+
+    brief, draft = native_request(2)
+    draft["scenes"][1]["controls"] = []
+    out = await env.assemble(brief, draft)
+    body = out.to_dict()
+    failures = [f for f in body["report"]["failures"] if f["code"] == "scene_no_controls"]
+    assert out.status == "refused" and [f["where"] for f in failures] == ["scene:s1"], body["report"]["failures"]
+    assert "Modifier" in failures[0]["message"] and "props.<name>" in failures[0]["message"] and "group content" in failures[0]["message"]
+    assert env.folders() == []
+    brief, draft = native_request(1)
+    draft["prefabs"][0]["remotion"]["props"] = {"type": "object", "properties": {"accent": {"type": "color", "default": "#7cf0c4"}}}
+    draft["scenes"][0]["props"] = {"accent": "#7cf0c4"}
+    draft["scenes"][0]["controls"] = [{"control_id": "accent", "path": "props.accent", "label": "Couleur d'accent", "group": "visual"}]
+    out = await env.assemble(brief, draft)
+    assert out.status == "refused" and "scene_no_controls" in codes(out.to_dict()["report"], "failures"), "a colour alone is not editable text"
+
+
+async def test_a_dead_control_on_a_native_scene_is_a_warning(env):
+    brief, draft = native_request(1)
+    draft["prefabs"][0]["remotion"]["props"]["properties"]["sous_titre"] = {"type": "string", "max_length": 80, "default": "x"}
+    out = await env.assemble(brief, draft)
+    assert out.status == "delivered" and "tsx_props_unread" in codes(out.to_dict()["report"], "warnings")
 
 
 async def test_a_native_scene_that_does_not_compile_is_still_refused_and_nothing_is_written(env):

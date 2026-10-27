@@ -377,3 +377,16 @@ def test_a_click_on_this_scene_opens_another_noopener_tab_each_time_and_says_so(
     assert out["tabs"][1:] == [["http://127.0.0.1:41000/", "jarvis-remotion-studio", "noopener,noreferrer"]] * 2, "noopener kept, a new tab per click"
     assert out["dialogs"] is False, "no second confirmation"
     assert "Ouvrir un autre onglet" in out["title"]
+
+
+def test_a_product_edition_without_developer_mode_says_the_engine_sentence_never_the_mcp_dialog():
+    """presentation-edition-v1 Slice 09 (I-006, QA m6): with the developer surfaces hidden the refusal is the product's sentence."""
+
+    base = {"scene": SCENE, "scenes": [{"id": SCENE["id"], "title": "Ouverture", "prefab": PIN}], "detail": {"state": "ready", "remotion": True},
+            "studio": {"status": "stopped", "pin": None}, "capability": {"status": "not_installed"}, "readError": None, "busy": None,
+            "actionError": None, "run": False, "needsClick": False, "explain": None, "now": 100_000}
+    script = ("globalThis.JarvisProductEdition={developerSurfacesShown:()=>false};"
+              f"const D=require({DOOR_JS});process.stdout.write(JSON.stringify(D.doorModel({json.dumps(base)})));")
+    blocked = node(script)["button"]["blocked"]
+    assert blocked.startswith("Le moteur vidéo de Jarvis n’est pas prêt (non installé) : demandez à Jarvis de l’installer ou de le réparer")
+    assert "MCP" not in blocked and "Plugins externes" not in blocked

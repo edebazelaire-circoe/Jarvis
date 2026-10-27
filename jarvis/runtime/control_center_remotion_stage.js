@@ -54,6 +54,7 @@
     return {ok:true,message:data};
   }
 
+  const PRODUCT_ENGINE_LEAD='Le moteur vidéo de Jarvis n’est pas prêt : la scène n’est pas jouée. Demandez à Jarvis de l’installer ou de le réparer.';
   /* Erreur de Core (enveloppe {error:{code,message,diagnostics?}}) -> état d'échec affichable. */
   function failureOf(status,body){
     const error=body&&body.error&&typeof body.error==='object'?body.error:{};
@@ -90,6 +91,12 @@
        on frame 0 and only its transport plays (contract § 4.1). Without `embed` (a Remotion prefab window on the Board, outside any
        presentation; the run stage window is retired, Slice 09) the bar is that window's only transport and it plays on ready. */
     const embedded=d.embed==='variants';
+    /* The page that holds this stage hides its developer surfaces (`html[data-developer-surfaces="hidden"]`, `docs/control-center-shell.md` ›
+       *Product edition UI*): same origin, read at the moment of the failure. Unreadable: the full text (the developer view). */
+    const productSurface=typeof d.productSurface==='function'?d.productSurface:()=>{
+      try{const top=d.parentWindow&&d.parentWindow.document;return !!top&&top.documentElement.getAttribute('data-developer-surfaces')==='hidden'}
+      catch(_error){return false /* intentional: another origin or no parent, the developer text is the safe default */}
+    };
     const now=d.now||(()=>Date.now());
     const later=d.setTimeout||((fn,ms)=>setTimeout(fn,ms));
     const cancel=d.clearTimeout||((id)=>clearTimeout(id));
@@ -231,11 +238,17 @@
       cancel(state.prepareTimer);stopEvery(state.counterTimer);
       teardownFrame();
       state.phase='failed';state.mounted=false;
-      const lines=[failure.lead||failure.message];
-      if(failure.lead)lines.push(`Détail : ${failure.message}`);
-      lines.push(`Code : ${failure.code}`);
-      for(const diag of failure.diagnostics)lines.push(`  ${diag.file}:${diag.line}:${diag.column}  ${diag.text}`);
-      for(const text of failure.errors)lines.push(`  ${text}`);
+      /* A product edition without developer mode (presentation-edition-v1 Slice 09 QA) reads the sentence only: no Core route, no English
+         detail, no code, no compiler line (they stay in the journal and in the parent's status). The full edition keeps every line. */
+      const product=productSurface();
+      const lead=product&&failure.code==='presentation_studio_engine_unavailable'?PRODUCT_ENGINE_LEAD:failure.lead;
+      const lines=[lead||failure.message];
+      if(!product){
+        if(failure.lead)lines.push(`Détail : ${failure.message}`);
+        lines.push(`Code : ${failure.code}`);
+        for(const diag of failure.diagnostics)lines.push(`  ${diag.file}:${diag.line}:${diag.column}  ${diag.text}`);
+        for(const text of failure.errors)lines.push(`  ${text}`);
+      }
       setPanel('failed',failure.title,lines,[{label:'Réessayer',run:()=>{prepare()}}]);
       ui.bar.hidden=true;
       tellParent({phase:'failed',reason:failure.code,message:failure.message.slice(0,300),title:failure.title});

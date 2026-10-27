@@ -39,11 +39,15 @@
   backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 0 50px rgba(0,0,0,.45);font:13px/1.45 system-ui,sans-serif;container-type:inline-size}
 #${PANEL_ID}[hidden]{display:none}
 /* presentation-edition-v1 Slice 09: while Variants is open (\`jvx-open\` on <html>) the editor docks beside it, above its layer (9000)
-   and above the presentations rail (9100), and Variants makes room for it; under 900 px it covers Variants (its own preview shows the scene). */
-html.jvx-open #${PANEL_ID}{position:fixed;z-index:9120;top:8px;right:8px;bottom:8px;width:min(420px,calc(100% - 16px))}
-@media (min-width:900px){html.jvx-open.jvi-open #jvStudioExplorer:not(:fullscreen){right:436px}}
+   and above the presentations rail (9100), and Variants makes room for it; under 900 px it covers Variants (its own preview shows the scene).
+   Always at the right (left:auto, the narrow-window rule below pins left for the dock panel, Slice 09 QA m5), and Variants ends exactly
+   where the editor begins (8 px margin + 420 px), so no strip of the page shows between them (Slice 09 QA: fragments at x≈985). */
+html.jvx-open #${PANEL_ID}{position:fixed;z-index:9120;top:8px;right:8px;bottom:8px;left:auto;width:min(420px,calc(100% - 16px))}
+@media (min-width:900px){html.jvx-open.jvi-open #jvStudioExplorer:not(:fullscreen){right:428px}}
 #${PANEL_ID} .jvi-context{margin:10px 14px 0;padding:8px 10px;border:1px solid var(--line,#183343);border-radius:7px;background:rgba(7,13,19,.55);font-size:12.5px;line-height:1.4}
 #${PANEL_ID} .jvi-context[hidden]{display:none}
+#${PANEL_ID} .jvi-histnote{margin:6px 14px 0;font-size:12px;line-height:1.35;color:var(--muted,#7190a0)}
+#${PANEL_ID} .jvi-histnote[hidden]{display:none}
 /* The line says what Variants put on screen: outside Variants the panel keeps its height for the controls (it edits the active variant). */
 html:not(.jvx-open) #${PANEL_ID} .jvi-context{display:none}
 #${PANEL_ID} .jvi-context strong{font-weight:650;color:var(--text,#d8edf7)}
@@ -345,6 +349,11 @@ html:not(.jvx-open) #${PANEL_ID} .jvi-context{display:none}
       default:return `${why.trim()||'Refus de Core.'} (${code||'inconnu'})`;
     }
   }
+  /* Core did not answer (stopped, restarting, unreachable from the Control Center): nothing was refused, nothing was written. The typed
+     value is KEPT and said in the user's words, never Core's English transport text (presentation-edition-v1 Slice 09 QA). */
+  const UNREACHABLE_CODES=new Set(['unreachable','timeout','core_unreachable','core_timeout','core_unavailable','network']);
+  function isUnreachable(code,http){return UNREACHABLE_CODES.has(String(code||''))||http===502||http===503||http===504}
+  const UNSAVED_TEXT='Jarvis ne joint pas son moteur (Core) : votre saisie est gardée ici mais n’est pas enregistrée. Elle le sera dès que Core répondra, ou avec « Réessayer ».';
   const HISTORY_TEXT=Object.freeze({
     history_unavailable:'Historique indisponible',nothing_to_undo:'Rien à annuler',nothing_to_redo:'Rien à rétablir',
     stale:'L\'historique a changé',refused:'Refusé'});
@@ -354,7 +363,7 @@ html:not(.jvx-open) #${PANEL_ID} .jvi-context{display:none}
   }
 
 
-  const api={ROUTE,GROUPS,GROUP_LABEL,PANEL_ID,BUTTON_ID,STYLE_ID,PREVIEW_OBJECT_ID,STORAGE_KEY,PLAYBACK_EVENT,PREVIEW_MIN_MS,TEXT_PREVIEW_MS,IDLE_COMMIT_MS,REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,POLL_MS,AVAILABILITY_MS,SAVED_FLASH_MS,RELOAD_RETRY_MS,UNSAFE_KEYS,HEX_COLOR,APPLIED_THEME,NOT_APPLIED_THEME,CSS,describe,clip,cloneJson,canonical,sameJson,pathParts,setAtPath,previewValues,widgetSpec,stepFor,decimalsOf,roundTo,formatValue,validateValue,diffControls,luminance,contrastRatio,PROVENANCE,describeRefusal,HISTORY_TEXT,InspectorError};
+  const api={ROUTE,GROUPS,GROUP_LABEL,PANEL_ID,BUTTON_ID,STYLE_ID,PREVIEW_OBJECT_ID,STORAGE_KEY,PLAYBACK_EVENT,PREVIEW_MIN_MS,TEXT_PREVIEW_MS,IDLE_COMMIT_MS,REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,POLL_MS,AVAILABILITY_MS,SAVED_FLASH_MS,RELOAD_RETRY_MS,UNSAFE_KEYS,HEX_COLOR,APPLIED_THEME,NOT_APPLIED_THEME,CSS,describe,clip,cloneJson,canonical,sameJson,pathParts,setAtPath,previewValues,widgetSpec,stepFor,decimalsOf,roundTo,formatValue,validateValue,diffControls,luminance,contrastRatio,PROVENANCE,describeRefusal,isUnreachable,UNSAVED_TEXT,HISTORY_TEXT,InspectorError};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   root.JarvisStudioInspectorCore=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

@@ -64,8 +64,9 @@ def test_the_brain_is_told_to_orchestrate_and_how_to_name_the_roles():
 
 # ---- Slice 13 (native-studio-playback-fix): the default is ONE author writing native Remotion code and looking at it.
 
-#: The author playbook is read by every author sub-agent: it stays short (the old one appended the 9 000-character planner).
-AUTHOR_PLAYBOOK_BUDGET_CHARS = 7000
+#: The author playbook is read by every author sub-agent: it stays short (the old one appended the 9 000-character planner). 7400 since
+#: presentation-edition-v1 Slice 09: the native loop says how a scene stays editable from « Modifier » (texts and main colour as controls).
+AUTHOR_PLAYBOOK_BUDGET_CHARS = 7400
 
 
 def test_the_author_writes_native_code_and_must_look_at_every_scene_it_renders():

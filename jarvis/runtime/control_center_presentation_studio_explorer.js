@@ -651,7 +651,7 @@
            lecture continue écoute (Player devenu vivant, position du Player, échec d'une scène). */
         /* `autoplay: false`, `embed: 'variants'` (Slice 06): the Player opens paused on frame 0 and only the transport below plays it (§ 4.1);
            the stage page shows no bar of its own (§ 2). */
-        previewHost=api.createPrefabHost({mode:'preview',document:doc,window:win,swapPrefix:'presentation-studio.',autoplay:false,embed:'variants',
+        previewHost=api.createPrefabHost({mode:'preview',document:doc,window:win,swapPrefix:'presentation-studio.',autoplay:false,embed:'variants',rest:()=>!S.run&&!(seq&&seq.active()),
           fetchBundle:api.bundleFetcher((path,options)=>fetchImpl(path,Object.assign({cache:'no-store'},options))),
           onPreviewEvent:()=>{/* intentional: the preview frame writes nothing anywhere; its events are dropped */},
           onLive:(id)=>{if(runAdapter.owns(id))runAdapter.onLive(id);else if(seq)seq.onLive(id)},
@@ -790,8 +790,8 @@
       ui.stopRun=button('Arrêter','jvx-btn',()=>{runCommand('stop')},{attrs:{'data-act':'stop_run','data-danger':'',title:'Arrêter la présentation'}});
       ui.stopRun.hidden=true;
       /* presentation-edition-v1 Slice 09: « Modifier » opens the editor (the inspector) beside Variants on the variant and the scene ON SCREEN. */
-      ui.edit=button('Modifier','jvx-btn jvx-edit',()=>{openEditor('button')},{attrs:{'data-act':'edit_scene','aria-haspopup':'dialog',
-        title:EDIT_TITLE}});
+      /* No `aria-haspopup`: the editor is a non-modal region beside Variants, not a dialog (Slice 09 QA m1). */
+      ui.edit=button('Modifier','jvx-btn jvx-edit',()=>{openEditor('button')},{attrs:{'data-act':'edit_scene',title:EDIT_TITLE}});
       for(const node of [ui.prevScene,ui.restart,ui.skipBack,ui.playAll,ui.skipFwd,ui.nextScene,ui.scrub,ui.time,ui.sound,ui.fsT,ui.more,ui.stopRun])ui.transport.appendChild(node);
     }
     /* ⏮ ⏭, ← →, Page précédente / suivante: the start of the previous / next scene, play state kept (§ 4.4). Without a map (a variant
@@ -1046,7 +1046,12 @@
       return list.filter(s=>s&&typeof s.scene_id==='string').map(s=>({
         id:s.scene_id,title:cleanLine(s.title,80)||'(sans titre)',section:cleanLine(s.section,40),prefab:s.prefab&&typeof s.prefab.id==='string'?s.prefab:null,
         props:s.props&&typeof s.props==='object'?s.props:{},data:s.data&&typeof s.data==='object'?s.data:{},
-        locals:s.scene_variants&&Array.isArray(s.scene_variants.items)?s.scene_variants.items.length:0}));
+        locals:s.scene_variants&&Array.isArray(s.scene_variants.items)?s.scene_variants.items.length:0,restMs:restMsOf(s)}));
+    }
+    /* The scene's declared end of entrance: its first timed anchor (ms), or null (the host then rests on the middle of the scene). */
+    function restMsOf(scene){
+      const times=(Array.isArray(scene.anchors)?scene.anchors:[]).map(a=>a&&a.at_ms).filter(ms=>Number.isInteger(ms)&&ms>=0);
+      return times.length?Math.min(...times):null;
     }
     function schedulePreview(){
       if(cmp.isActive())return;      /* l'aperçu simple est remplacé par la comparaison : rien à lire pour lui */
@@ -1156,7 +1161,7 @@
         else if(!scene.prefab)veil('danger','Scène sans prefab','Cette scène ne désigne aucun prefab.');
         else{
           try{
-            host.mount(ui.slot,{object_id:PREVIEW_OBJECT_ID,scene_id:scene.id,prefab:{id:scene.prefab.id,version:scene.prefab.version},title:scene.title,props:scene.props,data:scene.data});
+            host.mount(ui.slot,{object_id:PREVIEW_OBJECT_ID,scene_id:scene.id,prefab:{id:scene.prefab.id,version:scene.prefab.version},title:scene.title,props:scene.props,data:scene.data,rest_ms:scene.restMs});
             p.mounted=scene.prefab;ui.veil.hidden=true;
           }catch(error){
             veil('danger','Aperçu impossible',describe(error));
@@ -2075,7 +2080,8 @@
       const scene=currentScene();
       log('edit_requested',{via,presentation_id:S.pid,variant_id:S.preview.variantId,scene_id:scene.id});
       try{
-        const result=await ins.edit({presentation_id:S.pid,variant_id:S.preview.variantId,scene_id:scene.id,via:'variants'});
+        /* `opener`: closing the editor (Échap, ×) gives the focus back to « Modifier » (Slice 09 QA m1). */
+        const result=await ins.edit({presentation_id:S.pid,variant_id:S.preview.variantId,scene_id:scene.id,via:'variants',opener:ui.edit});
         if(!result||result.state!=='opened'){
           say('failed',`L’éditeur ne s’est pas ouvert : ${cleanLine(result&&result.reason||'raison inconnue',160)}`);
           log('edit_not_opened',{via,state:result&&result.state},'warn');
@@ -2105,7 +2111,8 @@
       if(!S.open||d.presentation_id!==S.pid)return;
       log('edit_seen',{variant_id:d.variant_id,revision:d.revision,scene_id:d.scene_id||null});
       const p=S.preview;
-      if(d.scene_id&&d.variant_id===p.variantId&&d.scene_id!==p.sceneId&&p.scenes.some(s=>s.id===d.scene_id)&&!(seq&&seq.active()))showScene(d.scene_id);
+      /* Only an undo / redo brings its scene (`bring`): a save made while Variants had moved on stays where Variants is (Slice 09 QA B1). */
+      if(d.bring===true&&d.scene_id&&d.variant_id===p.variantId&&d.scene_id!==p.sceneId&&p.scenes.some(s=>s.id===d.scene_id)&&!(seq&&seq.active()))showScene(d.scene_id);
       loadGraph({}).then(()=>{if(S.open){renderAll();schedulePreview()}})
         .catch(error=>{const info=describeRefusal(error.info||error,{op:'graph'});
           say('failed',`Modification enregistrée, mais l’aperçu n’a pas pu être relu : ${info.text}`,{action:{label:'Relire',run:()=>refresh()}});

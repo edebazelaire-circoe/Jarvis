@@ -2701,18 +2701,23 @@ Status: **Level 3** (handoff `jarvis-presentation-edition-v1`, Slice 09). Varian
 is the inspector (*Semantic edit contract*, *Persistence and undo contract*), docked beside Variants. Nothing here adds an edit path:
 every change is `POST .../variants/{variant_id}/edits` of the relay (actor `user`), undo / redo are `POST .../undo|redo`.
 
-**Entry.** « Modifier » (`data-act="edit_scene"`) on the scene row, before « Présenter ». It opens the editor on the presentation, the
-**variant on screen** (any live branch, not only the active one) and the **scene on screen** (`JarvisStudioInspector.instance.edit(
-{presentation_id, variant_id, scene_id})`, also `JarvisStudioExplorer.edit()`). It says why it cannot (`aria-disabled` + title, then a
-notice on click): no variant chosen, archived variant (« restaurez-la »), preview not ready, compare open, presentation running (the
-button is hidden during a run, like « Présenter »). The rail's « Éditer » keeps its meaning (Variants plus the editor) and gets the same
+**Entry.** « Modifier » (`data-act="edit_scene"`, a plain button: the editor is a non-modal region, no `aria-haspopup`) on the scene
+row, before « Présenter ». It opens the editor on the presentation, the **variant on screen** (any live branch, not only the active one)
+and the **scene on screen** (`JarvisStudioInspector.instance.edit({presentation_id, variant_id, scene_id, opener})`, also
+`JarvisStudioExplorer.edit()`). It says why it cannot (`aria-disabled` + title, then a notice on click): no variant chosen, archived
+variant (« restaurez-la »), the variant's preview not read yet, compare open, presentation running (the button is hidden during a run, like
+« Présenter »). A scene that cannot PLAY (engine not installed, a scene that does not compile) can still be edited: its values are Core's,
+not the engine's; the editor's local preview then says why it is empty (in a product edition without developer mode: the product sentence
+« Le moteur vidéo de Jarvis n'est pas prêt… », never Core's route, English detail or code). Closing the editor (`Esc`, ×) gives the focus
+back to « Modifier » (`opener`), or to the dock button when « Modifier » is gone. The rail's « Éditer » keeps its meaning (Variants plus the editor) and gets the same
 docking.
 
-**Layering.** While Variants is open (`html.jvx-open`, set by Variants) the editor is fixed at the right, above Variants (9000) and the
-docked rail (9100) at **9120**, marked `data-keep-live="true"` so Variants' inert sweep and its document key capture leave it alone; with
-the editor open (`html.jvi-open`) and a window of 900 px or more, Variants makes room (`right: 436px`); below 900 px the editor covers
-Variants (its own local preview shows the scene). `Esc` in the editor closes the editor only. Outside Variants the inspector is the dock
-panel it always was (z 34).
+**Layering.** While Variants is open (`html.jvx-open`, set by Variants) the editor is fixed at the right at every width (`left: auto`
+overrides the narrow-window rule of the dock panel), above Variants (9000) and the docked rail (9100) at **9120**, marked
+`data-keep-live="true"` so Variants' inert sweep and its document key capture leave it alone; with the editor open (`html.jvi-open`) and a
+window of 900 px or more, Variants ends exactly where the editor begins (`right: 428px` = 8 px margin + 420 px, no strip of the page
+between them); below 900 px the editor covers the right of Variants (its own local preview shows the scene). `Esc` in the editor closes the
+editor only. Outside Variants the inspector is the dock panel it always was (z 34).
 
 **What is edited, always in words.** A context line at the top of the editor (`[data-role="edit-context"]`): « Vous modifiez la scène
 k sur n de la variante #N » + a tag « active » / « non active » + whether that variant is the one presented and exported, and that each
@@ -2720,17 +2725,37 @@ change is saved on release.
 
 **One scene on screen.** Variants says the scene on screen (`jarvis:studio-explorer-scene {presentation_id, variant_id, scene_id}`, only
 on change); the editor follows it (scene, or variant + scene). A scene chosen in the editor's picker brings Variants to it
-(`JarvisStudioExplorer.showScene`).
+(`JarvisStudioExplorer.showScene`). The context line is a polite live region rewritten only when its words change (scene, variant, active
+state), never after a save.
 
-**Honest saving.** The editor says « enregistré » only after Core's variant is read back (unchanged rule of the inspector); it then says
-`jarvis:studio-variant-edited {presentation_id, variant_id, revision, scene_id}` and Variants re-reads the graph and the variant from
-Core and remounts the preview (no value copied from the editor). A failed re-read is said in Variants (« Modification enregistrée, mais
-l'aperçu n'a pas pu être relu », « Relire »).
+**A value typed is never lost and never lands on another scene** (Slice 09 QA, B1). Every move of the editor (the scene or the variant
+Variants puts on screen — its continuous play included —, the editor's picker, `‹ ›`, another presentation) goes through one queue
+(`requestMove`): a value typed and not yet released is first **saved on the scene it was typed on** and the write queue is waited for
+(`settleDrafts`); only then does the editor move, and it says « Saisie enregistrée sur la scène k « … » · l'éditeur montre maintenant la
+scène j « … » » (visible line + polite announce) and takes the caret out of the field (to the editor's title) so the next key never edits
+the other scene. If the save cannot be made (refused, Core unreachable), the editor **stays** on its scene with the value and says « L'éditeur
+reste sur la scène k » with « Abandonner ma saisie et continuer »; it moves on by itself once the value is saved or abandoned (Échap).
+Variants is never held back: it may show another scene meanwhile. Closing the editor saves first the same way (« Fermer sans enregistrer »
+when it cannot). A plain save never moves Variants (`jarvis:studio-variant-edited` carries `bring: false`); only an undo / redo does.
+
+**Core unreachable while editing.** The typed value stays in the field and in the draft (« aperçu · non enregistré »), the row says
+« Jarvis ne joint pas son moteur (Core) : votre saisie est gardée ici mais n'est pas enregistrée… » with « Réessayer » (never Core's
+transport text), and the next answer of Core (the editor's 3 s reload read) saves it on its own; the message goes away once it is saved.
+Journal `commit_unreachable` (error), `commit_retry_after_core_back`.
+
+**Honest saving.** The editor says « enregistré » only after Core's variant is read back (unchanged rule of the inspector), in the row AND
+in a short visible status line (« « Titre » enregistré · scène k « … » », 4 s); it then says `jarvis:studio-variant-edited
+{presentation_id, variant_id, revision, scene_id, bring}` and Variants re-reads the graph and the variant from Core at once (not at its
+10 s poll) and remounts the preview (no value copied from the editor). A failed re-read is said in Variants (« Modification enregistrée,
+mais l'aperçu n'a pas pu être relu », « Relire »).
 
 **Undo scoped to a scene.** `GET .../history` steps carry `scene_ids` (ids only). « Annuler » / « Rétablir » name the scene of the next
-step (« Annuler la dernière modification, scène 3 « … » (autre scène : elle s'affichera) »); an undo or redo of a change made on another
-scene first brings that scene on screen, in the editor and in Variants, and the status says « Modification annulée : scène k « … » ». The
-ring stays per variant (Core); nothing else is undone.
+step (« Annuler la dernière modification, scène 3 « … » (autre scène : elle s'affichera) »), and a visible line under the editor's bar
+says it too (« ↶ Annuler changera la scène 3 « … » », `[data-role=undo-scene]`); an undo or redo of a change made on another scene first
+brings that scene on screen, in the editor and in Variants, and the status says « Modification annulée : scène k « … » ». Writes already
+queued on the scene on screen land first (the undo waits for the queue, then reads its step: it undoes the latest change). The focus stays
+on « Annuler » (or the title when nothing is left), never on the page, where `Esc` would close Variants. The ring stays per variant (Core);
+nothing else is undone.
 
 **Developer surfaces.** In a product edition without developer mode, « Remotion Studio », its state line (`.jvx-rms`, master line,
 « Cette scène seule dans Remotion Studio », publish / revert) and the editor's source line (versions of the scene's model, last hot reload)
@@ -2746,12 +2771,27 @@ named « Direction déduite » (data stored before keep their English text).
 scene_event_failed`; `[studio-inspector] edit_requested|edit_select_failed|follow_variant|follow_failed|explorer_follow_failed|
 edited_event_failed`, `history_applied {scenes, moved}`.
 
-**Known limit.** A Remotion scene paused at its first frame shows what its first frame draws: a scene whose content fades in shows its
-background only until it plays (the editor's local preview shows the settled frame). Choosing a representative still for a paused scene
-is a Composition clock decision, not taken here.
+**Representative still** (PM decision, Slice 09 QA). A paused scene in Variants rests on its representative frame, and an image or PDF
+of a scene without a named frame is that frame: the end of its entrance, which the scene declares with its first timed anchor (`at_ms`),
+else the middle of the scene ([remotion-render.md](remotion-render.md) › *Image représentative*). Never during a play or a presentation run
+(scenes start at 0 there). An image or a PDF is of ONE scene: Sessions & Boards › Artefacts asks which one (the first by default) and
+says nothing for a copy of one scene.
+
+**Known limits of V1.**
+- **Replacing a visual is deferred after V1** (PM decision, `Issues/I-008-s09-leftovers.md`): a choice of image bounded to internal assets
+  (never a path) needs an asset contract on Core's side first; texts, colours and motion stay editable. A control of type `url` keeps its
+  text field.
+- The undo ring is in memory: it is lost when Core restarts (the tooltip says « l'historique ne garde que les modifications faites depuis
+  le démarrage de Core »).
+- Editing words still to clean in the editor and Variants (« Fallback - … · secours », « DA · RÉV. 1 », « GÉNÉRÉE / REPLI », « Partition
+  liée », « Racine de l'arbre », « Pourquoi cette branche ? », « 0/800 octets », « INSPECTEUR », « Artefact jart_… »): I-008.
 
 **Tests.** `tests/unit/test_presentation_editing_ui_browser.py` (real Core, Control Center, Chrome: non-active branch edited, docking on
-top, follow both ways, Core read back, undo on another scene, developer surfaces hidden / shown, 1280×720, 1440×900, 600×800),
+top, follow both ways, Core read back with Variants' poll neutralised (graph re-read counted), the other scenes byte-identical, undo on
+another scene, developer surfaces hidden / shown, a value typed when Variants changes the scene saved on its scene with the caret moved,
+the `full` edition, 1280×720, 1440×900, 600×800), `tests/unit/test_presentation_editing_drafts_js.py` (move queue, Core unreachable,
+undo after the queue, context line, close and focus), `tests/unit/test_variants_reads_core_after_edit_js.py` (immediate re-read, « Relire »),
+`tests/unit/test_representative_still_js.py`, `tests/unit/test_workspace_presentations_js.py` (scene choice of an image / PDF),
 `tests/unit/test_presentation_export_after_edit.py` (an edited deck exports its edit from a new frozen copy, the old copy keeps its value,
 the live variant reopens with the edit), `test_presentation_studio_history.py::test_a_step_names_the_scenes_it_touches_by_id_only`.
 
@@ -4692,7 +4732,8 @@ was the only creation path, and an agent could neither see nor fix the scenes it
 2. `presentation_inspect` `target: "draft_guide"`, `kind: "native"`: exact keys, one valid example, the key format, the tags the isolation guard
    refuses;
 3. storyboard: one scene = one composition (size, fps, duration) and one idea;
-4. write normal React/TSX (text, colours, layout in the code; helper modules in `src/lib/*.tsx`; `react` and `remotion` only);
+4. write normal React/TSX (layout, motion and secondary colours in the code; the visible texts and the main colour as props exposed as
+   controls, see *What a native deck must also pass*; helper modules in `src/lib/*.tsx`; `react` and `remotion` only);
 5. `presentation_draft_assemble` with `brief.authoring: "native"` (no score, roles or art direction needed);
 6. `presentation_source` `op: "preview"` on every scene, then the agent READS each rendered frame;
 7. `presentation_source` `op: "write"` (complete files) to fix what it saw, and preview again.
@@ -4705,8 +4746,19 @@ compiler builds it in time (`tsx_compile`, `tsx_compile_budget`, `tsx_lint_budge
 live Board references and inspirations follow their security contracts (`tsx_live_ref_*`, `tsx_inspiration_unconfirmed`), no network, eval or
 remote reference (`behavior_risky`). That is the floor the source-edit gate already applies to every later change of a scene.
 
-**What is silent** (`NATIVE_OFF`): the rules that judge the guided model itself (text in props, the `theme` prop, curated controls, cues, spoken
-lines, declared transitions, the props-based text density and contrast). **Everything else is a warning.** The guided path is unchanged and
+**What a native deck must also pass** (`NATIVE_REQUIRED`, presentation-edition-v1 Slice 09): every scene is editable from « Modifier »
+(`scene_no_controls` at ERROR in native, whatever the workflow's level). The QA of Slice 09 found that a deck written by the real
+`[presentation-author]` exposed no setting at all (text and colours literal in the TSX), so the editor said « Cette scène n'expose aucun
+réglage » on every scene. A native scene keeps its free React/TSX, but its **visible texts** (and its main colour) are props declared by its
+bundle with a default (`props` schema), read by the source (`props.titre`), valued by the scene (`props`) and exposed as scene `controls`
+(path `props.<name>`, group `content` for a text, `visual` for a colour); at least one `content` control per scene, a colour alone is not
+enough. The guide (`draft_guide` `kind: "native"`: `NATIVE_LOOP`, the example with `NATIVE_PROPS` / `NATIVE_CONTROLS`) and the author
+playbook say it before the first draft; the refusal says what to add. It holds in both editions (`full` and `presentation`): « Modifier » is
+the same editor in both, so an uneditable deck is the same defect in both. A declared prop that the source never reads is a warning
+(`tsx_props_unread`, a dead control) instead of silent.
+
+**What is silent** (`NATIVE_OFF`): the rules that judge the guided model itself (text in props, the `theme` prop, the other curated-control
+rules, cues, spoken lines, declared transitions, the props-based text density and contrast). **Everything else is a warning.** The guided path is unchanged and
 stays the default of `presentation_draft_assemble` when `authoring` is absent (its brief digest is unchanged).
 
 **Defaults a native draft gets from Core:** roles from the order (`single`, else `opening` / `body` / `closing`), a silent score (one

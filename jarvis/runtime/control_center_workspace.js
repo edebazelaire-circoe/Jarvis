@@ -781,14 +781,36 @@ const JarvisWorkspaceCore=(function(){
     }
     async function exportStart(d){
       const snap=String(d.snapshot||''),format=String(d.format||'');
+      let scene=String(d.scene||'');
       const known=S.exports[snap];
-      if(!snap||(known&&(known.status==='starting'||known.status==='running')))return null;
+      if(!snap||(known&&(known.status==='starting'||known.status==='running'||known.status==='scenes')))return null;
       const x=S.exports[snap]={snapshot:snap,format,status:'starting',started:now(),job:null,error:null,gen:((known&&known.gen)||0)+1};
       changed();
+      /* An image or a PDF is made of ONE scene (`RENDERS`, `docs/export.md` › *Image and PDF of a scene*, presentation-edition-v1 Slice 09):
+         without a scene the page reads the scenes of the frozen copy from Core and asks which one (the first one chosen by default); a copy
+         of one scene needs no question. Core then renders the scene's representative still (never its blank first frame). */
+      const still=format==='still'||format==='pdf';
+      if(still&&!scene){
+        x.status='scenes';changed();
+        let stills=null;
+        try{
+          const read=await client.get(PATHS.renderMaster(snap));
+          stills=list(read&&read.master&&read.master.stills);
+        }catch(error){exportFailed(x,error,'export_scenes_failed');return null}
+        if(S.exports[snap]!==x)return null;
+        log('info','workspace.export_scenes_read',{snapshot:snap,format,scenes:stills.length});
+        if(!stills.length){
+          exportFailed(x,{code:'presentation_render_unknown_scene',message:'Cette copie figée n’a aucune scène Remotion à rendre en image.'},'export_no_scene');
+          return null;
+        }
+        if(stills.length>1){x.status='choose';x.stills=stills;changed();return null}
+        scene=stills[0].scene_id;x.status='starting';changed();
+      }
       /* Slice 08 du projet maître (§ 13) : un MP4 d'une copie dont la vidéo entière est prête ET compte au moins deux scènes rend la vidéo
          entière (`scope: "master"`) ; sinon (une seule scène, pas prête, illisible, image, PDF) le corps d'avant, octet pour octet. La page ne
          décide rien : elle lit la vue de Core. */
       const body={snapshot_id:snap,format};
+      if(still){body.settings={scene_id:scene};x.scene=scene}
       if(format==='mp4'){
         try{
           const read=await client.get(PATHS.renderMaster(snap));
@@ -805,7 +827,7 @@ const JarvisWorkspaceCore=(function(){
       try{
         const answer=await client.post(PATHS.renderCreate(),body);
         x.job=answer.body.job;x.status=exportTerminal(x.job)?'done':'running';x.started=now();
-        log('info','workspace.export_started',{snapshot:snap,format,scope:x.scope||'scene',job:x.job&&x.job.job_id,artifact:x.job&&x.job.artifact_id});
+        log('info','workspace.export_started',{snapshot:snap,format,scope:x.scope||'scene',scene_id:x.scene||null,job:x.job&&x.job.job_id,artifact:x.job&&x.job.artifact_id});
       }catch(error){exportFailed(x,error,'export_failed');return null}
       changed();
       return x.status==='running'?exportPoll(snap):exportDone(x);
@@ -966,6 +988,12 @@ const JarvisWorkspaceCore=(function(){
         case 'export-cancel':return exportCancel(d);
         case 'artifact-save-copy':return copySave(d);
         case 'export-dismiss':return exportDismiss(d);
+        /* A render finished elsewhere (Variants' « Exporter la vidéo », `jarvis:presentation-render-finished`): the Board's renders are read
+           again while this view shows them, so a new render appears without « Actualiser » (Slice 09 QA). */
+        case 'renders-changed':
+          if(!S.open||S.artifacts.scope!=='board'||!S.artifacts.id)return null;
+          log('info','workspace.renders_changed',{job:d.job_id||null,state:d.state||null});
+          return presentationsRead();
         case 'artifact-close':S.artifacts.detail={id:null,...slot()};changed();return null;
         case 'switch':return switchTo(d.board);
         case 'notice-close':S.notice=null;changed();return null;
@@ -1431,13 +1459,14 @@ const JarvisWorkspaceCore=(function(){
     const c=copies&&copies[render.artifact_id];
     if(c&&c.status==='saving')return `<div class="wsp-export" role="status" aria-live="polite"><span class="wsp-spin" aria-hidden="true"></span>`
       +`Copie dans Documents en cours… ${clockHtml(c.started)} (2 min au plus)</div>`;
+    /* The button stays after a copy (Slice 09 QA): a second click copies again, or says the same bytes are already there. */
+    let outcome='';
     if(c&&c.status==='saved'){
       const r=c.result||{},where=r.destination&&r.destination.display_path||r.file_name||'le dossier d’export';
-      return `<div class="notice ok" role="status">${esc(r.already_exported?`Déjà dans ${where} : rien n’a été recopié.`
+      outcome=`<div class="notice ok" role="status">${esc(r.already_exported?`Déjà dans ${where} : rien n’a été recopié.`
         :`Copie enregistrée : ${where}${r.renamed?' (le nom était pris : numéroté, rien n’a été écrasé)':''}.`)}</div>`;
-    }
-    const failed=c&&c.status==='error'?`<div class="notice bad wsp-error" role="alert">${esc(c.text)} <code>${esc(c.code)}</code></div>`:'';
-    return ` ${btn('artifact-save-copy',{id:render.artifact_id},esc(COPY_LABEL),{title:'Copie ce fichier dans votre dossier Documents (le fichier interne de Jarvis ne bouge pas)'})}${failed}`;
+    }else if(c&&c.status==='error')outcome=`<div class="notice bad wsp-error" role="alert">${esc(c.text)} <code>${esc(c.code)}</code></div>`;
+    return ` ${btn('artifact-save-copy',{id:render.artifact_id},esc(COPY_LABEL),{title:'Copie ce fichier dans votre dossier Documents (le fichier interne de Jarvis ne bouge pas)'})}${outcome}`;
   }
   function renderRowHtml(render,boardId,copies){
     const here=list(render.board_ids).includes(boardId);
@@ -1464,6 +1493,16 @@ const JarvisWorkspaceCore=(function(){
       const lost=x.pollErrors?`<span class="wsp-warn"> · lecture de l’état en échec (${x.pollErrors}/3) : ${esc((x.pollError&&x.pollError.message)||'')}</span>`:'';
       return `<div class="wsp-export" role="status" aria-live="polite"><span class="wsp-spin" aria-hidden="true"></span>`
         +`Export ${esc((RENDER_FORMATS[x.format]||x.format))}${x.scope==='master'?esc(` (vidéo entière${x.scenes?`, ${x.scenes} scène${x.scenes>1?'s':''}`:''})`):''} en cours — ${esc(phase)}${esc(frames)}${esc(queue)} ${clockHtml(x.started)}${esc(limit)}${lost} ${stop}</div>`;
+    }
+    if(x&&x.status==='scenes')return `<div class="wsp-export" role="status"><span class="wsp-spin" aria-hidden="true"></span>Lecture des scènes de cette copie… ${clockHtml(x.started)}</div>`;
+    if(x&&x.status==='choose'){
+      const kind=x.format==='pdf'?'le PDF':'l’image';
+      const scenes=list(x.stills).map(s=>`<option value="${esc(s.scene_id)}">${esc(`Scène ${s.position}${s.title?` — ${s.title}`:''}`)}</option>`).join('');
+      return `<form class="wsp-bar wsp-form-inline wsp-export-form" data-form="export-start"><input type="hidden" name="snapshot" value="${id}">`
+        +`<input type="hidden" name="format" value="${esc(x.format)}">`
+        +`<label class="wsp-field"><span>Scène pour ${esc(kind)}</span><select name="scene" aria-label="Scène à exporter">${scenes}</select></label>`
+        +`<button type="submit" class="action small" title="Une image ou un PDF montre une scène, à l’instant où son entrée est terminée.">Exporter cette scène</button> `
+        +`${btn('export-dismiss',{snapshot:snap.artifact_id},'Annuler')}</form>`;
     }
     let outcome='';
     if(x&&x.status==='error')outcome=errorHtml(x.error,{lead:'Export impossible : '})+btn('export-dismiss',{snapshot:snap.artifact_id},'Fermer');
@@ -1649,6 +1688,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
   const client=W.createClient({fetchImpl:(path,options)=>window.fetch(path,options)});
   const manager=W.createManager({client,log,switchBoard,openStudioSource,onChange:()=>{if(!root.hidden)render()}});
   const S=manager.state;
+  window.addEventListener('jarvis:presentation-render-finished',event=>{
+    const d=event&&event.detail||{};
+    Promise.resolve(manager.act('renders-changed',{job_id:d.job_id,state:d.state}))
+      .catch(error=>log('error','workspace.renders_changed_failed',{message:error&&error.message}));
+  });
 
   function withFocusAndInput(fn){
     const active=document.activeElement;

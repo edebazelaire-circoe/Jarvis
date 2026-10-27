@@ -198,6 +198,8 @@
     /* Variants (native-studio-playback-fix Slice 06): its Player opens paused and only its transport plays it (§ 4.1). `autoplay: false`
        drops the grace-period play; `embed` tells the stage page it has no bar of its own (`R.stageUrl`). The run stage keeps both. */
     const autoplay=d.autoplay!==false;
+    /* `rest`: 'representative', or a function the page answers at each mount (Variants: only while nothing plays, never during a run). */
+    const resting=()=>{try{return typeof d.rest==='function'?d.rest()===true:d.rest==='representative'}catch(_error){return false /* intentional: frame 0, the old rest */}};
     const embed=typeof d.embed==='string'?d.embed:undefined;
     /* Sound (native-studio-playback-fix Slice 08): the sound the page wants for its Remotion Players (`sound(muted)`), `null` until it says
        (then each stage keeps the old rule: a click in the scene turns the sound on). Only the LIVE frame of an object gets it: a frame loaded
@@ -538,8 +540,10 @@
           rec.incarnation=++incarnations;
           rec.clock=null;rec.ordered=false;
           rec.ready=true;
-          /* Starts paused on the first frame: the timeline (or the grace period) decides what it plays, nothing replays after a mount. */
-          post(rec,R.hostMessage('control',{action:'pause',frame:0}));
+          /* Starts paused: the timeline (or the grace period) decides what it plays, nothing replays after a mount. On the first frame,
+             unless the page asked for the representative still (`rest: 'representative'`, Variants: presentation-edition-v1 Slice 09) and
+             this frame is the one on screen (a frame loaded ahead waits on frame 0 for the play that will reach it). */
+          post(rec,R.hostMessage('control',{action:'pause',frame:!rec.staged&&!rec.preload&&resting()?representativeFrame(status.composition,rec.restMs):0}));
           if(!rec.staged){sendSound(rec);hold(rec);notifyLive(rec)}
           clearNote(rec);
           if(rec.bandReason==='timeout'||rec.state==='error'){clearBand(rec)}
@@ -784,6 +788,7 @@
         theme:Object.assign({},baseTheme,instance.theme||{}),state:'loading',generation:0,lastDraw:now(),
         outputs:[],errorsIn:[],dropped:0,rateLimited:0,height:0,pendingHeight:null,resizeTimer:null,sentData:null,
         iframe:null,readyTimer:null,renderTimer:null,rendered:false,logs:0,outcomeSent:false,settleTimer:null,holdTimer:null,staged:false,preload:false,parked:false,ordered:false,claimed:false,queued:null,ahead:false,next:null,sceneId:typeof instance.scene_id==='string'&&instance.scene_id?instance.scene_id:null,
+        restMs:Number.isInteger(instance.rest_ms)&&instance.rest_ms>=0?instance.rest_ms:null,
         counters:counters||{starts:0,mounted:0,failed:0,remounts:0}};
       rec.propsJson=json(rec.props);rec.dataJson=json(rec.data);rec.themeJson=json(rec.theme);
       return rec;
@@ -1175,8 +1180,19 @@
     return host.update(id,prefab.props,prefab.data)?'update':'none';
   }
 
+  /* The representative still of a paused scene (presentation-edition-v1 Slice 09, PM decision; the same rule as Core's still and PDF
+     exports, `presentation_render_plan.representative_frame`, `docs/presentation-studio.md` › *Representative still*): the frame where
+     the scene's entrance is over, which the scene declares by its first timed anchor (`restMs`, ms from the start); without one, the
+     middle of the scene. Clamped to the composition. */
+  function representativeFrame(composition,restMs){
+    const total=composition&&Number.isInteger(composition.durationInFrames)&&composition.durationInFrames>0?composition.durationInFrames:1;
+    const fps=composition&&Number.isInteger(composition.fps)&&composition.fps>0?composition.fps:30;
+    const at=Number.isInteger(restMs)&&restMs>=0?Math.round(restMs*fps/1000):Math.floor(total/2);
+    return Math.max(0,Math.min(total-1,at));
+  }
+
   const api=Object.freeze({LIVE_CAP,SETTLE_MS,HOLD_GRACE_MS,PROPS_SETTLE_MS,READY_TIMEOUT_MS,TEARDOWN_MS,OUTPUT_RATE,ERROR_RATE,RESIZE_COALESCE_MS,BUNDLE_CACHE_CAP,
-    DEFAULT_THEME,SLOT_CLASS,createPrefabHost,bundleFetcher,sceneSlot,clearAround,placeAround,syncScene});
+    DEFAULT_THEME,SLOT_CLASS,createPrefabHost,representativeFrame,bundleFetcher,sceneSlot,clearAround,placeAround,syncScene});
   root.JarvisPrefabHost=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

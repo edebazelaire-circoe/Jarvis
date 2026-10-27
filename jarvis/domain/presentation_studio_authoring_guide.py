@@ -208,16 +208,28 @@ NATIVE_SCENE_TSX = """import React from "react";
 import {AbsoluteFill} from "remotion";
 import {Reveal} from "./lib/Reveal";
 
-// Normal Remotion code: write the text, the colours and the layout here, split helpers into src/lib/*.tsx.
-export default function Scene() {
+// Normal Remotion code: the layout, the motion and the secondary colours are written here, helpers go to src/lib/*.tsx.
+// The visible texts and the main colour are props (declared by the bundle, valued by the scene, exposed as controls): « Modifier » edits them.
+export default function Scene(props: {titre: string; ligne: string; accent: string}) {
   return (
     <AbsoluteFill style={{background: "#0a0d14", color: "#f2f4f8", fontFamily: "Segoe UI, system-ui, sans-serif", padding: 140, justifyContent: "center"}}>
-      <Reveal delay={0}><h1 style={{fontSize: 110, margin: 0}}>Remplace ce titre</h1></Reveal>
-      <Reveal delay={12}><p style={{fontSize: 44, color: "#7cf0c4", margin: "24px 0 0"}}>Et cette ligne, par ton propre contenu.</p></Reveal>
+      <Reveal delay={0}><h1 style={{fontSize: 110, margin: 0}}>{props.titre}</h1></Reveal>
+      <Reveal delay={12}><p style={{fontSize: 44, color: props.accent, margin: "24px 0 0"}}>{props.ligne}</p></Reveal>
     </AbsoluteFill>
   );
 }
 """
+
+#: presentation-edition-v1 Slice 09: what makes a native scene editable from « Modifier » (the gate refuses a native scene without a content
+#: control, `NATIVE_REQUIRED`). The bundle declares the props with a default, the scene gives its values and exposes them as controls.
+NATIVE_PROPS = {"type": "object", "properties": {
+    "titre": {"type": "string", "max_length": 80, "default": "Titre"},
+    "ligne": {"type": "string", "max_length": 160, "default": "Une ligne"},
+    "accent": {"type": "color", "default": "#7cf0c4"}}}
+NATIVE_CONTROLS = [
+    {"control_id": "titre", "path": "props.titre", "label": "Titre", "group": "content", "meaning": "Le grand titre de la scene"},
+    {"control_id": "ligne", "path": "props.ligne", "label": "Ligne sous le titre", "group": "content", "meaning": "La phrase sous le titre"},
+    {"control_id": "accent", "path": "props.accent", "label": "Couleur d'accent", "group": "visual", "meaning": "La couleur de la ligne"}]
 
 
 def native_example() -> dict[str, Any]:
@@ -225,12 +237,17 @@ def native_example() -> dict[str, Any]:
 
     def bundle(key: str, frames: int) -> dict[str, Any]:
         return {"key": key, "remotion": {"title": f"Scene {key}", "composition": {**NATIVE_DECK_SPEC, "duration_in_frames": frames},
-                                         "files": {"src/Scene.tsx": NATIVE_SCENE_TSX, "src/lib/Reveal.tsx": NATIVE_TITLE_TSX}}}
+                                         "files": {"src/Scene.tsx": NATIVE_SCENE_TSX, "src/lib/Reveal.tsx": NATIVE_TITLE_TSX},
+                                         "props": copy.deepcopy(NATIVE_PROPS)}}
+
+    def scene(key: str, title: str, line: str) -> dict[str, Any]:
+        return {"key": key, "title": title, "prefab": {"bundle": key}, "props": {"titre": title, "ligne": line, "accent": "#7cf0c4"},
+                "controls": copy.deepcopy(NATIVE_CONTROLS)}
 
     return {"brief": {"title": "Titre de la presentation", "workflow": "directed", "authoring": "native", "language": "fr"},
             "draft": {"prefabs": [bundle("ouverture", 240), bundle("cloture", 210)],
-                      "scenes": [{"key": "ouverture", "title": "Ouverture", "prefab": {"bundle": "ouverture"}},
-                                 {"key": "cloture", "title": "Cloture", "prefab": {"bundle": "cloture"}}]}}
+                      "scenes": [scene("ouverture", "Ouverture", "Ce que la presentation promet, en une ligne."),
+                                 scene("cloture", "Cloture", "Ce que le public retient, en une ligne.")]}}
 
 
 #: The brief keys that mean something to a native deck (`strict_content` is exploratory-only and refused elsewhere; `literal_terms`,
@@ -256,7 +273,10 @@ MASTER_HINT = ("VIDEO ENTIERE : les scenes d'un deck forment une seule video Rem
 NATIVE_LOOP = ("CODE REMOTION NATIF (brief.authoring: native). 1) Storyboard : une scene = une composition (taille, fps, duree en images) et "
                "une idee. 2) Ecris du React/TSX normal : texte, couleurs et mise en page dans le code, modules src/lib/*.tsx ; point d'entree "
                "src/Scene.tsx (export default) ; imports react et remotion seulement (polices systeme, pas de paquet) ; images en public/** "
-               "(base64) ; aucun reseau. 3) presentation_draft_assemble avec ce brief : seuls compilation, isolation, schema et references "
+               "(base64) ; aucun reseau. MODIFIABLE : les textes visibles et la couleur principale de chaque scene sont des props declarees "
+               "par le bundle (props, avec default), lues par le TSX (props.titre), valuees par la scene (props) et exposees en controls "
+               "(path props.titre, group content ; couleur : visual) : l'utilisateur les change depuis Modifier ; sans controle de contenu, "
+               "la scene est refusee (scene_no_controls). 3) presentation_draft_assemble avec ce brief : seuls compilation, isolation, schema et references "
                "bloquent ; le reste revient en warnings (a lire, pas a negocier) ; la partition muette et les roles sont deduits. 4) "
                "presentation_source op preview sur chaque scene, puis Read de chaque image : juge lisibilite, hierarchie, debordements, "
                "mouvement. 5) Corrige avec presentation_source op write (fichiers complets), revois. Les ids viennent des resultats. "
@@ -274,9 +294,11 @@ def draft_guide(kind: str | None = None) -> dict[str, Any]:
                           "types": {"duration_target_s": "secondes (entier)", "language": "fr, en, fr-CA", "tone": "liste de mots",
                                     "speech": "none (defaut natif), jarvis ou user"}},
                 "draft": {"required": ["scenes"], "optional": ["prefabs", "score", "art_direction"],
-                          "prefabs": "[{key, remotion: {title, files: {'src/Scene.tsx': <TSX>, 'src/lib/X.tsx': <TSX>}, composition: "
-                                     "{width, height, fps, duration_in_frames}, assets?: {'public/x.png': <base64>}}}]",
-                          "scenes": "[{key, title, prefab: {bundle: <key>}, role?}] dans l'ordre du deck",
+                          "prefabs": "[{key, remotion: {title, files: {'src/Scene.tsx': <TSX>, 'src/lib/X.tsx': <TSX>}, props: <schema des textes et "
+                                     "couleurs, avec default>, composition: {width, height, fps, duration_in_frames}, assets?: "
+                                     "{'public/x.png': <base64>}}}]",
+                          "scenes": "[{key, title, prefab: {bundle: <key>}, props, controls: [{control_id, path, label, group, meaning}], "
+                                    "role?}] dans l'ordre du deck",
                           "keys": "key de bundle et de scene : minuscules, chiffres et _ , commence par une lettre (ouverture, scene_2)",
                           "isolation": ISOLATION_HINT, "master": MASTER_HINT},
                 "note": "FORME seulement : remplace tout le texte, les couleurs, les durees et les mises en page par les tiens.",
