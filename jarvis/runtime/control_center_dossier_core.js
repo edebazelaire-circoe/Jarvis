@@ -50,6 +50,8 @@
   /* Collections de la colonne de gauche, dans cet ordre ; chaque nature d'entrée en a une. */
   const COLLECTIONS=Object.freeze([
     Object.freeze({id:'syntheses',label:'Synthèses',kinds:Object.freeze(['memory_summary','report'])}),
+    /* Documents de recherche (`documents/research/`, V1.2 Slice 04) : reconnus à leur champ `research`, pas à leur nature. */
+    Object.freeze({id:'research',label:'Recherches',kinds:Object.freeze([])}),
     Object.freeze({id:'notes',label:'Notes',kinds:Object.freeze(['note'])}),
     Object.freeze({id:'documents',label:'Documents',kinds:Object.freeze(['document','presentation','file'])}),
     Object.freeze({id:'transcripts',label:'Transcriptions',kinds:Object.freeze(['transcript'])}),
@@ -164,10 +166,14 @@
     const found=COLLECTIONS.find(c=>c.kinds.includes(kind));
     return found?found.id:'documents';
   }
+  /* La collection d'une entrée : un document de recherche va sous « Recherches », le reste selon sa nature. */
+  function collectionOfEntry(e){
+    return isObject(e)&&isObject(e.research)?'research':collectionOf(isObject(e)?e.kind:'');
+  }
   /* Colonne de gauche : collections non vides, puis l'arbre des dossiers de la mémoire (racine comprise). */
   function organize(entries){
     const list=Array.isArray(entries)?entries.filter(isObject):[];
-    const collections=COLLECTIONS.map(c=>({id:c.id,label:c.label,ids:list.filter(e=>collectionOf(e.kind)===c.id).map(e=>e.entry_id)}))
+    const collections=COLLECTIONS.map(c=>({id:c.id,label:c.label,ids:list.filter(e=>collectionOfEntry(e)===c.id).map(e=>e.entry_id)}))
       .filter(c=>c.ids.length);
     const tree={name:'',path:'',folders:new Map(),ids:[]};
     for(const e of list){
@@ -199,7 +205,7 @@
   function entriesOfSection(entries,section){
     const list=Array.isArray(entries)?entries:[];
     if(!section||section==='home')return list;
-    if(section.startsWith('c:'))return list.filter(e=>collectionOf(e.kind)===section.slice(2));
+    if(section.startsWith('c:'))return list.filter(e=>collectionOfEntry(e)===section.slice(2));
     if(section.startsWith('f:')){const p=section.slice(2);return list.filter(e=>e.source==='memory'&&(e.folder===p||text(e.folder).startsWith(p+'/')))}
     return list;
   }
@@ -234,6 +240,12 @@
     const lines=body.replace(/\r\n?/g,'\n').split('\n');
     const blocks=[];
     let para=[],list=null,quote=null,code=null;
+    /* En-tête de métadonnées en tête (`---` … `---`, document de recherche) : gardé tel quel, en bloc à chasse fixe,
+       jamais lu comme une ligne de séparation suivie d'un paragraphe (V1.2 Slice 04). */
+    if(lines.length&&lines[0].trim()==='---'){
+      const end=lines.findIndex((l,i)=>i>0&&l.trim()==='---');
+      if(end>0){blocks.push({t:'code',v:lines.slice(1,end).join('\n'),fm:true});lines.splice(0,end+1)}
+    }
     const flush=()=>{
       if(para.length){blocks.push({t:'p',inline:inline(para.join(' '))});para=[]}
       if(list){blocks.push(list);list=null}
@@ -270,10 +282,11 @@
   /* Le premier titre `#` d'un document devient son titre affiché (et quitte le corps, pour ne pas se lire deux fois). */
   function leadHeading(blocks){
     const list=Array.isArray(blocks)?blocks:[];
-    const first=list[0];
+    const at=list[0]&&list[0].fm?1:0;  // un en-tête de métadonnées précède le titre : il reste en tête du corps
+    const first=list[at];
     if(!first||first.t!=='h'||first.level!==1)return {heading:null,blocks:list};
     const heading=first.inline.map(t=>t.v).join('').trim();
-    return heading?{heading,blocks:list.slice(1)}:{heading:null,blocks:list};
+    return heading?{heading,blocks:list.slice(0,at).concat(list.slice(at+1))}:{heading:null,blocks:list};
   }
 
   /* ------------------------------------------------------------ onglets et disposition */
@@ -428,6 +441,21 @@
     if(n<1048576)return `${(n/1024).toFixed(n<10240?1:0).replace('.',',')} Kio`;
     return `${(n/1048576).toFixed(1).replace('.',',')} Mio`;
   }
+  /* Vérification d'un document de recherche, dite à l'humain : « vérifiée le 27 octobre 2026 · 4 sources (1 non lue) ». */
+  function researchLine(entry){
+    const r=isObject(entry)&&isObject(entry.research)?entry.research:null;
+    if(!r)return '';
+    if(r.problem==='unreadable')return 'en-tête de recherche illisible';
+    const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(text(r.checked_at));
+    const parts=[m?`vérifiée le ${new Date(+m[1],+m[2]-1,+m[3]).toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}`
+      :'date de vérification inconnue'];
+    if(typeof r.sources==='number'&&r.sources>0){
+      const failed=typeof r.failed_sources==='number'&&r.failed_sources>0?` (${r.failed_sources} non lue${r.failed_sources>1?'s':''})`:'';
+      parts.push(`${r.sources} source${r.sources>1?'s':''}${failed}`);
+    }
+    if(r.problem)parts.push('en-tête à réécrire');
+    return parts.join(' · ');
+  }
   function sourceLine(entry){
     if(!entry)return '';
     if(entry.source==='memory')return `Mémoire du Board · ${text(entry.path)}`;
@@ -436,9 +464,9 @@
   const api=Object.freeze({
     DEADLINE_MS,LIST_LIMIT,READ_BYTES,MAX_EDIT_BYTES,MAX_TABS,PAIR_WINDOW_MS,SPLIT_MIN_PX,NARROW_PX,WIDE_PX,
     COMMAND_ROUTE,PAGE_TOKEN_HEADER,BOARD_KINDS,COLLECTIONS,KIND_LABELS,ERRORS,REPRESENTATIONS,PATHS,
-    errorOf,allowed,createClient,collectionOf,organize,filterEntries,entriesOfSection,splitMachine,inline,markdownBlocks,leadHeading,
+    errorOf,allowed,createClient,collectionOf,collectionOfEntry,organize,filterEntries,entriesOfSection,splitMachine,inline,markdownBlocks,leadHeading,
     openTab,closeTab,layoutFor,pairFor,editGuard,EDIT_IN_PROGRESS,writeOutcome,presentOutcome,capabilities,safeLinkUrl,openDecision,rebindOnSwitch,
-    relativeTime,absoluteTime,formatBytes,sourceLine,
+    relativeTime,absoluteTime,formatBytes,sourceLine,researchLine,
   });
   root.JarvisDossierCore=api;
   if(typeof module==='object'&&module&&module.exports)module.exports=api;

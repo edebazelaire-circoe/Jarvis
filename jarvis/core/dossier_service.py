@@ -56,6 +56,9 @@ from jarvis.domain.dossier import (
     ranger_markdown, ranger_path,
     stored_body,
 )
+from jarvis.domain.research_freshness import (
+    FRONT_MATTER_TOO_LONG, MAX_FRONT_MATTER_BYTES, MAX_RESEARCH_HEAD_BYTES, is_research_path, parse_front_matter,
+)
 from jarvis.domain.scene import (
     MAX_SOURCE_PATH_CHARS, MAX_TITLE_CHARS, Representation, SceneActor, SceneCommand, SceneCommandOutcome,
     SceneObject, SceneObjectFields, SceneObjectKind, SceneOp, ScenePayload, SceneSnapshot, Visibility,
@@ -293,6 +296,7 @@ class DossierService:
                                     -datetime.fromisoformat(e["modified_at"]).timestamp() if e["modified_at"] else 0))
         page = entries[:limit]
         await self._ranger_titles(board.board_id, page)
+        await self._research_details(board.board_id, page)
         self._read("dossier_list", started, board_id=board.board_id, count=len(page), total=len(entries))
         payload: dict[str, Any] = {
             "board": self._board_view(board), "entries": page, "total": len(entries),
@@ -312,6 +316,7 @@ class DossierService:
         board = await self._board(board_id)
         view = await self._resolve_entry(board, ref, advanced=advanced)
         await self._ranger_titles(board.board_id, [view])
+        await self._research_details(board.board_id, [view])
         self._read("dossier_entry", started, board_id=board.board_id, source=ref.source.value)
         return {"board": self._board_view(board), "entry": view}
 
@@ -336,6 +341,43 @@ class DossierService:
             title = heading_title(str(head.get("text") or ""))
             if title:
                 view["title"] = title
+
+    async def _research_details(self, board_id: str, views: list[dict[str, Any]]) -> None:
+        """Un document de recherche (`documents/research/*.md`, V1.2 Slice 04) prend son sujet pour titre et dit
+        sa vérification (`research` : `checked_at`, `volatility`, sources, sources en échec, `problem`).
+
+        Seul son front-matter est lu (2 Kio, relu jusqu'à 16 Kio s'il n'est pas fermé), pour la seule page rendue.
+        Un document sans en-tête lisible garde son titre de nom et porte `research.problem` ; une lecture refusée
+        est journalisée et la liste n'échoue pas.
+        """
+
+        for view in views:
+            path = str(view.get("path") or "")
+            if view.get("source") != EntrySource.MEMORY.value or not is_research_path(path):
+                continue
+            try:
+                head = await self._workspace.memory_read(board_id, path=path, max_bytes=MAX_RESEARCH_HEAD_BYTES)
+                meta, problem = parse_front_matter(str(head.get("text") or ""), complete=bool(head.get("eof")))
+                if problem == FRONT_MATTER_TOO_LONG:
+                    head = await self._workspace.memory_read(board_id, path=path, max_bytes=MAX_FRONT_MATTER_BYTES)
+                    meta, problem = parse_front_matter(str(head.get("text") or ""), complete=bool(head.get("eof")))
+            except (BoardMemoryError, BoardMemoryUnavailable, BoardError, WorkspaceError) as exc:
+                # capture: le document reste listé sous son nom ; la cause est journalisée.
+                self._trace("core.dossier.research_unread", "En-tête d'un document de recherche illisible",
+                            level="warning", data={"board_id": board_id, "code": str(getattr(getattr(
+                                exc, "code", None), "value", getattr(exc, "code", "unknown")))})
+                view["research"] = {"problem": "unreadable"}
+                continue
+            details: dict[str, Any] = {"problem": problem} if problem else {}
+            if meta is not None:
+                if meta.topic:
+                    view["title"] = meta.topic
+                    details["topic"] = meta.topic
+                details.update({"checked_at": meta.checked_at.isoformat() if meta.checked_at else None,
+                                "volatility": meta.volatility.value if meta.volatility else None,
+                                "sources": len(meta.sources),
+                                "failed_sources": sum(1 for source in meta.sources if source.failed)})
+            view["research"] = details
 
     async def _resolve_entry(self, board: Board, ref: DossierEntryRef, *, advanced: bool) -> dict[str, Any]:
         if ref.source is EntrySource.MEMORY:

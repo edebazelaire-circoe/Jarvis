@@ -280,6 +280,12 @@ def presentation_research_section(marker: Callable[[str], str | None]) -> str:
     lines.append("- Toujours en arrière-plan. Consigne : les mots de l'utilisateur, l'identifiant du Board, le chemin "
                  "du document existant et sa décision. Jamais une ancienne recherche sur un sujet volatil présentée "
                  "comme actuelle.")
+    # V1.2 Slice 04 : le document de recherche est écrit par l'agent qui conclut ; le cerveau le relie au projet.
+    lines.append("- Document de recherche rendu (documents/research/…) qui sert le projet : ajoutez-le sous Documents "
+                 "clés de summary.md. « Document non enregistré » dans un compte rendu : relayez le résultat et dites "
+                 "qu'il n'est pas enregistré ; ne l'écrivez pas vous-même. Pour produire une présentation, la consigne "
+                 "de l'auteur ou du dossier de production cite les chemins des documents de recherche du sujet : ils "
+                 "en sont la matière, sans nouvelle recherche quand la décision dit réutiliser.")
     return "\n".join(lines) + "\n"
 
 

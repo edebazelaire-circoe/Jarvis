@@ -839,7 +839,7 @@ Work Methods restent des heuristiques, aucun graphe figé. En `full`, rien ne ch
 l'octet, `dump_full.py` du LOG).
 
 **Document de recherche.** Une recherche substantielle laisse `documents/research/<sujet-court>.md` dans la
-mémoire du Board (convention que la Slice 04 normalise), qui commence par un front-matter lisible et analysable
+mémoire du Board (convention normalisée par la Slice 04 : § 12), qui commence par un front-matter lisible et analysable
 (`subagent_roles.RESEARCH_FRONT_MATTER_TEMPLATE`, lu par `research_freshness.parse_front_matter`) :
 
 ```text
@@ -968,3 +968,68 @@ angles sont indépendants), relation `adversary` quand l'écart est mince, `qa` 
 cerveau), `mission_id`, `mission_owner`, `work_method` et, depuis cette Slice, `run_in_background`.
 
 IGuard (`contract_pending`) n'est pas nommé : la recherche fonctionne sans lui.
+
+## 12. Le document de recherche (édition Presentation, V1.2 Slice 04)
+
+Le document lui-même, après l'en-tête du § 11 : un seul format, lisible par l'utilisateur dans le Dossier et
+analysable par Core. Contrat côté Board : [boards.md](boards.md) › *Research documents* ; affichage :
+[dossier.md](dossier.md) › *Entry*.
+
+**Gabarit** (`subagent_roles.RESEARCH_DOCUMENT_TEMPLATE`, apposé aux rôles `research`, `web-research`,
+`research-lead` dans le bloc `SOURCES EXISTANTES ET FRAÎCHEUR`) : le front-matter du § 11, puis un titre `#` et
+les sections `research_freshness.RESEARCH_BODY_SECTIONS`, dans cet ordre. Les sources ne s'écrivent qu'une fois,
+dans l'en-tête ; le corps les cite.
+
+```text
+---
+topic: Remotion ou Motion Canvas pour une vidéo de présentation
+scope: licence, rendu, courbe d'apprentissage ; prix hors entreprise exclus
+checked_at: 2026-10-27
+volatility: medium
+uncertainty: date de la prochaine version majeure de Motion Canvas
+sources:
+  - https://www.remotion.dev/docs/license | date: 2026-09-12 | checked: 2026-10-27
+  - https://motioncanvas.io/docs/ | checked: 2026-10-27
+  - https://www.remotion.dev/pricing | tried: 2026-10-27 | status: failed
+---
+# Remotion ou Motion Canvas ?
+## Résumé
+Remotion rend des vidéos depuis React ; Motion Canvas depuis un éditeur et TypeScript.
+## Constats
+- Remotion : licence entreprise au-delà de trois personnes [remotion.dev/docs/license]
+## Incertitudes et contradictions
+- La page de prix de Remotion n'a pas pu être lue.
+## Réutilisation
+Valable pour un choix d'outil ; revérifier la licence avant avril 2027.
+```
+
+**Nom.** `documents/research/<slug>.md` : minuscules sans accents, mots joints par des tirets, sans date, au plus
+60 caractères coupés sur un mot (`research_freshness.research_slug` / `research_path`). Un sujet, un fichier : un
+document qui existe se met à jour (`board_memory_read` → `sha256` → `replace` avec `expected_sha256` ;
+`memory_conflict` → relire, fusionner, une seule nouvelle tentative), il n'est jamais doublé.
+
+**Quand, et par qui.** Seulement une recherche substantielle : comparer, choisir, faire l'état d'un sujet,
+plusieurs sources croisées. Une question factuelle isolée (un prix, une date) se répond sans document, sauf pour
+mettre à jour le document existant de son sujet. L'agent qui conclut l'écrit, une fois les apports convergés : la
+direction de recherche pour sa mission (`RESEARCH_LEAD_REUSE_LINE` : « Vous écrivez vous-même le document… ; vos
+agents ne l'écrivent pas »), sinon l'agent de recherche seul ; un agent lancé par une direction lui rend ses
+apports sans écrire de document. Le cerveau ne l'écrit jamais : il tient `summary.md` et y ajoute le document sous
+« Documents clés » quand il devient une source clé du projet (ligne de `presentation_research_section`).
+
+**Échec d'écriture** (`RESEARCH_SAVE_FAILED`). Refus du magasin (conflit persistant, Board archivé, trop gros,
+panne disque `board_memory_failed`) : le compte rendu commence par « Document non enregistré : <code> » et donne
+quand même tout le résultat ; jamais « enregistré » à tort. Le cerveau relaie le résultat en disant qu'il n'est pas
+enregistré, sans l'écrire lui-même. L'écriture passe par un temporaire et un remplacement atomique : la version
+précédente reste intacte (test `test_a_write_that_fails_while_publishing_keeps_the_previous_version`).
+
+**Réutilisation par la production.** En `presentation`, le hook appose après le playbook du dossier de production
+et de l'auteur (`[presentation-brief]`, `[presentation-author]`, pas la relecture) la note `RECHERCHES DU BOARD`
+(`presentation_playbooks.RESEARCH_SOURCES_NOTE`) : lire d'abord `documents/research/`, reprendre les constats
+avec leur source et la date de vérification, ne pas relancer une recherche qu'un document couvre, renvoyer ce qui
+manque ou est périmé à « Questions », citer chaque document par son chemin. La consigne du cerveau à ces agents
+cite les chemins des documents du sujet. En `full`, playbooks, rôles et prompt sont identiques à l'octet.
+
+Tests : `tests/unit/test_research_documents.py` (gabarit ↔ lecteur, nommage, mise à jour conditionnelle et conflit
+sur la vraie pile Core, panne au moment de publier, Dossier liste / entrée / Afficher sur le Board, consignes en
+`presentation` seulement), `tests/unit/test_dossier_core_js.py` (collection « Recherches », ligne de
+vérification, en-tête gardé en bloc).

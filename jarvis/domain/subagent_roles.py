@@ -650,6 +650,18 @@ RESEARCH_FRONT_MATTER_TEMPLATE = (
     "  - <lien ou chemin> | date: <AAAA-MM-JJ de la source> | checked: <AAAA-MM-JJ>\n"
     "---"
 )
+#: Le document entier (V1.2 Slice 04) : l'en-tête ci-dessus, puis un titre et les sections de
+#: `research_freshness.RESEARCH_BODY_SECTIONS`, dans cet ordre.
+RESEARCH_DOCUMENT_TEMPLATE = (
+    f"{RESEARCH_FRONT_MATTER_TEMPLATE}\n"
+    "# <titre>\n"
+    "## Résumé\n<la réponse en trois à cinq lignes, lisible sans le reste>\n"
+    "## Constats\n- <constat, chiffre ou fait> [<source>]\n"
+    "## Incertitudes et contradictions\n- <ce qui reste douteux ; quelles sources se contredisent>\n"
+    "## Réutilisation\n<ce que le document permet de dire ; à revérifier avant quand, ou si quoi change>\n"
+)
+#: Tête de la règle d'échec d'écriture : le compte rendu dit « Document non enregistré », jamais « enregistré ».
+RESEARCH_SAVE_FAILED = "Échec d'enregistrement"
 RESEARCH_REUSE_BLOCK = (
     f"{RESEARCH_REUSE_MARK}\n"
     "- L'existant d'abord : les documents de recherche du Board de votre consigne (board_memory_tree puis "
@@ -663,14 +675,25 @@ RESEARCH_REUSE_BLOCK = (
     "comme actuelle.\n"
     "- Le web pour ce qui manque ou est périmé : sources primaires et récentes, pages ouvertes, date de chaque "
     "source gardée, contradictions et incertitudes dites.\n"
-    "- Une recherche substantielle crée ou met à jour documents/research/<sujet-court>.md (board_memory_write ; "
-    "mettre à jour : relire puis replace avec expected_sha256), qui commence par ces métadonnées :\n"
-    f"{RESEARCH_FRONT_MATTER_TEMPLATE}\n"
+    "- Document de recherche, pour une recherche substantielle seulement (comparer, choisir, faire l'état d'un "
+    "sujet, plusieurs sources croisées) ; une question factuelle isolée (un prix, une date) se répond sans document, "
+    "sauf pour mettre à jour le document existant de son sujet. Il s'écrit une fois les apports convergés, par "
+    "l'agent qui conclut : si une direction de recherche vous a lancé, rendez-lui vos apports sans écrire de "
+    "document. Le cerveau ne l'écrit pas.\n"
+    "- Nom : documents/research/<sujet>.md, en minuscules sans accents, mots joints par des tirets, sans date "
+    "(remotion-vs-motion-canvas.md). Un sujet, un fichier : s'il existe, mettez-le à jour (board_memory_read pour "
+    "son sha256, puis replace avec expected_sha256 ; memory_conflict : relisez, fusionnez, une seule nouvelle "
+    "tentative), sinon create.\n"
+    "- Forme : l'en-tête est relu par JARVIS à chaque tour, le corps est lu par l'utilisateur dans le Dossier :\n"
+    f"{RESEARCH_DOCUMENT_TEMPLATE}"
     "volatility : high si le sujet change en semaines (modèles, prix, versions), medium en mois, low s'il est stable. "
     "Après un rafraîchissement partiel, seules les sources revérifiées prennent la nouvelle date checked. Une "
     "source que vous n'avez pas pu lire (refus, page vide) garde sa date checked de dernière lecture réussie et "
     "reçoit | tried: <AAAA-MM-JJ de la tentative> | status: failed : JARVIS ne la fera pas réessayer avant l'âge "
-    "toléré de sa volatilité ; dites dans votre compte rendu que la donnée n'a pas pu être vérifiée."
+    "toléré de sa volatilité ; dites dans votre compte rendu que la donnée n'a pas pu être vérifiée.\n"
+    f"- {RESEARCH_SAVE_FAILED} : si l'écriture est refusée (conflit persistant, Board archivé, trop gros, autre "
+    "code), votre compte rendu commence par « Document non enregistré : <code> » et donne quand même tout le "
+    "résultat ; ne dites jamais qu'il est enregistré. Enregistré : donnez son chemin."
 )
 #: En plus, pour la direction de recherche : orchestrer selon le besoin, jamais un graphe figé.
 RESEARCH_LEAD_REUSE_LINE = (
@@ -678,8 +701,8 @@ RESEARCH_LEAD_REUSE_LINE = (
     "confiez au web ([general] [web-research]) ce qui manque ou est périmé, en parallèle quand les angles sont "
     "indépendants ; une confrontation (relation adversary) quand l'écart entre options est mince, un contrôle "
     "qualité (relation qa) avant une synthèse qui engage, un échange (relation communication) entre agents qui "
-    "partagent un angle. Pas pour chaque question : une question étroite se traite seul. La synthèse finale va dans "
-    "documents/research/ avec ses métadonnées."
+    "partagent un angle. Pas pour chaque question : une question étroite se traite seul. Vous écrivez vous-même le "
+    "document de recherche, une fois les apports convergés ; vos agents ne l'écrivent pas."
 )
 
 

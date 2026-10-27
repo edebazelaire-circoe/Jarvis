@@ -267,8 +267,9 @@
     const ic=el('span','dsr-row-ic');ic.appendChild(icon(kindIcon(e.kind),18));ic.dataset.kind=e.kind;
     const main=el('span','dsr-row-main');
     main.appendChild(el('span','dsr-row-title',titleOf(e.entry_id)));
-    const meta=[C.KIND_LABELS[e.kind]||e.kind];
-    if(e.folder)meta.push(e.folder);
+    const research=C.researchLine(e);
+    const meta=[research?'Recherche':C.KIND_LABELS[e.kind]||e.kind];
+    if(research)meta.push(research);else if(e.folder)meta.push(e.folder);
     const when=C.relativeTime(e.modified_at,now());if(when)meta.push(when);
     if(e.size!=null&&e.source==='memory')meta.push(C.formatBytes(e.size));
     main.appendChild(el('span','dsr-row-meta',meta.join(' · ')));
@@ -292,7 +293,7 @@
       if(summary){
         const d=docOf(summary.entry_id);
         lead.appendChild(el('h4','dsr-h4','Résumé du Board'));
-        if(d&&d.status==='ok'){if(d.heading)lead.appendChild(el('p','dsr-lead-title',d.heading));const r=el('div','dsr-prose dsr-excerpt');renderBlocks(r,d.blocks.slice(0,6));lead.appendChild(r)}
+        if(d&&d.status==='ok'){if(d.heading)lead.appendChild(el('p','dsr-lead-title',d.heading));const r=el('div','dsr-prose dsr-excerpt');renderBlocks(r,d.blocks.filter(b=>!b.fm).slice(0,6));lead.appendChild(r)}
         else if(!d||d.status==='loading')lead.appendChild(el('p','dsr-quiet','Lecture du résumé…'));
         else lead.appendChild(el('p','dsr-quiet',d.error?`${d.error.title}.`:''));
         lead.appendChild(btn('dsr-link','Lire le résumé complet',{'data-open':summary.entry_id}));
@@ -375,7 +376,8 @@
     const dh=el('header','dsr-doc-head');
     const h=el('h3','dsr-doc-title',titleOf(entryId));h.tabIndex=-1;h.dataset.fk=`title:${entryId}`;h.setAttribute('dir','auto');
     dh.appendChild(h);
-    const meta=[C.KIND_LABELS[e.kind]||e.kind];
+    const meta=[C.researchLine(e)?'Recherche':C.KIND_LABELS[e.kind]||e.kind];
+    if(C.researchLine(e))meta.push(C.researchLine(e));
     const when=C.relativeTime(e.modified_at,now());if(when)meta.push(`modifié ${when}`);
     meta.push(e.source==='memory'?'mémoire du Board':'registre');
     const m=el('p','dsr-doc-meta',meta.join(' · '));
@@ -566,7 +568,8 @@
     if(summary){ctx.appendChild(el('h4','dsr-h4','En bref'));ctx.appendChild(el('p','dsr-ctx-summary',summary))}
     const dl=el('dl','dsr-facts');
     const add=(k,v,t)=>{if(!v)return;dl.appendChild(el('dt','',k));const dd=el('dd','',v);if(t)dd.title=t;dl.appendChild(dd)};
-    add('Nature',C.KIND_LABELS[e.kind]||e.kind);
+    add('Nature',C.researchLine(e)?'Document de recherche':C.KIND_LABELS[e.kind]||e.kind);
+    add('Recherche',C.researchLine(e));
     add('Source',C.sourceLine(e));
     add('Modifié',C.absoluteTime(e.modified_at));
     if(e.source==='memory')add('Taille',C.formatBytes(e.size));

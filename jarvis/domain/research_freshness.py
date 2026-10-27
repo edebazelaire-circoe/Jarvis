@@ -21,7 +21,9 @@ volatilité du sujet ou de la source (`MAX_AGE_DAYS`), et une demande d'actualit
 à `RECENCY_MAX_AGE_DAYS`, pour les seuls documents dont le sujet correspond au tour (`matches_topic`).
 La date de publication d'une source informe (`old_sources`), elle ne déclenche jamais de rafraîchissement : sinon
 un document juste revérifié resterait « périmé » pour toujours (reprise QA B2).
-Contrat : `docs/subagent-roles.md` › *11. Recherche : existant d'abord*.
+Le document lui-même (Slice 04) : nom stable par sujet (`research_path`), corps en sections fixes
+(`RESEARCH_BODY_SECTIONS`) ; gabarit complet `subagent_roles.RESEARCH_DOCUMENT_TEMPLATE`.
+Contrat : `docs/subagent-roles.md` › *11. Recherche : existant d'abord* et *12. Le document de recherche*.
 """
 
 from __future__ import annotations
@@ -606,6 +608,45 @@ def is_research_path(value: object) -> bool:
         return False
     return (value.lower().endswith(".md") and "\\" not in value and ".." not in value.split("/")
             and not any(char in value for char in "\r\n\0"))
+
+
+# ------------------------------------------------------------- le document lui-même (V1.2 Slice 04)
+
+#: Sections du corps d'un document de recherche, dans cet ordre, après le front-matter et le titre `# …`.
+#: Le front-matter porte les sources (référence, date, vérification ou tentative ratée) ; le corps se lit.
+RESEARCH_BODY_SECTIONS = ("Résumé", "Constats", "Incertitudes et contradictions", "Réutilisation")
+MAX_SLUG_CHARS = 60
+
+
+def research_slug(topic: object) -> str:
+    """Nom stable d'un document de recherche pour un sujet : minuscules ASCII, mots joints par `-`, sans date.
+
+    Un même sujet donne toujours le même nom : on met à jour ce document, on n'en crée pas un second. Coupé à
+    `MAX_SLUG_CHARS` sur une fin de mot ; vide si le sujet n'a aucun mot.
+    """
+
+    words = re.findall(r"[a-z0-9]+", _fold(str(topic or "")))
+    slug = "-".join(words)
+    if len(slug) <= MAX_SLUG_CHARS:
+        return slug
+    cut = slug[:MAX_SLUG_CHARS + 1]
+    return cut.rsplit("-", 1)[0] if "-" in cut else slug[:MAX_SLUG_CHARS]
+
+
+def research_path(topic: object) -> str:
+    """`documents/research/<slug>.md` du sujet ; `ValueError` si le sujet n'a aucun mot."""
+
+    slug = research_slug(topic)
+    if not slug:
+        raise ValueError("a research topic needs at least one letter or digit")
+    return f"{RESEARCH_DIR}/{slug}.md"
+
+
+def missing_body_sections(text: str) -> tuple[str, ...]:
+    """Sections de `RESEARCH_BODY_SECTIONS` absentes du corps (titres `## …`, casse et accents ignorés)."""
+
+    headings = {_fold(line[3:]).strip() for line in str(text or "").splitlines() if line.startswith("## ")}
+    return tuple(section for section in RESEARCH_BODY_SECTIONS if _fold(section) not in headings)
 
 
 def today_local(now: datetime | None = None) -> date:

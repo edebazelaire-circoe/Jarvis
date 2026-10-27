@@ -46,7 +46,7 @@ from jarvis.domain.mission_history import MissionHistoryError, fact_from_hook_ev
 from jarvis.domain.work_methods import WorkMethod, builtin_method
 from jarvis.domain.subagent_roles import (
     ROLE_MARK, ROLE_UNAVAILABLE_CODE, SubagentRole, adapt_instructions, edition_role_refusal, effective_method,
-    instructions_for, resolve_role, role_for, with_role_instructions,
+    instructions_for, resolve_role, reuses_research, role_for, with_role_instructions,
 )
 # `ANNOUNCED_ROLES` : les rôles qu'une description peut annoncer (loadout, registre, alias), réexporté ici.
 from jarvis.domain.agent_markers import ANNOUNCED_ROLES, WORD_PATTERN  # noqa: F401
@@ -269,7 +269,9 @@ def charter_input(
                                report_note=report_note)
     # La méthode de production d'une présentation : apposée ici, sur l'appel lui-même, parce qu'un sous-agent ne
     # voit pas le prompt du cerveau et que ce prompt demande des consignes courtes.
-    signed = with_playbook(signed, read_playbook_role(tool_input)) or signed
+    # Édition Presentation (V1.2 Slice 04) : dossier de production et auteur partent des documents de recherche.
+    signed = with_playbook(signed, read_playbook_role(tool_input),
+                           research_sources=reuses_research(capabilities)) or signed
     # La méthode du rôle annoncé (`subagent_roles`), pour la même raison : texte enregistré par l'utilisateur,
     # sinon défaut du code ; Work Method choisie par l'appelant si le rôle la permet. Jamais doublée.
     signed = with_role_instructions(signed, read_role(tool_input), role_overrides,

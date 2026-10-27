@@ -547,6 +547,58 @@ prompts*).
 
 Tests: `tests/unit/test_presentation_project_continuity.py`.
 
+### Research documents
+
+**V1.2 Slice 04 of `jarvis-presentation-edition-v1-2`.** A substantial
+research leaves one durable document in the Board memory:
+`documents/research/<slug>.md`. Board memory is its only owner (revisable,
+conditional writes, ledger, archive rule); the Dossier is its human projection;
+no second registry, no registry Artifact kind « document »
+([artifacts.md](artifacts.md): closed kinds), no copy to AppData exports or
+`Documents/Jarvis`.
+
+- **Format**: the front-matter read by Core at every turn (freshness, Slice 03),
+  then `# <title>` and four sections, in this order: `## Résumé`, `## Constats`
+  (each finding with its source), `## Incertitudes et contradictions`,
+  `## Réutilisation` (what it allows to say, when to check again). Sources live
+  once, in the front-matter (reference, `date`, `checked`, or `tried` +
+  `status: failed`). Template `subagent_roles.RESEARCH_DOCUMENT_TEMPLATE`,
+  sections `research_freshness.RESEARCH_BODY_SECTIONS` (`missing_body_sections`).
+  Full example: [subagent-roles.md](subagent-roles.md) § 12.
+- **Name**: `research_freshness.research_path(topic)` — lowercase ASCII, words
+  joined by `-`, no date, at most 60 characters cut on a word
+  (« Remotion vs Motion Canvas » -> `remotion-vs-motion-canvas.md`). One topic,
+  one file: an existing document is updated, never duplicated.
+- **Who and when**: the research agent that concludes (the Research Lead, or a
+  single research agent for a multi-source question) writes it once the
+  findings converge; agents launched by a Research Lead report to it and write
+  nothing. A single factual lookup (a price, a date) leaves no document, unless
+  it refreshes the existing document of its topic. The brain never writes it:
+  it only links it under `## Documents clés` of `summary.md` when it becomes a
+  key source.
+- **How**: `board_memory_write mode create`; refresh: `board_memory_read` ->
+  `sha256`, then `replace` with `expected_sha256`; `memory_conflict`: read,
+  merge, one more attempt. The store publishes through a temporary file and an
+  atomic replace: a failed write (conflict, archived Board, too large, disk
+  refusal `board_memory_failed`) leaves the previous version intact.
+- **Failure is said**: the agent's report then starts with « Document non
+  enregistré : <code> » and still carries the whole result; the brain relays it
+  as not saved and does not write it itself.
+- **Reuse**: the brain's turn block lists the Board's research documents with
+  their freshness decision (Slice 03). In `presentation`, the production brief
+  and the author playbooks get `presentation_playbooks.RESEARCH_SOURCES_NOTE`
+  (read `documents/research/` first, do not re-run a research a document
+  covers, cite each document by path; missing or stale points go to
+  « Questions »), and the brain's consigne for them cites the documents' paths.
+- **Dossier**: the document is an ordinary memory entry (`note`); the Dossier
+  reads its front-matter for the page and shows its topic as title, its last
+  check and its sources under « Recherches »
+  ([dossier.md](dossier.md) › *Entry*).
+
+`full` is unchanged byte for byte (role blocks, brain prompt, playbooks: the
+note is added after the playbook in `presentation` only). Tests:
+`tests/unit/test_research_documents.py`, `tests/unit/test_dossier_core_js.py`.
+
 
 ## Workspace inspection API
 

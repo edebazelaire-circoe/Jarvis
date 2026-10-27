@@ -206,3 +206,30 @@ def test_only_an_absolute_http_link_becomes_a_href(tmp_path):
     assert r[:2] == ["https://intranet.exemple/budget", "http://exemple.fr/a?b=1"]
     assert r[2:7] == [None] * 5
     assert r[7] == "https://exemple.fr/" and r[8:] == [None] * 4
+
+
+def test_a_research_document_has_its_own_collection_its_check_and_a_readable_header(tmp_path):
+    """V1.2 Slice 04 : « Recherches », « vérifiée le … », en-tête de métadonnées gardé en bloc, titre `#` extrait."""
+
+    r = run(tmp_path, r"""
+      const doc={entry_id:'memory:documents/research/a.md',source:'memory',kind:'note',title:'Remotion ou Motion Canvas',
+        folder:'documents/research',research:{topic:'Remotion ou Motion Canvas',checked_at:'2026-10-27',sources:3,failed_sources:1}};
+      const e=[doc,{entry_id:'memory:notes/a.md',source:'memory',kind:'note',title:'Plan',folder:'notes'},
+        {entry_id:'memory:documents/research/b.md',source:'memory',kind:'note',title:'b',folder:'documents/research',research:{problem:'no_front_matter'}},
+        {entry_id:'memory:documents/research/c.md',source:'memory',kind:'note',title:'c',folder:'documents/research',research:{problem:'unreadable'}}];
+      const o=C.organize(e);
+      const md=C.markdownBlocks('---\ntopic: X\nsources:\n  - https://a.b | checked: 2026-10-27\n---\n# Titre\n## Résumé\nLa réponse.');
+      const lead=C.leadHeading(md.blocks);
+      const plain=C.leadHeading(C.markdownBlocks('Texte\n\n---\n\nsuite').blocks);
+      return {collections:o.collections.map(c=>[c.id,c.ids.length]),section:C.entriesOfSection(e,'c:research').length,
+        line:C.researchLine(doc),bare:C.researchLine(e[2]),unreadable:C.researchLine(e[3]),none:C.researchLine(e[1]),
+        first:md.blocks[0],heading:lead.heading,rest:lead.blocks.map(b=>b.t),plain:plain.blocks.map(b=>b.t)};
+    """)
+    assert r["collections"] == [["research", 3], ["notes", 1]]
+    assert r["section"] == 3
+    assert r["line"] == "vérifiée le 27 octobre 2026 · 3 sources (1 non lue)"
+    assert r["bare"] == "date de vérification inconnue · en-tête à réécrire"
+    assert r["unreadable"] == "en-tête de recherche illisible" and r["none"] == ""
+    assert r["first"]["t"] == "code" and r["first"]["fm"] is True and r["first"]["v"].startswith("topic: X\nsources:")
+    assert r["heading"] == "Titre" and r["rest"] == ["code", "h", "p"]
+    assert r["plain"] == ["p", "hr", "p"], "a separator in the body stays a separator"

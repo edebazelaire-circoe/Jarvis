@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from jarvis.domain.presentation_studio_authoring_guide import MASTER_HINT, NATIVE_LOOP
+from jarvis.domain.research_freshness import RESEARCH_DIR
 
 #: Les marqueurs que le brain écrit entre crochets en tête de la description de l'Agent.
 BRIEF_ROLE = "presentation-brief"
@@ -139,6 +140,16 @@ PLAYBOOKS: Mapping[str, str] = {
 
 PLAYBOOK_ROLES = tuple(PLAYBOOKS)
 
+#: Édition Presentation (V1.2 Slice 04) : le dossier de production et l'auteur partent des documents de recherche
+#: du Board au lieu de relancer la recherche. Ajouté après le playbook, en `presentation` seulement : `full`
+#: reçoit le playbook d'avant, octet pour octet.
+RESEARCH_SOURCES_MARK = "RECHERCHES DU BOARD"
+RESEARCH_SOURCES_ROLES = (BRIEF_ROLE, AUTHOR_ROLE)
+RESEARCH_SOURCES_NOTE = f"""{RESEARCH_SOURCES_MARK}
+- Les documents de recherche du Board (`{RESEARCH_DIR}/`, `board_memory_tree` puis `board_memory_read`) sont ta matière première : lis ceux du sujet avant toute autre source. Leur en-tête dit quand ils ont été vérifiés (`checked_at`) et d'où vient chaque fait (`sources`).
+- Ne relance pas une recherche qu'un de ces documents couvre : reprends ses constats avec leur source et la date de vérification du document. Ce qui manque, ou ce que ta consigne dit périmé, va dans « Questions » : le cerveau lancera la recherche. Tu ne réécris pas ces documents.
+- Cite chaque document utilisé par son chemin, dans le dossier de production (section Matière) et dans ton compte rendu."""
+
 
 def playbook_for(role: object) -> str | None:
     """Le playbook d'un rôle, ou `None` pour un rôle qui n'en a pas."""
@@ -146,10 +157,16 @@ def playbook_for(role: object) -> str | None:
     return PLAYBOOKS.get(str(role or "").strip().lower())
 
 
-def with_playbook(prompt: str, role: object) -> str | None:
-    """`prompt` suivi du playbook du rôle, ou `None` s'il n'y a rien à ajouter. Jamais doublé."""
+def with_playbook(prompt: str, role: object, *, research_sources: bool = False) -> str | None:
+    """`prompt` suivi du playbook du rôle, ou `None` s'il n'y a rien à ajouter. Jamais doublé.
+
+    `research_sources` (édition Presentation, `subagent_roles.reuses_research`) : le dossier de production et
+    l'auteur reçoivent en plus `RESEARCH_SOURCES_NOTE`.
+    """
 
     playbook = playbook_for(role)
     if playbook is None or PLAYBOOK_MARK in prompt:
         return None
+    if research_sources and str(role or "").strip().lower() in RESEARCH_SOURCES_ROLES:
+        playbook = f"{playbook.rstrip()}\n\n{RESEARCH_SOURCES_NOTE}"
     return f"{prompt.rstrip()}\n\n{playbook}"
