@@ -81,7 +81,9 @@ else (UI, MCP, prompt) keeps its own list:
 `JARVIS_DEVELOPER_MODE` is true (`1`/`true`/`yes`/`on`; `0`/`false`/`no`/`off`/absent = false; any other value is a
 `ConfigurationError`, like the edition). Developer mode changes nothing else: Board kinds, connectors and refusals stay
 the edition's. It tells the product UI whether its developer surfaces (Trace, Test Lab, MCP, Prefabs, Avancé &
-Diagnostics…) belong in the normal navigation; it is not a security boundary. The Control Center writes the same value
+Diagnostics…) belong in the normal navigation; it is not a security boundary. A lighter **support mode** (V1.2 Slice 06,
+[settings/support-mode.md](settings/support-mode.md)) is a persisted Settings switch that reopens only the Settings
+categories Architecture & Agents and Avancé & Diagnostics; it is not part of this payload and widens nothing. The Control Center writes the same value
 on `<html data-developer-surfaces>` when it serves the page (`page_edition_markup`), so nothing flashes before Core is
 read. A payload without the key (older Core) reads as `visible`.
 

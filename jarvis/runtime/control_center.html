@@ -804,7 +804,7 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .overlay.open.instant{animation:none}
 .overlay.closing{animation:set-fade-out 160ms var(--shell-ease) forwards}
 @keyframes set-fade-out{to{opacity:0}}
-.set-hub{position:absolute;inset:0;display:grid;grid-template-rows:auto auto;align-content:safe center;overflow:auto;padding:clamp(64px,8vh,88px) clamp(16px,6vw,96px);font:14px/1.5 "Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;color:var(--text)}
+.set-hub{position:absolute;inset:0;display:grid;grid-template-rows:auto auto auto;align-content:safe center;overflow:auto;padding:clamp(64px,8vh,88px) clamp(16px,6vw,96px);font:14px/1.5 "Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;color:var(--text)}
 /* × (fermer) et ← (retour au hub) : deux boutons ronds en haut à gauche, même style ; sur les pages, le seul chrome
    fixe (ils restent en place quand la page défile). Le hub n'a que le ×. */
 :is(.set-hub-close,.set-hub-back){position:absolute;top:clamp(14px,3vh,28px);left:clamp(14px,2.2vw,30px);width:44px;height:44px;display:grid;place-items:center;border-radius:50%;border:1px solid rgba(151,191,209,.32);background:rgba(4,10,15,.6);color:var(--text);cursor:pointer;transition:background-color var(--shell-dur-fast),border-color var(--shell-dur-fast)}
@@ -842,6 +842,35 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-hub-card:hover .set-hub-go,.set-hub-card:focus-visible .set-hub-go{border-color:var(--hue);background:color-mix(in srgb,var(--hue) 18%,rgba(3,8,12,.6))}
 @media(max-width:640px){.set-hub-icon{width:42px;height:42px;top:18px;left:18px}.set-hub-name{margin-top:52px;font-size:17px}.set-hub-card{padding:18px}}
 @media(max-height:620px){.set-hub-grid{grid-auto-rows:minmax(136px,auto)}.set-hub-name{margin-top:52px}}
+/* V1.2 Slice 06 : catégorie rouverte par le mode support (édition produit), et bande « Aide et assistance ». */
+.set-hub-tag{position:absolute;top:24px;right:20px;padding:2px 9px;border-radius:999px;border:1px solid color-mix(in srgb,var(--hue) 55%,transparent);color:color-mix(in srgb,var(--hue) 70%,#e8f4fa);background:rgba(3,8,12,.55);font-size:11px;font-weight:600;letter-spacing:.06em}
+.set-help{max-width:1240px;width:100%;margin:clamp(18px,3vh,30px) auto 0;padding:14px 4px 10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:4px 26px;border-top:1px solid rgba(151,191,209,.18)}
+.set-help[hidden]{display:none}
+.set-help-title{grid-column:1/-1;margin:0 0 4px;font-size:13px;font-weight:600;color:#cfe2ec}
+.set-help-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;padding:8px 0;min-width:0}
+.set-help-row[hidden]{display:none}
+.set-help-icon{width:34px;height:34px;display:grid;place-items:center;border-radius:50%;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);background:rgba(3,8,12,.5)}
+.set-help-icon svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.set-help-text{display:grid;gap:2px;min-width:0}
+.set-help-name{font-size:14px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.set-help-desc{font-size:12.5px;line-height:1.45;color:#a9c2cf}
+.set-help-state{padding:1px 8px;border-radius:999px;font-size:11.5px;font-weight:600;border:1px solid rgba(151,191,209,.35);color:#cfe2ec}
+.set-help-state[data-tone=on]{border-color:color-mix(in srgb,var(--accent) 60%,transparent);color:var(--accent)}
+.set-help-state[data-tone=off],.set-help-state[data-tone=unknown]{color:#a9c2cf}
+.set-help-state[data-tone=busy]{border-color:rgba(255,200,87,.5);color:#ffd37a}
+.set-help-state[data-tone=error]{border-color:rgba(255,145,120,.55);color:#ffb39f}
+.set-help-btn{padding:6px 14px;border-radius:999px;border:1px solid rgba(151,191,209,.4);background:rgba(3,8,12,.55);color:var(--text);font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap;transition:border-color var(--shell-dur-fast),background-color var(--shell-dur-fast)}
+.set-help-btn:hover:not([aria-disabled=true]){border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,rgba(3,8,12,.6))}
+.set-help-btn[aria-disabled=true]{opacity:.6;cursor:progress}
+.set-help-switch{position:relative;flex:none;width:44px;height:24px;border-radius:999px;border:1px solid rgba(151,191,209,.45);background:rgba(3,8,12,.6);cursor:pointer;padding:0;transition:background-color var(--shell-dur),border-color var(--shell-dur)}
+.set-help-knob{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#a9c2cf;transition:transform var(--shell-dur) var(--shell-ease),background-color var(--shell-dur)}
+.set-help-switch[aria-checked=true]{background:color-mix(in srgb,var(--accent) 30%,rgba(3,8,12,.6));border-color:var(--accent)}
+.set-help-switch[aria-checked=true] .set-help-knob{transform:translateX(20px);background:var(--accent)}
+.set-help-switch[aria-disabled=true]{opacity:.6;cursor:progress}
+:is(.set-help-btn,.set-help-switch):focus-visible{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:var(--set-focus-offset)}
+.set-help-note{grid-column:1/-1;margin:2px 0 0;min-height:1.4em;font-size:12.5px;color:#cfe2ec}
+.set-help-note[data-tone=bad]{color:#ffb39f}
+@media(prefers-reduced-motion:reduce){.set-help-knob,.set-help-switch,.set-help-btn{transition:none}}
 @media(prefers-reduced-motion:reduce){.set-hub-card,.overlay.closing,.overlay.closing .set-hub-card{animation:none;opacity:1;transform:none;transition:none}.set-hub-card:hover,.set-hub-card:focus-visible{transform:none}}
 /* Page Personnalisation (refonte des Réglages page par page, 2026-10-23 ; maquette 01 et primitives partagées depuis la
    Slice 02 de refonte-ui-settings, 2026-10-24 ; `control_center_personalization.js`, contrat
@@ -2866,6 +2895,28 @@ button.wsp-ename:hover{color:var(--accent)}
       </div>
     </header>
     <nav class="set-hub-grid" id="settingsHubGrid" aria-label="Catégories des paramètres"></nav>
+    <!-- Aide et assistance (V1.2 Slice 06, `docs/settings/support-mode.md`) : édition produit seulement. La voix (même
+         projection que l'interrupteur de la roue), « Signaler un problème » (action branchée par la Slice 07 :
+         `JarvisSettingsHelp.setReportAction`) et le mode support. -->
+    <section class="set-help" id="settingsHubHelp" aria-labelledby="settingsHubHelpTitle" hidden>
+      <h3 class="set-help-title" id="settingsHubHelpTitle">Aide et assistance</h3>
+      <div class="set-help-row" data-help="voice">
+        <span class="set-help-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3.5a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0v-5a3 3 0 0 0-3-3z"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span>
+        <span class="set-help-text"><span class="set-help-name">Voix <span class="set-help-state" id="settingsHubVoiceState" data-tone="unknown">pas encore lue</span></span><span class="set-help-desc" id="settingsHubVoiceHint">Jarvis n’a pas encore dit l’état de la voix.</span></span>
+        <button type="button" class="set-help-btn" id="settingsHubVoiceToggle" aria-describedby="settingsHubVoiceHint" hidden></button>
+      </div>
+      <div class="set-help-row" data-help="report" id="settingsHubReportRow" hidden>
+        <span class="set-help-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 20.5V4.5M5 4.5h11l-2 4 2 4H5"/></svg></span>
+        <span class="set-help-text"><span class="set-help-name">Un souci ?</span><span class="set-help-desc" id="settingsHubReportDesc">Préparez un rapport pour l’assistance : rien n’est envoyé sans votre accord.</span></span>
+        <button type="button" class="set-help-btn" id="settingsHubReport" aria-describedby="settingsHubReportDesc">Signaler un problème</button>
+      </div>
+      <div class="set-help-row" data-help="support">
+        <span class="set-help-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14.5 6.5a4 4 0 0 0-5.3 5.3L4 17v3h3l5.2-5.2a4 4 0 0 0 5.3-5.3l-2.5 2.5-2.5-.5-.5-2.5z"/></svg></span>
+        <span class="set-help-text"><span class="set-help-name" id="settingsSupportLabel">Mode support</span><span class="set-help-desc" id="settingsSupportDesc">Montre les pages techniques (Architecture &amp; Agents, Avancé &amp; Diagnostics) pour un dépannage. Ne donne aucun pouvoir de plus à Jarvis.</span></span>
+        <button type="button" class="set-help-switch" id="settingsSupportSwitch" role="switch" aria-checked="false" aria-labelledby="settingsSupportLabel" aria-describedby="settingsSupportDesc"><span class="set-help-knob" aria-hidden="true"></span></button>
+      </div>
+      <p class="set-help-note" id="settingsHubHelpNote" role="status" aria-live="polite"></p>
+    </section>
   </section>
   <!-- Page Personnalisation (2026-10-23) : ouverte par la carte Personnalisation du hub ; `control_center_personalization.js`. -->
   <section class="set-view set-perso" id="settingsPerso" role="dialog" aria-modal="true" aria-labelledby="persoTitle" aria-describedby="persoLead">
@@ -3390,7 +3441,7 @@ async function renderErrors(){const archived=errorsView==='archived';title.textC
    qui tarde ne s'empile pas sous le suivant — et une échéance de 4 s, au-delà de laquelle la lecture est abandonnée
    et la page passe en « statut perdu » au lieu de rester figée sur le dernier état. */
 const STATUS_BEAT={inFlight:false,timeoutMs:4000};
-async function refreshStatus(){if(STATUS_BEAT.inFlight)return;STATUS_BEAT.inFlight=true;const statusAbort=typeof AbortController==='function'?new AbortController():null;const statusTimer=setTimeout(()=>{if(statusAbort)statusAbort.abort()},STATUS_BEAT.timeoutMs);try{const s=await api('/api/status',statusAbort?{signal:statusAbort.signal}:undefined),online=s.voice_online===true;renderLive(s.live);try{if(window.JarvisRuntimeWheel)JarvisRuntimeWheel.gate(s)}catch(jarvisError){console.error('[jarvis] jarvis_wheel_gate_failed',jarvisError)}$('.face').style.visibility=online?'visible':'hidden';const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background,s.boards);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisProductEdition&&JarvisProductEdition.instance)JarvisProductEdition.instance.gate(s.boards)}catch(editionError){console.error('[edition] edition.gate_failed',editionError)}try{if(window.JarvisBoardsControl)JarvisBoardsControl.gate(s.boards,s.interaction_mode,s.presentation)}catch(boardsError){console.error('[boards] boards_gate_failed',boardsError)}try{if(window.JarvisDossier)JarvisDossier.gate(s.boards,s.dossier_navigation)}catch(dossierError){console.error('[dossier] dossier_gate_failed',dossierError)}try{if(window.JarvisPresentationRail)JarvisPresentationRail.gate(s)}catch(railError){console.error('[presentation-rail] gate_failed',railError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{markBackgroundUnconfirmed()}catch(_pillsError){/* les pastilles non plus */}try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisBoardsControl)JarvisBoardsControl.statusLost()}catch(_boardsError){/* la carte Board non plus : elle doit cesser d'afficher un Board et une séance que plus rien ne confirme */}try{if(window.JarvisDossier)JarvisDossier.statusLost()}catch(_dossierError){/* le Dossier non plus : il dit « Core ne répond pas » et suspend ses écritures */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}try{if(window.JarvisRuntimeWheel)JarvisRuntimeWheel.statusLost()}catch(_jarvisError){/* le sous-menu JARVIS non plus : il dit « état inconnu », jamais le dernier état connu */}$('.face').style.visibility='hidden';updateSubagentBadge(null)}finally{clearTimeout(statusTimer);STATUS_BEAT.inFlight=false}}
+async function refreshStatus(){if(STATUS_BEAT.inFlight)return;STATUS_BEAT.inFlight=true;const statusAbort=typeof AbortController==='function'?new AbortController():null;const statusTimer=setTimeout(()=>{if(statusAbort)statusAbort.abort()},STATUS_BEAT.timeoutMs);try{const s=await api('/api/status',statusAbort?{signal:statusAbort.signal}:undefined),online=s.voice_online===true;renderLive(s.live);try{if(window.JarvisRuntimeWheel)JarvisRuntimeWheel.gate(s)}catch(jarvisError){console.error('[jarvis] jarvis_wheel_gate_failed',jarvisError)}try{settingsSupportGate(s.support_mode)}catch(supportError){console.error('[settings] support_mode.gate_failed',supportError)}$('.face').style.visibility=online?'visible':'hidden';const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background,s.boards);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisProductEdition&&JarvisProductEdition.instance)JarvisProductEdition.instance.gate(s.boards)}catch(editionError){console.error('[edition] edition.gate_failed',editionError)}try{if(window.JarvisBoardsControl)JarvisBoardsControl.gate(s.boards,s.interaction_mode,s.presentation)}catch(boardsError){console.error('[boards] boards_gate_failed',boardsError)}try{if(window.JarvisDossier)JarvisDossier.gate(s.boards,s.dossier_navigation)}catch(dossierError){console.error('[dossier] dossier_gate_failed',dossierError)}try{if(window.JarvisPresentationRail)JarvisPresentationRail.gate(s)}catch(railError){console.error('[presentation-rail] gate_failed',railError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{markBackgroundUnconfirmed()}catch(_pillsError){/* les pastilles non plus */}try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisBoardsControl)JarvisBoardsControl.statusLost()}catch(_boardsError){/* la carte Board non plus : elle doit cesser d'afficher un Board et une séance que plus rien ne confirme */}try{if(window.JarvisDossier)JarvisDossier.statusLost()}catch(_dossierError){/* le Dossier non plus : il dit « Core ne répond pas » et suspend ses écritures */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}try{if(window.JarvisRuntimeWheel)JarvisRuntimeWheel.statusLost()}catch(_jarvisError){/* le sous-menu JARVIS non plus : il dit « état inconnu », jamais le dernier état connu */}$('.face').style.visibility='hidden';updateSubagentBadge(null)}finally{clearTimeout(statusTimer);STATUS_BEAT.inFlight=false}}
 async function openPanel(name){if(window.JarvisChat)window.JarvisChat.close();if(window.JarvisRelationBoard)window.JarvisRelationBoard.close();current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 /* Un seul panneau latéral : fermer `#panel` ferme aussi le Chat (Échap, inspecteur du Studio). */
 function closePanel(){if(window.JarvisChat)window.JarvisChat.close();if(window.JarvisRelationBoard)window.JarvisRelationBoard.close();current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
@@ -6168,6 +6219,9 @@ function renderTabs(){
   /* Avis de catégorie déclaré par le registre (Avancé : outils d'opérateur). */
   const introHost=$('#settingsIntro').querySelector('.set-page-intro, .set-intro');
   if(cat.notice&&introHost)introHost.insertAdjacentHTML('beforeend',`<p class="set-intro-notice" id="settingsCategoryNotice">${esc(cat.notice)}</p>`);
+  /* Catégorie rouverte par le mode support (V1.2 Slice 06) : dite comme telle, avec la façon de la recacher. */
+  if(cat.supportOnly&&introHost)introHost.insertAdjacentHTML('beforeend','<p class="set-intro-notice" id="settingsSupportNotice">Page de support, visible parce que le mode support est activé. Elle ne change pas ce que Jarvis peut faire. Pour la cacher : Paramètres › Aide et assistance › Mode support.</p>');
+
   /* `data-section` : l'identifiant de l'entrée ; `.active` et `aria-selected` : l'entrée montrée. */
   /* Page pleine : les entrées sont les onglets de page de la fondation (`.set-tab`, pictogramme + libellé). */
   const itemHtml=(i,group)=>{const on=i.id===SET.section;
@@ -6679,7 +6733,10 @@ function settingsTabs(){
    confirmé par Core). Sans module, rien n'est caché. */
 function settingsEditionOptions(){
   const E=window.JarvisProductEdition;
-  return {developerSurfaces:E&&typeof E.developerSurfacesShown==='function'&&!E.developerSurfacesShown()?'hidden':'visible'};
+  /* `support` (V1.2 Slice 06) : le mode support lu au battement (`/api/status` › `support_mode`) ; il ne rouvre que les
+     catégories `support` du registre, et seulement dans une édition qui cache. */
+  return {developerSurfaces:E&&typeof E.developerSurfacesShown==='function'&&!E.developerSurfacesShown()?'hidden':'visible',
+    support:typeof HELP!=='undefined'&&!!HELP&&HELP.support.enabled===true};
 }
 /* Navigation du shell (`shellNavigation` du registre) : les catégories montrées par l'édition et leurs sections. */
 function settingsNavigation(){
@@ -6772,8 +6829,10 @@ function renderSettingsHub(){
   $('#settingsHubGrid').innerHTML=R.categoriesFor(settingsEditionOptions()).map((c,i)=>
     `<button type="button" class="set-hub-card" data-hub-category="${esc(c.id)}" aria-describedby="settingsHubDesc-${esc(c.id)}" style="--hue:${SETTINGS_HUE[c.id]||'var(--accent)'};--i:${i}">`
     +`<span class="set-hub-art" aria-hidden="true">${settingsIcon(c.id)}</span><span class="set-hub-icon" aria-hidden="true">${settingsIcon(c.id)}</span>`
+    +(c.supportOnly?'<span class="set-hub-tag">Support</span>':'')
     +`<span class="set-hub-name">${esc(c.label)}</span><span class="set-hub-desc" id="settingsHubDesc-${esc(c.id)}">${esc(c.description)}</span>`
     +`<span class="set-hub-go" aria-hidden="true">${HUB_ARROW}</span></button>`).join('');
+  renderSettingsHelp();
 }
 function openSettingsHub(options){
   if(SET.open)return;
@@ -6831,7 +6890,8 @@ $('#settingsHub').addEventListener('keydown',event=>{
     return;
   }
   if(event.key==='Tab'){
-    const items=[$('#settingsHubClose'),...cards],first=items[0],last=items[items.length-1];
+    const help=[...document.querySelectorAll('#settingsHubHelp button')].filter(b=>!b.hidden&&!b.closest('[hidden]'));
+    const items=[$('#settingsHubClose'),...cards,...help],first=items[0],last=items[items.length-1];
     if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}
     else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}
   }
@@ -6840,6 +6900,125 @@ document.addEventListener('keydown',event=>{
   if(event.key!=='Escape'||!settingsHubOpen())return;
   event.preventDefault();event.stopPropagation();closeSettingsHub();
 },true);
+
+/* --- Aide et assistance du hub, mode support, lien profond (V1.2 Slice 06) ----------------------------------------
+   Contrat : `docs/settings/support-mode.md`. Édition produit seulement (surfaces de développement cachées) ; en `full`
+   la bande reste cachée et rien ne change.
+   - Voix : la ligne `voiceLineOf` de la roue (même projection serveur que l'interrupteur « Voix activée ») ; le bouton
+     appelle le même geste (`JarvisRuntimeWheel.toggleVoice`). Aucun état gardé ici.
+   - « Signaler un problème » : emplacement seulement ; montré quand la Slice 07 a branché son action
+     (`JarvisSettingsHelp.setReportAction(fn)`).
+   - Mode support : `support_mode` du battement ; l'interrupteur écrit `POST /api/support-mode` (8 s au plus) et la
+     réponse relue devient le fait affiché. Il ne rouvre que les catégories `support` du registre.
+   - Lien profond : `#settings/<cible>` (catégorie, section ou alias) ouvre les Réglages sur la cible ; une cible
+     réservée au mode support ouvre le hub sur l'interrupteur et s'ouvre dès qu'il est activé. */
+/* `var` : `settingsEditionOptions` (déclaration remontée) peut être appelée par un module avant cette ligne. */
+var HELP={support:{enabled:false,problem:null},read:false,pending:false,reportAction:null,deepTarget:null};
+const HELP_DEADLINE_MS=8000;
+function settingsHelpShown(){const E=window.JarvisProductEdition;return !!(E&&typeof E.developerSurfacesShown==='function'&&!E.developerSurfacesShown())}
+function settingsHelpNote(text,tone){const note=$('#settingsHubHelpNote');if(!note)return;note.textContent=text||'';if(tone)note.dataset.tone=tone;else delete note.dataset.tone}
+function settingsSupportGate(block){
+  if(!block||typeof block!=='object')return;
+  const next={enabled:block.enabled===true,problem:typeof block.problem==='string'&&block.problem?block.problem:null};
+  const changed=next.enabled!==HELP.support.enabled||next.problem!==HELP.support.problem||!HELP.read;
+  HELP.support=next;HELP.read=true;
+  if(!changed)return;
+  console.info('[settings] support_mode.state '+JSON.stringify(next));
+  if(settingsHubOpen())renderSettingsHub();
+  else if(SET.open)renderTabs();
+}
+function renderSettingsHelp(){
+  const band=$('#settingsHubHelp');if(!band)return;
+  band.hidden=!settingsHelpShown();
+  if(band.hidden)return;
+  /* Voix : projection du battement, jamais une valeur espérée. */
+  const W=window.JarvisRuntimeWheel,line=W&&typeof W.voiceLine==='function'?W.voiceLine():null;
+  const state=$('#settingsHubVoiceState'),hint=$('#settingsHubVoiceHint'),toggle=$('#settingsHubVoiceToggle');
+  if(!line){state.textContent='pas encore lue';state.dataset.tone='unknown';hint.textContent='Jarvis n’a pas encore dit l’état de la voix.';toggle.hidden=true}
+  else{
+    state.textContent=line.word;state.dataset.tone=line.tone||'on';hint.textContent=line.hint||'';
+    toggle.hidden=false;toggle.textContent=line.action;
+    if(line.pending)toggle.setAttribute('aria-disabled','true');else toggle.removeAttribute('aria-disabled');
+  }
+  $('#settingsHubReportRow').hidden=typeof HELP.reportAction!=='function';
+  const sw=$('#settingsSupportSwitch');
+  sw.setAttribute('aria-checked',String(HELP.support.enabled));
+  if(HELP.pending)sw.setAttribute('aria-disabled','true');else sw.removeAttribute('aria-disabled');
+  if(HELP.support.problem&&!HELP.pending)settingsHelpNote(`Le choix enregistré du mode support est illisible : il reste coupé. Activez-le ou coupez-le pour l’enregistrer de nouveau. (${HELP.support.problem})`,'bad');
+}
+async function setSupportMode(enabled,source){
+  if(HELP.pending)return null;
+  HELP.pending=true;settingsHelpNote('Enregistrement…');renderSettingsHelp();
+  console.info('[settings] support_mode.requested '+JSON.stringify({enabled,source:source||null}));
+  const abort=typeof AbortController==='function'?new AbortController():null;
+  const timer=setTimeout(()=>{if(abort)abort.abort()},HELP_DEADLINE_MS);
+  try{
+    const view=await api('/api/support-mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled}),signal:abort?abort.signal:undefined});
+    HELP.support={enabled:view.enabled===true,problem:view.problem||null};HELP.read=true;
+    console.info('[settings] support_mode.saved '+JSON.stringify(HELP.support));
+    HELP.pending=false;renderSettingsHub();
+    settingsHelpNote(HELP.support.enabled?'Mode support activé : les pages Architecture & Agents et Avancé & Diagnostics sont visibles.':'Mode support coupé : les pages techniques sont de nouveau cachées.');
+    const target=HELP.deepTarget;HELP.deepTarget=null;
+    if(HELP.support.enabled&&target)openSettingsDeepLink(target,'after_support');
+    return view;
+  }catch(e){
+    const timeout=e&&e.name==='AbortError';
+    const code=timeout?'support_mode_timeout':(e&&e.code)||'support_mode_failed';
+    console.error('[settings] support_mode.failed '+JSON.stringify({enabled,code,error:String(e&&e.message||e).slice(0,200)}));
+    settingsHelpNote(timeout?`Pas de réponse de Jarvis après ${HELP_DEADLINE_MS/1000} s : le mode support n’a pas changé. Réessayez.`
+      :`Le mode support n’a pas changé : ${String(e&&e.message||e).slice(0,160)}`,'bad');
+    return null;
+  }finally{clearTimeout(timer);HELP.pending=false;renderSettingsHelp()}
+}
+$('#settingsSupportSwitch').addEventListener('click',()=>{if(!HELP.pending)setSupportMode(!HELP.support.enabled,'hub')});
+$('#settingsHubVoiceToggle').addEventListener('click',event=>{
+  if(event.currentTarget.getAttribute('aria-disabled')==='true')return;
+  const W=window.JarvisRuntimeWheel;
+  if(!W||typeof W.toggleVoice!=='function'){settingsHelpNote('L’interrupteur de la voix n’est pas chargé dans cette page.','bad');console.error('[settings] help.voice_toggle_missing');return}
+  console.info('[settings] help.voice_toggle');W.toggleVoice('settings_hub');
+});
+$('#settingsHubReport').addEventListener('click',()=>{
+  if(typeof HELP.reportAction!=='function')return;
+  console.info('[settings] help.report_problem');
+  try{const r=HELP.reportAction({source:'settings_hub'});if(r&&typeof r.catch==='function')r.catch(e=>{console.error('[settings] help.report_failed',e);settingsHelpNote(`Signalement impossible : ${String(e&&e.message||e).slice(0,160)}`,'bad')})}
+  catch(e){console.error('[settings] help.report_failed',e);settingsHelpNote(`Signalement impossible : ${String(e&&e.message||e).slice(0,160)}`,'bad')}
+});
+document.addEventListener('jarvis:voice-line',()=>{if(settingsHubOpen())renderSettingsHelp()});
+/* Lien profond `#settings/<cible>` : ce que le support dicte ou envoie (procédure : `docs/settings/support-mode.md`). */
+function settingsDeepTarget(hash){const m=/^#settings\/([a-z][a-z0-9_]{0,63})$/.exec(String(hash||''));return m?m[1]:null}
+function openSettingsDeepLink(target,source){
+  const R=window.JarvisSettingsRegistry;
+  if(!R||!R.page.resolve(target)){console.warn('[settings] deep_link.unknown '+JSON.stringify({target,source}));return openSettingsHub({source:'deep_link'})}
+  const options=settingsEditionOptions();
+  if(R.targetShown(target,R.page,options)){console.info('[settings] deep_link.open '+JSON.stringify({target,source}));if(settingsHubOpen()){const opener=SET.opener;SET.opener=null;overlay.classList.add('instant');settingsOverlayView('shell');return openSettingsTab(target,{returnFocus:opener})}return openSettingsTab(target)}
+  /* Cachée maintenant, montrée en mode support : le hub s'ouvre sur l'interrupteur, la cible attend son activation. */
+  if(R.targetShown(target,R.page,Object.assign({},options,{support:true}))){
+    HELP.deepTarget=target;
+    console.info('[settings] deep_link.needs_support '+JSON.stringify({target,source}));
+    if(SET.open)closeSettings();
+    if(!settingsHubOpen())openSettingsHub({source:'deep_link'});
+    settingsHelpNote('Cette page s’ouvre en mode support. Activez-le ci-dessous pour y aller.');
+    const sw=$('#settingsSupportSwitch');if(sw)sw.focus({preventScroll:true});
+    return Promise.resolve();
+  }
+  console.info('[settings] deep_link.hidden '+JSON.stringify({target,source}));
+  return openSettingsTab(target);
+}
+function followSettingsHash(source){const target=settingsDeepTarget(location.hash);if(target)openSettingsDeepLink(target,source)}
+window.addEventListener('hashchange',()=>followSettingsHash('hashchange'));
+/* Au chargement : après le premier battement, pour connaître le mode support (sinon une cible support attendrait). */
+if(settingsDeepTarget(location.hash)){
+  let tries=0;const wait=()=>{if(HELP.read||++tries>20)followSettingsHash('load');else setTimeout(wait,250)};setTimeout(wait,250);
+}
+window.JarvisSettingsHelp=Object.freeze({
+  /* Slice 07 : `fn({source})` ouvre la préparation d'un rapport ; la ligne « Signaler un problème » apparaît. */
+  setReportAction(fn){HELP.reportAction=typeof fn==='function'?fn:null;if(settingsHubOpen())renderSettingsHelp()},
+  support:()=>Object.assign({},HELP.support),
+  setSupport:(enabled,source)=>setSupportMode(enabled===true,source||'api'),
+  openDeepLink:target=>openSettingsDeepLink(target,'api'),
+  deepTarget:settingsDeepTarget,
+});
+
 
 /* Pas de fermeture au clic extérieur (Slice 02) : le shell couvre toute la fenêtre, il n'y a plus d'« extérieur »,
    et un clic dans un vide du shell fermerait par accident une page en cours de réglage. Ferment : le bouton

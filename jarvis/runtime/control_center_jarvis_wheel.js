@@ -117,6 +117,28 @@
       tone:pending?'busy':known.tone,disabled:pending===true};
   }
 
+  /* La ligne « Voix » du parcours principal (V1.2 Slice 06 : accueil des présentations, Aide et assistance des
+     Réglages) : la MÊME projection serveur que l'interrupteur, dite sans jargon (Coupée / En veille / En conversation),
+     et le geste qui la change. `null` tant que le battement ne porte pas `voice_lifecycle` : rien n'est deviné. */
+  const VOICE_LINE_WORDS=Object.freeze({off:'Coupée',sleep:'En veille',active:'En conversation',starting:'Démarrage…',
+    stopping:'Arrêt…',degraded:'Indisponible',not_running:'À relancer'});
+  function voiceLineOf(facts,pending){
+    const lc=isObject(facts)&&facts.read==='ok'?facts.lifecycle:null;
+    if(!lc)return null;
+    const on=lc.preference==='sleep';
+    const state=typeof lc.state==='string'?lc.state:'';
+    const word=VOICE_LINE_WORDS[state]||'État inconnu';
+    const key=facts.wakeKey||'F9';
+    const message=typeof lc.message==='string'?lc.message:'';
+    const hint=state==='sleep'?`Appuyez sur ${key} pour lui parler. Le chat reste disponible.`
+      :state==='active'?'Jarvis vous écoute.'
+      :state==='off'?'Aucun micro n’est ouvert. Le chat reste disponible.'
+      :message;
+    const tone=pending?'busy':(LIFECYCLE_NOTES[state]||{tone:'unknown'}).tone||'on';
+    return {state,on,word:pending?'Enregistrement…':word,hint,tone,pending:pending===true,
+      code:typeof lc.code==='string'?lc.code:'',action:on?'Couper la voix':'Rallumer la voix'};
+  }
+
   /* Ce que la touche d'éveil fait **maintenant** (l'ancien rappel caché de la page,
      inchangé) : selon l'état de la voix et le mode de tour. */
   function wakeHintOf(facts){
@@ -208,7 +230,7 @@
 
   const LIFECYCLE_ROUTE='/api/voice/lifecycle';
   const api=Object.freeze({VOICE_STATES,AGENT_STATES,VOICE_SETTINGS_TARGET,LIFECYCLE_ROUTE,LIFECYCLE_NOTES,factsOf,wakeHintOf,
-    jarvisItemsOf,voicePowerItemOf,categoryStatusOf});
+    jarvisItemsOf,voicePowerItemOf,categoryStatusOf,voiceLineOf});
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(typeof window==='undefined'||typeof document==='undefined')return;
 
@@ -225,7 +247,7 @@
     const W=window.JarvisToolWheel;
     if(!W)throw Object.assign(new Error('JarvisRuntimeWheel : JarvisToolWheel absent'),{code:'jarvis_wheel_dependency_missing'});
     let facts=factsOf(null,'pending');
-    let lastRead=null;
+    let lastRead=null,lastLine=null;
 
     /* Les deux portes : les routes que la page sert déjà. Une porte
        introuvable se dit (notification + journal), elle ne fait rien en
@@ -325,6 +347,12 @@
       if(typeof W.refresh==='function')W.refresh('jarvis');
       const seen=facts.read==='ok'?`${facts.voice.online}:${facts.voice.state}:${facts.agent.state}:${facts.subagents}:${facts.lifecycle?facts.lifecycle.state+'/'+facts.lifecycle.code:'-'}`:facts.read;
       if(seen!==lastRead){lastRead=seen;log('info','jarvis_wheel.facts',{read:facts.read,hint:wakeHintOf(facts)})}
+      /* La ligne « Voix » du parcours principal (accueil, Aide et assistance) se redessine sur ce signal : une
+         seule source, ce battement (V1.2 Slice 06). */
+      const line=voiceLineOf(facts,powerPending),said=line?`${line.state}:${line.on}:${line.pending}:${line.code}`:'-';
+      if(said!==lastLine){lastLine=said;
+        try{document.dispatchEvent(new CustomEvent('jarvis:voice-line',{detail:line}))}
+        catch(error){log('error','jarvis_wheel.voice_line_event_failed',{error:String(error&&error.message||error)})}}
     }
 
     window.JarvisRuntimeWheel=Object.freeze({
@@ -335,6 +363,7 @@
       wakeHint:()=>wakeHintOf(facts),
       items:()=>jarvisItemsOf(facts),
       toggleVoice:source=>toggleVoice(source||'api'),
+      voiceLine:()=>voiceLineOf(facts,powerPending),
     });
     log('info','jarvis_wheel.installed',{categories:['jarvis','settings']});
   }

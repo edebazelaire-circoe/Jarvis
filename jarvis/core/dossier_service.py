@@ -57,7 +57,8 @@ from jarvis.domain.dossier import (
     stored_body,
 )
 from jarvis.domain.research_freshness import (
-    FRONT_MATTER_TOO_LONG, MAX_FRONT_MATTER_BYTES, MAX_RESEARCH_HEAD_BYTES, is_research_path, parse_front_matter,
+    FRONT_MATTER_TOO_LONG, MAX_FRONT_MATTER_BYTES, MAX_RESEARCH_HEAD_BYTES, TITLE_LOOKAHEAD_BYTES, is_research_path,
+    parse_front_matter, research_body_title,
 )
 from jarvis.domain.scene import (
     MAX_SOURCE_PATH_CHARS, MAX_TITLE_CHARS, Representation, SceneActor, SceneCommand, SceneCommandOutcome,
@@ -342,7 +343,8 @@ class DossierService:
             if title:
                 view["title"] = title
 
-    async def _research_details(self, board_id: str, views: list[dict[str, Any]]) -> None:
+    async def _research_details(self, board_id: str, views: list[dict[str, Any]]) -> None:  # noqa: C901 - one read path
+
         """Un document de recherche (`documents/research/*.md`, V1.2 Slice 04) prend son sujet pour titre et dit
         sa vérification (`research` : `checked_at`, `volatility`, sources, sources en échec, `problem`).
 
@@ -370,12 +372,23 @@ class DossierService:
                 continue
             details: dict[str, Any] = {"problem": problem} if problem else {}
             if meta is not None:
-                # Titre : le `#` du corps s'il est dans la tête lue, sinon le sujet (un agent l'écrit parfois comme
-                # le nom du fichier : trace réelle S04), sinon le nom.
+                # Titre : le `#` du corps, lu en entier au-delà de l'en-tête s'il le faut (I-004 M2 : un en-tête qui
+                # frôle la tête lue coupait le titre ou le faisait manquer), sinon le sujet (un agent l'écrit parfois
+                # comme le nom du fichier : trace réelle S04), sinon le nom.
                 text = str(head.get("text") or "")
-                parts = text.split("\n---", 2) if problem is None else []
-                body = parts[1].split("\n", 1)[-1] if len(parts) > 1 else ""
-                title = heading_title(body) or meta.topic
+                body_title, more = research_body_title(text, complete=bool(head.get("eof"))) if problem is None \
+                    else (None, False)
+                if more:
+                    try:
+                        longer = await self._workspace.memory_read(
+                            board_id, path=path, max_bytes=len(text.encode("utf-8")) + TITLE_LOOKAHEAD_BYTES)
+                        body_title, _ = research_body_title(str(longer.get("text") or ""), complete=True)
+                    except (BoardMemoryError, BoardMemoryUnavailable, BoardError, WorkspaceError) as exc:
+                        # capture: le sujet sert de titre ; la cause est journalisée, la liste n'échoue pas.
+                        self._trace("core.dossier.research_unread", "Titre d'un document de recherche illisible",
+                                    level="warning", data={"board_id": board_id, "code": str(getattr(getattr(
+                                        exc, "code", None), "value", getattr(exc, "code", "unknown")))})
+                title = body_title or meta.topic
                 if title:
                     view["title"] = title
                 if meta.topic:
@@ -659,6 +672,9 @@ class DossierService:
         started = time.monotonic()
         board = await self._displayed_board(board_id)
         view = await self._resolve_entry(board, ref, advanced=False)
+        # Même titre qu'au Dossier (I-004 M1) : le `#` d'une note rangée ou d'un document de recherche.
+        await self._ranger_titles(board.board_id, [view])
+        await self._research_details(board.board_id, [view])
         # Le nom tel que stocké (casse comprise) : la réponse et `source_path` désignent le fichier sur disque (QA S05, polish 5).
         ref = DossierEntryRef.parse(view["entry_id"])
         source_path, artifact_id = "", ""

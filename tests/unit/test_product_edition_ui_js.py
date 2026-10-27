@@ -186,14 +186,45 @@ def test_settings_show_only_product_categories_and_sections_when_hidden():
                "visible:R.targetShown('prompts',reg,{developerSurfaces:'visible'}),"
                "cycle:[R.cycleCategory('connections',1,hidden),R.cycleCategory('voice_audio',-1,hidden),R.cycleCategory('connections',1)],"
                "refused}")
-    assert out["cats"] == [["voice_audio", "Personnalisation", []], ["memory_knowledge", "Mémoire & Connaissances", []],
-                           ["interface_interactions", "Interface & Interactions", ["shortcuts"]],
-                           ["connections", "Connexions", ["providers"]]]
+    # V1.2 Slice 06 : vocabulaire sans jargon et l'essentiel d'abord (`product.order`, docs/settings/novice-inventory.md).
+    assert out["cats"] == [["voice_audio", "Personnalisation", []], ["connections", "Connexions", ["providers"]],
+                           ["memory_knowledge", "Mémoire", []],
+                           ["interface_interactions", "Raccourcis clavier", ["shortcuts"]]]
     assert out["all"] == 6
     assert out["shown"] == [False, False, True, False, False, True, False]
     assert out["visible"] is True
-    assert out["cycle"] == ["voice_audio", "connections", "advanced_diagnostics"]
+    assert out["cycle"] == ["memory_knowledge", "interface_interactions", "advanced_diagnostics"]
     assert out["refused"] == "settings_section_invalid"
+
+
+def test_support_mode_reopens_only_the_support_categories_in_a_hiding_edition():
+    """V1.2 Slice 06 : le mode support rouvre Architecture & Agents et Avancé & Diagnostics (toutes leurs sections),
+    jamais une section `developer` d'une catégorie produit ; sans édition qui cache, il ne change rien."""
+    out = node("const reg=R.createRegistry();const m=()=>{};"
+               "reg.register({id:'shortcuts',category:'interface_interactions',label:'Raccourcis',save:'self',mount:m});"
+               "reg.register({id:'barehands',category:'interface_interactions',label:'Bare Hands',save:'self',surface:'developer',mount:m});"
+               "reg.register({id:'mcp_plugins',category:'connections',label:'Plugins MCP',save:'readonly',surface:'developer',mount:m});"
+               "reg.register({id:'providers',category:'connections',label:'Fournisseurs',save:'self',mount:m});"
+               "reg.register({id:'prompts',category:'advanced_diagnostics',group:'prompts',label:'Prompts',save:'self',mount:m});"
+               "reg.register({id:'voice_output',category:'voice_audio',label:'Voix & transcription',save:'footer',mount:m});"
+               "reg.register({id:'subagents',category:'agents_models',label:'Sous-agents',save:'self',mount:m});"
+               "const support={developerSurfaces:'hidden',support:true};"
+               "const nav=R.shellNavigation(reg,support);"
+               "return {cats:nav.categories.map(c=>[c.id,c.supportOnly,c.items.map(i=>i.id)]),"
+               "shown:['prompts','subagents','barehands','mcp_plugins','voice_output','agents_models'].map(t=>R.targetShown(t,reg,support)),"
+               "full:R.categoriesFor({developerSurfaces:'visible',support:true}).map(c=>[c.id,c.label,!!c.supportOnly]),"
+               "same:JSON.stringify(R.categoriesFor({developerSurfaces:'visible',support:true}))===JSON.stringify(R.categoriesFor()),"
+               "off:R.categoriesFor({developerSurfaces:'hidden',support:false}).map(c=>c.id),"
+               "cycle:R.cycleCategory('interface_interactions',1,support)}")
+    assert out["cats"] == [["voice_audio", False, ["voice_output"]], ["connections", False, ["providers"]],
+                           ["memory_knowledge", False, []], ["interface_interactions", False, ["shortcuts"]],
+                           ["agents_models", True, ["subagents"]], ["advanced_diagnostics", True, ["prompts"]]]
+    assert out["shown"] == [True, True, False, False, True, True]
+    assert out["same"] is True, "full edition: support mode changes nothing"
+    assert [c[0] for c in out["full"]] == ["voice_audio", "agents_models", "memory_knowledge", "interface_interactions",
+                                            "connections", "advanced_diagnostics"]
+    assert out["off"] == ["voice_audio", "connections", "memory_knowledge", "interface_interactions"]
+    assert out["cycle"] == "agents_models"
 
 
 def test_the_rail_home_and_plain_cards():

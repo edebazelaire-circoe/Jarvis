@@ -653,3 +653,57 @@ def today_local(now: datetime | None = None) -> date:
     """La date du jour (heure locale du poste) : seul point où l'horloge entre, côté appelant."""
 
     return (now or datetime.now()).date()
+
+
+# ------------------------------------------------------------- titre et aperçu du document (V1.2 Slice 06, I-004)
+
+#: Octets relus au-delà de la tête quand la ligne `# titre` n'y est pas entière (I-004 M2).
+TITLE_LOOKAHEAD_BYTES = 1_024
+
+
+def _after_front_matter(text: str) -> str | None:
+    """Le corps qui suit la ligne `---` fermant le front-matter, ou `None` sans en-tête fermé."""
+
+    value = text.lstrip(chr(0xFEFF)).replace("\r\n", "\n")
+    if not value.startswith("---\n"):
+        return None
+    end = value.find("\n---", 3)
+    if end < 0:
+        return None
+    rest = value[end + 4:]
+    line_end = rest.find("\n")
+    return rest[line_end + 1:] if line_end >= 0 else ""
+
+
+def research_body_title(text: str, *, complete: bool) -> tuple[str | None, bool]:
+    """(titre `#` du corps, faut-il lire plus loin). Une ligne coupée par la fin de la lecture n'est jamais un titre.
+
+    `complete` : `text` est le fichier entier (ou la lecture suffit). Sinon, tant que la première ligne non vide du
+    corps n'est pas lue en entier, la réponse est `(None, True)` : l'appelant relit plus loin.
+    """
+
+    from jarvis.domain.dossier import heading_title
+
+    body = _after_front_matter(text)
+    if body is None:
+        return None, False
+    if not complete:
+        cut = body.rfind("\n")
+        body = body[:cut + 1] if cut >= 0 else ""
+    if any(line.strip() for line in body.splitlines()):
+        return heading_title(body), False
+    return None, not complete
+
+
+def research_preview_text(text: str) -> str:
+    """L'aperçu d'un document de recherche posé sur le Board (I-004 M1) : sans le front-matter ni la ligne `# titre`
+    (le titre est celui de la fenêtre), il commence par le Résumé. Sans en-tête fermé : le texte tel quel."""
+
+    body = _after_front_matter(text)
+    if body is None:
+        return text
+    lines = body.split("\n")
+    first = next((index for index, line in enumerate(lines) if line.strip()), None)
+    if first is not None and lines[first].startswith("# "):
+        lines = lines[first + 1:]
+    return "\n".join(lines).lstrip("\n")

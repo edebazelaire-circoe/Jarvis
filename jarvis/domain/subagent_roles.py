@@ -192,9 +192,24 @@ class SubagentRole:
 
     def as_dict(self, capabilities: AgentCapabilityPolicy | None = None) -> dict[str, Any]:
         """Charge utile du rôle. `capabilities` (édition confinée) : `tools` lus par `role_tools`, jamais un outil
-        que l'édition refuse ; `None` ou édition non confinée : la charge d'avant, octet pour octet."""
+        que l'édition refuse ; `None` ou édition non confinée : la charge d'avant, octet pour octet.
 
+        Un rôle que l'édition n'offre pas (`offers_role` faux : `coder` en `presentation`) porte en plus
+        `edition_unavailable` (`code`, `message`) : l'onglet Sous-agents le dit « indisponible dans cette édition »,
+        avec le même code que le refus du hook d'aiguillage (V1.2 Slice 06). Ailleurs, la clé est absente."""
+
+        payload = self._payload(capabilities)
+        if capabilities is not None and not offers_role(self, capabilities):
+            payload["edition_unavailable"] = {
+                "code": ROLE_UNAVAILABLE_CODE,
+                "message": (f"Indisponible dans l'édition {capabilities.edition.value} : cette édition ne développe "
+                            "pas et ne modifie aucun code. Jarvis ne lance jamais ce rôle ici."),
+            }
+        return payload
+
+    def _payload(self, capabilities: AgentCapabilityPolicy | None) -> dict[str, Any]:
         return {
+
             "id": self.id,
             "marker": self.marker,
             "name": self.name,

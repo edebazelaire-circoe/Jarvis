@@ -36,6 +36,8 @@ from dataclasses import replace
 from pathlib import Path
 
 from jarvis.core.v2_services import NullDiagnosticSink
+from jarvis.domain.board_memory import MEMORY_DIR
+from jarvis.domain.research_freshness import is_research_path, research_preview_text
 from jarvis.domain.scene import (
     MAX_PAYLOAD_SUMMARY_CHARS,
     SceneActor,
@@ -45,6 +47,7 @@ from jarvis.domain.scene import (
     SceneOp,
 )
 from jarvis.ports.file_changes import NotifierFactory, normalize
+
 from jarvis.ports.v2 import DiagnosticSink
 
 SCENE_FILE_REFRESHED_KIND = "core.scene.file_refreshed"
@@ -95,6 +98,14 @@ def _read(path: str) -> tuple[bytes, bool]:
     return raw[:MAX_READ_BYTES], len(raw) > MAX_READ_BYTES
 
 
+def _is_research_document(path: str) -> bool:
+    """Un document de recherche d'une mémoire de Board (`.../memory/documents/research/*.md`, V1.2 Slice 04)."""
+
+    value = str(path).replace("\\", "/")
+    at = value.rfind("/" + MEMORY_DIR + "/")
+    return at >= 0 and is_research_path(value[at + len(MEMORY_DIR) + 2:])
+
+
 def _summary_for(path: str, signature: Signature) -> str:
     if signature == _MISSING:
         return f"Fichier introuvable : {path}"[:MAX_PAYLOAD_SUMMARY_CHARS]
@@ -102,6 +113,10 @@ def _summary_for(path: str, signature: Signature) -> str:
         raw, truncated = _read(path)
     except OSError as exc:
         return f"Fichier illisible ({type(exc).__name__}) : {path}"[:MAX_PAYLOAD_SUMMARY_CHARS]
+    if _is_research_document(path) and b"\x00" not in raw[:4096]:
+        # I-004 M1 : l'aperçu d'un document de recherche commence par son Résumé, pas par l'en-tête des sources.
+        preview = research_preview_text(raw.decode("utf-8", errors="replace"))
+        return render_file_summary(preview.encode("utf-8"), truncated_source=truncated)
     return render_file_summary(raw, truncated_source=truncated)
 
 

@@ -731,3 +731,18 @@ def test_role_applied_traces_the_nested_caller_and_both_sizes(tmp_path):
     assert first["data"]["instructions_chars"] == len(brief) - brief.index(ROLE_MARK)
     assert first["data"]["role_instructions_chars"] == len(role_for("qa").instructions.strip())
     assert first["data"]["role_instructions_chars"] < first["data"]["instructions_chars"]
+
+
+def test_a_role_the_edition_does_not_offer_is_said_unavailable_in_its_payload():
+    """V1.2 Slice 06 (I-001) : l'onglet Sous-agents dit `coder` « indisponible » en presentation, avec le code du hook."""
+
+    from jarvis.domain.agent_capabilities import PRESENTATION_CAPABILITIES, UNCONFINED
+    from jarvis.domain.subagent_roles import ROLE_UNAVAILABLE_CODE, ROLES, edition_role_refusal
+
+    marked = {role.id: role.as_dict(PRESENTATION_CAPABILITIES).get("edition_unavailable") for role in ROLES}
+    assert [rid for rid, value in marked.items() if value] == ["coder"]
+    assert marked["coder"]["code"] == ROLE_UNAVAILABLE_CODE and "presentation" in marked["coder"]["message"]
+    for role in ROLES:
+        assert ("edition_unavailable" in role.as_dict(PRESENTATION_CAPABILITIES)) == \
+            (edition_role_refusal(role, PRESENTATION_CAPABILITIES) is not None), role.id
+        assert "edition_unavailable" not in role.as_dict(UNCONFINED) and "edition_unavailable" not in role.as_dict()

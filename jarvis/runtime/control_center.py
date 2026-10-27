@@ -74,7 +74,7 @@ from jarvis.core.interaction_mode import supported_modes
 from jarvis.domain.interaction_mode import (
     DEFAULT_INTERACTION_MODE, INTERACTION_MODE_DERIVED, INTERACTION_MODE_DERIVED_MESSAGE, InteractionMode,
 )
-from jarvis.runtime import voice_lifecycle, wake_word_settings
+from jarvis.runtime import support_mode, voice_lifecycle, wake_word_settings
 from jarvis.runtime import personalization_profiles
 from jarvis.runtime.interaction_mode_view import CoreInteractionModeView
 from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
@@ -1621,6 +1621,9 @@ class ControlCenter:
             # Cycle de vie produit de la voix (Off / Sleep / Active, `docs/voice-lifecycle.md`).
             web.get("/api/voice/lifecycle", self.get_voice_lifecycle),
             web.post("/api/voice/lifecycle", self.save_voice_lifecycle),
+            # Mode support des Réglages (V1.2 Slice 06, `docs/settings/support-mode.md`) : navigation seulement.
+            web.get("/api/support-mode", self.get_support_mode),
+            web.post("/api/support-mode", self.save_support_mode),
             web.post("/api/wake-word", self.save_wake_word),
             web.get("/api/barehands", self.get_barehands),
             web.post("/api/barehands", self.save_barehands),
@@ -2914,6 +2917,8 @@ class ControlCenter:
             # Cycle de vie produit de la voix (Off / Sleep / Active, `docs/voice-lifecycle.md`) : projection des faits
             # (préférence, lanceur, battement de Voice), jamais d'état optimiste.
             "voice_lifecycle": self._voice_lifecycle_view(settings, voice_online=voice_online),
+            # Mode support des Réglages (V1.2 Slice 06) : ce que la navigation montre, rien d'autre.
+            "support_mode": support_mode.inspect(settings),
             # Mode d'interaction (Slice 01b) : la valeur **effective** que Core
             # tient, sa révision, et le mode que désigne le type du Board actif
             # (`board_mode`). Les deux sont nommés séparément parce qu'ils
@@ -4311,6 +4316,31 @@ class ControlCenter:
         self.journal.emit("voice.lifecycle.preference_saved", f"Préférence de voix : {before} -> {after}",
                           data={"before": before, "after": after, "managed": managed})
         return web.json_response(self._voice_lifecycle_view(current, voice_online=self._voice_online()))
+
+    async def get_support_mode(self, request: web.Request) -> web.Response:
+        del request
+        return web.json_response(support_mode.inspect(self._settings()))
+
+    async def save_support_mode(self, request: web.Request) -> web.Response:
+        """Montrer ou cacher les catégories `support` des Réglages (édition produit). Navigation seulement : aucun
+        lancement d'agent ne lit ce bloc (`docs/settings/support-mode.md`). La réponse est le bloc relu."""
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        current = self._settings()
+        before = support_mode.inspect(current)["enabled"]
+        try:
+            after = support_mode.apply(current, payload)
+        except support_mode.SupportModeError as exc:
+            self.journal.emit("support_mode.refused", f"Mode support refusé : {exc.code}", level="warning",
+                              data={"code": exc.code})
+            raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
+        self._write_settings(current)
+        self.journal.emit("support_mode.saved", f"Mode support : {before} -> {after}",
+                          data={"before": before, "after": after})
+        return web.json_response(support_mode.inspect(current))
 
     async def get_wake_word(self, request: web.Request) -> web.Response:
         """Le bloc `wake_word` tel qu'il s'applique, et ce qu'il dit de lui-même.

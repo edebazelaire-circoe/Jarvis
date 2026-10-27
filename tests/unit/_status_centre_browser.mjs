@@ -132,7 +132,9 @@ const SERVER=`(()=>{
         presentation:S.presentation||null,
         /* Slice 08 : la page relève un ordre de Jarvis au battement, quand le statut dit qu'il attend. */
         dossier_navigation:{pending:!!(S.nav&&S.nav.length)},
-        ...(S.voiceLifecycle?{voice_lifecycle:S.voiceLifecycle}:{}),...(S.status||{})});
+        ...(S.voiceLifecycle?{voice_lifecycle:S.voiceLifecycle}:{}),
+        /* V1.2 Slice 06 : le mode support des Réglages (\`supportMode\`, coupé par défaut). */
+        support_mode:S.supportMode||{enabled:false,problem:null},...(S.status||{})});
     }
     /* Slice 05 de presentation-edition-v1-2 : l'interrupteur de la voix. La réponse est la projection du serveur
        (veille demandée -> starting, coupée -> off) ; voiceLifecycleFail = refus 400 avec son code. */
@@ -143,6 +145,17 @@ const SERVER=`(()=>{
         code:preference==='off'?'voice_off':'voice_starting',message:preference==='off'?'Voix coupée.':'La voix démarre…'};
       return json(200,S.voiceLifecycle);
     }
+    /* V1.2 Slice 06 : mode support. La réponse est le bloc relu ; \`supportModeFail\` = refus 400 avec son code,
+       \`supportModeHang\` = jamais de réponse (seule l'échéance de la page l'abandonne). */
+    if(url==='/api/support-mode'&&method==='POST'){
+      if(S.supportModeHang)return new Promise((_ok,ko)=>{const sig=init&&init.signal;if(sig)sig.addEventListener('abort',()=>ko(new DOMException('aborted','AbortError')),{once:true})});
+      if(S.supportModeFail)return new Response('Mode support refusé (double).',{status:400,headers:{'X-Jarvis-Error-Code':S.supportModeFail}});
+      S.supportMode={enabled:JSON.parse(init.body).enabled===true,problem:null};
+      return json(200,S.supportMode);
+    }
+    /* V1.2 Slice 06 : la projection des réglages (\`settings\`, celle que sert ControlCenter._settings_payload). */
+    if(url==='/api/settings'&&method==='GET'&&S.settings)return json(200,S.settings);
+    if(url.split('?')[0]==='/api/agent/tasks'&&method==='GET'&&S.agentTasks)return json(200,S.agentTasks);
     /* Raccourcis d'interface (valeurs par défaut de jarvis/runtime/shortcuts.py). */
     if(url==='/api/shortcuts')return json(200,{values:{ui_settings:'s',ui_close:'Escape',ui_panel_errors:'e',ui_panel_trace:'t',ui_panel_agents:'a'}});
     if(url.startsWith('/api/background?'))return json(200,{ok:true,seq:S.seq,acknowledged:0,unread:1,counts:S.counts,events:eventsOf().filter(e=>S.counts[e.category]>0)});

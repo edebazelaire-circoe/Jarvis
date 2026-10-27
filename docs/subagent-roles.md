@@ -491,6 +491,11 @@ Work Methods apprises** (`work_methods`, groupe Labs) : outil d'opérateur, pas 
 Tests : `tests/unit/test_control_center_subagents_settings_js.py` (node, sur la vraie charge utile v2),
 `tests/unit/test_architecture_agents_settings_browser.py` (vrai Chrome).
 
+**Édition (V1.2 Slice 06).** Un rôle que l'édition n'offre pas (`offers_role` faux : `coder` en `presentation`) porte
+`edition_unavailable {code: role_unavailable_in_edition, message}` dans `GET /api/subagent-roles` ; la ligne, la fiche
+et la synthèse disent « Indisponible dans cette édition » avec le même code que le refus du hook. Ailleurs, la clé est
+absente (charge d'avant).
+
 **Sources.** Lecture seule de `GET /api/subagent-roles` (section 1ter) pour le catalogue, et de
 `GET /api/agent/tasks` (champ `role`, le marqueur tel que le hook le lit) pour les instances en cours. Aucune
 autre donnée, aucune liste recopiée : libellés, capacités, méthodes, libellés de relation

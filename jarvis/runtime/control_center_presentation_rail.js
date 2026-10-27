@@ -342,7 +342,19 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
 #${DOM.hostId} .jvr-home-retry{margin:8px 4px 2px;padding:4px 10px;border:1px solid var(--jvr-line);border-radius:999px;background:none;color:var(--jvr-ink);font:inherit;font-size:11.5px;cursor:pointer}
 #${DOM.hostId} .jvr-home-retry:hover{border-color:var(--jvr-hot)}
 #${DOM.hostId} .jvr-home-retry:focus-visible{outline:var(--shell-focus-w,2px) solid var(--shell-focus,#6ee7ff);outline-offset:var(--shell-focus-offset,2px)}
-#${DOM.hostId} .jvr-homebox[hidden],#${DOM.hostId}[data-density=slim] .jvr-homebox,#${DOM.hostId}[data-density=compact] .jvr-homebox{display:none}
+#${DOM.hostId} .jvr-home-voice{margin:10px 4px 2px;padding:9px 10px;border:1px solid var(--jvr-line);border-radius:10px;display:grid;gap:3px}
+#${DOM.hostId} .jvr-home-voice-head{margin:0;display:flex;align-items:center;gap:8px;color:var(--jvr-ink);font-size:12px}
+#${DOM.hostId} .jvr-home-voice-state{padding:1px 7px;border-radius:999px;border:1px solid var(--jvr-line);color:var(--jvr-mute);font-size:11px;font-weight:600}
+#${DOM.hostId} .jvr-home-voice-state[data-tone=on]{border-color:var(--jvr-hot);color:var(--accent,#6ee7ff)}
+#${DOM.hostId} .jvr-home-voice-state[data-tone=busy]{color:#ffd37a}
+#${DOM.hostId} .jvr-home-voice-state[data-tone=error]{color:var(--sem-alert,#ff9f43)}
+#${DOM.hostId} .jvr-home-voice-hint{margin:0;color:var(--jvr-mute);font-size:11.5px;line-height:1.45}
+#${DOM.hostId} .jvr-home-voice-btn{justify-self:start;margin-top:4px;padding:4px 10px;border:1px solid var(--jvr-line);border-radius:999px;background:none;color:var(--jvr-ink);font:inherit;font-size:11.5px;cursor:pointer}
+#${DOM.hostId} .jvr-home-voice-btn:hover:not([aria-disabled=true]){border-color:var(--jvr-hot)}
+#${DOM.hostId} .jvr-home-voice-btn[aria-disabled=true]{opacity:.6;cursor:progress}
+#${DOM.hostId} .jvr-home-voice-btn:focus-visible{outline:var(--shell-focus-w,2px) solid var(--shell-focus,#6ee7ff);outline-offset:var(--shell-focus-offset,2px)}
+#${DOM.hostId} .jvr-homebox[hidden],
+#${DOM.hostId}[data-density=slim] .jvr-homebox,#${DOM.hostId}[data-density=compact] .jvr-homebox{display:none}
 #${DOM.hostId} .jvr-list[hidden]{display:none}
 @media (prefers-reduced-motion:reduce){#${DOM.hostId} .jvr-new{transition:none}}
 `;
@@ -683,8 +695,11 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       const unread=home()?null:homeUnread();
       const showHome=S.loaded&&!m.visible.length&&!m.total&&(home()||!!unread)&&!S.lost;
       /* L'accueil vit hors de la liste d'options (une liste d'options ne contient que des options). */
+      /* Le focus d'un geste de l'accueil survit au rendu, qui reconstruit l'accueil (V1.2 Slice 06). */
+      const held=ui.home.contains(doc.activeElement)&&doc.activeElement.dataset?doc.activeElement.dataset.homeAct:null;
       clear(ui.home);ui.home.hidden=!showHome;ui.list.hidden=showHome;
       if(showHome)ui.home.appendChild(unread?homeUnreadFor(unread):homeFor());
+      if(held){const again=ui.home.querySelector(`[data-home-act="${held}"]`);if(again)again.focus({preventScroll:true})}
       else if(!m.visible.length)ui.list.appendChild(el('li','jvr-empty',m.total?'Toutes sont masquées ou archivées.':'Aucune présentation.'));
       for(const row of m.visible)ui.list.appendChild(itemFor(row));
       clear(ui.hiddenFold);clear(ui.archivedFold);
@@ -741,7 +756,45 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
         try{const line=readiness.homeLine();if(line)li.insertBefore(line,list)}
         catch(error){log('home_readiness_failed',{error:cleanLine(error&&error.message,120)},'error')}
       }
+      li.append(homeVoiceLine());
       return li;
+    }
+    /* La voix dans le parcours (V1.2 Slice 06) : la ligne `voiceLineOf` de la roue, même projection serveur que
+       l'interrupteur « Voix activée », et le même geste (`toggleVoice`). Sans battement lu : « pas encore lue ». */
+    function homeVoiceLine(){
+      const W=d.voice||root.JarvisRuntimeWheel;
+      let line=null;
+      try{line=W&&typeof W.voiceLine==='function'?W.voiceLine():null}
+      catch(error){log('home_voice_failed',{error:cleanLine(error&&error.message,120)},'error')}
+      const box=el('div','jvr-home-voice');box.dataset.homeVoice=line?line.state:'unknown';
+      const head=el('p','jvr-home-voice-head');
+      const state=el('span','jvr-home-voice-state',line?line.word:'pas encore lue');state.dataset.tone=line?line.tone||'on':'unknown';
+      head.append(el('strong','','Voix'),state);
+      const hint=el('p','jvr-home-voice-hint',line?line.hint:'Jarvis n’a pas encore dit l’état de la voix.');
+      hint.id='jvrHomeVoiceHint';
+      box.append(head,hint);
+      if(line){
+        const b=el('button','jvr-home-voice-btn',line.action);b.type='button';b.dataset.homeAct='voice';
+        b.setAttribute('aria-describedby',hint.id);
+        if(line.pending)b.setAttribute('aria-disabled','true');
+        b.addEventListener('click',()=>{
+          if(b.getAttribute('aria-disabled')==='true')return;
+          log('home_action',{action:'voice'});
+          try{const r=W.toggleVoice('presentation_home');if(r&&typeof r.catch==='function')r.catch(error=>log('home_voice_failed',{error:cleanLine(error&&error.message,120)},'error'))}
+          catch(error){log('home_voice_failed',{error:cleanLine(error&&error.message,120)},'error');say('failed',`Voix : ${cleanLine(error&&error.message,100)}`)}
+        });
+        box.append(b);
+      }
+      return box;
+    }
+    /* Un changement de la voix (signal `jarvis:voice-line` de la roue) remplace la seule ligne Voix de l'accueil :
+       le reste (focus compris, s'il n'était pas sur elle) ne bouge pas. */
+    function refreshHomeVoice(){
+      const old=ui.home&&!ui.home.hidden?ui.home.querySelector('.jvr-home-voice'):null;
+      if(!old)return;
+      const focused=old.contains(doc.activeElement);
+      const fresh=homeVoiceLine();old.replaceWith(fresh);
+      if(focused){const b=fresh.querySelector('button');if(b)b.focus({preventScroll:true})}
     }
     /* L'accueil quand Core n'a pas dit ce que l'édition permet : la cause, son code, « Réessayer » (relit Core). */
     function homeUnreadFor(view){
@@ -1118,6 +1171,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       schedule();
       if(d.assumeCore){S.coreOk=true;refresh().then(()=>{render()})}
       doc.addEventListener('visibilitychange',()=>{if(!doc.hidden&&S.coreOk)refresh()});
+      doc.addEventListener('jarvis:voice-line',()=>{try{refreshHomeVoice()}catch(error){log('home_voice_failed',{error:cleanLine(error&&error.message,120)},'error')}});
       win.addEventListener&&win.addEventListener('resize',()=>{const next=densityOf({width:Number(win.innerWidth)||1280,collapsed:S.collapsed,studio:!!(S.studioOpen&&ui.host&&!ui.host.hidden)});if(S.studioOpen||next!==S.density)render()});
       win.addEventListener&&win.addEventListener('jarvis:studio-explorer-opened',()=>{S.studioOpen=true;render();reportSoon(true)});
       win.addEventListener&&win.addEventListener('jarvis:studio-explorer-closed',()=>{S.studioOpen=false;render();reportSoon(true)});

@@ -18,6 +18,8 @@
 | [`architecture-tab.md`](architecture-tab.md) | onglet Architecture d'Architecture & Agents : montage, adaptateur, événement `architecture:configure-brain`, écarts au contrat du graphe |
 | [`brain-config-panel.md`](brain-config-panel.md) | fenêtre flottante de configuration d'un cerveau (ouverte depuis le canevas) : montage, adaptateur, champs du descripteur, écriture en PATCH successifs, focus |
 | [`connections.md`](connections.md) | Plugins & MCP › Fournisseurs : cartes, routes et charges des clés, jamais une valeur |
+| [`novice-inventory.md`](novice-inventory.md) | édition Presentation : inventaire de chaque page et section, essentiel / avancé-support / développeur, libellés sans jargon et ordre du hub (V1.2 Slice 06) |
+| [`support-mode.md`](support-mode.md) | mode support (catégories `support` rouvertes sans le mode développeur, aucune capacité de plus), bande « Aide et assistance » du hub, lien profond `#settings/<cible>`, procédure support (V1.2 Slice 06) |
 | [`migration-rollout.md`](migration-rollout.md) | migration et déploiement de la refonte des réglages (tâche du catalogue de modèles) |
 | [`../legacy/settings-tab-aliases.md`](../legacy/settings-tab-aliases.md) | inventaire des anciens ID d'onglet et leur sort (Slice 09) |
 

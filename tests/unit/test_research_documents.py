@@ -220,6 +220,7 @@ async def test_the_dossier_lists_and_shows_the_research_document_with_its_check(
         item = (await stack.core.scene.snapshot()).get_object(shown["object_id"])
         memory_file = stack.data_root / "boards" / w.board_a / "memory" / DOC_PATH
         assert item.payload.source_path == str(memory_file), "même source, rien de recopié"
+        assert item.payload.title == "Remotion ou Motion Canvas ?", "même titre qu'au Dossier (I-004 M1)"
 
 
 # ------------------------------------------------------------------ 5. consignes (presentation seulement)
@@ -297,3 +298,68 @@ async def test_the_real_document_of_the_s04_trace_is_conform_fresh_and_titled_in
         assert row["title"] == "Gamma vs Pitch : prix d'entrée, export PowerPoint, collaboration"
         assert row["research"]["topic"] == "gamma-vs-pitch" and row["research"]["checked_at"] == "2026-10-27"
         assert (row["research"]["sources"], row["research"]["failed_sources"]) == (8, 1)
+
+
+
+# ------------------------------------------------------------------ 6. finitions du Dossier (V1.2 Slice 06, I-004)
+
+
+def _long_header(sources: int) -> str:
+    lines = ["---", "topic: gamma-vs-pitch", "checked_at: 2026-10-27", "volatility: high", "sources:"]
+    lines += [f"  - https://example.com/une/longue/adresse/de/source/numero-{n:02d}?ref=abcdef | checked: 2026-10-27"
+              for n in range(sources)]
+    return "\n".join(lines) + "\n---\n"
+
+
+def test_the_title_is_read_whole_or_not_at_all():
+    from jarvis.domain.research_freshness import research_body_title
+
+    doc = "---\ntopic: x\n---\n\n# Un titre assez long pour être coupé en plein mot\n\n## Résumé\nTexte.\n"
+    assert research_body_title(doc, complete=True) == ("Un titre assez long pour être coupé en plein mot", False)
+    cut = doc[:doc.index("pour") + 4]
+    assert research_body_title(cut, complete=False) == (None, True), "une ligne coupée n'est jamais un titre"
+    assert research_body_title("---\ntopic: x\n---\n", complete=False) == (None, True)
+    assert research_body_title("---\ntopic: x\n---\nTexte sans titre\n", complete=False) == (None, False)
+    assert research_body_title("# Pas d'en-tête\n", complete=True) == (None, False)
+
+
+def test_the_board_preview_starts_with_the_summary():
+    from jarvis.domain.research_freshness import research_preview_text
+
+    assert research_preview_text(DOCUMENT).startswith("## Résumé"), research_preview_text(DOCUMENT)[:80]
+    assert research_preview_text("# Notes sans en-tête\n") == "# Notes sans en-tête\n"
+
+
+def test_the_scene_preview_of_a_research_document_hides_its_header(tmp_path):
+    from jarvis.core.scene_file_watcher import _signature, _summary_for
+
+    folder = tmp_path / "boards" / "b" / "memory" / "documents" / "research"
+    folder.mkdir(parents=True)
+    research = folder / "remotion-vs-motion-canvas.md"
+    research.write_text(DOCUMENT, encoding="utf-8")
+    other = tmp_path / "boards" / "b" / "memory" / "notes.md"
+    other.write_text(DOCUMENT, encoding="utf-8")
+    assert _summary_for(str(research), _signature(str(research))).startswith("## Résumé")
+    assert _summary_for(str(other), _signature(str(other))).startswith("---"), "une autre note : inchangée"
+
+
+async def test_a_header_close_to_the_head_bound_keeps_the_whole_title(tmp_path):
+    """I-004 M2 : un en-tête qui frôle 2 Kio ; le titre `#` n'est ni coupé ni remplacé par le sujet."""
+
+    title = "Gamma vs Pitch : prix d'entrée, export PowerPoint, collaboration"
+    for sources in range(10, 30):
+        header = _long_header(sources)
+        if 1_990 < len(header.encode("utf-8")) < 2_048:
+            break
+    else:
+        raise AssertionError("aucun en-tête près de 2 Kio")
+    text = header + f"\n# {title}\n\n## Résumé\nTexte.\n"
+    async with CaptureStack(tmp_path) as stack:
+        w = await build(stack)
+        await stack.core.boards.switch(w.board_a)
+        body = {"path": "documents/research/gamma-vs-pitch.md", "content": text, "mode": "create"}
+        assert (await core(stack, "POST", f"{V1}/boards/{w.board_a}/memory/write", json=body))[0] == 201
+        status, listed, _, _ = await core(stack, "GET", f"{V1}/boards/{w.board_a}/dossier")
+        assert status == 200
+        row = next(r for r in listed["entries"] if r["entry_id"] == "memory:documents/research/gamma-vs-pitch.md")
+        assert row["title"] == title

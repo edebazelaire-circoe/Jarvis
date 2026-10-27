@@ -361,7 +361,7 @@
       else if(b.t==='p'){const p=el('p');renderInline(p,b.inline);parent.appendChild(p)}
       else if(b.t==='ul'||b.t==='ol'){const list=el(b.t);for(const it of b.items){const li=el('li');renderInline(li,it);list.appendChild(li)}parent.appendChild(list)}
       else if(b.t==='quote'){const q=el('blockquote');renderInline(q,b.inline);parent.appendChild(q)}
-      else if(b.t==='code'){const pre=el('pre');pre.appendChild(el('code','',b.v));parent.appendChild(pre)}
+      else if(b.t==='code'){const pre=el('pre',b.fm?'dsr-research-head':'');pre.appendChild(el('code','',b.v));parent.appendChild(pre)}
       else if(b.t==='hr')parent.appendChild(el('hr'));
     }
   }
@@ -1340,6 +1340,9 @@
 #dossierView .dsr-prose>.dsr-mh:first-child{margin-top:0}
 #dossierView .dsr-prose code{padding:1px 5px;border-radius:4px;background:rgba(110,231,255,.08);font:14px ui-monospace,Consolas,monospace}
 #dossierView .dsr-prose pre{padding:12px 14px;border-radius:8px;background:#03080c;overflow:auto}
+/* I-004 M3 (V1.2 Slice 06) : l'en-tête d'un document de recherche (sources, longues URL) passe à la ligne au lieu de
+   déborder à droite ; le code d'une note garde son défilement. */
+#dossierView .dsr-prose pre.dsr-research-head{white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal}
 #dossierView .dsr-prose pre code{padding:0;background:none}
 #dossierView .dsr-prose blockquote{padding-left:14px;border-left:1px solid var(--dsr-rule-strong);color:var(--dsr-soft)}
 #dossierView .dsr-prose hr{border:0;border-top:1px solid var(--dsr-rule);margin:1.6em 0}

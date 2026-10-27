@@ -1182,7 +1182,13 @@ guarded by Core and by the brain's confinement (Slice 04).
 
 **Developer mode.** `JARVIS_DEVELOPER_MODE=1` (Core and Control Center environment) shows the developer surfaces of a
 product edition and changes nothing else (the Board kinds stay the edition's). An unreadable value refuses to start,
-like the edition. There is no in-page toggle: a user of the installed product cannot reach it by accident.
+like the edition. There is no in-page toggle for it: a user of the installed product cannot reach it by accident.
+
+**Support mode (V1.2 Slice 06).** A persisted, reversible switch in Settings › Aide et assistance reopens the two
+Settings categories declared `support` (Architecture & Agents, Avancé & Diagnostics) for a field support session,
+without developer mode and without any capability: the launcher tools, Bare Hands and Plugins MCP stay hidden, the
+agent capability manifest is unchanged. Contract, deep link `#settings/<target>` and support procedure:
+[settings/support-mode.md](settings/support-mode.md); inventory: [settings/novice-inventory.md](settings/novice-inventory.md).
 
 **Inventory (2026-10-26).**
 
@@ -1190,8 +1196,9 @@ like the edition. There is no in-page toggle: a user of the installed product ca
 | --- | --- | --- |
 | Launcher: Conversation `CNV`, Agents `AGT`, Erreurs `ERR`, Réglages `SET`, Sessions & Boards `WSP`, Inspecteur `INS` | product | shown |
 | Launcher: Trace `TRC` (and shortcut `ui_panel_trace`), Test Lab `LAB`, MCP inspector `MCP` (with « Plugins externes » and the « Présentations · moteur » card), Prefabs `PFB` | developer | hidden; the popover roving skips them; `t` does nothing (journal `edition.shortcut_hidden`) |
-| Réglages › Architecture & Agents (brain graph, sub-agent roles) | developer category | hidden |
-| Réglages › Avancé & Diagnostics (architecture & compatibilité, prompts, Runtime & CLI, diagnostics, Labs & outils de test, Bare Hands · essais, Work Methods) | developer category | hidden |
+| Réglages › Architecture & Agents (brain graph, sub-agent roles) | developer category, `support` | hidden; shown with support mode (tag « Support »; `coder` « Indisponible dans cette édition ») |
+| Réglages › Avancé & Diagnostics (architecture & compatibilité, prompts, Runtime & CLI, diagnostics, Labs & outils de test, Bare Hands · essais, Work Methods) | developer category, `support` | hidden; shown with support mode |
+| Réglages hub: product labels and order (Personnalisation, Connexions, Mémoire, Raccourcis clavier), band « Aide et assistance » (Voix, Signaler un problème once Slice 07 wires it, Mode support) | product (V1.2 Slice 06) | shown; `full` keeps six categories, old labels, no band |
 | Réglages › Interface & Interactions › Bare Hands | developer section | hidden (Raccourcis stays) |
 | Réglages › Plugins & MCP › Plugins MCP | developer section | hidden; the category reads « Connexions » (Fournisseurs stays) |
 | Rail card menu « Remotion Studio… » and the engine name « Remotion » on cards | developer | hidden (a Slidecar presentation still says « Slidecar ») |

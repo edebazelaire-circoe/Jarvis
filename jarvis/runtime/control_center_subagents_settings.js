@@ -169,6 +169,9 @@
         enabled:r.enabled!==false,can_spawn:r.can_spawn===true,can_own_mission:r.can_own_mission===true,
         offered_to_brain:r.offered_to_brain===true,offered_to_subagents:r.offered_to_subagents===true,
         constrained_output:r.constrained_output===true,modified:r.modified===true,conflict:r.conflict?str(r.conflict):null,
+        /* V1.2 Slice 06 : rôle que l'édition n'offre pas (`coder` en presentation), même code que le refus du hook. */
+        edition_unavailable:r.edition_unavailable&&typeof r.edition_unavailable==='object'
+          ?{code:str(r.edition_unavailable.code),message:str(r.edition_unavailable.message)}:null,
         missing:EXPECTED.filter(k=>!Object.prototype.hasOwnProperty.call(r,k))};
     }
     function normalizePayload(data){
@@ -223,6 +226,7 @@
     }
     function availability(role){
       if(!role.enabled)return chip('Désactivé','bad','Le hook ne reconnaît pas ce rôle : son marqueur reste dans le libellé.');
+      if(role.edition_unavailable)return chip('Indisponible dans cette édition','bad',role.edition_unavailable.message);
       return '';
     }
     /* --- Tableau de bord (refonte-ui-settings, Slice 03) ------------------------------------------------------
@@ -349,7 +353,7 @@
           sub:[out('selected')?`${out('selected')} par leur liste`:'',out('cli_default')?`${out('cli_default')} par le modèle du CLI`:'',refused?`${refused} refusé(s)`:''].filter(Boolean).join(' · ')||'aperçu vide'};
       }
       return `<div class="sar-stats">${[
-        statHtml({key:'roles',value:String(active.length),label:'Sous-agents actifs',glyph:'team',tone:'violet',sub:`sur ${all.length} rôle(s) du registre`}),
+        statHtml({key:'roles',value:String(active.length),label:'Sous-agents actifs',glyph:'team',tone:'violet',sub:`sur ${all.length} rôle(s) du registre${all.some(r=>r.edition_unavailable)?` · ${all.filter(r=>r.edition_unavailable).length} indisponible(s) dans cette édition`:''}`}),
         statHtml({key:'providers',glyph:'cloud',...prov,tone:prov.tone||'blue'}),
         statHtml({key:'tools',value:String(uses.size),label:'Outils déclarés',glyph:'tool',tone:'teal',sub:top?`le plus partagé : ${top[0]} (${top[1]} rôle(s))`:'aucun outil déclaré'}),
         statHtml({key:'ready',glyph:'pulse',...ready,tone:ready.tone||'cyan'}),
@@ -724,7 +728,9 @@
       const loadout=role.loadout_role?`loadout <code>${esc(role.loadout_role)}</code>`:'<span class="hint">celui du profil</span>';
       const methods=(role.work_methods||[]);
       const ordered=[...methods].sort((a,b)=>(b===role.default_work_method)-(a===role.default_work_method));
-      const state=!role.enabled
+      const state=role.edition_unavailable
+        ?`<div class="notice bad" data-sar-edition-unavailable><strong>Indisponible dans cette édition.</strong> ${esc(role.edition_unavailable.message)} <code>${esc(role.edition_unavailable.code)}</code></div>`
+        :!role.enabled
         ?`<div class="notice bad"><strong>Rôle désactivé.</strong> Le hook ne le reconnaît pas : un sous-agent qui l'annonce garde le marqueur dans son libellé et suit seulement sa consigne.</div>`
         :(!role.offered_to_brain?`<div class="notice info">Actif pour le hook, mais <strong>pas encore proposé au cerveau</strong> : seul un agent qui lance des agents peut le demander.</div>`:'');
       const missing=role.missing&&role.missing.length?`<div class="notice">Fiche incomplète : la réponse du serveur ne donne pas ${role.missing.map(k=>`<code>${esc(k)}</code>`).join(', ')}. Ces champs s'affichent vides.</div>`:'';
@@ -733,7 +739,8 @@
         <button type="button" class="action sar-back" data-sar-back>Revenir à la liste des rôles</button>
         <header class="sar-head">${identity(role,'lg')}<div><p class="sar-eyebrow">Fiche du rôle</p><h3 id="sar-title" class="sar-title" tabindex="-1">${esc(role.name)}</h3>
           <p class="sar-desc">${esc(role.description||'')}</p>
-          <div class="sar-tags">${role.enabled?chip('Actif','ok'):chip('Désactivé','bad')}${role.offered_to_brain?chip('Proposé au cerveau','ok'):chip('Pas proposé au cerveau')}${role.offered_to_subagents?chip('Proposé aux agents','ok'):chip('Pas proposé aux agents')}</div></div></header>
+          <div class="sar-tags">${role.edition_unavailable?chip('Indisponible dans cette édition','bad'):role.enabled?chip('Actif','ok'):chip('Désactivé','bad')}
+${role.offered_to_brain?chip('Proposé au cerveau','ok'):chip('Pas proposé au cerveau')}${role.offered_to_subagents?chip('Proposé aux agents','ok'):chip('Pas proposé aux agents')}</div></div></header>
         ${state}${missing}
         <div class="sar-detail-cols${models?'':' single'}">
         <div class="sar-col-a"><section class="sar-block" aria-labelledby="sar-mission"><h4 id="sar-mission">Mission</h4><p class="sar-prose">${esc(role.mission||'')}</p>

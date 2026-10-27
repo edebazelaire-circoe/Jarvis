@@ -95,6 +95,26 @@ process.stdout.write(JSON.stringify({page:host.innerHTML,errors}));""")
     assert out["errors"] == [] and "pas encore proposé au cerveau" in out["page"]
 
 
+def test_coder_is_said_unavailable_in_the_presentation_edition_and_nothing_changes_in_full(tmp_path, monkeypatch):
+    """V1.2 Slice 06 (I-001) : en presentation, la ligne et la fiche de `coder` disent « Indisponible dans cette
+    édition » avec le code du refus du hook ; aucun autre rôle ; en `full`, rien."""
+
+    monkeypatch.setenv("JARVIS_PRODUCT_EDITION", "presentation")
+    payload = roles_payload(tmp_path)
+    out = run_node(tmp_path, payload, """
+const v=M.create(host,{fetch:reply,...quiet});await v.load();const list=host.innerHTML;v.select('coder');const coder=host.innerHTML;
+v.select('research');process.stdout.write(JSON.stringify({list,coder,research:host.innerHTML,errors}));""")
+    assert out["errors"] == []
+    assert out["coder"].count("Indisponible dans cette édition") >= 2 and "role_unavailable_in_edition" in out["coder"]
+    assert "data-sar-edition-unavailable" in out["coder"] and "data-sar-edition-unavailable" not in out["research"]
+    assert "1 indisponible(s) dans cette édition" in out["list"]
+    monkeypatch.setenv("JARVIS_PRODUCT_EDITION", "full")
+    full = run_node(tmp_path, roles_payload(tmp_path), """
+const v=M.create(host,{fetch:reply,...quiet});await v.load();v.select('coder');
+process.stdout.write(JSON.stringify({page:host.innerHTML}));""")
+    assert "Indisponible dans cette édition" not in full["page"] and "indisponible(s)" not in full["page"]
+
+
 def test_accents_are_tokens_mapped_once_to_theme_variables():
     source = MODULE.read_text(encoding="utf-8")
     page = HTML.read_text(encoding="utf-8")

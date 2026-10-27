@@ -228,3 +228,26 @@ def test_the_voice_switch_without_launcher_and_with_an_unreadable_choice(tmp_pat
     assert got["restart"]["tone"] == "off" and "relancez Voice" in got["restart"]["detail"]
     assert got["unreadable"]["checked"] is False and got["unreadable"]["tone"] == "error"
     assert "rallumer" in got["unreadable"]["detail"] and "(voice_preference_unreadable)" in got["unreadable"]["detail"]
+
+
+def test_the_voice_line_of_the_main_journey_is_the_same_projection_in_plain_words(tmp_path):
+    """V1.2 Slice 06 : la ligne « Voix » de l'accueil et d'Aide et assistance (Coupée / En veille / En conversation),
+    lue sur le même `voice_lifecycle` que l'interrupteur ; sans battement, rien (pas d'état deviné)."""
+
+    got = run(tmp_path, """
+      const L=(o)=>({...S,voice_online:o.online===true,voice_lifecycle:o});
+      const line=(s,p)=>J.voiceLineOf(J.factsOf(s,'ok'),p);
+      out({sleep:line(L({preference:'sleep',state:'sleep',code:null,message:'',online:true})),
+        off:line(L({preference:'off',state:'off',code:'voice_off',message:'x'})),
+        active:line(L({preference:'sleep',state:'active',online:true})),
+        degraded:line(L({preference:'sleep',state:'degraded',code:'voice_provider_key_missing',message:'Clé absente.'})),
+        pending:line(L({preference:'sleep',state:'sleep',online:true}),true),
+        none:line(S),pendingRead:J.voiceLineOf(J.factsOf(null,'pending')),lost:J.voiceLineOf(J.factsOf(null,'lost'))})""")
+    assert got["none"] is None and got["pendingRead"] is None and got["lost"] is None
+    assert (got["sleep"]["word"], got["sleep"]["action"], got["sleep"]["on"]) == ("En veille", "Couper la voix", True)
+    assert "F9" in got["sleep"]["hint"] and "chat" in got["sleep"]["hint"]
+    assert (got["off"]["word"], got["off"]["action"], got["off"]["tone"]) == ("Coupée", "Rallumer la voix", "off")
+    assert got["active"]["word"] == "En conversation"
+    assert got["degraded"]["word"] == "Indisponible" and got["degraded"]["hint"] == "Clé absente." \
+        and got["degraded"]["code"] == "voice_provider_key_missing" and got["degraded"]["tone"] == "error"
+    assert got["pending"]["pending"] is True and got["pending"]["word"] == "Enregistrement…"

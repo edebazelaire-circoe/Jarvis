@@ -4558,6 +4558,10 @@ create button).
   présentation » → « Nouvelle présentation »; 3 « Faites écrire les scènes » → « Ouvrir le chat » (`JarvisChat.open`;
   the voice works too); 4 « Relisez, présentez, exportez » (open the card: Variantes for the scenes, « Présenter »,
   then « Enregistrer une copie dans Documents » after an export, [export.md](export.md)).
+- **Voice line** (V1.2 Slice 06, `.jvr-home-voice`): under the steps, « Voix » and its projected state (En veille /
+  Coupée / En conversation…), a plain hint (« Appuyez sur F9 pour lui parler… ») and « Couper la voix » / « Rallumer la
+  voix » (`JarvisRuntimeWheel.toggleVoice`, [voice-lifecycle.md](voice-lifecycle.md)); the focus of a home button
+  survives the rail's re-render.
 - **« Nouvelle présentation »** in the rail head (icon only in the strip and the Studio column): a title dialog, then
   `POST /api/presentation-studio/presentations {title}` — Core's default engine, none named, the same route as the
   « Présentations · moteur » card that stays the developer door (engine choice, Slidecar). One creation at a time,

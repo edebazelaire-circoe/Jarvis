@@ -147,8 +147,9 @@ def test_presentation_settings_show_four_categories_and_never_a_hidden_page(tmp_
                   "presentation")[0]
     _no_errors(step)
     r = step["results"]
-    assert r["cards"] == [["voice_audio", "Personnalisation"], ["memory_knowledge", "Mémoire & Connaissances"],
-                          ["interface_interactions", "Interface & Interactions"], ["connections", "Connexions"]]
+    # V1.2 Slice 06 : vocabulaire sans jargon, l'essentiel d'abord (docs/settings/novice-inventory.md).
+    assert r["cards"] == [["voice_audio", "Personnalisation"], ["connections", "Connexions"],
+                          ["memory_knowledge", "Mémoire"], ["interface_interactions", "Raccourcis clavier"]]
     assert r["landed"]["category"] == "voice_audio", "a hidden target opens the first shown category"
     assert not any("Avancé" in label or "Architecture" in label for label in r["landed"]["rail"]), r["landed"]
 
@@ -433,6 +434,7 @@ def test_full_edition_is_unchanged(tmp_path):
         ["key", "esc", "Escape", 150],
         ["eval", "hub", "openSettingsHub({source:'test'}),[...document.querySelectorAll('#settingsHubGrid [data-hub-category]')].length", 300],
         ["eval", "names", "[...document.querySelectorAll('#settingsHubGrid .set-hub-name')].map(n=>n.textContent)", 50],
+        ["eval", "help", "({band:document.getElementById('settingsHubHelp').hidden,tags:document.querySelectorAll('.set-hub-tag').length})", 50],
         ["eval", "close", "closeSettingsHub(),1", 400],
         ["click", "card", "#boardsButton", 500],
         ["click", "new", "#boardsNewBoard", 400],
@@ -449,6 +451,9 @@ def test_full_edition_is_unchanged(tmp_path):
     assert r["markup"] == "visible"
     assert r["tools"] == {"TRC": True, "LAB": True, "MCP": True, "PFB": True}
     assert r["hub"] == 6 and "Plugins & MCP" in r["names"] and "Avancé & Diagnostics" in r["names"]
+    assert r["names"] == ["Personnalisation", "Architecture & Agents", "Mémoire & Connaissances", "Interface & Interactions",
+                          "Plugins & MCP", "Avancé & Diagnostics"], "full: order and labels unchanged (V1.2 Slice 06)"
+    assert r["help"] == {"band": True, "tags": 0}, "full: no help band, no support tag"
     assert all(k["avail"] == "available" and k["disabled"] is None for k in r["kinds"]), r["kinds"]
     assert r["note"] is None
     assert r["rail"] is True, "an empty rail stays hidden in full"

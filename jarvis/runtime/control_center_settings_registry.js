@@ -23,22 +23,28 @@
      les libellés ne sont que de la présentation. `notice` (facultatif) : l'avis montré sous l'intro de la catégorie. */
   const CATEGORIES=freezeAll([
     /* Libellés et descriptions du hub de cartes (2026-10-23) ; les identifiants n'ont pas changé. */
-    {id:'voice_audio',label:'Personnalisation',description:'Thème, apparence, voix et comportement général.'},
+    {id:'voice_audio',label:'Personnalisation',description:'Thème, apparence, voix et comportement général.',
+      product:Object.freeze({label:'Personnalisation',description:'Voix, langue, ton des réponses et apparence.',order:10})},
     /* `agents_models` : « Architecture & Agents » (jarvis-architecture-agents-settings-editor, D01 et C2) ; deux sections,
        Architecture et Sous-agents, qui sont ses deux onglets internes (`docs/settings/architecture-agents.md`). */
     /* `page` (refonte-ui-settings, Slice 07) : la catégorie s'ouvre en page pleine (fil d'Ariane, grand titre, `lead`,
        onglets de page, sans rail), comme la page Personnalisation ; les autres gardent le shell à rail. */
     /* `surface` (presentation-edition Slice 08, `docs/settings/navigation-registry.md` § Édition produit) : `developer` =
        absente de la navigation quand l'édition cache les surfaces de développement ; ses sections en héritent.
-       `product` : libellé et description montrés à la place dans ce cas (sans jargon). */
-    {id:'agents_models',label:'Architecture & Agents',description:'Architecture des cerveaux, délégation et modèles des sous-agents.',surface:'developer',
+       `product` : libellé, description et rang (`order`) montrés à la place dans ce cas (sans jargon, l'essentiel
+       d'abord : V1.2 Slice 06, `docs/settings/novice-inventory.md`).
+       `support` (V1.2 Slice 06, `docs/settings/support-mode.md`) : une catégorie `developer` que le mode support de
+       l'édition produit montre de nouveau (`options.support`), sans le mode développeur complet. */
+    {id:'agents_models',label:'Architecture & Agents',description:'Architecture des cerveaux, délégation et modèles des sous-agents.',surface:'developer',support:true,
       page:Object.freeze({lead:'Configurez l’architecture de JARVIS et ses sous-agents spécialisés pour orchestrer chaque tâche.'})},
     {id:'memory_knowledge',label:'Mémoire & Connaissances',description:'Mémoire, rappel et bases de connaissances.',
+      product:Object.freeze({label:'Mémoire',description:'Ce que Jarvis retient de vos projets et les sources qu’il consulte.',order:30}),
       page:Object.freeze({lead:'Configurez la mémoire de JARVIS, les sources de connaissances et l’accès des agents à ces informations.'})},
-    {id:'interface_interactions',label:'Interface & Interactions',description:'Interface, modes d’interaction, entrées et sorties.'},
+    {id:'interface_interactions',label:'Interface & Interactions',description:'Interface, modes d’interaction, entrées et sorties.',
+      product:Object.freeze({label:'Raccourcis clavier',description:'Les touches qui pilotent Jarvis sans la souris.',order:40})},
     {id:'connections',label:'Plugins & MCP',description:'Extensions, outils externes et connecteurs.',
-      product:Object.freeze({label:'Connexions',description:'Comptes et services que Jarvis peut utiliser.'})},
-    {id:'advanced_diagnostics',label:'Avancé & Diagnostics',description:'Paramètres avancés, journaux et outils de diagnostic.',surface:'developer',
+      product:Object.freeze({label:'Connexions',description:'Comptes et services que Jarvis peut utiliser.',order:20})},
+    {id:'advanced_diagnostics',label:'Avancé & Diagnostics',description:'Paramètres avancés, journaux et outils de diagnostic.',surface:'developer',support:true,
       notice:'Outils d’opérateur : architecture, prompts, runtime, état constaté et essais de JARVIS. Les réglages du quotidien sont dans les autres catégories.'},
   ]);
   const CATEGORY_IDS=Object.freeze(CATEGORIES.map(c=>c.id));
@@ -143,14 +149,25 @@
      (`JarvisProductEdition`, lu sur Core) : les catégories et sections `developer` sortent de la navigation et une
      catégorie qui déclare `product` montre ce libellé. Tout autre valeur (ou rien) : les six catégories, inchangées. */
   const hidesDeveloper=options=>!!options&&options.developerSurfaces==='hidden';
+  /* Mode support (V1.2 Slice 06) : seulement dans une édition qui cache ; il rouvre les catégories `support`, jamais
+     une section `developer` d'une catégorie produit (Bare Hands, Plugins MCP) ni un outil du lanceur. */
+  const supportOn=options=>hidesDeveloper(options)&&options.support===true;
+  function categoryHidden(c,options){
+    return !!c&&hidesDeveloper(options)&&c.surface==='developer'&&!(supportOn(options)&&c.support===true);
+  }
+  /* Rang d'affichage en édition produit : `product.order`, puis les catégories rouvertes par le support, à la fin. */
+  const productRank=c=>c.product&&Number.isFinite(c.product.order)?c.product.order:1000+CATEGORY_IDS.indexOf(c.id);
   function categoriesFor(options){
     const hide=hidesDeveloper(options);
-    return CATEGORIES.filter(c=>!(hide&&c.surface==='developer'))
-      .map(c=>hide&&c.product?Object.assign({},c,{label:c.product.label,description:c.product.description}):c);
+    const shown=CATEGORIES.filter(c=>!categoryHidden(c,options))
+      .map(c=>!hide?c:Object.assign({},c,c.product?{label:c.product.label,description:c.product.description}:{},
+        c.surface==='developer'?{supportOnly:true}:{}));
+    return hide?shown.sort((a,b)=>productRank(a)-productRank(b)):shown;
   }
-  function surfaceOfSection(entry){
-    const c=category(entry.category);
-    return c&&c.surface==='developer'?'developer':entry.surface||'product';
+  /* Une section est cachée quand sa catégorie l'est, ou quand elle se déclare elle-même `developer`. */
+  function sectionHidden(entry,options){
+    if(!hidesDeveloper(options))return false;
+    return categoryHidden(category(entry.category),options)||entry.surface==='developer';
   }
 
   function createRegistry(){
@@ -205,9 +222,9 @@
      Ce que le shell dessine : pour chaque catégorie, ses sections enregistrées dans l'ordre du registre
      (`registry.sections`). Depuis la Slice 09 il n'y a plus d'onglet hérité ni de lien « encore dans ». */
   function shellNavigation(registry,options){
-    const hide=hidesDeveloper(options);
     const categories=categoriesFor(options).map(c=>({id:c.id,label:c.label,description:c.description,notice:c.notice||'',page:c.page||null,groups:groupsOf(c.id),
-      items:(registry?registry.sections(c.id):[]).filter(s=>!(hide&&surfaceOfSection(s)==='developer'))
+      supportOnly:c.supportOnly===true,
+      items:(registry?registry.sections(c.id):[]).filter(s=>!sectionHidden(s,options))
         .map(s=>({kind:'section',id:s.id,label:s.label,save:s.save,advanced:s.advanced,group:s.group,fill:!!s.fill}))}));
     return {categories};
   }
@@ -217,10 +234,9 @@
     const hit=registry?registry.resolve(target):(CATEGORY_IDS.includes(target)?{category:target,section:null}:null);
     if(!hit)return false;
     if(!hidesDeveloper(options))return true;
-    const c=category(hit.category);
-    if(c&&c.surface==='developer')return false;
+    if(categoryHidden(category(hit.category),options))return false;
     const entry=hit.section&&registry?registry.section(hit.section):null;
-    return !(entry&&surfaceOfSection(entry)==='developer');
+    return !(entry&&sectionHidden(entry,options));
   }
 
   /* Une cible (catégorie, section, alias hérité) → `{category, item}` dans `nav` (`shellNavigation`). `item` vaut
@@ -237,6 +253,7 @@
 
   const api=Object.freeze({CATEGORIES,CATEGORY_IDS,CATEGORY_GROUPS,DEFAULT_CATEGORY,LEGACY_TAB_ALIASES,ERROR_CODES,SAVE_POLICIES,APPLIES,
     category,groups:groupsOf,cycleCategory,legacyAlias,createRegistry,shellNavigation,shellTarget,categoriesFor,targetShown,SURFACES,
+    categoryHidden,sectionHidden,
     /* L'instance de la page, où les modules enregistrent leurs sections. */
     page:createRegistry()});
   root.JarvisSettingsRegistry=api;

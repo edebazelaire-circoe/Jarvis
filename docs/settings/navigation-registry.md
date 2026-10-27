@@ -209,4 +209,16 @@ Une catégorie ou une section se déclare **surface de développement** là où 
   pose sur `<html>`, confirmé par Core ([`../control-center-shell.md`](../control-center-shell.md) › *Product edition UI*).
 
 Rien n'est retiré du registre : la page enregistre toujours toutes ses sections ; seule la navigation les cache.
+
+**V1.2 Slice 06** ([novice-inventory.md](novice-inventory.md), [support-mode.md](support-mode.md)) :
+
+- `product` porte aussi `order` : en édition qui cache, `categoriesFor` trie par `product.order` (Personnalisation 10,
+  Connexions 20, Mémoire 30, Raccourcis clavier 40) ; `voice_audio`, `memory_knowledge` et `interface_interactions`
+  ont désormais leur `product` (libellés sans jargon). Sans option, ordre et libellés d'avant.
+- `support:true` (catégories `agents_models`, `advanced_diagnostics`) : `options.support === true` avec
+  `developerSurfaces === 'hidden'` les rouvre (et toutes leurs sections), marquées `supportOnly` (étiquette « Support »
+  au hub, avis en tête du shell), rangées après les catégories produit. Une section `developer` d'une catégorie
+  produit (`bare_hands`, `mcp_plugins`) reste cachée. `categoryHidden(c, options)` et `sectionHidden(entry, options)`
+  sont la seule règle ; `shellNavigation`, `targetShown` et `cycleCategory` les suivent.
+- `settingsEditionOptions()` (page) ajoute `support` : le bloc `support_mode` du battement `/api/status`.
 Régression : `tests/unit/test_product_edition_ui_js.py`, `tests/unit/test_presentation_edition_ui_browser.py`.
