@@ -48,20 +48,21 @@ puis ces notes.
   `docs/windows-packaging.md` (section *Channels*, manifeste, sonde, `verify`), `docs/voice-lifecycle.md` (tableau du
   défaut par poste), `third_party/README.md`, `docs/SECURITY.md` §17, `docs/OPERATIONS.md`.
 
-### Comment les cas sont distingués
+### Comment les cas sont distingués (après la reprise QA)
 
-`installed_engine_ready()` est vrai si et seulement si : **produit installé** (`private_runtime.package_layout()` non
-nul, c'est-à-dire marqueur `jarvis-product.json` à côté du code) **et** `openwakeword` + `onnxruntime` importables
-(sans import) **et** les trois modèles vérifiés (taille + SHA-256) dans `catalog.default_model_dir()`.
+`installed_build_ships_engine()` (anciennement `installed_engine_ready`, voir *Reprise QA*) est vrai si et seulement
+si : **produit installé** (`private_runtime.package_layout()` non nul, c'est-à-dire marqueur `jarvis-product.json` à
+côté du code) **et** manifeste du paquet avec un bloc `models.wake_word` (écrit seulement par le build interne).
+La présence des fichiers du moteur n'entre plus dans la décision : elle est dite par l'état du moteur.
 
 | Poste | Résultat | Profil vierge |
 | --- | --- | --- |
-| build interne installé | vrai | « Hey Jarvis » armé en Sleep + F9 |
-| build de production installé | faux (moteur absent) | F9 seul, « Moteur absent » si l'utilisateur l'active |
+| build interne installé | vrai | « Hey Jarvis » armé en Sleep + F9 ; moteur en panne → réglage activé, code et message dits |
+| build de production installé | faux (manifeste sans `models`) | F9 seul, « Moteur absent » si l'utilisateur l'active |
 | checkout de développement (édition `full` du poste) | **toujours faux** (pas de marqueur) | `DEFAULT_ENABLED = False` inchangé |
 
-Le critère n'est jamais le réglage d'édition : un checkout avec l'extra `wakeword` et des modèles téléchargés reste en
-F9 seul par défaut.
+Le critère n'est jamais le réglage d'édition : un checkout avec l'extra `wakeword` et des modèles vérifiés reste en
+F9 seul par défaut (prouvé par test, voir *Reprise QA*).
 
 ## Preuves
 
@@ -125,3 +126,41 @@ F9 seul par défaut.
   trois modèles (~77 Mo).
 - Le paquet interne contient un fichier vide `scipy-1.18.1-cp314-cp314-win_amd64.whl` à la racine de `site-packages` :
   il vient de la roue amont de scipy elle-même (suivi par l'empreinte, sans effet).
+
+## Reprise QA (`qa/qa-report-05b.md`, HEAD `36c5fea1`)
+
+Commit `2512f7c2`. Aucun changement de packaging : pas de rebuild.
+
+- **MA1 corrigé** : la condition d'armement d'un profil vierge devient `wake_word_install.installed_build_ships_engine()`
+  : produit installé (marqueur) **et** manifeste du paquet déclarant `models.wake_word`. Elle ne lit plus les fichiers
+  du moteur. Un modèle manquant ou altéré, ou un paquet Python absent, à n'importe quel démarrage suivant : le réglage
+  reste activé (`openwakeword`) ; `voice_lifecycle.wake_engine` rend `configured: true, available: false` et le code
+  stable (`wake_model_missing`, `wake_model_mismatch`, `wake_package_missing`) avec son message (« … seul F9 réveille
+  JARVIS ») ; la page Mot d'éveil affiche « Moteur absent » (rendu inchangé, `test_an_enabled_word_without_its_engine_says_it_does_not_listen`
+  rejoué dans Chrome) ; la ligne « Voix » de la préparation ajoute ce message et ce code ; le mot vocal n'est pas armé,
+  F9 l'est. Plus jamais « Aucun mot de réveil vocal n'est activé » dans ce cas. `engine_modules_present` (devenu
+  inutile) est retiré. `docs/voice-lifecycle.md` › *Wake word engine* réécrit en conséquence.
+  Test : `test_a_broken_engine_stays_enabled_and_says_why_it_does_not_listen[missing|altered|package]` (vrai
+  `read_states` sur un paquet simulé, puis `project` et `product_readiness._voice_item`), avec un appel non mis en
+  cache, c'est-à-dire un « nouveau processus ».
+- **m2 corrigé** : `test_the_command_line_builds_production_unless_internal_is_asked[build|lock]` (appel de `main`
+  sans `--channel` → `production`) ; `test_without_the_product_marker_engine_and_verified_models_never_arm_the_default`
+  (paquet sans marqueur, paquet Python « présent », trois modèles vérifiés → jamais armé, profil vierge désactivé) et
+  son pendant `test_the_same_package_with_its_marker_arms_the_default`.
+  **Mutations rejouées** (fichiers restaurés par `git checkout` après chacune) sur les trois fichiers de tests de la
+  Slice : M4 (`build --channel` par défaut `internal`) → 1 échec, **tuée** ; M7a (retrait de `if layout is None:
+  return False`) → 2 échecs, **tuée** ; M7b (armement par les fichiers du moteur au lieu du marqueur) → 4 échecs,
+  **tuée** ; retour de MA1 (armement conditionné à `package_installed()`) → 1 échec, **tuée**.
+- **Restes acceptés (non corrigés, consignés)** :
+  - **m1** : le contrôle sur disque de `channel_problems` ne voit que `site-packages/openwakeword|onnxruntime`
+    (+ `dist-info`) et `models/` ; un composant renommé avec des manifestes réécrits de façon cohérente passe `verify`.
+    Non exploitable par accident (le build exige une entrée de politique par roue, `*.onnx` ignoré par Git). Piste :
+    rechercher les `*.onnx`/`*.tflite` hors `onnxruntime/datasets`.
+  - **m3** : `release_info.py` identifie un build interne (nom `-internal-`, `production_blockers`,
+    `channel_warning`) sans refuser de le publier ; aucune étape de publication n'existe et la CI construit le canal
+    par défaut (production). Une future étape de publication devra lire `product.channel`.
+  - **m4** : une variante `onnxruntime_directml-*.dist-info` seule n'est pas attrapée par le motif ; sans effet réel
+    (ces roues installent `onnxruntime/`, attrapé).
+- Tests : `test_wake_word_installed_default.py` (15), `test_windows_packaging.py`, `test_release_tooling.py` et
+  16 fichiers voisins (wake word, voice lifecycle, readiness, private runtime, product setup, openwakeword engine) :
+  849 passés, 2 ignorés (essais live sans modèle ni clip).
