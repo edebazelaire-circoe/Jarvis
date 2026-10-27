@@ -412,3 +412,7 @@ payant ; aucune migration ; aucun redémarrage requis.
 - Seconde reprise (`f6e397e4`, `82779e18`) : X1, X2, x3, x4 et x6 (secrets scellés DPAPI et coffre MCP donnés au masqueur, en mémoire seulement) corrigés ; 6/6 mutations tuées ; porte `release` verte au commit final. Vérification de l'agent 0 : 78 tests (paquet de support, installeur, outils de release, masquage) verts, sonde `probe_m2.py` du relecteur « masked » sur les quatre formes.
 - Restes : paquet non reconstruit depuis `63697cfa` (le prochain build, S11, embarquera les corrections) ; CI GitHub jamais exécutée (A12, push réservé au Human) ; I-010 points 11-20.
 - Décision : **APPROUVÉE**.
+
+## 2026-10-27 — Slice 11 rattachée à l'acceptation de la V1.2 (agent 0)
+- La tâche `jarvis-presentation-edition-v1-2` amende cette V1 ; sa branche contient toute la V1 (fusion `c0dd317d` après l'approbation de la S10). Une V1 seule ne sera pas distribuée.
+- Décision : l'essai final Windows et l'acceptation Human de cette Slice 11 sont menés **une seule fois**, sur le candidat de la V1.2 (Slice 09 de la V1.2), qui est un sur-ensemble. Les preuves et le dossier d'acceptation vivent dans `tasks/jarvis-presentation-edition-v1-2/` ; les checks HV-* de la V1 y sont repris. Les deux branches seront fusionnées ensemble dans `main` sur ordre du Human.
