@@ -67,7 +67,7 @@ lancé depuis `pev12b`, Windows 11, 2026-10-27.
   152 fichiers) : 3 463 passés, seuls échecs = 6 de `test_control_center_mcp_api.py` et
   `test_app.py::test_the_control_center_receives_a_tools_gateway_target_built_from_core_settings`, tous dans
   `tests/known_failures.json`. Relance des 37 fichiers `test_control_center*` après le correctif d'arrêt : mêmes 6 connus.
-- **Essai réel en bac à sable avec le lanceur produit** (archive du commit sous `%TEMP%12s05`, marqueur
+- **Essai réel en bac à sable avec le lanceur produit** (archive du commit sous `%TEMP%\v12s05`, marqueur
   `jarvis-product.json` posé, `LOCALAPPDATA` et racines de données/runtime/export dans le bac, ports 48653/48654,
   visualiseur coupé, navigateur non ouvert, aucune clé vocale) :
   1. profil vierge : Core et Control Center démarrés, Voice **tenue** `voice_provider_key_missing` (`launcher.json`),
@@ -79,8 +79,8 @@ lancé depuis `pev12b`, Windows 11, 2026-10-27.
   5. `python -m jarvis voice` seul avec `off` : code 0, « Voice ne démarre pas », trace
      `voice.lifecycle.start_refused_off`.
   Base `8e4e7141` dans le même bac : `child_stop_timeout ui` à chaque « Quitter » (le trou corrigé). Preuves copiées
-  au scratchpad de la session 448345f0 : `scratchpad12s05\evidence\` (résultat, `launcher.log`, trace filtrée,
-  journal de la base) et `scratchpad12s05\sandbox-dbs\` (copies des bases jetables avant suppression du bac).
+  au scratchpad de la session 448345f0 : `scratchpad\v12s05\evidence\` (résultat, `launcher.log`, trace filtrée,
+  journal de la base) et `scratchpad\v12s05\sandbox-dbs\` (copies des bases jetables avant suppression du bac).
   Aucun processus du bac ne reste.
 
 ## Checks Human proposés
