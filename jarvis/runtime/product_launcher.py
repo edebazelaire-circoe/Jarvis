@@ -199,6 +199,41 @@ class Role:
     last_exit: int | None = None
 
 
+def own_process_ref() -> str:
+    """`pid:heure de création` du lanceur lui-même ; "" si l'identité est illisible (les lecteurs retombent sur le PID)."""
+
+    from jarvis.adapters import process_tree
+
+    try:
+        return process_tree.make_process_ref(os.getpid())
+    except OSError:
+        return ""  # intentional: readers fall back to the pid alone (the pre-S10 behaviour, fails safe)
+
+
+def launcher_alive(state: object, *, pid_alive: Callable[[int], bool],
+                   ref_alive: Callable[[str], bool] | None = None) -> bool:
+    """Vrai si l'état publié (`launcher.json`) désigne un lanceur VIVANT (I-009 point 2).
+
+    Avec `process_ref`, le PID doit exister avec la même heure de création : un PID réemployé après un plantage ne
+    compte plus. Un état écrit avant la Slice 10 (sans `process_ref`) ou une référence illisible retombe sur le seul
+    PID : refuser à tort (« JARVIS est ouvert ») reste le défaut sûr, jamais l'inverse.
+    """
+
+    if not isinstance(state, Mapping):
+        return False
+    pid = state.get("pid")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    ref = state.get("process_ref")
+    if isinstance(ref, str) and ref:
+        from jarvis.adapters import process_tree
+
+        parsed = process_tree.parse_process_ref(ref)
+        if parsed is not None and parsed[0] == pid:
+            return (ref_alive or process_tree.ref_alive)(ref)
+    return pid_alive(pid)
+
+
 def owned_tree_factory() -> Any | None:
     """Un Job Object `KILL_ON_JOB_CLOSE` par enfant (`owned_process_tree.OwnedProcessTree`), `None` hors Windows."""
 
@@ -280,12 +315,15 @@ class Launcher:
         self.stop_path = plan.runtime_root / STOP_FILE
         self.state_path = plan.runtime_root / STATE_FILE
         self.stopping = False
+        self.process_ref = own_process_ref()
 
     # ------------------------------------------------------------------ état publié
 
     def write_state(self) -> None:
-        state = {"schema": STATE_SCHEMA, "schema_version": 1, "pid": os.getpid(), "started_at": utc_now(),
-                 "ui_url": self.plan.ui_url,
+        # `process_ref` (`pid:heure de création`, I-009 point 2) : un lecteur ne prend jamais un PID réemployé après un
+        # plantage du lanceur pour un JARVIS ouvert (`launcher_alive`).
+        state = {"schema": STATE_SCHEMA, "schema_version": 1, "pid": os.getpid(), "process_ref": self.process_ref,
+                 "started_at": utc_now(), "ui_url": self.plan.ui_url,
                  "roles": {role.name: {"pid": getattr(role.process, "pid", None), "abandoned": role.abandoned,
                                        "last_exit": role.last_exit} for role in self.plan.roles}}
         temp = self.state_path.with_name(STATE_FILE + ".tmp")

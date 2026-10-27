@@ -469,3 +469,17 @@ def test_render_is_not_ready_when_the_private_node_is_missing():
     assert render.state is ReadinessState.ACTION_NEEDED and render.detail == "node: private_runtime_missing"
     assert "Relancez l'installation de JARVIS" in render.summary
     assert by_id(facts())["render"].state is ReadinessState.READY
+
+
+async def test_a_reused_launcher_pid_hides_quit(tmp_path):
+    """I-009 point 2 : `launcher.json` d'un lanceur planté dont le PID est réemployé ⇒ pas de « Quitter JARVIS »."""
+
+    (tmp_path / "runtime").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "runtime" / "launcher.json").write_text(json.dumps({"pid": 4242, "process_ref": "4242:9"}),
+                                                        encoding="utf-8")
+    reused = service(tmp_path, FakeCore(), pid_alive=lambda pid: True, ref_alive=lambda ref: False)
+    assert reused.launcher() == {"managed": False}
+    with pytest.raises(ReadinessActionError):
+        reused.request_quit()
+    same = service(tmp_path, FakeCore(), pid_alive=lambda pid: False, ref_alive=lambda ref: ref == "4242:9")
+    assert same.launcher()["managed"] is True

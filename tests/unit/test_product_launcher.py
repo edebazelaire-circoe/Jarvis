@@ -7,6 +7,7 @@ page, relances bornées, arrêt propre sans orphelin, refus visibles et durables
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -336,3 +337,32 @@ def test_run_until_stop_requested_returns_on_the_request_and_cancels_the_main_wa
 
     with pytest.raises(RuntimeError, match="core died"):
         asyncio.run(run_until_stop_requested(fails(), None))
+
+
+# ---------------------------------------------------------------------- identité publiée (S10, I-009 point 2)
+
+
+def test_the_published_state_carries_the_launcher_identity_with_its_creation_time(tmp_path):
+    from jarvis.adapters import process_tree
+
+    instance, _spawned, _notices, _opened = launcher(tmp_path, stop_after=None)
+    instance.write_state()
+    state = json.loads((tmp_path / "runtime" / L.STATE_FILE).read_text(encoding="utf-8"))
+    assert state["pid"] == os.getpid()
+    assert state["process_ref"] == process_tree.make_process_ref(os.getpid()) != ""
+    assert L.launcher_alive(state, pid_alive=lambda pid: False) is True  # vérifié par la vraie heure de création
+
+
+def test_a_reused_pid_is_never_taken_for_a_running_launcher(tmp_path):
+    from jarvis.adapters import process_tree
+
+    mine = process_tree.make_process_ref(os.getpid())
+    pid, started = process_tree.parse_process_ref(mine)
+    reused = {"pid": pid, "process_ref": f"{pid}:{int(started) - 1}"}  # même PID, autre processus (heure différente)
+    assert L.launcher_alive(reused, pid_alive=lambda _pid: True) is False
+    # État écrit avant la Slice 10, ou référence illisible / d'un autre PID : le PID seul fait foi (défaut sûr).
+    assert L.launcher_alive({"pid": 77}, pid_alive=lambda p: p == 77) is True
+    assert L.launcher_alive({"pid": 77, "process_ref": "garbage"}, pid_alive=lambda p: p == 77) is True
+    assert L.launcher_alive({"pid": 77, "process_ref": "78:123"}, pid_alive=lambda p: p == 77) is True
+    for bad in (None, [], {"pid": "77"}, {"pid": True}, {"pid": 0}, {}):
+        assert L.launcher_alive(bad, pid_alive=lambda _pid: True) is False

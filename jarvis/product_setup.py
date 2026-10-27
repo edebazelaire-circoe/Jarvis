@@ -314,8 +314,12 @@ def _version(manifest: Mapping[str, Any]) -> str:
     return str((manifest.get("product") or {}).get("version") or "0")
 
 
-def launcher_running(home: Path | None, *, alive: Callable[[int], bool]) -> bool:
+def launcher_running(home: Path | None, *, alive: Callable[[int], bool],
+                     ref_alive: Callable[[str], bool] | None = None) -> bool:
     """Vrai si un lanceur vivant est publié dans la maison (`runtime\\launcher.json`)."""
+
+    # PID et heure de création comparés quand l'état les porte (`product_launcher.launcher_alive`, I-009 point 2).
+    from jarvis.runtime.product_launcher import launcher_alive
 
     if home is None:
         return False
@@ -323,8 +327,7 @@ def launcher_running(home: Path | None, *, alive: Callable[[int], bool]) -> bool
         state = json.loads((home / "runtime" / "launcher.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    pid = state.get("pid") if isinstance(state, dict) else None
-    return isinstance(pid, int) and alive(pid)
+    return launcher_alive(state, pid_alive=alive, ref_alive=ref_alive)
 
 
 def pid_alive(pid: int) -> bool:
@@ -530,17 +533,46 @@ def rename_with_retries(source: Path, destination: Path) -> bool:
 # ---------------------------------------------------------------------- installation
 
 
+def probe_swappable(target: Path, *, rename: Callable[[Path, Path], None] = os.replace) -> None:
+    """Sonde du remplacement (I-009 point 1) : renomme le programme installé puis le remet, AVANT la vérification du
+    paquet (plusieurs minutes). Un fichier tenu par autre chose que JARVIS (antivirus, éditeur) est dit en secondes,
+    et non après la vérification. L'état d'opération nomme le dossier mis de côté pendant la sonde : si la remise en
+    place échouait, l'installation suivante le reconnaît comme ancien programme et l'efface après son succès."""
+
+    pending = read_state(target)
+    aside = free_sibling(target, PREVIOUS_SUFFIX)
+    write_state(target, "probe", entries=top_entries(target) | set((pending or {}).get("entries") or ()),
+                previous=str(aside))
+    try:
+        rename(target, aside)
+    except OSError as exc:
+        restore_state(target, pending)
+        raise SetupError("jarvis_running", "Des fichiers de JARVIS sont encore utilisés (JARVIS, un antivirus ou un "
+                         "autre programme) : fermez-le, puis relancez l'installation.",
+                         f"{type(exc).__name__}: {exc}") from exc
+    if not _retry(lambda: rename(aside, target), done=lambda: target.exists() and not aside.exists()):
+        raise SetupError("rollback_failed", "JARVIS n'a pas pu être remis en place après une vérification. Redémarrez "
+                         "Windows, puis relancez l'installation : elle réparera JARVIS.",
+                         f"programme mis de côté : {aside}", rolled_back=False, had_previous=True,
+                         previous=str(aside))
+    restore_state(target, pending)
+
+
 def install(source: Path, targets: Targets, *, move: bool, progress: Progress,
             shortcuts: Shortcuts | None = None, alive: Callable[[int], bool] = pid_alive,
+            ref_alive: Callable[[str], bool] | None = None,
             verify: Callable[[PR.PackageLayout], tuple[dict | None, list[str]]] = PR.verify_package,
-            verify_copy: Callable[[Path, Path], list[str]] = copy_matches) -> dict[str, Any]:
+            verify_copy: Callable[[Path, Path], list[str]] = copy_matches,
+            rename: Callable[[Path, Path], None] = os.replace) -> dict[str, Any]:
     """Installe (ou met à jour, ou répare, ou reprend une opération inachevée) le paquet `source` dans
     `targets.target`. Voir l'en-tête du module."""
 
     check_target(targets)
     # Avant la vérification du paquet (plusieurs minutes) : un JARVIS ouvert est dit tout de suite.
-    if launcher_running(targets.home, alive=alive):
+    if launcher_running(targets.home, alive=alive, ref_alive=ref_alive):
         raise SetupError("jarvis_running", "JARVIS est ouvert : quittez-le, puis relancez l'installation.")
+    if folder_kind(targets.target) == "jarvis":
+        probe_swappable(targets.target, rename=rename)
     source = Path(source).resolve()
     progress.step("verify_source", "Vérification de chaque fichier du paquet (quelques minutes)…")
     manifest, problems = verify(PR.PackageLayout(source))
@@ -770,6 +802,7 @@ def deferred_removal_script(target: Path, *, registry: Registry, pid: int, image
 
 
 def uninstall(targets: Targets, *, progress: Progress, alive: Callable[[int], bool] = pid_alive,
+              ref_alive: Callable[[str], bool] | None = None,
               running_from: Path | None = None, spawn: Callable[..., Any] = subprocess.Popen,
               script_dir: Path | None = None, pid: int | None = None, image: str | None = None,
               deferred_wait_s: int = DEFERRED_WAIT_S, deferred_attempts: int = DEFERRED_ATTEMPTS) -> dict[str, Any]:
@@ -779,7 +812,7 @@ def uninstall(targets: Targets, *, progress: Progress, alive: Callable[[int], bo
 
     check_target(targets)
     target = targets.target
-    if launcher_running(targets.home, alive=alive):
+    if launcher_running(targets.home, alive=alive, ref_alive=ref_alive):
         raise SetupError("jarvis_running", "JARVIS est ouvert : quittez-le, puis relancez la désinstallation.")
     kind = folder_kind(target)
     if kind == "foreign":

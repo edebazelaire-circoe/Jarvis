@@ -31,6 +31,7 @@ import shutil
 import subprocess
 from typing import Any
 
+from jarvis.domain.diagnostic_redaction import DiagnosticRedactor
 from jarvis.domain.product_readiness import BrainFacts
 
 CLI_ENV = "JARVIS_CLAUDE_CLI"
@@ -121,7 +122,10 @@ def probe(cli: str | None, *, run: Runner = _run, sign_in_running: bool = False)
                           sign_in_running=sign_in_running)
     logged_in, method = parse_auth_status(done.stdout or "")
     if logged_in is None:
-        tail = ((done.stderr or done.stdout or "").strip().splitlines() or [""])[-1][:200]
+        # I-009 point 5 : la dernière ligne de la CLI va au rapport et au journal ; masquée (secrets, adresses,
+        # chemins personnels) avant d'être bornée.
+        last = ((done.stderr or done.stdout or "").strip().splitlines() or [""])[-1]
+        tail = DiagnosticRedactor(os.environ).text(last)[:200]
         return BrainFacts(found=True, version=version, error=f"claude_auth_status_unreadable: exit {done.returncode} {tail}".strip(),
                           sign_in_running=sign_in_running)
     return BrainFacts(found=True, version=version, logged_in=logged_in, auth_method=method,

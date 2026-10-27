@@ -222,11 +222,14 @@ def test_the_deferred_removal_waits_for_the_real_end_of_the_process_then_removes
 
     t = targets(tmp_path / "with space é")
     S.install(make_package(tmp_path / "src"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
-    holder = hold_file(t.target / "runtime" / "python" / "pythonw.exe", 5)
+    # S10 (intermittent sous charge) : la boîte reste ouverte 8 s et l'attente se compte depuis sa prise, pas depuis la
+    # fin de `uninstall`, qui peut durer plus d'une seconde sur une machine chargée.
+    holder = hold_file(t.target / "runtime" / "python" / "pythonw.exe", 8)
+    held_at = time.monotonic()
     try:
         result = S.uninstall(t, progress=quiet(), running_from=t.target / "runtime" / "python",
                              script_dir=tmp_path / "tmp", pid=holder.pid, image=Path(sys.executable).name)
-        time.sleep(3.5)
+        time.sleep(max(0.0, 3.5 - (time.monotonic() - held_at)))
         assert holder.poll() is None
         # Le processus vit encore : rien n'est effacé, rien n'est retiré.
         assert (t.target / PR.RUNTIME_MANIFEST).exists() and t.registry.read() is not None
@@ -480,3 +483,63 @@ def test_progress_never_breaks_the_installation_when_its_file_cannot_be_written(
                    str(tmp_path / "hive.json"), "--progress", str(blocked), "--result", str(tmp_path / "out" / "result.json")],
                   environ={"LOCALAPPDATA": str(tmp_path / "Local")})
     assert code == 0 and json.loads((tmp_path / "out" / "result.json").read_text(encoding="utf-8"))["ok"] is True
+
+
+def test_a_reused_launcher_pid_does_not_block_the_installer(tmp_path):
+    """I-009 point 2 : après un plantage du lanceur, son PID réemployé par un autre processus ne vaut plus « ouvert »."""
+
+    t = targets(tmp_path)
+    (t.home / "runtime").mkdir(parents=True)
+    state = t.home / "runtime" / "launcher.json"
+    state.write_text(json.dumps({"pid": 77, "process_ref": "77:1000"}), encoding="utf-8")
+    result = S.install(make_package(tmp_path / "src"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts(),
+                       alive=lambda pid: True, ref_alive=lambda ref: False)
+    assert result["ok"] and result["mode"] == "install"
+    with pytest.raises(S.SetupError) as running:
+        S.uninstall(t, progress=quiet(), alive=lambda pid: True, ref_alive=lambda ref: ref == "77:1000")
+    assert running.value.code == "jarvis_running"
+
+
+def test_a_locked_program_is_refused_before_the_package_verification(tmp_path):
+    """I-009 point 1 : un fichier tenu par un autre programme est dit en secondes, avant la longue vérification."""
+
+    t = targets(tmp_path)
+    S.install(make_package(tmp_path / "v1"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
+    verified = []
+
+    def locked(source, destination):
+        raise PermissionError(32, "Le processus ne peut pas accéder au fichier", str(source))
+
+    with pytest.raises(S.SetupError) as refused:
+        S.install(make_package(tmp_path / "v2", "0.3.0"), t, move=False, progress=quiet(),
+                  shortcuts=RecordingShortcuts(), rename=locked,
+                  verify=lambda layout: verified.append(layout) or (None, ["never"]))
+    assert refused.value.code == "jarvis_running" and "antivirus" in str(refused.value)
+    assert verified == []  # refusé AVANT la vérification du paquet
+    assert sorted(p.name for p in t.target.parent.iterdir()) == ["Jarvis"]  # rien de mis de côté, aucun état
+    assert PR.verify_package(PR.PackageLayout(t.target))[1] == []
+
+
+def test_a_probe_that_cannot_put_the_program_back_is_resumed_by_the_next_install(tmp_path, monkeypatch):
+    t = targets(tmp_path)
+    S.install(make_package(tmp_path / "v1"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
+    calls = []
+
+    def sticky(source, destination):
+        calls.append((source.name, destination.name))
+        if len(calls) > 1:
+            raise PermissionError(5, "Accès refusé", str(source))  # la remise en place échoue à chaque reprise
+        os.replace(source, destination)
+
+    monkeypatch.setattr(S, "RETRY_DELAYS_S", (0.0,))
+    with pytest.raises(S.SetupError) as refused:
+        S.install(make_package(tmp_path / "v2", "0.3.0"), t, move=False, progress=quiet(),
+                  shortcuts=RecordingShortcuts(), rename=sticky)
+    monkeypatch.undo()
+    assert refused.value.code == "rollback_failed" and "Redémarrez Windows" in str(refused.value)
+    aside = Path(refused.value.extra["previous"])
+    assert not t.target.exists() and aside.is_dir() and aside.name.startswith("Jarvis" + S.PREVIOUS_SUFFIX)
+    assert S.read_state(t.target)["previous"] == str(aside)
+    result = S.install(make_package(tmp_path / "v3", "0.3.0"), t, move=False, progress=quiet(),
+                       shortcuts=RecordingShortcuts())
+    assert result["ok"] and sorted(p.name for p in t.target.parent.iterdir()) == ["Jarvis"]

@@ -53,6 +53,7 @@ from jarvis.private_runtime import PackageLayout, package_layout, verify_package
 from jarvis.protocol.client import ForwardRefused
 from jarvis.runtime import brain_cli
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.runtime.product_launcher import launcher_alive
 
 ONBOARDING_FILE = "product-onboarding.json"
 ONBOARDING_SCHEMA = "jarvis.product-onboarding"
@@ -125,7 +126,8 @@ class ProductReadinessService:
                  disk_free: Callable[[Path], int] | None = None,
                  verify: Callable[[PackageLayout], tuple[dict | None, list[str]]] = verify_package,
                  monotonic: Callable[[], float] = time.monotonic,
-                 pid_alive: Callable[[int], bool] | None = None) -> None:
+                 pid_alive: Callable[[int], bool] | None = None,
+                 ref_alive: Callable[[str], bool] | None = None) -> None:
         self._transport = transport
         self._runtime_root = Path(runtime_root)
         self._journal = journal
@@ -142,6 +144,7 @@ class ProductReadinessService:
         self._verify = verify
         self._monotonic = monotonic
         self._pid_alive = pid_alive or _pid_alive
+        self._ref_alive = ref_alive or _ref_alive
         self._brain_cache: tuple[float, BrainFacts] | None = None
         self._audio_cache: tuple[float, Probe] | None = None
         self._sign_in: brain_cli.SignIn | None = None
@@ -380,9 +383,8 @@ class ProductReadinessService:
             state = json.loads((self._runtime_root / LAUNCHER_STATE_FILE).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {"managed": False}
-        pid = state.get("pid") if isinstance(state, dict) else None
-        if not isinstance(pid, int) or not self._pid_alive(pid):
-            return {"managed": False}
+        if not launcher_alive(state, pid_alive=self._pid_alive, ref_alive=self._ref_alive):
+            return {"managed": False}  # PID mort ou réemployé (I-009 point 2) : « Quitter JARVIS » n'a pas de sens
         return {"managed": True, "started_at": state.get("started_at")}
 
     def request_quit(self) -> dict[str, Any]:
@@ -588,6 +590,15 @@ def _pid_alive(pid: int) -> bool:
     try:
         return bool(process_tree.pid_exists(pid))
     except Exception:  # noqa: BLE001 - argued: an unreadable pid means no managed launcher; "Quitter" stays hidden
+        return False
+
+
+def _ref_alive(ref: str) -> bool:
+    from jarvis.adapters import process_tree
+
+    try:
+        return bool(process_tree.ref_alive(ref))
+    except Exception:  # noqa: BLE001 - argued: an unreadable identity means no managed launcher; "Quitter" stays hidden
         return False
 
 
