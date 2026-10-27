@@ -208,16 +208,17 @@ act. There is no telemetry backend (out of scope).
 
 ## Release gates
 
-Status of the candidate built from `b43e0a27` on 2026-10-27 (package `c5154e4e…`, installer
-`233504e2…`). « Automated » means run on this Windows 11 workstation, not on a clean machine.
+Status of the candidate built from a clean clone of `fa89e894` on 2026-10-27 (package `1621617d…`, installer
+`8c18977d…`, artifact `jarvis-0.2.0-fa89e894059d-8c18977dae8e`; later commits of the Slice change no build
+input). « Automated » means run on this Windows 11 workstation, not on a clean machine.
 
 | Id | Gate | Kind | Status |
 | --- | --- | --- | --- |
 | A1 | static release verifier | automated | green |
 | A2 | test gate, `release` suite (product, packaging, installer, edition, confinement, export, migrations, support) | automated | green |
-| A3 | test gate, `unit` suite (all non-browser tests) | automated | see the Slice 10 LOG entry for the counts of the run |
-| A4 | test gate, `browser` suite | automated | see the Slice 10 LOG entry |
-| A5 | package built from a clean clone of a known commit, private runtimes, probe with PATH reduced to Windows | automated | green (`package_sha256` `c5154e4e…`); reproducibility across two builds proven in Slice 06 on one machine only |
+| A3 | test gate, `unit` suite (all non-browser tests) | automated | green: 845 files in 19 parts, 21 998 passed, 10 listed failures, 2 intermittents now listed |
+| A4 | test gate, `browser` suite | automated | **partial**: 19 of 185 files run locally (product, edition, launcher, export, rail, one shard of 7, and the files of the listed failures, which fail exactly as listed); the full suite is for the CI shards |
+| A5 | package built from a clean clone of a known commit, private runtimes, probe with PATH reduced to Windows | automated | green (`package_sha256` `1621617d…`); reproducibility across two builds proven in Slice 06 on one machine only |
 | A6 | installer built from the verified package | automated | green (unsigned) |
 | A7 | installed-product smoke, 12 steps (above) | automated | green |
 | A8 | update over a seeded older profile, migrations with backups, rollback boundary | automated | green (pytest and package smoke) |
