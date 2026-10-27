@@ -376,3 +376,22 @@ def test_the_human_validation_sheet_matches_what_the_screen_really_says():
         assert said in text, said
     criteria = (folder / "SLICE.md").read_text(encoding="utf-8").split("## Acceptance Criteria")[1].split("##")[0]
     assert "en écoute" in criteria and "Jamais « en écoute »" in criteria
+
+
+# ------------------------------------------------------------ moteur absent (Slice 05 presentation-edition-v1-2)
+
+
+def test_an_enabled_word_whose_engine_is_missing_is_never_shown_as_enabled():
+    """`engine` vient de `voice_lifecycle.wake_engine` : moteur absent, la page dit qu'il n'écoute pas et pourquoi."""
+
+    missing = {**state_of(enabled=True, provider="openwakeword"),
+               "engine": {"configured": True, "available": False, "code": "wake_package_missing",
+                          "message": "Le moteur du mot de réveil (openWakeWord) n'est pas installé : seul F9 réveille JARVIS."}}
+    present = {**missing, "engine": {"configured": True, "available": True, "code": None}}
+    out = run_js("out={missing:L.describe(D.missing),present:L.describe(D.present),off:L.describe(D.off)}",
+                 missing=missing, present=present, off={**missing, "enabled": False})
+    assert out["missing"]["kind"] == "engine_missing" and out["missing"]["tone"] == "bad"
+    assert out["missing"]["pill"] == "Moteur absent" and out["missing"]["code"] == "wake_package_missing"
+    assert "n’écoute pas" in out["missing"]["title"] and "wake_package_missing" in out["missing"]["detail"]
+    assert "touche manuelle" in out["missing"]["detail"]
+    assert out["present"]["kind"] == "enabled" and out["off"]["kind"] == "disabled"

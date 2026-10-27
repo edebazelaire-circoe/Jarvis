@@ -1167,6 +1167,23 @@ async def _run_voice_v2() -> int:
     signals.offline()
     switch_bus = VoiceSwitchBus(settings.runtime_root)
     overrides = _control_settings(settings.runtime_root)
+    # Cycle de vie produit (docs/voice-lifecycle.md) : « voix coupée » est un choix persisté de l'utilisateur. Voice
+    # ne démarre pas, n'ouvre ni micro ni écouteur de réveil, et sort proprement (code 0) ; le lanceur ne la relance pas.
+    from jarvis.runtime import voice_lifecycle
+    preference, problem = voice_lifecycle.inspect_preference(overrides)
+    if not voice_lifecycle.voice_allowed(preference):
+        from jarvis.runtime.journal import RuntimeJournal
+        unreadable = preference == voice_lifecycle.PREFERENCE_UNREADABLE
+        RuntimeJournal(settings.runtime_root).emit(
+            "voice.lifecycle.start_refused_off",
+            "Choix de voix illisible : Voice ne démarre pas" if unreadable
+            else "Voix coupée par l'utilisateur : Voice ne démarre pas",
+            level="warning" if unreadable else "info",
+            data={"code": voice_lifecycle.VOICE_PREFERENCE_UNREADABLE if unreadable else voice_lifecycle.VOICE_OFF,
+                  "problem": problem})
+        print("Choix de voix illisible : Voice ne démarre pas (rallumez la voix dans JARVIS)." if unreadable
+              else "Voix coupée dans JARVIS (Réglages ou roue JARVIS) : Voice ne démarre pas.")
+        return 0
     from jarvis.runtime.prompt_overrides import prompt_override_document
     prompt_overrides = prompt_override_document(overrides)
     # L'architecture choisie dans le Control Center passe devant
@@ -1646,7 +1663,14 @@ async def _run_voice_v2() -> int:
         print(f"{banner}. {wake_hint} pour activer, puis à nouveau pour envoyer.")
     conversation_events.start()
     try:
-        await voice.run()
+        # Rend la main aussi à la demande d'arrêt du lanceur (« Quitter JARVIS ») ou quand l'utilisateur coupe la voix :
+        # le `finally` ferme alors la séance et le micro (`voice.close()`), au lieu d'un `terminate` (Slice 05 v1-2).
+        from jarvis.runtime.stop_request import stop_request_path
+        released = await voice_lifecycle.run_until_released(voice.run(), stop_file=stop_request_path(),
+                                                            runtime_root=settings.runtime_root)
+        if released is not None:
+            journal.emit("voice.lifecycle.released", "Voice s'arrête proprement",
+                         data={"reason": released, "code": released})
     finally:
         timeout_task.cancel(); await asyncio.gather(timeout_task, return_exceptions=True)
         try:

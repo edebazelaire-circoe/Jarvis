@@ -74,7 +74,7 @@ from jarvis.core.interaction_mode import supported_modes
 from jarvis.domain.interaction_mode import (
     DEFAULT_INTERACTION_MODE, INTERACTION_MODE_DERIVED, INTERACTION_MODE_DERIVED_MESSAGE, InteractionMode,
 )
-from jarvis.runtime import wake_word_settings
+from jarvis.runtime import voice_lifecycle, wake_word_settings
 from jarvis.runtime import personalization_profiles
 from jarvis.runtime.interaction_mode_view import CoreInteractionModeView
 from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
@@ -226,6 +226,10 @@ from jarvis.v2_config import (
 
 
 VOICE_HEARTBEAT_MAX_AGE_S = 5.0
+#: Fraîcheur des faits coûteux du cycle de vie de la voix (clé du fournisseur, moteur du mot de réveil).
+VOICE_FACTS_TTL_S = 15.0
+#: Attente des requêtes encore ouvertes quand le Control Center s'arrête (aiohttp : 60 s par défaut).
+HTTP_SHUTDOWN_TIMEOUT_S = 3.0
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 #: Préfixe des routes de lecture des Conversation Events (Slice 04).
 CONVERSATIONS_ROUTE = "/api/conversations"
@@ -1385,6 +1389,10 @@ class ControlCenter:
         # configuré » et l'écran affiche un repli nommé, jamais comme la vérité.
         self.interaction_mode_view = interaction_mode_view or CoreInteractionModeView(None, journal=self.journal)
         self._wake_word_unreadable_reported = False
+        #: Faits coûteux du cycle de vie de la voix (clé du fournisseur, moteur du mot de réveil : empreintes SHA-256
+        #: des modèles) : relus au plus toutes les `VOICE_FACTS_TTL_S` secondes, ou dès que leurs réglages changent.
+        self._voice_facts: tuple[float, str, voice_lifecycle.ProviderKey, dict[str, Any]] | None = None
+        self._voice_lifecycle_seen: tuple[str, str | None] | None = None
         # Un avertissement par cause par minute : un Board actif illisible à
         # chaque battement ne doit pas écrire une ligne par seconde.
         self._interaction_mode_reports = ReportThrottle()
@@ -1513,7 +1521,8 @@ class ControlCenter:
         from jarvis.runtime.product_readiness import ProductReadinessRoutes, ProductReadinessService
         self.product_readiness = ProductReadinessService(
             transport=lambda: self.sessions, runtime_root=self.runtime_root, journal=self.journal,
-            list_audio=lambda: self.audio_diagnostics.list_devices())
+            list_audio=lambda: self.audio_diagnostics.list_devices(),
+            voice_view=lambda: self._voice_lifecycle_view(self._settings(), voice_online=self._voice_online()))
         self.product_readiness_routes = ProductReadinessRoutes(self.product_readiness, journal=self.journal)
         # Contexts, captures, Artifacts (Slice 09 session-context-recording) : relais
         # vers Core, sans état propre ; transport relu à chaque requête.
@@ -1609,6 +1618,9 @@ class ControlCenter:
             web.get("/api/personalization/profiles", self.get_personalization_profiles),
             web.post("/api/personalization/profiles", self.save_personalization_profiles),
             web.get("/api/wake-word", self.get_wake_word),
+            # Cycle de vie produit de la voix (Off / Sleep / Active, `docs/voice-lifecycle.md`).
+            web.get("/api/voice/lifecycle", self.get_voice_lifecycle),
+            web.post("/api/voice/lifecycle", self.save_voice_lifecycle),
             web.post("/api/wake-word", self.save_wake_word),
             web.get("/api/barehands", self.get_barehands),
             web.post("/api/barehands", self.save_barehands),
@@ -2467,7 +2479,10 @@ class ControlCenter:
         self.runtime_root.mkdir(parents=True, exist_ok=True)
         self._migrate_local_secrets()
         self._apply_agent_settings(self._settings())
-        self._runner = web.AppRunner(self._app)
+        # Requêtes encore ouvertes à l'arrêt (long-polls de la page : scène, Dossier, sous-agents) : 60 s d'attente par
+        # défaut dans aiohttp, au-delà du délai de grâce du lanceur (15 s) ; « Quitter JARVIS » finissait en arrêt forcé
+        # (bac à sable de la Slice 05 v1-2). Elles sont coupées après `HTTP_SHUTDOWN_TIMEOUT_S`.
+        self._runner = web.AppRunner(self._app, shutdown_timeout=HTTP_SHUTDOWN_TIMEOUT_S)
         await self._runner.setup()
         await web.TCPSite(self._runner, host, port).start()
         self.journal.emit("ui.start", "Jarvis Control Center started", data={"host": host, "port": port})
@@ -2896,6 +2911,9 @@ class ControlCenter:
             # permanente dans la page pour apprendre un booléen (constat F1 :
             # `/api/status` ne portait aucun champ Bare Hands).
             "barehands": {"enabled": bool(barehands.load(settings)["enabled"])},
+            # Cycle de vie produit de la voix (Off / Sleep / Active, `docs/voice-lifecycle.md`) : projection des faits
+            # (préférence, lanceur, battement de Voice), jamais d'état optimiste.
+            "voice_lifecycle": self._voice_lifecycle_view(settings, voice_online=voice_online),
             # Mode d'interaction (Slice 01b) : la valeur **effective** que Core
             # tient, sa révision, et le mode que désigne le type du Board actif
             # (`board_mode`). Les deux sont nommés séparément parce qu'ils
@@ -4201,6 +4219,99 @@ class ControlCenter:
 
     # ------------------------------------------------ mot d'éveil (réglages)
 
+    # ------------------------------------------------ cycle de vie de la voix (Off / Sleep / Active)
+
+    def _voice_facts_for(self, settings: dict[str, Any]) -> tuple[voice_lifecycle.ProviderKey, dict[str, Any]]:
+        relevant = json.dumps({key: settings.get(key) for key in (
+            "wake_word", "credentials", "credential_bindings", "voice_stack", "voice_arch", "voice_architecture",
+            "porcupine_access_key", "openai_api_key")}, sort_keys=True, default=str)
+        now = time.monotonic()
+        cached = self._voice_facts
+        if cached is not None and cached[1] == relevant and now - cached[0] < VOICE_FACTS_TTL_S:
+            return cached[2], cached[3]
+        try:
+            key = voice_lifecycle.provider_key(settings)
+        except Exception as exc:  # noqa: BLE001 - capture: said as a stable code, never a 500 on the status beat
+            key = voice_lifecycle.ProviderKey(False, code=voice_lifecycle.VOICE_CONFIGURATION_INVALID,
+                                              label=type(exc).__name__)
+        try:
+            wake = voice_lifecycle.wake_engine(settings)
+        except Exception as exc:  # noqa: BLE001 - capture: the wake line says it could not be read
+            wake = {"configured": None, "provider": None, "keyword": None, "available": False,
+                    "code": "wake_engine_unreadable",
+                    "message": f"Moteur du mot de réveil illisible ({type(exc).__name__})."}
+        self._voice_facts = (now, relevant, key, wake)
+        return key, wake
+
+    def _voice_runtime_state(self) -> str | None:
+        try:
+            report = json.loads((self.runtime_root / ".voice_runtime").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        state = report.get("runtime_state") if isinstance(report, dict) else None
+        return state if isinstance(state, str) else None
+
+    def _voice_online(self) -> bool:
+        try:
+            beat = float((self.runtime_root / ".voice_heartbeat").read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return False
+        return max(0.0, time.time() - beat) <= VOICE_HEARTBEAT_MAX_AGE_S
+
+    def _voice_lifecycle_view(self, settings: dict[str, Any], *, voice_online: bool) -> dict[str, Any]:
+        """Projection Off / Sleep / Active (`voice_lifecycle.project`). Ne lève pas : le battement porte la page."""
+
+        try:
+            preference, problem = voice_lifecycle.inspect_preference(settings)
+            key, wake = self._voice_facts_for(settings)
+            view = voice_lifecycle.project(
+                preference=preference, voice_online=voice_online,
+                runtime_state=self._voice_runtime_state() if voice_online else None,
+                launcher=self.product_readiness.launcher(), key=key, wake=wake,
+                manual_key=str(shortcut_registry.current(settings)["wake_toggle"]))
+            view["problem"] = problem
+        except Exception as exc:  # noqa: BLE001 - capture: unknown state said as such, journaled once per cause
+            view = {"schema_version": voice_lifecycle.SCHEMA_VERSION, "preference": None, "state": "unknown",
+                    "code": "voice_lifecycle_unreadable", "message": "État de la voix illisible.",
+                    "error": type(exc).__name__}
+        seen = (str(view.get("state")), view.get("code"))
+        if seen != self._voice_lifecycle_seen:
+            self._voice_lifecycle_seen = seen
+            self.journal.emit("voice.lifecycle.state", f"Voix : {seen[0]}" + (f" ({seen[1]})" if seen[1] else ""),
+                              level="warning" if seen[0] in ("degraded", "unknown") else "info",
+                              data={"state": seen[0], "code": seen[1], "preference": view.get("preference"),
+                                    "problem": view.get("problem")})
+        return view
+
+    async def get_voice_lifecycle(self, request: web.Request) -> web.Response:
+        del request
+        return web.json_response(self._voice_lifecycle_view(self._settings(), voice_online=self._voice_online()))
+
+    async def save_voice_lifecycle(self, request: web.Request) -> web.Response:
+        """Enregistrer « voix coupée » / « veille ». Le lanceur (ou Voice elle-même) l'applique à chaud.
+
+        La réponse est la projection relue, pas la valeur voulue : passer à « veille » rend `starting` tant que Voice
+        n'a pas battu ; passer à « off » rend `stopping` tant qu'elle bat encore.
+        """
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        current = self._settings()
+        before = voice_lifecycle.load_preference(current)
+        try:
+            after = voice_lifecycle.apply_preference(current, payload)
+        except voice_lifecycle.VoiceLifecycleError as exc:
+            self.journal.emit("voice.lifecycle.refused", f"Préférence de voix refusée : {exc.code}", level="warning",
+                              data={"code": exc.code})
+            raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
+        self._write_settings(current)
+        managed = bool(self.product_readiness.launcher().get("managed"))
+        self.journal.emit("voice.lifecycle.preference_saved", f"Préférence de voix : {before} -> {after}",
+                          data={"before": before, "after": after, "managed": managed})
+        return web.json_response(self._voice_lifecycle_view(current, voice_online=self._voice_online()))
+
     async def get_wake_word(self, request: web.Request) -> web.Response:
         """Le bloc `wake_word` tel qu'il s'applique, et ce qu'il dit de lui-même.
 
@@ -4212,7 +4323,9 @@ class ControlCenter:
         del request
         settings = self._settings()
         self._report_wake_word_unreadable(wake_word_settings.inspect(settings))
-        return web.json_response(wake_word_settings.describe(settings))
+        # `engine` : ce que le moteur choisi peut faire sur ce poste (paquet, modèles, clé) ; la page ne dit jamais
+        # « armé » quand il manque (`voice_lifecycle.wake_engine`).
+        return web.json_response({**wake_word_settings.describe(settings), "engine": self._voice_facts_for(settings)[1]})
 
     def _report_page_edition_unreadable(self, exc: Exception) -> None:
         """L'édition produit de ce processus est illisible au service de la page (Slice 08 presentation-edition).
@@ -4271,7 +4384,7 @@ class ControlCenter:
             )
             raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
         self._write_settings(current)
-        state = wake_word_settings.describe(current)
+        state = {**wake_word_settings.describe(current), "engine": self._voice_facts_for(current)[1]}
         self.journal.emit(
             "wake_word.settings.saved", "Réglage du mot d'éveil enregistré (redémarrage de Voice requis)",
             data={"enabled": state["enabled"], "provider": state["provider"]},

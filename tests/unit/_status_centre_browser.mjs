@@ -131,7 +131,17 @@ const SERVER=`(()=>{
         scene:{enabled:S.sceneOn,source:'core'},scene_limits:{job_cancel_timeout_s:30},live:S.live,interaction_mode:S.mode||null,
         presentation:S.presentation||null,
         /* Slice 08 : la page relève un ordre de Jarvis au battement, quand le statut dit qu'il attend. */
-        dossier_navigation:{pending:!!(S.nav&&S.nav.length)},...(S.status||{})});
+        dossier_navigation:{pending:!!(S.nav&&S.nav.length)},
+        ...(S.voiceLifecycle?{voice_lifecycle:S.voiceLifecycle}:{}),...(S.status||{})});
+    }
+    /* Slice 05 de presentation-edition-v1-2 : l'interrupteur de la voix. La réponse est la projection du serveur
+       (veille demandée -> starting, coupée -> off) ; voiceLifecycleFail = refus 400 avec son code. */
+    if(url==='/api/voice/lifecycle'&&method==='POST'){
+      if(S.voiceLifecycleFail)return new Response('refusé',{status:400,headers:{'X-Jarvis-Error-Code':S.voiceLifecycleFail}});
+      const preference=JSON.parse(init.body).preference;
+      S.voiceLifecycle={...(S.voiceLifecycle||{}),preference,state:preference==='off'?'off':'starting',
+        code:preference==='off'?'voice_off':'voice_starting',message:preference==='off'?'Voix coupée.':'La voix démarre…'};
+      return json(200,S.voiceLifecycle);
     }
     /* Raccourcis d'interface (valeurs par défaut de jarvis/runtime/shortcuts.py). */
     if(url==='/api/shortcuts')return json(200,{values:{ui_settings:'s',ui_close:'Escape',ui_panel_errors:'e',ui_panel_trace:'t',ui_panel_agents:'a'}});

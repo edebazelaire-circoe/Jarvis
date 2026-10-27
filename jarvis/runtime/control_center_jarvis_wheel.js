@@ -4,13 +4,16 @@
    (`docs/06-ui-visual-spec.md` › C et F). Contrat :
    `docs/control-center-shell.md` › *Tool wheel* › *JARVIS and Paramètres*.
 
-   **JARVIS dit l'état, il ne le pilote pas.** À la tête de cette Slice, ni
-   Core ni le Control Center n'exposent de route pour endormir ou réveiller
-   Voice, ni pour changer un mode de réflexion ou d'autonomie : seule la touche
-   d'éveil de Voice (raccourci global, F9 par défaut) agit. Le sous-menu ne
-   montre donc que des faits, chacun avec sa source, et deux portes vers des
-   surfaces qui existent déjà (le panneau Agents, les réglages de la voix).
-   Aucun bouton Veille / Réveil n'est dessiné : il mentirait.
+   **JARVIS dit l'état ; il ne pilote qu'une chose : couper ou rallumer la voix.**
+   Ni Core ni le Control Center n'exposent de route pour réveiller Voice, ni pour
+   changer un mode de réflexion ou d'autonomie : seule la touche d'éveil de Voice
+   (raccourci global, F9 par défaut) réveille. Depuis la Slice 05 de
+   presentation-edition-v1-2 (`docs/voice-lifecycle.md`), la ligne **Voix activée**
+   est un interrupteur (`menuitemcheckbox`) de la préférence persistée Off / Sleep
+   (`POST /api/voice/lifecycle`) ; elle n'apparaît que si le battement porte
+   `voice_lifecycle`, et elle montre l'état que le serveur projette (coupée,
+   veille, active, démarrage, arrêt, indisponible avec sa raison), jamais celui
+   que le clic espère.
 
    **Une seule source : le battement de la page.** `refreshStatus`
    (`control_center.html`) lit `/api/status` et appelle `gate(status)` ;
@@ -81,7 +84,37 @@
       agent:Object.freeze({name:String(agent.name||status.agent_cli||'').trim(),
         state:typeof agent.state==='string'?agent.state:'',model:typeof agent.model==='string'?agent.model:''}),
       subagents:active,
+      lifecycle:isObject(status.voice_lifecycle)?status.voice_lifecycle:null,
     });
+  }
+
+  /* L'état produit de la voix (`voice_lifecycle.state`) -> la note courte et le ton de l'interrupteur. */
+  const LIFECYCLE_NOTES=Object.freeze({
+    off:Object.freeze({note:'coupée · OFF',tone:'off'}),
+    sleep:Object.freeze({note:'veille · SLEEP',tone:undefined}),
+    active:Object.freeze({note:'en conversation',tone:undefined}),
+    starting:Object.freeze({note:'démarrage…',tone:'busy'}),
+    stopping:Object.freeze({note:'arrêt…',tone:'busy'}),
+    degraded:Object.freeze({note:'indisponible',tone:'error'}),
+    /* Sans lanceur : rallumée, mais Voice est à relancer par vous (pas une panne). */
+    not_running:Object.freeze({note:'à relancer',tone:'off'}),
+  });
+
+  /* L'interrupteur « Voix activée » : coché quand la préférence n'est pas « coupée ». `pending` : une écriture est en
+     vol (le bloc navigateur la tient), l'entrée est grisée et dit pourquoi. `null` sans `voice_lifecycle`. */
+  function voicePowerItemOf(facts,pending){
+    const lc=isObject(facts)&&facts.read==='ok'?facts.lifecycle:null;
+    if(!lc)return null;
+    /* Cochée seulement pour un choix « veille » lisible ; un choix illisible se réécrit en la rallumant. */
+    const on=lc.preference==='sleep';
+    const known=LIFECYCLE_NOTES[lc.state]||{note:String(lc.state||'état inconnu'),tone:'unknown'};
+    const message=typeof lc.message==='string'?lc.message:'';
+    const code=typeof lc.code==='string'&&lc.code&&lc.code!=='voice_off'?` (${lc.code})`:'';
+    const next=on?'choisir pour couper la voix (le chat reste disponible)':'choisir pour rallumer la voix en veille';
+    return {id:'voice_power',kind:'action',toggle:true,checked:on,icon:'jarvis',label:'Voix activée',
+      note:pending?'enregistrement…':known.note,
+      detail:`${message?message+code+' ; ':''}${pending?'enregistrement en cours':next}`,
+      tone:pending?'busy':known.tone,disabled:pending===true};
   }
 
   /* Ce que la touche d'éveil fait **maintenant** (l'ancien rappel caché de la page,
@@ -125,6 +158,9 @@
         detail:`Voice en ligne, ${known?known.word.toLowerCase():`état ${v.state}`}${v.stack?`, pile ${v.stack}`:''}`,
         tone:undefined}
       :{note:'hors ligne',detail:'Voice ne donne plus signe de vie : rien n’écoute',tone:'off'};
+    if(!v.online&&f.lifecycle&&f.lifecycle.state==='off'){
+      voice.note='coupée';voice.detail='Voix coupée par vous : aucun micro n’est ouvert';
+    }
     const hint=wakeHintOf(f);
     const turn=f.turnMode==='manual'?'tour manuel':'tour automatique';
     const wake={label:hint,
@@ -138,8 +174,10 @@
       tone:a.state==='error'||a.state==='failed'?'error':!a.state?'unknown':undefined};
     const n=f.subagents;
     const subNote=n===null?'nombre non dit':n===0?'aucun en cours':n===1?'1 en cours':`${n} en cours`;
+    const power=voicePowerItemOf(f,false);
     return [
       {id:'voice',kind:'status',status:true,icon:'jarvis',label:'Voix',...voice},
+      ...(power?[power]:[]),
       {id:'wake',kind:'status',status:true,icon:'key',...wake},
       {id:'agent',kind:'status',status:true,icon:'agent',...agent},
       {id:'subagents',kind:'action',icon:'subagents',label:'Sous-agents',note:subNote,
@@ -158,7 +196,8 @@
     if(f.read==='lost')return {tone:'unknown',text:'état inconnu, statut illisible'};
     if(f.read!=='ok')return null;
     const known=VOICE_STATES[f.voice.state];
-    const voice=f.voice.online?`voix : ${known?known.word.toLowerCase():f.voice.state}`:'voix hors ligne';
+    const voice=f.voice.online?`voix : ${known?known.word.toLowerCase():f.voice.state}`
+      :f.lifecycle&&f.lifecycle.state==='off'?'voix coupée':'voix hors ligne';
     const n=f.subagents;
     return {tone:null,text:n?`${voice} · ${n} sous-agent${n>1?'s':''}`:voice};
   }
@@ -167,7 +206,9 @@
      catégorie s'ouvre désormais sur Thème & scène, hub des Réglages du 2026-10-23). */
   const VOICE_SETTINGS_TARGET='conversation';
 
-  const api=Object.freeze({VOICE_STATES,AGENT_STATES,VOICE_SETTINGS_TARGET,factsOf,wakeHintOf,jarvisItemsOf,categoryStatusOf});
+  const LIFECYCLE_ROUTE='/api/voice/lifecycle';
+  const api=Object.freeze({VOICE_STATES,AGENT_STATES,VOICE_SETTINGS_TARGET,LIFECYCLE_ROUTE,LIFECYCLE_NOTES,factsOf,wakeHintOf,
+    jarvisItemsOf,voicePowerItemOf,categoryStatusOf});
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(typeof window==='undefined'||typeof document==='undefined')return;
 
@@ -213,8 +254,42 @@
       return root.openSettingsTab(tab||null,{returnFocus:document.querySelector('#toolWheel .tw-anchor')});
     }
 
+    /* L'interrupteur de la voix : une écriture à la fois, la réponse du serveur (sa projection) devient le fait
+       affiché ; un refus est dit (notification + journal) et rien n'est supposé. Délai borné : la page n'attend
+       jamais sans fin. */
+    let powerPending=false;
+    async function toggleVoice(source){
+      if(powerPending||facts.read!=='ok'||!facts.lifecycle)return;
+      const preference=facts.lifecycle.preference==='sleep'?'off':'sleep';
+      powerPending=true;apply(facts);
+      log('info','jarvis_wheel.voice_power_requested',{preference,source:source||null});
+      const abort=typeof AbortController==='function'?new AbortController():null;
+      const timer=setTimeout(()=>{if(abort)abort.abort()},8000);
+      try{
+        const response=await fetch(LIFECYCLE_ROUTE,{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({preference}),signal:abort?abort.signal:undefined});
+        const text=await response.text();
+        if(!response.ok){
+          const code=response.headers.get('X-Jarvis-Error-Code')||`http_${response.status}`;
+          throw Object.assign(new Error(text||code),{code});
+        }
+        const view=JSON.parse(text);
+        facts=Object.freeze({...facts,lifecycle:isObject(view)?view:facts.lifecycle});
+        log('info','jarvis_wheel.voice_power_saved',{preference,state:view&&view.state,code:view&&view.code});
+        if(typeof root.toast==='function')root.toast({title:preference==='off'?'Voix coupée':'Voix rallumée',
+          sub:String(view&&view.message||(preference==='off'?'Aucun micro n’est ouvert.':'La voix démarre en veille.')),kind:'ok',ms:4000});
+      }catch(error){
+        const code=error&&error.name==='AbortError'?'voice_lifecycle_timeout':(error&&error.code)||'voice_lifecycle_failed';
+        log('error','jarvis_wheel.voice_power_failed',{preference,code,error:String(error&&error.message||error)});
+        say('Voix : changement non enregistré',`${code} : ${String(error&&error.message||error).slice(0,200)}`);
+      }finally{
+        clearTimeout(timer);powerPending=false;apply(facts);
+      }
+    }
+
     function items(){
       return jarvisItemsOf(facts).map(spec=>{
+        if(spec.id==='voice_power')return {...voicePowerItemOf(facts,powerPending),onActivate:ctx=>toggleVoice(ctx&&ctx.source)};
         if(spec.id==='subagents')return {...spec,onActivate:ctx=>openAgents(ctx&&ctx.source)};
         if(spec.id==='voice_settings')return {...spec,onActivate:ctx=>openSettingsAt(VOICE_SETTINGS_TARGET,ctx&&ctx.source)};
         return spec;
@@ -248,7 +323,7 @@
       try{W.setStatus('jarvis',categoryStatusOf(facts))}
       catch(error){log('error','jarvis_wheel.paint_failed',{error:String(error&&error.message||error)})}
       if(typeof W.refresh==='function')W.refresh('jarvis');
-      const seen=facts.read==='ok'?`${facts.voice.online}:${facts.voice.state}:${facts.agent.state}:${facts.subagents}`:facts.read;
+      const seen=facts.read==='ok'?`${facts.voice.online}:${facts.voice.state}:${facts.agent.state}:${facts.subagents}:${facts.lifecycle?facts.lifecycle.state+'/'+facts.lifecycle.code:'-'}`:facts.read;
       if(seen!==lastRead){lastRead=seen;log('info','jarvis_wheel.facts',{read:facts.read,hint:wakeHintOf(facts)})}
     }
 
@@ -259,6 +334,7 @@
       facts:()=>facts,
       wakeHint:()=>wakeHintOf(facts),
       items:()=>jarvisItemsOf(facts),
+      toggleVoice:source=>toggleVoice(source||'api'),
     });
     log('info','jarvis_wheel.installed',{categories:['jarvis','settings']});
   }

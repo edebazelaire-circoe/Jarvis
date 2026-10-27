@@ -173,6 +173,31 @@ async def test_voice_absent_allows(stack, state):
     assert status == 202 and body["duplicate"] is False
 
 
+@pytest.mark.parametrize("product_state", ["off", "sleep"])
+async def test_chat_in_off_or_sleep_reaches_the_brain_without_touching_voice(stack, product_state):
+    """Cycle de vie de la voix (`docs/voice-lifecycle.md`, Slice 05 v1-2) : Off = aucun processus Voice (`absent`),
+    Sleep = Voice au fond (`background`). Un envoi au Chat atteint le cerveau, ne change ni l'état ni la révision du
+    canal vocal, ne crée aucune demande, et la réponse d'un tour écrit n'est jamais parlée."""
+
+    channel = stack.core.voice_channel
+    if product_state == "off":
+        voice_absent(stack.core)
+    else:
+        channel.report(voice("background"))
+    before = channel.snapshot()
+    conversation_id = await stack.foreground()
+    status, _body, correlation_id = await stack.send(conversation_id, "Un message écrit")
+    assert status == 202
+    await stack.settle()
+    assert [turn.text for turn in stack.backend.calls] == ["Un message écrit"]
+    after = channel.snapshot()
+    assert after["voice"]["state"] == before["voice"]["state"] == ("absent" if product_state == "off" else "background")
+    assert after["voice"]["revision"] == before["voice"]["revision"] and after["voice"]["request"] is None
+    assert after["chat_writable"] is True
+    kinds = [event.event_type for event in await stack.events(conversation_id)]
+    assert T.BRAIN_SPEECH_REQUESTED not in kinds, "un tour écrit n'est jamais parlé (speech_withheld_text_channel)"
+
+
 async def test_replay_after_lock_returns_duplicate_200(tmp_path):
     opened, server = await open_stack(tmp_path)
     request_id = str(uuid.uuid4())

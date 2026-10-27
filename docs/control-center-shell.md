@@ -842,9 +842,11 @@ n’est confirmé`), tone `unknown`: the last known state is **never** kept. The
 JARVIS category projects a short sentence on its sector and the core readout
 (`voix : veille · 2 sous-agents`, `état inconnu, statut illisible` with a muted
 « ? » that does not colour the anchor). An open JARVIS submenu follows the
-beat (`refresh`). No Veille / Réveil, Pause or mode row is drawn: a click-to-
-sleep/wake control needs a canonical Voice lifecycle route first (follow-up,
-not invented here). **Paramètres** lists the six Settings categories
+beat (`refresh`). No Réveil, Pause or mode row is drawn. Since Slice 05 of
+presentation-edition-v1-2 the row **Voix activée** (`voice_power`, a
+`menuitemcheckbox`, only when the beat carries `voice_lifecycle`) switches the
+persisted voice preference Off / Sleep through `POST /api/voice/lifecycle` and
+shows the server's projection, never the hoped state ([voice-lifecycle.md](voice-lifecycle.md)). **Paramètres** lists the six Settings categories
 (`settingsTabs()`, read from `JarvisSettingsRegistry.CATEGORIES` since Slice 02
 of jarvis-settings-ui-reorganization; see `docs/settings/settings-shell.md`),
 each row opening the same Settings as `#openSettings` on that category

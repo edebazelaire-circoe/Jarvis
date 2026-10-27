@@ -127,7 +127,8 @@ class ProductReadinessService:
                  verify: Callable[[PackageLayout], tuple[dict | None, list[str]]] = verify_package,
                  monotonic: Callable[[], float] = time.monotonic,
                  pid_alive: Callable[[int], bool] | None = None,
-                 ref_alive: Callable[[str], bool] | None = None) -> None:
+                 ref_alive: Callable[[str], bool] | None = None,
+                 voice_view: Callable[[], Mapping[str, Any]] | None = None) -> None:
         self._transport = transport
         self._runtime_root = Path(runtime_root)
         self._journal = journal
@@ -145,6 +146,8 @@ class ProductReadinessService:
         self._monotonic = monotonic
         self._pid_alive = pid_alive or _pid_alive
         self._ref_alive = ref_alive or _ref_alive
+        #: Projection Off / Sleep / Active du Control Center (`voice_lifecycle.project`) pour la ligne « Voix ».
+        self._voice_view = voice_view
         self._brain_cache: tuple[float, BrainFacts] | None = None
         self._audio_cache: tuple[float, Probe] | None = None
         self._sign_in: brain_cli.SignIn | None = None
@@ -220,6 +223,14 @@ class ProductReadinessService:
         self._audio_cache = (self._monotonic(), probe)
         return probe
 
+    def _voice(self) -> Probe:
+        if self._voice_view is None:
+            return Probe(error="voice_lifecycle_unavailable")
+        try:
+            return Probe(value=dict(self._voice_view()))
+        except Exception as exc:  # noqa: BLE001 - optional line; its cause is shown, never hidden
+            return Probe(error=f"voice_lifecycle_unreadable: {type(exc).__name__}")
+
     def _home_root(self) -> Path:
         home = self._installation.home
         return home.root if home is not None else self._runtime_root
@@ -262,6 +273,7 @@ class ProductReadinessService:
             running[ActionId.BRAIN_SIGN_IN.value] = round(now - self._sign_in.started_at, 1)
         return ReadinessFacts(installed=self._installation.installed, core=core, edition=edition,
                               connectors=connectors, render=render, brain=brain, browser=self._browser(), audio=audio,
+                              voice=self._voice(),
                               disk_free=self._disk(), layout_missing=self._layout_missing(), export_root=export_root,
                               integrity=self._integrity, running=running)
 
@@ -377,7 +389,8 @@ class ProductReadinessService:
     # ------------------------------------------------------------------ lanceur
 
     def launcher(self) -> dict[str, Any]:
-        """`managed` vrai si un lanceur vivant a publié son état (alors « Quitter JARVIS » a un sens)."""
+        """`managed` vrai si un lanceur vivant a publié son état (alors « Quitter JARVIS » a un sens) ; `voice` : ce que
+        le lanceur dit de la Voix (`pid`, `running`, `held`, `abandoned`), `None` s'il ne la lance pas."""
 
         try:
             state = json.loads((self._runtime_root / LAUNCHER_STATE_FILE).read_text(encoding="utf-8"))
@@ -385,7 +398,9 @@ class ProductReadinessService:
             return {"managed": False}
         if not launcher_alive(state, pid_alive=self._pid_alive, ref_alive=self._ref_alive):
             return {"managed": False}  # PID mort ou réemployé (I-009 point 2) : « Quitter JARVIS » n'a pas de sens
-        return {"managed": True, "started_at": state.get("started_at")}
+        roles = state.get("roles") if isinstance(state.get("roles"), dict) else {}
+        voice = roles.get("voice") if isinstance(roles.get("voice"), dict) else None
+        return {"managed": True, "started_at": state.get("started_at"), "voice": voice}
 
     def request_quit(self) -> dict[str, Any]:
         if not self.launcher().get("managed"):

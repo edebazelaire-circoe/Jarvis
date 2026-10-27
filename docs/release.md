@@ -307,6 +307,12 @@ Windows 11 workstation, not on a clean machine.
 
 A missing physical gate is reported as unverified, never assumed passed.
 
+### Voice lifecycle and wake word (v1-2)
+
+Off / Sleep / Active and the launcher's voice gate: [voice-lifecycle.md](voice-lifecycle.md). HD-V12-01: internal
+V1.2 builds may ship openWakeWord and its CC BY-NC-SA models for the spoken wake word; **replacing that technology is a
+production blocker** before any commercial release. Physical check: HV-V12-VOICE-01 (real microphone).
+
 ## Out of scope / open
 
 - running the pipeline on GitHub (A12) and pinning its actions by commit SHA instead of tag;

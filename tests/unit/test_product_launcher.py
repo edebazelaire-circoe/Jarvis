@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from jarvis.runtime import product_launcher as L
+from jarvis.runtime.voice_lifecycle import LaunchDecision
 
 
 class FakeProcess:
@@ -87,7 +88,7 @@ def plan(tmp_path: Path, *, voice: bool = True) -> L.LaunchPlan:
                         env={"PATH": "C:/Windows"}, start_timeout_s=30.0)
 
 
-def launcher(tmp_path, *, behaviours=None, probe=None, stop_after: float | None = None, voice=True):
+def launcher(tmp_path, *, behaviours=None, probe=None, stop_after: float | None = None, voice=True, gate=None):
     FakeTree.made = []
     clock = Clock()
     spawned: list[FakeProcess] = []
@@ -115,7 +116,9 @@ def launcher(tmp_path, *, behaviours=None, probe=None, stop_after: float | None 
     log = L.LauncherLog(p.runtime_root / "logs" / "launcher.log")
     instance = L.Launcher(p, log=log, notify=lambda title, text: notices.append(text), open_url=opened.append,
                           spawn=spawn, tree_factory=FakeTree, clock=clock, sleep=sleep,
-                          probe=probe or (lambda url, headers=None: (True, b"{}")))
+                          probe=probe or (lambda url, headers=None: (True, b"{}")),
+                          # Préférence « veille » et clé présente, sauf si le test dit autre chose (Slice 05 v1-2).
+                          voice_gate=gate or (lambda running: LaunchDecision(True, None)))
     return instance, spawned, notices, opened
 
 
@@ -268,9 +271,10 @@ def test_quit_asks_core_and_control_center_to_stop_cleanly_before_any_terminate(
     by_role = {p.argv[-1]: p for p in spawned}
     assert by_role["core"].kwargs["env"]["JARVIS_STOP_REQUEST_FILE"].endswith("stop-core.request")
     assert by_role["control-center"].kwargs["env"]["JARVIS_STOP_REQUEST_FILE"].endswith("stop-ui.request")
-    assert "JARVIS_STOP_REQUEST_FILE" not in by_role["voice"].kwargs["env"]
+    # Slice 05 v1-2 : la Voix lit aussi la demande (micro et séance fermés par son `finally`).
+    assert by_role["voice"].kwargs["env"]["JARVIS_STOP_REQUEST_FILE"].endswith("stop-voice.request")
     assert not by_role["core"].terminated and not by_role["control-center"].terminated
-    assert by_role["voice"].terminated  # la Voix ne lit pas la demande : arrêtée comme avant
+    assert by_role["voice"].terminated  # ce double-ci ne la lit pas : arrêt forcé après le délai de grâce
     clean = [row["data"]["role"] for row in events(tmp_path) if row["kind"] == "child_stopped_cleanly"]
     assert clean == ["ui", "core"]
     assert not list((tmp_path / "runtime").glob("stop-*.request"))

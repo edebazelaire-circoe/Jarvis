@@ -230,3 +230,57 @@ def test_settings_opened_from_the_wheel_keep_the_focus_and_give_it_back_to_the_a
     assert r["later"]["inShell"] and r["later"]["section"] == r["now"]["section"], r["later"]
     assert r["tabbed"]["inShell"] and r["shifted"]["inShell"], (r["tabbed"], r["shifted"])
     assert r["closed"]["open"] is False and r["closed"]["anchor"] is True, (r["closed"]["id"], r["closed"])
+
+
+POWER = "#toolWheel .tw-sub:not([hidden]) [data-tw-item=voice_power]"
+POWER_READ = r"""(()=>{const b=document.querySelector('#toolWheel .tw-sub:not([hidden]) [data-tw-item=voice_power]');
+  return b?{role:b.getAttribute('role'),checked:b.getAttribute('aria-checked'),note:(b.querySelector('.tw-note')||{}).textContent||'',
+    tone:b.getAttribute('data-tw-tone'),name:b.getAttribute('aria-label')||b.textContent,
+    bodies:window.__sc.bodies.filter(x=>x.path==='/api/voice/lifecycle').map(x=>x.body)}:null})()"""
+SLEEP = {"voiceLifecycle": {"preference": "sleep", "state": "sleep", "code": None, "message": ""}}
+
+
+def test_the_voice_switch_cuts_and_restores_the_voice_and_shows_the_server_answer(tmp_path):
+    """Slice 05 presentation-edition-v1-2 (`docs/voice-lifecycle.md`) : l'interrupteur Off / Sleep de la roue JARVIS."""
+
+    step = _drive(tmp_path, [{"width": 1280, "height": 720, "seed": SLEEP, "actions": [
+        *_open("jarvis"), ["eval", "before", POWER_READ, 100], *_shot("voice-switch-sleep"),
+        # La roue se referme après une action (son contrat) : on la rouvre pour relire l'interrupteur.
+        ["click", "cut", POWER, 700], ["eval", "closed", "window.JarvisToolWheel.isOpen()", 50],
+        ["eval", "toasts", "document.body.innerText.includes('Voix coupée')", 50],
+        *_open("jarvis"), ["eval", "cut", POWER_READ, 100], *_shot("voice-switch-off"),
+        ["click", "restore", POWER, 700], *_open("jarvis"), ["eval", "restored", POWER_READ, 100]]}])[0]
+    got = step["results"]
+    assert got["before"]["role"] == "menuitemcheckbox" and got["before"]["checked"] == "true"
+    assert got["before"]["note"] == "veille · SLEEP" and "couper la voix" in got["before"]["name"]
+    assert got["closed"] is False and got["toasts"] is True
+    assert got["cut"]["bodies"] == [{"preference": "off"}]
+    assert got["cut"]["checked"] == "false" and got["cut"]["note"] == "coupée · OFF" and got["cut"]["tone"] == "off"
+    assert got["restored"]["bodies"] == [{"preference": "off"}, {"preference": "sleep"}]
+    assert got["restored"]["checked"] == "true" and got["restored"]["note"] == "démarrage…", "projection, pas espoir"
+    _no_errors(step)
+
+
+def test_a_refused_voice_switch_is_said_and_changes_nothing(tmp_path):
+    step = _drive(tmp_path, [{"width": 1280, "height": 720,
+                              "seed": {**SLEEP, "voiceLifecycleFail": "voice_lifecycle_foreign_version"}, "actions": [
+        *_open("jarvis"), ["click", "cut", POWER, 700], *_open("jarvis"), ["eval", "after", POWER_READ, 100]]}])[0]
+    after = step["results"]["after"]
+    assert after["checked"] == "true" and after["note"] == "veille · SLEEP"
+    errors = [line["text"] for line in step["console"] if line["type"] == "error"]
+    assert any("jarvis_wheel.voice_power_failed" in text and "voice_lifecycle_foreign_version" in text for text in errors)
+
+
+def test_an_unreadable_voice_choice_is_shown_and_one_click_rewrites_it(tmp_path):
+    """Reprise QA m1 : choix illisible -> « indisponible », décoché ; un clic enregistre « veille » (choix valide)."""
+
+    seed = {"voiceLifecycle": {"preference": "unreadable", "state": "degraded", "code": "voice_preference_unreadable",
+                               "message": "Le choix de voix enregistré est illisible."}}
+    step = _drive(tmp_path, [{"width": 1280, "height": 720, "seed": seed, "actions": [
+        *_open("jarvis"), ["eval", "before", POWER_READ, 100],
+        ["click", "fix", POWER, 700], *_open("jarvis"), ["eval", "after", POWER_READ, 100]]}])[0]
+    got = step["results"]
+    assert got["before"]["checked"] == "false" and got["before"]["note"] == "indisponible"
+    assert "voice_preference_unreadable" in got["before"]["name"]
+    assert got["after"]["bodies"] == [{"preference": "sleep"}] and got["after"]["checked"] == "true"
+    _no_errors(step)

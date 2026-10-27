@@ -7,18 +7,24 @@ Le raccourci du menu Démarrer lance `runtime\\python\\pythonw.exe -B -m jarvis 
    (`runtime\\logs\\launcher.log`, `errors.jsonl` ; `%TEMP%\\jarvis-launcher-error.log` quand la maison est
    introuvable : I-002 point 4) ;
 2. garde **une seule instance** par utilisateur (`runtime\\launcher.lock`) : un second clic rouvre la page ;
-3. démarre Core, attend `/v1/health`, puis le Control Center, attend sa page, puis la Voix (facultative) ; chaque
+3. démarre Core, attend `/v1/health`, puis le Control Center, attend sa page, puis la Voix (facultative) **si la
+   préférence de l'utilisateur n'est pas « voix coupée » et que la clé du fournisseur vocal existe**
+   (`voice_lifecycle.launch_decision`, `docs/voice-lifecycle.md`) ; sinon la Voix est *tenue* avec son code
+   (`voice_off`, `voice_provider_key_missing`), publié dans `launcher.json`, au lieu de planter trois fois ; chaque
    enfant est lancé avec `-B` (aucun bytecode écrit dans le dossier du programme, `docs/windows-packaging.md`), sa
    sortie dans `runtime\\logs\\<rôle>.log`, et **contenu dans un Job Object** `KILL_ON_JOB_CLOSE` : si le lanceur
    meurt, Windows arrête tout l'arbre (MCP, Remotion, CLI) ; aucun orphelin ;
 4. ouvre la page dans le navigateur (`JARVIS_OPEN_BROWSER=0` : non) ; le Control Center, lui, n'ouvre rien ;
 5. veille : un enfant essentiel mort est relancé (au plus `MAX_RESTARTS` fois en `RESTART_WINDOW_S`), au-delà tout
-   s'arrête et la cause est dite ; la Voix morte trop souvent est abandonnée sans emporter le reste ;
+   s'arrête et la cause est dite ; la Voix morte trop souvent est abandonnée sans emporter le reste ; la préférence
+   est relue à chaque tour (`VOICE_GATE_EVERY_S`) : « voix coupée » arrête la Voix à chaud, « veille » la (re)démarre
+   (et donne une nouvelle chance à une Voix abandonnée) ;
 6. s'arrête proprement sur « Quitter JARVIS » (fichier `runtime\\launcher-stop.request`, écrit par
    `POST /api/product/quit`) ou Ctrl+C : Control Center et Voix d'abord, Core ensuite. Core et le Control Center
    reçoivent d'abord une DEMANDE d'arrêt (`runtime\\stop-<rôle>.request`, chemin donné par
-   `JARVIS_STOP_REQUEST_FILE`, `jarvis/runtime/stop_request.py`) et sortent par leur chemin normal ; passé
-   `STOP_GRACE_S`, et pour la Voix (qui ne la lit pas), `terminate` puis le Job ferme le reste.
+   `JARVIS_STOP_REQUEST_FILE`, `jarvis/runtime/stop_request.py`) et sortent par leur chemin normal (la Voix aussi
+   depuis la Slice 05 de presentation-edition-v1-2 : micro et séance fermés par `voice.close()`) ; passé
+   `STOP_GRACE_S`, `terminate` puis le Job ferme le reste (Remotion, CLI, MCP).
 
 `launch` ne sert qu'au produit installé : sans marqueur (checkout de développement), il refuse
 (`not_installed_product`) au lieu de démarrer sur les ports et les données du JARVIS de développement.
@@ -60,8 +66,14 @@ POLL_S = 0.5
 STOP_GRACE_S = 15.0
 #: Après `terminate` : délai avant `kill`.
 KILL_GRACE_S = 5.0
-#: Rôles qui lisent la demande d'arrêt propre (`stop_request.py`) ; la Voix est arrêtée par `terminate`.
-GRACEFUL_ROLES = frozenset({"core", "ui"})
+#: Rôles qui lisent la demande d'arrêt propre (`stop_request.py`, `voice_lifecycle.run_until_released`).
+GRACEFUL_ROLES = frozenset({"core", "ui", "voice"})
+#: Période de relecture de la préférence de voix pendant la veille.
+VOICE_GATE_EVERY_S = 1.0
+#: Sorties propres (code 0) de la Voix tolérées dans `RESTART_WINDOW_S` : une Voix qui se libère sur « voix coupée »,
+#: même vue trop tard par le lanceur, n'est pas un plantage (reprise QA m2) ; au-delà, elle est abandonnée quand même
+#: (une Voix qui sortirait 0 en boucle ne tourne pas sans fin).
+VOICE_CLEAN_EXITS_MAX = 10
 CREATE_NO_WINDOW = 0x08000000
 TITLE = "JARVIS"
 
@@ -197,6 +209,10 @@ class Role:
     restarts: list[float] = field(default_factory=list)
     abandoned: bool = False
     last_exit: int | None = None
+    #: Voix seulement : pourquoi elle n'est pas démarrée (`voice_off`, `voice_provider_key_missing`…), sinon `None`.
+    held: str | None = None
+    #: Voix seulement : instants des sorties propres (code 0) dans la fenêtre, hors compteur de plantages.
+    clean_exits: list[float] = field(default_factory=list)
 
 
 def own_process_ref() -> str:
@@ -288,6 +304,21 @@ def plan_from_environment(environ: Mapping[str, str] | None = None) -> LaunchPla
                       start_timeout_s=timeout if timeout > 0 else DEFAULT_START_TIMEOUT_S, open_browser=opened)
 
 
+def default_voice_gate(runtime_root: Path, *, running: bool = False) -> Any:
+    """Préférence (`control-center-settings.json`) et clé du fournisseur vocal, comme Voice les lirait.
+
+    Voix déjà en marche : seule la préférence compte (une clé retirée n'arrête rien), la clé n'est pas relue."""
+
+    from jarvis.environment import load_project_environment
+    from jarvis.runtime import voice_lifecycle
+
+    try:
+        load_project_environment()  # une clé du .env compte, comme pour Voice (setdefault : rien n'est remplacé)
+    except Exception:  # noqa: BLE001 - argued silence: the voice child reports an unreadable .env itself
+        pass
+    return voice_lifecycle.launch_decision(voice_lifecycle.read_settings_file(runtime_root), check_key=not running)
+
+
 def http_ok(url: str, *, headers: Mapping[str, str] | None = None, timeout_s: float = 3.0) -> tuple[bool, Any]:
     request = urllib.request.Request(url, headers=dict(headers or {}))
     try:
@@ -302,7 +333,8 @@ class Launcher:
     def __init__(self, plan: LaunchPlan, *, log: LauncherLog, notify: Callable[[str, str], None] = default_notify,
                  open_url: Callable[[str], Any] = webbrowser.open, spawn: Callable[..., Any] = subprocess.Popen,
                  tree_factory: Callable[[], Any] = owned_tree_factory, clock: Callable[[], float] = time.monotonic,
-                 sleep: Callable[[float], None] = time.sleep, probe: Callable[..., tuple[bool, Any]] = http_ok) -> None:
+                 sleep: Callable[[float], None] = time.sleep, probe: Callable[..., tuple[bool, Any]] = http_ok,
+                 voice_gate: Callable[[bool], Any] | None = None) -> None:
         self.plan = plan
         self.log = log
         self.notify = notify
@@ -316,6 +348,8 @@ class Launcher:
         self.state_path = plan.runtime_root / STATE_FILE
         self.stopping = False
         self.process_ref = own_process_ref()
+        self.voice_gate = voice_gate or (lambda running: default_voice_gate(plan.runtime_root, running=running))
+        self._voice_checked_at = float("-inf")
 
     # ------------------------------------------------------------------ état publié
 
@@ -325,7 +359,9 @@ class Launcher:
         state = {"schema": STATE_SCHEMA, "schema_version": 1, "pid": os.getpid(), "process_ref": self.process_ref,
                  "started_at": utc_now(), "ui_url": self.plan.ui_url,
                  "roles": {role.name: {"pid": getattr(role.process, "pid", None), "abandoned": role.abandoned,
-                                       "last_exit": role.last_exit} for role in self.plan.roles}}
+                                       "last_exit": role.last_exit, "held": role.held,
+                                       "running": role.process is not None and role.process.returncode is None}
+                           for role in self.plan.roles}}
         temp = self.state_path.with_name(STATE_FILE + ".tmp")
         temp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
         os.replace(temp, self.state_path)
@@ -430,7 +466,10 @@ class Launcher:
         self.start_role(ui)
         self.wait_ready(ui, self.plan.ui_url + "api/status")
         for role in self.plan.roles[2:]:
-            self.start_role(role)
+            if role.name == "voice":
+                self.sync_voice(role, force=True)
+            else:
+                self.start_role(role)
         self.write_state()
         if self.plan.open_browser:
             self.open_url(self.plan.ui_url)
@@ -443,12 +482,39 @@ class Launcher:
                 self.log.emit("stop_requested", "Arrêt demandé (Quitter JARVIS)")
                 return 0
             for role in self.plan.roles:
+                if role.name == "voice":
+                    self.sync_voice(role)
                 if role.abandoned or role.process is None:
                     continue
                 code = role.process.poll()
                 if code is None:
                     continue
                 role.last_exit = code
+                if role.name == "voice" and not self._voice_wanted(role):
+                    # Sortie voulue (voix coupée : Voice s'arrête d'elle-même) ou clé retirée : pas de relance.
+                    self._close_tree(role)
+                    role.process = None
+                    self.log.emit("voice_exited_held", f"voice arrêtée (code {code}), tenue : {role.held}",
+                                  role=role.name, exit_code=code, code=role.held)
+                    self.write_state()
+                    continue
+                if role.name == "voice" and code == 0:
+                    # Voice s'est libérée d'elle-même (« voix coupée » vue par elle avant le lanceur, puis rallumée) :
+                    # pas un plantage. Relance par `sync_voice`, selon la préférence COURANTE (reprise QA m2).
+                    self._close_tree(role)
+                    role.process = None
+                    now = self.clock()
+                    role.clean_exits = [at for at in role.clean_exits if now - at < RESTART_WINDOW_S] + [now]
+                    if len(role.clean_exits) > VOICE_CLEAN_EXITS_MAX:
+                        role.abandoned = True
+                        self.log.emit("child_abandoned", f"voice abandonnée après {VOICE_CLEAN_EXITS_MAX} sorties propres",
+                                      level="warning", role=role.name, clean_exits=len(role.clean_exits))
+                    else:
+                        self.log.emit("voice_exited_clean", "voice s'est arrêtée proprement : relance selon la préférence",
+                                      role=role.name, exit_code=0)
+                        self._voice_checked_at = float("-inf")
+                    self.write_state()
+                    continue
                 self.log.emit("child_exited", f"{role.name} arrêté (code {code})", level="warning" if role.essential else "info",
                               role=role.name, exit_code=code, tail=tail(self._log_path(role), 6))
                 self._close_tree(role)
@@ -467,6 +533,67 @@ class Launcher:
                 self.write_state()
             self.sleep(POLL_S)
         return 0
+
+    # ------------------------------------------------------------------ voix (préférence et clé)
+
+    def _decide_voice(self, running: bool) -> Any:
+        try:
+            return self.voice_gate(running)
+        except Exception as exc:  # noqa: BLE001 - capture: the voice is optional; start it and let it say its own error
+            self.log.emit("voice_gate_failed", f"préférence de voix illisible : {type(exc).__name__}: {exc}"[:300],
+                          level="warning", role="voice")
+            from jarvis.runtime.voice_lifecycle import LaunchDecision
+
+            return LaunchDecision(True, None)
+
+    def _voice_wanted(self, role: Role) -> bool:
+        decision = self._decide_voice(False)
+        self._apply_hold(role, None if decision.start else decision.code)
+        return decision.start
+
+    def _apply_hold(self, role: Role, code: str | None) -> None:
+        if code == role.held:
+            return
+        previous, role.held = role.held, code
+        if code is None:
+            self.log.emit("voice_released", f"voix autorisée (était tenue : {previous})", role=role.name,
+                          previous=previous)
+        else:
+            self.log.emit("voice_held", f"voix tenue : {code}", level="info" if code == "voice_off" else "warning",
+                          role=role.name, code=code)
+
+    def sync_voice(self, role: Role, *, force: bool = False) -> None:
+        """Accorde la Voix à la préférence et à la clé : la démarre, l'arrête, ou la tient avec son code."""
+
+        now = self.clock()
+        if not force and now - self._voice_checked_at < VOICE_GATE_EVERY_S:
+            return
+        self._voice_checked_at = now
+        running = role.process is not None and role.process.poll() is None
+        decision = self._decide_voice(running)
+        held_before = role.held
+        changed = False
+        if decision.start:
+            if role.held is not None:
+                # rallumée : une Voix abandonnée a une nouvelle chance
+                role.abandoned, role.restarts, role.clean_exits = False, [], []
+            self._apply_hold(role, None)
+            if role.process is None and not role.abandoned:
+                self.start_role(role)
+                changed = True
+        else:
+            self._apply_hold(role, decision.code)
+            if running and decision.stop_running:
+                self.log.emit("voice_stopping", "voix coupée par l'utilisateur : arrêt de Voice", role=role.name,
+                              code=decision.code)
+                self.stop_role(role)
+                self._close_tree(role)
+                role.process = None
+                changed = True
+                self.log.emit("child_stopped", f"{role.name} arrêté", role=role.name, reason=decision.code)
+        # Une tenue qui change (clé absente -> voix coupée, etc.) est publiée aussi : `launcher.json` dit la vérité.
+        if (changed or role.held != held_before) and not force:
+            self.write_state()
 
     def _close_tree(self, role: Role) -> None:
         tree, role.tree = role.tree, None
