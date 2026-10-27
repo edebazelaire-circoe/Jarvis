@@ -185,6 +185,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--suite", choices=SUITES, required=True)
     parser.add_argument("--shard", action="append", default=[],
                         help="K/N : seulement la K-ième part sur N des fichiers ; répétable (3/10 puis 1/2 : la moitié de la part 3)")
+    parser.add_argument("--only", action="append", default=[],
+                        help="motif de nom de fichier (fnmatch), répétable : seulement ces fichiers de la suite")
     parser.add_argument("--report", help="écrit le verdict JSON dans ce fichier")
     parser.add_argument("--list", action="store_true", help="liste les fichiers sans lancer pytest")
     parser.add_argument("--today", help=argparse.SUPPRESS)  # tests de la porte
@@ -195,6 +197,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         known = load_known()
         files = suite_files(args.suite)
+        if args.only:
+            files = [f for f in files if _matches(f, tuple(args.only))]
         for spec in args.shard:
             files = shard(files, spec)
     except GateError as exc:
@@ -219,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
 
         verdict = judge(result, known, today=today, rerun=rerun)
     shards = ",".join(args.shard) or None
-    payload = {"suite": args.suite, "shard": shards, "files": len(files), "known_failures_file": KNOWN_FAILURES.name,
+    payload = {"suite": args.suite, "shard": shards, "only": args.only or None, "files": len(files), "known_failures_file": KNOWN_FAILURES.name,
                **verdict.to_payload()}
     if args.report:
         Path(args.report).parent.mkdir(parents=True, exist_ok=True)
