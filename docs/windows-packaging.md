@@ -44,6 +44,7 @@ picks; paths with spaces are supported).
   runtime\python\         Python 3.14.6 embeddable (python.org), python314._pth, Lib\site-packages (locked wheels)
   runtime\node\           Node.js 24.21.0 (nodejs.org) with its own npm
   licenses\               licence texts (runtimes, every wheel's dist-info licence files)
+  models\wake-word\       INTERNAL build only (see Channels): the three pinned openWakeWord models
   third-party-manifest.json
   runtime-manifest.json   machine-readable runtime manifest (below)
 ```
@@ -104,9 +105,10 @@ Schema `jarvis.runtime-manifest` v1, written by the build, read by
 
 | Key | Content |
 | --- | --- |
-| `product` | `name`, `edition` (`presentation`), `version` (pyproject), `source_revision` (Git commit) |
+| `product` | `name`, `edition` (`presentation`), `version` (pyproject), `source_revision` (Git commit), `channel` (`production` or `internal`; absent = `production`, V1 packages), `channel_warning` (internal only) |
 | `runtimes.<python\|node>` | `version`, `root`, `executable` (relative), `tree_sha256`, `files`, `source` (`url`, archive `sha256`); `node.npm_version` |
 | `app`, `licenses` | `root`, `tree_sha256`, `files` |
+| `models` | internal build only: `root` (`models`), `tree_sha256`, `files`, `wake_word` (`models/wake-word`) |
 | `third_party_manifest_sha256` | SHA-256 of `third-party-manifest.json` |
 | `excluded`, `external`, `provisioned` | ids and reasons copied from the policy |
 | `package_sha256` | SHA-256 of the canonical manifest body: one value identifies the whole package |
@@ -117,7 +119,7 @@ order: independent of the install folder.
 **Consumers.** `private_runtime.diagnostics()` (no hashing, no absolute path)
 is the `runtimes` block of `installation` in `/v1/health` and of the
 `core.installation` journal event: `mode`, `status` (`ok`/`degraded`/`invalid`),
-`edition`, `version`, runtime versions, excluded ids, typed `problems`
+`edition`, `channel`, `version`, runtime versions, excluded ids, typed `problems`
 (`runtime_manifest_missing`, `runtime_manifest_invalid`,
 `private_runtime_missing`). A manifest whose `runtimes`, `product` or
 `excluded` blocks do not have the expected shape (an entry that is not an
@@ -153,7 +155,8 @@ differ.
 | Status | Components (presentation edition) |
 | --- | --- |
 | `bundled` | Python 3.14.6 (PSF-2.0), Node.js 24.21.0 (MIT + bundled deps, npm Artistic-2.0), 64 wheels (licences in the policy; notes for pynput LGPL-3.0, certifi MPL-2.0, numpy's GCC runtime) |
-| `excluded` | `openwakeword` + `onnxruntime` + its models (CC BY-NC-SA 4.0, HV-PACKAGE-04: keyboard wake), `imageio-ffmpeg` (GPLv3, HV-PACKAGE-03), `pvporcupine` (Picovoice terms, HV-PACKAGE-05), `sherpa-onnx` (Solo Owner, out of V1), Barehands and ai-visualizer (AGPL, HV-PACKAGE-06; the Control Center runs without the face), MediaPipe (ships with Barehands), developer tools |
+| `bundled`, internal channel only | the `wakeword` extra: `openwakeword` (Apache-2.0), `onnxruntime` (MIT; its `LICENSE` and `ThirdPartyNotices.txt` live in the package folder, copied through the policy's `license_files`) and 10 dependencies (scipy, scikit-learn, tqdm MPL-2.0 AND MIT, joblib, narwhals, threadpoolctl, cloudpickle, colorama, flatbuffers, packaging); the three openWakeWord models (`models`, CC-BY-NC-SA-4.0, with `licenses\openwakeword-models\NOTICE.txt`) |
+| `excluded` | production channel: `openwakeword` + `onnxruntime` + its models (CC BY-NC-SA 4.0, HV-PACKAGE-04: keyboard wake; HD-V12-01 lifts it for the internal channel only), `imageio-ffmpeg` (GPLv3, HV-PACKAGE-03), `pvporcupine` (Picovoice terms, HV-PACKAGE-05), `sherpa-onnx` (Solo Owner, out of V1), Barehands and ai-visualizer (AGPL, HV-PACKAGE-06; the Control Center runs without the face), MediaPipe (ships with Barehands), developer tools |
 | `external` | Claude Code CLI (not redistributed, HV-PACKAGE-02; installed with Anthropic's official installer, signed in by Slice 07), Chrome/Edge for Remotion renders (HV-PACKAGE-09) |
 | `provisioned` | Remotion npm packages, fetched by `npm ci` from the pinned lock (Remotion licence, HV-PACKAGE-08) |
 
@@ -161,6 +164,39 @@ Human decisions: `tasks/jarvis-presentation-edition-v1/slices/06-windows-private
 Any open licence decision is a **release gate** (Slices 10/11), not a
 build failure: the default applied is always the safe one (excluded or not
 redistributed).
+
+## Channels: production and internal builds
+
+Decision HD-V12-01 (`tasks/jarvis-presentation-edition-v1-2/slices/00-project-manager/HUMAN-DECISIONS.md`):
+V1.2 is tested internally with the current wake word technology (openWakeWord,
+whose pre-trained models are CC BY-NC-SA 4.0, non-commercial), which must be
+replaced before any production release. The build therefore has two channels,
+`build --channel production|internal`:
+
+| | `production` (default) | `internal` (explicit) |
+| --- | --- | --- |
+| Wheels | `requirements.lock` | `requirements.lock` + `requirements-internal.lock` (the `wakeword` extra; resolved with the production lock as constraint, so shared wheels keep the production version and hash) |
+| Wake word models | none | `models\wake-word\` : `melspectrogram.onnx`, `embedding_model.onnx`, `hey_jarvis_v0.1.onnx`, downloaded **at build time** by `wakeword_model_catalog` (size and SHA-256 pinned there), never at first launch |
+| Policy | entries without `channels`; `openwakeword`, `onnxruntime`, `openwakeword-models` are `excluded` | adds the entries `channels: ["internal"]` and the `models` section; those three exclusions (`channels: ["production"]`) do not apply |
+| Manifests | `product.channel: "production"` | `product.channel: "internal"`, `product.channel_warning`, `models` tree; third-party manifest `channel`, `warning`, model components with `channels` |
+| Default wake word of a blank profile | F9 only | « Hey Jarvis » armed in Sleep, plus F9 ([voice-lifecycle.md](voice-lifecycle.md)) |
+
+The internal warning, everywhere it is written (policy, manifests, `verify`
+output, `NOTICE.txt`, release info): « Usage interne non commercial ; à
+remplacer avant production ». `channel_policy` filters the policy for the
+channel being built: a reserved wheel installed in a production build has no
+policy entry and is an excluded component, so the build stops. **`verify`
+refuses a production package** (`private_runtime.channel_problems`, shared with
+the installer) that holds a `models\` tree, an `openwakeword` or `onnxruntime`
+folder or `dist-info` in `site-packages`, or a third-party component reserved
+to another channel, and any unknown channel. A manifest without `channel` (V1
+packages) is production.
+
+Maintenance: `build_package.py lock --channel internal` regenerates
+`requirements-internal.lock` from `requirements-internal.in` and refuses a
+resolution that would change a production wheel. `scripts/verify_release.py`
+fails when an internal wheel is also in the production lock or is not reserved
+to the internal channel by the policy.
 
 ## Build
 
@@ -183,9 +219,9 @@ from a clean checkout of that revision. A package therefore never claims one
 
 ```powershell
 # from the repository; output and cache outside the repository
-.\.venv\Scripts\python.exe packaging\windows\build_package.py build --out $env:TEMP\jarvis-pkg [--rev HEAD] [--cache DIR]
+.\.venv\Scripts\python.exe packaging\windows\build_package.py build --out $env:TEMP\jarvis-pkg [--channel production|internal] [--rev HEAD] [--cache DIR]
 .\.venv\Scripts\python.exe packaging\windows\build_package.py verify $env:TEMP\jarvis-pkg
-.\.venv\Scripts\python.exe packaging\windows\build_package.py lock [--constraints FILE]   # maintenance, network
+.\.venv\Scripts\python.exe packaging\windows\build_package.py lock [--channel production|internal] [--constraints FILE]   # maintenance, network
 ```
 
 Steps: download (or reuse from the cache, default
@@ -202,7 +238,13 @@ aiohttp, numpy, livekit, sounddevice, mcp, pywin32, Google clients), resolve
 the private Node and run it, see no `python`/`node`/`npm`/`ffmpeg`/`git` on
 `PATH`, have `sys.flags.no_site`, no `sys.path` entry outside the package, no
 excluded module importable (`onnxruntime`, `openwakeword`, `imageio_ffmpeg`,
-`pvporcupine`, `sherpa_onnx`) and report `diagnostics().status == "ok"`.
+`pvporcupine`, `sherpa_onnx`; the internal channel drops the first two) and
+report `diagnostics().status == "ok"`. The probe also reads the wake word of a
+blank profile (`wake_word_settings.load({})`): disabled in production; in the
+internal channel it must be armed (`openwakeword`), the models must be read
+from `models\wake-word` and verified, and the real openWakeWord detector is
+built from them and fed five frames of silence (zeros, no audio device
+opened), which must not trigger.
 
 **Reproducible**: two builds of the same revision into two folders give the
 same `package_sha256` (proved in the Slice 06 LOG, then again after the QA
@@ -210,10 +252,12 @@ rework with `compileall -j 1`). The output folder must be empty and outside
 the repository. Archive members are extracted only inside their target folder
 (no `..`, no absolute name, no drive letter).
 
-**`verify`** recomputes every tracked tree (`app`, `licenses`, each runtime),
-the third-party manifest digest and `package_sha256`, and reports any file or
-folder that belongs to no tracked tree (at the package root, or directly under
-`runtime\` beside the declared runtimes). An unreadable manifest (invalid JSON,
+**`verify`** recomputes every tracked tree (`app`, `licenses`, `models` when
+declared, each runtime), the third-party manifest digest and `package_sha256`,
+reports any file or folder that belongs to no tracked tree (at the package
+root, or directly under `runtime\` beside the declared runtimes) and any
+departure from the package channel (see Channels); it names the channel and
+repeats the internal warning. An unreadable manifest (invalid JSON,
 a UTF-8 BOM, a wrong shape) is a clean `ÉCHEC : paquet altéré`, exit code 1.
 
 ### Trying the package (simulated installed product)
@@ -261,6 +305,8 @@ tester's own browser. Then `python.exe -B -m jarvis core` (and
   `jarvis-barehands` MCP server (no `barehands-mcp.json` is written), and an
   installed `presentation` product refuses `python -m jarvis wake-word install`
   (`wake_word_install_unavailable_in_edition`: the CC BY-NC-SA models are never
-  downloaded by the product; `wake-word status` stays available).
+  downloaded by the product; in an internal build the message says they are
+  already shipped; `wake-word status` stays available and reads
+  `models\wake-word` of the package).
 - Readiness UI, repair actions and the Claude CLI sign-in: Slice 07,
   [product-install.md](product-install.md) › *Readiness*.

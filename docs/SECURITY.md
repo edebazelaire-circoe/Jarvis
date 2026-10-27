@@ -631,7 +631,10 @@ second owner is a failed test, not a silent state.
   `jarvis/adapters/wakeword_model_catalog.py`) match; a mismatch installs nothing
   (`wake_model_mismatch`) and a tampered installed file is refused at load.
 - **Licence.** Code Apache-2.0; the pre-trained models are CC BY-NC-SA 4.0: private,
-  non-commercial testing only (`third_party/README.md`).
+  non-commercial testing only (`third_party/README.md`). The internal Windows build
+  (HD-V12-01) ships them read-only in `<package>\models\wake-word`, covered by the
+  package tree hash (`verify`); the product never downloads them, and a production
+  package that holds them is refused.
 - **Failure never removes the manual key.** F9 is a separate backend; a missing
   extra, a missing or altered model or a dead engine is said in
   `runtime/trace.jsonl` and leaves F9 usable.

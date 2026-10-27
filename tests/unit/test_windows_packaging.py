@@ -30,6 +30,8 @@ RUNTIMES = json.loads((PACKAGING / "runtimes.json").read_text(encoding="utf-8"))
 POLICY = json.loads((PACKAGING / "third_party_policy.json").read_text(encoding="utf-8"))
 LOCK = B.parse_lock((PACKAGING / "requirements.lock").read_text(encoding="utf-8"))
 LOCKED = {row["name"]: row for row in LOCK}
+INTERNAL_LOCK = B.parse_lock((PACKAGING / "requirements-internal.lock").read_text(encoding="utf-8"))
+INTERNAL_LOCKED = {row["name"]: row for row in INTERNAL_LOCK}
 
 
 def top_level_pins() -> dict[str, str]:
@@ -75,10 +77,56 @@ def test_a_lock_line_without_hash_is_refused():
 # -- politique de licences ---------------------------------------------------------------------------------------------
 
 def test_every_locked_wheel_has_a_policy_entry_and_nothing_else():
-    declared = {B.normalize(name) for name in POLICY["python_packages"]}
-    assert declared == set(LOCKED)
+    """Par canal : les roues de la politique du canal = celles de ses verrous, ni plus ni moins (HD-V12-01)."""
+
+    for channel, locked in (("production", set(LOCKED)), ("internal", set(LOCKED) | set(INTERNAL_LOCKED))):
+        policy = B.channel_policy(POLICY, channel)
+        assert {B.normalize(name) for name in policy["python_packages"]} == locked, channel
+        assert [path.name for path in B.channel_locks(POLICY, channel)] == POLICY["channels"][channel]["locks"]
+        assert {row["name"] for row in B.read_locks(B.channel_locks(POLICY, channel))} == locked
     for name, entry in POLICY["python_packages"].items():
         assert entry["status"] == "bundled" and entry["license"], name
+
+
+def test_the_internal_lock_only_adds_wheels_reserved_to_the_internal_channel():
+    assert set(INTERNAL_LOCKED) >= {"openwakeword", "onnxruntime"}
+    assert not set(INTERNAL_LOCKED) & set(LOCKED), "une roue partagée garde la version de la production"
+    for name in INTERNAL_LOCKED:
+        assert POLICY["python_packages"][name]["channels"] == ["internal"], name
+    reserved = {name for name, entry in POLICY["python_packages"].items() if "channels" in entry}
+    assert reserved == set(INTERNAL_LOCKED)
+
+
+def test_a_wheel_locked_twice_is_refused(tmp_path):
+    lock = tmp_path / "a.lock"
+    lock.write_text("httpx==0.28.1 --hash=sha256:" + "0" * 64 + "\n", encoding="utf-8")
+    with pytest.raises(B.BuildError, match="deux fois"):
+        B.read_locks([lock, lock])
+
+
+def test_production_is_the_default_channel_and_excludes_the_wake_word():
+    assert B.DEFAULT_CHANNEL == "production" and POLICY["channels"]["production"]["default"] is True
+    assert POLICY["channels"]["internal"]["default"] is False
+    production = B.channel_policy(POLICY, "production")
+    assert not {"openwakeword", "onnxruntime"} & set(production["python_packages"]) and production["models"] == {}
+    assert {"openwakeword", "onnxruntime", "openwakeword-models"} <= {item["id"] for item in production["excluded"]}
+
+
+def test_the_internal_channel_bundles_the_wake_word_with_its_non_commercial_warning():
+    internal = B.channel_policy(POLICY, "internal")
+    assert {"openwakeword", "onnxruntime"} <= set(internal["python_packages"])
+    assert not {"openwakeword", "onnxruntime", "openwakeword-models"} & {item["id"] for item in internal["excluded"]}
+    models = internal["models"]["openwakeword-models"]
+    assert models["license"] == "CC-BY-NC-SA-4.0" and models["destination"] == "models/wake-word"
+    warning = POLICY["channels"]["internal"]["warning"]
+    assert "usage interne non commercial" in warning.lower() and "à remplacer avant production" in warning
+    assert models["warning"] == warning and POLICY["channels"]["internal"]["decision"] == "HD-V12-01"
+    assert "à remplacer avant production" in B.WAKE_MODELS_NOTICE and "by-nc-sa/4.0" in B.WAKE_MODELS_NOTICE
+
+
+def test_an_unknown_channel_is_refused():
+    with pytest.raises(B.BuildError, match="canal inconnu"):
+        B.channel_policy(POLICY, "beta")
 
 
 @pytest.mark.parametrize("excluded", ["openwakeword", "onnxruntime", "imageio-ffmpeg", "pvporcupine", "sherpa-onnx"])
@@ -286,7 +334,11 @@ def test_the_build_checks_the_revision_before_reading_any_input(tmp_path, monkey
 
 GOOD_PROBE = {"installed": True, "executable_in_package": True, "node_private": True, "no_site": True,
               "sys_path_outside_package": [], "excluded_importable": {"onnxruntime": False, "openwakeword": False},
-              "ffmpeg": None, "path_tools": {"python": None, "node": None}, "diagnostics": {"status": "ok"}}
+              "ffmpeg": None, "path_tools": {"python": None, "node": None}, "diagnostics": {"status": "ok"},
+              "wake": {"default_enabled": False, "default_provider": "porcupine"}}
+GOOD_INTERNAL_WAKE = {"default_enabled": True, "default_provider": "openwakeword", "model_dir_in_package": True,
+                      "models_verified": ["embedding", "hey_jarvis", "melspectrogram"], "detector": "OpenWakeWordEngine",
+                      "silence_detections": [-1, -1, -1, -1, -1]}
 
 
 @pytest.mark.parametrize("change, expected", [
@@ -369,3 +421,179 @@ def test_verify_fails_cleanly_on_an_unreadable_manifest(tmp_path, capsys, raw):
     (out / "runtime-manifest.json").write_bytes(raw)
     code, output = verify(out, capsys)
     assert code == 1 and "ÉCHEC" in output and "Traceback" not in output
+
+
+@pytest.mark.parametrize("channel, wake, expected", [
+    ("production", {"default_enabled": True}, "armé par défaut"),
+    ("internal", GOOD_INTERNAL_WAKE | {"default_enabled": False}, "pas armé par défaut"),
+    ("internal", GOOD_INTERNAL_WAKE | {"model_dir_in_package": False}, "pas lus dans le paquet"),
+    ("internal", GOOD_INTERNAL_WAKE | {"models_verified": ["hey_jarvis"]}, "non vérifiés"),
+    ("internal", GOOD_INTERNAL_WAKE | {"silence_detections": [-1, 0]}, "silence"),
+    ("internal", None, "non chargé")])
+def test_the_probe_checks_the_wake_word_of_each_channel(channel, wake, expected):
+    assert B.probe_problems(GOOD_PROBE | {"wake": GOOD_INTERNAL_WAKE}, "internal") == []
+    problems = B.probe_problems(GOOD_PROBE | {"wake": wake}, channel)
+    assert any(expected in problem for problem in problems), problems
+
+
+def test_the_probe_lets_the_internal_build_import_its_wake_engine_only():
+    assert {"onnxruntime", "openwakeword"} <= set(B.PROBE_EXCLUDED_MODULES["production"])
+    assert not {"onnxruntime", "openwakeword"} & set(B.PROBE_EXCLUDED_MODULES["internal"])
+    assert set(B.PROBE_EXCLUDED_MODULES["internal"]) >= {"imageio_ffmpeg", "pvporcupine", "sherpa_onnx"}
+
+
+# -- canaux : manifeste tiers, manifeste du paquet, verify (HD-V12-01) ------------------------------------------------
+
+
+def _toy_policy(names: dict, models: bool = False) -> dict:
+    packages = {name: {"license": "MIT", "status": "bundled", **({"channels": channels} if channels else {})}
+                for name, channels in names.items()}
+    return {"channels": {"production": {"locks": ["requirements.lock"]},
+                         "internal": {"locks": ["requirements.lock", "requirements-internal.lock"], "warning": "W"}},
+            "python_packages": packages,
+            "excluded": [{"id": "openwakeword", "kind": "python-package", "reason": "NC", "channels": ["production"]}],
+            "external": [], "provisioned": [],
+            "models": ({"openwakeword-models": {"license": "CC-BY-NC-SA-4.0", "status": "bundled", "channels": ["internal"],
+                                                "destination": "models/wake-word", "warning": "W"}} if models else {})}
+
+
+TOY_LOCK = [{"name": "httpx", "version": "0.28.1", "sha256": "a" * 64},
+            {"name": "openwakeword", "version": "0.6.0", "sha256": "b" * 64}]
+
+
+def test_a_production_build_refuses_openwakeword_in_its_site_packages(tmp_path):
+    site = fake_site(tmp_path / "site", {"httpx": "0.28.1", "openwakeword": "0.6.0"})
+    policy = B.channel_policy(_toy_policy({"httpx": None, "openwakeword": ["internal"]}), "production")
+    with pytest.raises(B.BuildError) as refused:
+        B.third_party_manifest(site, TOY_LOCK, policy, RUNTIMES, {})
+    assert "openwakeword: aucune entrée" in str(refused.value) and "openwakeword: composant exclu présent" in str(refused.value)
+
+
+def test_an_internal_build_lists_its_reserved_wheels_and_models_with_their_channel(tmp_path):
+    site = fake_site(tmp_path / "site", {"httpx": "0.28.1", "openwakeword": "0.6.0"})
+    policy = B.channel_policy(_toy_policy({"httpx": None, "openwakeword": ["internal"]}, models=True), "internal")
+    licenses = {"python-packages/openwakeword": ["licenses/python-packages/openwakeword/LICENSE"],
+                "openwakeword-models": ["licenses/openwakeword-models/NOTICE.txt"]}
+    models_dir = tmp_path / "models" / "wake-word"
+    with pytest.raises(B.BuildError, match="modèles déclarés par la politique du canal mais non livrés"):
+        B.third_party_manifest(site, TOY_LOCK, policy, RUNTIMES, licenses, models_dir)
+    models_dir.mkdir(parents=True)
+    with pytest.raises(B.BuildError, match="openwakeword: aucun texte de licence"):
+        B.third_party_manifest(site, TOY_LOCK, policy, RUNTIMES, {}, models_dir)
+    manifest = B.third_party_manifest(site, TOY_LOCK, policy, RUNTIMES, licenses, models_dir)
+    assert manifest["channel"] == "internal" and manifest["warning"] == "W"
+    by_id = {component["id"]: component for component in manifest["components"]}
+    assert by_id["openwakeword"]["channels"] == ["internal"] and "channels" not in by_id["httpx"]
+    models = [component for component in manifest["components"] if component["kind"] == "model"]
+    assert sorted(component["file"] for component in models) == sorted(
+        f"models/wake-word/{spec.filename}" for spec in B.WAKE_MODELS.MODELS)
+    for component in models:
+        spec = B.WAKE_MODELS.find_model(component["id"].split("/")[1])
+        assert component["sha256"] == spec.sha256 and component["size"] == spec.size
+        assert component["license"] == "CC-BY-NC-SA-4.0" and component["channels"] == ["internal"]
+        assert component["license_files"] == ["licenses/openwakeword-models/NOTICE.txt"]
+    assert "openwakeword" not in {item["id"] for item in manifest["excluded"]}
+
+
+def test_a_production_build_refuses_models_it_does_not_declare(tmp_path):
+    site = fake_site(tmp_path / "site", {"httpx": "0.28.1"})
+    policy = B.channel_policy(_toy_policy({"httpx": None}, models=True), "production")
+    (tmp_path / "models").mkdir()
+    with pytest.raises(B.BuildError, match="modèles livrés alors que la politique du canal n'en déclare aucun"):
+        B.third_party_manifest(site, TOY_LOCK[:1], policy, RUNTIMES, {}, tmp_path / "models")
+
+
+def test_extra_license_files_and_the_model_notice_are_shipped(tmp_path):
+    out, site = tmp_path / "pkg", tmp_path / "pkg" / "runtime" / "python" / "Lib" / "site-packages"
+    for relative in ("runtime/python/LICENSE.txt", "runtime/node/LICENSE"):
+        (out / relative).parent.mkdir(parents=True, exist_ok=True)
+        (out / relative).write_text("L", encoding="utf-8")
+    (site / "onnxruntime").mkdir(parents=True)
+    (site / "onnxruntime" / "LICENSE").write_text("MIT", encoding="utf-8")
+    policy = {"python_packages": {"onnxruntime": {"license_files": ["onnxruntime/LICENSE"]}},
+              "models": {"openwakeword-models": {}}}
+    copied = B.collect_licenses(out, site, RUNTIMES, policy)
+    assert copied["python-packages/onnxruntime"] == ["licenses/python-packages/onnxruntime/onnxruntime/LICENSE"]
+    notice = (out / copied["openwakeword-models"][0]).read_text(encoding="utf-8")
+    assert "CC BY-NC-SA 4.0" in notice and "à remplacer avant production" in notice
+    policy["python_packages"]["onnxruntime"]["license_files"].append("onnxruntime/ThirdPartyNotices.txt")
+    with pytest.raises(B.BuildError, match="absents de la roue"):
+        B.collect_licenses(out, site, RUNTIMES, policy)
+
+
+def test_the_runtime_manifest_names_its_channel_and_tracks_the_models(tmp_path, monkeypatch):
+    monkeypatch.setattr(B, "node_npm_version", lambda node_dir: "10.0.0")
+    out = fake_built_package(tmp_path / "pkg")
+    production = B.runtime_manifest(out, RUNTIMES, "r" * 40, B.channel_policy(POLICY, "production"))
+    assert production["product"]["channel"] == "production" and "models" not in production
+    assert "channel_warning" not in production["product"]
+    (out / "models" / "wake-word").mkdir(parents=True)
+    (out / "models" / "wake-word" / "hey_jarvis_v0.1.onnx").write_bytes(b"m")
+    internal = B.runtime_manifest(out, RUNTIMES, "r" * 40, B.channel_policy(POLICY, "internal"))
+    assert internal["product"]["channel"] == "internal"
+    assert "à remplacer avant production" in internal["product"]["channel_warning"]
+    assert internal["models"]["root"] == "models" and internal["models"]["files"] == 1
+
+
+def refresh_manifest(out: Path, **product) -> Path:
+    """Recalcule les empreintes du faux paquet après une plantation : seul le contrôle de canal peut alors refuser."""
+
+    from jarvis import private_runtime as PR
+
+    manifest = json.loads((out / PR.RUNTIME_MANIFEST).read_text(encoding="utf-8"))
+    manifest["product"].update(product)
+    for name in ("python", "node"):
+        manifest["runtimes"][name]["tree_sha256"] = PR.tree_sha256(out / "runtime" / name)[0]
+    manifest["third_party_manifest_sha256"] = PR.file_sha256(out / B.THIRD_PARTY_MANIFEST)
+    if (out / "models").is_dir():
+        manifest["models"] = {"root": "models", "tree_sha256": PR.tree_sha256(out / "models")[0]}
+    manifest.pop("package_sha256", None)
+    manifest["package_sha256"] = B.package_digest(manifest)
+    B.write_json(out / PR.RUNTIME_MANIFEST, manifest)
+    return out
+
+
+def plant_model(out: Path) -> None:
+    (out / "models" / "wake-word").mkdir(parents=True)
+    (out / "models" / "wake-word" / "hey_jarvis_v0.1.onnx").write_bytes(b"model")
+
+
+def test_verify_accepts_an_intact_internal_package_and_refuses_a_tampered_model(tmp_path, capsys):
+    out = fake_built_package(tmp_path / "pkg")
+    plant_model(out)
+    refresh_manifest(out, channel="internal", channel_warning="Usage interne non commercial")
+    code, output = verify(out, capsys)
+    assert code == 0 and "canal internal" in output and "Usage interne non commercial" in output
+    (out / "models" / "wake-word" / "hey_jarvis_v0.1.onnx").write_bytes(b"other")
+    code, output = verify(out, capsys)
+    assert code == 1 and "models: arbre modifié" in output
+
+
+def test_verify_names_the_production_channel_of_a_package_without_channel(tmp_path, capsys):
+    code, output = verify(fake_built_package(tmp_path / "pkg"), capsys)  # manifeste V1 : pas de `channel`
+    assert code == 0 and "canal production" in output
+
+
+@pytest.mark.parametrize("plant, expected", [
+    (plant_model, "production: modèles livrés"),
+    (lambda out: (out / "runtime" / "python" / "Lib" / "site-packages" / "openwakeword").mkdir(parents=True),
+     "production: openwakeword présent"),
+    (lambda out: (out / "runtime" / "python" / "Lib" / "site-packages" / "onnxruntime-1.30.0.dist-info").mkdir(parents=True),
+     "production: onnxruntime présent"),
+    (lambda out: (out / B.THIRD_PARTY_MANIFEST).write_text(
+        json.dumps({"components": [{"id": "openwakeword", "channels": ["internal"]}]}), encoding="utf-8"),
+     "production: openwakeword réservé aux canaux ['internal']"),
+])
+def test_verify_refuses_a_production_package_that_carries_an_internal_component(tmp_path, capsys, plant, expected):
+    out = fake_built_package(tmp_path / "pkg")
+    plant(out)
+    (out / "runtime" / "python" / "Lib" / "site-packages").mkdir(parents=True, exist_ok=True)
+    (out / "runtime" / "python" / "Lib" / "site-packages" / "keep.txt").write_text("x", encoding="utf-8")
+    code, output = verify(refresh_manifest(out, channel="production"), capsys)
+    assert code == 1 and expected in output, output
+    assert "arbre modifié" not in output and "integrity_failed" not in output and "package_sha256" not in output
+
+
+def test_verify_refuses_an_unknown_channel(tmp_path, capsys):
+    code, output = verify(refresh_manifest(fake_built_package(tmp_path / "pkg"), channel="beta"), capsys)
+    assert code == 1 and "canal inconnu 'beta'" in output

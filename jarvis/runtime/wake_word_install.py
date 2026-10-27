@@ -23,13 +23,20 @@ Codes de sortie : 0 tout est en place, 1 échec ou refus, 2 confirmation
 impossible (pas de clavier et pas de `--yes`).
 
 Produit installé en édition `presentation` (`docs/windows-packaging.md`) : `install`
-est refusé (`wake_word_install_unavailable_in_edition`, code 1). Les modèles
-(CC BY-NC-SA) et openWakeWord sont exclus du paquet : le produit ne les télécharge
-jamais. `status` reste permis (lecture seule).
+est refusé (`wake_word_install_unavailable_in_edition`, code 1) ; le produit ne
+télécharge jamais de modèle. Build de production : openWakeWord et les modèles
+(CC BY-NC-SA) sont exclus du paquet. Build interne (HD-V12-01) : ils sont livrés
+dans le paquet (`<paquet>/models/wake-word`, lu par `catalog.default_model_dir`),
+donc rien à installer. `status` reste permis (lecture seule).
+
+`installed_engine_ready` dit si CE processus est un produit installé dont le moteur
+est présent (paquet importable, modèles vérifiés) : c'est la condition qui arme le
+mot de réveil d'un profil vierge (`wake_word_settings.baseline`).
 """
 
 from __future__ import annotations
 
+from functools import lru_cache
 import importlib.util
 import json
 import sys
@@ -47,6 +54,9 @@ def destination() -> str:
     """
 
     directory = catalog.default_model_dir()
+    bundled = catalog.bundled_model_dir()
+    if bundled is not None and directory == bundled:
+        return "dossier du programme : models/wake-word"
     try:
         return directory.resolve().relative_to(catalog.ROOT.resolve()).as_posix()
     except ValueError:
@@ -68,6 +78,39 @@ def package_installed() -> bool:
 
     try:
         return importlib.util.find_spec("openwakeword") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+@lru_cache(maxsize=1)
+def installed_engine_ready() -> bool:
+    """Vrai si ce processus est un produit installé dont le moteur openWakeWord est présent : `openwakeword` et
+    `onnxruntime` importables (sans les importer) et les trois modèles vérifiés (taille, SHA-256).
+
+    Lu une fois par processus : le paquet est en lecture seule et Voice ne relit ses réglages qu'au démarrage.
+    Toujours faux en développement (checkout, édition `full` du poste du développeur) : le défaut n'y change pas.
+    """
+
+    from jarvis import private_runtime
+    from jarvis.domain.errors import ConfigurationError
+
+    try:
+        if private_runtime.package_layout() is None:
+            return False
+    except ConfigurationError:
+        # Silence argumentée : un marqueur illisible refuse déjà le démarrage (`data_root`) et y est dit ; ici le
+        # défaut sûr (F9 seul) suffit.
+        return False
+    if not engine_modules_present():
+        return False
+    return all(state.state == "verified" for state in read_states())
+
+
+def engine_modules_present() -> bool:
+    """`openwakeword` ET `onnxruntime` importables, sans les importer."""
+
+    try:
+        return package_installed() and importlib.util.find_spec("onnxruntime") is not None
     except (ImportError, ValueError):
         return False
 
@@ -197,9 +240,14 @@ def _install(out: TextIO, err: TextIO, input_fn: Callable[[str], str], *, yes: b
 INSTALL_REFUSED = "wake_word_install_unavailable_in_edition"
 
 
-def install_refusal(*, installed: bool, edition: str) -> str | None:
-    """Phrase du refus de `install` dans un produit installé `presentation`, `None` ailleurs (checkout, `full`)."""
+def install_refusal(*, installed: bool, edition: str, bundled: bool = False) -> str | None:
+    """Phrase du refus de `install` dans un produit installé `presentation`, `None` ailleurs (checkout, `full`).
 
+    `bundled` : le paquet livre déjà les modèles (build interne, HD-V12-01)."""
+
+    if installed and edition == "presentation" and bundled:
+        return (f"{INSTALL_REFUSED}: les modèles openWakeWord sont livrés avec ce programme (build interne, "
+                "usage interne non commercial) : rien à installer. Voir : python -m jarvis wake-word status")
     if installed and edition == "presentation":
         return (f"{INSTALL_REFUSED}: l'éveil vocal openWakeWord n'est pas livré dans l'édition presentation "
                 "(modèles sous licence non commerciale CC BY-NC-SA) ; le réveil se fait au clavier.")
@@ -210,7 +258,8 @@ def _process_install_refusal() -> str | None:
     from jarvis.installation import detect_installation
     from jarvis.runtime.product_edition_env import process_edition
 
-    return install_refusal(installed=detect_installation().installed, edition=process_edition().edition.value)
+    return install_refusal(installed=detect_installation().installed, edition=process_edition().edition.value,
+                           bundled=catalog.bundled_model_dir() is not None)
 
 
 def run_cli(

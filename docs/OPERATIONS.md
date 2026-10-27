@@ -560,6 +560,13 @@ micro réel : `docs/HARDWARE_ACCEPTANCE.md`, « Configurable wake word (openWake
 openWakeWord est **facultatif** : sans lui, Voice démarre exactement comme avant
 (touche manuelle, et Porcupine si sa clé existe). Rien ne s'installe tout seul.
 
+Ces étapes valent pour un checkout de développement. Le **build interne** du
+paquet Windows (`build_package.py build --channel internal`, HD-V12-01) livre déjà
+l'extra et les trois modèles vérifiés (`<paquet>\models\wake-word`) : rien à
+installer, et un profil vierge y arme « Hey Jarvis » en veille en plus de F9
+(`docs/voice-lifecycle.md` › *Wake word engine*). Le build de production n'en livre
+aucun (F9 seul). Usage interne non commercial ; à remplacer avant production.
+
 1. **L'extra Python** `wakeword`, dans l'environnement qui fait tourner Voice :
    `python -m pip install -e ".[wakeword]"`, depuis la racine du dépôt, avec le
    Python du venv de Voice. Le `-e` est obligatoire : le venv vivant a `jarvis` en

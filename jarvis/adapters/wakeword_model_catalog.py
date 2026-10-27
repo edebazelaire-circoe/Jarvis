@@ -11,6 +11,12 @@ n'est accordée à l'URL.
 Licence : le code d'openWakeWord est Apache-2.0 ; les modèles préentraînés sont
 CC BY-NC-SA 4.0 (usage privé non commercial), voir `third_party/README.md`.
 
+Build interne du paquet Windows (HD-V12-01, `docs/windows-packaging.md` › *Canaux*) :
+`build_package.py build --channel internal` télécharge ces trois fichiers avec
+ce catalogue (mêmes empreintes) et les livre sous `<paquet>/models/wake-word` ;
+`default_model_dir()` y lit en priorité (`bundled_model_dir`). Un build de
+production n'en livre aucun.
+
 Le modèle de ce fichier est `sherpa_model_catalog` : mêmes garde-fous (taille
 bornée, `.part` jamais laissé, remplacement atomique), codes d'erreur
 `wake_model_*` calqués sur `speaker_model_*`.
@@ -142,8 +148,17 @@ def find_model(name: str) -> WakeModelSpec | None:
 
 
 def default_model_dir() -> Path:
-    """`<runtime>/wake-word/models`, le runtime étant `JARVIS_RUNTIME_DIR` ou `runtime/` du dépôt."""
+    """Où le produit lit (et le développement installe) les modèles.
 
+    - Produit installé dont le paquet livre les modèles (build interne, HD-V12-01) : `<paquet>/models/wake-word`,
+      en lecture seule, prioritaire même si `JARVIS_RUNTIME_DIR` est posé (le paquet fait foi, rien n'est téléchargé).
+    - Sinon `<runtime>/wake-word/models`, le runtime étant `JARVIS_RUNTIME_DIR` ou `runtime/` du dépôt (ou de la
+      maison du produit installé).
+    """
+
+    bundled = bundled_model_dir()
+    if bundled is not None:
+        return bundled
     raw = os.getenv("JARVIS_RUNTIME_DIR")
     if raw:
         path = Path(raw).expanduser()
@@ -152,6 +167,18 @@ def default_model_dir() -> Path:
         from jarvis.data_root import default_runtime_root  # `<dépôt>/runtime`, ou `<maison du produit>/runtime` installé
         runtime = default_runtime_root(dev_default=ROOT / "runtime")
     return runtime / "wake-word" / "models"
+
+
+def bundled_model_dir() -> Path | None:
+    """`models/wake-word` du paquet de ce processus s'il existe (build interne), sinon `None` (développement,
+    build de production)."""
+
+    from jarvis import private_runtime  # paquet de CE processus, lu une fois (marqueur produit)
+
+    layout = private_runtime.package_layout()
+    if layout is None or not layout.wake_models_dir.is_dir():
+        return None
+    return layout.wake_models_dir
 
 
 def verify_spec(spec: WakeModelSpec, model_dir: Path) -> Path:

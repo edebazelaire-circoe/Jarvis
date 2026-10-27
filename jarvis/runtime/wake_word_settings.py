@@ -19,6 +19,14 @@ Le bloc ``wake_word``, à la racine de ``runtime/control-center-settings.json`` 
 - ``enabled`` : **faux par défaut** (D1). Sans réglage explicite, le comportement
   d'avant cette fonctionnalité est strictement inchangé : la touche manuelle, et
   le mot Porcupine si une clé Porcupine est configurée. Aucun micro de plus.
+  **Exception, profil vierge d'un produit installé dont le moteur est présent**
+  (build interne, HD-V12-01, `wake_word_install.installed_engine_ready`) : un bloc
+  **absent** vaut ``{"enabled": true, "provider": "openwakeword"}`` (`baseline`),
+  donc « Hey Jarvis » réveille en Sleep en plus de F9. L'utilisateur le désactive
+  par les Réglages (le bloc écrit fait alors foi). Le checkout de développement
+  (édition ``full`` du poste du développeur) n'est jamais un produit installé :
+  `DEFAULT_ENABLED` y reste la règle. Un bloc illisible donne toujours les défauts
+  sûrs (`defaults`), jamais `baseline`.
 - ``provider`` : ``porcupine`` (défaut = le comportement actuel) ou
   ``openwakeword``. Valeurs fermées.
 - ``keyword`` : un mot par fournisseur, **jamais le même jeton** :
@@ -125,6 +133,23 @@ def defaults() -> WakeWordSettings:
     """Les défauts sûrs : désactivé, fournisseur actuel."""
 
     return WakeWordSettings()
+
+
+def baseline() -> WakeWordSettings:
+    """Réglage d'un profil vierge (bloc ``wake_word`` absent).
+
+    Produit installé dont le moteur openWakeWord est livré et vérifié (build interne, HD-V12-01) : mot de réveil
+    armé, ``openwakeword`` / ``hey_jarvis``. Partout ailleurs (développement, build de production, moteur absent) :
+    les défauts sûrs. La décision vit dans `wake_word_install.installed_engine_ready` (lue une fois par processus) ;
+    import paresseux : ce module reste une frontière de réglages sans dépendance au chargement.
+    """
+
+    from jarvis.runtime import wake_word_install
+
+    if wake_word_install.installed_engine_ready():
+        return WakeWordSettings(enabled=True, provider=PROVIDER_OPENWAKEWORD,
+                                keyword=DEFAULT_KEYWORDS[PROVIDER_OPENWAKEWORD])
+    return defaults()
 
 
 def default_keyword(provider: str) -> str:
@@ -266,7 +291,7 @@ def _read(settings: Mapping[str, Any]) -> tuple[WakeWordSettings, dict[str, Any]
         "ignored_fields": [],
     }
     if stored is None:
-        return defaults(), seen
+        return baseline(), seen
     if not isinstance(stored, Mapping):
         seen["unreadable"] = True
         seen["problems"].append({
@@ -381,6 +406,9 @@ def _state(current: WakeWordSettings, seen: Mapping[str, Any]) -> str:
     if seen["unreadable"] or seen["problems"]:
         return ("Bloc wake_word illisible : défauts sûrs appliqués, mot d'éveil du bloc inactif "
                 "(comportement actuel inchangé). Voir « problems ».")
+    if not seen["present"] and current.enabled:
+        return (f"Mot d'éveil actif par défaut : moteur {current.provider} livré avec ce programme (build interne), "
+                f"mot « {current.keyword} », en plus du raccourci clavier. Désactivez-le ici pour garder le clavier seul.")
     if not current.enabled:
         return "Mot d'éveil du bloc inactif : comportement actuel inchangé (touche manuelle, et Porcupine si sa clé est configurée)."
     return (

@@ -354,6 +354,45 @@ def test_release_info_names_a_verified_package_its_installer_and_its_inputs(tmp_
         RI.build(package, installer, gate_reports=[gate], smoke_report=smoke, environ={})
 
 
+def test_release_info_carries_the_channel_and_names_an_internal_build_apart(tmp_path):
+    """HD-V12-01 : le canal est dans l'identité ; un build interne porte son nom et le bloquant de production."""
+
+    head, package, manifest, installer = _candidate(tmp_path)
+    gate = _verdict(tmp_path / "gate.json", revision=head)
+    info = RI.build(package, installer, gate_reports=[gate],
+                    smoke_report=_smoke(tmp_path / "smoke.json", installer, manifest["package_sha256"]), environ={})
+    assert info["product"]["channel"] == "production" and "production_blockers" not in info
+    assert "-internal-" not in info["artifact_name"]
+    assert "packaging/windows/requirements-internal.lock" in info["build_inputs_sha256"]
+
+    internal = json.loads(json.dumps(manifest))
+    internal["product"].update(channel="internal", channel_warning="Usage interne non commercial ; à remplacer avant production.")
+    internal.pop("package_sha256")
+    internal["package_sha256"] = PR.package_digest(internal)
+    (package / PR.RUNTIME_MANIFEST).write_text(json.dumps(internal), encoding="utf-8")
+    other = _installer(tmp_path / "JARVIS-Setup-internal.exe", _zip_with(internal))
+    info = RI.build(package, other, gate_reports=[gate],
+                    smoke_report=_smoke(tmp_path / "smoke-internal.json", other, internal["package_sha256"]), environ={})
+    assert info["product"]["channel"] == "internal"
+    assert info["artifact_name"].startswith(f"jarvis-0.2.0-internal-{head[:12]}-")
+    assert "openWakeWord" in info["production_blockers"][0] and "--channel production" in info["production_blockers"][0]
+    assert info["channel_warning"].startswith("Usage interne non commercial")
+
+
+def test_an_internal_wheel_must_stay_reserved_to_the_internal_channel(tmp_path):
+    windows = tmp_path / "packaging" / "windows"
+    windows.mkdir(parents=True)
+    for name in ("requirements.lock", "requirements-internal.lock", "third_party_policy.json"):
+        (windows / name).write_text((ROOT / "packaging" / "windows" / name).read_text(encoding="utf-8"), encoding="utf-8")
+    assert V.internal_lock_findings(tmp_path) == [], "the real internal lock is clean"
+    policy = json.loads((windows / "third_party_policy.json").read_text(encoding="utf-8"))
+    del policy["python_packages"]["openwakeword"]["channels"]
+    (windows / "third_party_policy.json").write_text(json.dumps(policy), encoding="utf-8")
+    assert "internal wheel openwakeword is not reserved to the internal channel by the policy" in V.internal_lock_findings(tmp_path)
+    lock = (windows / "requirements-internal.lock").read_text(encoding="utf-8")
+    (windows / "requirements-internal.lock").write_text(lock + "httpx==0.28.1 --hash=sha256:" + "0" * 64 + "\n", encoding="utf-8")
+    assert "internal wheel httpx is also in the production lock" in V.internal_lock_findings(tmp_path)
+
 def test_release_info_refuses_a_package_and_an_installer_that_do_not_belong_together(tmp_path):
     """QA S10 R2 (essai réel : une identité « verte » pour un paquet d'une autre révision, sans porte ni essai) et m7."""
 
