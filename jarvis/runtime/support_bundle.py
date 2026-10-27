@@ -24,6 +24,14 @@ jeton opaque, sans forme reconnaissable, qui apparaît seul dans un journal est 
 descellées ne vivent qu'en mémoire, le temps du paquet ; `bundle.json` ne dit que des COMPTES (`secret_sources`), et
 un descellement impossible (autre compte Windows, coffre indisponible) dégrade le masquage sans empêcher le paquet.
 Le zip est écrit sous `runtime\\support\\` (ou `--out`) ; son chemin est rendu à l'appelant.
+
+V1.2 Slice 07 (« Signaler un problème », `docs/support-report.md`) : le MÊME service, en mode complet
+(`BundleSources.full`, demandé avec le consentement de l'utilisateur dans le Control Center, ou `--full`), ajoute ce que
+les collecteurs de `support_snapshot.py` rendent DÉJÀ masqué : instantané cohérent des deux bases d'état (coffre vidé),
+mémoire du Board actif, réglages sans clés, état de préparation, description de l'utilisateur. Tout paquet porte
+`manifest.json` (inclus, masqué, omis, refusé, exclu, avec tailles et raisons) et `report.md` (`support_report.py` :
+rapport IA ancré dans les seules preuves masquées, ou rapport factuel sans IA). Le dossier `runtime\\support\\` garde au
+plus `KEEP_BUNDLES` paquets de moins de `MAX_BUNDLE_AGE_S` (`prune_support_folder`).
 """
 
 from __future__ import annotations
@@ -31,7 +39,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import io
 import json
 import os
 from pathlib import Path
@@ -40,12 +47,18 @@ import re
 import shutil
 import sqlite3
 import sys
+import tempfile
+import time
 from typing import Any
 import zipfile
 
-from jarvis.domain.diagnostic_redaction import DiagnosticRedactor
+from jarvis.domain.diagnostic_redaction import DiagnosticRedactor, secret_like, sensitive_name
 from jarvis.domain.mcp_plugins import REDACTED
 from jarvis.runtime.journal import read_jsonl_tail, tail_lines
+from jarvis.runtime.support_snapshot import (
+    ManifestEntry, SnapshotError, active_board_from_state, board_memory, sanitized_settings,
+    snapshot_database,
+)
 
 SCHEMA = "jarvis.support-bundle"
 SUPPORT_DIR = "support"
@@ -66,17 +79,10 @@ DIAGNOSTIC_KEYS = frozenset({"error", "error_type", "exception", "code", "reason
                              "detail", "cause", "stage", "operation", "op", "role", "level", "component", "module",
                              "step", "state", "mode", "method", "exit_code", "signal", "errno"})
 _IDENTIFIER = re.compile(r"\S{1,120}")
-#: Mots (séparés par `_`, `-` ou `.`) d'un nom de variable dont la valeur est un secret quelle que soit sa forme :
-#: `INFOMANIAK_TOKEN`, `API_KEY`, `DB_PASSWORD`… Mot entier, ou fin de mot pour les formes collées (`APIKEY`,
-#: `ACCESSTOKEN`) ; jamais un morceau (`KEYBOARD_LAYOUT`, `BYPASS_HOST` ne sont pas des secrets, QA S10 x4).
-SECRET_NAME_WORDS = frozenset({"TOKEN", "KEY", "SECRET", "PASSWORD", "PASSWD", "PWD", "PASS", "PASSPHRASE",
-                               "CREDENTIAL", "CREDENTIALS", "COOKIE", "SIGNATURE", "AUTHORIZATION", "BEARER"})
-SECRET_NAME_ENDINGS = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "APIKEY", "CREDENTIAL", "CREDENTIALS")
-#: Mots qui font d'un nom « sensible » un réglage descriptif (`TOKEN_TYPE`, `KEY_FILE`, `MAX_TOKEN`, `TOKEN_EXPIRES_AT`).
-DESCRIPTIVE_NAME_WORDS = frozenset({"TYPE", "KIND", "EXPIRES", "EXPIRY", "EXPIRATION", "AT", "SCOPE", "SCOPES", "URL",
-                                    "URI", "HOST", "PORT", "MODE", "TIMEOUT", "LENGTH", "SIZE", "COUNT", "MAX", "MIN",
-                                    "LIMIT", "ENABLED", "FILE", "PATH", "DIR", "NAME", "ID", "CACHE", "LAYOUT", "HINT"})
-_TRIVIAL_VALUE = re.compile(r"(?i)(?:true|false|yes|no|on|off|none|null|enabled|disabled|[0-9.:+-]*)")
+#: Noms sensibles, valeurs en forme de secret : la règle vit dans le masqueur (`diagnostic_redaction`, QA S10 x4,
+#: V1.2 S07 B1) ; gardée ici sous ses anciens noms pour les appelants du paquet.
+_sensitive_name = sensitive_name
+_secret_like = secret_like
 MAX_FILE_BYTES = 1024 * 1024
 LOG_ROLES = ("launcher", "core", "ui", "voice")
 #: Bases dont seule la version de schéma est lue.
@@ -86,6 +92,29 @@ DATA_FOLDERS = ("state", "CONTEXT_GLOBAL", "boards", "sessions", "artifacts", "p
                 "memory", "history", "prefabs", "local_capabilities", "backups")
 #: Fichiers d'état du runtime recopiés, masqués.
 RUNTIME_STATE_FILES = ("launcher.json", "product-onboarding.json")
+MANIFEST_SCHEMA = "jarvis.support-manifest"
+#: Paquets dont l'envoi a échoué, gardés par la rétention jusqu'à leur enregistrement (30 jours au plus).
+PENDING_FILE = ".pending-send.json"
+BUNDLE_NAME = re.compile(r"jarvis-support-\d{8}T\d{6}Z(?:-\d{1,4})?\.zip")
+#: Rétention du dossier de support : les `KEEP_BUNDLES` plus récents, aucun de plus de `MAX_BUNDLE_AGE_S`.
+KEEP_BUNDLES = 5
+MAX_BUNDLE_AGE_S = 30 * 24 * 3600
+#: Un temporaire (`.tmp`, dossier `.work-*`) plus vieux qu'une heure est un reste d'arrêt brutal : retiré.
+STALE_WORK_S = 3600
+DESCRIPTION_CHARS = 4000
+#: Ce qui n'entre JAMAIS, même en mode complet (dit au manifeste avec le statut `excluded`).
+NEVER_INCLUDED = (("credential_vault", "MCP vault rows (mcp_credentials) removed from the database snapshot"),
+                  ("sealed_settings_keys", "API keys of the local settings, plain or DPAPI-sealed"),
+                  ("core_token", "runtime/core.token"),
+                  ("env_values", "values of config/.env (names only, in config-keys.json)"))
+#: Dossiers de données jamais copiés : médias lourds, runtimes privés, caches, sauvegardes, autres Boards.
+OMITTED_FOLDERS = {"CONTEXT_GLOBAL": "global context: not part of a problem report",
+                   "sessions": "session captures (media)", "artifacts": "artifacts (media, renders)",
+                   "presentations": "presentation documents and renders (heavy media)",
+                   "presentation_templates": "templates (heavy media)", "memory": "global memory: not part of a problem report",
+                   "history": "conversation history files (the state database snapshot carries the recent context)",
+                   "prefabs": "prefab library (code and media)", "local_capabilities": "private runtimes (Remotion, Node)",
+                   "backups": "backups (.bak copies of the bases)"}
 
 
 class SupportBundleError(RuntimeError):
@@ -103,6 +132,23 @@ class BundleSources:
     #: Descelleurs des réglages locaux et du coffre MCP (DPAPI par défaut ; injectés par les tests).
     credentials_sealer: Callable[[], Any] | None = None
     mcp_sealer: Callable[[], Any] | None = None
+    #: V1.2 Slice 07 : mode complet (rapport de problème consenti), description libre, Board actif connu de Core,
+    #: rapport de préparation (santé) relevé par le Control Center.
+    full: bool = False
+    description: str = ""
+    active_board: Mapping[str, Any] | None = None
+    health: Mapping[str, Any] | None = None
+
+
+@dataclass
+class Collected:
+    """Fichiers du paquet (déjà masqués), lignes du manifeste, preuves masquées pour `report.md`."""
+
+    files: dict[str, bytes]
+    manifest: list[ManifestEntry]
+    evidence: dict[str, Any]
+    #: Le masqueur du paquet (secrets connus en mémoire seulement) : le prompt et la réponse du rapport IA y repassent.
+    redact: Callable[[str], str] = str
 
 
 def utc_stamp() -> str:
@@ -189,25 +235,6 @@ def env_items(config_dir: Path | None) -> tuple[list[tuple[str, str]], int]:
 
 def env_keys(config_dir: Path | None) -> list[str]:
     return sorted({name for name, _value in env_items(config_dir)[0]})
-
-
-def _sensitive_name(name: str) -> bool:
-    words = [word for word in re.split(r"[_.\-]+", name.upper()) if word]
-    if any(word in DESCRIPTIVE_NAME_WORDS for word in words):
-        return False
-    return any(word in SECRET_NAME_WORDS or word.endswith(SECRET_NAME_ENDINGS) for word in words)
-
-
-def _secret_like(name: str, value: str) -> bool:
-    if not value or _TRIVIAL_VALUE.fullmatch(value):
-        return False
-    if _sensitive_name(name):
-        return len(value) >= 6
-    # Prudence : toute valeur non triviale qui ressemble à un jeton (sans espace ; lettres ET chiffres, ou longue).
-    # Un mot seul (`presentation`, `Europe/Paris`) reste lisible : il nomme un réglage, pas un secret.
-    if len(value) < 8 or any(char.isspace() for char in value):
-        return False
-    return (any(char.isdigit() for char in value) and any(char.isalpha() for char in value)) or len(value) >= 20
 
 
 def _sealer(factory: Callable[[], Any] | None, default: Callable[[], Any]) -> Any:
@@ -367,7 +394,15 @@ def _read_json(path: Path) -> Any:
 
 
 def collect(sources: BundleSources) -> dict[str, bytes]:
-    """Les fichiers du paquet (nom → octets), déjà masqués et bornés."""
+    """Les fichiers du paquet (nom → octets), déjà masqués et bornés (sans `manifest.json` ni `report.md`)."""
+
+    with tempfile.TemporaryDirectory(prefix=".work-") as work:
+        return collect_bundle(sources, Path(work)).files
+
+
+def collect_bundle(sources: BundleSources, work_dir: Path) -> Collected:
+    """Fichiers masqués, manifeste et preuves du paquet. `work_dir` : dossier de travail vide (instantanés des bases),
+    à la charge de l'appelant."""
 
     secrets, secret_report = secret_sources(sources)
     redactor = DiagnosticRedactor(sources.environ, known_secrets=secrets)
@@ -423,7 +458,76 @@ def collect(sources: BundleSources) -> dict[str, bytes]:
                 lines = [f"<{role}.log illisible : {type(exc).__name__}>"]
             files[f"logs/{role}.log"] = _lines_bytes(redactor.text(line[:MAX_INPUT_CHARS]) for line in lines)
     files["config-keys.json"] = _json_bytes({"config_env_keys": env_keys(sources.config_dir)})
-    return {name: _cap(content) for name, content in files.items()}
+    files = {name: _cap(content) for name, content in files.items()}
+    manifest = [ManifestEntry(name, _category(name), "masked" if name.startswith("logs/") else "included", len(content))
+                for name, content in files.items()]
+    manifest += [ManifestEntry(name, name, "excluded", reason=reason) for name, reason in NEVER_INCLUDED]
+    board = None
+    if sources.full:
+        board = _full_content(sources, redactor, work_dir, files, manifest)
+    else:
+        manifest += [ManifestEntry(name, "content", "excluded", reason="light bundle: no content without a problem report")
+                     for name in ("state/jarvis.sqlite3", "state/scene.sqlite3", "board/memory", "settings")]
+    for name, reason in OMITTED_FOLDERS.items():
+        size = (summary["data_folders"].get(name) or {}).get("bytes")
+        manifest.append(ManifestEntry(f"data/{name}", "data_folder", "omitted", size, reason=reason))
+    from jarvis.runtime.support_report import build_evidence
+    evidence = build_evidence(files, board=board, full=sources.full)
+    return Collected(files=files, manifest=manifest, evidence=evidence, redact=redactor.text)
+
+
+def _category(name: str) -> str:
+    if name.startswith("logs/"):
+        return "logs"
+    return {"bundle.json": "summary", "config-keys.json": "config_names"}.get(name, "other")
+
+
+def _full_content(sources: BundleSources, redactor: DiagnosticRedactor, work_dir: Path, files: dict[str, bytes],
+                  manifest: list[ManifestEntry]) -> dict[str, Any] | None:
+    """Mode complet : description, santé, réglages, instantanés des bases, mémoire du Board actif. Rend le Board actif
+    (masqué) ou `None`."""
+
+    description = redactor.text(sources.description.strip()[:DESCRIPTION_CHARS]) if sources.description.strip() else ""
+    if description:
+        files["context/description.txt"] = (description + "\n").encode("utf-8")
+        manifest.append(ManifestEntry("context/description.txt", "user_description", "masked",
+                                      len(files["context/description.txt"])))
+    if sources.health is not None:
+        files["health/readiness.json"] = _json_bytes(redactor.structured(dict(sources.health)))
+        manifest.append(ManifestEntry("health/readiness.json", "health", "masked", len(files["health/readiness.json"])))
+    else:
+        manifest.append(ManifestEntry("health/readiness.json", "health", "omitted", reason="not available (no Control Center)"))
+    body, entry = sanitized_settings(sources.runtime_root / "control-center-settings.json", redactor.structured)
+    if body is not None:
+        files[entry.path] = body
+    manifest.append(entry)
+    for relative in DATABASES:
+        target = work_dir / Path(relative).name
+        try:
+            report = snapshot_database(sources.data_root / relative, target, redactor.cell)
+        except SnapshotError as exc:
+            manifest.append(ManifestEntry(relative, "state_database", "omitted", reason=str(exc)))
+            continue
+        try:
+            files[relative] = target.read_bytes()
+        finally:
+            target.unlink(missing_ok=True)
+        manifest.append(ManifestEntry(relative, "state_database", "masked", len(files[relative]),
+                                      reason=json.dumps(report, sort_keys=True)))
+    board: dict[str, Any] | None = dict(sources.active_board) if sources.active_board else None
+    if board is None:
+        board = active_board_from_state(sources.data_root / DATABASES[0])
+    board_id = str((board or {}).get("board_id") or "")
+    if not board_id:
+        manifest.append(ManifestEntry("board/memory", "board_memory", "omitted", reason="no active board known"))
+        return None
+    memory, entries = board_memory(sources.data_root, board_id, redactor.cell)
+    files.update(memory)
+    manifest.extend(entries)
+    shown = {key: board[key] for key in ("board_id", "title", "board_kind") if isinstance(board.get(key), str)}
+    files["board/board.json"] = _json_bytes(redactor.structured(shown))
+    manifest.append(ManifestEntry("board/board.json", "board_memory", "masked", len(files["board/board.json"])))
+    return redactor.structured(shown)
 
 
 def _json_bytes(payload: Any) -> bytes:
@@ -440,28 +544,177 @@ def _cap(content: bytes) -> bytes:
     return content[-MAX_FILE_BYTES:]  # the end of a log is the part that explains the failure
 
 
-def write_bundle(sources: BundleSources, out_dir: Path | None = None) -> Path:
-    """Écrit `jarvis-support-<UTC>.zip` (temporaire puis renommé : jamais un zip à moitié écrit) et rend son chemin."""
+def write_bundle(sources: BundleSources, out_dir: Path | None = None, *, report: str | None = None) -> Path:
+    """Écrit le paquet (temporaire puis renommé : jamais un zip à moitié écrit) et rend son chemin.
+
+    `report` : le texte de `report.md` déjà écrit ; absent, un rapport factuel sans IA (ligne de commande)."""
+
+    from jarvis.runtime.support_report import factual_report
 
     target_dir = Path(out_dir) if out_dir is not None else sources.runtime_root / SUPPORT_DIR
     try:
-        files = collect(sources)
         target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / f"jarvis-support-{utc_stamp()}.zip"
-        index = 2
-        while target.exists():
-            target = target_dir / f"jarvis-support-{utc_stamp()}-{index}.zip"
-            index += 1
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
-            for name, content in sorted(files.items()):
-                bundle.writestr(name, content)
-        temp = target.with_name(target.name + ".tmp")
-        temp.write_bytes(buffer.getvalue())
-        os.replace(temp, target)
+        with tempfile.TemporaryDirectory(prefix=".work-", dir=target_dir) as work:
+            collected = collect_bundle(sources, Path(work))
+        text = report if report is not None else factual_report(collected.evidence, ai_status="not_requested")
+        path = write_archive(target_dir, collected, text, report_kind="ai" if report is not None else "factual")
     except OSError as exc:
         raise SupportBundleError(f"Paquet de support non écrit dans {target_dir} : {type(exc).__name__}: {exc}") from exc
+    if out_dir is None:
+        prune_support_folder(target_dir, protect=path)
+    return path
+
+
+def manifest_payload(collected: Collected, *, report_kind: str, report_meta: Mapping[str, Any] | None = None,
+                     report_bytes: int) -> dict[str, Any]:
+    entries = [entry.to_dict() for entry in collected.manifest]
+    entries.append({"path": "report.md", "category": "report", "status": "included", "bytes": report_bytes,
+                    "reason": f"{report_kind} report, written from masked evidence only"})
+    included = [e for e in entries if e["status"] in ("included", "masked")]
+    return {"schema": MANIFEST_SCHEMA, "schema_version": 1,
+            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "mode": "full" if collected.evidence.get("full") else "light",
+            "active_board": collected.evidence.get("active_board"),
+            "report": {"kind": report_kind, **dict(report_meta or {})},
+            "totals": {"included_files": len(included), "included_bytes": sum(e.get("bytes") or 0 for e in included),
+                       "omitted": sum(1 for e in entries if e["status"] == "omitted"),
+                       "refused": sum(1 for e in entries if e["status"] == "refused")},
+            "files": entries}
+
+
+def write_archive(target_dir: Path, collected: Collected, report: str, *, report_kind: str,
+                  report_meta: Mapping[str, Any] | None = None) -> Path:
+    """`jarvis-support-<UTC>.zip` dans `target_dir`, avec `report.md` et `manifest.json` : écrit en temporaire puis
+    renommé (jamais un zip à moitié écrit, jamais un paquet existant écrasé). `OSError` remonte, rien ne reste."""
+
+    report_bytes = report.encode("utf-8")
+    files = dict(collected.files)
+    files["report.md"] = report_bytes
+    files["manifest.json"] = _json_bytes(manifest_payload(collected, report_kind=report_kind, report_meta=report_meta,
+                                                          report_bytes=len(report_bytes)))
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"jarvis-support-{utc_stamp()}.zip"
+    index = 2
+    while target.exists():
+        target = target_dir / f"jarvis-support-{utc_stamp()}-{index}.zip"
+        index += 1
+    temp = target.with_name(target.name + ".tmp")
+    try:
+        with zipfile.ZipFile(temp, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
+            for name, content in sorted(files.items()):
+                bundle.writestr(name, content)
+        os.replace(temp, target)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
     return target
+
+
+def prune_support_folder(folder: Path, *, keep: int = KEEP_BUNDLES, max_age_s: float = MAX_BUNDLE_AGE_S,
+                         now: float | None = None, protect: Path | None = None) -> list[str]:
+    """Rétention : garde les `keep` paquets les plus récents de moins de `max_age_s` (et toujours `protect`, le paquet
+    qu'on vient d'écrire) ; retire les temporaires vieux d'une heure. Seuls les noms du service sont touchés
+    (`BUNDLE_NAME`, `*.zip.tmp`, `.work-*`) ; jamais un sous-dossier ni un autre fichier. Rend les noms retirés."""
+
+    clock = time.time() if now is None else now
+    removed: list[str] = []
+    try:
+        entries = list(os.scandir(folder))
+    except OSError:
+        return removed  # intentional: no folder yet, nothing to keep tidy
+    bundles: list[tuple[float, Path]] = []
+    for entry in entries:
+        try:
+            info = entry.stat(follow_symlinks=False)
+        except OSError:
+            continue  # intentional: a file vanishing during the pass is already gone
+        path = Path(entry.path)
+        if BUNDLE_NAME.fullmatch(entry.name) and entry.is_file(follow_symlinks=False):
+            bundles.append((info.st_mtime, path))
+        elif (entry.name.endswith(".zip.tmp") or entry.name.startswith(".work-")) and clock - info.st_mtime > STALE_WORK_S:
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+                removed.append(entry.name)
+            except OSError:
+                continue  # intentional: retried at the next bundle
+    bundles.sort(reverse=True)
+    # A bundle whose send failed and that was never saved is kept until saved, sent or `max_age_s` old (QA S07 m5).
+    pending = pending_bundles(folder)
+    rank = 0
+    for mtime, path in bundles:
+        if protect is not None and path == protect:
+            continue
+        old = clock - mtime > max_age_s
+        if path.name in pending and not old:
+            continue
+        if old or rank >= keep:
+            try:
+                path.unlink()
+                removed.append(path.name)
+                if path.name in pending:
+                    set_pending(folder, path.name, False)
+            except OSError:
+                pass  # intentional: a bundle held open (being sent) is retried at the next pass
+            continue
+        rank += 1
+    return removed
+
+
+def pending_bundles(folder: Path) -> set[str]:
+    """Paquets dont l'envoi a échoué et qui n'ont été ni enregistrés ni envoyés depuis (`PENDING_FILE`)."""
+
+    try:
+        names = json.loads((Path(folder) / PENDING_FILE).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return set()
+    except (OSError, ValueError):
+        return set()  # intentional: an unreadable list protects nothing more; retention then follows its count rule
+    return {name for name in names if isinstance(name, str) and BUNDLE_NAME.fullmatch(name)} if isinstance(names, list) else set()
+
+
+def set_pending(folder: Path, name: str, pending: bool) -> None:
+    """Ajoute ou retire `name` de la liste des paquets à garder ; écriture atomique. `OSError` remonte."""
+
+    names = pending_bundles(folder)
+    names = names | {name} if pending else names - {name}
+    target = Path(folder) / PENDING_FILE
+    temp = target.with_name(target.name + ".tmp")
+    temp.write_text(json.dumps(sorted(names)), encoding="utf-8")
+    os.replace(temp, target)
+
+
+def sweep_work_folders(folder: Path) -> list[str]:
+    """Retire tout dossier `.work-*` (copie brute d'une base laissée par un arrêt brutal, QA S07 m4). À n'appeler que
+    hors d'une création en cours."""
+
+    removed: list[str] = []
+    try:
+        entries = [entry for entry in os.scandir(folder) if entry.name.startswith(".work-")]
+    except OSError:
+        return removed  # intentional: no support folder yet
+    for entry in entries:
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                shutil.rmtree(entry.path)
+            else:
+                os.unlink(entry.path)
+            removed.append(entry.name)
+        except OSError:
+            continue  # intentional: retried at the next creation
+    return removed
+
+
+def _config_dir(installation: Any) -> Path | None:
+    """Dossier du `.env` dont les valeurs sont des secrets connus : `config` du produit installé, ou, en développement,
+    la racine du dépôt (`environment.project_environment_file`, QA S07 M1 : le JARVIS quotidien tourne ainsi)."""
+
+    if installation.home is not None:
+        return installation.home.config
+    from jarvis.environment import PROJECT_ROOT
+    return PROJECT_ROOT
 
 
 def sources_from_environment(environ: Mapping[str, str] | None = None) -> BundleSources:
@@ -485,7 +738,7 @@ def sources_from_environment(environ: Mapping[str, str] | None = None) -> Bundle
                 "intact": manifest is not None and not problems, "problems": problems[:20]}
 
     return BundleSources(data_root=resolve_data_root(env), runtime_root=resolve_runtime_root(env),
-                         config_dir=installation.home.config if installation.home else None, environ=env,
+                         config_dir=_config_dir(installation), environ=env,
                          installation={"mode": installation.mode.value}, package=package)
 
 
@@ -493,11 +746,18 @@ def run_cli(args: Any) -> int:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
+    sources = sources_from_environment()
+    sources.full = bool(getattr(args, "full", False))
+    sources.description = str(getattr(args, "description", None) or "")
     try:
-        path = write_bundle(sources_from_environment(), Path(args.out) if getattr(args, "out", None) else None)
+        path = write_bundle(sources, Path(args.out) if getattr(args, "out", None) else None)
     except SupportBundleError as exc:
         print(str(exc), file=sys.stderr)
         return 1
     print(f"Paquet de support écrit : {path}")
-    print("Il ne contient ni conversations, ni présentations, ni clés ; vous pouvez l'ouvrir pour le relire avant de l'envoyer.")
+    if sources.full:
+        print("Il contient, masqués, les bases d'état, la mémoire du Board actif et les réglages sans clés ; relisez "
+              "manifest.json avant de l'envoyer.")
+    else:
+        print("Il ne contient ni conversations, ni présentations, ni clés ; vous pouvez l'ouvrir pour le relire avant de l'envoyer.")
     return 0

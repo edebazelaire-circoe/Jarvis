@@ -229,6 +229,10 @@ after the backup; a profile copied to another Windows user or PC loses its DPAPI
 
 ## Support bundle
 
+The full problem report (« Signaler un problème », V1.2 Slice 07: masked state-base snapshots, active Board memory,
+sanitized settings, readiness, AI `report.md`, `manifest.json`, retention, send) is specified in
+[support-report.md](support-report.md); every bundle now carries `manifest.json` and `report.md`.
+
 `<install>\runtime\python\python.exe -B -m jarvis support-bundle [--out DIR]`
 (`jarvis/runtime/support_bundle.py`) writes `jarvis-support-<UTC>.zip` under `runtime\support\`
 (temporary file then rename: never a half zip; two in the same second never overwrite each other):
@@ -339,5 +343,4 @@ entry for it in the production channel, and the removal of the internal-only ope
 ## Out of scope / open
 
 - running the pipeline on GitHub (A12) and pinning its actions by commit SHA instead of tag;
-- a support bundle button in the readiness window (the command exists; the UI is a frontend change);
 - cross-machine reproducibility of the package (same `package_sha256` on two different machines).
