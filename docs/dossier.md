@@ -25,7 +25,9 @@ human-readable entries, two canonical owners of one Board:
 
 - the **Board memory** (`<data_root>/boards/<board_id>/memory/`,
   [boards.md](boards.md) › *Board memory*): free-form files, `summary.md`
-  convention;
+  convention (in a Presentation project, the structured project digest:
+  [boards.md](boards.md) › *Presentation project digest*; its *Documents
+  clés* point to Dossier entries by their memory path);
 - the **registry Artifacts linked to the Board** (`board_artifact_links`, v8,
   [artifacts.md](artifacts.md) › *Board links*).
 

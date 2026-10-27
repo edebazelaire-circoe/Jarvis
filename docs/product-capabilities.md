@@ -160,6 +160,16 @@ after the fact:
   `written: false`, nothing declared to Core). The reason tells the model that
   this edition does no development and lists the offered roles; it holds no
   path or secret. `full`, and an unreadable edition, refuse nothing.
+  Pinned by tests (`test_presentation_brain_scope.py`,
+  `test_presentation_project_continuity.py`): an `Agent` **or `Task`** call
+  (`routing_hook.AGENT_TOOLS`), `[coder]` without a profile, `[CODER]`,
+  `[ coder ]`, the marker in the prompt only, `[éphémère]` first.
+  **Unreadable edition (accepted, I-001 m4)**: when `JARVIS_PRODUCT_EDITION`
+  cannot be read, the hook lets the call through
+  (`agent_capabilities_unreadable` is logged, texts as in `full`); it never
+  refuses on its own failure. This is not an opening: Core and the CLI
+  launcher refuse to start on an unreadable edition, so no confined brain runs
+  with it, and the real barrier stays the tools the CLI was launched with.
 - **Role tools** (`SubagentRole.tools`, descriptive): the payload of
   `GET /api/subagent-roles` shows `role_tools(role, capabilities)`: no tool of
   `forbidden_native_tools` (`qa` no longer shows `Bash`), `board_memory_write`
@@ -188,9 +198,13 @@ after the fact:
   offered. When the manifest closes `self_development`, it adds the refusal of
   development: no change to the Jarvis code or repository or another project,
   no arbitrary code or command; the only code made here is Remotion scenes and
-  prefabs, through `presentation_source`. Project continuity and research
-  reuse/freshness (V1.2 Slices 02-03) are added as separate lines at the
-  anchor comment in that function.
+  prefabs, through `presentation_source`. Project continuity (V1.2 Slice 02)
+  is one line at the anchor comment (`- Continuité : …`) plus the section
+  `MÉMOIRE DU PROJET : summary.md` (`BRAIN_PRESENTATION_MEMORY_SECTION`)
+  appended to this section: the `summary.md` convention, when and how the
+  brain updates it, how it resumes ([boards.md](boards.md) › *Presentation
+  project digest*). Research reuse/freshness (Slice 03) is added as a
+  separate line at the same anchor.
   The workspace adaptation replaces exact lines of a read-only constant and
   raises `PromptAdaptationError` (`prompt_adaptation_line_missing`) when one is
   missing, instead of skipping it.
@@ -221,6 +235,20 @@ event lists the tools actually offered (`tools`), which the real traces check.
 See `tasks/jarvis-presentation-edition-v1/LOG.md` (Slice 04) for the sandbox
 run: init `tools` of the brain and of a sub-agent, normal authoring/export,
 hostile turns (write outside, PowerShell, delete, delegated to a sub-agent).
+
+**V1.2 Slice 01 (2026-10-27, model `claude-opus-5-5`)**, sandbox in
+`presentation` (`tasks/jarvis-presentation-edition-v1-2/LOG.md`, Slice 01 and
+its QA): the brain's `system/init` offers only `Task, Glob, Grep, Read,
+SendMessage, ToolSearch, WebFetch, WebSearch` plus the `jarvis-*` MCP servers
+(92 tools), `permissionMode` `dontAsk`. A development request (« modifie le
+code de JARVIS… lance git status ») is refused in one sentence with no tool
+call and no agent; a web question goes to one `[general] [web-research]`; a
+one-slide request goes to `[general] [presentation-author]`
+(`presentation_draft_assemble`, `presentation_source op preview`). No Bash,
+Write, Edit, PowerShell nor `[coder]` call. The real hook process refuses a
+forged `[coder]` / `[CODER]` with `role_unavailable_in_edition` and an
+`agent.spawn_refused` line; the model itself never attempted `[coder]`, so the
+refusal behind the live CLI is not observed. Cost: 1.07 $ + 0.29 $ (QA).
 
 ## Residual risks
 
