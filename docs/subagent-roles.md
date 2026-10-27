@@ -856,60 +856,81 @@ sources:
 ```
 
 `volatility` : `high` (semaines : modèles, prix, versions), `medium` (mois), `low` (stable) ; `faible`,
-`moyenne`, `forte` sont acceptés. Par source : `date` (de la source), `checked` (de sa vérification),
-`volatility` (si elle diffère du sujet), `status: failed` (vérification ratée : refus, page vide ; aussi
-reconnu quand `checked` contient « échec », « failed », « non lue », « vide » ou un code HTTP 4xx/5xx). Les dates
-entre guillemets (`'2026-10-20'`) sont lues. Après un rafraîchissement partiel, seules les sources revérifiées
-prennent la nouvelle date `checked` ; une source qu'on n'a pas pu lire garde l'ancienne et reçoit `status: failed`.
+`moyenne`, `forte` sont acceptés. Par source : `date` (de la source), `checked` (de sa dernière lecture
+réussie), `volatility` (si elle diffère du sujet), et pour une lecture ratée (refus, page vide) `tried` (date de
+la tentative) avec `status: failed`. Un échec est aussi reconnu quand `checked` contient, en mots entiers,
+« échec », « failed », « erreur », « non lue », « vide », « refusé », « forbidden », « timeout » ou un code HTTP
+4xx/5xx isolé (jamais les millisecondes d'un horodatage) ; la date de ce `checked` est alors celle de la
+tentative. Les sources s'écrivent sur une ligne (`- <réf> | date: … | checked: …`) ou en bloc YAML imbriqué
+(`- url: …` puis `date:`, `checked:`, `tried:`, `status:` indentés) ; les blocs `topic: >` sont lus ; les dates
+entre guillemets aussi. Après un rafraîchissement partiel, seules les sources relues prennent la nouvelle date
+`checked`.
 
-**Décision déterministe** (`jarvis/domain/research_freshness.py`, `decide`, pure ; tests
+**Décision déterministe** (`jarvis/domain/research_freshness.py`, `decide` / `decide_for`, pures ; tests
 `tests/unit/test_research_freshness.py`). Pas de durée de vie universelle : l'âge toléré **depuis la dernière
-vérification** dépend de la volatilité (`MAX_AGE_DAYS` : 30 j `high`, 180 j `medium`, 730 j `low` ; `medium`
+lecture réussie** dépend de la volatilité (`MAX_AGE_DAYS` : 30 j `high`, 180 j `medium`, 730 j `low` ; `medium`
 par défaut), et une demande d'actualité le réduit à `RECENCY_MAX_AGE_DAYS` = 7 j, **pour les seuls documents
 dont le sujet correspond au tour** (`matches_topic` : un mot significatif commun entre la demande et le `topic`,
-le `scope` ou le nom du fichier).
+le `scope` ou le nom du fichier ; mots de 4 lettres et plus par racine, mots de 2-3 lettres comme « IA »,
+« LLM », « GPT » par mot entier ; mots-outils et mots génériques écartés, liste `TOPIC_STOPWORDS` : prix,
+tarif, outil, comparaison, présentation, slide, deck, offre, formule, version, tendance, chiffre…).
+
+**Source en échec durable** (seconde reprise F1). Une source dont la dernière tentative a échoué est
+« non vérifiable » tant que cette tentative a moins que l'âge toléré de sa volatilité : elle ne déclenche aucun
+rafraîchissement (le document reste « réutiliser » si le reste tient), elle est signalée au cerveau, qui le dit
+si la donnée compte. Au-delà, elle redevient périmée et on la réessaie. Une lecture réussie plus récente que la
+tentative l'emporte.
 
 Déclencheurs d'actualité (`RECENCY_TRIGGERS`, liste explicite et testée, mots entiers sans accents ni casse) :
-dernier·e·s, actuel·le·s, actuellement, aujourd'hui, en ce moment, à ce jour, à jour, récent·e·s, cette année,
-cette semaine, latest, current, currently, today, newest, up to date. Écartés : « dernier·e·s » suivi d'un
-élément du projet (`RECENCY_EXCLUDED_NOUNS` : diapo, slide, page, phrase, message…, et « version » suivie du
-deck ou du document) ; « maintenant » / « now » seuls ; une année seule.
+dernier·e·s, actuel·le·s, actuellement, aujourd'hui, en ce moment, à ce jour, récent·e·s, cette année, cette
+semaine, latest, current, currently, today, newest, up to date. Écartés : « dernier·e·s » ou « current » suivi
+d'un élément du projet ou de la conversation (`RECENCY_EXCLUDED_NOUNS` : diapo, slide, page, phrase, message,
+chose, mot, deck…, et « version » suivie du deck ou du document), « en dernier » ; « à jour » (« mets à jour »,
+« mise à jour », « le deck est-il à jour ? » : un verbe d'édition) ; « maintenant » / « now » seuls ; une année
+seule.
 
 | Ordre | Cas | Action | Raison |
 | --- | --- | --- | --- |
 | 1 | aucun document | `new_research` | `no_document` |
-| 2 | pas de front-matter ou pas de `checked_at` lisible | `full_refresh` | `freshness_unknown` |
+| 2 | pas de front-matter, pas de `checked_at` lisible, ou en-tête jamais fermé / plus long que 16 Kio | `full_refresh` | `freshness_unknown` |
 | 3 | `checked_at` dans le futur | `full_refresh` | `checked_at_in_future` |
 | 4 | demande d'actualité sur ce sujet et document vérifié il y a plus de 7 j | `full_refresh` | `recency_requested` |
-| 5 | aucune source au-delà de son âge toléré ni ratée | `reuse` | `fresh` |
-| 5 | toutes les sources au-delà ou ratées | `full_refresh` | `stale` |
-| 5 | certaines sources au-delà ou ratées | `partial_refresh` (sources nommées) | `partially_stale` |
+| 5 | aucune source périmée (les non vérifiables pour l'instant sont seulement signalées) | `reuse` | `fresh` |
+| 5 | toutes les sources périmées | `full_refresh` | `stale` |
+| 5 | certaines sources périmées | `partial_refresh` (sources nommées) | `partially_stale` |
 
-La date de **publication** d'une source ne déclenche jamais de rafraîchissement (reprise QA B2 : sinon un
-document juste revérifié resterait périmé pour toujours) : une source `high` publiée plus de 30 j avant sa
-vérification est seulement comptée (`old_sources`, « déjà ancienne à sa lecture, à signaler sans rafraîchir »).
-Sans source citée, le document entier est jugé à la volatilité du sujet.
+La date de **publication** d'une source ne déclenche jamais de rafraîchissement (reprise QA B2) : une source
+`high` publiée plus de 30 j avant sa lecture est seulement comptée (`old_sources`). Sans source citée, le
+document entier est jugé à la volatilité du sujet.
 
 Exemples : une note du 24 octobre 2026, `medium`, et « combien de VAE vendus en 2025 ? » → `reuse` ; une note
 de mars 2025 et « quels sont les derniers modèles d'OpenAI ? » → `full_refresh` (`recency_requested`), pendant que
-la note Gamma du même Board, hors sujet, garde sa décision ; une note stable dont une source de prix `high` a été
-vérifiée il y a trois mois → `partial_refresh` de cette seule source ; « modifie la dernière diapo » → aucun
-déclencheur ; un document rafraîchi aujourd'hui → `reuse`, même avec « derniers ».
+la note Gamma du même Board, hors sujet, n'est pas touchée ; une note stable dont une source de prix `high` a été
+lue il y a trois mois → `partial_refresh` de cette seule source ; « modifie la dernière diapo », « mets à jour la
+slide » → aucun déclencheur ; « le prix actuel de Synthesia » → ne touche pas la note Gamma ; un document
+rafraîchi aujourd'hui → `reuse`, même avec « derniers », y compris quand une de ses sources est restée en 403
+aujourd'hui (`gamma.app/pricing | checked: 2026-10-27 (échec HTTP 403, non lue)` : « non vérifiable pour
+l'instant », réessayée après 30 j).
 
 **Où la décision est prise.** Pas par le modèle : Core la calcule à chaque tour, sur le texte du tour
 (`BrainOrchestrator._turn_board` → `SessionManager.board_context(conversation_id, request=…)` →
 `board_hydration.with_board_research`). Au plus 8 fichiers `.md` de `documents/research/` (ceux dont le nom parle
 du sujet du tour d'abord, puis les plus récents ; le surplus est dit au cerveau avec la façon de les lister). Le
 front-matter seul sert : 2 Kio lus, puis relus jusqu'à `MAX_FRONT_MATTER_BYTES` = 16 Kio quand l'en-tête est
-plus long (un en-tête réel de 30 sources fait 3,9 Kio) ; au-delà, `problem: front_matter_too_long` est signalé et
-la décision porte sur ce qui a été lu. Elle voyage dans le bloc `board` (`memory.research = {documents, recency,
-unread?}`, chaque document avec `on_topic`, `problem`, `old_count` ; absent hors Presentation et sans document) et
-le Control Center la rend sous la mémoire, décodée strictement (`board_brief.render_board_research`) :
+plus long (un en-tête réel de 30 sources fait 3,9 Kio). Un en-tête jamais fermé, quelle que soit la taille du
+fichier, ou plus long que 16 Kio est signalé (`problem`, « à réécrire ») et jugé prudemment (`decide_for` :
+`full_refresh`, fraîcheur inconnue), sujet et date gardés pour l'affichage. Elle voyage dans le bloc `board`
+(`memory.research = {documents, recency, unread?}`, chaque document avec `on_topic`, `problem`, `old_count`,
+`unverifiable_sources` / `unverifiable_count` ; absent hors Presentation et sans document). Le Control Center la
+rend sous la mémoire, décodée strictement (`board_brief.render_board_research`) ; « rafraîchir » et « tout
+revérifier » ne sont dits que pour les documents du sujet du tour, les autres sont « hors sujet du tour, aucune
+action » :
 
 ```text
 Recherches du Board (documents/research), fraîcheur décidée par JARVIS pour ce tour (demande d'actualité : « derniers », appliquée aux documents du sujet du tour) :
 - documents/research/openai-modeles.md : « Modèles d'OpenAI disponibles », sujet du tour, vérifié le 2025-03-02, volatilité forte → tout revérifier (la demande réclame l'état actuel)
-- documents/research/gamma-outil.md : « Gamma : fonctionnalités et tarifs », vérifié le 2026-10-20, volatilité forte → réutiliser tel quel (à jour pour sa volatilité)
+- documents/research/gamma-outil.md : « Gamma : fonctionnalités et tarifs », vérifié le 2026-10-27, volatilité forte → réutiliser tel quel (à jour pour sa volatilité) ; non vérifiable pour l'instant (dernière tentative ratée, pas de nouvel essai avant l'âge toléré) : https://gamma.app/pricing ; dites-le si la donnée compte
+- documents/research/prix-heygen.md : « Prix de HeyGen », vérifié le 2026-08-01, volatilité forte → hors sujet du tour, aucune action
 ```
 
 Trace : `core.research.freshness_decided` (`board_id`, `conversation_id`, `today`, `recency`, `unread`,

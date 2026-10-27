@@ -648,6 +648,7 @@ def test_conversation_and_deck_ordinals_are_not_recency(request_text):
 @pytest.mark.parametrize(("checked", "failed"), [
     ("2026-10-27T11:35:12.450Z", False), ("2026-10-27 (vidéo regardée)", False), ("2026-10-27 (vide)", True),
     ("2026-10-27 (HTTP 403)", True), ("2026-10-27 (échec)", True), ("2026-10-27 12:404", False),
+    ("2026-10-27 (film Terror lu)", False), ("2026-10-27 (videos)", False),
 ])
 def test_failure_words_are_whole_words_and_timestamps_are_not_http_codes(checked, failed):
     meta, _ = parse_front_matter(f"---\ntopic: X\nchecked_at: 2026-10-27\nsources:\n  - https://a | checked: {checked}\n---\n")
