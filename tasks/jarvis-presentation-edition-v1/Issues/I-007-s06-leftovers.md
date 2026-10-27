@@ -40,3 +40,11 @@ deliberately left out. Not blocking; owners:
 ## Slice 07 status (2026-10-26)
 - Point 1: done. Readiness shows « Moteur de rendu : Réparer » on `install_failed` and the named action `render_repair` reinstalls at the pinned versions. Reproduced and fixed in the simulated install (private Node removed, restored by a repair reinstall, capability still `install_failed`, then ready in 61 s).
 - Launcher `-B`: done (every child of the launcher). The MCP servers started by the Claude CLI from `*-mcp.json` still run without `-B`; `verify` of the installed folder stayed intact after two sessions and a render.
+
+## Slice 10 status (2026-10-27)
+- Point 2 (pip user cache): done, `--no-cache-dir` on both pip calls of the build (`test_release_tooling.py`).
+- Point 3 (intermittents): done. `test_presentation_render_service.py` waits (bounded) for the `cleanup` call made
+  after the final state; `test_remotion_isolation.py` measures the thread CPU time instead of the wall clock.
+  Neither is in `tests/known_failures.json`.
+- Point 4 and the counter-review observations: carried into the release gate table (`docs/release.md`).
+  Cross-machine reproducibility is still not proven.

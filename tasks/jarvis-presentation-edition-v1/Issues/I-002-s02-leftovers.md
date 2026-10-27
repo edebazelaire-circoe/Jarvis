@@ -15,3 +15,10 @@ Origin: Slice 02 QA (runtime 7/7 PASS, code review with no blocker). Owners:
 - Point 3: done. The launcher (`python -B -m jarvis launch`) creates `data`, `runtime`, `config` at first launch; the readiness action `prepare_data` recreates them.
 - Point 4: done. Launcher refusals are shown (message box without a console) and written (`runtime/logs/launcher.log`, `errors.jsonl`, or `%TEMP%/jarvis-launcher-error.log` before any home exists). Proven in the simulated install (LOCALAPPDATA removed).
 - Point 5: not re-measured (simulated home under `%TEMP%`, no long-path failure seen); stays with Slice 10.
+
+## Slice 10 status (2026-10-27)
+- Point 5: measured, closed. The longest file JARVIS writes itself in a Context folder of the installed product
+  (`…\data\sessions\jsess_<32 hex>\contexts\jctx_<32 hex>\.jarvis-enrichment.json`) is 165 characters for
+  `C:\Users\Jean` and 181 for a 20-character user name (the Windows maximum), so at least 78 characters of margin
+  under `MAX_PATH`. The QA failure came from a sandbox home under a long `%TEMP%\claude\…\scratchpad` path. Files an
+  agent writes deeper inside its Context stay checked by `safe_folders.check_file_path` (typed refusal, no crash).

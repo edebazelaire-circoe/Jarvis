@@ -18,19 +18,19 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from jarvis.adapters.export_destination import ExportDestination
 from jarvis.domain.artifacts import Artifact, ArtifactError, ArtifactErrorCode, ArtifactState
 from jarvis.domain.document_export import (
     ExportError, ExportErrorCode as E, ExportResult, default_stem, export_class_of, file_stem,
 )
 from jarvis.ports.artifacts import ArtifactPayloadError
+from jarvis.ports.document_export import ExportDestinationPort
 
 #: Qui a demandé : l'interface (geste de l'utilisateur) ou le cerveau (sur la demande de l'utilisateur, attestée par son outil).
 ACTORS = frozenset({"user", "brain"})
 
 
 class DocumentExportService:
-    def __init__(self, *, artifacts: Any, destination: ExportDestination,
+    def __init__(self, *, artifacts: Any, destination: ExportDestinationPort,
                  title_of: Callable[[Artifact], Awaitable[str | None]] | None = None, diagnostics: Any | None = None,
                  clock: Callable[[], datetime] | None = None) -> None:
         self._artifacts = artifacts
@@ -43,7 +43,7 @@ class DocumentExportService:
                         level="warning", data={"root": destination.label})
 
     @property
-    def destination(self) -> ExportDestination:
+    def destination(self) -> ExportDestinationPort:
         return self._destination
 
     def root(self) -> dict[str, Any]:

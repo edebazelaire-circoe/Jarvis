@@ -41,3 +41,14 @@ in brackets.
 - mn4: no test checks the failed copy is set aside before deletion (surviving mutation).
 - mn5: the uninstall log says the key was removed without checking `reg delete` succeeded.
 - mn6: `/S` only catches `ArgumentException` on paths (`setup_stub.cs`); another path error would crash with a Windows dialog (read only).
+
+## Slice 10 status (2026-10-27)
+- Point 1: done. `product_setup.probe_swappable` renames the installed program and back BEFORE the package
+  verification; a held file refuses `jarvis_running` in seconds; a failed rename back is `rollback_failed`, resumed
+  by the next install (tests in `test_product_setup.py`).
+- Point 2: done. `launcher.json` carries `process_ref` (PID + creation time); `product_launcher.launcher_alive` is the
+  single reader (installer, uninstaller, readiness « Quitter JARVIS »); a state without it falls back to the PID.
+- Point 5: done. The last line of `claude auth status` goes through `DiagnosticRedactor` before the report.
+- Point 4 (screen readers of the WinForms bootstrap): NOT done (frontend of the bootstrap, never run graphically);
+  stays for HV-INSTALL-01 / Slice 11.
+- mn1 (deferred uninstall script and a reused PID): NOT done; see `I-010-s10-leftovers.md`.

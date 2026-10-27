@@ -44,6 +44,9 @@ CORE_ADAPTER_IMPORT_EXCEPTIONS: dict[str, frozenset[str]] = {
             # shares the `sqlite_state` connection, constructed only.
             "jarvis.adapters.sqlite_conversation_events",
             "jarvis.adapters.sqlite_state",
+            # Explicit export destination (presentation-edition Slice 03): constructed only
+            # (`ExportDestination.from_environment`); the service sees `ports.document_export`.
+            "jarvis.adapters.export_destination",
             # Board store (Slice 02 of board-session): shares the
             # `sqlite_state` connection like the event store, constructed only.
             "jarvis.adapters.sqlite_workspace_board",

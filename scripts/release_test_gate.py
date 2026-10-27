@@ -183,7 +183,8 @@ def judge(result: dict, known: dict[str, Known], *, today: date, rerun) -> Verdi
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     parser.add_argument("--suite", choices=SUITES, required=True)
-    parser.add_argument("--shard", help="K/N : seulement la K-ième part sur N des fichiers de la suite")
+    parser.add_argument("--shard", action="append", default=[],
+                        help="K/N : seulement la K-ième part sur N des fichiers ; répétable (3/10 puis 1/2 : la moitié de la part 3)")
     parser.add_argument("--report", help="écrit le verdict JSON dans ce fichier")
     parser.add_argument("--list", action="store_true", help="liste les fichiers sans lancer pytest")
     parser.add_argument("--today", help=argparse.SUPPRESS)  # tests de la porte
@@ -193,7 +194,9 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8", errors="replace")
     try:
         known = load_known()
-        files = shard(suite_files(args.suite), args.shard)
+        files = suite_files(args.suite)
+        for spec in args.shard:
+            files = shard(files, spec)
     except GateError as exc:
         print(f"[test-gate] ERREUR : {exc}", file=sys.stderr)
         return 2
@@ -215,12 +218,13 @@ def main(argv: list[str] | None = None) -> int:
             return False
 
         verdict = judge(result, known, today=today, rerun=rerun)
-    payload = {"suite": args.suite, "shard": args.shard, "files": len(files), "known_failures_file": KNOWN_FAILURES.name,
+    shards = ",".join(args.shard) or None
+    payload = {"suite": args.suite, "shard": shards, "files": len(files), "known_failures_file": KNOWN_FAILURES.name,
                **verdict.to_payload()}
     if args.report:
         Path(args.report).parent.mkdir(parents=True, exist_ok=True)
         Path(args.report).write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"[test-gate] suite {args.suite}{' ' + args.shard if args.shard else ''} : {len(files)} fichiers, "
+    print(f"[test-gate] suite {args.suite}{' ' + shards if shards else ''} : {len(files)} fichiers, "
           f"{verdict.passed} passés, {verdict.failed} en échec dont {len(verdict.known_failed)} connus")
     for label, rows in (("échec NON listé", verdict.unknown), ("entrée périmée (le test passe : la retirer)", verdict.stale),
                         ("entrée à revoir (review_by dépassé)", verdict.expired), ("intermittent toléré (passé seul)", verdict.tolerated)):

@@ -2,7 +2,7 @@
 #
 # Every step calls a script of the repository, so each one can be run locally exactly as here:
 #   static   -> scripts/verify_release.py
-#   tests    -> scripts/release_test_gate.py --suite unit --shard K/4
+#   tests    -> scripts/release_test_gate.py --suite unit --shard K/4 (repeatable: --shard 3/10 --shard 1/2)
 #   browser  -> scripts/release_test_gate.py --suite browser --shard K/4
 #   package  -> packaging/windows/build_package.py build|installer, scripts/package_smoke.py, scripts/release_info.py
 # Known failures are an explicit, dated list (tests/known_failures.json), never a global ignore.

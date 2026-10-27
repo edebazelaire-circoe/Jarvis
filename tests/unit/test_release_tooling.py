@@ -147,6 +147,8 @@ def test_suites_cover_every_test_file_once_and_shards_partition_them():
     assert set(G.suite_files("release")) <= set(unit) and "tests/unit/test_release_tooling.py" in G.suite_files("release")
     parts = [G.shard(everything, f"{k}/4") for k in range(1, 5)]
     assert sorted(sum(parts, [])) == everything and all(parts)
+    halves = [G.shard(parts[2], f"{k}/2") for k in (1, 2)]  # `--shard 3/4 --shard K/2` : les moitiés d'une part
+    assert sorted(halves[0] + halves[1]) == sorted(parts[2]) and not set(halves[0]) & set(halves[1])
     for bad in ("0/4", "5/4", "x"):
         with pytest.raises(G.GateError):
             G.shard(everything, bad)
