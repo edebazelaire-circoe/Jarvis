@@ -3,7 +3,7 @@
 # Every step calls a script of the repository, so each one can be run locally exactly as here:
 #   static   -> scripts/verify_release.py
 #   tests    -> scripts/release_test_gate.py --suite unit --shard K/4 (repeatable: --shard 3/10 --shard 1/2)
-#   browser  -> scripts/release_test_gate.py --suite browser --shard K/4
+#   browser  -> scripts/release_test_gate.py --suite browser --shard K/10 (sizing: docs/release.md, Pipeline)
 #   package  -> packaging/windows/build_package.py build|installer, scripts/package_smoke.py, scripts/release_info.py
 # Known failures are an explicit, dated list (tests/known_failures.json), never a global ignore.
 # Status on 2026-10-27: written and validated locally only (YAML parsed, every script run on Windows 11); its first
@@ -80,13 +80,17 @@ jobs:
           if-no-files-found: error
 
   browser:
-    name: Browser tests (shard ${{ matrix.shard }}/4)
+    name: Browser tests (shard ${{ matrix.shard }}/10)
     runs-on: windows-latest
-    timeout-minutes: 60
+    # Sizing (docs/release.md, Pipeline): measured 2026-10-27 at 0.9 min per browser file on average and 2.2 min for the
+    # slowest group (settings). 10 shards of at most 19 files -> about 17 min each, at most 42 min if every file were as
+    # slow as the slowest group; 75 min leaves that margin, so `package` (needs: browser) is never blocked by construction.
+    # tests/unit/test_release_tooling.py keeps this bound when files are added.
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,7 +105,7 @@ jobs:
       - name: Install Jarvis and its development tools
         run: python -m pip install -e ".[dev]"
       - name: Test gate, browser suite (Chrome of the runner)
-        run: python scripts/release_test_gate.py --suite browser --shard ${{ matrix.shard }}/4 --report gate/browser-${{ matrix.shard }}.json
+        run: python scripts/release_test_gate.py --suite browser --shard ${{ matrix.shard }}/10 --report gate/browser-${{ matrix.shard }}.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:

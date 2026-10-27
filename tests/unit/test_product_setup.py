@@ -402,7 +402,9 @@ def test_the_deferred_removal_really_deletes_a_folder_with_spaces(tmp_path):
     S.uninstall(t, progress=quiet(), running_from=t.target / "runtime" / "python", script_dir=tmp_path / "tmp",
                 pid=exited.pid, image=Path(sys.executable).name)
     assert wait_until(lambda: not t.target.exists(), 30)
-    assert t.target.parent.exists() and wait_until(lambda: t.registry.read() is None, 10)
+    assert wait_until(lambda: t.registry.read() is None, 10)
+    # QA S10 R3: the empty `Programs\CIRCOE` goes too (plain `rmdir`), its parent and the home stay.
+    assert wait_until(lambda: not t.target.parent.exists(), 10) and t.target.parent.parent.is_dir()
 
 
 def test_uninstall_refuses_a_folder_that_is_not_jarvis(tmp_path):
@@ -543,3 +545,110 @@ def test_a_probe_that_cannot_put_the_program_back_is_resumed_by_the_next_install
     result = S.install(make_package(tmp_path / "v3", "0.3.0"), t, move=False, progress=quiet(),
                        shortcuts=RecordingShortcuts())
     assert result["ok"] and sorted(p.name for p in t.target.parent.iterdir()) == ["Jarvis"]
+
+
+# ---------------------------------------------------------------------- dossiers de travail d'amorces tuées (QA S10 R3)
+
+
+def _setup_dir(parent: Path, name: str, *, age_s: float = 0.0) -> Path:
+    folder = parent / name
+    (folder / "package" / "runtime").mkdir(parents=True)
+    (folder / "package" / "runtime" / "big.bin").write_bytes(b"x" * 1024)
+    (folder / "progress.jsonl").write_text('{"phase": "copy"}\n', encoding="utf-8")
+    if age_s:
+        old = time.time() - age_s
+        for path in (folder, folder / "package", folder / "progress.jsonl"):
+            os.utime(path, (old, old))
+    return folder
+
+
+def test_an_install_removes_the_work_folders_of_dead_installers_and_only_them(tmp_path):
+    """Essai réel QA S10 R3 : une amorce tuée laisse `Programs/CIRCOE/.jarvis-setup-<id>` (448 Mo)."""
+
+    t = targets(tmp_path)
+    parent = t.target.parent
+    parent.mkdir(parents=True)
+    precious = seed_home(t)
+    dead = _setup_dir(parent, ".jarvis-setup-999999-aaaa1111")
+    live = _setup_dir(parent, ".jarvis-setup-4242-bbbb2222")
+    old_name_recent = _setup_dir(parent, ".jarvis-setup-0123456789ab")
+    old_name_stale = _setup_dir(parent, ".jarvis-setup-ba9876543210", age_s=2 * S.ORPHAN_MIN_AGE_S)
+    half_removed = _setup_dir(parent, ".jarvis-setup-31337-dddd4444.removing")
+    foreign = parent / ".jarvis-settings"
+    foreign.mkdir()
+    current = _setup_dir(parent, ".jarvis-setup-77-cccc3333")
+    source = current / "package"
+    import shutil
+
+    shutil.rmtree(source)
+    make_package(source)
+    result = S.install(source, t, move=False, progress=quiet(), shortcuts=RecordingShortcuts(),
+                       setup_alive=lambda pid, created: pid in (4242, 77))
+    assert result["ok"]
+    assert sorted(result["setup_work_removed"]) == sorted([dead.name, old_name_stale.name, half_removed.name])
+    assert not dead.exists() and not old_name_stale.exists() and not half_removed.exists()
+    assert live.exists() and old_name_recent.exists() and current.exists() and foreign.exists()
+    assert {row["name"] for row in result["setup_work_kept"]} == {live.name, old_name_recent.name}
+    assert precious.read_text(encoding="utf-8") == '{"title": "Atelier"}'
+    assert not [p for p in parent.iterdir() if p.name.endswith(S.SETUP_WORK_REMOVING)]
+
+
+def test_the_owner_of_a_work_folder_is_a_live_process_older_than_the_folder(tmp_path):
+    folder = tmp_path / ".jarvis-setup-1-abcdef12"
+    folder.mkdir()
+    created = S._created(folder)
+    assert S.setup_owner_alive(os.getpid(), created), "this test process existed before the folder"
+    younger = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert not S.setup_owner_alive(younger.pid, created - 5), "a PID reused after the folder was made is not its owner"
+    finally:
+        younger.kill()
+        younger.wait(timeout=30)
+    assert not S.setup_owner_alive(younger.pid, created), "a dead process owns nothing"
+    assert S.setup_work_owner(".jarvis-setup-4242-bbbb2222") == 4242
+    assert S.setup_work_owner(".jarvis-setup-4242-bbbb2222.removing") == 4242
+    assert S.setup_work_owner(".jarvis-setup-0123456789ab") is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows refuses to rename a folder with an open file")
+def test_a_work_folder_whose_files_are_still_open_is_never_removed(tmp_path):
+    parent = tmp_path / "Programs" / "CIRCOE"
+    folder = _setup_dir(parent, ".jarvis-setup-999999-eeee5555")
+    holder = hold_file(folder / "package" / "runtime" / "big.bin", 20)
+    try:
+        outcome = S.remove_orphan_setup_dirs(parent, owner_alive=lambda pid, created: False)
+        assert outcome["removed"] == [] and "encore utilisé" in outcome["kept"][0]["why"]
+        assert (folder / "package" / "runtime" / "big.bin").exists()
+    finally:
+        holder.kill()
+        holder.wait(timeout=30)
+    assert S.remove_orphan_setup_dirs(parent, owner_alive=lambda pid, created: False)["removed"] == [folder.name]
+
+
+def test_uninstall_removes_dead_work_folders_then_the_empty_vendor_folder_and_keeps_the_home(tmp_path):
+    t = targets(tmp_path)
+    S.install(make_package(tmp_path / "src"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
+    precious = seed_home(t)
+    dead = _setup_dir(t.target.parent, ".jarvis-setup-999999-aaaa1111")
+    result = S.uninstall(t, progress=quiet(), setup_alive=lambda pid, created: False)
+    assert result["removed"] and result["setup_work_removed"] == [dead.name] and result["vendor_dir_removed"]
+    assert not t.target.parent.exists(), "Programs/CIRCOE is gone once empty"
+    assert (tmp_path / "Local" / "Programs").is_dir()
+    assert precious.read_text(encoding="utf-8") == '{"title": "Atelier"}' and t.home.is_dir()
+    # A vendor folder that still holds something (another CIRCOE program) stays.
+    t2 = targets(tmp_path / "other")
+    S.install(make_package(tmp_path / "src2"), t2, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
+    (t2.target.parent / "OtherTool").mkdir()
+    again = S.uninstall(t2, progress=quiet(), setup_alive=lambda pid, created: False)
+    assert again["removed"] and not again["vendor_dir_removed"] and (t2.target.parent / "OtherTool").is_dir()
+
+
+def test_the_deferred_removal_script_removes_the_vendor_folder_only_when_empty(tmp_path):
+    t = targets(tmp_path)
+    body = S.deferred_removal_script(t.target, registry=t.registry, pid=1, image="pythonw.exe", log=tmp_path / "l.log")
+    assert f'set "VENDOR={t.target.parent}"' in body
+    assert 'if defined VENDOR rmdir "%VENDOR%"' in body and 'rmdir /s /q "%VENDOR%"' not in body
+    assert body.index('del /f /q "%STATE%"') < body.index('rmdir "%VENDOR%"') < body.index(":failed")
+    custom = S.deferred_removal_script(tmp_path / "Apps" / "Jarvis", registry=t.registry, pid=1, image="x.exe",
+                                       log=tmp_path / "l.log")
+    assert 'set "VENDOR="' in custom, "a custom parent folder is never removed"

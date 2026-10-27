@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 import zipfile
 
@@ -128,6 +129,79 @@ def test_an_unreadable_database_is_reported_not_raised(tmp_path):
     assert "error" in summary["databases"]["state/scene.sqlite3"]
     with sqlite3.connect(sources.data_root / "state" / "jarvis.sqlite3") as conn:  # la vraie base reste lisible
         assert conn.execute("SELECT count(*) FROM schema_version").fetchone()[0] >= 1
+
+
+def test_an_opaque_token_of_the_env_or_of_core_token_is_masked_wherever_a_log_prints_it(tmp_path):
+    """QA S10 M2 : un jeton sans forme reconnaissable (Infomaniak, Circuit Toolbox, jeton local) n'est masqué que parce
+    que le masqueur le CONNAÎT ; un réglage ordinaire de `.env` reste lisible."""
+
+    sources, _env = profile(tmp_path)
+    opaque, unnamed, local = "Zq7Xv2Lm9Pw4Rt8Ks1Hd6Fn3", "a1b2c3d4e5f6g7h8", "tok-FAKE-0123456789"
+    with open(sources.config_dir / ".env", "a", encoding="utf-8") as env:
+        env.write(f'INFOMANIAK_TOKEN="{opaque}"\nCIRCUIT_TOOLBOX_ENDPOINT_ID={unnamed}\nJARVIS_PRODUCT_EDITION=presentation\n'
+                  "JARVIS_LAUNCH_VOICE=0\n")
+    with open(sources.runtime_root / "logs" / "core.log", "a", encoding="utf-8") as log:
+        log.write(f"connecting upstream with {opaque} then endpoint {unnamed} edition presentation\n")
+        log.write(f"local session {local}\n")
+    with open(sources.runtime_root / "errors.jsonl", "a", encoding="utf-8") as errors:
+        errors.write(json.dumps({"ts": "t", "kind": "k", "level": "error", "message": f"upstream refused {opaque}",
+                                 "data": {"detail": f"with {local}"}}) + "\n")
+    secrets = SB.known_secrets(sources)
+    assert opaque in secrets and unnamed in secrets and "tok-FAKE-0123456789" in secrets
+    assert "presentation" not in secrets and "0" not in secrets
+    everything = "\n".join(read_zip(SB.write_bundle(sources)).values())
+    for leak in (opaque, unnamed, local):
+        assert leak not in everything, leak
+    assert "edition presentation" in everything, "an ordinary setting value stays readable"
+
+
+def test_error_data_keeps_diagnostics_by_allowlist_and_drops_user_text(tmp_path):
+    """QA S10 m3 : `data` passe par une liste blanche (titres, requêtes, mots de l'utilisateur n'entrent pas)."""
+
+    sources, _env = profile(tmp_path)
+    row = {"ts": "t", "kind": "studio.failed", "level": "error", "message": "m" * 3000,
+           "data": {"title": "Plan secret de fusion", "query": "chiffres du trimestre", "words": ["mot un", "deux"],
+                    "error": "OSError: [Errno 22] Invalid argument", "presentation_id": "pres_0123", "count": 3,
+                    "ok": False, "nested": {"reason": "disk full", "label": "Bilan secret"}}}
+    (sources.runtime_root / "errors.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    kept = json.loads(read_zip(SB.write_bundle(sources))["logs/errors.jsonl"].splitlines()[-1])
+    data = kept["data"]
+    assert data["title"] == "<21 caractères retirés>" and data["query"] == "<21 caractères retirés>"
+    assert data["words"] == ["<6 caractères retirés>", "deux"] and data["nested"]["label"] == "<12 caractères retirés>"
+    assert data["error"] == "OSError: [Errno 22] Invalid argument" and data["nested"]["reason"] == "disk full"
+    assert data["presentation_id"] == "pres_0123" and data["count"] == 3 and data["ok"] is False
+    assert len(kept["message"]) < SB.MESSAGE_CHARS + 20
+
+
+def test_a_base_with_a_wal_but_no_shm_is_read_without_creating_anything(tmp_path):
+    """QA S10 m9 : `mode=ro` créerait un `-shm` à côté d'un `-wal` orphelin de son `-shm` ; rien ne doit apparaître."""
+
+    sources, _env = profile(tmp_path)
+    state = sources.data_root / "state"
+    live = tmp_path / "live"
+    live.mkdir()
+    base = live / "jarvis.sqlite3"
+    shutil.copyfile(state / "jarvis.sqlite3", base)
+    holder = sqlite3.connect(base)
+    try:
+        holder.execute("PRAGMA journal_mode=WAL")
+        holder.execute("PRAGMA wal_autocheckpoint=0")
+        holder.execute("CREATE TABLE IF NOT EXISTS qa_wal (x)")
+        holder.execute("INSERT INTO qa_wal VALUES (1)")
+        holder.commit()
+        for name in ("jarvis.sqlite3", "jarvis.sqlite3-wal"):  # a copy of a running base: base and -wal, no -shm
+            shutil.copyfile(live / name, state / name)
+    finally:
+        holder.close()
+    for leftover in state.glob("jarvis.sqlite3-shm"):
+        leftover.unlink()
+    assert (state / "jarvis.sqlite3-wal").exists() and not (state / "jarvis.sqlite3-shm").exists()
+    before = {name: (state / name).read_bytes() for name in ("jarvis.sqlite3", "jarvis.sqlite3-wal")}
+    summary = json.loads(read_zip(SB.write_bundle(sources))["bundle.json"])
+    entry = summary["databases"]["state/jarvis.sqlite3"]
+    assert entry["versions"] and entry["wal_not_read"] is True
+    assert not (state / "jarvis.sqlite3-shm").exists(), "nothing created next to the base"
+    assert {name: (state / name).read_bytes() for name in before} == before, "base and -wal byte-identical, never replayed"
 
 
 def test_the_cli_command_is_declared():

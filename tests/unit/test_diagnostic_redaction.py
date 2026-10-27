@@ -31,6 +31,42 @@ def test_secret_shapes_and_named_pairs_are_masked():
     assert "[secret masqué]" in out
 
 
+def test_generic_secret_forms_are_masked_too():
+    """QA S10 m2 : URL avec mot de passe (sans domaine de premier niveau aussi), secret client et code Google, AWS, Stripe,
+    `pwd:`. Les secrets ci-dessous sont faux."""
+
+    r = DiagnosticRedactor(ENV)
+    cases = {
+        "postgres://bob:hunter2hunter2@localhost/db": "hunter2hunter2",
+        "fetch https://admin:S3cr3tPass@db.example.com/x": "S3cr3tPass",
+        "smtp+ssl://mailer:Pa55-w0rd!@smtp.local:465": "Pa55-w0rd!",
+        "pwd: hunter2": "hunter2",
+        "client GOCSPX-FAKEfakeFAKEfake0123456789": "GOCSPX-FAKE",
+        "redirect?code=4/0AfakeFAKEfakeFAKEfake0123456789&scope=x": "4/0Afake",
+        "id AKIAFAKEFAKEFAKE0123 used": "AKIAFAKE",
+        "aws_secret_access_key = wJalrFAKEfakeFAKE/K7MDENG/bPxRfiCYFAKEKEY": "wJalrFAKE",
+        "AWS_SESSION_TOKEN=FwoGZXIvFAKEfake0123": "FwoGZXIv",
+        "stripe sk_live_FAKEfakeFAKEfake0123": "sk_live_FAKE",
+    }
+    for line, secret in cases.items():
+        assert secret not in r.text(line), (line, r.text(line))
+    assert r.text("postgres://bob:hunter2hunter2@localhost/db") == "postgres://bob:[secret masqué]@localhost/db"
+    assert r.text("see https://example.com/a@b and mail bob@example.com") == "see https://example.com/a@b and mail <email>"
+
+
+def test_masking_stays_linear_on_long_runs_of_one_character():
+    """QA S10 (essai réel) : une longue suite de caractères identiques prenait 2 min 38 s (`_JWT` quadratique)."""
+
+    import time
+
+    r = DiagnosticRedactor(ENV)
+    started = time.process_time()
+    for char in "a0-_.%+:/@=\\ \"'":
+        r.text(char * 100_000)
+    r.text("ab1-" * 25_000)
+    assert time.process_time() - started < 10.0, "each run of 100 000 characters must take well under a second"
+
+
 def test_personal_paths_user_name_and_email_are_replaced():
     r = DiagnosticRedactor(ENV)
     out = r.text(r"open C:\Users\Jean.Dupont\AppData\Local\CIRCOE\Jarvis\data\state\jarvis.sqlite3 failed; "

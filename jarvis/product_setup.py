@@ -78,6 +78,13 @@ RETRY_DELAYS_S: tuple[float, ...] = (0.2, 0.5, 1.0, 2.0, 3.0)
 DEFERRED_WAIT_S = 1800
 DEFERRED_ATTEMPTS = 40
 UNINSTALL_LOG = "jarvis-uninstall.log"
+#: Dossier de travail de l'amorce (`setup_stub.cs`), à côté de la cible : `.jarvis-setup-<PID de l'amorce>-<hex>`.
+#: Une amorce tuée (ou une coupure) le laisse (448 Mo, essai réel QA S10 R3) : l'installation suivante et la
+#: désinstallation le retirent (`remove_orphan_setup_dirs`).
+SETUP_WORK_PREFIX = ".jarvis-setup-"
+SETUP_WORK_REMOVING = ".removing"
+#: Ancien nom sans PID (`.jarvis-setup-<hex>`) : propriétaire inconnu, retiré seulement s'il n'a pas bougé depuis 1 h.
+ORPHAN_MIN_AGE_S = 3600
 #: Caractères refusés dans une cible : ils casseraient la ligne de commande de la désinstallation différée.
 UNSAFE_TARGET_CHARS = frozenset('"%!^&|<>')
 CREATE_NO_WINDOW = 0x08000000
@@ -526,6 +533,106 @@ def remove_tree(folder: Path) -> bool:
     return _retry(lambda: _rmtree_once(folder), done=lambda: not folder.exists())
 
 
+def setup_work_owner(name: str) -> int | None:
+    """PID de l'amorce qui a créé ce dossier de travail (`.jarvis-setup-<pid>-<hex>`), None pour l'ancien nom."""
+
+    parts = name[len(SETUP_WORK_PREFIX):].removesuffix(SETUP_WORK_REMOVING).split("-")
+    return int(parts[0]) if len(parts) == 2 and parts[0].isdigit() and int(parts[0]) > 0 else None
+
+
+def _filetime_epoch(filetime: str) -> float | None:
+    try:
+        return (int(filetime) - 116444736000000000) / 1e7
+    except ValueError:
+        return None
+
+
+def setup_owner_alive(pid: int, folder_created: float) -> bool:
+    """Le processus `pid` vit encore ET existait déjà quand le dossier a été créé : c'est son propriétaire. Un PID
+    réemployé depuis (processus plus jeune que le dossier) n'en est pas un. Identité inconnue : vivant (prudence)."""
+
+    from jarvis.adapters import process_tree
+
+    started = process_tree._windows_start_time(pid) if process_tree.IS_WINDOWS else process_tree._posix_start_time(pid)
+    if started is None:
+        return False
+    epoch = _filetime_epoch(started) if process_tree.IS_WINDOWS else None
+    return epoch is None or epoch <= folder_created + 2.0
+
+
+def _created(folder: Path) -> float:
+    stat = folder.stat()
+    return float(getattr(stat, "st_birthtime", stat.st_ctime))
+
+
+def _last_touched(folder: Path) -> float:
+    times = []
+    for path in (folder, folder / "package", folder / "progress.jsonl", folder / "result.json"):
+        try:
+            times.append(path.stat().st_mtime)
+        except OSError:
+            continue  # intentional: a missing part only means it was never written
+    return max(times)
+
+
+def remove_orphan_setup_dirs(parent: Path, *, current: Path | None = None,
+                             owner_alive: Callable[[int, float], bool] = setup_owner_alive,
+                             now: Callable[[], float] = time.time,
+                             rename: Callable[[Path, Path], None] = os.replace) -> dict[str, Any]:
+    """Retire les dossiers de travail d'amorces mortes à côté de la cible ; jamais `current` (celui de cette
+    installation), jamais celui d'une amorce vivante, jamais un dossier dont un fichier est encore ouvert (sonde de
+    renommage d'abord), jamais autre chose qu'un `.jarvis-setup-*` (la maison n'est pas sous `Programs`)."""
+
+    removed: list[str] = []
+    kept: list[dict[str, str]] = []
+    try:
+        entries = sorted(parent.iterdir()) if parent.is_dir() else []
+    except OSError:
+        return {"removed": removed, "kept": kept}
+    mine = Path(current).resolve() if current is not None else None
+    for entry in entries:
+        if not entry.name.startswith(SETUP_WORK_PREFIX) or not entry.is_dir() or entry.is_symlink():
+            continue
+        if mine is not None and entry.resolve() == mine:
+            continue
+        try:
+            created, touched = _created(entry), _last_touched(entry)
+        except OSError:
+            continue  # intentional: vanished meanwhile (another cleanup)
+        owner = setup_work_owner(entry.name)
+        if owner is not None and owner_alive(owner, created):
+            kept.append({"name": entry.name, "why": f"amorce {owner} encore vivante"})
+            continue
+        if owner is None and not entry.name.endswith(SETUP_WORK_REMOVING) and now() - touched < ORPHAN_MIN_AGE_S:
+            kept.append({"name": entry.name, "why": "ancien nom sans PID, modifié il y a moins d'une heure"})
+            continue
+        aside = entry if entry.name.endswith(SETUP_WORK_REMOVING) else entry.with_name(entry.name + SETUP_WORK_REMOVING)
+        if aside != entry:
+            try:
+                rename(entry, aside)  # refused while a file inside is open (a setup Python still copying)
+            except OSError as exc:
+                kept.append({"name": entry.name, "why": f"encore utilisé ({type(exc).__name__})"})
+                continue
+        if remove_tree(aside):
+            removed.append(entry.name)
+        else:
+            kept.append({"name": aside.name, "why": "fichiers verrouillés, repris la prochaine fois"})
+    return {"removed": removed, "kept": kept}
+
+
+def remove_empty_vendor_dir(target: Path) -> bool:
+    """`Programs\\CIRCOE` vide après la désinstallation : retiré (jamais s'il contient quoi que ce soit)."""
+
+    parent = target.parent
+    if parent.name.lower() != VENDOR_DIR.lower():
+        return False
+    try:
+        parent.rmdir()  # refuses a folder that is not empty: nothing else can be lost
+    except OSError:
+        return False
+    return True
+
+
 def rename_with_retries(source: Path, destination: Path) -> bool:
     return _retry(lambda: os.replace(source, destination), done=lambda: destination.exists() and not source.exists())
 
@@ -563,7 +670,8 @@ def install(source: Path, targets: Targets, *, move: bool, progress: Progress,
             ref_alive: Callable[[str], bool] | None = None,
             verify: Callable[[PR.PackageLayout], tuple[dict | None, list[str]]] = PR.verify_package,
             verify_copy: Callable[[Path, Path], list[str]] = copy_matches,
-            rename: Callable[[Path, Path], None] = os.replace) -> dict[str, Any]:
+            rename: Callable[[Path, Path], None] = os.replace,
+            setup_alive: Callable[[int, float], bool] = setup_owner_alive) -> dict[str, Any]:
     """Installe (ou met à jour, ou répare, ou reprend une opération inachevée) le paquet `source` dans
     `targets.target`. Voir l'en-tête du module."""
 
@@ -653,10 +761,15 @@ def install(source: Path, targets: Targets, *, move: bool, progress: Progress,
         progress.step("cleanup", "Nettoyage de l'ancienne version…")
         if not remove_tree(old):
             leftovers.append(str(old))
+    current_work = source.parent if source.parent.name.startswith(SETUP_WORK_PREFIX) else None
+    orphans = remove_orphan_setup_dirs(target.parent, current=current_work, owner_alive=setup_alive)
+    if orphans["removed"]:
+        progress.step("cleanup", "Nettoyage d'une installation interrompue…", removed=orphans["removed"])
     progress.step("done", "JARVIS est installé.", mode=mode, version=version)
     return {"ok": True, "mode": mode, "version": version, "target": str(target), "resumed": kind == "leftover",
             "shortcuts": [str(path) for path in targets.shortcut_paths],
             "previous_leftover": leftovers[0] if leftovers else None, "leftovers": leftovers,
+            "setup_work_removed": orphans["removed"], "setup_work_kept": orphans["kept"],
             "data_home": str(targets.home) if targets.home else None, "data_kept": True}
 
 
@@ -749,7 +862,8 @@ def deferred_removal_script(target: Path, *, registry: Registry, pid: int, image
        « JARVIS est désinstallé » garde `pythonw.exe` vivant aussi longtemps que l'utilisateur la lit ;
     2. supprime le dossier, avec `attempts` reprises espacées de ~3 s (antivirus, fichier encore ouvert) ;
     3. alors seulement retire la clé de désinstallation et l'état d'opération ; sinon les garde (la désinstallation
-       reste proposée par Windows, et un nouvel essai ou une réinstallation reconnaît le reste) ;
+       reste proposée par Windows, et un nouvel essai ou une réinstallation reconnaît le reste) ; puis le dossier de
+       l'éditeur (`Programs\\CIRCOE`) s'il est VIDE (`rmdir` sans `/s` refuse un dossier non vide) ;
     4. écrit chaque étape dans `log`, puis s'efface lui-même.
 
     Cible sans `" % ! ^ & | < >` (`check_target`) : elle se place telle quelle entre guillemets.
@@ -761,6 +875,7 @@ def deferred_removal_script(target: Path, *, registry: Registry, pid: int, image
         "chcp 65001 >nul",
         "setlocal EnableExtensions DisableDelayedExpansion",
         f'set "TARGET={target}"',
+        f'set "VENDOR={target.parent if target.parent.name.lower() == VENDOR_DIR.lower() else ""}"',
         f'set "STATE={state_path(target)}"',
         f'set "LOG={log}"',
         f'call :log "debut : attente de la fin du processus {pid} ({image})"',
@@ -788,6 +903,7 @@ def deferred_removal_script(target: Path, *, registry: Registry, pid: int, image
         ":removed",
         registry.removal_command(),
         'del /f /q "%STATE%" >nul 2>&1',
+        'if defined VENDOR rmdir "%VENDOR%" >nul 2>&1',
         'call :log "dossier supprime, cle de desinstallation retiree : %TARGET%"',
         "goto end",
         ":failed",
@@ -805,7 +921,8 @@ def uninstall(targets: Targets, *, progress: Progress, alive: Callable[[int], bo
               ref_alive: Callable[[str], bool] | None = None,
               running_from: Path | None = None, spawn: Callable[..., Any] = subprocess.Popen,
               script_dir: Path | None = None, pid: int | None = None, image: str | None = None,
-              deferred_wait_s: int = DEFERRED_WAIT_S, deferred_attempts: int = DEFERRED_ATTEMPTS) -> dict[str, Any]:
+              deferred_wait_s: int = DEFERRED_WAIT_S, deferred_attempts: int = DEFERRED_ATTEMPTS,
+              setup_alive: Callable[[int, float], bool] = setup_owner_alive) -> dict[str, Any]:
     """Retire le programme, ses raccourcis et sa clé ; la maison (données) reste. Rien n'est effacé sans preuve que
     c'est JARVIS (`folder_kind`). Lancé depuis le programme lui-même (`running_from`), l'effacement est confié à un
     script `cmd.exe` détaché (`deferred_removal_script`) qui attend la fin réelle de ce processus (`pid`)."""
@@ -818,6 +935,7 @@ def uninstall(targets: Targets, *, progress: Progress, alive: Callable[[int], bo
     if kind == "foreign":
         raise SetupError("not_a_jarvis_folder", "Ce dossier ne contient pas JARVIS : rien n'est effacé.", str(target))
     pending = read_state(target)
+    orphans = remove_orphan_setup_dirs(target.parent, owner_alive=setup_alive)
     progress.step("shortcuts", "Retrait des raccourcis…")
     for path in targets.shortcut_paths:
         try:
@@ -825,15 +943,16 @@ def uninstall(targets: Targets, *, progress: Progress, alive: Callable[[int], bo
         except FileNotFoundError:
             pass  # intentional: already removed by hand
     base = {"ok": True, "target": str(target), "data_home": str(targets.home) if targets.home else None,
-            "data_kept": True}
+            "data_kept": True, "setup_work_removed": orphans["removed"], "setup_work_kept": orphans["kept"]}
     if kind in ("absent", "empty"):
         if kind == "empty" and not remove_tree(target):
             raise SetupError("uninstall_incomplete", "Le dossier de JARVIS est verrouillé : fermez ce qui l'utilise, "
                              "puis relancez la désinstallation.", str(target))
         targets.registry.delete()
         clear_state(target)
+        vendor_removed = remove_empty_vendor_dir(target)
         progress.step("done", "JARVIS est désinstallé. Vos présentations et réglages sont conservés.")
-        return {**base, "deferred_removal": False, "removed": True}
+        return {**base, "deferred_removal": False, "removed": True, "vendor_dir_removed": vendor_removed}
     write_state(target, "uninstall", entries=top_entries(target) | set((pending or {}).get("entries") or ()))
     progress.step("files", "Retrait des fichiers du programme…")
     inside = running_from is not None and (running_from == target or target in running_from.parents)
@@ -863,8 +982,9 @@ def uninstall(targets: Targets, *, progress: Progress, alive: Callable[[int], bo
                          f"restes sous {target} : {', '.join(left)[:600]}", leftovers=left)
     targets.registry.delete()
     clear_state(target)
+    vendor_removed = remove_empty_vendor_dir(target)
     progress.step("done", "JARVIS est désinstallé. Vos présentations et réglages sont conservés.")
-    return {**base, "deferred_removal": False, "removed": True}
+    return {**base, "deferred_removal": False, "removed": True, "vendor_dir_removed": vendor_removed}
 
 
 # ---------------------------------------------------------------------- ligne de commande
