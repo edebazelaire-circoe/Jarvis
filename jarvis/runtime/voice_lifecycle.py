@@ -305,7 +305,10 @@ def project(*, preference: str, voice_online: bool, runtime_state: str | None, l
         state, code = STATE_DEGRADED, VOICE_NOT_LAUNCHED
     elif isinstance(role, Mapping) and role.get("abandoned"):
         state, code = STATE_DEGRADED, VOICE_CRASH_LOOP
-    elif isinstance(role, Mapping) and role.get("held") and role.get("held") != VOICE_OFF:
+    # Une tenue due à la préférence (coupée, illisible) est périmée dès que la préférence lue dit « veille » : le lanceur
+    # ne l'a simplement pas encore relue (au plus 1 s). Elle ne doit pas rester affichée (bac à sable, reprise QA).
+    elif isinstance(role, Mapping) and role.get("held") and role.get("held") not in (VOICE_OFF,
+                                                                                      VOICE_PREFERENCE_UNREADABLE):
         state, code = STATE_DEGRADED, str(role.get("held"))
     elif not key.present:
         state, code = STATE_DEGRADED, key.code or VOICE_PROVIDER_KEY_MISSING

@@ -324,6 +324,8 @@ def view(**kw):
     ({"launcher": {"managed": True, "voice": {"held": "voice_provider_key_missing"}}}, "degraded",
      "voice_provider_key_missing"),
     ({"launcher": {"managed": True, "voice": {"abandoned": True}}}, "degraded", "voice_crash_loop"),
+    ({"launcher": {"managed": True, "voice": {"held": "voice_preference_unreadable"}}}, "starting", "voice_starting"),
+    ({"launcher": {"managed": True, "voice": {"held": "voice_off"}}}, "starting", "voice_starting"),
     ({"launcher": {"managed": True, "voice": None}}, "degraded", "voice_not_launched"),
     ({"key": V.ProviderKey(False, "openai", "OpenAI", "voice_provider_key_missing")}, "degraded",
      "voice_provider_key_missing"),
