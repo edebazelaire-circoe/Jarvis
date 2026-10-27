@@ -7,6 +7,7 @@ cerveau (le manifeste `agent_capabilities` reste maître) et le serveur MCP des 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -105,7 +106,10 @@ async def test_support_mode_is_not_in_the_settings_projection_the_console_mcp_re
 
 
 def test_support_mode_widens_no_agent_capability(tmp_path, monkeypatch):
-    """Le manifeste ne dépend que de l'édition du processus ; aucun lancement d'agent ne lit le bloc."""
+    """Le manifeste ne dépend que de l'édition du processus ; aucun lancement d'agent ne lit le bloc.
+
+    Lecteurs cherchés par le mot entier `support_mode` (module ou clé) : `support_model_unavailable` (code de la Slice 07,
+    modèle du rapport IA) n'est pas une lecture du mode support (faux positif constaté à la fusion de la Slice 07)."""
 
     monkeypatch.setenv("JARVIS_PRODUCT_EDITION", "presentation")
     (tmp_path / "control-center-settings.json").write_text(
@@ -114,5 +118,5 @@ def test_support_mode_widens_no_agent_capability(tmp_path, monkeypatch):
     assert agent_capability_policy("presentation").cli_args(["jarvis-workspace"]) == \
         PRESENTATION_CAPABILITIES.cli_args(["jarvis-workspace"])
     readers = sorted(str(path.relative_to(ROOT)).replace("\\", "/") for path in (ROOT / "jarvis").rglob("*.py")
-                     if "support_mode" in path.read_text(encoding="utf-8") and path.name != "support_mode.py")
+                     if re.search(r"\bsupport_mode\b", path.read_text(encoding="utf-8")) and path.name != "support_mode.py")
     assert readers == ["jarvis/runtime/control_center.py"], readers

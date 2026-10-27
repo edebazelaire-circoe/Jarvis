@@ -39,8 +39,9 @@ booléenne) : coupé, avec `problem` (`support_mode_block_malformed`, `support_m
 
 - **Aide et assistance** (bas du hub des Réglages, édition produit seulement) : la ligne **Voix** (état lu sur le
   battement par `JarvisRuntimeWheel.voiceLine()`, bouton = le même geste que l'interrupteur de la roue), **Signaler un
-  problème** (ligne cachée tant que la Slice 07 n'a pas branché son action par
-  `JarvisSettingsHelp.setReportAction(fn)` ; `fn({source:'settings_hub'})`), **Mode support** (`role="switch"`,
+  problème** (branchée sur le panneau de la Slice 07 : le hub se referme puis `JarvisSupportReport.open({reason:
+  'settings_hub'})`, [../support-report.md](../support-report.md) ; ligne cachée si le module manque ;
+  `JarvisSettingsHelp.setReportAction(fn)` reste le point de branchement), **Mode support** (`role="switch"`,
   `aria-checked` = le fait relu ; une écriture à la fois, 8 s au plus, refus ou silence dits dans la note, rien
   supposé). Journal `[settings] support_mode.requested|saved|failed|state`, `help.voice_toggle`, `help.report_problem`.
 - Une page de support ouverte dit en tête qu'elle est visible parce que le mode support est activé, et comment la cacher.

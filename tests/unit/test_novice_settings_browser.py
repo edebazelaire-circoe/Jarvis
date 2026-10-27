@@ -98,6 +98,8 @@ def test_the_hub_puts_the_essentials_first_and_support_mode_reveals_without_wide
         ["eval", "wired", "!document.getElementById('settingsHubReportRow').hidden", 50],
         ["click", "report", "#settingsHubReport", 200],
         ["eval", "reported", "window.__reported||0", 50],
+        ["eval", "rewire", "JarvisSettingsHelp.setReportAction(null),1", 50],
+        ["eval", "unwired", "!document.getElementById('settingsHubReportRow').hidden", 50],
         ["click", "on", "#settingsSupportSwitch", 700],
         ["eval", "after", HUB, 50],
         *_shot(f"s06-hub-support-on-{size}"),
@@ -118,10 +120,10 @@ def test_the_hub_puts_the_essentials_first_and_support_mode_reveals_without_wide
     assert r["before"]["cards"] == [["voice_audio", "Personnalisation", False], ["connections", "Connexions", False],
                                     ["memory_knowledge", "Mémoire", False],
                                     ["interface_interactions", "Raccourcis clavier", False]]
-    assert r["before"]["band"] and r["before"]["report"] is False, "no report row before Slice 07 wires its action"
+    assert r["before"]["band"] and r["before"]["report"] is True, "Slice 07 wired: the report row is shown"
     assert r["before"]["voice"][0] == "En veille" and "F9" in r["before"]["voice"][1] and r["before"]["voice"][2] == "Couper la voix"
     assert r["before"]["switch"] == "false"
-    assert r["wired"] is True and r["reported"] == 1
+    assert r["wired"] is True and r["reported"] == 1 and r["unwired"] is False, "no action, no row"
     posts = [b for b in step["bodies"] if b["path"] == "/api/support-mode"]
     assert [b["body"] for b in posts] == [{"enabled": True}, {"enabled": False}], posts
     assert r["after"]["switch"] == "true" and "Mode support activé" in r["after"]["note"]
@@ -247,3 +249,29 @@ def test_keyboard_stays_in_the_hub_and_reduced_motion_stills_the_switch(tmp_path
     assert all(stop["visible"] for stop in stops), "Tab never lands on a hidden control"
     assert r["wrapped"] == "settingsHubClose", "Tab after the last control wraps inside the hub"
     assert r["motion"] in ("0s", "0s, 0s")
+
+
+def test_report_a_problem_opens_the_support_report_panel_and_creates_nothing(tmp_path):
+    """Intégration S06 × S07 : « Signaler un problème » de la bande d'aide ferme le hub et ouvre le panneau du rapport
+    (aperçu lu), sans créer de paquet ni envoyer ; Échap le ferme."""
+
+    preview = {"board": {"board_id": "default", "title": "Pitch client"}, "approx_bytes": 2048,
+               "included": [], "excluded": [], "destination": "support@example.com",
+               "default_destination": "support@example.com", "send_mode": "mail", "send_in_progress": False}
+    seed = {"edition": PRESENTATION, "voiceLifecycle": SLEEP, "support": {"preview": preview}}
+    actions = [
+        ["eval", "open", "openSettingsHub({source:'test'}),1", 500],
+        ["eval", "row", "!document.getElementById('settingsHubReportRow').hidden", 50],
+        *_shot("s06-hub-report-row-1366x768"),
+        ["click", "report", "#settingsHubReport", 1200],
+        ["eval", "after", "({hub:settingsHubOpen(),panel:!!document.getElementById('jvSupport')&&!document.getElementById('jvSupport').hidden,"
+                          "state:JarvisSupportReport.instance.state().open})", 50],
+        *_shot("s06-report-panel-from-settings-1366x768"),
+    ]
+    step = _drive(tmp_path, [{"width": 1366, "height": 768, "seed": seed, "actions": actions}], "presentation")[0]
+    _no_errors_but_unstubbed(step)
+    r = step["results"]
+    assert r["row"] is True
+    assert r["after"] == {"hub": False, "panel": True, "state": True}, r["after"]
+    assert "GET /api/support/preview" in step["calls"], step["calls"]
+    assert not [c for c in step["calls"] if c.startswith("POST /api/support/")], "nothing created, nothing sent"

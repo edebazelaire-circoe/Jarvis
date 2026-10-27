@@ -7037,6 +7037,16 @@ window.JarvisSettingsHelp=Object.freeze({
   openDeepLink:target=>openSettingsDeepLink(target,'api'),
   deepTarget:settingsDeepTarget,
 });
+/* « Signaler un problème » de la bande d'aide (intégration S06 × S07) : le panneau de la Slice 07
+   (`JarvisSupportReport.open`, `docs/support-report.md`), ouvert une fois le hub refermé (son piège de Tab et son Échap
+   ne retiennent pas le panneau) ; le focus revient ensuite à ce qui avait ouvert les Paramètres. Sans le module, la
+   ligne reste cachée. */
+if(window.JarvisSupportReport&&typeof window.JarvisSupportReport.open==='function'){
+  window.JarvisSettingsHelp.setReportAction(({source}={})=>new Promise((resolve,reject)=>{
+    closeSettingsHub();
+    setTimeout(()=>{try{Promise.resolve(window.JarvisSupportReport.open({reason:source||'settings_hub'})).then(resolve,reject)}catch(e){reject(e)}},200);
+  }));
+}else console.error('[settings] help.report_module_missing');
 
 
 /* Pas de fermeture au clic extérieur (Slice 02) : le shell couvre toute la fenêtre, il n'y a plus d'« extérieur »,
