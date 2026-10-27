@@ -5467,10 +5467,13 @@ class ControlCenter:
             effective = {}
             snapshot_state = {"promoted": [], "error": f"{type(exc).__name__}: {exc}"[:200]}
         roles = []
+        # Outils déclarés lus dans le manifeste de l'édition (`subagent_roles.role_tools`) : en `presentation`, aucun
+        # outil que le CLI refuse n'est affiché (`qa` ne déclare plus Bash) ; `full` : la charge d'avant.
+        capabilities = edition_capabilities()
         for role in subagent_roles.ROLES:
             layer = layers[role.prompt_id]
             roles.append({
-                **role.as_dict(),
+                **role.as_dict(capabilities),
                 "instructions": layer["current_text"],
                 "default_instructions": layer["default_text"],
                 "modified": layer["current_text"] != layer["default_text"],

@@ -45,8 +45,8 @@ from jarvis.domain.agent_relations import QA_REVIEWER_ROLE_IDS
 from jarvis.domain.mission_history import MissionHistoryError, fact_from_hook_event
 from jarvis.domain.work_methods import WorkMethod, builtin_method
 from jarvis.domain.subagent_roles import (
-    ROLE_MARK, SubagentRole, adapt_instructions, effective_method, instructions_for, resolve_role, role_for,
-    with_role_instructions,
+    ROLE_MARK, ROLE_UNAVAILABLE_CODE, SubagentRole, adapt_instructions, edition_role_refusal, effective_method,
+    instructions_for, resolve_role, role_for, with_role_instructions,
 )
 # `ANNOUNCED_ROLES` : les rôles qu'une description peut annoncer (loadout, registre, alias), réexporté ici.
 from jarvis.domain.agent_markers import ANNOUNCED_ROLES, WORD_PATTERN  # noqa: F401
@@ -592,6 +592,22 @@ def _edition_capabilities(journal: RuntimeJournal) -> AgentCapabilityPolicy | No
         return None
 
 
+def _edition_role_guard(orchestration: Orchestration | None,
+                        capabilities: AgentCapabilityPolicy | None) -> agent_orchestration.SpawnGuard | None:
+    """Refus d'un rôle que l'édition n'offre pas (`subagent_roles.edition_role_refusal`), ou `None`.
+
+    Édition confinée seulement : un `[coder]` forgé ne part pas, même sans outil d'écriture, parce qu'un rôle de
+    développement n'a pas de sens dans une édition qui ne développe pas. Code stable `role_unavailable_in_edition`,
+    consigné par `_log_declared` (`agent.spawn_refused`). `full` ou édition illisible : rien ne change.
+    """
+    if orchestration is None:
+        return None
+    reason = edition_role_refusal(orchestration.role, capabilities)
+    if reason is None:
+        return None
+    return agent_orchestration.SpawnGuard(deny=True, code=ROLE_UNAVAILABLE_CODE, reason=reason)
+
+
 def _log_confined_adaptation(journal: RuntimeJournal, event: Mapping[str, Any], role: SubagentRole,
                              role_overrides: Mapping[str, str], capabilities: AgentCapabilityPolicy | None) -> None:
     """Consigne les passages d'une méthode de rôle que l'édition confinée n'a pas pu réécrire (surcharge modifiée).
@@ -632,8 +648,11 @@ def run(event: Mapping[str, Any], runtime_root: Path, *, spawn_guard: bool = Fal
         orchestration = orchestration_of(event) if str(event.get("tool_name") or "") in AGENT_TOOLS else None
     except Exception:  # noqa: BLE001 - une lecture qui lève ne vaut pas un outil perdu ; rien n'est déclaré
         orchestration = None
-    guard = _delegation_guard(event, runtime_root, journal) or _spawn_guard(
-        event, runtime_root, journal, orchestration, enforce=spawn_guard)
+    # Le manifeste de l'édition, lu une fois : il refuse d'abord un rôle que l'édition n'offre pas, puis adapte la
+    # consigne de ce qui part.
+    capabilities = _edition_capabilities(journal)
+    guard = (_edition_role_guard(orchestration, capabilities) or _delegation_guard(event, runtime_root, journal)
+             or _spawn_guard(event, runtime_root, journal, orchestration, enforce=spawn_guard))
     if guard.deny:
         _log_declared(journal, event, orchestration, guard, written=False)
         return _output("deny", guard.reason)
@@ -653,7 +672,6 @@ def run(event: Mapping[str, Any], runtime_root: Path, *, spawn_guard: bool = Fal
             return _output("deny", refusal)
     role_overrides = _role_overrides(event, runtime_root, journal)
     promoted = _promoted_methods(event, runtime_root, journal)
-    capabilities = _edition_capabilities(journal)
     try:
         charter = charter_input(event, role_overrides, promoted, capabilities)
     except Exception:  # noqa: BLE001 - une charte qui lève ne vaut pas un outil perdu

@@ -16,6 +16,9 @@ edition offers), [export.md](export.md) (the only way a file leaves Jarvis),
 | Debug console refused | `claude_local.open_console`, `codex_local.open_console` | same |
 | Self-development refused | `self_dev_service.py` (`gate`, `_ensure_edition`) | same |
 | Brain prompt, sub-agent methods and routing hook describe only real capabilities | `claude_local.render_brain_system_prompt` / `brain_system_prompt` / `workspace_prompt_for`, renderer `prompt_catalog._brain_system`; `subagent_roles.brain_rules` / `role_brief` / `adapt_instructions`; `routing_hook.profile_rule` / `charter_input` (`capabilities`), `AgentCapabilityPolicy.subagent_note`; read-only `CONTEXT_GLOBAL` rules `global_context.GLOBAL_CONTEXT_READ_ONLY_RULES` | same, plus `test_product_edition.py` |
+| A role the edition does not offer is refused (V1.2 Slice 01) | `subagent_roles.edition_role_refusal`, `routing_hook._edition_role_guard` (`role_unavailable_in_edition`) | `tests/unit/test_presentation_brain_scope.py` |
+| Role tools shown per edition | `subagent_roles.role_tools`, `SubagentRole.as_dict(capabilities)`, `control_center._subagent_roles_payload` | same |
+| Presentation project role in the brain prompt | `claude_local.presentation_project_section` (`BRAIN_PRESENTATION_PROJECT_MARK`) | same |
 
 ## Vocabulary
 
@@ -149,6 +152,18 @@ after the fact:
 - **Sub-agent roles**: a role is offered when its default profile is
   (`subagent_roles.offers_role`); `[coder]` disappears from `brain_rules`,
   from the spawn catalogue of `research-lead` and from the Mission Owner list.
+  It is also **refused**, not only unlisted (V1.2 Slice 01): an `Agent` call
+  whose description announces a role the edition does not offer (a forged
+  `[coder]`, any profile, `[mission]`, `[éphémère]`, the brain or a nested
+  agent) is denied by the routing hook with the stable code
+  `role_unavailable_in_edition`, logged as `agent.spawn_refused` (`role_id`,
+  `written: false`, nothing declared to Core). The reason tells the model that
+  this edition does no development and lists the offered roles; it holds no
+  path or secret. `full`, and an unreadable edition, refuse nothing.
+- **Role tools** (`SubagentRole.tools`, descriptive): the payload of
+  `GET /api/subagent-roles` shows `role_tools(role, capabilities)`: no tool of
+  `forbidden_native_tools` (`qa` no longer shows `Bash`), `board_memory_write`
+  instead of the built-in write tools. `full`: the previous payload.
 - **Mission dossier** (case B): without a built-in write tool, `_DOSSIER`
   becomes `_DOSSIER_TOOL`: read with `board_memory_read`, written only with
   `board_memory_write` (`create` once, `append` to add at the end, `replace`
@@ -158,6 +173,24 @@ after the fact:
 - **Brain lines**: the delegation line (`BRAIN_DELEGATE_WORK_LINE_CONFINED`:
   no browser, code, command), memory and feedback lines, and the workspace
   line on `board_memory_write` (`BRAIN_WORKSPACE_MEMORY_WRITE_TOOL_LINE`).
+  That line **recommends** `expected_sha256` for `replace`, it does not claim
+  Core requires it (V1.2 Slice 01): Core keeps it optional because `replace`
+  creates a missing file (nothing to read first) and a file above 1 MiB has no
+  hash (`docs/boards.md`); the Dossier editor and the workspace manager rely on
+  both.
+- **Presentation project role** (`presentation_project_section`, section
+  `VOTRE RÔLE : LE PROJET DE PRÉSENTATION`, appended after the capabilities
+  section in `presentation` only): each Board is a presentation project;
+  interview, documentary and web research in the background, organisation in
+  the Board memory, the approved connectors (labels read from
+  `connector_policy`, a `contract_pending` connector such as IGuard is not
+  named), creation through the Presentation tools. Roles are named only when
+  offered. When the manifest closes `self_development`, it adds the refusal of
+  development: no change to the Jarvis code or repository or another project,
+  no arbitrary code or command; the only code made here is Remotion scenes and
+  prefabs, through `presentation_source`. Project continuity and research
+  reuse/freshness (V1.2 Slices 02-03) are added as separate lines at the
+  anchor comment in that function.
   The workspace adaptation replaces exact lines of a read-only constant and
   raises `PromptAdaptationError` (`prompt_adaptation_line_missing`) when one is
   missing, instead of skipping it.
@@ -180,7 +213,7 @@ after the fact:
 `agent.start` carries `confined`, `launch_permission_mode`, `chrome`, `cwd`;
 the agent snapshot carries `confined` and the launched `permission_mode`.
 Refusals: `agent.console_refused`, `selfdev.refused`, `agent.start` (Codex,
-level error), `settings.agent.rejected` (code). The CLI's own `system/init`
+level error), `settings.agent.rejected` (code), `agent.spawn_refused` (`role_unavailable_in_edition`, routing hook). The CLI's own `system/init`
 event lists the tools actually offered (`tools`), which the real traces check.
 
 ## Real traces (2026-10-26, CLI 2.1.310)

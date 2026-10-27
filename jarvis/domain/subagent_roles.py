@@ -49,7 +49,7 @@ import re
 from typing import Any
 
 from jarvis.domain import routing
-from jarvis.domain.agent_capabilities import AgentCapabilityPolicy
+from jarvis.domain.agent_capabilities import NATIVE_WRITE_TOOLS, AgentCapabilityPolicy
 from jarvis.domain.memory_settings import LOADOUT_ROLES
 from jarvis.domain.work_methods import (
     BUILTIN_METHODS, WorkMethod, builtin_method, check_role_methods, is_method_id, promotion_refusal, render_method,
@@ -190,7 +190,10 @@ class SubagentRole:
     def prompt_id(self) -> str:
         return f"{PROMPT_PREFIX}{self.id}"
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(self, capabilities: AgentCapabilityPolicy | None = None) -> dict[str, Any]:
+        """Charge utile du rôle. `capabilities` (édition confinée) : `tools` lus par `role_tools`, jamais un outil
+        que l'édition refuse ; `None` ou édition non confinée : la charge d'avant, octet pour octet."""
+
         return {
             "id": self.id,
             "marker": self.marker,
@@ -198,7 +201,7 @@ class SubagentRole:
             "description": self.description,
             "mission": self.mission,
             "skills": list(self.skills),
-            "tools": list(self.tools),
+            "tools": list(role_tools(self, capabilities)),
             "when_relevant": self.when_relevant,
             "default_profile": self.default_profile,
             "enabled": self.enabled,
@@ -622,6 +625,47 @@ def offers_role(role: SubagentRole, capabilities: AgentCapabilityPolicy | None) 
     """Le rôle a-t-il un sens dans l'édition ? Son profil par défaut doit y être offert (`[coder]` exige `code`)."""
 
     return capabilities is None or capabilities.offers_task_profile(role.default_profile)
+
+
+#: Code stable du refus, par le hook d'aiguillage, d'un rôle que l'édition n'offre pas (`docs/product-capabilities.md`).
+ROLE_UNAVAILABLE_CODE = "role_unavailable_in_edition"
+
+#: Outil JARVIS qui remplace, en édition sans outil intégré d'écriture, les outils d'écriture déclarés d'un rôle.
+MEMORY_WRITE_TOOL = "board_memory_write"
+
+
+def role_tools(role: SubagentRole, capabilities: AgentCapabilityPolicy | None) -> tuple[str, ...]:
+    """Les outils déclarés du rôle tels que l'édition les offre (`SubagentRole.tools` est descriptif).
+
+    Non confiné : `role.tools`. Confiné : sans aucun outil que le manifeste refuse (`forbidden_native_tools`) ; un
+    rôle qui déclarait un outil intégré d'écriture écrit par `board_memory_write`, ajouté s'il manque. Dérivé du
+    manifeste, jamais d'une seconde liste : ce que l'onglet Sous-agents affiche suit ce que le CLI offre.
+    """
+
+    if capabilities is None or not capabilities.confined:
+        return role.tools
+    kept = tuple(tool for tool in role.tools if tool not in capabilities.forbidden_native_tools)
+    wrote = any(tool in NATIVE_WRITE_TOOLS and tool in capabilities.forbidden_native_tools for tool in role.tools)
+    return (*kept, MEMORY_WRITE_TOOL) if wrote and MEMORY_WRITE_TOOL not in kept else kept
+
+
+def edition_role_refusal(role: SubagentRole | None, capabilities: AgentCapabilityPolicy | None,
+                         roles: Sequence[SubagentRole] = ROLES) -> str | None:
+    """Raison lisible du refus d'un rôle que l'édition n'offre pas (`offers_role` faux), ou `None`.
+
+    Le hook d'aiguillage refuse l'appel `Agent` avec cette raison (code `ROLE_UNAVAILABLE_CODE`) : un marqueur forgé
+    (`[coder]`) ne lance plus un sous-agent sans outil qui chercherait en vain à coder. La raison s'adresse au modèle
+    qui a fait l'appel : elle nomme les rôles offerts et dit quoi faire, sans chemin ni secret.
+    """
+
+    if role is None or capabilities is None or offers_role(role, capabilities):
+        return None
+    offered = ", ".join(_marker_of(item) for item in roles
+                        if item.enabled and item.offered_to_brain and offers_role(item, capabilities))
+    return (f"Rôle [{role.marker}] indisponible dans l'édition {capabilities.edition.value} de JARVIS "
+            f"({ROLE_UNAVAILABLE_CODE}) : cette édition ne développe pas, ne modifie aucun code ni dépôt et ne lance "
+            "aucune commande. Si la demande est du développement, dites simplement à l'utilisateur que cette édition "
+            f"ne le fait pas. Sinon, relancez avec un rôle disponible : {offered}.")
 
 
 def adapt_instructions(role: SubagentRole, text: str,

@@ -138,9 +138,17 @@ Le frontend lit ces jetons, il ne les recopie pas dans des conditions.
   (`qa` -> `reviewer`, `research-lead` -> `research`). `LOADOUT_ROLES` n'est pas étendu : aucun rôle n'a
   besoin d'un loadout à lui, et les règles `memory.loadouts` enregistrées restent valides.
 - `tools` : les outils que le rôle utilise, affichés. Aucun consommateur ne s'en sert pour restreindre les
-  outils du CLI (section 1bis).
+  outils du CLI (section 1bis). En édition confinée, la liste affichée est celle de `role_tools(role,
+  capabilities)` : sans aucun outil que le manifeste refuse (`qa` ne montre plus `Bash`), avec
+  `board_memory_write` à la place des outils d'écriture (`docs/product-capabilities.md`, V1.2 Slice 01).
 
-Tous ces champs paraissent dans `SubagentRole.as_dict()`, donc dans `GET /api/subagent-roles` (section 1ter).
+Tous ces champs paraissent dans `SubagentRole.as_dict(capabilities)`, donc dans `GET /api/subagent-roles`
+(section 1ter), qui passe le manifeste de l'édition du processus ; sans manifeste ou en `full`, la charge d'avant.
+
+Un rôle que l'édition n'offre pas (`offers_role` faux : `coder` en `presentation`) est **refusé** par le hook
+d'aiguillage quand un appel `Agent` l'annonce, même par un marqueur forgé ou à l'intérieur d'une mission :
+`permissionDecision: deny`, code `role_unavailable_in_edition`, ligne `agent.spawn_refused`
+(`subagent_roles.edition_role_refusal`, `routing_hook._edition_role_guard`).
 
 ### 1bis. Ce que le hook appose pour un rôle
 
