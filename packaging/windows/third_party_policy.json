@@ -92,7 +92,9 @@
       "status": "bundled",
       "channels": [
         "internal"
-      ]
+      ],
+      "license_text_from": "requests",
+      "notes": "La roue ne contient aucun texte de licence : le texte Apache-2.0 est repris de la roue requests (même licence), avec un NOTICE.txt qui le dit."
     },
     "frozenlist": {
       "license": "Apache-2.0",

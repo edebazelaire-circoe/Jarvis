@@ -597,3 +597,21 @@ def test_verify_refuses_a_production_package_that_carries_an_internal_component(
 def test_verify_refuses_an_unknown_channel(tmp_path, capsys):
     code, output = verify(refresh_manifest(fake_built_package(tmp_path / "pkg"), channel="beta"), capsys)
     assert code == 1 and "canal inconnu 'beta'" in output
+
+
+def test_a_wheel_without_licence_text_borrows_the_same_licence_from_another_wheel(tmp_path):
+    out, site = tmp_path / "pkg", tmp_path / "pkg" / "runtime" / "python" / "Lib" / "site-packages"
+    for relative in ("runtime/python/LICENSE.txt", "runtime/node/LICENSE"):
+        (out / relative).parent.mkdir(parents=True, exist_ok=True)
+        (out / relative).write_text("L", encoding="utf-8")
+    fake_site(site, {"requests": "2.34.2", "flatbuffers": "25.12.19"})
+    (site / "requests-2.34.2.dist-info" / "LICENSE").write_text("Apache License 2.0", encoding="utf-8")
+    policy = {"python_packages": {"requests": {"license": "Apache-2.0"},
+                                  "flatbuffers": {"license": "Apache-2.0", "license_text_from": "requests"}}}
+    copied = B.collect_licenses(out, site, RUNTIMES, policy)
+    assert copied["python-packages/flatbuffers"] == ["licenses/python-packages/flatbuffers/LICENSE",
+                                                     "licenses/python-packages/flatbuffers/NOTICE.txt"]
+    assert "reproduced from the requests wheel" in (out / "licenses/python-packages/flatbuffers/NOTICE.txt").read_text(encoding="utf-8")
+    policy["python_packages"]["flatbuffers"]["license"] = "MIT"
+    with pytest.raises(B.BuildError, match="même licence"):
+        B.collect_licenses(out, site, RUNTIMES, policy)

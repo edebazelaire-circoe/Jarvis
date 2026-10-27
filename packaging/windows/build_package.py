@@ -530,6 +530,25 @@ def collect_licenses(out: Path, site: Path, runtimes: dict, policy: dict | None 
             raise BuildError(f"{name}: textes de licence déclarés absents de la roue : {missing}")
         if extra:
             copy(f"python-packages/{normalize(name)}", extra, site)
+    packages = (policy or {}).get("python_packages") or {}
+    for name, entry in sorted(packages.items()):
+        # Roue sans texte de licence (flatbuffers) : le même texte (même SPDX) repris d'une autre roue livrée, et dit.
+        source = entry.get("license_text_from")
+        if not source:
+            continue
+        if (packages.get(source) or {}).get("license") != entry.get("license"):
+            raise BuildError(f"{name}: license_text_from {source!r} n'a pas la même licence ({entry.get('license')})")
+        texts = [out / relative for relative in copied.get(f"python-packages/{normalize(source)}", [])
+                 if Path(relative).name.upper().startswith("LICEN")]
+        if not texts:
+            raise BuildError(f"{name}: aucun texte de licence chez {source}")
+        component = f"python-packages/{normalize(name)}"
+        copy(component, texts, texts[0].parent)
+        notice = licenses / component / "NOTICE.txt"
+        notice.write_text(f"{name}: the wheel ships no licence file. Its metadata declares {entry['license']}; the "
+                          f"licence text above is reproduced from the {source} wheel (same licence).\n",
+                          encoding="utf-8", newline="\n")
+        copied[component].append(notice.relative_to(out).as_posix())
     for name in sorted(((policy or {}).get("models") or {})):
         notice = licenses / name / "NOTICE.txt"
         notice.parent.mkdir(parents=True, exist_ok=True)
