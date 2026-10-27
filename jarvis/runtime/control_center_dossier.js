@@ -1342,7 +1342,8 @@
 #dossierView .dsr-prose pre{padding:12px 14px;border-radius:8px;background:#03080c;overflow:auto}
 /* I-004 M3 (V1.2 Slice 06) : l'en-tête d'un document de recherche (sources, longues URL) passe à la ligne au lieu de
    déborder à droite ; le code d'une note garde son défilement. */
-#dossierView .dsr-prose pre.dsr-research-head{white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal}
+#dossierView .dsr-prose pre.dsr-research-head{white-space:pre-wrap;word-break:break-all;line-height:1.55}
+#dossierView .dsr-prose pre.dsr-research-head code{line-height:inherit}
 #dossierView .dsr-prose pre code{padding:0;background:none}
 #dossierView .dsr-prose blockquote{padding-left:14px;border-left:1px solid var(--dsr-rule-strong);color:var(--dsr-soft)}
 #dossierView .dsr-prose hr{border:0;border-top:1px solid var(--dsr-rule);margin:1.6em 0}

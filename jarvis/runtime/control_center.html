@@ -871,6 +871,20 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-help-note{grid-column:1/-1;margin:2px 0 0;min-height:1.4em;font-size:12.5px;color:#cfe2ec}
 .set-help-note[data-tone=bad]{color:#ffb39f}
 @media(prefers-reduced-motion:reduce){.set-help-knob,.set-help-switch,.set-help-btn{transition:none}}
+/* Édition produit sur un écran bas (portable 1366×768) : la bande d'aide tient dans le premier écran, le hub se resserre.
+   `full` n'a pas de bande : inchangé. */
+@media(max-height:860px){
+  html[data-developer-surfaces="hidden"] .set-hub{padding-top:clamp(40px,6vh,64px);padding-bottom:24px}
+  html[data-developer-surfaces="hidden"] .set-hub-title{font-size:clamp(30px,3.4vw,44px)}
+  html[data-developer-surfaces="hidden"] .set-hub-mark{width:clamp(48px,4.4vw,60px)}
+  html[data-developer-surfaces="hidden"] .set-hub-rule{margin-top:12px}
+  html[data-developer-surfaces="hidden"] .set-hub-grid{margin-top:18px;grid-auto-rows:minmax(132px,auto)}
+  html[data-developer-surfaces="hidden"] .set-hub-name{margin-top:50px;font-size:18px}
+  html[data-developer-surfaces="hidden"] .set-hub-icon{width:44px;height:44px;top:18px}
+  html[data-developer-surfaces="hidden"] .set-hub-card{padding:18px 22px}
+  html[data-developer-surfaces="hidden"] .set-help{margin-top:14px;padding-top:10px}
+  html[data-developer-surfaces="hidden"] .set-help-row{padding:4px 0}
+}
 @media(prefers-reduced-motion:reduce){.set-hub-card,.overlay.closing,.overlay.closing .set-hub-card{animation:none;opacity:1;transform:none;transition:none}.set-hub-card:hover,.set-hub-card:focus-visible{transform:none}}
 /* Page Personnalisation (refonte des Réglages page par page, 2026-10-23 ; maquette 01 et primitives partagées depuis la
    Slice 02 de refonte-ui-settings, 2026-10-24 ; `control_center_personalization.js`, contrat
