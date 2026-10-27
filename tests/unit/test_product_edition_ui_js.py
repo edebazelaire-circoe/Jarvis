@@ -265,3 +265,13 @@ def test_the_store_tells_the_edition_marked_on_the_page():
                "const c={info(){},warn(){},error(){}};"
                "return ['presentation','full','unreadable','__JARVIS_PRODUCT_EDITION__',null].map(v=>E.createStore({document:mk(v),console:c}).state().pageEdition)")
     assert out == ["presentation", "full", None, None, None]
+
+
+def test_the_shortcuts_card_has_a_keyboard_icon_in_the_product_edition_only():
+    """QA S06 m6 : « Raccourcis clavier » montre un clavier en édition produit ; `full` garde l'icône d'avant."""
+
+    out = node("const hidden=R.categoriesFor({developerSurfaces:'hidden'}).find(c=>c.id==='interface_interactions');"
+               "const full=R.categoriesFor().find(c=>c.id==='interface_interactions');"
+               "const nav=R.shellNavigation(R.createRegistry(),{developerSurfaces:'hidden'}).categories.find(c=>c.id==='interface_interactions');"
+               "return {hidden:hidden.icon||null,full:full.icon||null,nav:nav.icon}")
+    assert out == {"hidden": "keyboard", "full": None, "nav": "keyboard"}

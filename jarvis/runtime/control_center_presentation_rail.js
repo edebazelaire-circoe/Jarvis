@@ -773,14 +773,15 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       const hint=el('p','jvr-home-voice-hint',line?line.hint:'Jarvis n’a pas encore dit l’état de la voix.');
       hint.id='jvrHomeVoiceHint';
       box.append(head,hint);
-      if(line){
+      /* QA S06 m5 : le bouton est l'action utile de la ligne (`actionKind`), ou rien quand il n'y en a pas. */
+      if(line&&line.action){
         const b=el('button','jvr-home-voice-btn',line.action);b.type='button';b.dataset.homeAct='voice';
         b.setAttribute('aria-describedby',hint.id);
         if(line.pending)b.setAttribute('aria-disabled','true');
         b.addEventListener('click',()=>{
           if(b.getAttribute('aria-disabled')==='true')return;
           log('home_action',{action:'voice'});
-          try{const r=W.toggleVoice('presentation_home');if(r&&typeof r.catch==='function')r.catch(error=>log('home_voice_failed',{error:cleanLine(error&&error.message,120)},'error'))}
+          try{const r=typeof W.voiceLineAct==='function'?W.voiceLineAct('presentation_home'):W.toggleVoice('presentation_home');if(r&&typeof r.catch==='function')r.catch(error=>log('home_voice_failed',{error:cleanLine(error&&error.message,120)},'error'))}
           catch(error){log('home_voice_failed',{error:cleanLine(error&&error.message,120)},'error');say('failed',`Voix : ${cleanLine(error&&error.message,100)}`)}
         });
         box.append(b);

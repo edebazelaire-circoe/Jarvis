@@ -251,3 +251,22 @@ def test_the_voice_line_of_the_main_journey_is_the_same_projection_in_plain_word
     assert got["degraded"]["word"] == "Indisponible" and got["degraded"]["hint"] == "Clé absente." \
         and got["degraded"]["code"] == "voice_provider_key_missing" and got["degraded"]["tone"] == "error"
     assert got["pending"]["pending"] is True and got["pending"]["word"] == "Enregistrement…"
+
+
+def test_an_unavailable_voice_offers_the_useful_action_never_a_misleading_switch(tmp_path):
+    """QA S06 m5 : clé absente → « Ajouter la clé vocale » (Connexions) ; voix non lancée ou configuration illisible →
+    aucun bouton ; plantages répétés → « Couper la voix », le geste que le message demande ; coupée → rallumer."""
+
+    got = run(tmp_path, """
+      const L=(o)=>({...S,voice_online:false,voice_lifecycle:o});
+      const line=s=>{const l=J.voiceLineOf(J.factsOf(s,'ok'));return {action:l.action,kind:l.actionKind}};
+      out({key:line(L({preference:'sleep',state:'degraded',code:'voice_provider_key_missing',message:'Clé absente.'})),
+        notLaunched:line(L({preference:'sleep',state:'degraded',code:'voice_not_launched',message:'Non lancée.'})),
+        config:line(L({preference:'sleep',state:'degraded',code:'voice_configuration_invalid',message:'Illisible.'})),
+        crash:line(L({preference:'sleep',state:'degraded',code:'voice_crash_loop',message:'Coupez-la puis rallumez-la.'})),
+        off:line(L({preference:'off',state:'off',code:'voice_off'})),target:J.VOICE_KEY_TARGET})""")
+    assert got["key"] == {"action": "Ajouter la clé vocale", "kind": "open_connections"}
+    assert got["notLaunched"] == {"action": None, "kind": None} and got["config"] == {"action": None, "kind": None}
+    assert got["crash"] == {"action": "Couper la voix", "kind": "toggle"}
+    assert got["off"] == {"action": "Rallumer la voix", "kind": "toggle"}
+    assert got["target"] == "providers"

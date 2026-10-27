@@ -338,7 +338,8 @@
     /* Chiffres de synthèse, tous mesurés : registre (rôles, outils) et instantané de routage (fournisseurs, modèles du
        catalogue, rôles lançables d'après l'aperçu servi). Sans instantané, la tuile le dit au lieu d'inventer un chiffre. */
     function metricsHtml(){
-      const all=roles(),active=all.filter(r=>r.enabled),uses=new Map();
+      /* QA S06 m1 : un rôle que l'édition n'offre pas n'est ni actif ni lançable ici (`full` : aucun n'est concerné). */
+      const all=roles(),active=all.filter(r=>r.enabled&&!r.edition_unavailable),uses=new Map();
       active.forEach(r=>new Set(r.tools||[]).forEach(t=>uses.set(t,(uses.get(t)||0)+1)));
       const top=[...uses].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]))[0];
       const s=snap(),none=routed()?(st.route.phase==='error'&&!s?'politique illisible':'lecture de la politique…'):'routage non servi ici';
@@ -347,7 +348,7 @@
         const by=new Map();s.harnesses.forEach(h=>{const k=h.provider||h.id;by.set(k,by.get(k)===true||h.available)});
         const on=[...by.values()].filter(Boolean).length,models=s.harnesses.filter(h=>h.available).reduce((n,h)=>n+h.models.filter(m=>m.available).length,0);
         prov={value:`${on}/${by.size}`,label:'Fournisseurs IA disponibles',tone:on<by.size?'warn':'',sub:`${models} modèle(s) disponible(s) au catalogue`};
-        const rs=s.roles.filter(r=>roleById(r.role_id)),out=k=>rs.filter(r=>r.preview&&r.preview.outcome===k).length;
+        const rs=s.roles.filter(r=>roleById(r.role_id)&&!roleById(r.role_id).edition_unavailable),out=k=>rs.filter(r=>r.preview&&r.preview.outcome===k).length;
         const ok=out('selected')+out('cli_default'),refused=out('refused');
         ready={value:`${ok}/${rs.length}`,label:'Rôles lançables',tone:ok<rs.length?'warn':'ok',
           sub:[out('selected')?`${out('selected')} par leur liste`:'',out('cli_default')?`${out('cli_default')} par le modèle du CLI`:'',refused?`${refused} refusé(s)`:''].filter(Boolean).join(' · ')||'aperçu vide'};
@@ -740,7 +741,7 @@
         <header class="sar-head">${identity(role,'lg')}<div><p class="sar-eyebrow">Fiche du rôle</p><h3 id="sar-title" class="sar-title" tabindex="-1">${esc(role.name)}</h3>
           <p class="sar-desc">${esc(role.description||'')}</p>
           <div class="sar-tags">${role.edition_unavailable?chip('Indisponible dans cette édition','bad'):role.enabled?chip('Actif','ok'):chip('Désactivé','bad')}
-${role.offered_to_brain?chip('Proposé au cerveau','ok'):chip('Pas proposé au cerveau')}${role.offered_to_subagents?chip('Proposé aux agents','ok'):chip('Pas proposé aux agents')}</div></div></header>
+${role.edition_unavailable?'':(role.offered_to_brain?chip('Proposé au cerveau','ok'):chip('Pas proposé au cerveau'))+(role.offered_to_subagents?chip('Proposé aux agents','ok'):chip('Pas proposé aux agents'))}</div></div></header>
         ${state}${missing}
         <div class="sar-detail-cols${models?'':' single'}">
         <div class="sar-col-a"><section class="sar-block" aria-labelledby="sar-mission"><h4 id="sar-mission">Mission</h4><p class="sar-prose">${esc(role.mission||'')}</p>
@@ -790,7 +791,7 @@ ${role.offered_to_brain?chip('Proposé au cerveau','ok'):chip('Pas proposé au c
         ${body}<div class="sar-actions"><button type="button" class="action" data-sar-tasks-refresh${t.phase==='loading'?' disabled':''}>Actualiser</button></div></details>`;
     }
     function summaryHtml(){
-      const all=roles(),active=all.filter(r=>r.enabled).length,brain=all.filter(r=>r.enabled&&r.offered_to_brain).length,mod=all.filter(r=>r.modified).length;
+      const all=roles(),active=all.filter(r=>r.enabled&&!r.edition_unavailable).length,brain=all.filter(r=>r.enabled&&r.offered_to_brain&&!r.edition_unavailable).length,mod=all.filter(r=>r.modified).length;
       const schema=st.payload.schema_version!==2?`<div class="notice">Version du registre inattendue (<code>${esc(st.payload.schema_version??'absente')}</code>, cet écran lit la version 2) : les champs absents s'affichent vides.</div>`:'';
       const dropped=st.payload.dropped?`<div class="notice">${st.payload.dropped} entrée(s) sans identifiant ignorée(s).</div>`:'';
       return `${schema}${dropped}<p class="sar-summary">${all.length} rôles · ${active} actifs · ${brain} proposés au cerveau${mod?` · ${mod} aux instructions modifiées`:''}</p>`;

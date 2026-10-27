@@ -87,33 +87,46 @@ async def test_a_bad_payload_is_a_coded_400_and_writes_nothing(control):
 
 
 async def test_support_mode_is_not_in_the_settings_projection_the_console_mcp_reads(control):
-    """`jarvis-console` décrit et écrit ce que projette `GET /api/settings` : le mode support n'y est pas."""
+    """`jarvis-console` décrit et écrit ce que projette `GET /api/settings` : le mode support n'y est pas, sous aucun nom.
 
-    control.settings_path.write_text(json.dumps({"support_mode": {"schema_version": 1, "enabled": True}}),
-                                     encoding="utf-8")
-    projection = json.loads((await control.get_settings(None)).text)
+    QA S06 m3 : on ne cherche pas un nom de clé (une exposition sous `support` passerait) ; la projection doit être
+    identique, octet pour octet, que le mode support soit absent, coupé ou activé."""
 
-    def keys(value):
-        if isinstance(value, dict):
-            for key, item in value.items():
-                yield key
-                yield from keys(item)
-        elif isinstance(value, list):
-            for item in value:
-                yield from keys(item)
-
-    assert not [key for key in keys(projection) if "support_mode" in str(key).lower()]
+    other = {"keep": {"a": 1}}
+    projections = []
+    for block in (None, {"schema_version": 1, "enabled": False}, {"schema_version": 1, "enabled": True}):
+        settings = dict(other) if block is None else {**other, "support_mode": block}
+        control.settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        projections.append((await control.get_settings(None)).text)
+    assert projections[0] == projections[1] == projections[2]
 
 
 def test_support_mode_widens_no_agent_capability(tmp_path, monkeypatch):
     """Le manifeste ne dépend que de l'édition du processus ; aucun lancement d'agent ne lit le bloc.
 
-    Lecteurs cherchés par le mot entier `support_mode` (module ou clé) : `support_model_unavailable` (code de la Slice 07,
-    modèle du rapport IA) n'est pas une lecture du mode support (faux positif constaté à la fusion de la Slice 07)."""
+    QA S06 m2 : on compare ce que le lancement du cerveau résout réellement (`resolve_agent_execution`, CLI, mode de
+    permission verrouillé `dontAsk`, réglages du CLI) avec le mode support absent, coupé et activé, y compris quand les
+    réglages enregistrés demandent `bypassPermissions` et Codex : une lecture déguisée du bloc (une clé construite,
+    `settings.get("support" + "_mode")`) qui lèverait le verrou change ce résultat et fait échouer le test.
+
+    Lecteurs cherchés aussi par le mot entier `support_mode` (module ou clé) : `support_model_unavailable` (code de la
+    Slice 07, modèle du rapport IA) n'est pas une lecture du mode support (faux positif constaté à la fusion)."""
+
+    from jarvis.runtime.agent_settings import effective_agent_cli, resolve_agent_execution, resolve_agent_settings
 
     monkeypatch.setenv("JARVIS_PRODUCT_EDITION", "presentation")
-    (tmp_path / "control-center-settings.json").write_text(
-        json.dumps({"support_mode": {"schema_version": 1, "enabled": True}}), encoding="utf-8")
+    stored = {"agent_cli_settings": {"claude": {"permission_mode": "bypassPermissions"},
+                                     "codex": {"permission_mode": "danger-full-access"}},
+              "claude_permission_mode": "bypassPermissions"}
+    resolved = []
+    for agent_cli in ("claude", "codex"):
+        for block in (None, {"schema_version": 1, "enabled": False}, {"schema_version": 1, "enabled": True}):
+            settings = {**stored, "agent_cli": agent_cli, **({} if block is None else {"support_mode": block})}
+            execution = resolve_agent_execution(settings, cwd=tmp_path, runtime_root=tmp_path)
+            resolved.append((agent_cli, execution.agent_cli, execution.permission_mode, execution.command,
+                             effective_agent_cli(agent_cli), tuple(sorted(resolve_agent_settings(settings, "claude").items()))))
+            assert execution.agent_cli == "claude" and execution.permission_mode == "dontAsk", (block, execution)
+    assert len({row[1:] for row in resolved}) == 1, resolved
     assert edition_capabilities() is PRESENTATION_CAPABILITIES
     assert agent_capability_policy("presentation").cli_args(["jarvis-workspace"]) == \
         PRESENTATION_CAPABILITIES.cli_args(["jarvis-workspace"])

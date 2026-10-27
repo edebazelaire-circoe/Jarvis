@@ -96,6 +96,9 @@ Block `voice_lifecycle` at the root of `runtime/control-center-settings.json` (n
   `voiceLineOf(facts)` of the wheel module (Coupée / En veille / En conversation / Démarrage… / Arrêt… / Indisponible /
   À relancer, a plain hint, the code kept in the projection) with a button that calls the same `toggleVoice`; it is
   redrawn on the wheel's `jarvis:voice-line` event, never from a local state.
+  The button is the useful action (`actionKind`, QA S06 m5): key missing gives Ajouter la cle vocale (Settings >
+  Connexions > Fournisseurs); Voice not launched on this machine or unreadable configuration gives no button (the message
+  says why); a crash loop keeps Couper la voix (what its message asks); otherwise switch off / on.
 - Settings › Voix & audio › Mot d'éveil: `GET/POST /api/wake-word` carry `engine` (`voice_lifecycle.wake_engine`).
   Enabled but engine missing (`wake_package_missing`, `wake_model_missing`, `wake_model_mismatch`,
   `wake_porcupine_key_missing`, `wake_porcupine_package_missing`) shows « Moteur absent » and that only the key wakes

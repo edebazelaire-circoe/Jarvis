@@ -108,11 +108,21 @@ v.select('research');process.stdout.write(JSON.stringify({list,coder,research:ho
     assert out["coder"].count("Indisponible dans cette édition") >= 2 and "role_unavailable_in_edition" in out["coder"]
     assert "data-sar-edition-unavailable" in out["coder"] and "data-sar-edition-unavailable" not in out["research"]
     assert "1 indisponible(s) dans cette édition" in out["list"]
+    # QA S06 m1 : la fiche ne dit plus « Proposé… » à côté d'« Indisponible », et les compteurs l'excluent.
+    import re
+    head = re.search(r'<p class="sar-eyebrow">Fiche du rôle</p>.*?<div class="sar-tags">(.*?)</div></div></header>',
+                     out["coder"], re.S).group(1)
+    assert "Indisponible dans cette édition" in head and "Proposé" not in head, head
+    actifs = re.search(r'data-sar-stat="roles".*?set-stat-value">(\d+)<', out["list"], re.S).group(1)
+    total = len(payload["roles"])
+    assert int(actifs) == total - 1, (actifs, total)
+    assert f"{total - 1} actifs · {total - 1} proposés au cerveau" in out["list"]
     monkeypatch.setenv("JARVIS_PRODUCT_EDITION", "full")
     full = run_node(tmp_path, roles_payload(tmp_path), """
 const v=M.create(host,{fetch:reply,...quiet});await v.load();v.select('coder');
 process.stdout.write(JSON.stringify({page:host.innerHTML}));""")
     assert "Indisponible dans cette édition" not in full["page"] and "indisponible(s)" not in full["page"]
+    assert "Proposé au cerveau" in full["page"], "full: the role sheet is unchanged"
 
 
 def test_accents_are_tokens_mapped_once_to_theme_variables():

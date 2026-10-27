@@ -135,8 +135,16 @@
       :state==='off'?'Aucun micro n’est ouvert. Le chat reste disponible.'
       :message;
     const tone=pending?'busy':(LIFECYCLE_NOTES[state]||{tone:'unknown'}).tone||'on';
-    return {state,on,word:pending?'Enregistrement…':word,hint,tone,pending:pending===true,
-      code:typeof lc.code==='string'?lc.code:'',action:on?'Couper la voix':'Rallumer la voix'};
+    const code=typeof lc.code==='string'?lc.code:'';
+    /* QA S06 m5 : l'action proposée est celle qui aide (`actionKind`). Voix voulue mais indisponible : la clé manque →
+       « Ajouter la clé vocale » (Réglages › Connexions) ; voix non lancée sur ce poste ou configuration illisible →
+       aucun bouton (le message dit pourquoi) ; plantages répétés ou erreur → « Couper la voix » reste le geste que le
+       message demande (« coupez-la puis rallumez-la »). Ailleurs : couper / rallumer. */
+    const NO_ACTION=['voice_not_launched','voice_configuration_invalid'];
+    let actionKind='toggle',action=on?'Couper la voix':'Rallumer la voix';
+    if(on&&state==='degraded'&&code==='voice_provider_key_missing'){actionKind='open_connections';action='Ajouter la clé vocale'}
+    else if(on&&state==='degraded'&&NO_ACTION.includes(code)){actionKind=null;action=null}
+    return {state,on,word:pending?'Enregistrement…':word,hint,tone,pending:pending===true,code,action,actionKind};
   }
 
   /* Ce que la touche d'éveil fait **maintenant** (l'ancien rappel caché de la page,
@@ -227,9 +235,11 @@
   /* La ligne « Réglages de la voix » ouvre la section Conversation de Personnalisation (ID canonique de section : la
      catégorie s'ouvre désormais sur Thème & scène, hub des Réglages du 2026-10-23). */
   const VOICE_SETTINGS_TARGET='conversation';
+  /* Section où s'ajoute la clé du fournisseur vocal (`actionKind: open_connections` de la ligne Voix). */
+  const VOICE_KEY_TARGET='providers';
 
   const LIFECYCLE_ROUTE='/api/voice/lifecycle';
-  const api=Object.freeze({VOICE_STATES,AGENT_STATES,VOICE_SETTINGS_TARGET,LIFECYCLE_ROUTE,LIFECYCLE_NOTES,factsOf,wakeHintOf,
+  const api=Object.freeze({VOICE_STATES,AGENT_STATES,VOICE_SETTINGS_TARGET,VOICE_KEY_TARGET,LIFECYCLE_ROUTE,LIFECYCLE_NOTES,factsOf,wakeHintOf,
     jarvisItemsOf,voicePowerItemOf,categoryStatusOf,voiceLineOf});
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(typeof window==='undefined'||typeof document==='undefined')return;
@@ -364,6 +374,17 @@
       items:()=>jarvisItemsOf(facts),
       toggleVoice:source=>toggleVoice(source||'api'),
       voiceLine:()=>voiceLineOf(facts,powerPending),
+      /* Le geste de la ligne Voix (`actionKind`) : interrupteur, ou Réglages › Connexions pour la clé. */
+      voiceLineAct(source){
+        const line=voiceLineOf(facts,powerPending);
+        if(!line||!line.actionKind)return undefined;
+        if(line.actionKind==='open_connections'){
+          if(typeof root.openSettingsTab!=='function'){log('error','jarvis_wheel.route_missing',{route:'settings'});return undefined}
+          log('info','jarvis_wheel.voice_key_settings',{source:source||null});
+          return root.openSettingsTab(VOICE_KEY_TARGET);
+        }
+        return toggleVoice(source||'api');
+      },
     });
     log('info','jarvis_wheel.installed',{categories:['jarvis','settings']});
   }

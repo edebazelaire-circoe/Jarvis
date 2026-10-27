@@ -41,7 +41,7 @@
       product:Object.freeze({label:'Mémoire',description:'Ce que Jarvis retient de vos projets et les sources qu’il consulte.',order:30}),
       page:Object.freeze({lead:'Configurez la mémoire de JARVIS, les sources de connaissances et l’accès des agents à ces informations.'})},
     {id:'interface_interactions',label:'Interface & Interactions',description:'Interface, modes d’interaction, entrées et sorties.',
-      product:Object.freeze({label:'Raccourcis clavier',description:'Les touches qui pilotent Jarvis sans la souris.',order:40})},
+      product:Object.freeze({label:'Raccourcis clavier',description:'Les touches qui pilotent Jarvis sans la souris.',order:40,icon:'keyboard'})},
     {id:'connections',label:'Plugins & MCP',description:'Extensions, outils externes et connecteurs.',
       product:Object.freeze({label:'Connexions',description:'Comptes et services que Jarvis peut utiliser.',order:20})},
     {id:'advanced_diagnostics',label:'Avancé & Diagnostics',description:'Paramètres avancés, journaux et outils de diagnostic.',surface:'developer',support:true,
@@ -161,6 +161,7 @@
     const hide=hidesDeveloper(options);
     const shown=CATEGORIES.filter(c=>!categoryHidden(c,options))
       .map(c=>!hide?c:Object.assign({},c,c.product?{label:c.product.label,description:c.product.description}:{},
+        c.product&&c.product.icon?{icon:c.product.icon}:{},
         c.surface==='developer'?{supportOnly:true}:{}));
     return hide?shown.sort((a,b)=>productRank(a)-productRank(b)):shown;
   }
@@ -223,7 +224,7 @@
      (`registry.sections`). Depuis la Slice 09 il n'y a plus d'onglet hérité ni de lien « encore dans ». */
   function shellNavigation(registry,options){
     const categories=categoriesFor(options).map(c=>({id:c.id,label:c.label,description:c.description,notice:c.notice||'',page:c.page||null,groups:groupsOf(c.id),
-      supportOnly:c.supportOnly===true,
+      supportOnly:c.supportOnly===true,icon:c.icon||null,
       items:(registry?registry.sections(c.id):[]).filter(s=>!sectionHidden(s,options))
         .map(s=>({kind:'section',id:s.id,label:s.label,save:s.save,advanced:s.advanced,group:s.group,fill:!!s.fill}))}));
     return {categories};

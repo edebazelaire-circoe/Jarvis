@@ -141,7 +141,8 @@ def test_a_support_deep_link_waits_for_support_mode_then_opens_the_page(tmp_path
     actions = [
         ["eval", "hash", "location.hash='#settings/subagents',1", 900],
         ["eval", "hub", "({hub:settingsHubOpen(),focus:document.activeElement&&document.activeElement.id,"
-                        "note:document.getElementById('settingsHubHelpNote').textContent})", 50],
+                        "note:document.getElementById('settingsHubHelpNote').textContent,"
+                        "ring:(cs=>cs.outlineStyle!=='none'&&parseFloat(cs.outlineWidth)>0)(getComputedStyle(document.getElementById('settingsSupportSwitch')))})", 50],
         *_shot("s06-deep-link-needs-support-1366x768"),
         ["key", "space", " ", 1500],
         ["eval", "landed", LANDED, 50],
@@ -156,7 +157,8 @@ def test_a_support_deep_link_waits_for_support_mode_then_opens_the_page(tmp_path
     _no_errors_but_unstubbed(step)
     r = step["results"]
     assert r["hub"]["hub"] is True and r["hub"]["focus"] == "settingsSupportSwitch"
-    assert "mode support" in r["hub"]["note"]
+    assert "juste au-dessus" in r["hub"]["note"], "QA S06 m4: the switch sits above the note"
+    assert r["hub"]["ring"] is True, "QA S06 m4: a programmatic focus still shows the ring"
     assert r["landed"]["category"] == "agents_models" and r["landed"]["section"] == "subagents", r["landed"]
     assert "text" in r["coder"], r["coder"]
     assert "Indisponible dans cette édition" in r["coder"]["text"]
@@ -275,3 +277,28 @@ def test_report_a_problem_opens_the_support_report_panel_and_creates_nothing(tmp
     assert r["after"] == {"hub": False, "panel": True, "state": True}, r["after"]
     assert "GET /api/support/preview" in step["calls"], step["calls"]
     assert not [c for c in step["calls"] if c.startswith("POST /api/support/")], "nothing created, nothing sent"
+
+
+def test_an_unavailable_voice_without_a_key_offers_to_add_it(tmp_path):
+    """QA S06 m5 : voix voulue mais clé absente → hub et accueil proposent « Ajouter la clé vocale », qui ouvre
+    Connexions › Fournisseurs ; aucun « Couper la voix » trompeur, aucune écriture de la préférence."""
+
+    degraded = {"preference": "sleep", "state": "degraded", "code": "voice_provider_key_missing",
+                "message": "La voix ne peut pas démarrer : la clé du fournisseur vocal manque.", "managed": True}
+    seed = {"edition": PRESENTATION, "voiceLifecycle": degraded, "rail": False,
+            "boards": _boards(("default", "Pitch client", "presentation")), "settings": _settings(tmp_path)}
+    actions = [
+        ["eval", "settle", "1", 1500],
+        ["eval", "home", "(b=>b?(b.querySelector('button')||{}).textContent||null:'none')(document.querySelector('#presentationRail .jvr-home-voice'))", 50],
+        ["eval", "open", "openSettingsHub({source:'test'}),1", 500],
+        ["eval", "hub", "document.getElementById('settingsHubVoiceToggle').hidden?null:document.getElementById('settingsHubVoiceToggle').textContent", 50],
+        *_shot("s06-voice-key-missing-hub-1366x768"),
+        ["click", "add", "#settingsHubVoiceToggle", 1200],
+        ["eval", "landed", LANDED, 50],
+    ]
+    step = _drive(tmp_path, [{"width": 1366, "height": 768, "seed": seed, "actions": actions}], "presentation")[0]
+    _no_errors_but_unstubbed(step)
+    r = step["results"]
+    assert r["home"] == "Ajouter la clé vocale" and r["hub"] == "Ajouter la clé vocale", r
+    assert r["landed"]["open"] and r["landed"]["section"] == "providers", r["landed"]
+    assert not [b for b in step["bodies"] if b["path"] == "/api/voice/lifecycle"]

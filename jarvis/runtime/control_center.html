@@ -868,7 +868,7 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .set-help-switch[aria-checked=true]{background:color-mix(in srgb,var(--accent) 30%,rgba(3,8,12,.6));border-color:var(--accent)}
 .set-help-switch[aria-checked=true] .set-help-knob{transform:translateX(20px);background:var(--accent)}
 .set-help-switch[aria-disabled=true]{opacity:.6;cursor:progress}
-:is(.set-help-btn,.set-help-switch):focus-visible{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:var(--set-focus-offset)}
+:is(.set-help-btn,.set-help-switch):focus-visible,.set-help-switch[data-ring]{outline:var(--set-focus-w) solid var(--set-focus);outline-offset:var(--set-focus-offset)}
 .set-help-note{grid-column:1/-1;margin:2px 0 0;min-height:1.4em;font-size:12.5px;color:#cfe2ec}
 .set-help-note[data-tone=bad]{color:#ffb39f}
 @media(prefers-reduced-motion:reduce){.set-help-knob,.set-help-switch,.set-help-btn{transition:none}}
@@ -5989,6 +5989,8 @@ function mountSubagentSettings(host,revision,mode){
 /* Icônes et teintes des six catégories, communes au hub de cartes et au rail (hub des Réglages, 2026-10-23) :
    pinceau, cerveau, base de données, écran, pièce de puzzle, engrenage ; bleu, violet, vert, ambre, magenta, cyan. */
 const SETTINGS_ICON={
+  /* QA S06 m6 : carte « Raccourcis clavier » de l'édition produit (`product.icon`). */
+  keyboard:'<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 9.5h1M9.5 9.5h1M13 9.5h1M16.5 9.5h1M6 12.5h1M9.5 12.5h1M13 12.5h1M16.5 12.5h1M8 15.5h8"/>',
   voice_audio:'<path d="M18.4 3.6a2 2 0 0 1 2.8 2.8l-8.6 8.6-3.4.6.6-3.4z"/><path d="M8.2 14.6c-2 0-3.4 1.4-3.4 3.4 0 1-.6 1.8-1.8 2.2 1 .6 2.3.8 3.6.8 2.5 0 4.2-1.7 4.2-4"/>',
   agents_models:'<path d="M9.5 4.5a2.5 2.5 0 0 0-4.6 1.4A3 3 0 0 0 3.5 11a3 3 0 0 0 1.3 4.6 2.8 2.8 0 0 0 4.7 2.9V4.5z"/><path d="M14.5 4.5a2.5 2.5 0 0 1 4.6 1.4 3 3 0 0 1 1.4 5.1 3 3 0 0 1-1.3 4.6 2.8 2.8 0 0 1-4.7 2.9V4.5z"/><path d="M9.5 9H7.5M14.5 9h2M9.5 14H8M14.5 14h1.5"/>',
   memory_knowledge:'<ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v13c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-13"/><path d="M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8"/>',
@@ -6217,7 +6219,7 @@ function renderTabs(){
   rail.setAttribute('aria-orientation',narrow?'horizontal':'vertical');
   rail.innerHTML=nav.categories.map(c=>{const on=c.id===SET.category;
     return `<button type="button" role="tab" class="set-cat" id="settingsCat-${c.id}" data-category="${c.id}" aria-selected="${on}" aria-controls="settingsMain" tabindex="${on?0:-1}" style="--set-hue:${SETTINGS_HUE[c.id]||'var(--accent)'}">`
-      +`<span class="set-cat-icon">${settingsIcon(c.id)}</span><span class="set-cat-label">${esc(c.label)}</span><span class="set-cat-desc">${esc(c.description)}</span></button>`}).join('');
+      +`<span class="set-cat-icon">${settingsIcon(c.icon||c.id)}</span><span class="set-cat-label">${esc(c.label)}</span><span class="set-cat-desc">${esc(c.description)}</span></button>`}).join('');
   shell.style.setProperty('--set-hue',SETTINGS_HUE[cat.id]||'var(--accent)');
   shell.dataset.category=cat.id;
   /* Page pleine (Slice 07, `page` du registre) : fil d'Ariane, icône et grand titre, phrase et onglets de page, sans
@@ -6231,10 +6233,10 @@ function renderTabs(){
   $('#settingsMain').setAttribute('aria-labelledby',page?'settingsCategoryTitle':`settingsCat-${cat.id}`);
   $('#settingsIntro').innerHTML=page
     ?`<div class="set-page-intro"><p class="set-crumb"><span>JARVIS</span><span aria-hidden="true">›</span><span>Paramètres</span></p>`
-      +`<div class="set-title-row"><span class="set-title-icon" aria-hidden="true">${settingsIcon(cat.id)}</span><h2 class="set-title" id="settingsCategoryTitle">${esc(cat.label)}</h2></div>`
+      +`<div class="set-title-row"><span class="set-title-icon" aria-hidden="true">${settingsIcon(cat.icon||cat.id)}</span><h2 class="set-title" id="settingsCategoryTitle">${esc(cat.label)}</h2></div>`
       +`<p class="set-lead">${esc(cat.page.lead||cat.description)}</p>`
       +'<span class="set-rule" aria-hidden="true"></span></div>'
-    :`<span class="set-intro-icon" aria-hidden="true">${settingsIcon(cat.id)}</span>`+UI.intro({id:'settingsCategoryTitle',title:cat.label,description:cat.description,level:3});
+    :`<span class="set-intro-icon" aria-hidden="true">${settingsIcon(cat.icon||cat.id)}</span>`+UI.intro({id:'settingsCategoryTitle',title:cat.label,description:cat.description,level:3});
   /* Avis de catégorie déclaré par le registre (Avancé : outils d'opérateur). */
   const introHost=$('#settingsIntro').querySelector('.set-page-intro, .set-intro');
   if(cat.notice&&introHost)introHost.insertAdjacentHTML('beforeend',`<p class="set-intro-notice" id="settingsCategoryNotice">${esc(cat.notice)}</p>`);
@@ -6847,7 +6849,7 @@ function renderSettingsHub(){
   $('#settingsHubIcon').innerHTML=settingsIcon('settings');
   $('#settingsHubGrid').innerHTML=R.categoriesFor(settingsEditionOptions()).map((c,i)=>
     `<button type="button" class="set-hub-card" data-hub-category="${esc(c.id)}" aria-describedby="settingsHubDesc-${esc(c.id)}" style="--hue:${SETTINGS_HUE[c.id]||'var(--accent)'};--i:${i}">`
-    +`<span class="set-hub-art" aria-hidden="true">${settingsIcon(c.id)}</span><span class="set-hub-icon" aria-hidden="true">${settingsIcon(c.id)}</span>`
+    +`<span class="set-hub-art" aria-hidden="true">${settingsIcon(c.icon||c.id)}</span><span class="set-hub-icon" aria-hidden="true">${settingsIcon(c.icon||c.id)}</span>`
     +(c.supportOnly?'<span class="set-hub-tag">Support</span>':'')
     +`<span class="set-hub-name">${esc(c.label)}</span><span class="set-hub-desc" id="settingsHubDesc-${esc(c.id)}">${esc(c.description)}</span>`
     +`<span class="set-hub-go" aria-hidden="true">${HUB_ARROW}</span></button>`).join('');
@@ -6956,7 +6958,7 @@ function renderSettingsHelp(){
   if(!line){state.textContent='pas encore lue';state.dataset.tone='unknown';hint.textContent='Jarvis n’a pas encore dit l’état de la voix.';toggle.hidden=true}
   else{
     state.textContent=line.word;state.dataset.tone=line.tone||'on';hint.textContent=line.hint||'';
-    toggle.hidden=false;toggle.textContent=line.action;
+    toggle.hidden=!line.action;toggle.textContent=line.action||'';
     if(line.pending)toggle.setAttribute('aria-disabled','true');else toggle.removeAttribute('aria-disabled');
   }
   $('#settingsHubReportRow').hidden=typeof HELP.reportAction!=='function';
@@ -6993,8 +6995,11 @@ $('#settingsSupportSwitch').addEventListener('click',()=>{if(!HELP.pending)setSu
 $('#settingsHubVoiceToggle').addEventListener('click',event=>{
   if(event.currentTarget.getAttribute('aria-disabled')==='true')return;
   const W=window.JarvisRuntimeWheel;
-  if(!W||typeof W.toggleVoice!=='function'){settingsHelpNote('L’interrupteur de la voix n’est pas chargé dans cette page.','bad');console.error('[settings] help.voice_toggle_missing');return}
-  console.info('[settings] help.voice_toggle');W.toggleVoice('settings_hub');
+  if(!W||typeof W.voiceLineAct!=='function'){settingsHelpNote('L’interrupteur de la voix n’est pas chargé dans cette page.','bad');console.error('[settings] help.voice_toggle_missing');return}
+  const line=W.voiceLine();console.info('[settings] help.voice_action '+JSON.stringify({kind:line&&line.actionKind||null}));
+  /* Ouvrir Connexions depuis le hub : le shell prend la place du hub, comme une carte. */
+  if(line&&line.actionKind==='open_connections'){const opener=SET.opener;SET.opener=null;overlay.classList.add('instant');settingsOverlayView('shell');return openSettingsTab(W.VOICE_KEY_TARGET||'providers',{returnFocus:opener})}
+  W.voiceLineAct('settings_hub');
 });
 $('#settingsHubReport').addEventListener('click',()=>{
   if(typeof HELP.reportAction!=='function')return;
@@ -7016,8 +7021,10 @@ function openSettingsDeepLink(target,source){
     console.info('[settings] deep_link.needs_support '+JSON.stringify({target,source}));
     if(SET.open)closeSettings();
     if(!settingsHubOpen())openSettingsHub({source:'deep_link'});
-    settingsHelpNote('Cette page s’ouvre en mode support. Activez-le ci-dessous pour y aller.');
-    const sw=$('#settingsSupportSwitch');if(sw)sw.focus({preventScroll:true});
+    settingsHelpNote('Cette page s’ouvre en mode support : activez l’interrupteur « Mode support » juste au-dessus pour y aller.');
+    const sw=$('#settingsSupportSwitch');
+    /* QA S06 m4 : un focus posé par programme n'allume pas `:focus-visible` ; l'anneau est montré jusqu'à la sortie. */
+    if(sw){sw.dataset.ring='';sw.addEventListener('blur',()=>{delete sw.dataset.ring},{once:true});sw.focus({preventScroll:true})}
     return Promise.resolve();
   }
   console.info('[settings] deep_link.hidden '+JSON.stringify({target,source}));
