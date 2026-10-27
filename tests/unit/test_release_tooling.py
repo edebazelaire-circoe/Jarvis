@@ -295,9 +295,9 @@ def _installer(path: Path, payload: bytes, stub: bytes = b"MZ-stub") -> Path:
 
 def _zip_with(manifest: dict) -> bytes:
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as bundle:
-        bundle.writestr(PR.RUNTIME_MANIFEST, json.dumps(manifest))
-        bundle.writestr("runtime/node/node.exe", b"node")
+    with zipfile.ZipFile(buffer, "w") as bundle:  # fixed member date: the same manifest always gives the same bytes
+        bundle.writestr(zipfile.ZipInfo(PR.RUNTIME_MANIFEST, date_time=(2026, 1, 1, 0, 0, 0)), json.dumps(manifest))
+        bundle.writestr(zipfile.ZipInfo("runtime/node/node.exe", date_time=(2026, 1, 1, 0, 0, 0)), b"node")
     return buffer.getvalue()
 
 
