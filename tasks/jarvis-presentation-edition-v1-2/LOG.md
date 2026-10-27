@@ -27,3 +27,8 @@ Reserved for implementation agents and the Project Manager. Do not treat plannin
 - Non vérifié : refus du hook derrière la vraie CLI (le cerveau ne l'a pas tenté) ; outils effectifs des sous-agents (la CLI n'émet pas de `system/init` pour eux : seuls leurs appels sont visibles) ; affichage de l'onglet Sous-agents en `presentation` dans un navigateur (charge utile testée seulement) ; un `presentation_source op write` (l'auteur a assemblé par prefabs puis prévisualisé).
 - Observation hors Slice : le dépôt suit `.tmp-cosmos/` et `.tmp-orbprobe/` (profils Chrome, `cdp.py`).
 - Aucune migration ; consigne et hook neufs au prochain lancement du CLI (redémarrage du JARVIS vivant au merge, par le Human).
+
+## 2026-10-27 — Slice 01, QA et décision (agent 0)
+- QA indépendante (`slices/01-presentation-product-brain-scope/qa/qa-report.md`, `078d8665`) : PASS avec réserves, 0 bloquant, 0 majeur, 4 mineurs. Mutations : 5 tuées sur 7, 1 équivalente, 1 survivante (appel `Task`, m1). Essai réel complémentaire 0,29 $ : le cerveau refuse lui-même un `[coder]` explicite ; le hook en vrai processus refuse `[coder]`/`[CODER]`. Coût total de la Slice : 1,36 $.
+- Décision : **APPROUVÉE**. m1/m2 (tests manquants) et la doc « Real traces » sont confiés à la Slice 02 ; m3/m4 acceptés ; l'onglet Sous-agents va à la Slice 06 (I-001).
+- Non vérifié : refus rendu derrière la vraie CLI (le modèle ne tente jamais l'appel), `presentation_source op write`, outils réellement offerts aux sous-agents.
