@@ -591,7 +591,7 @@ no second registry, no registry Artifact kind « document »
   covers, cite each document by path; missing or stale points go to
   « Questions »), and the brain's consigne for them cites the documents' paths.
 - **Dossier**: the document is an ordinary memory entry (`note`); the Dossier
-  reads its front-matter for the page and shows its topic as title, its last
+  reads its front-matter for the page and shows its `#` title (else its topic), its last
   check and its sources under « Recherches »
   ([dossier.md](dossier.md) › *Entry*).
 

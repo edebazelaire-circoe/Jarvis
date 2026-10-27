@@ -370,8 +370,15 @@ class DossierService:
                 continue
             details: dict[str, Any] = {"problem": problem} if problem else {}
             if meta is not None:
+                # Titre : le `#` du corps s'il est dans la tête lue, sinon le sujet (un agent l'écrit parfois comme
+                # le nom du fichier : trace réelle S04), sinon le nom.
+                text = str(head.get("text") or "")
+                parts = text.split("\n---", 2) if problem is None else []
+                body = parts[1].split("\n", 1)[-1] if len(parts) > 1 else ""
+                title = heading_title(body) or meta.topic
+                if title:
+                    view["title"] = title
                 if meta.topic:
-                    view["title"] = meta.topic
                     details["topic"] = meta.topic
                 details.update({"checked_at": meta.checked_at.isoformat() if meta.checked_at else None,
                                 "volatility": meta.volatility.value if meta.volatility else None,

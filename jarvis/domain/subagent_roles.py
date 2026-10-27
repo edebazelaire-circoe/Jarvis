@@ -641,7 +641,7 @@ RESEARCH_REUSE_MARK = "SOURCES EXISTANTES ET FRAÎCHEUR"
 #: Le gabarit des métadonnées d'un document de recherche (`research_freshness`, relu à chaque tour par Core).
 RESEARCH_FRONT_MATTER_TEMPLATE = (
     "---\n"
-    "topic: <sujet>\n"
+    "topic: <le sujet en clair, pas le nom du fichier>\n"
     "scope: <ce que couvre le document>\n"
     "checked_at: <AAAA-MM-JJ de votre vérification>\n"
     "volatility: <low | medium | high>\n"

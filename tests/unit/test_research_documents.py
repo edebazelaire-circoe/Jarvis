@@ -17,6 +17,7 @@ Contrat : `docs/subagent-roles.md` › *12. Le document de recherche*, `docs/boa
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -200,10 +201,11 @@ async def test_the_dossier_lists_and_shows_the_research_document_with_its_check(
         assert status == 200
         rows = {row["entry_id"]: row for row in listed["entries"]}
         row = rows[f"memory:{DOC_PATH}"]
-        assert row["title"] == "Remotion ou Motion Canvas pour une vidéo de présentation"
+        assert row["title"] == "Remotion ou Motion Canvas ?", "le titre `#` du document"
         assert row["folder"] == "documents/research" and row["kind"] == "note"
-        assert row["research"] == {"topic": row["title"], "checked_at": "2026-10-27", "volatility": "medium",
-                                   "sources": 3, "failed_sources": 1}
+        assert row["research"] == {"topic": "Remotion ou Motion Canvas pour une vidéo de présentation",
+                                   "checked_at": "2026-10-27", "volatility": "medium", "sources": 3,
+                                   "failed_sources": 1}
         bare = rows["memory:documents/research/sans-entete.md"]
         assert bare["title"] == "sans-entete" and bare["research"] == {"problem": "no_front_matter"}
         assert "research" not in rows["memory:notes/plan.md"], "seuls les documents de recherche"
@@ -271,3 +273,27 @@ def test_the_production_brief_and_the_author_start_from_the_board_research_in_pr
     assert with_playbook("x", "presentation-review", research_sources=True) == f"x\n\n{REVIEW_PLAYBOOK}"
     assert with_playbook("x", "presentation-brief") == f"x\n\n{BRIEF_PLAYBOOK}"
     assert with_playbook(f"x\n\n{BRIEF_PLAYBOOK}", "presentation-brief", research_sources=True) is None
+
+
+# ------------------------------------------------------------------ 6. le document réel écrit par une direction de recherche (trace S04)
+
+REAL_DOC = Path(__file__).parents[1] / "fixtures" / "research" / "gamma-vs-pitch.md"
+
+
+async def test_the_real_document_of_the_s04_trace_is_conform_fresh_and_titled_in_the_dossier(tmp_path):
+    """Écrit par `[general] [research-lead]` au bac S04 : sujet écrit comme le nom du fichier, `#` humain."""
+
+    text = REAL_DOC.read_text(encoding="utf-8")
+    meta, problem = parse_front_matter(text)
+    assert problem is None and missing_body_sections(text) == ()
+    assert decide(meta, today=TODAY, request="Prépare le dossier de production sur Gamma contre Pitch").action \
+        is FreshnessAction.REUSE
+    async with CaptureStack(tmp_path) as stack:
+        w = await build(stack)
+        body = {"path": "documents/research/gamma-vs-pitch.md", "content": text, "mode": "create"}
+        assert (await core(stack, "POST", f"{V1}/boards/{w.board_a}/memory/write", json=body))[0] == 201
+        _, listed, _, _ = await core(stack, "GET", f"{V1}/boards/{w.board_a}/dossier")
+        [row] = [e for e in listed["entries"] if e.get("path") == "documents/research/gamma-vs-pitch.md"]
+        assert row["title"] == "Gamma vs Pitch : prix d'entrée, export PowerPoint, collaboration"
+        assert row["research"]["topic"] == "gamma-vs-pitch" and row["research"]["checked_at"] == "2026-10-27"
+        assert (row["research"]["sources"], row["research"]["failed_sources"]) == (8, 1)
