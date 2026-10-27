@@ -857,48 +857,63 @@ sources:
 
 `volatility` : `high` (semaines : modèles, prix, versions), `medium` (mois), `low` (stable) ; `faible`,
 `moyenne`, `forte` sont acceptés. Par source : `date` (de la source), `checked` (de sa vérification),
-`volatility` (si elle diffère du sujet). Après un rafraîchissement partiel, seules les sources revérifiées
-prennent la nouvelle date `checked`.
+`volatility` (si elle diffère du sujet), `status: failed` (vérification ratée : refus, page vide ; aussi
+reconnu quand `checked` contient « échec », « failed », « non lue », « vide » ou un code HTTP 4xx/5xx). Les dates
+entre guillemets (`'2026-10-20'`) sont lues. Après un rafraîchissement partiel, seules les sources revérifiées
+prennent la nouvelle date `checked` ; une source qu'on n'a pas pu lire garde l'ancienne et reçoit `status: failed`.
 
 **Décision déterministe** (`jarvis/domain/research_freshness.py`, `decide`, pure ; tests
-`tests/unit/test_research_freshness.py`). Pas de durée de vie universelle : l'âge toléré dépend de la
-volatilité (`MAX_AGE_DAYS` : 30 j `high`, 180 j `medium`, 730 j `low` ; `medium` par défaut), et une demande
-d'actualité le réduit à `RECENCY_MAX_AGE_DAYS` = 7 j. Mots d'actualité (`recency_terms`, mots entiers, sans
-accents ni casse) : dernier·e·s, actuel·le·s, actuellement, aujourd'hui, en ce moment, maintenant, récent·e·s,
-à jour, cette année, ce mois, cette semaine, latest, current, today, now, newest, up to date, this year, et
-l'année en cours écrite en chiffres.
+`tests/unit/test_research_freshness.py`). Pas de durée de vie universelle : l'âge toléré **depuis la dernière
+vérification** dépend de la volatilité (`MAX_AGE_DAYS` : 30 j `high`, 180 j `medium`, 730 j `low` ; `medium`
+par défaut), et une demande d'actualité le réduit à `RECENCY_MAX_AGE_DAYS` = 7 j, **pour les seuls documents
+dont le sujet correspond au tour** (`matches_topic` : un mot significatif commun entre la demande et le `topic`,
+le `scope` ou le nom du fichier).
+
+Déclencheurs d'actualité (`RECENCY_TRIGGERS`, liste explicite et testée, mots entiers sans accents ni casse) :
+dernier·e·s, actuel·le·s, actuellement, aujourd'hui, en ce moment, à ce jour, à jour, récent·e·s, cette année,
+cette semaine, latest, current, currently, today, newest, up to date. Écartés : « dernier·e·s » suivi d'un
+élément du projet (`RECENCY_EXCLUDED_NOUNS` : diapo, slide, page, phrase, message…, et « version » suivie du
+deck ou du document) ; « maintenant » / « now » seuls ; une année seule.
 
 | Ordre | Cas | Action | Raison |
 | --- | --- | --- | --- |
 | 1 | aucun document | `new_research` | `no_document` |
 | 2 | pas de front-matter ou pas de `checked_at` lisible | `full_refresh` | `freshness_unknown` |
 | 3 | `checked_at` dans le futur | `full_refresh` | `checked_at_in_future` |
-| 4 | demande d'actualité et document vérifié il y a plus de 7 j | `full_refresh` | `recency_requested` |
-| 5 | aucune source au-delà de son âge toléré | `reuse` | `fresh` |
-| 5 | toutes les sources au-delà | `full_refresh` | `stale` |
-| 5 | certaines sources au-delà | `partial_refresh` (sources nommées) | `partially_stale` |
+| 4 | demande d'actualité sur ce sujet et document vérifié il y a plus de 7 j | `full_refresh` | `recency_requested` |
+| 5 | aucune source au-delà de son âge toléré ni ratée | `reuse` | `fresh` |
+| 5 | toutes les sources au-delà ou ratées | `full_refresh` | `stale` |
+| 5 | certaines sources au-delà ou ratées | `partial_refresh` (sources nommées) | `partially_stale` |
 
-Une source `high` déjà plus vieille que son âge toléré au moment de sa vérification (`checked - date`) compte
-périmée. Sans source citée, le document entier est jugé à la volatilité du sujet.
+La date de **publication** d'une source ne déclenche jamais de rafraîchissement (reprise QA B2 : sinon un
+document juste revérifié resterait périmé pour toujours) : une source `high` publiée plus de 30 j avant sa
+vérification est seulement comptée (`old_sources`, « déjà ancienne à sa lecture, à signaler sans rafraîchir »).
+Sans source citée, le document entier est jugé à la volatilité du sujet.
 
 Exemples : une note du 24 octobre 2026, `medium`, et « combien de VAE vendus en 2025 ? » → `reuse` ; une note
-de mars 2025 et « quels sont les derniers modèles d'OpenAI ? » → `full_refresh` (`recency_requested`) ; une note
-stable dont une source de prix `high` a trois mois → `partial_refresh` de cette seule source.
+de mars 2025 et « quels sont les derniers modèles d'OpenAI ? » → `full_refresh` (`recency_requested`), pendant que
+la note Gamma du même Board, hors sujet, garde sa décision ; une note stable dont une source de prix `high` a été
+vérifiée il y a trois mois → `partial_refresh` de cette seule source ; « modifie la dernière diapo » → aucun
+déclencheur ; un document rafraîchi aujourd'hui → `reuse`, même avec « derniers ».
 
 **Où la décision est prise.** Pas par le modèle : Core la calcule à chaque tour, sur le texte du tour
 (`BrainOrchestrator._turn_board` → `SessionManager.board_context(conversation_id, request=…)` →
-`board_hydration.with_board_research` : au plus 8 fichiers `.md` de `documents/research/`, 2 Kio de tête
-chacun). Elle voyage dans le bloc `board` (`memory.research = {documents, recency}`, absent hors Presentation
-et sans document) et le Control Center la rend sous la mémoire, décodée strictement
-(`board_brief.render_board_research`) :
+`board_hydration.with_board_research`). Au plus 8 fichiers `.md` de `documents/research/` (ceux dont le nom parle
+du sujet du tour d'abord, puis les plus récents ; le surplus est dit au cerveau avec la façon de les lister). Le
+front-matter seul sert : 2 Kio lus, puis relus jusqu'à `MAX_FRONT_MATTER_BYTES` = 16 Kio quand l'en-tête est
+plus long (un en-tête réel de 30 sources fait 3,9 Kio) ; au-delà, `problem: front_matter_too_long` est signalé et
+la décision porte sur ce qui a été lu. Elle voyage dans le bloc `board` (`memory.research = {documents, recency,
+unread?}`, chaque document avec `on_topic`, `problem`, `old_count` ; absent hors Presentation et sans document) et
+le Control Center la rend sous la mémoire, décodée strictement (`board_brief.render_board_research`) :
 
 ```text
-Recherches du Board (documents/research), fraîcheur décidée par JARVIS pour ce tour (demande d'actualité : « derniers ») :
-- documents/research/openai-modeles.md : « Modèles d'OpenAI disponibles », vérifié le 2025-03-02, volatilité forte → tout revérifier (la demande réclame l'état actuel)
+Recherches du Board (documents/research), fraîcheur décidée par JARVIS pour ce tour (demande d'actualité : « derniers », appliquée aux documents du sujet du tour) :
+- documents/research/openai-modeles.md : « Modèles d'OpenAI disponibles », sujet du tour, vérifié le 2025-03-02, volatilité forte → tout revérifier (la demande réclame l'état actuel)
+- documents/research/gamma-outil.md : « Gamma : fonctionnalités et tarifs », vérifié le 2026-10-20, volatilité forte → réutiliser tel quel (à jour pour sa volatilité)
 ```
 
 Trace : `core.research.freshness_decided` (`board_id`, `conversation_id`, `today`, `recency`, `unread`,
-`documents[]` : `path`, `action`, `reason`, `checked_at`, `stale_count`), un par tour dont le Board a des
+`documents[]` : `path`, `action`, `reason`, `checked_at`, `stale_count`, `on_topic`, `problem`), un par tour dont le Board a des
 documents de recherche.
 
 **Ce que fait le cerveau** (`claude_local.presentation_research_section`, section `RECHERCHE : EXISTANT

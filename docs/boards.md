@@ -415,7 +415,7 @@ gives back A's memory.
 | `memory.summary` | head of `summary.md` read **by name** (case ignored, even when the 40-entry manifest stops before it), at most `MAX_BRAIN_BOARD_SUMMARY_BYTES = 2 048` UTF-8 bytes, cut on a whole character; `summary_clipped: true` when the file goes on |
 | `memory.error` | stable code when the memory cannot be read (`board_memory_unsafe`, `board_memory_failed`, a `memory_*` code): no entries, no summary |
 | `memory.summary_error` | only `summary.md` is unreadable (binary, invalid UTF-8): the manifest stays |
-| `memory.research` | `presentation` only (V1.2 Slice 03): `{documents[], recency[]}`, at most 8 `.md` files of `documents/research/` with their freshness decision for the turn's text (`research_freshness.decide`); absent otherwise. Rendered « Recherches du Board … » ([subagent-roles.md](subagent-roles.md) § 11) |
+| `memory.research` | `presentation` only (V1.2 Slice 03): `{documents[], recency[], unread?}`, at most 8 `.md` files of `documents/research/` (topic of the turn first, then most recent; the rest counted in `unread`), front-matter read up to 16 KiB, with their freshness decision for the turn's text (`research_freshness.decide`; recency applies to on-topic documents only); absent otherwise. Rendered « Recherches du Board … » ([subagent-roles.md](subagent-roles.md) § 11) |
 
 Budget: the Board part keeps its own 2 048 characters (memory **not**
 counted there); the memory adds at most 40 entries / 2 048 serialized
