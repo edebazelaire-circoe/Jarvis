@@ -41,7 +41,11 @@ const JarvisWorkspaceCore=(function(){
   /* Échéances client. Le relais attend Core 30 s pour la mémoire et
      l'inspection d'un Board, 10 s pour le reste (`docs/boards.md`) : le client
      attend un peu plus, pour que ce soit la réponse du relais qui parle. */
-  const DEADLINE_MS=Object.freeze({read:15000,memory:35000,render:65000});
+  /* `copy`: the relay waits 120 s for a copy of up to 512 MiB (`docs/export.md`), the page 5 s more. */
+  const DEADLINE_MS=Object.freeze({read:15000,memory:35000,render:65000,copy:125000});
+  /* « Enregistrer une copie dans Documents » for a finished render (presentation-edition-v1 Slice 09, I-003): video, image or PDF. */
+  const COPYABLE_KINDS=new Set(['presentation_video','presentation_still','presentation_pdf']);
+  const COPY_LABEL='Enregistrer une copie dans Documents';
   const EXPORT_POLL_MS=1000;
   const PRES_PAGE=50;
   const PAGE=20,ACTIVITY_PAGE=50,ARTIFACT_TEXT=2000,READ_BYTES=65536;
@@ -212,6 +216,8 @@ const JarvisWorkspaceCore=(function(){
     renderCancel:id=>`/api/local-capabilities/remotion/render/jobs/${seg(id)}/cancel`,
     /* La vidéo entière d'une copie figée (master-project-studio-export Slice 06/08, `docs/remotion-master-project.md` § 10, § 13) : lecture seule. */
     renderMaster:snapshot=>`/api/local-capabilities/remotion/render/master${query({snapshot_id:snapshot})}`,
+    /* An explicit copy to the user's folder (`docs/export.md`): an artifact id, never a path. */
+    exportCopy:()=>'/api/exports',
   });
   const MUTATIONS=new Set(['write','mkdir','move','delete']);
 
@@ -228,6 +234,7 @@ const JarvisWorkspaceCore=(function(){
       &&!path.includes('?');
     if(method==='POST'){
       if(render)return segments.length===5||(segments.length===7&&segments[6]==='cancel');
+      if(path==='/api/exports')return true;
       return segments.length===6&&segments[0]==='api'&&segments[1]==='workspace'&&segments[2]==='boards'
         &&segments[4]==='memory'&&MUTATIONS.has(segments[5])&&!path.includes('?');
     }
@@ -244,7 +251,7 @@ const JarvisWorkspaceCore=(function(){
   function createClient({fetchImpl,setTimer=setTimeout,clearTimer=clearTimeout}={}){
     async function call(method,path,body){
       if(!allowed(method,path))throw apiError('forbidden_route',0,`adresse refusée par la page : ${method} ${path}`);
-      const deadlineMs=/\/render\/jobs$|\/render\/master\?/.test(path)?DEADLINE_MS.render:isMemoryPath(path)?DEADLINE_MS.memory:DEADLINE_MS.read;
+      const deadlineMs=path==='/api/exports'?DEADLINE_MS.copy:/\/render\/jobs$|\/render\/master\?/.test(path)?DEADLINE_MS.render:isMemoryPath(path)?DEADLINE_MS.memory:DEADLINE_MS.read;
       const controller=typeof AbortController==='function'?new AbortController():null;
       let timedOut=false;
       const timer=setTimer(()=>{timedOut=true;if(controller)controller.abort()},deadlineMs);
@@ -318,6 +325,8 @@ const JarvisWorkspaceCore=(function(){
         form:null,confirm:null,formGen:0,archived:false},
       artifacts:{scope:'board',id:null,session:null,context:null,kind:'',since:'',until:'',list:pager(),detail:{id:null,...slot()},presentations:slot(),presShown:PRES_PAGE},
       exports:{},
+      /* Copies to Documents asked from a render row, by artifact id (`saving` | `saved` | `error`). */
+      copies:{},
     };
   }
 
@@ -772,14 +781,36 @@ const JarvisWorkspaceCore=(function(){
     }
     async function exportStart(d){
       const snap=String(d.snapshot||''),format=String(d.format||'');
+      let scene=String(d.scene||'');
       const known=S.exports[snap];
-      if(!snap||(known&&(known.status==='starting'||known.status==='running')))return null;
+      if(!snap||(known&&(known.status==='starting'||known.status==='running'||known.status==='scenes')))return null;
       const x=S.exports[snap]={snapshot:snap,format,status:'starting',started:now(),job:null,error:null,gen:((known&&known.gen)||0)+1};
       changed();
+      /* An image or a PDF is made of ONE scene (`RENDERS`, `docs/export.md` › *Image and PDF of a scene*, presentation-edition-v1 Slice 09):
+         without a scene the page reads the scenes of the frozen copy from Core and asks which one (the first one chosen by default); a copy
+         of one scene needs no question. Core then renders the scene's representative still (never its blank first frame). */
+      const still=format==='still'||format==='pdf';
+      if(still&&!scene){
+        x.status='scenes';changed();
+        let stills=null;
+        try{
+          const read=await client.get(PATHS.renderMaster(snap));
+          stills=list(read&&read.master&&read.master.stills);
+        }catch(error){exportFailed(x,error,'export_scenes_failed');return null}
+        if(S.exports[snap]!==x)return null;
+        log('info','workspace.export_scenes_read',{snapshot:snap,format,scenes:stills.length});
+        if(!stills.length){
+          exportFailed(x,{code:'presentation_render_unknown_scene',message:'Cette copie figée n’a aucune scène Remotion à rendre en image.'},'export_no_scene');
+          return null;
+        }
+        if(stills.length>1){x.status='choose';x.stills=stills;changed();return null}
+        scene=stills[0].scene_id;x.status='starting';changed();
+      }
       /* Slice 08 du projet maître (§ 13) : un MP4 d'une copie dont la vidéo entière est prête ET compte au moins deux scènes rend la vidéo
          entière (`scope: "master"`) ; sinon (une seule scène, pas prête, illisible, image, PDF) le corps d'avant, octet pour octet. La page ne
          décide rien : elle lit la vue de Core. */
       const body={snapshot_id:snap,format};
+      if(still){body.settings={scene_id:scene};x.scene=scene}
       if(format==='mp4'){
         try{
           const read=await client.get(PATHS.renderMaster(snap));
@@ -796,7 +827,7 @@ const JarvisWorkspaceCore=(function(){
       try{
         const answer=await client.post(PATHS.renderCreate(),body);
         x.job=answer.body.job;x.status=exportTerminal(x.job)?'done':'running';x.started=now();
-        log('info','workspace.export_started',{snapshot:snap,format,scope:x.scope||'scene',job:x.job&&x.job.job_id,artifact:x.job&&x.job.artifact_id});
+        log('info','workspace.export_started',{snapshot:snap,format,scope:x.scope||'scene',scene_id:x.scene||null,job:x.job&&x.job.job_id,artifact:x.job&&x.job.artifact_id});
       }catch(error){exportFailed(x,error,'export_failed');return null}
       changed();
       return x.status==='running'?exportPoll(snap):exportDone(x);
@@ -828,6 +859,30 @@ const JarvisWorkspaceCore=(function(){
       log(x.job.state==='complete'?'info':'warn','workspace.export_finished',{snapshot:x.snapshot,job:x.job.job_id,state:x.job.state,code:x.job.error_code||null});
       changed();
       if(S.artifacts.scope==='board'&&S.artifacts.id)await presentationsRead();  /* la liste des rendus est relue du serveur */
+      return null;
+    }
+    /* « Enregistrer une copie dans Documents » (presentation-edition-v1 Slice 09, I-003): a COPY of a finished render, on this click only. The
+       wait is seen (pulse, seconds, its deadline), the outcome is Core's `display_path` (numbered if the name was taken, « déjà là » if the
+       same bytes are there), a refusal is said in the user's words with its code. The sentences are those of Variants' export (one table). */
+    async function copySave(d){
+      const id=String(d.id||'');
+      if(!id||(S.copies[id]&&S.copies[id].status==='saving'))return null;
+      const c=S.copies[id]={status:'saving',started:now(),result:null,code:null,text:''};
+      changed();
+      log('info','workspace.copy_requested',{artifact:id});
+      try{
+        const answer=await client.post(PATHS.exportCopy(),{artifact_id:id});
+        c.status='saved';c.result=answer.body&&answer.body.export||{};
+        log('info','workspace.copy_saved',{artifact:id,file_name:c.result.file_name,renamed:!!c.result.renamed,already:!!c.result.already_exported});
+      }catch(error){
+        const code=error&&error.code||'network';
+        const known=copyErrors()[code];
+        c.status='error';c.code=code;
+        c.text=known||(code==='timeout'?'Core n’a pas répondu à temps : la copie a peut-être été faite, regardez dans le dossier d’export avant de réessayer.'
+          :`La copie n’a pas abouti : ${(error&&error.message)||code}`);
+        log(error&&error.status>=500||!(error&&error.status)?'error':'warn','workspace.copy_failed',{artifact:id,code,status:error&&error.status,message:error&&error.message});
+      }
+      changed();
       return null;
     }
     async function exportCancel(d){
@@ -931,7 +986,14 @@ const JarvisWorkspaceCore=(function(){
         case 'presentations-more':S.artifacts.presShown+=PRES_PAGE;changed();return null;
         case 'export-start':return exportStart(d);
         case 'export-cancel':return exportCancel(d);
+        case 'artifact-save-copy':return copySave(d);
         case 'export-dismiss':return exportDismiss(d);
+        /* A render finished elsewhere (Variants' « Exporter la vidéo », `jarvis:presentation-render-finished`): the Board's renders are read
+           again while this view shows them, so a new render appears without « Actualiser » (Slice 09 QA). */
+        case 'renders-changed':
+          if(!S.open||S.artifacts.scope!=='board'||!S.artifacts.id)return null;
+          log('info','workspace.renders_changed',{job:d.job_id||null,state:d.state||null});
+          return presentationsRead();
         case 'artifact-close':S.artifacts.detail={id:null,...slot()};changed();return null;
         case 'switch':return switchTo(d.board);
         case 'notice-close':S.notice=null;changed();return null;
@@ -1387,14 +1449,33 @@ const JarvisWorkspaceCore=(function(){
     if(render.scene_id)bits.push(`scène ${render.scene_id}`);
     return bits.length?` <span class="wsp-sub" title="Réglages enregistrés avec le rendu (empreinte ${esc(render.settings_sha256||'—')})">${esc(bits.join(' · '))}</span>`:'';
   }
-  function renderRowHtml(render,boardId){
+  /* The copy sentences of Variants' export (`JarvisVariantsVideoExport.SAVE_ERRORS`, one table); outside the page (node), none. */
+  function copyErrors(){
+    const Vx=typeof globalThis!=='undefined'?globalThis.JarvisVariantsVideoExport:null;
+    return Vx&&Vx.SAVE_ERRORS||{};
+  }
+  function copyHtml(render,copies){
+    if(render.state!=='complete'||!COPYABLE_KINDS.has(render.kind))return '';
+    const c=copies&&copies[render.artifact_id];
+    if(c&&c.status==='saving')return `<div class="wsp-export" role="status" aria-live="polite"><span class="wsp-spin" aria-hidden="true"></span>`
+      +`Copie dans Documents en cours… ${clockHtml(c.started)} (2 min au plus)</div>`;
+    /* The button stays after a copy (Slice 09 QA): a second click copies again, or says the same bytes are already there. */
+    let outcome='';
+    if(c&&c.status==='saved'){
+      const r=c.result||{},where=r.destination&&r.destination.display_path||r.file_name||'le dossier d’export';
+      outcome=`<div class="notice ok" role="status">${esc(r.already_exported?`Déjà dans ${where} : rien n’a été recopié.`
+        :`Copie enregistrée : ${where}${r.renamed?' (le nom était pris : numéroté, rien n’a été écrasé)':''}.`)}</div>`;
+    }else if(c&&c.status==='error')outcome=`<div class="notice bad wsp-error" role="alert">${esc(c.text)} <code>${esc(c.code)}</code></div>`;
+    return ` ${btn('artifact-save-copy',{id:render.artifact_id},esc(COPY_LABEL),{title:'Copie ce fichier dans votre dossier Documents (le fichier interne de Jarvis ne bouge pas)'})}${outcome}`;
+  }
+  function renderRowHtml(render,boardId,copies){
     const here=list(render.board_ids).includes(boardId);
     return `<li><span class="wsp-node">Rendu</span> ${chip(RENDER_FORMATS[render.format]||artifactKindLabel(render.kind),'',`kind : ${render.kind}`)}`
       +`${render.state&&render.state!=='complete'?stateChip(render.state):''}${here?'':chip('Non lié à ce Board','warn','Ce rendu n’est lié qu’à d’autres Boards.')}`
       +`<button type="button" class="wsp-link" data-act="artifact-show" data-id="${esc(render.artifact_id)}" title="Ouvrir le détail et la provenance">${esc(render.artifact_id)}</button>`
       +`${render.size_bytes!=null?` <span class="wsp-sub">${esc(formatBytes(render.size_bytes))}</span>`:''}${renderFactsHtml(render)}`
       +`${render.error_code&&render.state!=='complete'?` <span class="wsp-sub">${esc(render.error_code)}</span>`:''}`
-      +`${render.flat?' <span class="wsp-sub">export à plat : non éditable, l’origine éditable est la source ci-dessus</span>':''}${previewHtml(render)}</li>`;
+      +`${render.flat?' <span class="wsp-sub">export à plat : non éditable, l’origine éditable est la source ci-dessus</span>':''}${previewHtml(render)}${copyHtml(render,copies)}</li>`;
   }
   /* Export (Slice 16) : ce qui attend se voit (phase, images, secondes écoulées, délai) et se quitte (Annuler). */
   function exportHtml(snap,source,exports){
@@ -1412,6 +1493,16 @@ const JarvisWorkspaceCore=(function(){
       const lost=x.pollErrors?`<span class="wsp-warn"> · lecture de l’état en échec (${x.pollErrors}/3) : ${esc((x.pollError&&x.pollError.message)||'')}</span>`:'';
       return `<div class="wsp-export" role="status" aria-live="polite"><span class="wsp-spin" aria-hidden="true"></span>`
         +`Export ${esc((RENDER_FORMATS[x.format]||x.format))}${x.scope==='master'?esc(` (vidéo entière${x.scenes?`, ${x.scenes} scène${x.scenes>1?'s':''}`:''})`):''} en cours — ${esc(phase)}${esc(frames)}${esc(queue)} ${clockHtml(x.started)}${esc(limit)}${lost} ${stop}</div>`;
+    }
+    if(x&&x.status==='scenes')return `<div class="wsp-export" role="status"><span class="wsp-spin" aria-hidden="true"></span>Lecture des scènes de cette copie… ${clockHtml(x.started)}</div>`;
+    if(x&&x.status==='choose'){
+      const kind=x.format==='pdf'?'le PDF':'l’image';
+      const scenes=list(x.stills).map(s=>`<option value="${esc(s.scene_id)}">${esc(`Scène ${s.position}${s.title?` — ${s.title}`:''}`)}</option>`).join('');
+      return `<form class="wsp-bar wsp-form-inline wsp-export-form" data-form="export-start"><input type="hidden" name="snapshot" value="${id}">`
+        +`<input type="hidden" name="format" value="${esc(x.format)}">`
+        +`<label class="wsp-field"><span>Scène pour ${esc(kind)}</span><select name="scene" aria-label="Scène à exporter">${scenes}</select></label>`
+        +`<button type="submit" class="action small" title="Une image ou un PDF montre une scène, à l’instant où son entrée est terminée.">Exporter cette scène</button> `
+        +`${btn('export-dismiss',{snapshot:snap.artifact_id},'Annuler')}</form>`;
     }
     let outcome='';
     if(x&&x.status==='error')outcome=errorHtml(x.error,{lead:'Export impossible : '})+btn('export-dismiss',{snapshot:snap.artifact_id},'Fermer');
@@ -1433,8 +1524,8 @@ const JarvisWorkspaceCore=(function(){
     return btn('source-open',attrs,label,{disabled:true,title:why}).replace('<button ',`<button aria-describedby="${esc(id)}" `)
       +`<span class="wsp-sub" id="${esc(id)}">${esc(why)}</span>`;
   }
-  function snapshotRowHtml(snap,source,boardId,presentationId,exports){
-    const renders=list(snap.renders).map(r=>renderRowHtml(r,boardId)).join('');
+  function snapshotRowHtml(snap,source,boardId,presentationId,exports,copies){
+    const renders=list(snap.renders).map(r=>renderRowHtml(r,boardId,copies)).join('');
     const failed=snap.state==='failed'||snap.state==='partial';
     return `<li><span class="wsp-node">Copie figée</span> ${stateChip(snap.state)}${engineChip(snap.engine)}${freshnessChip(snap,source)}`
       +`${snap.linked_here?'':chip('Lié par un rendu seulement','warn','Ce Board montre un rendu de cette copie, pas la copie elle-même.')}`
@@ -1459,7 +1550,7 @@ const JarvisWorkspaceCore=(function(){
           +`${openButtonHtml({presentation:src.presentation_id},'Ouvrir la source',live,src.presentation_id)}</div>`
           +`<span class="wsp-sub">${esc(src.source_ref)}</span>`
           +(others.length?`<p class="wsp-sub">Aussi sur : ${others.map(id=>`<button type="button" class="wsp-link" data-act="goto" data-view="artifacts" data-scope="board" data-id="${esc(id)}">${esc(titleOf(S,id))}</button>`).join(' · ')}</p>`:'')
-          +`<ul class="wsp-tree">${list(src.snapshots).map(x=>snapshotRowHtml(x,live,d.board_id,src.presentation_id,S.exports)).join('')||'<li class="wsp-none">Aucune copie figée lisible.</li>'}</ul></div>`;
+          +`<ul class="wsp-tree">${list(src.snapshots).map(x=>snapshotRowHtml(x,live,d.board_id,src.presentation_id,S.exports,S.copies)).join('')||'<li class="wsp-none">Aucune copie figée lisible.</li>'}</ul></div>`;
       }).join('');
       const bad=unreadable.length?`<p class="wsp-warn">${plural(unreadable.length,'artefact de présentation illisible','artefacts de présentation illisibles')} (provenance absente ou incohérente) : `
         +`${unreadable.map(u=>`<button type="button" class="wsp-link" data-act="artifact-show" data-id="${esc(u.artifact_id)}" title="${esc(u.code)}">${esc(u.artifact_id)}</button>`).join(' ')}</p>`:'';
@@ -1597,6 +1688,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
   const client=W.createClient({fetchImpl:(path,options)=>window.fetch(path,options)});
   const manager=W.createManager({client,log,switchBoard,openStudioSource,onChange:()=>{if(!root.hidden)render()}});
   const S=manager.state;
+  window.addEventListener('jarvis:presentation-render-finished',event=>{
+    const d=event&&event.detail||{};
+    Promise.resolve(manager.act('renders-changed',{job_id:d.job_id,state:d.state}))
+      .catch(error=>log('error','workspace.renders_changed_failed',{message:error&&error.message}));
+  });
 
   function withFocusAndInput(fn){
     const active=document.activeElement;

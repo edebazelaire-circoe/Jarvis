@@ -39,7 +39,7 @@
   'use strict';
   const Core=root.JarvisStudioInspectorCore||(typeof require==='function'?require('./control_center_presentation_studio_inspector_core.js'):null);
   const Widgets=root.JarvisStudioInspectorWidgets||(typeof require==='function'?require('./control_center_presentation_studio_inspector_widgets.js'):null);
-  const {ROUTE,GROUPS,GROUP_LABEL,PANEL_ID,BUTTON_ID,STYLE_ID,PREVIEW_OBJECT_ID,STORAGE_KEY,PLAYBACK_EVENT,PREVIEW_MIN_MS,TEXT_PREVIEW_MS,IDLE_COMMIT_MS,REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,POLL_MS,AVAILABILITY_MS,SAVED_FLASH_MS,RELOAD_RETRY_MS,UNSAFE_KEYS,HEX_COLOR,APPLIED_THEME,NOT_APPLIED_THEME,CSS,describe,clip,cloneJson,canonical,sameJson,pathParts,setAtPath,previewValues,widgetSpec,stepFor,decimalsOf,roundTo,formatValue,validateValue,diffControls,luminance,contrastRatio,PROVENANCE,describeRefusal,HISTORY_TEXT,InspectorError}=Core;
+  const {ROUTE,GROUPS,GROUP_LABEL,PANEL_ID,BUTTON_ID,STYLE_ID,PREVIEW_OBJECT_ID,STORAGE_KEY,PLAYBACK_EVENT,PREVIEW_MIN_MS,TEXT_PREVIEW_MS,IDLE_COMMIT_MS,REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,POLL_MS,AVAILABILITY_MS,SAVED_FLASH_MS,RELOAD_RETRY_MS,UNSAFE_KEYS,HEX_COLOR,APPLIED_THEME,NOT_APPLIED_THEME,CSS,describe,clip,cloneJson,canonical,sameJson,pathParts,setAtPath,previewValues,widgetSpec,stepFor,decimalsOf,roundTo,formatValue,validateValue,diffControls,luminance,contrastRatio,PROVENANCE,describeRefusal,isUnreachable,UNSAVED_TEXT,HISTORY_TEXT,InspectorError}=Core;
 
   /* ------------------------------------------------------------------ contrôleur */
   function createStudioInspector(deps){
@@ -64,6 +64,9 @@
       open:false,available:true,hiddenReason:null,presentations:[],presentationId:null,variant:null,sceneId:null,scene:null,
       tab:'content',showPreview:true,history:null,art:{state:'idle',doc:null,revision:null,message:''},
       reload:{pending:[],rows:[],degraded:null},loading:null,fatal:null,status:null,reloading:null,generation:0,
+      /* presentation-edition-v1 Slice 09: the variant and scene asked by Variants (« Modifier »), consumed by the next presentation read;
+         the active variant of the presentation, to say whether the edited one is it. */
+      want:null,activeVariantId:null,presentationTitle:'',
     };
     const ui={};
     const widgets=new Map();     /* control_id -> {row, el, update(row), session} */
@@ -163,7 +166,8 @@
       ensureStyle();
       const panel=el('aside');
       panel.id=PANEL_ID;
-      attrs(panel,{role:'region','aria-label':'Inspecteur de présentation'});
+      /* `data-keep-live`: Variants makes the page under it inert, except what lives beside it (the editor docks there, Slice 09). */
+      attrs(panel,{role:'region','aria-label':'Inspecteur de présentation','data-keep-live':'true'});
       panel.hidden=true;
       ui.title=el('h2','jvi-title','Inspecteur');
       ui.title.id='jviTitle';ui.title.setAttribute('tabindex','-1');
@@ -173,11 +177,13 @@
       /* Porte graphique de l'explorateur de variantes (Slice 18) : même appel que la voix, depuis la présentation réglée ici. */
       ui.explore=button('Variantes','jvi-icon jvi-explore',()=>{openExplorer()},{"aria-label":"Ouvrir les variantes",title:"Variantes : l'arbre des branches de cette présentation"});
       ui.explore.disabled=true;
-      ui.close=button('×','jvi-icon',()=>{close({restoreFocus:true})},{'aria-label':'Fermer l\'inspecteur',title:'Fermer (Échap)'});
+      ui.close=button('×','jvi-icon',()=>{closeByUser()},{'aria-label':'Fermer l\'inspecteur',title:'Fermer (Échap)'});
       const bar=el('div','jvi-bar');
       [ui.title,ui.explore,ui.undo,ui.redo,ui.close].forEach((n)=>bar.appendChild(n));
       ui.live=el('div','jvi-sr');attrs(ui.live,{role:'status','aria-live':'polite'});
       ui.pick=el('div','jvi-pick');
+      /* Slice 09: what is being edited, always in words (presentation, variant and whether it is the active one, scene k of n). */
+      ui.context=el('div','jvi-context');ui.context.hidden=true;attrs(ui.context,{'aria-live':'polite','data-role':'edit-context'});
       ui.status=el('div','jvi-status');ui.status.hidden=true;
       ui.spin=el('span','jvi-spin');ui.spin.setAttribute('aria-hidden','true');
       ui.statusText=el('div','jvi-msgtext');
@@ -199,7 +205,10 @@
       ui.panels=el('div');
       ui.empty=el('p','jvi-empty');ui.empty.hidden=true;
       ui.top=el('div','jvi-top');
-      [ui.pick,ui.status,ui.reloadBanner,ui.srcline].forEach((n)=>ui.top.appendChild(n));
+      /* The source line (versions of the scene's model, last hot reload) is an engine detail: a developer surface (Slice 09). */
+      ui.srcline.setAttribute('data-surface','developer');
+      ui.histNote=el('p','jvi-histnote');ui.histNote.hidden=true;ui.histNote.setAttribute('data-role','undo-scene');
+      [ui.context,ui.histNote,ui.pick,ui.status,ui.reloadBanner,ui.srcline].forEach((n)=>ui.top.appendChild(n));
       [ui.da,ui.empty,ui.issues,ui.panels].forEach((n)=>ui.main.appendChild(n));
       [bar,ui.live,ui.top,ui.stage,ui.tabs,ui.main].forEach((n)=>panel.appendChild(n));
       panel.addEventListener('keydown',onPanelKey);
@@ -266,6 +275,7 @@
     function setStatus(kind,title,text,actions){
       S.status=kind?{kind,title,text,actions:actions||[],at:now()}:null;
       renderStatus();
+      return S.status;
     }
 
     function renderStatus(){
@@ -329,12 +339,19 @@
       abandonDrafts('presentation');
       const body=await read(`${ROUTE}/${encodeURIComponent(id)}`,'Présentation');
       const active=body.presentation&&body.presentation.active_variant_id;
-      let variant=(body.variants||[]).find((v)=>v.variant_id===active)||null;
-      if(!variant&&active)variant=await read(`${ROUTE}/${encodeURIComponent(id)}/variants/${encodeURIComponent(active)}`,'Variante');
+      S.activeVariantId=active||null;S.presentationTitle=body.presentation&&body.presentation.title||'';
+      S.variantNumbers=new Map(((body.presentation&&body.presentation.variants)||[]).filter((v)=>v&&typeof v.variant_id==='string').map((v)=>[v.variant_id,v.variant_number]));
+      /* Slice 09: Variants asks for the variant ON SCREEN (any live branch, not only the active one) and its scene. */
+      const want=options&&options.variantId?{variantId:options.variantId,sceneId:options.sceneId||null}:S.want&&S.want.presentationId===id?S.want:null;
+      S.want=null;
+      const target=want&&want.variantId||active;
+      let variant=(body.variants||[]).find((v)=>v.variant_id===target)||null;
+      if(!variant&&target)variant=await read(`${ROUTE}/${encodeURIComponent(id)}/variants/${encodeURIComponent(target)}`,'Variante');
       S.variant=variant;syncExplore();
       S.history=null;S.art={state:'idle',doc:null,revision:null,message:''};
       const scenes=variant&&Array.isArray(variant.scenes)?variant.scenes:[];
-      if(!keep||!scenes.some((s)=>s.scene_id===S.sceneId))S.sceneId=scenes.length?scenes[0].scene_id:null;
+      if(want&&want.sceneId&&scenes.some((s)=>s.scene_id===want.sceneId))S.sceneId=want.sceneId;
+      else if(!keep||!scenes.some((s)=>s.scene_id===S.sceneId))S.sceneId=scenes.length?scenes[0].scene_id:null;
       renderPick();
       log('variant_loaded',{presentation_id:id,variant_id:variant&&variant.variant_id,scenes:scenes.length,revision:variant&&variant.revision});
       await Promise.all([loadScene(),loadHistory(),loadArtDirection()]);
@@ -412,6 +429,7 @@
       stats.polls++;
       try{
         const body=await read(`${base()}/reloads`,'Rechargements');
+        retryUnsaved();       /* Core answers again: a value kept while it was unreachable is saved now (Slice 09 QA) */
         S.reload.pending=Array.isArray(body.pending)?body.pending:[];
         S.reload.rows=Array.isArray(body.reloads)?body.reloads:[];
         const mine=S.sceneId;
@@ -446,24 +464,28 @@
     /* -------------------------------------------------------------- rendu */
     function renderPick(){
       if(!ui.pick)return;
+      renderContext();
       clear(ui.pick);
-      const solo=S.presentations.length<=1;
+      /* Slice 09: docked beside Variants, the presentation is the one Variants shows (no second choice that would desync them). */
+      const at=explorerScene(),docked=!!at&&at.presentation_id===S.presentationId;
+      const solo=S.presentations.length<=1||docked;
       ui.pick.className='jvi-pick'+(solo?' is-solo':'');
       if(!S.presentations.length)return;
       if(!solo){
-        const label=el('label','jvi-field');label.appendChild(el('span',null,'Présentation'));
+        const label=el('label','jvi-field jvi-field-presentation');label.appendChild(el('span',null,'Présentation'));
         const select=el('select');select.setAttribute('aria-label','Présentation');
         for(const p of S.presentations){
           const o=el('option',null,p.title||p.presentation_id);o.value=p.presentation_id;
           if(p.presentation_id===S.presentationId)o.selected=true;
           select.appendChild(o);
         }
-        select.addEventListener('change',()=>{selectPresentation(select.value).catch((error)=>{setFatal(error,()=>{loadPresentations()});log('presentation_failed',{error:describe(error)},'error')})});
+        select.addEventListener('change',()=>{const id=select.value;requestMove({kind:'presentation',apply:()=>selectPresentation(id).catch((error)=>{setFatal(error,()=>{loadPresentations()});log('presentation_failed',{error:describe(error)},'error')})})});
         label.appendChild(select);ui.pick.appendChild(label);
       }
       const scenes=(S.variant&&S.variant.scenes)||[];
       const field=el('label','jvi-field');
-      field.appendChild(el('span',null,S.variant?`Scène · ${S.variant.title||'variante active'}`:'Scène'));
+      /* Slice 09: the variant (and whether it is the active one) is said by the context line above, never guessed here. */
+      field.appendChild(el('span',null,S.variant&&S.variant.title?`Scène · ${S.variant.title}`:'Scène'));
       const sel=el('select');sel.setAttribute('aria-label','Scène');sel.id='jviScene';
       scenes.forEach((s,i)=>{
         const o=el('option',null,`${i+1}. ${s.title||'(sans titre)'}${s.section?' · '+s.section:''}`);o.value=s.scene_id;
@@ -481,12 +503,205 @@
         row.appendChild(field);row.appendChild(prev);row.appendChild(next);ui.pick.appendChild(row);
       }else{ui.pick.appendChild(field);ui.pick.appendChild(prev);ui.pick.appendChild(next)}
     }
-    function chooseScene(id){
-      if(id===S.sceneId)return;
-      abandonDrafts('scene');
+    /* Another scene (picker, ‹ ›, Variants, « Modifier »): never before what was typed on this one is saved (`requestMove`). */
+    function chooseScene(id,options){
+      if(id===S.sceneId&&!move.target)return;
+      requestMove({kind:'scene',sceneId:id,apply:()=>switchScene(id,options)});
+    }
+    function switchScene(id,options){
+      if(id===S.sceneId)return null;
+      abandonDrafts('scene');          /* nothing left: `settleDrafts` saved it, or the user chose to drop it */
       S.sceneId=id;S.reload.degraded=null;renderReloadBanner(null);
       renderPick();
-      loadScene().then(()=>pollReloads());
+      /* Slice 09: a scene chosen HERE while Variants shows this variant brings Variants to it (one scene on screen, never two). */
+      if(!(options&&options.fromExplorer))followInExplorer(id);
+      return loadScene().then(()=>pollReloads());
+    }
+    /* ------------------------------------------------------------ leaving a scene with a draft (presentation-edition-v1 Slice 09 QA, B1)
+       Variants changes the scene on screen by itself (continuous play) and the editor follows it. A value typed and not yet released used to
+       be dropped in silence there, and the field kept the focus over the NEXT scene's value. Now every move (scene, variant, presentation)
+       first saves what is typed on the scene it was typed on and waits for the write queue; only then does the editor move. A save that
+       fails (refused, Core unreachable) keeps the editor on its scene with the draft and says so, with a way out; Variants may show another
+       scene meanwhile. The latest move asked wins; the focus leaves a field whose scene changed under it. */
+    const move={target:null,running:false,held:false,hold:null,resumed:null};
+    function hasUnsaved(){
+      for(const s of sessions.values())if(s.committing||(s.dirty&&s.draft!==undefined))return true;
+      return queue.pending.size>0;
+    }
+    async function settleDrafts(){
+      const dirty=[...sessions.values()].filter((s)=>s.dirty&&s.draft!==undefined&&!s.committing&&widgets.get(s.id));
+      const items=dirty.map((s)=>({id:s.id,value:s.draft,label:widgets.get(s.id).ctx.row.label}));
+      const jobs=dirty.map((s)=>{const w=widgets.get(s.id);s.unsaved=null;return onCommit(w.ctx,s.draft,{immediate:true})});
+      await Promise.all(jobs);
+      for(let i=0;i<8&&queue.pending.size;i++)await queue.tail;   /* a stale rebase queues once more behind itself */
+      const kept=items.filter((it)=>{const w=widgets.get(it.id),x=sessions.get(it.id);return (x&&x.dirty)||!w||!sameJson(w.ctx.row.current,it.value)});
+      const left=[...sessions.values()].filter((x)=>x.dirty&&x.draft!==undefined);
+      const saved=items.filter((it)=>!kept.includes(it));
+      /* A value whose save was already in flight when the move came is not in `items`; if it is still unsaved it is named too (Slice 09
+         mini-rework, QA m1: the held move said « une valeur » and logged `kept:[]`). */
+      for(const x of left){
+        if(kept.some((k)=>k.id===x.id))continue;
+        const w=widgets.get(x.id);
+        kept.push({id:x.id,value:x.draft,label:w?w.ctx.row.label:x.id});
+      }
+      return {ok:!kept.length,saved,kept};
+    }
+    function requestMove(target){
+      move.target=target;
+      if(!move.running)runMove().catch((error)=>{log('move_failed',{error:describe(error)},'error');setStatus('bad','Changement de scène impossible',describe(error))});
+    }
+    /* A held move goes on once nothing is left unsaved (checked after the write that just ended has left the queue). */
+    function resumeMove(){
+      if(!move.held)return;
+      later(()=>{
+        if(!move.held||hasUnsaved()||move.running)return;
+        const hold=move.hold;
+        move.held=false;move.hold=null;
+        log('move_resumed',{target:!!move.target,kept:hold?hold.count:0});
+        /* Slice 09 mini-rework (QA M1): the warning « L’éditeur reste… n’est pas enregistrée » is false from here on; the move that goes on
+           replaces it with what was saved and where the editor is (`runMove`), or, with no move left, it is replaced right now. */
+        if(move.target){move.resumed=hold;requestMove(move.target);return}
+        if(hold&&S.status===hold.status){
+          const said=setStatus('ok',savedTitle(hold),'');
+          later(()=>{if(S.status===said)setStatus(null)},5000);
+        }
+      },0);
+    }
+    function savedTitle(h){
+      return h.names?`${h.names} enregistré${h.count>1?'s':''} sur la ${h.origin}`:`Saisie enregistrée sur la ${h.origin}`;
+    }
+    async function runMove(){
+      move.running=true;
+      try{
+        for(;;){
+          const t=move.target;
+          if(!t)return;
+          let saved=null;
+          if(hasUnsaved()){
+            const origin=sceneLabel(S.sceneId)||'scène en cours';
+            const typing=!!(ui.root&&doc.activeElement&&ui.root.contains(doc.activeElement)&&inTextField(doc.activeElement));
+            setStatus('info','Enregistrement de votre saisie…',` Sur la ${origin}, avant de changer de scène.`);
+            log('move_saving',{kind:t.kind,from:S.sceneId,to:t.sceneId||null});
+            const r=await settleDrafts();
+            if(!r.ok){
+              move.held=true;
+              const names=r.kept.map((k)=>`« ${clip(k.label,40)} »`).join(', ')||'une valeur';
+              const said=setStatus('warn',`L’éditeur reste sur la ${origin}`,
+                ` Votre saisie (${names}) n’est pas enregistrée : l’éditeur ne change pas de scène tant qu’elle n’est ni enregistrée ni abandonnée.`,
+                [{label:'Abandonner ma saisie et continuer',run:()=>{const target=move.target;abandonDrafts('user');move.held=false;move.hold=null;setStatus(null);if(target)requestMove(target)}}]);
+              move.hold={status:said,origin,names:r.kept.length?names:'',count:r.kept.length};
+              announce(`Saisie non enregistrée : l’éditeur reste sur la ${origin}.`);
+              log('move_held',{kind:t.kind,kept:r.kept.map((k)=>k.id)},'warn');
+              return;
+            }
+            saved={origin,count:r.saved.length,typing};
+            if(move.target!==t)continue;      /* a newer move arrived while saving: that one is applied (the draft is saved) */
+          }else if(move.resumed){
+            const h=move.resumed;             /* a held move going on: its value was saved meanwhile (`resumeMove`) */
+            saved={origin:h.origin,count:h.count,names:h.names,
+              typing:!!(ui.root&&doc.activeElement&&ui.root.contains(doc.activeElement)&&inTextField(doc.activeElement))};
+          }
+          move.resumed=null;
+          move.target=null;
+          await t.apply();
+          if(saved){
+            const where=sceneLabel(S.sceneId);
+            const said=setStatus('ok',savedTitle(saved),where?` · l’éditeur montre maintenant la ${where}.`:'');
+            later(()=>{if(S.status===said)setStatus(null)},5000);
+            announce(`${savedTitle(saved)}.${where?` L’éditeur montre maintenant la ${where}.`:''}`);
+            log('move_after_save',{kind:t.kind,saved:saved.count});
+            /* The field now shows another scene's value: the caret never stays there (the next key would edit that scene). */
+            if(saved.typing&&ui.title)ui.title.focus();
+          }
+        }
+      }finally{move.running=false}
+    }
+    /* ------------------------------------------------------------ Variants and the editor (presentation-edition-v1 Slice 09) */
+    function explorerApi(){return root.JarvisStudioExplorer||null}
+    function explorerScene(){
+      const ex=explorerApi();
+      try{return ex&&typeof ex.scene==='function'?ex.scene():null}catch(_error){return null /* intentional: Variants absent or closed reads as « nothing on screen » */}
+    }
+    function followInExplorer(sceneId){
+      const at=explorerScene(),ex=explorerApi();
+      if(!at||!S.variant||at.presentation_id!==S.presentationId||at.variant_id!==S.variant.variant_id||at.scene_id===sceneId)return;
+      try{ex.showScene(sceneId)}catch(error){log('explorer_follow_failed',{error:describe(error)},'warn')}
+    }
+    function sceneLabel(sceneId){
+      const scenes=(S.variant&&S.variant.scenes)||[];
+      const i=scenes.findIndex((s)=>s.scene_id===sceneId);
+      return i<0?null:`scène ${i+1} « ${clip(scenes[i].title||'(sans titre)',60)} »`;
+    }
+    /* What is being edited, in words (RULE ZERO: the active scene and variant are always clear). */
+    function renderContext(){
+      if(!ui.context)return;
+      const v=S.variant;
+      const scenes=v&&Array.isArray(v.scenes)?v.scenes:[];
+      const index=scenes.findIndex((s)=>s.scene_id===S.sceneId);
+      const isActive=!!v&&!!S.activeVariantId&&v.variant_id===S.activeVariantId;
+      const n=!v?null:Number.isInteger(v.variant_number)?v.variant_number:S.variantNumbers&&S.variantNumbers.get(v.variant_id);
+      const number=Number.isInteger(n)?`variante #${n}`:'variante';
+      /* A polite live region: rewritten only when its words change (a new scene, variant or active state), never after each save (QA m2). */
+      const key=v?`${index}|${scenes.length}|${number}|${isActive}`:'';
+      if(key===ui.contextKey)return;
+      ui.contextKey=key;
+      ui.context.hidden=!v;
+      clear(ui.context);
+      if(!v)return;
+      ui.context.appendChild(document_text('Vous modifiez '));
+      ui.context.appendChild(el('strong',null,index>=0?`la scène ${index+1} sur ${scenes.length}`:'cette variante'));
+      ui.context.appendChild(document_text(` de la ${number}`));
+      const tag=el('span','jvi-ctx-tag',isActive?'active':'non active');tag.setAttribute('data-active',String(isActive));ui.context.appendChild(tag);
+      const sub=el('span','jvi-ctx-sub',isActive?'Celle qui se présente et s’exporte.':'Elle ne se présente pas tant que vous ne l’activez pas.');
+      ui.context.appendChild(sub);
+    }
+    function document_text(text){return doc.createTextNode(text)}
+    /* Said to the page after every committed change (edit, undo, redo): Variants re-reads the variant from Core. */
+    /* `bring` (undo / redo only): Variants brings that scene on screen. A plain save never moves Variants: a value saved while Variants had
+       already moved on (its continuous play, Slice 09 QA B1) must not pull it back. */
+    function sayEdited(revision,sceneId,bring){
+      if(typeof win.dispatchEvent!=='function'||typeof win.CustomEvent!=='function'||!S.variant)return;
+      try{win.dispatchEvent(new win.CustomEvent('jarvis:studio-variant-edited',{detail:{presentation_id:S.presentationId,variant_id:S.variant.variant_id,
+        revision:Number.isInteger(revision)?revision:null,scene_id:sceneId||S.sceneId||null,bring:bring===true}}))}
+      catch(error){log('edited_event_failed',{error:describe(error)},'warn')}
+    }
+    /* Variants changed the scene (or the variant) on screen: the editor follows, when it edits the same presentation. */
+    function onExplorerScene(event){
+      const d=event&&event.detail||{};
+      if(!S.open||!d.presentation_id||d.presentation_id!==S.presentationId)return;
+      if(S.variant&&d.variant_id===S.variant.variant_id){
+        if(d.scene_id&&(d.scene_id!==S.sceneId||move.target))chooseScene(d.scene_id,{fromExplorer:true});
+        return;
+      }
+      log('follow_variant',{variant_id:d.variant_id,scene_id:d.scene_id});
+      requestMove({kind:'variant',sceneId:d.scene_id,apply:()=>selectPresentation(d.presentation_id,{variantId:d.variant_id,sceneId:d.scene_id})
+        .catch((error)=>{setFatal(error,()=>{loadPresentations()});log('follow_failed',{code:error.code,error:describe(error)},'error')})});
+    }
+    /* « Modifier » in Variants: open beside it on that variant and that scene. */
+    async function edit(request){
+      const r=request||{};
+      if(typeof r.presentation_id!=='string'||typeof r.variant_id!=='string')return {state:'refused',reason:'présentation ou variante manquante'};
+      log('edit_requested',{via:r.via||'api',variant_id:r.variant_id,scene_id:r.scene_id||null});
+      /* Closing the editor gives the focus back to what opened it (« Modifier » in Variants), when it is still there (Slice 09 QA m1). */
+      S.opener=r.opener&&typeof r.opener.focus==='function'?r.opener:null;
+      if(S.open){
+        if(S.presentationId===r.presentation_id&&S.variant&&S.variant.variant_id===r.variant_id){
+          if(r.scene_id&&r.scene_id!==S.sceneId)chooseScene(r.scene_id,{fromExplorer:true});
+        }else if(hasUnsaved()){
+          requestMove({kind:'variant',sceneId:r.scene_id,apply:()=>selectPresentation(r.presentation_id,{variantId:r.variant_id,sceneId:r.scene_id})
+            .catch((error)=>{setFatal(error,()=>{loadPresentations()});log('edit_select_failed',{code:error.code,error:describe(error)},'error')})});
+        }else{
+          try{await selectPresentation(r.presentation_id,{variantId:r.variant_id,sceneId:r.scene_id})}
+          catch(error){setFatal(error,()=>{loadPresentations()});log('edit_select_failed',{code:error.code,error:describe(error)},'error');return {state:'failed',reason:describe(error)}}
+        }
+        if(ui.title)ui.title.focus();
+        return {state:'opened'};
+      }
+      S.presentationId=r.presentation_id;
+      S.want={presentationId:r.presentation_id,variantId:r.variant_id,sceneId:r.scene_id||null};
+      const opened=open();
+      if(opened===false){S.want=null;return {state:'refused',reason:S.hiddenReason==='fullscreen'?'Quittez le plein écran pour modifier.':'Arrêtez la présentation en cours pour modifier.'}}
+      return {state:'opened'};
     }
 
     function renderHistory(){
@@ -495,8 +710,24 @@
       const canUndo=!!h&&h.undo_count>0,canRedo=!!h&&h.redo_count>0;
       ui.undo.disabled=!canUndo;ui.redo.disabled=!canRedo;
       const who=(e)=>e&&e.actor==='brain'?' (faite par Jarvis)':'';
-      ui.undo.title=canUndo?`Annuler la dernière modification${who(h.next_undo)} (Ctrl+Z dans l'inspecteur)`:'Rien à annuler';
-      ui.redo.title=canRedo?`Rétablir la modification annulée${who(h.next_redo)} (Ctrl+Y dans l'inspecteur)`:'Rien à rétablir';
+      /* Slice 09: the step's scene, in words; « autre scène » when it is not the one on screen. */
+      const on=(e)=>{
+        const sid=e&&Array.isArray(e.scene_ids)&&e.scene_ids[0];
+        const label=sid?sceneLabel(sid):null;
+        return label?`, ${label}${sid!==S.sceneId?' (autre scène : elle s’affichera)':''}`:'';
+      };
+      ui.undo.title=canUndo?`Annuler la dernière modification${who(h.next_undo)}${on(h.next_undo)} (Ctrl+Z dans l'inspecteur)`:'Rien à annuler';
+      ui.redo.title=canRedo?`Rétablir la modification annulée${who(h.next_redo)}${on(h.next_redo)} (Ctrl+Y dans l'inspecteur)`:'Rien à rétablir';
+      /* The name stays the action (« Annuler la dernière modification »); the scene it changes is its description. */
+      const describe_=(node,text)=>{if(text)node.setAttribute('aria-description',text.replace(/^, /,''));else node.removeAttribute('aria-description')};
+      describe_(ui.undo,canUndo?on(h.next_undo):'');describe_(ui.redo,canRedo?on(h.next_redo):'');
+      /* Seen, not only in a tooltip (Slice 09 QA): the scene the next undo changes, under the bar. */
+      if(ui.histNote){
+        const sid=canUndo&&h.next_undo&&Array.isArray(h.next_undo.scene_ids)?h.next_undo.scene_ids[0]:null;
+        const label=sid?sceneLabel(sid):null;
+        ui.histNote.hidden=!label;
+        ui.histNote.textContent=label?`↶ Annuler changera la ${label}${sid!==S.sceneId?' (autre scène : elle s’affichera)':''}`:'';
+      }
       if(!canUndo)ui.undo.title=h&&h.tracked===false?'Rien à annuler : l\'historique ne garde que les modifications faites depuis le démarrage de Core':'Rien à annuler';
     }
 
@@ -791,13 +1022,14 @@
       }catch(error){
         if(epoch!==s.epoch)return;
         stats.failures++;
-        setRowMessage(ctx.row.control_id,'bad',`Aperçu non validé : ${describe(error)}`);
+        setRowMessage(ctx.row.control_id,'bad',isUnreachable(error.code,error.status)?PREVIEW_UNREACHABLE:`Aperçu non validé : ${describe(error)}`);
         log('preview_failed',{control_id:ctx.row.control_id,code:error.code,error:describe(error)},'warn');
       }finally{
         s.inflight=false;
         if(epoch===s.epoch&&s.hasLatest)schedulePreview(ctx,s,s.minMs||PREVIEW_MIN_MS);
       }
     }
+    const PREVIEW_UNREACHABLE='Jarvis ne joint pas son moteur (Core) : l’aperçu attend, votre saisie est gardée.';
     /* Clavier et ± : le dernier appui arme un seul enregistrement après une courte pause. */
     function onIdle(ctx,value){
       onPreview(ctx,value);
@@ -844,10 +1076,12 @@
       setRowMessage(ctx.row.control_id,'info','');
       syncPreview();
       announce(`${ctx.row.label} : modification abandonnée.`);
+      resumeMove();
     }
     function abandonDrafts(reason){
+      const dirty=[...sessions.values()].filter((x)=>x.dirty&&x.draft!==undefined).length;
       for(const s of sessions.values()){clearTimers(s);s.epoch++;s.dirty=false;s.draft=undefined;s.hasLatest=false}
-      if(sessions.size)log('drafts_abandoned',{count:sessions.size,reason});
+      if(sessions.size)log('drafts_abandoned',{count:sessions.size,dirty,reason},dirty?'warn':undefined);
       sessions.clear();
       for(const task of queue.pending.values())task.superseded=true;
       queue.pending.clear();
@@ -859,7 +1093,7 @@
     function enqueue(key,run,label){
       const prior=queue.pending.get(key);
       if(prior){prior.superseded=true;stats.writesSuperseded++;if(prior.wake)prior.wake()}
-      const task={key,superseded:false,label};
+      const task={key,superseded:false,label,sceneId:S.sceneId};
       queue.pending.set(key,task);
       const job=queue.tail.then(()=>{
         if(task.superseded)return null;
@@ -895,6 +1129,13 @@
         let attempt=0;
         for(;;){
           if(task.superseded){return null}
+          /* Slice 09 QA (m3): a write belongs to the scene it was typed on. Every scene change waits for the queue first (`settleDrafts`), so
+             this never fires; if it ever did, nothing is written to another scene and it is said. */
+          if(task.sceneId&&task.sceneId!==S.sceneId){
+            log('commit_scene_moved',{control_id:id,from:task.sceneId,to:S.sceneId},'error');
+            setStatus('bad','Modification non enregistrée','La scène a changé avant l’enregistrement : rien n’a été écrit sur une autre scène.');
+            return null;
+          }
           /* L'opération est construite ICI, à partir de la valeur relue après l'enregistrement précédent : jamais sur la base que
              notre propre écriture vient de périmer (une file de pas de clavier ne se rend pas `stale` à elle-même). */
           const fresh=widgets.get(id);
@@ -910,6 +1151,7 @@
             outcome=await postEdit('commit',[op]);
           }catch(error){
             stats.failures++;
+            if(isUnreachable(error.code,error.status)){keepUnsaved(ctx,s,value,why,{code:error.code,message:describe(error)});return null}
             restoreDisplay(id);
             setRowMessage(id,'bad',`Enregistrement impossible : ${describe(error)}`,[{label:'Réessayer',run:()=>retryCommit(ctx,value,why)}]);
             log('commit_failed',{control_id:id,code:error.code,error:describe(error)},'error');
@@ -945,10 +1187,30 @@
         const w=widgets.get(id);if(w){w.ctx.chrome.li.classList.remove('is-busy');w.ctx.chrome.reset.disabled=!w.ctx.row.is_set}
       }
     }
+    /* Core did not answer (Slice 09 QA): the typed value stays in the field and in the draft, the message is the product's, « Réessayer »
+       saves it, and the next answer of Core (`pollReloads`) saves it on its own; the message goes away once it is saved. */
+    function keepUnsaved(ctx,s,value,why,error){
+      const id=ctx.row.control_id;
+      s.dirty=true;s.draft=value;s.hasLatest=false;s.lastSent=undefined;s.unsaved={why};
+      const w=widgets.get(id);if(w)w.update(w.ctx.row);
+      setRowMessage(id,'bad',UNSAVED_TEXT,[{label:'Réessayer',run:()=>retryCommit(ctx,value,why)}]);
+      log('commit_unreachable',{control_id:id,code:error&&error.code||null,error:clip(error&&error.message||'',200)},'error');
+      tell('Modification non enregistrée','Core ne répond pas : votre saisie est gardée.','bad');
+    }
+    function retryUnsaved(){
+      for(const s of sessions.values()){
+        if(!s.unsaved||!s.dirty||s.committing||s.draft===undefined)continue;
+        const w=widgets.get(s.id);if(!w)continue;
+        const why=s.unsaved.why;s.unsaved=null;
+        log('commit_retry_after_core_back',{control_id:s.id});
+        retryCommit(w.ctx,s.draft,why);
+      }
+    }
     function retryCommit(ctx,value,why){
       const w=widgets.get(ctx.row.control_id);
       const row=w?w.ctx.row:ctx.row;
       setRowMessage(row.control_id,'info','');
+      const s=sessions.get(row.control_id);if(s)s.unsaved=null;
       if(why==='reset')resetControl(row);else onCommit(w?w.ctx:ctx,value,{immediate:true});
     }
     /* Rien n'a été enregistré : le widget montre de nouveau la valeur de Core (jamais celle d'un brouillon abandonné). */
@@ -979,11 +1241,19 @@
         log('commit_applied',{control_id:id,op:op.op,revision:result.revision,changed:!!result.changed,previews});
         setRowMessage(id,'info','');
         await Promise.all([loadScene({quiet:true}),loadHistory()]);
+        sayEdited(result.revision,ctx.row.scene_id||S.sceneId);
         flashSaved(id);
         announce(`${ctx.row.label} : enregistré.`);
+        /* Seen, not only heard (Slice 09 QA): a short visible line, unless a warning or an error is on screen. */
+        if(!S.status||S.status.kind==='ok'||S.status.kind==='info'){
+          const said=setStatus('ok',`« ${clip(ctx.row.label,60)} » enregistré`,sceneLabel(S.sceneId)?` · ${sceneLabel(S.sceneId)}`:'');
+          later(()=>{if(S.status===said)setStatus(null)},4000);
+        }
+        resumeMove();
         return result;
       }
       if(outcome.kind==='stale'){return handleStale(ctx,s,value,'commit',op,ver)}
+      if(outcome.kind==='error'&&isUnreachable(outcome.code,outcome.http)){keepUnsaved(ctx,s,value,op.op==='control.reset'?'reset':'set',outcome);return null}
       if(outcome.kind==='refused'||outcome.kind==='error'){
         if(latest){s.dirty=false;s.draft=undefined}
         s.lastSent=undefined;
@@ -1000,7 +1270,7 @@
     }
     function showRefusal(ctx,outcome,value){
       const id=ctx.row.control_id;
-      const text=describeRefusal(outcome.code,outcome.message);
+      const text=isUnreachable(outcome.code,outcome.http)?PREVIEW_UNREACHABLE:describeRefusal(outcome.code,outcome.message);
       stats.failures++;
       setRowMessage(id,'bad',text);
       log('edit_refused',{control_id:id,code:outcome.code,status:outcome.kind,http:outcome.http||null},'warn');
@@ -1060,8 +1330,24 @@
     }
     async function runHistory(direction){
       if(!S.variant||!S.available)return;
-      const h=S.history,entry=h&&(direction==='undo'?h.next_undo:h.next_redo);
+      const trigger=ui.root&&doc.activeElement&&(doc.activeElement===ui.undo||doc.activeElement===ui.redo)?doc.activeElement:null;
       discardDrafts();      /* règle : annuler / rétablir abandonne d'abord les brouillons en attente, jamais ils ne s'enregistrent après */
+      /* Slice 09 QA (m3): a write already queued belongs to the scene on screen; it lands BEFORE the undo may bring another scene, and the step
+         to undo is read after it (it is the latest change). */
+      if(queue.pending.size){ui.undo.disabled=true;ui.redo.disabled=true;for(let i=0;i<8&&queue.pending.size;i++)await queue.tail}
+      const h=S.history,entry=h&&(direction==='undo'?h.next_undo:h.next_redo);
+      try{return await runHistoryStep(direction,entry)}
+      finally{
+        /* The button pressed by Enter is disabled while it runs: the focus comes back to it, or to the title when it stays disabled (never
+           to the page, where Échap would close Variants instead of the editor; Slice 09 QA). Never to the OTHER button: a second Enter
+           would then redo what the first one undid (Slice 09 mini-rework, QA m2). */
+        if(trigger&&S.open&&ui.root&&!ui.root.hidden){
+          const back=!trigger.disabled?trigger:ui.title;
+          if(back&&(doc.activeElement===doc.body||doc.activeElement===null||doc.activeElement===trigger||!ui.root.contains(doc.activeElement)))back.focus();
+        }
+      }
+    }
+    async function runHistoryStep(direction,entry){
       const body={};
       if(entry&&entry.entry_id)body.expected_entry_id=entry.entry_id;
       stats[direction]++;
@@ -1074,12 +1360,22 @@
           const result=response.body;
           if(result&&typeof result.status==='string'&&(result.status==='applied'||Object.prototype.hasOwnProperty.call(HISTORY_TEXT,result.status))){
             if(result.status==='applied'){
-              log('history_applied',{direction,revision:result.revision});
+              /* Slice 09: the step says which scene it changed (`scene_ids`, ids only); a step on another scene brings that scene on screen,
+                 here and in Variants, so an undo never changes a scene out of sight. */
+              const touched=entry&&Array.isArray(entry.scene_ids)?entry.scene_ids:[];
+              const where=touched.length?sceneLabel(touched[0]):null;
+              log('history_applied',{direction,revision:result.revision,scenes:touched.length,moved:!!(touched[0]&&touched[0]!==S.sceneId)});
               setStatus(null);
+              if(touched[0]&&touched[0]!==S.sceneId&&((S.variant&&S.variant.scenes)||[]).some((s)=>s.scene_id===touched[0])){
+                abandonDrafts('history');       /* the queue is empty (awaited above): nothing typed on the old scene can follow it */
+                S.sceneId=touched[0];renderPick();followInExplorer(touched[0]);
+              }
               await Promise.all([loadScene({quiet:true}),loadHistory()]);
-              setStatus('ok',direction==='undo'?'Modification annulée':'Modification rétablie','');
+              sayEdited(result.revision,touched[0]||S.sceneId,true);
+              const said=`${direction==='undo'?'Modification annulée':'Modification rétablie'}${where?` : ${where}`:''}`;
+              setStatus('ok',said,'');
               later(()=>{if(S.status&&S.status.kind==='ok')setStatus(null)},4000);
-              announce(direction==='undo'?'Modification annulée.':'Modification rétablie.');
+              announce(`${said}.`);
               return result;
             }
             const text=`${HISTORY_TEXT[result.status]}.${result.message?' '+clip(result.message,300):''}`;
@@ -1192,7 +1488,7 @@
         const id=row?row.getAttribute('data-control-id'):null;
         const s=id?sessions.get(id):null;
         if(s&&s.dirty&&widgets.get(id)){revertDraft(widgets.get(id).ctx);return}     /* d'abord abandonner le brouillon, ensuite fermer */
-        close({restoreFocus:true});
+        closeByUser();
         return;
       }
       /* Aucune touche non modifiée ne sort du panneau : ni raccourcis de la page (s, e, t, a…), ni navigation de la scène. Tab reste libre. */
@@ -1250,6 +1546,7 @@
       if(!S.available)return false;
       S.open=true;
       ui.root.hidden=false;ui.root.inert=false;
+      if(doc.documentElement&&doc.documentElement.classList)doc.documentElement.classList.add('jvi-open');
       if(ui.dock){ui.dock.classList.add('active');ui.dock.setAttribute('aria-expanded','true')}
       const closeSidePanel=typeof d.closeSidePanel==='function'?d.closeSidePanel:(typeof root.closePanel==='function'?root.closePanel:null);
       if(closeSidePanel){try{closeSidePanel()}catch(_error){/* intentional: the side panel closing is a courtesy */}}
@@ -1262,15 +1559,32 @@
     function close(options){
       if(!S.open&&!(ui.root&&!ui.root.hidden))return;
       abandonDrafts('close');
-      S.open=false;
+      S.open=false;S.want=null;
+      if(doc.documentElement&&doc.documentElement.classList)doc.documentElement.classList.remove('jvi-open');
       stopPolling();
       unmountPreview();
       if(ui.root)ui.root.hidden=true;
       if(ui.dock){ui.dock.classList.remove('active');ui.dock.setAttribute('aria-expanded','false')}
-      if(options&&options.restoreFocus&&ui.dock&&!ui.dock.disabled)ui.dock.focus();
+      if(options&&options.restoreFocus){
+        const opener=S.opener;
+        const usable=opener&&opener.isConnected!==false&&!opener.disabled&&!(typeof opener.closest==='function'&&opener.closest('[inert],[hidden]'));
+        if(usable)opener.focus();
+        else if(ui.dock&&!ui.dock.disabled)ui.dock.focus();
+      }
+      S.opener=null;
       log('closed',{});
     }
-    function toggle(){S.open?close({restoreFocus:true}):open()}
+    function toggle(){S.open?closeByUser():open()}
+    /* × , Échap, the dock button: a value typed elsewhere in the panel and not yet saved is saved first (Slice 09 QA: never dropped in silence);
+       if it cannot be, the editor stays open and says so, with « Fermer sans enregistrer ». */
+    async function closeByUser(){
+      if(!hasUnsaved()){close({restoreFocus:true});return}
+      setStatus('info','Enregistrement de votre saisie…',' Avant de fermer l’éditeur.');
+      const r=await settleDrafts();
+      if(r.ok){setStatus(null);close({restoreFocus:true});return}
+      setStatus('warn','L’éditeur reste ouvert',' Votre saisie n’est pas enregistrée.',[{label:'Fermer sans enregistrer',run:()=>{abandonDrafts('user');close({restoreFocus:true})}}]);
+      log('close_held',{kept:r.kept.map((k)=>k.id)},'warn');
+    }
 
     function install(){
       ui.dock=doc.getElementById(BUTTON_ID);
@@ -1285,7 +1599,7 @@
       if(typeof doc.addEventListener==='function'){
         doc.addEventListener('fullscreenchange',checkAvailability);
         /* Le lecteur dit tout de suite qu'une lecture commence ou finit (il l'apprend par son relevé) : pas d'attente du prochain tour de 500 ms. */
-        if(typeof win.addEventListener==='function'){win.addEventListener(PLAYBACK_EVENT,checkAvailability);win.addEventListener('jarvis:studio-explorer-closed',onExplorerClosed)}
+        if(typeof win.addEventListener==='function'){win.addEventListener(PLAYBACK_EVENT,checkAvailability);win.addEventListener('jarvis:studio-explorer-closed',onExplorerClosed);win.addEventListener('jarvis:studio-explorer-scene',onExplorerScene)}
         doc.addEventListener('visibilitychange',()=>{if(S.open&&!doc.hidden)pollReloads()});
       }
       availTimer=every(checkAvailability,AVAILABILITY_MS);
@@ -1306,7 +1620,7 @@
       pendingDrafts:[...sessions.values()].filter((s)=>s.dirty).map((s)=>s.id)});
 
     return Object.freeze({install,open,close,toggle,destroy,view,stats:()=>Object.assign({},stats),refresh:()=>loadPresentations(),
-      checkAvailability,pollReloads,selectScene:chooseScene,selectTab,runHistory,loadScene,selectPresentation,
+      checkAvailability,pollReloads,selectScene:chooseScene,selectTab,runHistory,loadScene,selectPresentation,edit,
       widget:(id)=>widgets.get(id)||null,element:()=>ui.root,dockButton:()=>ui.dock,previewHost:()=>previewHost});
   }
 

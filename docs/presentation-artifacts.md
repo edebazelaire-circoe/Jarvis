@@ -187,7 +187,8 @@ Concurrency, resume and failures:
   names no machine path, the `.partial` stays as evidence, the next call opens `_a2`. Any other write error is the same typed `package_failed`.
 
 `presentation/presentation.json` describes only what the frozen variant needs: the presentation document with `variants` reduced to the frozen variant's index entry,
-`archived` emptied and `active_variant_id` set to it (`resources` kept). It is a description for provenance, not a loadable multi-variant presentation. The `live_refs[].ref`
+`archived` emptied and `active_variant_id` set to it (`resources` kept), and that entry's lineage (`sources`) emptied: it names variants the copy does
+not carry, and the package check refused every branch made by « Nouvelle variante… » until presentation-edition-v1 Slice 09 (the live index keeps the lineage). It is a description for provenance, not a loadable multi-variant presentation. The `live_refs[].ref`
 strings (`board:<id>/...`) stay in the manifest on purpose: they are the provenance of each copied item, and only authorised Boards can appear there.
 
 Frozen means frozen: editing, moving or deleting the Board item, the Board, or the source afterwards never changes the package (tests assert byte-equal payload and a

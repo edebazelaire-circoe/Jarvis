@@ -297,3 +297,15 @@ def test_random_sequences_never_break_a_hard_bound(seed):
             assert ring.count <= MAX_ENTRIES_PER_VARIANT and ring.size <= MAX_VARIANT_BYTES
             assert all(e.size <= MAX_ENTRY_BYTES for e in (*ring.undo, *ring.redo))
     assert book.evicted_entries == reported
+
+
+def test_a_step_names_the_scenes_it_touches_by_id_only():
+    """Slice 09 (presentation-edition-v1): « Annuler » says which scene it changes; ids only, in order, no duplicate."""
+    from jarvis.domain.presentation_studio_history import scene_ids_of
+
+    ops = ({"op": "control.set", "scene_id": "pss_000000000002", "control_id": "title", "value": "secret"},
+           {"op": "control.reset", "scene_id": "pss_000000000002", "control_id": "accent"},
+           {"op": "scene.insert", "scene": {"scene_id": "pss_000000000003", "title": "secret"}},
+           {"op": "scene.move", "scene_id": None}, "not a mapping")
+    assert scene_ids_of(ops) == ["pss_000000000002", "pss_000000000003"]
+    assert scene_ids_of(()) == []

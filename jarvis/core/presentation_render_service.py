@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from dataclasses import replace
 import hashlib
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from pathlib import Path
@@ -43,7 +44,7 @@ from jarvis.domain.presentation_render import (
     RenderErrorCode as C, ResolvedRender, clean_detail, master_scene_failure, parse_settings, resolve,
 )
 from jarvis.domain.presentation_render_master import choose_master, frozen_plan, master_files, master_target
-from jarvis.domain.presentation_render_plan import choose_scene, plan_files
+from jarvis.domain.presentation_render_plan import choose_scene, plan_files, representative_frame, still_scenes
 from jarvis.domain.presentation_studio import PresentationStudioError
 from jarvis.ports.artifacts import RelationDirection
 from jarvis.ports.remotion_render import BrowserInfo, RenderRunner
@@ -276,6 +277,11 @@ class PresentationRenderService:
                 raise
         else:
             target = choose_scene(package, parsed.scene_id)
+            # No frame named: the scene's representative still, never frame 0 (a scene that fades in is blank there; Slice 09 PM decision).
+            if fmt is RenderFormat.STILL and parsed.frame is None:
+                parsed = replace(parsed, frame=representative_frame(package, target))
+            elif fmt is RenderFormat.PDF and parsed.frames is None:
+                parsed = replace(parsed, frames=(representative_frame(package, target),))
         resolved = resolve(fmt, parsed, target)
         installed = self._installed()
         if installed is None or installed.remotion_version != target.engine_version:
@@ -335,7 +341,8 @@ class PresentationRenderService:
         self._trace("master_readiness", "Vidéo entière d'un snapshot : plan lu", data={
             "snapshot_id": snapshot_id, "status": plan.status.value, "reason": plan.reason.value if plan.reason else None,
             "project_key": plan.project_key, "scenes": len(plan.scenes)})
-        return plan.to_wire()
+        # `stills` (Slice 09): the scenes an image or PDF export can name, with their titles, so a page offers the choice `RENDERS` asks for.
+        return {**plan.to_wire(), "stills": still_scenes(package)}
 
     # ------------------------------------------------------------------ aperçu natif (Slice 13 native-studio-playback-fix)
 

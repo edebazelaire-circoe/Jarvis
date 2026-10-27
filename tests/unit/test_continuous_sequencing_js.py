@@ -203,7 +203,7 @@ function seqBench(opts){
     log:(k,d,l)=>logs.push([k,l||'info']),scenes:()=>SCENES,revision:()=>o.revision===undefined?3:o.revision,selectedIndex:()=>o.selected||0,
     fetchClock:async()=>{fetches.push(1);const a=answers[Math.min(fetches.length-1,answers.length-1)];if(a instanceof Error)throw a;return a},
     show:(i)=>{shows.push(i);const want=key(SCENES[i]);if(want===H.live)return;H.pending=want},
-    variantChanged:()=>{changedVariant++},changed:(v)=>views.push(v.phase)});
+    variantChanged:()=>{changedVariant++},changed:(v)=>views.push(v.phase),rest:o.rest});
   H.live=key(SCENES[o.selected||0]);
   const advance=(ms)=>{t+=ms;for(const x of timers.slice()){if(x.fn&&x.at<=t){const fn=x.fn;x.fn=null;fn()}}};
   /* The host swaps the frames: the pending scene is live, its Player sits paused on frame 0. */
@@ -376,6 +376,27 @@ async def test_choosing_a_scene_goes_to_its_start_and_keeps_the_play_state(tmp_p
     """)
     assert result["playing"] == ["waiting", 990] and result["paused"] == ["paused", 0]
     assert result["orders"] == [["s1@1", "play", 0], ["s3@1", "play", 0], ["s3@1", "pause", None], ["s1@1", "pause", 0]]
+
+
+async def test_a_scene_held_at_its_start_shows_its_representative_still_but_plays_from_its_start(tmp_path):
+    """presentation-edition-v1 Slice 09 (PM decision): a scene chosen while nothing plays shows its representative still (the host's
+    `restFrame`, not its blank first frame); the clock stays at the scene's start and « Lire » plays it from frame 0. Never during a run."""
+
+    result = run_seq(tmp_path, r"""
+      const b=seqBench({rest:()=>true});
+      b.H.restFrame=()=>45;
+      await b.seq.play();b.report(5,true);b.seq.pause();
+      b.seq.seekScene(2);b.swap();
+      const held={phase:b.seq.view().phase,frame:b.seq.view().frame,last:b.orders.slice(-1)[0]};
+      await b.seq.play();
+      const played=b.orders.slice(-1)[0];
+      const r=seqBench({rest:()=>false});r.H.restFrame=()=>45;
+      await r.seq.play();r.report(5,true);r.seq.pause();r.seq.seekScene(2);r.swap();
+      return {held,played,run:r.orders.slice(-1)[0]};
+    """)
+    assert result["held"] == {"phase": "paused", "frame": 990, "last": ["s3@1", "pause", 45]}, "the still is shown, the clock stays at the start"
+    assert result["played"] == ["s3@1", "play", 0], "« Lire » plays the scene from its beginning"
+    assert result["run"] == ["s3@1", "pause", 0], "no rest when the page says so (a run)"
 
 
 async def test_the_real_host_and_the_sequencer_hand_over_without_a_hybrid_frame(tmp_path):

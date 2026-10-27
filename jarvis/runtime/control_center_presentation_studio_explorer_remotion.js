@@ -172,6 +172,13 @@
       :`Remotion Studio illisible (${cleanLine(code,60)}) : l’état affiché n’est plus confirmé.`;
   }
 
+  /* Whether the page shows developer surfaces (`docs/control-center-shell.md` › *Product edition UI*): the edition's store, else the page
+     marking; outside a page (node), shown — `full` behaviour. */
+  function developerShown(){
+    const E=root.JarvisProductEdition;
+    try{return !E||typeof E.developerSurfacesShown!=='function'||E.developerSurfacesShown()!==false}
+    catch(_error){return true /* intentional: an unreadable edition keeps the developer wording, never a dead end */}
+  }
   function doorModel(i){
     const C=Studio();
     const lost=lostRead(i.readError);
@@ -186,7 +193,11 @@
     else if(lost)blocked=`${lostSentence(i.readError)} Réessayez dans un instant.`;
     else if(cap&&cap.status&&!RUNNABLE.has(cap.status)){
       const label=(C.CAPABILITY[cap.status]||{label:String(cap.status)}).label;
-      blocked=`L’environnement Remotion n’est pas prêt (${label.toLowerCase()}) : installez-le ou réparez-le (carte « Présentations · moteur », onglet « Plugins externes » du dialogue MCP), puis réessayez.`;
+      /* presentation-edition-v1 Slice 09 (I-006): the MCP dialog's « Plugins externes » tab is a developer surface; a product edition
+         without developer mode never sends the user there. */
+      blocked=developerShown()
+        ?`L’environnement Remotion n’est pas prêt (${label.toLowerCase()}) : installez-le ou réparez-le (carte « Présentations · moteur », onglet « Plugins externes » du dialogue MCP), puis réessayez.`
+        :`Le moteur vidéo de Jarvis n’est pas prêt (${label.toLowerCase()}) : demandez à Jarvis de l’installer ou de le réparer, puis réessayez.`;
     }
     const pin=st&&st.pin||null;
     const relation=!st||st.status!=='ready'||!pin||!mine?'none':pin.prefab_id===mine.id?(Number(pin.version)===Number(mine.version)?'here':'version'):'other';
@@ -382,12 +393,14 @@
 
     /* -------------------------------------------------------------- DOM */
     function buildButton(){
-      ui.button=ctx.button('Remotion Studio','jvx-btn',()=>{request({via:'button'})},{attrs:{'data-act':'remotion_studio',
+      /* presentation-edition-v1 Slice 09 (I-006): Remotion Studio is a developer tool — hidden in a product edition without developer mode
+         by the page's single rule on `data-surface="developer"` (`docs/control-center-shell.md` › *Product edition UI*). */
+      ui.button=ctx.button('Remotion Studio','jvx-btn',()=>{request({via:'button'})},{attrs:{'data-act':'remotion_studio','data-surface':'developer',
         title:'Ouvrir la scène à l’écran dans Remotion Studio (un onglet à part, après confirmation)'}});
       return ui.button;
     }
     function buildStatus(){
-      ui.status=el('div','jvx-rms');ui.status.hidden=true;
+      ui.status=el('div','jvx-rms');ui.status.hidden=true;ui.status.setAttribute('data-surface','developer');
       ui.text=el('span','jvx-rms-text');attrs(ui.text,{role:'status','aria-live':'polite'});
       ui.link=el('a','jvx-rms-link');attrs(ui.link,{target:'_blank',rel:'noopener noreferrer'});ui.link.hidden=true;
       ui.link.addEventListener('click',()=>{S.needsClick=false;log('remotion_studio_tab_opened',{via:'link'});later(render,0)});

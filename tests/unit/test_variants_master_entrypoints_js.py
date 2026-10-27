@@ -255,13 +255,17 @@ def test_export_refusals_are_french_sentences_with_the_code_and_retry_only_when_
         d = describe(transient)
         assert d["retry"] is True and d["text"] == "La demande d’export n’a pas abouti : Core est injoignable ou en erreur." and d["detail"], transient
     assert describe({"code": "timeout", "status": 0, "message": "aucune réponse en 65 s"})["retry"] is True
-    unknown = describe({"code": "presentation_render_snapshot_invalid", "status": 400, "message": "the snapshot package is invalid"})
-    assert unknown == {"code": "presentation_render_snapshot_invalid", "text": "Core a refusé l’export de la vidéo entière.",
-                       "detail": "the snapshot package is invalid", "retry": False}, "an unknown refusal: no « Réessayer », Core's words in small print"
+    unknown = describe({"code": "presentation_render_format_refused", "status": 400, "message": "the format is refused"})
+    assert unknown == {"code": "presentation_render_format_refused", "text": "Core a refusé l’export de la vidéo entière.",
+                       "detail": "the format is refused", "retry": False}, "an unknown refusal: no « Réessayer », Core's words in small print"
+    # Slice 09 QA: the frozen copy refused (a branch's lineage once did it) is said in French, Core's reason in small print, no retry.
+    frozen = describe({"code": "presentation_render_snapshot_invalid", "status": 400, "message": "the snapshot package is invalid"})
+    assert frozen["text"].startswith("Jarvis n’a pas pu préparer la copie figée de cette variante : rien n’a été exporté.")
+    assert frozen["detail"] == "the snapshot package is invalid" and frozen["retry"] is False
     err = export_model(x={"status": "error", "error": live, "started": 1})["status"]
     assert err["text"] == live["text"] and err["code"] == "live_ref_not_authorised" and err["retry"] is False
     err = export_model(x={"status": "error", "error": unknown, "started": 1})["status"]
-    assert err["code"] == "presentation_render_snapshot_invalid · the snapshot package is invalid" and err["retry"] is False
+    assert err["code"] == "presentation_render_format_refused · the format is refused" and err["retry"] is False
 
 
 def test_the_scene_door_is_quieter_than_the_primary_button_and_the_dialog_body_scrolls():
@@ -570,7 +574,8 @@ def test_the_board_export_asks_the_whole_video_only_when_the_frozen_copy_is_read
       for(const [name,reply,format] of [['ready',{status:200,body:{master:{status:'ready',project_key:'mpk_'+'a'.repeat(24),scenes:[{},{},{}]}}},'mp4'],
           ['single',{status:200,body:{master:{status:'ready',project_key:'mpk_'+'c'.repeat(24),scenes:[{}]}}},'mp4'],
           ['incompatible',{status:200,body:{master:{status:'incompatible',reason:'master_fps_mismatch'}}},'mp4'],
-          ['unreadable',{status:503,body:{error:{code:'core_unreachable',message:'down'}}},'mp4'],['still',null,'still']]){
+          ['unreadable',{status:503,body:{error:{code:'core_unreachable',message:'down'}}},'mp4'],
+          ['still',{status:200,body:{master:{status:'incompatible',stills:[{scene_id:'pss_'+'1'.repeat(32),position:1,title:'Seule'}]}}},'still']]){
         const e=exporter();await e.openBoard();
         if(reply)e.w.server.plan[MASTER]=reply;
         e.w.server.plan[JOBS]={status:202,body:{job:job()}};
@@ -591,7 +596,8 @@ def test_the_board_export_asks_the_whole_video_only_when_the_frozen_copy_is_read
     assert "vidéo entière" not in _text(r["single"]["html"])
     assert r["incompatible"]["posts"] == [{"snapshot_id": snap, "format": "mp4"}], "not ready: today's body, unchanged"
     assert r["unreadable"]["posts"] == [{"snapshot_id": snap, "format": "mp4"}] and "workspace.export_master_read_failed" in r["unreadable"]["logs"]
-    assert r["still"]["posts"] == [{"snapshot_id": snap, "format": "still"}] and r["still"]["reads"] == [], "only an MP4 can be the whole video"
+    # Slice 09: an image reads the copy's scenes (`stills`) to name one; it is never the whole video (no `scope`).
+    assert r["still"]["posts"] == [{"snapshot_id": snap, "format": "still", "settings": {"scene_id": "pss_" + "1" * 32}}], "only an MP4 can be the whole video"
     assert seen["allowed"] == [True, False, False, False]
     assert RENDER_JOBS == "/api/local-capabilities/remotion/render/jobs"
 

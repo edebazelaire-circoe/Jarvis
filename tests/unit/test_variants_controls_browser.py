@@ -12,7 +12,7 @@ Proved, measured (contract `docs/presentation-studio.md` › *Variants control a
   one selected scene;
 - `?` and « ⋯ › Raccourcis clavier » open ONE keyboard sheet (a modal dialog, the § 4.15 map of the mode on screen and the tree keys);
   `Échap` closes it and the focus goes back to where it was;
-- during a presentation run the graph actions (« Activer », « Brancher d'ici… », « Renommer… », « Archiver… ») and the tree are inert AND
+- during a presentation run the graph actions (« Activer », « Nouvelle variante… », « Renommer… », « Archiver… ») and the tree are inert AND
   visibly dimmed, with the reason on screen; the windowed scene line gives way to the presenter strip; when the run ends they come back;
 - every visible readout is the Player's composition time, the score time labelled « Partition », a labelled wait, or labelled authoring
   metadata (the variant count says « variantes »).
@@ -40,7 +40,7 @@ from tests.unit.test_variants_run_browser import READY, drive, wire
 X = "#jvStudioExplorer"
 EXPLORER = "window.JarvisStudioExplorer"
 VIEWPORTS = ["800x600", "1280x720", "1920x1080"]
-GRAPH_ACTIONS = ["Activer", "Brancher d'ici…", "Renommer…", "Archiver…"]
+GRAPH_ACTIONS = ["Activer", "Nouvelle variante…", "Renommer…", "Archiver…"]
 
 #: Everything a viewer can see or reach in Variants: each visible control with its name, state, effective opacity (the product of
 #: its ancestors'), inertness and box; plus the readouts and the overflow.
@@ -213,7 +213,7 @@ async def test_during_a_run_the_graph_actions_and_the_tree_are_dimmed_with_the_r
     assert reads["stacked"]["gap"] >= 0, ("the presenter strip is drawn under the transport, never over it", reads["stacked"])
     back = {c["name"]: c for c in after["controls"] if c["name"] in GRAPH_ACTIONS}
     assert set(back) == set(GRAPH_ACTIONS)
-    assert back["Brancher d'ici…"]["disabled"] is False and back["Brancher d'ici…"]["opacity"] == 1 and not back["Brancher d'ici…"]["inert"]
+    assert back["Nouvelle variante…"]["disabled"] is False and back["Nouvelle variante…"]["opacity"] == 1 and not back["Nouvelle variante…"]["inert"]
     assert after["treeInert"] is False and after["treeOpacity"] == 1 and after["runNote"] is None
     _readouts_are_canonical_or_labelled(reads["readouts"])
     assert shot.stat().st_size > 1000

@@ -12,7 +12,8 @@
    Actions : {eval}, {wait}, {click: sel}, {rclick: sel}, {key: nom, ctrl?, shift?, alt?}, {type: texte}, {focus: sel}, {value: nom, expr},
      {until: expr, ms}, {size: [w,h]}, {shot: chemin.png}, {ax: nom, root: sel}, {hashTree: nom, path}, {hashFile: nom, path},
      {http: {name, method, path, body}} (le plan appelle le Control Center ; la réponse est lue sous `reads[name]`),
-     {frameValue: nom, object_id, expr}, {frameUntil: {object_id, expr, ms}} (évalue DANS le cadre de prefab, lu comme un contenu non fiable).
+     {frameValue: nom, object_id, expr}, {frameUntil: {object_id, expr, ms}} (évalue DANS le cadre de prefab, lu comme un contenu non fiable),
+     {block: [motifs]} (`Network.setBlockedURLs` : la page ne joint plus ces adresses, comme un Core arrêté ; `[]` les rend).
    Sortie : {reads, console, errors}. */
 import {execFileSync, spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
@@ -158,6 +159,7 @@ try{
     if(action.eval!==undefined)await evaluate(action.eval);
     else if(action.wait!==undefined)await sleep(action.wait);
     else if(action.key!==undefined)await press(action.key,action);
+    else if(action.block!==undefined){await send('Network.enable');await send('Network.setBlockedURLs',{urls:action.block})}
     else if(action.type!==undefined)await send('Input.insertText',{text:action.type});
     else if(action.focus!==undefined)await evaluate(`document.querySelector(${JSON.stringify(action.focus)}).focus()`);
     else if(action.click!==undefined)await click(action.click);

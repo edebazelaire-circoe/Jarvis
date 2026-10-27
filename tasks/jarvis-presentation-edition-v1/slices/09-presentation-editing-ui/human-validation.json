@@ -2,7 +2,23 @@
   "checks": [
     {
       "id": "HV-EDIT-01",
-      "description": "Edit a real generated deck: change text, replace a visual, create/select a variant, undo one action, preview, and export. Confirm the active scene/variant and saved result are always understandable."
+      "description": "Edit a real generated deck (written by Jarvis): change a text and a colour from « Modifier », create/select a variant, undo one action, preview, and export (video, and an image or PDF of a scene). Confirm the active scene/variant and saved result are always understandable. Replacing a visual is deferred after V1 (Issues/I-008)."
+    },
+    {
+      "id": "HV-EDIT-02",
+      "description": "In Variantes, choose a scene, click « Modifier »: the editor opens on the right, on that scene and that variant, and its first line says which scene, which variant and whether it is the active one. Change the title, release: the Variantes preview shows the new title after Jarvis has saved it (play the scene if its first frame is empty)."
+    },
+    {
+      "id": "HV-EDIT-03",
+      "description": "Change a scene, go to another scene, click « Annuler »: the tooltip named the changed scene, Jarvis brings that scene back on screen (editor and Variantes) and only it goes back."
+    },
+    {
+      "id": "HV-EDIT-04",
+      "description": "On a non-active variant (« Nouvelle variante… »), « Modifier » edits THAT variant (tag « non active »); the active variant is unchanged until you click « Activer »."
+    },
+    {
+      "id": "HV-EDIT-05",
+      "description": "In the installed Presentation edition (no developer mode), Variantes shows neither « Remotion Studio » nor « Cette scène seule dans Remotion Studio »; in Sessions & Boards › Artefacts, a finished image or PDF render offers « Enregistrer une copie dans Documents » and the file lands in Documents\\Jarvis with a French name (« … - image.png », « … - PDF.pdf », « … - vidéo.mp4 »)."
     }
   ]
 }

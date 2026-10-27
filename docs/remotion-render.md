@@ -40,13 +40,25 @@ Un PDF **de pages-images** est livré, parce qu'il est bon marché et honnête :
 
 Clés **fermées** (`settings`), types stricts ; une clé qui ne s'applique pas au format est refusée (`presentation_render_invalid`).
 
+**Image représentative** (presentation-edition-v1 Slice 09, décision du PM). Une image ou un PDF d'une scène sans `frame` / `frames`
+montre l'instant où l'entrée de la scène est terminée, que la scène déclare par sa **première ancre datée** (`at_ms`, le moment où son
+contenu est révélé) ; une scène qui n'en déclare pas donne son **image du milieu** (`duration_in_frames // 2`) ; borné à la scène, arrondi
+au plus proche (moitié vers le haut). L'image 0 n'est plus le défaut : une scène qui apparaît en fondu y est vide. La même règle fait
+reposer l'aperçu de Variantes à l'arrêt (`control_center_prefab_host.js` › `representativeFrame` / `restFrame`, option `rest` de l'hôte, et
+le séquenceur qui tient une scène choisie à l'arrêt sur cette image, son horloge restant au début de la scène ; jamais pendant une lecture
+ni une présentation) ; `presentation_render_plan.representative_frame`, test de parité `tests/unit/test_representative_still_js.py`.
+Un `frame` / `frames` nommé est rendu tel quel (identité de rendu inchangée). **Une image ou un PDF est d'UNE scène** : le PDF d'un deck
+entier n'est pas livré (la vidéo entière est la seule portée de variante, MP4) ; une page qui offre l'export d'une image ou d'un PDF fait
+choisir la scène (Sessions & Boards › Artefacts : liste `stills` de la lecture ci-dessous, la première par défaut, aucune question pour une
+copie d'une seule scène).
+
 | Clé | Formats | Sens | Défaut |
 | --- | --- | --- | --- |
 | `scene_id` | tous | scène du snapshot (`pss_...`) ; obligatoire s'il y a plusieurs scènes Remotion (en portée de scène ; la portée `scope: "master"` l'interdit, [remotion-master-project.md](remotion-master-project.md) § 10) | l'unique scène |
 | `scope` | mp4 pour `master` | `"scene"` (la portée historique ; explicite, elle est normalisée : même identité de rendu) ou `"master"` (la vidéo entière de la variante figée, § 3 bis) | `"scene"` |
 | `frame_start`, `frame_end` | mp4 | plage d'images **incluse** dans la durée déclarée | toute la scène |
-| `frame` | still | image fixe | 0 |
-| `frames` | pdf | 1 à 24 images distinctes, une page chacune | `[0]` |
+| `frame` | still | image fixe | l'image représentative de la scène (ci-dessous) |
+| `frames` | pdf | 1 à 24 images distinctes, une page chacune | `[image représentative]` |
 | `scale` | tous | échelle de sortie : 0,25 · 0,5 · 1 · 1,5 · 2 | 1 |
 | `crf` | mp4 | qualité H.264, 16 à 35 | 23 |
 | `concurrency` | tous | onglets de rendu, 1 à 2 (**ne change pas les pixels** : hors de l'identité du rendu) ; chaque onglet pèse plusieurs centaines de Mo de Chrome, et pixels de sortie × onglets est borné à 3 840 × 2 160 (un onglet en 4K, ou deux en 1080p) | 1 |
@@ -153,7 +165,7 @@ Préfixe frère de la famille des capacités : `/v1/local-capabilities/remotion/
 | POST | `/v1/local-capabilities/remotion/render/jobs` | `{format, settings?, snapshot_id}` ou `{format, settings?, presentation_id, variant_id, expected_presentation_revision, expected_variant_revision, authorised_boards?}` | 202 `{job: vue}` |
 | GET | `/v1/local-capabilities/remotion/render/jobs/{job_id}` | — | `{job: vue}` |
 | POST | `/v1/local-capabilities/remotion/render/jobs/{job_id}/cancel` | `{}` | `{job: vue}` |
-| GET | `/v1/local-capabilities/remotion/render/master` | `?snapshot_id=jart_ps_…` (seul paramètre admis) | 200 `{master: vue du plan}` ([remotion-master-project.md](remotion-master-project.md) § 2 : `status` `ready` avec `project_key`, `composition`, `scenes`, `public_assets`, `totals`, ou `incompatible` avec `reason`, `detail`, `scene_ids`) ; lecture seule, rien n'est lancé ; snapshot illisible : `presentation_render_snapshot_invalid` |
+| GET | `/v1/local-capabilities/remotion/render/master` | `?snapshot_id=jart_ps_…` (seul paramètre admis) | 200 `{master: vue du plan}` ([remotion-master-project.md](remotion-master-project.md) § 2 : `status` `ready` avec `project_key`, `composition`, `scenes`, `public_assets`, `totals`, ou `incompatible` avec `reason`, `detail`, `scene_ids`) et, dans les deux cas, `stills` : les scènes qu'une image ou un PDF peut nommer, dans l'ordre figé (`{scene_id, position, title}`, presentation-edition-v1 Slice 09) ; lecture seule, rien n'est lancé ; snapshot illisible : `presentation_render_snapshot_invalid` |
 | POST | `/v1/local-capabilities/remotion/render/preview` | `{presentation_id, variant_id, scene_id, frames? (1..6), scale? (0.25, 0.5, 1)}` | 200 `{preview: {scene_id, prefab, composition, scale, frames: [{frame, path, bytes}], elapsed_ms}}` |
 
 Pourquoi des routes d'abord : l'export est une **action de l'utilisateur** qui lance un processus et écrit un Artifact ; les budgets d'outils des serveurs MCP internes sont contractuels (le verbe du cerveau vit dans le serveur séparé `jarvis-remotion`, Slice 21). Le gel (`authorised_boards`) passe par la même route : sans liste, aucun Board n'est lu (refus par défaut). Corps de plus de 8 Kio, champ en trop, paramètre de requête : `presentation_render_invalid`.

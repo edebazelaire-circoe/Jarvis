@@ -293,6 +293,9 @@ async def test_the_master_readiness_of_a_snapshot_is_the_plan_view(rig):
     _, _, snapshot = await deck(rig)
     view = await rig.service.master_readiness(snapshot)
     assert view["status"] == "ready" and view["composition"]["duration_in_frames"] == 270 and len(view["scenes"]) == 3
+    # Slice 09: the scenes an image or PDF can name, in the frozen order, with their titles (the export form's scene choice).
+    assert [(s["scene_id"], s["position"]) for s in view["stills"]] == [(sid, n) for n, sid in enumerate(IDS, 1)]
+    assert all(isinstance(s["title"], str) for s in view["stills"])
     with pytest.raises(RenderError) as bad:
         await rig.service.master_readiness("jart_ps_" + "0" * 32 + "_" + "0" * 32 + "_p1_v1_a1")
     assert bad.value.code is C.SNAPSHOT_INVALID

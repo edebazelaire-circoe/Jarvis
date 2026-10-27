@@ -140,8 +140,42 @@ async def test_only_one_render_runs_at_a_time_and_the_others_wait_in_order(rig):
     for job in (first, second, third):
         assert (await finished(rig.service, job["job_id"]))["state"] == "complete"
     order = [c[1]["frames"] for c in rig.runner.calls if c[0] == "run"]
-    assert order == [[0], [1], [2]]
+    assert order == [[45], [1], [2]], "no frame named: the representative still (middle of a 90-frame scene without anchor), Slice 09"
     assert D.CONCURRENCY_LIMIT == 1
+
+
+async def test_a_still_or_pdf_without_a_frame_is_the_representative_frame_never_frame_zero(rig):
+    """presentation-edition-v1 Slice 09 (PM decision): a scene whose content fades in is blank on frame 0, so an image or PDF of a scene
+    defaults to the frame where its entrance is over (its first timed anchor), or its middle when it declares none."""
+
+    from jarvis.domain.presentation_render_plan import choose_scene, representative_frame
+
+    package = await rig.world.packager.read_snapshot(rig.snapshot)
+    target = choose_scene(package, None)
+    assert representative_frame(package, target) == target.duration_in_frames // 2 == 45
+    still = await finished(rig.service, (await rig.service.submit(rig.snapshot, "still"))["job_id"])
+    pdf = await finished(rig.service, (await rig.service.submit(rig.snapshot, "pdf"))["job_id"])
+    assert still["state"] == pdf["state"] == "complete"
+    assert [c[1]["frames"] for c in rig.runner.calls if c[0] == "run"] == [[45], [45]]
+    named = await finished(rig.service, (await rig.service.submit(rig.snapshot, "still", {"frame": 0}))["job_id"])
+    assert named["state"] == "complete" and [c[1]["frames"] for c in rig.runner.calls if c[0] == "run"][-1] == [0], "a named frame is kept"
+
+
+def test_the_representative_frame_is_the_first_timed_anchor_clamped_to_the_scene():
+    import json
+    from types import SimpleNamespace
+
+    from jarvis.domain.presentation_render_plan import representative_frame
+
+    def frame(anchors, frames=90, fps=30):
+        variant = {"scenes": [{"scene_id": "pss_a", "anchors": anchors}]}
+        package = SimpleNamespace(files={"presentation/variant.json": json.dumps(variant).encode()})
+        return representative_frame(package, SimpleNamespace(scene_id="pss_a", duration_in_frames=frames, fps=fps))
+
+    assert frame([]) == 45
+    assert frame([{"anchor_id": "b", "label": "B", "at_ms": 2000}, {"anchor_id": "a", "label": "A", "at_ms": 1000}]) == 30
+    assert frame([{"anchor_id": "a", "label": "A"}]) == 45, "an untimed anchor declares nothing"
+    assert frame([{"anchor_id": "a", "label": "A", "at_ms": 60_000}]) == 89, "clamped to the last frame"
 
 
 async def test_at_most_eight_jobs_are_active_running_included_and_the_ninth_creates_nothing(rig):

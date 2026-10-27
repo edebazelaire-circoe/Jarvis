@@ -17,7 +17,8 @@
     — installer, first-run provisioning, product readiness and repair UI.
 9. [x] `08-presentation-product-ui` — **APPROVED** on 2026-10-26 (branch `-s08`: `abdfeea9`..`7b38db15`, rework `062b83d1`, merged). Criterion 7 deferred to Slice 07. Leftovers: `Issues/I-006-s08-leftovers.md`.
     — Presentation-only Board/product shell + end-to-end Presentation workspace UX pass.
-10. `09-presentation-editing-ui` — dedicated editing/variants/media/preview UX pass.
+10. [x] `09-presentation-editing-ui` — **APPROVED** on 2026-10-27 (branch `-s09`: `d118d939`..`c4d6b11f`, reworks `a2b1d650`, `efbcb698`, merged). Visual replacement deferred after V1. Leftovers: `Issues/I-008-s09-leftovers.md`.
+    — dedicated editing/variants/media/preview UX pass.
 11. `10-production-readiness-recovery-ci` — crash/update/recovery, CI and packaged artifact release gates.
 12. `11-final-e2e-windows-acceptance` — clean-machine physical E2E and Human acceptance.
 

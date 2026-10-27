@@ -59,6 +59,36 @@ def scene_document(package: FrozenPackage, scene_id: str) -> Mapping[str, Any]:
         raise RenderError(C.SNAPSHOT_INVALID, f"scene {scene_id} is not in the frozen variant document") from None
 
 
+def still_scenes(package: FrozenPackage) -> list[dict[str, Any]]:
+    """The scenes an image or a PDF can be made of (`RENDERS`: one scene each, `settings.scene_id`), in the frozen order: `{scene_id,
+    position, title}` of every Remotion scene of the frozen variant. What a page offers as the scene choice of an image or PDF export
+    (presentation-edition-v1 Slice 09); an unreadable variant document gives ids without titles (the render itself then says why)."""
+
+    blocks, _ = remotion_pins(package)
+    try:
+        titles = {s["scene_id"]: str(s.get("title", ""))[:120] for s in
+                  json.loads(package.files["presentation/variant.json"].decode("utf-8"))["scenes"]}
+    except (KeyError, ValueError, TypeError):
+        titles = {}  # intentional: titles are a courtesy of the choice; the render reads the document again and refuses it with its code
+    rows = [s for s in package.manifest["scenes"] if (s["prefab"]["id"], s["prefab"]["version"]) in blocks]
+    return [{"scene_id": s["scene_id"], "position": n, "title": titles.get(s["scene_id"], "")} for n, s in enumerate(rows, 1)]
+
+
+def representative_frame(package: FrozenPackage, target: SceneTarget) -> int:
+    """The still that stands for the scene when nobody names a frame (presentation-edition-v1 Slice 09, PM decision): the frame where its
+    entrance is over, which the scene declares with its first timed anchor (`at_ms`, the moment its content is revealed); a scene that
+    declares none gives its middle frame. Frame 0 is never the default: a scene whose content fades in is blank there. Clamped to the
+    composition. The same rule rests the Variants preview (`control_center_prefab_host.js` › `representativeFrame`)."""
+
+    scene = scene_document(package, target.scene_id)
+    times = [a.get("at_ms") for a in scene.get("anchors", []) if isinstance(a, dict)] if isinstance(scene.get("anchors"), list) else []
+    times = [t for t in times if type(t) is int and t >= 0]
+    last = max(0, target.duration_in_frames - 1)
+    # Half up, like the page's `Math.round` (Python's `round` goes to even: 2.5 -> 2 here, 3 there).
+    frame = int(min(times) * target.fps / 1000 + 0.5) if times else target.duration_in_frames // 2
+    return max(0, min(last, frame))
+
+
 def render_props(package: FrozenPackage, target: SceneTarget) -> dict[str, Any]:
     """Valeurs d'entrée de la composition : défauts figés du manifeste, puis valeurs d'instance de la scène figée."""
 

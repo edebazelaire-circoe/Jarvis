@@ -36,7 +36,7 @@ chemin du dossier s'il existe). Preuve réelle (Slice 13) : la consigne du brain
 chemin de la source ; le premier geste de l'auteur est `draft_guide` `kind: native`, comme le dit le playbook.
 
 Le playbook de l'auteur ne contient plus `PLANNER_PROMPT` (9 000 caractères de règles du modèle guidé) : il porte la
-boucle native (`NATIVE_LOOP`) et la barre de qualité, en moins de 7 000 caractères (testé). Le mode guidé (contrôles
+boucle native (`NATIVE_LOOP`) et la barre de qualité, en moins de 7 400 caractères (testé). Le mode guidé (contrôles
 réglables à la voix, thème de variante, partition parlée par Jarvis) reste disponible quand la consigne le demande : la
 porte de qualité complète s'applique alors, et `draft_guide` sans `kind` en donne la forme.
 
@@ -48,6 +48,14 @@ les scènes (deck neuf 1920x1080 à 30, que Core pose aussi pour ce qu'un bundle
 variante), fichiers `public/` nommés d'après leur scène (chemin et `staticFile()`), jamais `getInputProps`. Ce sont des faits techniques
 de compatibilité, pas une règle de contenu ou de style : le natif reste permissif. Le résultat de `presentation_draft_assemble` et de
 `presentation_source` porte le bloc `master` (prête, ou la raison dite à l'utilisateur) ; l'auteur corrige ce qu'il nomme.
+
+**Une scène modifiable depuis « Modifier » (presentation-edition-v1 Slice 09).** Le code natif reste libre, mais les textes visibles
+et la couleur principale de chaque scène sont des props déclarées par le bundle (avec `default`), lues par le TSX, valuées par la scène
+et exposées en `controls` (groupe `content` pour un texte, `visual` pour une couleur) : c'est ce que l'utilisateur change dans l'éditeur
+de Variantes. Une scène native sans contrôle de contenu est refusée à l'assemblage (`scene_no_controls`, `NATIVE_REQUIRED`, avec ce
+qu'il faut ajouter) ; `NATIVE_LOOP` et l'exemple de `draft_guide` `kind: native` le disent avant le premier envoi. Même règle dans les
+éditions `full` et `presentation` (« Modifier » est le même éditeur). Contrat : [presentation-studio.md](presentation-studio.md) ›
+*Native Remotion authoring* › *What a native deck must also pass*.
 
 ## Limites connues
 

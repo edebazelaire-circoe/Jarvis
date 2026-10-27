@@ -105,6 +105,8 @@ async def test_the_typed_client_returns_every_outcome_and_raises_on_envelopes(tm
         await client.presentation_studio_edit(pid, vid, body(revision, op_set(S1, "body", "Client")))
         state = await client.presentation_studio_history(pid, vid)
         assert state["undo_count"] == 1 and state["next_undo"]["ops"] == ["control.set"]
+        # Slice 09 (presentation-edition-v1): the step names the scene it changes (an id, never a value).
+        assert state["next_undo"]["scene_ids"] == [S1]
         stale = await client.presentation_studio_undo(pid, vid, {"actor": "brain", "expected_entry_id": "psh_" + "1" * 12})
         assert stale["status"] == "stale"
         applied = await client.presentation_studio_undo(pid, vid, {"actor": "brain"})

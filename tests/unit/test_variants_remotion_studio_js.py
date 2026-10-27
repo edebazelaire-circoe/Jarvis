@@ -170,7 +170,8 @@ def test_the_button_is_on_the_scene_row_and_a_confirmed_open_sends_the_exact_pin
     """)
     order = out["before"]["order"]
     # master Slice 08: « Exporter la vidéo » sits between the door and « Présenter » (hidden until the whole video is asked for)
-    assert order.index("remotion_studio") == order.index("video_export") - 1 == order.index("present") - 2, ("beside « Présenter » on the scene row", order)
+    # presentation-edition-v1 Slice 09: « Modifier » (edit_scene) sits just before « Présenter ».
+    assert order.index("remotion_studio") == order.index("video_export") - 1 == order.index("edit_scene") - 2 == order.index("present") - 3, ("beside « Présenter » on the scene row", order)
     assert order[0] == "jvx-transport", "the transport row stays alone (Slice 10)"
     s = out["seen"]
     assert s["modal"] == "true" and s["inert"] is True and s["opens"] == 0, "a modal confirmation first, nothing launched yet"
@@ -376,3 +377,16 @@ def test_a_click_on_this_scene_opens_another_noopener_tab_each_time_and_says_so(
     assert out["tabs"][1:] == [["http://127.0.0.1:41000/", "jarvis-remotion-studio", "noopener,noreferrer"]] * 2, "noopener kept, a new tab per click"
     assert out["dialogs"] is False, "no second confirmation"
     assert "Ouvrir un autre onglet" in out["title"]
+
+
+def test_a_product_edition_without_developer_mode_says_the_engine_sentence_never_the_mcp_dialog():
+    """presentation-edition-v1 Slice 09 (I-006, QA m6): with the developer surfaces hidden the refusal is the product's sentence."""
+
+    base = {"scene": SCENE, "scenes": [{"id": SCENE["id"], "title": "Ouverture", "prefab": PIN}], "detail": {"state": "ready", "remotion": True},
+            "studio": {"status": "stopped", "pin": None}, "capability": {"status": "not_installed"}, "readError": None, "busy": None,
+            "actionError": None, "run": False, "needsClick": False, "explain": None, "now": 100_000}
+    script = ("globalThis.JarvisProductEdition={developerSurfacesShown:()=>false};"
+              f"const D=require({DOOR_JS});process.stdout.write(JSON.stringify(D.doorModel({json.dumps(base)})));")
+    blocked = node(script)["button"]["blocked"]
+    assert blocked.startswith("Le moteur vidéo de Jarvis n’est pas prêt (non installé) : demandez à Jarvis de l’installer ou de le réparer")
+    assert "MCP" not in blocked and "Plugins externes" not in blocked
