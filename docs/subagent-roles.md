@@ -830,3 +830,105 @@ changé). L'instantané ne fait jamais échouer une écriture réussie : si la r
 `GET` dont la lecture échoue rend `500 role_routing_snapshot_failed`. Journal :
 `subagent_role_routing.saved|restored|rejected|read|catalog_failed|snapshot_failed`, avec `role_id` canonique
 (alias résolu, `null` si inconnu) et `role_marker` (le mot reçu, borné).
+
+## 11. Recherche : existant d'abord (édition Presentation, V1.2 Slice 03)
+
+En édition `presentation` (`subagent_roles.reuses_research`, même prédicat que le condensé `summary.md`), une
+recherche part de ce qui existe et de sa fraîcheur, sur la pile existante : aucun second orchestrateur, les
+Work Methods restent des heuristiques, aucun graphe figé. En `full`, rien ne change (textes identiques à
+l'octet, `dump_full.py` du LOG).
+
+**Document de recherche.** Une recherche substantielle laisse `documents/research/<sujet-court>.md` dans la
+mémoire du Board (convention que la Slice 04 normalise), qui commence par un front-matter lisible et analysable
+(`subagent_roles.RESEARCH_FRONT_MATTER_TEMPLATE`, lu par `research_freshness.parse_front_matter`) :
+
+```text
+---
+topic: Modèles d'OpenAI disponibles
+scope: modèles de l'API, prix exclus
+checked_at: 2026-10-27
+volatility: high
+uncertainty: GPT-6 Pro cité par un seul tracker tiers
+sources:
+  - https://developers.openai.com/api/docs/changelog | date: 2026-10-26 | checked: 2026-10-27
+  - https://en.wikipedia.org/wiki/GPT-6 | checked: 2026-10-27
+---
+```
+
+`volatility` : `high` (semaines : modèles, prix, versions), `medium` (mois), `low` (stable) ; `faible`,
+`moyenne`, `forte` sont acceptés. Par source : `date` (de la source), `checked` (de sa vérification),
+`volatility` (si elle diffère du sujet). Après un rafraîchissement partiel, seules les sources revérifiées
+prennent la nouvelle date `checked`.
+
+**Décision déterministe** (`jarvis/domain/research_freshness.py`, `decide`, pure ; tests
+`tests/unit/test_research_freshness.py`). Pas de durée de vie universelle : l'âge toléré dépend de la
+volatilité (`MAX_AGE_DAYS` : 30 j `high`, 180 j `medium`, 730 j `low` ; `medium` par défaut), et une demande
+d'actualité le réduit à `RECENCY_MAX_AGE_DAYS` = 7 j. Mots d'actualité (`recency_terms`, mots entiers, sans
+accents ni casse) : dernier·e·s, actuel·le·s, actuellement, aujourd'hui, en ce moment, maintenant, récent·e·s,
+à jour, cette année, ce mois, cette semaine, latest, current, today, now, newest, up to date, this year, et
+l'année en cours écrite en chiffres.
+
+| Ordre | Cas | Action | Raison |
+| --- | --- | --- | --- |
+| 1 | aucun document | `new_research` | `no_document` |
+| 2 | pas de front-matter ou pas de `checked_at` lisible | `full_refresh` | `freshness_unknown` |
+| 3 | `checked_at` dans le futur | `full_refresh` | `checked_at_in_future` |
+| 4 | demande d'actualité et document vérifié il y a plus de 7 j | `full_refresh` | `recency_requested` |
+| 5 | aucune source au-delà de son âge toléré | `reuse` | `fresh` |
+| 5 | toutes les sources au-delà | `full_refresh` | `stale` |
+| 5 | certaines sources au-delà | `partial_refresh` (sources nommées) | `partially_stale` |
+
+Une source `high` déjà plus vieille que son âge toléré au moment de sa vérification (`checked - date`) compte
+périmée. Sans source citée, le document entier est jugé à la volatilité du sujet.
+
+Exemples : une note du 24 octobre 2026, `medium`, et « combien de VAE vendus en 2025 ? » → `reuse` ; une note
+de mars 2025 et « quels sont les derniers modèles d'OpenAI ? » → `full_refresh` (`recency_requested`) ; une note
+stable dont une source de prix `high` a trois mois → `partial_refresh` de cette seule source.
+
+**Où la décision est prise.** Pas par le modèle : Core la calcule à chaque tour, sur le texte du tour
+(`BrainOrchestrator._turn_board` → `SessionManager.board_context(conversation_id, request=…)` →
+`board_hydration.with_board_research` : au plus 8 fichiers `.md` de `documents/research/`, 2 Kio de tête
+chacun). Elle voyage dans le bloc `board` (`memory.research = {documents, recency}`, absent hors Presentation
+et sans document) et le Control Center la rend sous la mémoire, décodée strictement
+(`board_brief.render_board_research`) :
+
+```text
+Recherches du Board (documents/research), fraîcheur décidée par JARVIS pour ce tour (demande d'actualité : « derniers ») :
+- documents/research/openai-modeles.md : « Modèles d'OpenAI disponibles », vérifié le 2025-03-02, volatilité forte → tout revérifier (la demande réclame l'état actuel)
+```
+
+Trace : `core.research.freshness_decided` (`board_id`, `conversation_id`, `today`, `recency`, `unread`,
+`documents[]` : `path`, `action`, `reason`, `checked_at`, `stale_count`), un par tour dont le Board a des
+documents de recherche.
+
+**Ce que fait le cerveau** (`claude_local.presentation_research_section`, section `RECHERCHE : EXISTANT
+D'ABORD`, et une ligne `Réutilisation` à l'ancre S02-S03) : réutiliser → répondre depuis le document (une
+lecture), en disant de quand date sa vérification, sans web ; rafraîchir seulement → un seul `[general]
+[web-research]` pour les sources nommées ; tout revérifier ou rien au Board → recherche neuve : question ciblée
+→ `[general] [web-research]` (et `[general] [research]` en parallèle si le contexte global ou Drive peut y
+répondre), comparer, choisir, faire l'état d'un sujet → un seul `[general] [research-lead]`. Toujours en
+arrière-plan ; la consigne porte les mots de l'utilisateur, l'identifiant du Board, le chemin du document et sa
+décision. Cas B : les aides partent « selon RECHERCHE : EXISTANT D'ABORD (le web seulement pour ce qui manque
+ou est périmé) » au lieu de « en parallèle ».
+
+**Choix de latence (justifié).** La découverte du Board ne coûte aucun tour d'agent : elle est déjà dans le
+bloc du tour. Quand rien n'existe au Board, documentaire (contexte global, Drive) et web partent ensemble,
+comme avant : aucune latence ajoutée. On n'attend un agent documentaire avant le web que lorsque le Board a déjà
+un document, et alors la décision dit si le web sert.
+
+**Ce que reçoivent les rôles de recherche** (`research`, `web-research`, `research-lead` ;
+`subagent_roles.research_reuse_text`, bloc `SOURCES EXISTANTES ET FRAÎCHEUR` apposé par le hook entre les
+instructions et les capacités) : l'existant d'abord (documents de recherche du Board de la consigne, missions,
+Dossier, `knowledge_search`, `drive_search`/`drive_read` quand Drive est connecté) ; lectures directes limitées à
+la mémoire de ce Board et à la Session ouverte ; un autre Board seulement si la consigne le demande ou le nomme,
+par son identifiant ; un document n'est pas vrai parce qu'il existe ; le web pour ce qui manque ou est périmé
+(sources primaires, pages ouvertes, dates gardées, contradictions dites) ; le gabarit du front-matter. La
+direction de recherche reçoit en plus `RESEARCH_LEAD_REUSE_LINE` : elle orchestre selon la question (documentaire
+lu elle-même ou confié à `[general] [research]`, web à `[general] [web-research]`, en parallèle quand les
+angles sont indépendants), relation `adversary` quand l'écart est mince, `qa` avant une synthèse qui engage,
+`communication` entre agents qui partagent un angle ; pas pour chaque question.
+
+**Topologie dans la trace.** `agent.declared` porte `role_id`, `caller_agent_id` (le parent ; `null` = le
+cerveau), `mission_id`, `mission_owner`, `work_method` et, depuis cette Slice, `run_in_background`.
+
+IGuard (`contract_pending`) n'est pas nommé : la recherche fonctionne sans lui.

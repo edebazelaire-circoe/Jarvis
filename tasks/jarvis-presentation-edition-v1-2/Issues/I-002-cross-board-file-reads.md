@@ -1,6 +1,6 @@
 # I-002 — Lectures de fichiers entre Boards en édition confinée (reprise QA de la Slice 02)
 
-Statut : **ouvert**, correction proposée hors Slice 02 (décision de l'agent 0 attendue). Pas une régression de la V1.2 :
+Statut : **ouvert** ; correction 1 faite par la Slice 03 (voir fin), en attente de QA ; correction 2 non retenue. Pas une régression de la V1.2 :
 l'accès existe depuis board-memory-workspace-inspector S03 et la Slice 01 de la V1 Presentation.
 
 ## Constat (trace réelle S02, `scratchpad\v12s02\evidence\trace.jsonl`)
@@ -64,3 +64,25 @@ rendu ses fichiers aussi.
 - **Correction 1 (dossiers `--add-dir`) : confiée à la Slice 03.** En édition confinée, les lectures directes de fichiers (Read/Grep/Glob) sont limitées à la mémoire du Board de l'agent et au dossier de la Session ouverte (plus les connaissances globales nécessaires), avec relance ou reconfiguration de la CLI au rattachement à un autre Board. La Slice 03 possède la découverte des sources existantes et doit poser ces frontières.
 - **Correction 2 (outils MCP par identifiant) : non retenue.** L'inspection non activante d'un autre Board par son identifiant (`board_memory_*`, `board_inspect`, `dossier_*`) est un geste explicite, tracé et documenté (`docs/boards.md`), utile pour réutiliser la recherche d'un autre projet de l'utilisateur à sa demande. Ce qui est refusé, c'est le balayage implicite de tous les Boards par le système de fichiers. La Slice 03 précise dans la consigne de recherche que la découverte porte sur le Board courant et les connaissances globales, et qu'un autre Board n'est lu que sur demande ou référence explicite.
 - `origin: "brain"` des écritures de sous-agents et lignes invalides de `trace.jsonl` : restent ouverts ici, non bloquants.
+
+## Correction 1 faite (Slice 03, agent d'implémentation, 2026-10-27, code `79cf6813`)
+- **Grant par Board** en édition confinée : `ClaudeLocalAgent._board_scoped_dirs` remplace `<data_root>/boards`
+  par `<data_root>/boards/<board_id>/memory` et `<data_root>/sessions` par `<data_root>/sessions/<jarvis_session_id>`,
+  pour le Board et la Session de l'entrée du pool (`board_scope`, posé par `ControlCenter._wire_agent` ;
+  `sessions_root` par `_wire_agent` et `_grant_dirs`). Dossiers créés au besoin (`ensure_folder_tree`, ids
+  vérifiés) ; refus dit une fois (`agent_board_memory_dir_unavailable`, `agent_session_dir_unavailable`). Un agent
+  sans liaison ne reçoit ni Board ni Session. `agent.start` porte `board_scope`. `full` inchangé.
+- **Relance au rattachement** : `board_scope_stale()` (CLI lancé pour une autre liaison) compte comme un grant
+  manquant (`_lacks_workspace_grant`) : relance `--resume` à l'adoption (`session_resume`) et avant un tour
+  (`board_scope`), jamais pendant un tour ni un travail. Trace réelle : démarrage sans liaison (`board_scope
+  [null, null]`, aucun dossier de Board), adoption, relance avec `boards\default\memory` et
+  `sessions\jsess_55af…` seulement.
+- **Preuve réelle** (bac S03) : un `[general] [research]` du Board A fait `Grep`/`Glob` sur `<data>\boards` et
+  `<data>\sessions` : refusés « is outside … boards\default\memory, sessions\<Session ouverte> … » ; rien de B.
+- **Consignes** : la découverte porte sur le Board courant et les connaissances globales ; un autre Board se lit
+  par les outils `board_*` avec son identifiant, sur demande ou référence explicite (prompt confiné, note des
+  sous-agents, bloc des rôles de recherche, section `RECHERCHE : EXISTANT D'ABORD`).
+- **Reste lisible par chemin** (non partitionné par Board) : `<data>/artifacts` (pièces jointes) et
+  `<data>/local_capabilities` (aperçus Remotion). Documenté dans `docs/product-capabilities.md` › *Reading scope*.
+- Statut : correction 1 **faite**, en attente de QA ; correction 2 non retenue (décision ci-dessus) ; autres
+  constats inchangés.

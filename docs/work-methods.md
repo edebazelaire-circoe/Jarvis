@@ -41,6 +41,27 @@ sa source canonique ; le contrat des relations est [agent-relations.md](agent-re
   fuseau) et des références de preuve bornées (`evidence_refs` : ids de mission, de relation QA,
   d'artefact ; jamais de raisonnement). La promotion est un acte explicite, jamais un effet de bord (D24).
 
+## Versions livrées (garde d'empreinte, V1.2 Slice 03)
+
+Une méthode **livrée** (`BUILTIN_METHODS`) suit la même règle qu'une version promue : `id@version` désigne un
+contenu, pour toujours. Les faits `work_method`, l'historique des missions et l'apprentissage des candidats
+citent la clé, pas le texte : réécrire `deep-research@1` changerait en silence ce que ces preuves désignent.
+
+- Changer quoi que ce soit d'une méthode livrée (nom, résumé, principes, critères, relations, rôles) = publier
+  la version suivante dans le code (`version=2`), jamais réécrire la version publiée.
+- `tests/unit/test_work_methods_fingerprint.py` fige l'empreinte (sha256 de `to_payload()` aux clés triées et
+  du texte `render_method`) de chaque version livrée dans `SHIPPED_FINGERPRINTS`. Un texte changé sous la même
+  clé fait échouer le test (« publiez la version N+1 ») ; une nouvelle version ajoute sa ligne et garde celle de
+  l'ancienne (historique, jamais retirée) ; la version livrée est toujours la plus récente de l'historique.
+- Une nouvelle version livrée doit dépasser toute version déjà **promue** de la même méthode sur les postes :
+  sinon `promotion_refusal` écarte la promue (`work_method_version_not_after_builtin`) et deux contenus
+  porteraient la même clé. Avant de publier `@N`, vérifier la table `work_method_versions`.
+
+Exemple : la discipline « existant d'abord, fraîcheur explicite » de la V1.2 Slice 03 n'a **pas** changé
+`quick/deep/comparative-research@1` : elle est propre à l'édition Presentation et vit dans le bloc
+`SOURCES EXISTANTES ET FRAÎCHEUR` des rôles de recherche ([subagent-roles.md](subagent-roles.md) § 11), ce qui
+garde `full` identique à l'octet et les versions publiées intactes.
+
 ## Choix par l'appelant
 
 Depuis la Slice 05, l'agent qui lance un sous-agent peut nommer une méthode après le rôle

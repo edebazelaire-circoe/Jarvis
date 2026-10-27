@@ -415,6 +415,7 @@ gives back A's memory.
 | `memory.summary` | head of `summary.md` read **by name** (case ignored, even when the 40-entry manifest stops before it), at most `MAX_BRAIN_BOARD_SUMMARY_BYTES = 2 048` UTF-8 bytes, cut on a whole character; `summary_clipped: true` when the file goes on |
 | `memory.error` | stable code when the memory cannot be read (`board_memory_unsafe`, `board_memory_failed`, a `memory_*` code): no entries, no summary |
 | `memory.summary_error` | only `summary.md` is unreadable (binary, invalid UTF-8): the manifest stays |
+| `memory.research` | `presentation` only (V1.2 Slice 03): `{documents[], recency[]}`, at most 8 `.md` files of `documents/research/` with their freshness decision for the turn's text (`research_freshness.decide`); absent otherwise. Rendered « Recherches du Board … » ([subagent-roles.md](subagent-roles.md) § 11) |
 
 Budget: the Board part keeps its own 2 048 characters (memory **not**
 counted there); the memory adds at most 40 entries / 2 048 serialized
@@ -453,8 +454,12 @@ the Board line:
 `jarvis/app.py`, `ClaudeLocalAgent.boards_dir`, created with
 `safe_folders.ensure_folder_tree` before each launch; refused or impossible:
 `agent.add_dir_refused` / `agent_boards_dir_unavailable` once, and the CLI
-starts without it). Constant for the Control Center's life: a Board switch
-relaunches nothing. Same caveat as `sessions/`: with `bypassPermissions` it is
+starts without it). Constant for the Control Center's life in `full`: a Board
+switch relaunches nothing. In a confined edition (`presentation`, V1.2 Slice
+03, I-002 correction 1) the grant is scoped to the pool entry: only
+`<data_root>/boards/<board_id>/memory` and `<data_root>/sessions/<jarvis_session_id>`,
+and the unbound foreground is relaunched (`--resume`) once adopted
+([product-capabilities.md](product-capabilities.md) › *Reading scope*). Same caveat as `sessions/`: with `bypassPermissions` it is
 a grant, not a security boundary. Codex gets no `writable_roots` entry for it
 (its default `danger-full-access` writes anywhere; `workspace-write` cannot
 write Board memory — accepted limit: Codex never receives the native MCP
