@@ -145,3 +145,35 @@ Deux rapports IA réels : 0,097 $ + 0,091 $ = **0,188 $** (budget 0,20 $).
 - Le balayage de `.work-*` à l'ouverture suppose une seule création à la fois sur ce dossier : une commande
   `support-bundle` lancée pendant l'ouverture du Control Center pourrait perdre son dossier de travail (elle échoue
   alors avec sa cause, sans paquet partiel).
+
+
+## Seconde reprise (2026-10-27, après la contre-relecture FAIL de `qa/rework-review.md`)
+
+Commit de code `c31bf6f4`. Les sondes de la contre-relecture (`v12s07cr/probe_redact.py`, `probe_fp.py`,
+`probe_snap.py`, `probe_real2.py`) sont rejouées et reprises en tests dans `tests/unit/test_support_report_qa.py`
+(section « seconde reprise »).
+
+| Point | Correctif |
+| --- | --- |
+| **B1'** | `_NAMED_VALUE` accepte les préfixes `export `, `$env:`, `set ` / `set "` ; `setx NOM valeur` a sa propre expression ; `_mask_named` reprend la recherche au début de la valeur d'un nom refusé (un nom n'est jamais avalé) ; valeurs entre guillemets échappés (`\"…\"`, JSON dans une chaîne) reconnues. Canaris `$env:` et `setx` absents du zip, de la base, de `report.md` et du prompt (test). |
+| **M-a** | Objets `{"name"|"key"|"header": "<NOM>", "value": "…"}` dans les deux ordres, guillemets échappés ou non (texte, cellules), et dans les structures (`_walk`). |
+| **m-a** | Noms de secret par liste explicite et testée : mots `TOKEN`, `SECRET`, `PASSWORD`… ; `KEY` seulement après un qualificatif (`API`, `ACCESS`, `PRIVATE`, `SESSION`, `SUBSCRIPTION`, `CLIENT`… ou un fournisseur) ; mots descriptifs étendus (`REF`, `PUBLIC`, `ERROR`, `IDEMPOTENCY`, `SUPERSEDES`, `OUTPUT`, `SORT`, `PARTITION`, `PRIMARY`, `DEDUPE`, `HAS`, `SET`…) ; `PASS` et `SIGNATURE` retirés. Copie de la base réelle `jarvis.sqlite3.v9.bak` (18,6 Mo) : **1 cellule** changée (au lieu de 8 647 réécrites / 422 masquées), et c'est le masquage canonique des plugins MCP (forme JWT sur des `tool_id` pointés `circoetoolbox-server-production.infomaniak.…`), inchangé et consigné. Les 20 échantillons de `probe_fp.py` ressortent à l'identique (test), sauf trois comportements canoniques consignés (`signature`, mot après `Bearer `, chemin personnel → `<user>` voulu). |
+| **m-b** | `cell` = une passe de `text` sur le texte brut ; le JSON n'est plus analysé ni réécrit ; `_mask_column` lit chaque cellule une fois et compte exactement les cellules changées ; une cellule sans secret reste identique (test). Mesures : base synthétique de 62 Mo (`probe_snap.py`) **43 s** (au lieu de 158 s), copie réelle de 18,6 Mo **10,4 s** (au lieu de 30 s). L'échéance de création de l'interface suit la taille des bases annoncée par l'aperçu (`createDeadline` : 210 s au moins, puis 150 s + 1,5 s par Mo ; test). |
+| **m-c** | Blocs PEM/PGP : le corps ne traverse jamais `-----` et s'arrête au marqueur suivant (masqué quand même) ; PuTTY : corps jusqu'au marqueur PuTTY suivant. `BEGIN ×8000`, `Private-Lines ×16000`, `PuTTY-User-Key-File ×8000` : moins de 2 s (test ; 0,08-0,09 s mesurés). |
+| **m-d** | Verrou d'envoi pour tout le service (un envoi en attente bloque tout autre paquet : 409) ; l'aperçu dit `send_in_progress` ; la description modifiée ou la réouverture du panneau ne débloquent plus « Envoyer » (tests service et navigateur). |
+| **m-f** | Tests qui tuent les mutations « extension en majuscules » (`ID_RSA.PEM`, `client.Key`, `vault.P12`) et « découpe camelCase » (`sessionKey`, `privateKey`), vérifié par mutation ; la mutation `MAX_JSON_DEPTH` n'a plus d'objet (plus d'analyse JSON) ; le code `joined` redondant est retiré. |
+| m-e | Consigné, non traité : paires encodées dans une URL (`client_secret%3D…`), liste YAML sous une clé sensible, base64 d'un JSON de secrets (limites documentées dans `docs/support-report.md`). |
+
+### Preuves
+
+- Tests : `test_support_report_qa.py` (56), `test_support_report.py`, `test_support_report_js.py`,
+  `test_support_bundle.py`, `test_diagnostic_redaction.py`, `test_release_tooling.py`,
+  `test_cli_stream_tool_redaction.py`, `test_control_center_relay_whitelist.py`, `test_product_readiness.py`,
+  `test_product_readiness_js.py`, `test_brain_cli.py`, `test_v2_architecture.py`, `test_control_center_shell_layers.py`,
+  `test_mcp_plugin_domain.py`, `test_mcp_plugin_service.py`, `test_mcp_plugin_store_sqlite.py` : **445 passés**, 0 échec ;
+  navigateur et node du rapport : 8 passés.
+- Sondes : `probe_redact.py` → seules fuites restantes : `yaml_list`, `url_enc`, `url_enc_full` (m-e) ; `probe_fp.py` →
+  3 différences, toutes canoniques ou voulues ; `probe_snap.py` → 6 canaris absents, `freelist 0`, cellules
+  pathologiques ≤ 1,2 s ; `v12s07qa/probe_canaries.py` → `LEAKS: {}`, `prompt leaks: []`.
+- La copie de la sauvegarde réelle a été lue seule (source `.bak` jamais modifiée) puis la copie et son instantané
+  retirés après mesure. Aucun JARVIS lancé, aucun MAPI, aucun appel de modèle (0 $).
