@@ -1,0 +1,57 @@
+{
+  "schema": "jarvis.package-runtimes",
+  "schema_version": 1,
+  "_comment": "Runtimes privés épinglés du paquet macOS (docs/macos-portability.md, Slice 08 de la V1.2). PLAN : aucun paquet macOS n'est construit tant que le packager n'existe pas. Versions alignées sur packaging/windows/runtimes.json. Empreintes relevées le 2026-10-27 dans les fichiers de sommes publiés par l'éditeur ET recalculées sur l'archive téléchargée (voir checksum_source). python.org ne publie pas de Python relocalisable pour macOS (seulement un .pkg universel qui s'installe dans /Library) : la source est python-build-standalone (Astral), archive install_only.",
+  "architectures": {
+    "arm64": {
+      "python": {
+        "version": "3.14.6",
+        "build": "20260804",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260804/cpython-3.14.6+20260804-aarch64-apple-darwin-install_only.tar.gz",
+        "sha256": "a39d12dc9b2ce468e368f8a868e4eec0f8723e37935c1fadad7c4b8e07d3f74a",
+        "size": 26170048,
+        "checksum_source": "https://github.com/astral-sh/python-build-standalone/releases/download/20260804/SHA256SUMS",
+        "license": "PSF-2.0 (CPython) ; bibliothèques liées listées par python-build-standalone",
+        "license_file": "to-verify-on-first-build",
+        "strip_components": 1,
+        "executable": "bin/python3"
+      },
+      "node": {
+        "version": "24.21.0",
+        "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-arm64.tar.gz",
+        "sha256": "bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057",
+        "size": 52909993,
+        "checksum_source": "https://nodejs.org/dist/v24.21.0/SHASUMS256.txt",
+        "license": "MIT (Node.js; bundled dependencies listed in its LICENSE, npm Artistic-2.0)",
+        "license_file": "LICENSE",
+        "strip_components": 1,
+        "executable": "bin/node"
+      }
+    },
+    "x64": {
+      "python": {
+        "version": "3.14.6",
+        "build": "20260804",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260804/cpython-3.14.6+20260804-x86_64-apple-darwin-install_only.tar.gz",
+        "sha256": "dd03b9ea9a52c362e1846db27acfbc590c7c591f02598e405fd82c83debef313",
+        "size": 26133103,
+        "checksum_source": "https://github.com/astral-sh/python-build-standalone/releases/download/20260804/SHA256SUMS",
+        "license": "PSF-2.0 (CPython) ; bibliothèques liées listées par python-build-standalone",
+        "license_file": "to-verify-on-first-build",
+        "strip_components": 1,
+        "executable": "bin/python3"
+      },
+      "node": {
+        "version": "24.21.0",
+        "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-x64.tar.gz",
+        "sha256": "1462cb3b3046b815cf8ea436d3da450ec1a9f11dac7e5a46b0ada5305d7e8097",
+        "size": 54203979,
+        "checksum_source": "https://nodejs.org/dist/v24.21.0/SHASUMS256.txt",
+        "license": "MIT (Node.js; bundled dependencies listed in its LICENSE, npm Artistic-2.0)",
+        "license_file": "LICENSE",
+        "strip_components": 1,
+        "executable": "bin/node"
+      }
+    }
+  }
+}

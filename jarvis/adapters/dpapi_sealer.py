@@ -6,6 +6,11 @@
   altéré est refusé (`SealerError`).
 - `UnavailableSealer` : hors Windows. `available` faux ⇒ le coffre refuse tout
   secret (`mcp_vault_unavailable`), **aucun repli en clair**.
+- macOS (Slice 08 V1.2, `docs/macos-portability.md` › *Secrets*) : le scellement par le Trousseau
+  n'est PAS encore écrit (ni `keyring` ni autre liaison au Trousseau dans les dépendances, aucun Mac
+  pour l'éprouver). `default_sealer` y rend un `UnavailableSealer` qui le dit
+  (`MACOS_KEYCHAIN_PENDING`) : un produit installé sur Mac refuse d'enregistrer une clé plutôt que de
+  l'écrire en clair. Bloquant de `HV-V12-MAC-01`.
 
 Slice 05 presentation-edition : le même scellement sert les clés API du Control Center et les
 jetons Google OAuth de l'édition produit (`jarvis/runtime/local_secrets.py`), avec une
@@ -27,6 +32,9 @@ from jarvis.ports.mcp_plugins import SealerError
 DPAPI_SCHEME = "dpapi-user-v1"
 DPAPI_ENTROPY = b"jarvis-mcp-v1"
 CRYPTPROTECT_UI_FORBIDDEN = 0x1
+#: Raison rendue sur macOS tant que le scellement par le Trousseau n'existe pas (refus, jamais de clair).
+MACOS_KEYCHAIN_PENDING = ("macOS Keychain sealing is not implemented yet (docs/macos-portability.md, Secrets): "
+                          "Jarvis refuses to store secrets in clear text")
 
 
 class _DataBlob(ctypes.Structure):
@@ -107,11 +115,13 @@ class UnavailableSealer:
 
 
 def default_sealer(entropy: bytes = DPAPI_ENTROPY) -> DpapiSealer | UnavailableSealer:
-    """DPAPI sous Windows, sinon `UnavailableSealer` (injecté par `app.py:_run_core_v2`)."""
+    """DPAPI sous Windows, sinon `UnavailableSealer` (injecté par `app.py:_run_core_v2`) ; macOS : raison explicite."""
 
     if sys.platform == "win32":
         sealer = DpapiSealer(entropy)
         if sealer.available:
             return sealer
         return UnavailableSealer(sealer.unavailable_reason or "DPAPI unavailable")
+    if sys.platform == "darwin":
+        return UnavailableSealer(MACOS_KEYCHAIN_PENDING)
     return UnavailableSealer()

@@ -33,6 +33,10 @@ n'y change rien. Cette résolution est faite en un seul endroit,
 Ce qui précède décrit un **checkout de développement** (dépôt, worktree, bac à
 sable). Un **produit installé** (Presentation Edition, décisions D04/D05) a une
 maison stable par utilisateur Windows, indépendante du dossier du programme.
+macOS (Slice 08 de la V1.2, **non supporté** avant `HV-V12-MAC-01`) : même
+contrat, maison `~/Library/Application Support/CIRCOE/Jarvis` choisie par le
+même adaptateur (`product_home`) ; table complète :
+[macos-portability.md](macos-portability.md).
 
 **Signal d'installation** (`jarvis/installation.py`, seule source) : le fichier
 `jarvis-product.json`, posé par le paquet d'installation à côté du paquet

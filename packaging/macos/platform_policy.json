@@ -1,0 +1,23 @@
+{
+  "schema": "jarvis.platform-policy",
+  "schema_version": 1,
+  "_comment": "Écarts de composants tiers entre les paquets Windows et macOS (docs/macos-portability.md, Slice 08 de la V1.2). La politique de licences commune reste packaging/windows/third_party_policy.json ; ce fichier dit seulement ce qui change sur macOS. Les verrous macOS (un par architecture) restent à générer sur un runner macOS : packaging/windows/requirements.lock ne porte que des roues win_amd64.",
+  "platform": "macos",
+  "architectures": ["arm64", "x64"],
+  "minimum_macos": "13.5",
+  "minimum_macos_reason": "Node.js 24 exige macOS 13.5 ou plus récent ; Python 3.14 (python-build-standalone) en exige moins.",
+  "windows_only_packages": {
+    "pywin32": "Dépendance Windows de mcp (marqueur sys_platform == 'win32') : jamais dans un paquet macOS."
+  },
+  "macos_only_packages": {
+    "pyobjc-core": {"license": "MIT", "status": "to-lock", "reason": "Dépendance de pyobjc-framework-* (pynput sous macOS)."},
+    "pyobjc-framework-cocoa": {"license": "MIT", "status": "to-lock", "reason": "Dépendance de pyobjc-framework-quartz."},
+    "pyobjc-framework-quartz": {"license": "MIT", "status": "to-lock", "reason": "pynput : sys_platform == 'darwin'."},
+    "pyobjc-framework-applicationservices": {"license": "MIT", "status": "to-lock", "reason": "pynput : sys_platform == 'darwin'."}
+  },
+  "windows_file_suffixes": [".exe", ".dll", ".cmd", ".bat", ".ps1", ".pyd"],
+  "locks": {
+    "arm64": "requirements-macos-arm64.lock (à générer sur macos-latest, --platform macosx_11_0_arm64)",
+    "x64": "requirements-macos-x64.lock (à générer sur macos-13, --platform macosx_10_13_x86_64)"
+  }
+}

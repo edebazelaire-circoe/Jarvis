@@ -105,7 +105,14 @@ def _browser_candidates(environ: Mapping[str, str], which: Callable[[str], str |
         if base:
             found.append(str(Path(base) / "Microsoft" / "Edge" / "Application" / "msedge.exe"))
     elif sys.platform == "darwin":
-        found.append("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        # Slice 08 V1.2 (non exécuté sur un vrai Mac, `docs/macos-portability.md`) : Chrome puis Edge puis Chromium,
+        # dans /Applications puis ~/Applications (installation sans droits d'administrateur).
+        bundles = (("Google Chrome.app", "Google Chrome"), ("Microsoft Edge.app", "Microsoft Edge"),
+                   ("Chromium.app", "Chromium"))
+        home = environ.get("HOME", "").strip()
+        roots = ["/Applications", *([f"{home.rstrip('/')}/Applications"] if home.startswith("/") else [])]
+        for root in roots:
+            found += [f"{root}/{bundle}/Contents/MacOS/{binary}" for bundle, binary in bundles]
     else:
         for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
             path = which(name)

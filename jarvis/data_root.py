@@ -48,7 +48,7 @@ from jarvis.adapters import safe_folders
 from jarvis.adapters.global_context import GLOBAL_CONTEXT_DIR
 from jarvis.adapters.safe_tree import UnsafeTree, copy_tree
 from jarvis.environment import PROJECT_ROOT
-from jarvis.installation import PRODUCT_HOME_LABEL, Installation, detect_installation
+from jarvis.installation import Installation, detect_installation
 
 DATA_ROOT_ENV = "JARVIS_DATA_ROOT"
 RUNTIME_DIR_ENV = "JARVIS_RUNTIME_DIR"
@@ -124,6 +124,7 @@ def installation_diagnostics(data_root: Path, runtime_root: Path, environ: Mappi
     """Bloc `installation` de `/v1/health` et du journal de démarrage : mode et provenance des racines.
 
     Aucun chemin absolu : la maison du produit est nommée `%LOCALAPPDATA%/CIRCOE/Jarvis`
+    (macOS : `~/Library/Application Support/CIRCOE/Jarvis`, `ProductHome.label`)
     (jamais le nom de l'utilisateur), une racine imposée par variable est `override`,
     la racine de développement garde son seul nom de dossier (`<dépôt>-<empreinte>`).
     """
@@ -134,7 +135,7 @@ def installation_diagnostics(data_root: Path, runtime_root: Path, environ: Mappi
     def describe(root: Path, sub: str, *, override: bool) -> dict:
         root = Path(root).resolve()
         if installation.installed and root == (getattr(installation.home, sub)).resolve():
-            return {"source": "product_home", "label": PRODUCT_HOME_LABEL + "\\" + sub}
+            return {"source": "product_home", "label": installation.home.sub_label(sub)}
         if override:
             return {"source": "override", "label": None}
         if sub == "data" and root == default_data_root(project_root or PROJECT_ROOT).resolve():
@@ -142,7 +143,7 @@ def installation_diagnostics(data_root: Path, runtime_root: Path, environ: Mappi
         return {"source": "development_default" if sub == "runtime" else "followed", "label": None}
 
     return {"mode": installation.mode.value,
-            "product_home": PRODUCT_HOME_LABEL if installation.installed else None,
+            "product_home": installation.home.label if installation.installed else None,
             "data_root": describe(data_root, "data", override=bool(env.get(DATA_ROOT_ENV, "").strip())),
             "runtime_root": describe(runtime_root, "runtime", override=bool(str(env.get(RUNTIME_DIR_ENV) or "").strip()))}
 

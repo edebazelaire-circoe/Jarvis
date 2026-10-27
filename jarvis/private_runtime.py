@@ -9,6 +9,8 @@ paquet pose à côté du code :
         app/                    CODE_ROOT : paquet `jarvis/` + marqueur `jarvis-product.json`
         runtime/python/         Python embarquable épinglé (+ `Lib/site-packages` verrouillé)
         runtime/node/           Node.js épinglé (npm livré avec lui)
+        (macOS, Slice 08 V1.2, non supporté avant HV-V12-MAC-01 : `runtime/python/bin/python3`,
+         `runtime/python/lib/python3.X/site-packages`, `runtime/node/bin/node` ; voir `docs/macos-portability.md`)
         runtime-manifest.json   manifeste machine (versions, empreintes, composants exclus, canal)
         licenses/, third-party-manifest.json
         models/wake-word/       build INTERNE seulement (HD-V12-01) : modèles openWakeWord épinglés
@@ -37,7 +39,7 @@ fait qu'à la demande (diagnostic, réparation), jamais au démarrage.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import lru_cache
 import hashlib
@@ -46,7 +48,7 @@ import os
 from pathlib import Path
 import shutil
 
-from jarvis.installation import CODE_ROOT, read_product_marker
+from jarvis.installation import CODE_ROOT, HostPlatform, host_platform, read_product_marker
 
 #: Nom du dossier du code dans le paquet : `CODE_ROOT` d'un produit installé.
 APP_DIR = "app"
@@ -94,9 +96,23 @@ class RuntimeProblem:
 
 @dataclass(frozen=True, slots=True)
 class PackageLayout:
-    """Emplacements du paquet, dérivés du seul dossier d'installation (`CODE_ROOT.parent`)."""
+    """Emplacements du paquet, dérivés du seul dossier d'installation (`CODE_ROOT.parent`).
+
+    `platform` choisit la disposition des exécutables : Windows (et `OTHER`, inchangé) `python.exe`, `node.exe`,
+    `Lib/site-packages` ; macOS `bin/python3`, `bin/node`, `lib/python3.X/site-packages` (runtimes POSIX épinglés,
+    `packaging/macos/runtimes.json`). Les arbres suivis par le manifeste ne changent pas.
+    """
 
     install_root: Path
+    platform: HostPlatform = field(default_factory=host_platform)
+
+    @property
+    def posix(self) -> bool:
+        return self.platform is HostPlatform.MACOS
+
+    @property
+    def _exe_suffix(self) -> str:
+        return "" if self.posix else ".exe"
 
     @property
     def app(self) -> Path:
@@ -108,23 +124,34 @@ class PackageLayout:
 
     @property
     def python_exe(self) -> Path:
-        return self.python_dir / "python.exe"
+        return self.python_dir / "bin" / "python3" if self.posix else self.python_dir / "python.exe"
 
     @property
     def node_dir(self) -> Path:
         return self.install_root / RUNTIME_DIR / NODE_DIR
 
     @property
+    def node_bin_dir(self) -> Path:
+        """Dossier mis en tête du PATH des enfants : `node/` (Windows), `node/bin/` (macOS)."""
+
+        return self.node_dir / "bin" if self.posix else self.node_dir
+
+    @property
     def node_exe(self) -> Path:
-        return self.node_dir / "node.exe"
+        return self.node_bin_dir / f"node{self._exe_suffix}"
 
     @property
     def ffmpeg_exe(self) -> Path:
-        return self.install_root / RUNTIME_DIR / FFMPEG_DIR / "ffmpeg.exe"
+        return self.install_root / RUNTIME_DIR / FFMPEG_DIR / f"ffmpeg{self._exe_suffix}"
 
     @property
     def site_packages(self) -> Path:
-        return self.python_dir / "Lib" / "site-packages"
+        if not self.posix:
+            return self.python_dir / "Lib" / "site-packages"
+        # `lib/python3.X/site-packages` : la mineure vient du runtime livré ; sans lui, un chemin qui n'existe pas
+        # (les vérifications de présence restent fausses, jamais une autre arborescence devinée).
+        found = sorted(self.python_dir.glob("lib/python3.*/site-packages"))
+        return found[-1] if found else self.python_dir / "lib" / "python3" / "site-packages"
 
     @property
     def wake_models_dir(self) -> Path:
@@ -167,7 +194,7 @@ class PackageLayout:
         if key == "node":
             path = self.node_exe
         elif key in {"ffmpeg", "ffprobe"} and self.ships("ffmpeg"):
-            path = self.ffmpeg_exe.with_name(f"{key}.exe")
+            path = self.ffmpeg_exe.with_name(f"{key}{self._exe_suffix}")
         elif key in {"python", "python3"}:
             path = self.python_exe
         else:
@@ -244,7 +271,7 @@ def child_path(path_value: str, *, layout: object = PROCESS) -> str:
     current = package_layout() if layout is PROCESS else layout
     if current is None:
         return path_value
-    head = str(current.node_dir)
+    head = str(current.node_bin_dir)
     parts = [part for part in str(path_value or "").split(os.pathsep) if part]
     return os.pathsep.join([head, *[p for p in parts if os.path.normcase(p) != os.path.normcase(head)]])
 
@@ -409,7 +436,7 @@ def package_channel(manifest: Mapping) -> str:
     return channel if isinstance(channel, str) else repr(channel)
 
 
-def channel_problems(install_root: Path, manifest: Mapping) -> list[str]:
+def channel_problems(install_root: Path, manifest: Mapping, *, platform: HostPlatform | None = None) -> list[str]:
     """Écarts au canal du paquet (HD-V12-01) : un paquet de production ne porte NI openWakeWord, NI onnxruntime, NI
     modèle du mot de réveil, ni composant que le manifeste tiers réserve à un autre canal. Lu sur le disque ET dans
     le manifeste tiers : une politique mal éditée au build ne suffit pas à faire passer un composant interne."""
@@ -423,7 +450,7 @@ def channel_problems(install_root: Path, manifest: Mapping) -> list[str]:
     problems = []
     if isinstance(manifest.get("models"), dict) or (root / MODELS_DIR).exists():
         problems.append(f"production: modèles livrés ({MODELS_DIR}/) réservés au build interne (HD-V12-01)")
-    site = PackageLayout(root).site_packages
+    site = PackageLayout(root, platform or host_platform()).site_packages
     for module in INTERNAL_ONLY_MODULES:
         if (site / module).exists() or any(site.glob(f"{module}-*.dist-info")):
             problems.append(f"production: {module} présent, réservé au build interne (HD-V12-01)")
@@ -467,7 +494,7 @@ def verify_package(layout: PackageLayout) -> tuple[dict | None, list[str]]:
     if not third_party.is_file() or file_sha256(third_party) != manifest.get("third_party_manifest_sha256"):
         problems.append(f"{THIRD_PARTY_MANIFEST} modifié")
     problems += [f"{name}: fichier ou dossier inattendu" for name in unexpected_entries(root, manifest)]
-    problems += channel_problems(root, manifest)
+    problems += channel_problems(root, manifest, platform=layout.platform)
     body = {key: value for key, value in manifest.items() if key != "package_sha256"}
     if package_digest(body) != manifest.get("package_sha256"):
         problems.append("package_sha256 ne correspond pas au manifeste")

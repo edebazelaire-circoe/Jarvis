@@ -48,7 +48,7 @@ RELEASE_PATTERNS = ("test_product_*.py", "test_windows_*.py", "test_private_runt
                     "test_support_bundle*.py", "test_owned_process_tree*.py", "test_process_tree*.py",
                     "test_control_center_relay_whitelist*.py", "test_product_edition*.py", "test_wake_word_install*.py",
                     "test_document_export*.py", "test_remotion_export_save_mcp.py", "test_presentation_export_after_edit.py",
-                    "test_board_edition*.py", "test_workspace_board_contract.py")
+                    "test_board_edition*.py", "test_workspace_board_contract.py", "test_macos_portability*.py")
 SUITES = ("unit", "browser", "release", "all")
 #: Codes de sortie de pytest qui disent que la session est allée au bout (0 tout passe, 1 des tests échouent).
 PYTEST_FINISHED = (0, 1)

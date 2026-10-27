@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Entitlements du Hardened Runtime (docs/macos-portability.md, Signature). PLAN, à valider sur un vrai Mac :
+     audio-input : micro sous Hardened Runtime (sans lui, l'accès est refusé même après l'accord de l'utilisateur) ;
+     allow-jit : V8 (Node privé, Remotion) ;
+     allow-unsigned-executable-memory : ctypes/libffi du Python privé ;
+     disable-library-validation : extensions natives des roues (.so) signées par leurs éditeurs, pas par CIRCOE.
+     Pas d'App Sandbox : Jarvis lance Node, Chrome et le CLI Claude, qu'un bac à sable d'application interdirait. -->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

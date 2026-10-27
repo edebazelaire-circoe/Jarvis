@@ -424,6 +424,7 @@ class CodexLocalAgent:
             async with self._process_lock:
                 if self._owned_closed:
                     raise RuntimeError("owned_agent_closed")
+                from jarvis.runtime.owned_process_tree import spawn_kwargs as owned_spawn_kwargs
                 self.process = await asyncio.create_subprocess_exec(
                     *argv,
                     cwd=str(self.cwd),
@@ -431,7 +432,7 @@ class CodexLocalAgent:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     env={**os.environ, "PYTHONUNBUFFERED": "1", **gateway_env},
-                    **({"creationflags": self._process_tree.creationflags} if self._process_tree else {}),
+                    **(owned_spawn_kwargs(self._process_tree) if self._process_tree else {}),
                 )
                 if self._process_tree:
                     self._process_tree.attach_and_resume(self.process.pid)

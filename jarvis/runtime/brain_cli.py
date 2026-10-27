@@ -13,6 +13,8 @@ Recherche (`locate`) :
    Démarrer garde le `PATH` d'avant l'installation de la CLI jusqu'à la prochaine session Windows :
    `%USERPROFILE%\\.local\\bin\\claude.exe` (installeur natif), `%APPDATA%\\npm\\claude.cmd` (npm),
    `%LOCALAPPDATA%\\Microsoft\\WinGet\\Links\\claude.exe` (winget).
+   macOS (Slice 08 V1.2, non exécuté sur un Mac) : une application lancée depuis le Finder a un `PATH` minimal, d'où
+   `~/.local/bin/claude` (installeur natif), `/opt/homebrew/bin/claude` et `/usr/local/bin/claude` (Homebrew).
 
 En développement, rien ne change : `cli_catalog.resolve_command` garde `shutil.which`.
 
@@ -29,6 +31,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from typing import Any
 
 from jarvis.domain.diagnostic_redaction import DiagnosticRedactor
@@ -46,9 +49,13 @@ CREATE_NO_WINDOW = 0x08000000
 Runner = Callable[[list[str], float], "subprocess.CompletedProcess[str]"]
 
 
-def known_locations(environ: Mapping[str, str]) -> list[Path]:
-    """Emplacements des installeurs officiels (Windows), dans l'ordre de préférence."""
+def known_locations(environ: Mapping[str, str], *, platform: str | None = None) -> list[Path]:
+    """Emplacements des installeurs officiels, dans l'ordre de préférence (`platform` : `sys.platform` simulé)."""
 
+    if (sys.platform if platform is None else platform) == "darwin":
+        home = str(environ.get("HOME") or "").strip()
+        rows = [Path(home) / ".local" / "bin" / "claude"] if home.startswith("/") else []
+        return rows + [Path("/opt/homebrew/bin/claude"), Path("/usr/local/bin/claude")]
     rows: list[Path] = []
     profile = str(environ.get("USERPROFILE") or "").strip()
     if profile:
