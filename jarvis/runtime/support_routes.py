@@ -87,6 +87,12 @@ class SupportReportService:
         self._export_destination = export_destination
         self._busy: asyncio.Lock = asyncio.Lock()
         self._started: float | None = None
+        #: Envois en cours par paquet : un second « Envoyer » pendant qu'une messagerie attend est refusé (QA S07 m3).
+        self._sending: dict[str, asyncio.Future] = {}
+        swept = SB.sweep_work_folders(self.support_dir)  # raw base copies left by a hard stop (QA S07 m4)
+        if swept:
+            self._emit("support.report.work_swept", f"{len(swept)} dossier(s) de travail orphelin(s) retiré(s)",
+                       count=len(swept))
 
     @property
     def support_dir(self) -> Path:
@@ -201,6 +207,7 @@ class SupportReportService:
 
     async def _create(self, description: str) -> dict[str, Any]:
         started = time.monotonic()
+        SB.sweep_work_folders(self.support_dir)  # under the creation lock: no other creation is using one
         self._emit("support.report.started", "Rapport de problème demandé", has_description=bool(description.strip()))
         board = await self._board()
         health = None
@@ -285,13 +292,20 @@ class SupportReportService:
         if size > SS.MAX_SEND_BYTES:
             self._emit("support.report.send_failed", "Paquet trop gros pour un courriel", level="error",
                        code="support_bundle_too_large", name=name, bytes=size)
+            self._pending(name, True)
             raise SupportRouteError(413, "support_bundle_too_large",
                                     "Ce paquet est trop gros pour un courriel : enregistrez-le et transmettez-le autrement.",
                                     f"{size} bytes > {SS.MAX_SEND_BYTES}")
+        running = self._sending.get(name)
+        if running is not None and not running.done():
+            raise SupportRouteError(409, "support_send_in_progress",
+                                    "Un envoi de ce paquet attend encore votre messagerie : terminez-le dans sa fenêtre.")
         subject, body = SS.mail_text(path, description=_description_of(path))
         self._emit("support.report.send_started", f"Envoi demandé ({self._transport.name})", name=name,
                    transport=self._transport.name)
         task = asyncio.ensure_future(asyncio.to_thread(self._transport.send, path, to=destination, subject=subject, body=body))
+        self._sending[name] = task
+        task.add_done_callback(lambda _done: self._sending.pop(name, None) if self._sending.get(name) is task else None)
         try:
             outcome = await asyncio.wait_for(asyncio.shield(task), timeout=SEND_TIMEOUT_S)
         except asyncio.TimeoutError:
@@ -304,8 +318,10 @@ class SupportReportService:
         except SS.SupportSendError as exc:
             self._emit("support.report.send_failed", f"Envoi échoué : {exc.code}", level="error", code=exc.code,
                        name=name, transport=self._transport.name, detail=exc.detail[:200])
-            raise SupportRouteError(502, exc.code, f"{exc} Le paquet est conservé : enregistrez-le pour le transmettre.",
-                                    exc.detail) from exc
+            self._pending(name, True)
+            raise SupportRouteError(502, exc.code, f"{exc} Le paquet est conservé jusqu'à son enregistrement (30 jours au "
+                                    "plus) : enregistrez-le pour le transmettre.", exc.detail) from exc
+        self._pending(name, False)
         self._emit("support.report.sent", outcome.message, name=name, transport=self._transport.name, status=outcome.status)
         return {"status": outcome.status, "message": outcome.message, "bundle": name, "destination": destination}
 
@@ -331,9 +347,20 @@ class SupportReportService:
                                     "Le paquet n'a pas pu être copié dans Documents\\Jarvis. Utilisez « Télécharger… ».",
                                     exc.detail) from exc
         label = getattr(destination, "label", "Documents\\Jarvis")
+        self._pending(name, False)
         self._emit("support.report.saved", "Paquet copié dans le dossier d'export", name=name, file_name=outcome.file_name)
         return {"status": "saved", "file_name": outcome.file_name, "root": label,
                 "message": f"Paquet enregistré dans {label} sous le nom {outcome.file_name}."}
+
+    def _pending(self, name: str, pending: bool) -> None:
+        try:
+            SB.set_pending(self.support_dir, name, pending)
+        except OSError as exc:
+            self._emit("support.report.pending_unwritable", f"Liste des paquets à garder non écrite : {type(exc).__name__}",
+                       level="warning", code="support_pending_unwritable", name=name)
+
+    def downloaded(self, name: str) -> None:
+        self._pending(name, False)
 
     def set_destination(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         value = payload.get(SS.SUPPORT_EMAIL_SETTING)
@@ -425,6 +452,7 @@ class SupportReportRoutes:
         except SupportRouteError as exc:
             return _error(exc.status, exc.code, str(exc), exc.detail)
         self._journal.emit("support.report.downloaded", "Paquet téléchargé par la page", data={"name": path.name})
+        self._service.downloaded(path.name)
         return web.FileResponse(path, headers={"Content-Disposition": f'attachment; filename="{path.name}"',
                                                "Content-Type": "application/zip", "Cache-Control": "no-store"})
 

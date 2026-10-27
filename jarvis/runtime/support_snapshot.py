@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -42,6 +43,9 @@ MAX_MEMORY_FILES = 2000
 MAX_MEMORY_DEPTH = 16
 #: Tables vidées dans l'instantané, quelle que soit leur forme : le coffre des identifiants MCP.
 SECRET_TABLES = ("mcp_credentials",)
+#: Fichiers de clé ou de coffre jamais copiés de la mémoire, même texte (QA S07 M3) : dits `excluded` au manifeste.
+KEY_FILE_SUFFIXES = frozenset({".ppk", ".pem", ".key", ".asc", ".gpg", ".pgp", ".p12", ".pfx", ".jks", ".keystore",
+                               ".kdbx", ".der", ".p8"})
 BOARD_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 
@@ -244,7 +248,8 @@ def board_memory(data_root: Path, board_id: str, mask: Callable[[str], str],
             entries.append(ManifestEntry(f"{prefix}/{relative}", "board_memory", "omitted", reason=f"unreadable:{type(exc).__name__}"))
             return
         for entry in children:
-            name = f"{relative}/{entry.name}" if relative else entry.name
+            shown = masked_name(entry.name, mask)  # a file name can carry a secret too (QA S07 M2)
+            name = f"{relative}/{shown}" if relative else shown
             path = f"{prefix}/{name}"
             try:
                 info = os.lstat(entry.path)
@@ -259,6 +264,11 @@ def board_memory(data_root: Path, board_id: str, mask: Callable[[str], str],
                 entries.append(ManifestEntry(path, "board_memory", "refused", reason="not_a_regular_file"))
             elif entry.name.startswith(".~bm") or entry.name.endswith(".tmp"):
                 continue  # intentional: a temporary of an interrupted write is never listed by the memory store either
+            elif info.st_nlink > 1:
+                # A hard link may share its bytes with a file outside the data root (QA S07 m1): never read.
+                entries.append(ManifestEntry(path, "board_memory", "refused", reason="hard_link_not_followed"))
+            elif Path(entry.name).suffix.lower() in KEY_FILE_SUFFIXES:
+                entries.append(ManifestEntry(path, "board_memory", "excluded", info.st_size, reason="key_file_never_included"))
             elif len(files) >= MAX_MEMORY_FILES:
                 entries.append(ManifestEntry(path, "board_memory", "omitted", info.st_size, reason="file_count_limit"))
             elif info.st_size > MAX_MEMORY_FILE_BYTES:
@@ -279,6 +289,16 @@ def board_memory(data_root: Path, board_id: str, mask: Callable[[str], str],
     if not files and not entries:
         entries.append(ManifestEntry(prefix, "board_memory", "omitted", reason="empty"))
     return files, entries
+
+
+def masked_name(name: str, mask: Callable[[str], str]) -> str:
+    """Le nom tel quel, ou `masque-<sha256 court><extension>` s'il porte un secret (stable d'un paquet à l'autre)."""
+
+    if mask(name) == name:
+        return name
+    suffix = Path(name).suffix
+    suffix = suffix if mask(suffix) == suffix and len(suffix) <= 12 else ""
+    return f"masque-{hashlib.sha256(name.encode('utf-8')).hexdigest()[:10]}{suffix}"
 
 
 def _read_text(path: Path) -> str | None:

@@ -173,3 +173,28 @@ def test_save_creates_then_offers_both_ways_and_the_readiness_footer_opens_the_r
     offered = r["offered"]
     assert offered["said"] == "Paquet prêt. Choisissez où l’enregistrer." and offered["roles"] == ["save-documents", "download"]
     assert _support_calls(step)[-1] == "POST /api/support/reports" and r["closed"] is True
+
+
+def test_a_send_waiting_for_the_mail_client_blocks_a_second_send(tmp_path):
+    """QA S07 m3 : la messagerie n'a pas rendu la main ; « Envoyer » est bloqué, aucun second envoi n'est demandé."""
+
+    waiting = {"answer": {"status": "waiting", "bundle": NAME,
+                          "message": "La messagerie n'a pas répondu après 30 s : si une fenêtre de rédaction est ouverte, "
+                                     "terminez l'envoi depuis celle-ci. Le paquet reste disponible."}}
+    seed = {"edition": PRESENTATION, "rail": False, "boards": _boards(("default", "Budget 2027", "presentation")),
+            "support": {"preview": _preview(tmp_path), "create": {**_created(), "delayMs": 100}, "send": waiting}}
+    actions = [
+        ["eval", "settle", "1", 1500],
+        ["eval", "open", "window.JarvisSupportReport.open({reason:'test'}).then(()=>true)", 700],
+        ["click", "consent", "#jvSupportConsent", 200],
+        ["click", "send", "#jvSupport .sp-send", 900],
+        ["eval", "waiting", DIALOG, 50],
+        ["click", "again", "#jvSupport .sp-send", 400],
+        ["eval", "again_state", DIALOG, 50],
+    ]
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed, "actions": actions}], "presentation")[0]
+    _no_errors(step)
+    r = step["results"]
+    assert r["waiting"]["send"] == "En attente de la messagerie…" and r["waiting"]["sendDisabled"] == "true"
+    assert r["again_state"]["status"].startswith("Un envoi attend encore votre messagerie")
+    assert _support_calls(step).count(f"POST /api/support/reports/{NAME}/send") == 1

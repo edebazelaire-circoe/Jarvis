@@ -35,8 +35,24 @@ download and retry stay offered. A created bundle is reused for the retry, never
 ## Bundle content (full mode)
 
 Everything is masked by the bundle's `DiagnosticRedactor` (known secrets first: `.env` values, `core.token`, local
-settings keys unsealed in memory, MCP vault credentials; then key shapes, PEM blocks, credential pairs, e-mails,
-personal paths, user name).
+settings keys unsealed in memory, MCP vault credentials; then key shapes, private-key blocks, credential pairs,
+e-mails, personal paths, user name). The `.env` read is `config\.env` of the installed product or, in development,
+the repository `.env` (`jarvis/environment.py` root; values in memory only, QA S07 M1).
+
+Masking rules added by the QA rework of the Slice (`jarvis/domain/diagnostic_redaction.py`):
+
+- **Named secrets** (`sensitive_name` / `named_secret`): a key or variable whose name has a word `TOKEN`, `KEY`,
+  `SECRET`, `PASSWORD`, `PASS`, `CREDENTIAL(S)`, `COOKIE`, `SIGNATURE`, `AUTHORIZATION`, `BEARER`, or ends with
+  `TOKEN`, `SECRET`, `PASSWORD`, `APIKEY` (camelCase split: `refreshToken`, `X-Api-Key`, `OPENAI_API_KEY`), unless a
+  descriptive word makes it a setting (`TYPE`, `FILE`, `MAX`, `HINT`…). Its non-trivial value (6 characters or more)
+  is masked: in JSON (any depth), in free text `NAME=value`, `export NAME=value`, `NAME: value` (quoted or not), and
+  in escaped JSON pairs (`\"refresh_token\": \"…\"`, any number of escapes). Identifiers and timestamps under an
+  ordinary name stay readable.
+- **JSON cells and files** (`DiagnosticRedactor.cell` / `deep`): a database text cell or a memory file that parses
+  as JSON is masked as a structure, and a string that is itself JSON is parsed and masked again (6 levels); the
+  content is kept (conversations stay readable), only the secrets go.
+- **Private-key blocks**: PEM (PKCS#1/#8, OpenSSH, legacy encrypted with `Proc-Type`/`DEK-Info`), PGP (`… PRIVATE KEY
+  BLOCK`), PuTTY (`PuTTY-User-Key-File-…` or `Private-Lines:` up to `Private-MAC:`), short JWT (`eyJ…`).
 
 | Path | Content |
 | --- | --- |
@@ -65,7 +81,12 @@ Only `<data>` (resolved root), `<runtime>` and `config\.env` (names and known se
 Board id must match `[A-Za-z0-9_-]{1,128}`; each of `boards`, `<id>`, `memory` is inspected with `lstat` (a link or
 junction is refused, `link_refused`) and the real path must stay under the data root. Inside the memory, a link,
 junction or reparse point is **never followed** (`refused`, `link_or_junction_not_followed`); binary or non-UTF-8
-files, files over 1 MiB, files past the 16 MiB budget or the 2 000-file limit are omitted with their reason.
+files, files over 1 MiB, files past the 16 MiB budget or the 2 000-file limit are omitted with their reason. A file with
+more than one hard link is refused (`hard_link_not_followed`: its bytes may live outside the data root). Key and
+keystore files (`.ppk`, `.pem`, `.key`, `.asc`, `.gpg`, `.pgp`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.kdbx`, `.der`,
+`.p8`) are never included (`excluded`, `key_file_never_included`). A file or folder **name** that carries a secret
+(the masker changes it) becomes `masque-<sha256 10 hex><extension>`, stable from one bundle to the next, in the zip
+member names and in `manifest.json`.
 
 ### Never included / omitted
 
@@ -110,18 +131,23 @@ Transport `JARVIS_SUPPORT_TRANSPORT`:
 Why MAPI: it needs no extra secret and carries the attachment; the user's own client sends it, after one more look.
 The CIRCOE Mail connector (Circuit Toolbox) classes sending as `destructive`, refused at call time in V1
 (`docs/product-connectors.md`), and takes no local attachment. A zip over 20 MiB is not mailed
-(`413 support_bundle_too_large`): save it. **A send failure never deletes the zip.** Nothing is sent without the
+(`413 support_bundle_too_large`): save it. **A send failure never deletes the zip.** While a send of a bundle is
+still running (mail client not returned, `waiting`), a second send of it is refused (`409 support_send_in_progress`)
+and the dialog shows « En attente de la messagerie… » with « Envoyer » disabled. Nothing is sent without the
 user's click on « Envoyer » with the consent box checked; there is no automatic upload or telemetry.
 
 ## Retention
 
 Bundles live in `<runtime>\support\` (`%LOCALAPPDATA%\CIRCOE\Jarvis\runtime\support\` installed). After each bundle:
 keep the 5 newest, delete any older than 30 days (the one just written is always kept), delete `*.zip.tmp` and
-`.work-*` leftovers older than one hour. Only these names are touched; `outbox\` and other files never.
+`.work-*` leftovers older than one hour. A bundle whose send failed and that was neither saved, downloaded nor sent
+since is listed in `.pending-send.json` and kept outside the count rule, until 30 days (the failure message says
+so). Every `.work-*` folder (a raw base copy left by a hard stop) is also removed when the Control Center opens the
+service and before each creation. Only these names are touched; `outbox\` and other files never.
 
 ## Diagnostics (journal `runtime\trace.jsonl`, errors also in `errors.jsonl`)
 
-`support.report.started`, `.board_unknown` (warning), `.health_unavailable` (warning), `.model_unavailable`
+`support.report.started`, `.work_swept` (orphan work folders removed), `.pending_unwritable` (warning), `.board_unknown` (warning), `.health_unavailable` (warning), `.model_unavailable`
 (warning), `.ai_failed` (warning, `code` `support_ai_<status>`), `.omissions` (info: count, reasons),
 `.created` (name, bytes, report kind, AI status, cost, duration, pruned), `.failed` (error: `support_folder_unavailable`,
 `support_collect_failed`, `support_write_failed`), `.send_started`, `.sent`, `.send_waiting` (warning),

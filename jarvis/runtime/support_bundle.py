@@ -52,7 +52,7 @@ import time
 from typing import Any
 import zipfile
 
-from jarvis.domain.diagnostic_redaction import DiagnosticRedactor
+from jarvis.domain.diagnostic_redaction import DiagnosticRedactor, secret_like, sensitive_name
 from jarvis.domain.mcp_plugins import REDACTED
 from jarvis.runtime.journal import read_jsonl_tail, tail_lines
 from jarvis.runtime.support_snapshot import (
@@ -79,17 +79,10 @@ DIAGNOSTIC_KEYS = frozenset({"error", "error_type", "exception", "code", "reason
                              "detail", "cause", "stage", "operation", "op", "role", "level", "component", "module",
                              "step", "state", "mode", "method", "exit_code", "signal", "errno"})
 _IDENTIFIER = re.compile(r"\S{1,120}")
-#: Mots (séparés par `_`, `-` ou `.`) d'un nom de variable dont la valeur est un secret quelle que soit sa forme :
-#: `INFOMANIAK_TOKEN`, `API_KEY`, `DB_PASSWORD`… Mot entier, ou fin de mot pour les formes collées (`APIKEY`,
-#: `ACCESSTOKEN`) ; jamais un morceau (`KEYBOARD_LAYOUT`, `BYPASS_HOST` ne sont pas des secrets, QA S10 x4).
-SECRET_NAME_WORDS = frozenset({"TOKEN", "KEY", "SECRET", "PASSWORD", "PASSWD", "PWD", "PASS", "PASSPHRASE",
-                               "CREDENTIAL", "CREDENTIALS", "COOKIE", "SIGNATURE", "AUTHORIZATION", "BEARER"})
-SECRET_NAME_ENDINGS = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "APIKEY", "CREDENTIAL", "CREDENTIALS")
-#: Mots qui font d'un nom « sensible » un réglage descriptif (`TOKEN_TYPE`, `KEY_FILE`, `MAX_TOKEN`, `TOKEN_EXPIRES_AT`).
-DESCRIPTIVE_NAME_WORDS = frozenset({"TYPE", "KIND", "EXPIRES", "EXPIRY", "EXPIRATION", "AT", "SCOPE", "SCOPES", "URL",
-                                    "URI", "HOST", "PORT", "MODE", "TIMEOUT", "LENGTH", "SIZE", "COUNT", "MAX", "MIN",
-                                    "LIMIT", "ENABLED", "FILE", "PATH", "DIR", "NAME", "ID", "CACHE", "LAYOUT", "HINT"})
-_TRIVIAL_VALUE = re.compile(r"(?i)(?:true|false|yes|no|on|off|none|null|enabled|disabled|[0-9.:+-]*)")
+#: Noms sensibles, valeurs en forme de secret : la règle vit dans le masqueur (`diagnostic_redaction`, QA S10 x4,
+#: V1.2 S07 B1) ; gardée ici sous ses anciens noms pour les appelants du paquet.
+_sensitive_name = sensitive_name
+_secret_like = secret_like
 MAX_FILE_BYTES = 1024 * 1024
 LOG_ROLES = ("launcher", "core", "ui", "voice")
 #: Bases dont seule la version de schéma est lue.
@@ -100,6 +93,8 @@ DATA_FOLDERS = ("state", "CONTEXT_GLOBAL", "boards", "sessions", "artifacts", "p
 #: Fichiers d'état du runtime recopiés, masqués.
 RUNTIME_STATE_FILES = ("launcher.json", "product-onboarding.json")
 MANIFEST_SCHEMA = "jarvis.support-manifest"
+#: Paquets dont l'envoi a échoué, gardés par la rétention jusqu'à leur enregistrement (30 jours au plus).
+PENDING_FILE = ".pending-send.json"
 BUNDLE_NAME = re.compile(r"jarvis-support-\d{8}T\d{6}Z(?:-\d{1,4})?\.zip")
 #: Rétention du dossier de support : les `KEEP_BUNDLES` plus récents, aucun de plus de `MAX_BUNDLE_AGE_S`.
 KEEP_BUNDLES = 5
@@ -240,25 +235,6 @@ def env_items(config_dir: Path | None) -> tuple[list[tuple[str, str]], int]:
 
 def env_keys(config_dir: Path | None) -> list[str]:
     return sorted({name for name, _value in env_items(config_dir)[0]})
-
-
-def _sensitive_name(name: str) -> bool:
-    words = [word for word in re.split(r"[_.\-]+", name.upper()) if word]
-    if any(word in DESCRIPTIVE_NAME_WORDS for word in words):
-        return False
-    return any(word in SECRET_NAME_WORDS or word.endswith(SECRET_NAME_ENDINGS) for word in words)
-
-
-def _secret_like(name: str, value: str) -> bool:
-    if not value or _TRIVIAL_VALUE.fullmatch(value):
-        return False
-    if _sensitive_name(name):
-        return len(value) >= 6
-    # Prudence : toute valeur non triviale qui ressemble à un jeton (sans espace ; lettres ET chiffres, ou longue).
-    # Un mot seul (`presentation`, `Europe/Paris`) reste lisible : il nomme un réglage, pas un secret.
-    if len(value) < 8 or any(char.isspace() for char in value):
-        return False
-    return (any(char.isdigit() for char in value) and any(char.isalpha() for char in value)) or len(value) >= 20
 
 
 def _sealer(factory: Callable[[], Any] | None, default: Callable[[], Any]) -> Any:
@@ -528,7 +504,7 @@ def _full_content(sources: BundleSources, redactor: DiagnosticRedactor, work_dir
     for relative in DATABASES:
         target = work_dir / Path(relative).name
         try:
-            report = snapshot_database(sources.data_root / relative, target, redactor.text)
+            report = snapshot_database(sources.data_root / relative, target, redactor.cell)
         except SnapshotError as exc:
             manifest.append(ManifestEntry(relative, "state_database", "omitted", reason=str(exc)))
             continue
@@ -545,7 +521,7 @@ def _full_content(sources: BundleSources, redactor: DiagnosticRedactor, work_dir
     if not board_id:
         manifest.append(ManifestEntry("board/memory", "board_memory", "omitted", reason="no active board known"))
         return None
-    memory, entries = board_memory(sources.data_root, board_id, redactor.text)
+    memory, entries = board_memory(sources.data_root, board_id, redactor.cell)
     files.update(memory)
     manifest.extend(entries)
     shown = {key: board[key] for key in ("board_id", "title", "board_kind") if isinstance(board.get(key), str)}
@@ -665,16 +641,80 @@ def prune_support_folder(folder: Path, *, keep: int = KEEP_BUNDLES, max_age_s: f
             except OSError:
                 continue  # intentional: retried at the next bundle
     bundles.sort(reverse=True)
-    for rank, (mtime, path) in enumerate(bundles):
+    # A bundle whose send failed and that was never saved is kept until saved, sent or `max_age_s` old (QA S07 m5).
+    pending = pending_bundles(folder)
+    rank = 0
+    for mtime, path in bundles:
         if protect is not None and path == protect:
             continue
-        if rank >= keep or clock - mtime > max_age_s:
+        old = clock - mtime > max_age_s
+        if path.name in pending and not old:
+            continue
+        if old or rank >= keep:
             try:
                 path.unlink()
                 removed.append(path.name)
+                if path.name in pending:
+                    set_pending(folder, path.name, False)
             except OSError:
-                continue  # intentional: a bundle held open (being sent) is retried at the next pass
+                pass  # intentional: a bundle held open (being sent) is retried at the next pass
+            continue
+        rank += 1
     return removed
+
+
+def pending_bundles(folder: Path) -> set[str]:
+    """Paquets dont l'envoi a échoué et qui n'ont été ni enregistrés ni envoyés depuis (`PENDING_FILE`)."""
+
+    try:
+        names = json.loads((Path(folder) / PENDING_FILE).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return set()
+    except (OSError, ValueError):
+        return set()  # intentional: an unreadable list protects nothing more; retention then follows its count rule
+    return {name for name in names if isinstance(name, str) and BUNDLE_NAME.fullmatch(name)} if isinstance(names, list) else set()
+
+
+def set_pending(folder: Path, name: str, pending: bool) -> None:
+    """Ajoute ou retire `name` de la liste des paquets à garder ; écriture atomique. `OSError` remonte."""
+
+    names = pending_bundles(folder)
+    names = names | {name} if pending else names - {name}
+    target = Path(folder) / PENDING_FILE
+    temp = target.with_name(target.name + ".tmp")
+    temp.write_text(json.dumps(sorted(names)), encoding="utf-8")
+    os.replace(temp, target)
+
+
+def sweep_work_folders(folder: Path) -> list[str]:
+    """Retire tout dossier `.work-*` (copie brute d'une base laissée par un arrêt brutal, QA S07 m4). À n'appeler que
+    hors d'une création en cours."""
+
+    removed: list[str] = []
+    try:
+        entries = [entry for entry in os.scandir(folder) if entry.name.startswith(".work-")]
+    except OSError:
+        return removed  # intentional: no support folder yet
+    for entry in entries:
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                shutil.rmtree(entry.path)
+            else:
+                os.unlink(entry.path)
+            removed.append(entry.name)
+        except OSError:
+            continue  # intentional: retried at the next creation
+    return removed
+
+
+def _config_dir(installation: Any) -> Path | None:
+    """Dossier du `.env` dont les valeurs sont des secrets connus : `config` du produit installé, ou, en développement,
+    la racine du dépôt (`environment.project_environment_file`, QA S07 M1 : le JARVIS quotidien tourne ainsi)."""
+
+    if installation.home is not None:
+        return installation.home.config
+    from jarvis.environment import PROJECT_ROOT
+    return PROJECT_ROOT
 
 
 def sources_from_environment(environ: Mapping[str, str] | None = None) -> BundleSources:
@@ -698,7 +738,7 @@ def sources_from_environment(environ: Mapping[str, str] | None = None) -> Bundle
                 "intact": manifest is not None and not problems, "problems": problems[:20]}
 
     return BundleSources(data_root=resolve_data_root(env), runtime_root=resolve_runtime_root(env),
-                         config_dir=installation.home.config if installation.home else None, environ=env,
+                         config_dir=_config_dir(installation), environ=env,
                          installation={"mode": installation.mode.value}, package=package)
 
 
