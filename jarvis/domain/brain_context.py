@@ -33,6 +33,7 @@ import json
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from jarvis.domain.research_freshness import MAX_RESEARCH_DOCS, ResearchDocStatus
 from jarvis.domain.v2 import BrainWorkingState
 from jarvis.domain.work_state import WorkItem, WorkSnapshot, WorkStatus, clip_text
 
@@ -569,6 +570,11 @@ class BrainBoardMemory:
     summary_clipped: bool = False
     error: str | None = None
     summary_error: str | None = None
+    #: Documents de `documents/research/` et leur décision de fraîcheur pour la demande du tour (V1.2 Slice 03,
+    #: édition Presentation seulement ; vide ailleurs, et alors absent de la charge utile).
+    research: tuple[ResearchDocStatus, ...] = ()
+    #: Mots d'actualité trouvés dans la demande du tour (`research_freshness.recency_terms`).
+    research_recency: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not is_board_memory_locator(self.locator):
@@ -587,8 +593,13 @@ class BrainBoardMemory:
             value = getattr(self, name)
             if value is not None and (not isinstance(value, str) or not value or len(value) > 64):
                 raise ValueError(f"{name} must be a short code")
-        if self.error is not None and (self.entries or self.summary):
+        if self.error is not None and (self.entries or self.summary or self.research):
             raise ValueError("an unreadable memory carries no entries and no summary")
+        if (not isinstance(self.research, tuple) or len(self.research) > MAX_RESEARCH_DOCS
+                or not all(isinstance(item, ResearchDocStatus) for item in self.research)):
+            raise ValueError(f"research must be a tuple of at most {MAX_RESEARCH_DOCS} ResearchDocStatus")
+        if not isinstance(self.research_recency, tuple) or len(self.research_recency) > 8:
+            raise ValueError("research_recency must be a short tuple")
 
     @classmethod
     def bounded(cls, *, locator: str, path: str, entries: tuple[BrainBoardMemoryEntry, ...], more: bool,
@@ -621,6 +632,9 @@ class BrainBoardMemory:
             payload["error"] = self.error
         if self.summary_error:
             payload["summary_error"] = self.summary_error
+        if self.research:
+            payload["research"] = {"documents": [item.to_payload() for item in self.research],
+                                   "recency": list(self.research_recency)}
         return payload
 
 

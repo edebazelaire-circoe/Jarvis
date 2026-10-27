@@ -37,7 +37,7 @@ from jarvis.core.upload_service import BoardDropSeam, UploadService
 from jarvis.domain.artifacts import ARTIFACTS_DIR
 from jarvis.domain.uploads import upload_bounds
 from jarvis.domain.product_connectors import ConnectorFacts, connector_policy, connectors_payload
-from jarvis.domain.product_edition import FULL_EDITION, ProductEditionPolicy
+from jarvis.domain.product_edition import FULL_EDITION, ProductEdition, ProductEditionPolicy
 from jarvis.core.capture_service import CaptureAssociation, CaptureService, NoCaptureSources
 from jarvis.core.recording_transcriber import RecordingTranscriber
 from jarvis.core.capture_api import CaptureApi
@@ -285,6 +285,8 @@ class JarvisCoreApplication:
             diagnostics=diagnostics, authority=self.speech_authority, host=self.board_host, events=self.events,
             contexts=SQLiteContextRepository(self.state), workspaces=FileContextWorkspaces(root),
             board_memory=FileBoardMemoryStore(root), data_root=root,
+            # V1.2 Slice 03 : recherches du Board et leur fraîcheur dans le bloc `board`, en Presentation seulement.
+            research_freshness=product_edition.edition is ProductEdition.PRESENTATION,
         )
         # Registre d'Artifacts et ledger d'activité (handoff
         # session-context-recording, Slice 04) : même base v6, même connexion ;

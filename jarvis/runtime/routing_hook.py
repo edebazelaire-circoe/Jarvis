@@ -905,6 +905,9 @@ def _log_declared(journal: RuntimeJournal, event: Mapping[str, Any], orchestrati
         "role_id": role.id if role is not None else None,
         "caller_agent_id": caller if isinstance(caller, str) and caller else None,
         "caller_agent_type": str(event.get("agent_type") or "") or None,
+        # V1.2 Slice 03 : la topologie se lit dans la trace (qui lance qui, quel rôle, au premier plan ou en fond).
+        "run_in_background": bool((event.get("tool_input") or {}).get("run_in_background"))
+        if isinstance(event.get("tool_input"), Mapping) else False,
         "ephemeral": bool(orchestration and orchestration.head.ephemeral),
         "mission_owner": mission.mission_owner,
         "mission_id": ticket.mission_id if ticket else mission.mission_id,

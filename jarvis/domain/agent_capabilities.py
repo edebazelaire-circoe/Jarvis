@@ -155,7 +155,9 @@ class AgentCapabilityPolicy:
         return (f"{SUBAGENT_CONFINED_MARK}\n"
                 "Cette édition de JARVIS ne vous donne ni terminal, ni outil qui écrit, modifie ou supprime un fichier, "
                 f"ni navigateur piloté. Outils intégrés : {', '.join(self.native_tools)} ; la lecture se limite aux "
-                "dossiers de JARVIS. Vous écrivez uniquement par les outils JARVIS : board_memory_write pour la mémoire "
+                "dossiers de JARVIS accordés au Board de la conversation (sa mémoire, la Session ouverte, contexte "
+                "global) ; un autre Board ne se lit que par les outils board_* avec son identifiant, si la consigne le "
+                "demande. Vous écrivez uniquement par les outils JARVIS : board_memory_write pour la mémoire "
                 "du Board (dossier de mission compris), les outils presentation_* pour une présentation. Ce que votre "
                 "consigne dit du code, des tests, de git ou d'un fichier à modifier ne se fait que par ces outils ; "
                 "sinon, dites dans votre compte rendu ce qui manque, sans chercher d'autre moyen.")

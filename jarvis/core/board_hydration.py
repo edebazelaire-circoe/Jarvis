@@ -16,12 +16,18 @@ invalide…) → manifeste gardé, `summary_error`. Toute autre exception remont
 
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import date
 from pathlib import Path
 
 from jarvis.domain.board_memory import MEMORY_SUMMARY_NAME, BoardMemoryError, BoardMemoryErrorCode, BoardMemoryPath
 from jarvis.domain.brain_context import (
     MAX_BRAIN_BOARD_MANIFEST_DEPTH, MAX_BRAIN_BOARD_MANIFEST_ENTRIES, MAX_BRAIN_BOARD_SUMMARY_BYTES,
     BrainBoardMemory, BrainBoardMemoryEntry,
+)
+from jarvis.domain.research_freshness import (
+    MAX_RESEARCH_DOCS, MAX_RESEARCH_HEAD_BYTES, RESEARCH_DIR, ResearchDocStatus, decide, is_research_path,
+    parse_front_matter, recency_terms,
 )
 from jarvis.ports.board_memory import BoardMemoryStore, BoardMemoryUnavailable, MemoryEntryKind
 
@@ -60,6 +66,39 @@ def read_board_memory(store: BoardMemoryStore, data_root: Path, board_id: str) -
         summary_error = BOARD_MEMORY_READ_FAILED
     return BrainBoardMemory.bounded(locator=locator, path=path, entries=entries, more=tree.truncated,
                                     summary=summary, summary_clipped=clipped, summary_error=summary_error)
+
+
+def with_board_research(memory: BrainBoardMemory, store: BoardMemoryStore, board_id: str, *, request: str | None,
+                        today: date) -> tuple[BrainBoardMemory, int]:
+    """`memory` complété des documents de `documents/research/` et de leur décision de fraîcheur (V1.2 Slice 03).
+
+    Édition Presentation seulement (l'appelant décide). Au plus `MAX_RESEARCH_DOCS` fichiers `.md` (profondeur 2),
+    tête de `MAX_RESEARCH_HEAD_BYTES` octets chacun : le front-matter seul sert (`research_freshness`). Dossier
+    absent : rien d'ajouté. Un document illisible est jugé `freshness_unknown` (il existe, sa fraîcheur non) ; une
+    panne du dossier lui-même laisse le bloc tel quel. Rend aussi le nombre de documents non lus (au-delà de la borne).
+    """
+
+    if memory.error is not None:
+        return memory, 0
+    try:
+        tree = store.tree(board_id, BoardMemoryPath.parse(RESEARCH_DIR), depth=2, max_entries=4 * MAX_RESEARCH_DOCS)
+    except (BoardMemoryError, BoardMemoryUnavailable, OSError):
+        # intentional: pas de dossier de recherche (le cas courant) ou dossier illisible : la mémoire du tour suffit.
+        return memory, 0
+    files = [entry for entry in tree.entries
+             if entry.kind is MemoryEntryKind.FILE and is_research_path(entry.path)]
+    statuses: list[ResearchDocStatus] = []
+    for entry in files[:MAX_RESEARCH_DOCS]:
+        try:
+            head = store.read(board_id, BoardMemoryPath.parse(entry.path), max_bytes=MAX_RESEARCH_HEAD_BYTES)
+            meta, _problem = parse_front_matter(head.text)
+        except (BoardMemoryError, BoardMemoryUnavailable, OSError, UnicodeDecodeError):
+            meta = None
+        statuses.append(ResearchDocStatus.from_decision(entry.path, meta, decide(meta, today=today, request=request)))
+    if not statuses:
+        return memory, 0
+    terms = recency_terms(request, today)[:8]
+    return replace(memory, research=tuple(statuses), research_recency=terms), max(0, len(files) - MAX_RESEARCH_DOCS)
 
 
 def _code(exc: BaseException) -> str:

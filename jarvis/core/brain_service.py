@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections import OrderedDict
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -366,6 +367,7 @@ class BrainOrchestrator:
         self._board_of = board_of
         # Bloc `board` de chaque tour : conversation -> `BrainBoardContext` (async).
         self._board_context = board_context
+        self._board_context_takes_request = board_context is not None and _takes_keyword(board_context, "request")
         self._events = events
         self._backend: BrainBackend = backend or NullBrainBackend()
         # Optionnel : sans executeur cable, une annulation reste une decision
@@ -2017,6 +2019,9 @@ class BrainOrchestrator:
         if self._board_context is None:
             return None
         try:
+            if self._board_context_takes_request:
+                # V1.2 Slice 03 : le texte du tour décide de la fraîcheur des recherches du Board (Presentation).
+                return await self._board_context(turn.conversation_id, request=turn.text)
             return await self._board_context(turn.conversation_id)
         except asyncio.CancelledError:
             raise
@@ -2879,3 +2884,16 @@ class BrainOrchestrator:
                 conversation_id=conversation_id,
             )
         )
+
+
+def _takes_keyword(callback: object, name: str) -> bool:
+    """Le rappel accepte-t-il le mot-clé `name` ? (rappels d'avant la V1.2 Slice 03 : non, appelés sans.)"""
+
+    try:
+        parameters = inspect.signature(callback).parameters  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    parameter = parameters.get(name)
+    return (parameter is not None and parameter.kind in {inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                                                         inspect.Parameter.KEYWORD_ONLY}) or any(
+        item.kind is inspect.Parameter.VAR_KEYWORD for item in parameters.values())

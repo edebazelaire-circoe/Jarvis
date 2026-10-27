@@ -83,7 +83,9 @@ def _digest(title: str, purpose: str, step: str) -> str:
 def test_the_convention_is_in_the_presentation_prompt_only():
     prompt = render_brain_system_prompt(PRESENTATION_CAPABILITIES)
     assert prompt.count(BRAIN_PRESENTATION_MEMORY_MARK) == 1 and BRAIN_PRESENTATION_MEMORY_SECTION in prompt
-    assert prompt.endswith(BRAIN_PRESENTATION_MEMORY_SECTION)
+    # V1.2 Slice 03 : la section RECHERCHE : EXISTANT D'ABORD suit la mémoire du projet, en dernier.
+    research_head = claude_local.BRAIN_PRESENTATION_RESEARCH_MARK + "\n"
+    assert prompt.index(BRAIN_PRESENTATION_MEMORY_SECTION) < prompt.rindex(research_head)
     for text in (claude_local.BRAIN_SYSTEM_PROMPT, render_brain_system_prompt(UNCONFINED),
                  render_brain_system_prompt(None)):
         assert BRAIN_PRESENTATION_MEMORY_MARK not in text and "## Finalité" not in text

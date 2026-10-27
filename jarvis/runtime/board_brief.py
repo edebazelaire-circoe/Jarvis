@@ -30,6 +30,7 @@ from __future__ import annotations
 from pathlib import PureWindowsPath, PurePosixPath
 from typing import Any
 
+from jarvis.domain.research_freshness import MAX_RESEARCH_DOCS, FreshnessAction, ResearchDocStatus
 from jarvis.runtime.session_context_brief import neutralize_lines
 
 #: Type de Board dit avec les mots de l'interface (`board_kind` -> libellé).
@@ -175,4 +176,49 @@ def render_board_memory(memory: Any, board_id: str) -> list[str]:
         lines.append(BOARD_SUMMARY_BEGIN)
         lines.append(neutralize_lines(_clip_bytes(summary, _MAX_MEMORY_SUMMARY_BYTES)))
         lines.append(BOARD_SUMMARY_END)
+    lines.extend(render_board_research(memory.get("research")))
+    return lines
+
+
+#: Tête des recherches du Board (V1.2 Slice 03, édition Presentation : Core ne joint `research` qu'en Presentation).
+BRIEF_RESEARCH_HEAD = "Recherches du Board (documents/research), fraîcheur décidée par JARVIS pour ce tour"
+_ACTION_WORDS = {
+    FreshnessAction.REUSE: "réutiliser tel quel",
+    FreshnessAction.PARTIAL_REFRESH: "rafraîchir seulement les sources périmées",
+    FreshnessAction.FULL_REFRESH: "tout revérifier",
+    FreshnessAction.NEW_RESEARCH: "chercher à neuf",
+}
+_REASON_WORDS = {
+    "fresh": "à jour pour sa volatilité", "partially_stale": "en partie périmé", "stale": "trop ancien pour sa volatilité",
+    "recency_requested": "la demande réclame l'état actuel", "freshness_unknown": "sans date de vérification lisible",
+    "checked_at_in_future": "date de vérification dans le futur", "no_document": "aucun document",
+}
+_VOLATILITY_WORDS = {"low": "faible", "medium": "moyenne", "high": "forte"}
+
+
+def render_board_research(block: Any) -> list[str]:
+    """Une ligne par document de recherche du Board et sa décision ; rien sans bloc. Décodage strict."""
+
+    if not isinstance(block, dict):
+        return []
+    raw = block.get("documents")
+    items = [ResearchDocStatus.from_payload(item) for item in raw[:MAX_RESEARCH_DOCS]] if isinstance(raw, list) else []
+    kept = [item for item in items if item is not None]
+    if not kept:
+        return []
+    recency = [_text(term, 24) for term in block.get("recency") or [] if isinstance(term, str)][:8]
+    head = BRIEF_RESEARCH_HEAD + (f" (demande d'actualité : « {', '.join(recency)} »)" if recency else "") + " :"
+    lines = [head]
+    for item in kept:
+        facts = [f"« {_text(item.topic, 120)} »" if item.topic else "sans sujet déclaré"]
+        if item.checked_at is not None:
+            facts.append(f"vérifié le {item.checked_at.isoformat()}")
+        if item.volatility is not None:
+            facts.append(f"volatilité {_VOLATILITY_WORDS[item.volatility.value]}")
+        decision = f"{_ACTION_WORDS[item.action]} ({_REASON_WORDS.get(item.reason, item.reason)})"
+        if item.stale_sources:
+            more = item.stale_count - len(item.stale_sources)
+            decision += " : " + ", ".join(_text(ref, 160) for ref in item.stale_sources) + (f" et {more} autre(s)"
+                                                                                          if more > 0 else "")
+        lines.append(f"- {item.path} : {', '.join(facts)} → {decision}")
     return lines
