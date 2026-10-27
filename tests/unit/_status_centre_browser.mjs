@@ -199,6 +199,20 @@ const SERVER=`(()=>{
     /* Slice 07 presentation-edition : la préparation. \`readiness\` : la charge du serveur (absente : 404) ;
        \`readinessActions\` : {action_id: {status?, answer, next?, delayMs?}} (\`next\` remplace le rapport) ;
        le premier lancement marque le rapport « fait » et active un Board Présentation. */
+    /* V1.2 Slice 07 : « Signaler un problème ». \`support\` : {preview, create, send, save, destination}, chacun
+       {status?, answer, delayMs?} (\`preview\` : la charge seule). \`errors\` : la liste de la vue des erreurs. */
+    if(url.split('?')[0]==='/api/errors')return json(200,S.errors||[]);
+    if(url.startsWith('/api/support/')&&S.support){
+      const sp=S.support,step=async a=>{if(!a)return json(404,{error:{code:'http_error',message:'not stubbed '+url}});
+        if(a.delayMs)await new Promise(r=>setTimeout(r,a.delayMs));
+        if((a.status||200)>=400)return json(a.status,{error:a.answer});return json(a.status||200,a.answer)};
+      if(url==='/api/support/preview')return sp.preview?json(sp.previewStatus||200,sp.preview):json(404,{error:{code:'http_error',message:'no preview'}});
+      if(url==='/api/support/reports'&&method==='POST')return step(sp.create);
+      if(url.endsWith('/send')&&method==='POST')return step(sp.sendQueue&&sp.sendQueue.length?sp.sendQueue.shift():sp.send);
+      if(url.endsWith('/save')&&method==='POST')return step(sp.save);
+      if(url==='/api/support/destination'&&method==='POST'){const b=JSON.parse(init.body);
+        return json(200,{destination:b.support_email||'e.debazelaire@circoe.com',default_destination:'e.debazelaire@circoe.com'})}
+    }
     if(url.startsWith('/api/product/readiness/actions/')&&method==='POST'){
       const id=decodeURIComponent(url.split('/').pop()),a=(S.readinessActions||{})[id];
       if(!a)return json(404,{error:{code:'readiness_action_unknown',message:'unknown readiness action (double)'}});

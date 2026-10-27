@@ -209,6 +209,7 @@ class CliTextModel:
         self._model = model
         self._factory = agent_factory
         self._close_timeout_s = close_timeout_s
+        self.last_cost_usd: float | None = None
 
     async def complete(self, system: str, prompt: str, *, timeout_s: float) -> str:
         factory = self._factory
@@ -233,6 +234,8 @@ class CliTextModel:
             await self._close(agent)
         if not isinstance(result, dict) or result.get("ok") is not True or not isinstance(result.get("text"), str):
             raise ExtractorUnavailable("the model call did not complete")
+        # Cost of the last answer, read by callers that report it (support report, V1.2 Slice 07); `None` if unknown.
+        self.last_cost_usd = result.get("cost_usd") if isinstance(result.get("cost_usd"), (int, float)) else None
         return result["text"]
 
     async def _close(self, agent: Any) -> None:

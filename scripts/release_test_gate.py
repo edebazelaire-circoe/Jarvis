@@ -45,7 +45,7 @@ BROWSER_PATTERNS = ("*_browser.py", "*_js.py")
 RELEASE_PATTERNS = ("test_product_*.py", "test_windows_*.py", "test_private_runtime*.py", "test_installed_product_root*.py",
                     "test_agent_capabilit*.py", "test_confined_prompts*.py", "test_export*.py", "test_data_root*.py",
                     "test_global_context*.py", "test_schema_migrations.py", "test_release_*.py", "test_diagnostic_redaction*.py",
-                    "test_support_bundle*.py", "test_owned_process_tree*.py", "test_process_tree*.py",
+                    "test_support_bundle*.py", "test_support_report*.py", "test_owned_process_tree*.py", "test_process_tree*.py",
                     "test_control_center_relay_whitelist*.py", "test_product_edition*.py", "test_wake_word_install*.py",
                     "test_document_export*.py", "test_remotion_export_save_mcp.py", "test_presentation_export_after_edit.py",
                     "test_board_edition*.py", "test_workspace_board_contract.py")

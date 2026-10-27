@@ -6,7 +6,8 @@ ici :
 
 1. les secrets par le masquage canonique des plugins MCP (`mcp_plugins.redact` / `redact_structured` : `Bearer`,
    JWT, `Authorization`, cookies, toute paire `token=` / `api_key:` / `password`…), plus les FORMES de clés nues
-   connues (`sk-…`, `sk-ant-…`, `AIza…`, `ya29.…`, `ghp_…`, `xox?-…`, `GOCSPX-…`, `4/0…`, `AKIA…`, `sk_live_…`), le mot
+   connues (`sk-…`, `sk-ant-…`, `AIza…`, `ya29.…`, `ghp_…`, `xox?-…`, `GOCSPX-…`, `4/0…`, `AKIA…`, `sk_live_…`, bloc PEM
+   `-----BEGIN … PRIVATE KEY-----`), le mot
    de passe d'une URL `schéma://utilisateur:mot de passe@hôte`, et les paires que le masquage canonique ne nomme pas
    (`pwd`, `passphrase`, `private_key`, `aws_secret_access_key`, `aws_session_token`) ;
 2. les adresses électroniques → `<email>` ;
@@ -37,6 +38,9 @@ _KEY_SHAPES = (
     re.compile(r"\b4/0[A-Za-z0-9_-]{20,}"),                   # Google OAuth authorization code
     re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),             # AWS access key id
     re.compile(r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}"),     # Stripe
+    # Bloc PEM d'une clé privée (V1.2 Slice 07 : un fichier de la mémoire d'un Board peut en coller une), corps compris
+    # jusqu'à la ligne de fin ; base64 n'a pas de `-`, donc la course s'arrête au marqueur de fin (linéaire, bornée).
+    re.compile(r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----[^-]{0,16384}(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----)?"),
 )
 #: `schéma://utilisateur:mot de passe@hôte` (postgres, https, smtp…) : le mot de passe, quel que soit l'hôte (QA S10 m2).
 _URL_PASSWORD = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{1,20}://[^\s:/@'\"<>]{1,128}:)(?!\[secret masqué\])[^\s@/'\"<>]{1,256}@")

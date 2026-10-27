@@ -323,6 +323,8 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 MISSIONS_ROUTE = "/api/missions"
 #: Préparation, premier lancement et « Quitter JARVIS » (`product_readiness.ProductReadinessRoutes`).
 PRODUCT_ROUTE_PREFIX = "/api/product"
+#: « Signaler un problème » (V1.2 Slice 07, `support_routes.SupportReportRoutes`, `docs/support-report.md`).
+SUPPORT_ROUTE_PREFIX = "/api/support"
 #: Work Methods, candidats appris et promotion (organic-agent-orchestration, Slice 12) : toutes les méthodes gardées
 #: comme l'historique des missions dont les candidats sont tirés.
 WORK_METHODS_ROUTE = "/api/work-methods"
@@ -337,7 +339,9 @@ READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_RO
                        *EXPORT_GUARDED_PREFIXES,
                        # Préparation de JARVIS (Slice 07) : version de la CLI, méthode de connexion, comptes, lanceur ;
                        # rien à lire pour une page étrangère (DNS rebinding, O1 de la revue de la Slice 07).
-                       PRODUCT_ROUTE_PREFIX)
+                       PRODUCT_ROUTE_PREFIX,
+                       # « Signaler un problème » (V1.2 Slice 07) : paquets de diagnostic et leur envoi.
+                       SUPPORT_ROUTE_PREFIX)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -714,6 +718,9 @@ PRODUCT_EDITION_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRODUCT_EDITION_JS__*/"
 #: `window.JarvisReadiness`, lu par l'accueil des présentations. Avant le rail des présentations.
 PRODUCT_READINESS_SCRIPT_FILE = "control_center_product_readiness.js"
 PRODUCT_READINESS_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRODUCT_READINESS_JS__*/"
+#: « Signaler un problème » (V1.2 Slice 07) : `window.JarvisSupportReport`, ouvert du dock et de la vue des erreurs.
+SUPPORT_REPORT_SCRIPT_FILE = "control_center_support_report.js"
+SUPPORT_REPORT_SCRIPT_MARKER = "/*__CONTROL_CENTER_SUPPORT_REPORT_JS__*/"
 PRESENTATION_ATTENTION_SCRIPT_FILE = "control_center_presentation_attention.js"
 PRESENTATION_ATTENTION_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_ATTENTION_JS__*/"
 #: Client pur de la scène constellation (Slice 03) : application ordonnée des
@@ -1515,6 +1522,14 @@ class ControlCenter:
             transport=lambda: self.sessions, runtime_root=self.runtime_root, journal=self.journal,
             list_audio=lambda: self.audio_diagnostics.list_devices())
         self.product_readiness_routes = ProductReadinessRoutes(self.product_readiness, journal=self.journal)
+        # « Signaler un problème » (V1.2 Slice 07, `docs/support-report.md`) : paquet de diagnostic complet avec le
+        # consentement de l'utilisateur, rapport IA à zéro outil, envoi vers la destination configurée.
+        from jarvis.runtime.support_routes import SupportReportRoutes, SupportReportService
+        self.support_report = SupportReportService(
+            runtime_root=self.runtime_root, journal=self.journal, settings=self._settings,
+            update_settings=self._update_support_settings, active_board=self._support_active_board,
+            health=lambda: self.product_readiness.report(), model_factory=self._support_text_model)
+        self.support_report_routes = SupportReportRoutes(self.support_report, journal=self.journal)
         # Contexts, captures, Artifacts (Slice 09 session-context-recording) : relais
         # vers Core, sans état propre ; transport relu à chaque requête.
         self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
@@ -1684,6 +1699,7 @@ class ControlCenter:
             *self.capture_routes.routes(),
             *self.export_routes.routes(),
             *self.product_readiness_routes.routes(),
+            *self.support_report_routes.routes(),
             *self.workspace_routes.routes(),
             *self.chat_routes.routes(),
             *self.memory_routes.routes(),
@@ -2722,6 +2738,10 @@ class ControlCenter:
             PRODUCT_READINESS_SCRIPT_MARKER,
             page.with_name(PRODUCT_READINESS_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
+        html = html.replace(
+            SUPPORT_REPORT_SCRIPT_MARKER,
+            page.with_name(SUPPORT_REPORT_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
         html = page_edition_markup(html, report=self._report_page_edition_unreadable)
         html = html.replace(
             BOARDS_SCRIPT_MARKER,
@@ -3407,6 +3427,41 @@ class ControlCenter:
             # error line naming its cause, never a value, and the next start retries (copy-first: nothing lost).
             self.journal.emit("secrets.migration_failed", "Clés locales non scellées", level="error",
                               data={"error": type(exc).__name__, "code": getattr(exc, "code", None)})
+
+    # ------------------------------------------- « Signaler un problème » (V1.2 Slice 07)
+
+    def _update_support_settings(self, apply: Callable[[dict[str, Any]], None]) -> None:
+        current = self._settings()
+        apply(current)
+        self._write_settings(current)
+
+    async def _support_active_board(self) -> dict[str, Any] | None:
+        if self.sessions is None:
+            return None
+        payload = await self.sessions.active_board()
+        board = payload.get("board") if isinstance(payload, dict) else None
+        return board if isinstance(board, dict) else None
+
+    def _support_text_model(self, cwd: Path) -> tuple[Any, str | None]:
+        """Le chemin de modèle existant à ZÉRO outil (`CliTextModel`, profil `speculative_analysis`), lancé dans un
+        dossier de travail vide ; le modèle du profil `fast` du routage s'il y en a un, sinon celui du CLI."""
+
+        from jarvis.adapters.memory_extractor_llm import CliTextModel
+        from jarvis.runtime.agent_settings import resolve_agent_execution
+
+        settings = self._settings()
+        execution = resolve_agent_execution(settings, cwd=cwd, runtime_root=self.runtime_root)
+        chosen: str | None = None
+        try:
+            policy = agent_routing.load_policy(settings)
+            entry = policy.for_profile("fast") if policy.enabled else None
+            for ref in (entry.candidates if entry is not None else ()):
+                if ref.agent == execution.agent_cli and ref.model:
+                    chosen = ref.model
+                    break
+        except Exception:  # noqa: BLE001 - argued: routing is a preference; the CLI's configured model then serves
+            chosen = None
+        return CliTextModel(lambda: execution, lambda: chosen), chosen or execution.model or execution.agent_cli
 
     def _write_settings(self, settings: dict[str, Any]) -> None:
         self._seal_settings(settings)

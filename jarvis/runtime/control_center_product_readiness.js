@@ -379,7 +379,12 @@
         if(startBtn.getAttribute('aria-disabled')==='true'){S.status={kind:'info',hint:true,text:'Terminez d’abord les étapes indispensables (en orange).'};render();return}
         start();
       });
-      actions.append(quitBtn,startBtn);footer.append(status,actions);
+      /* « Signaler un problème » (V1.2 Slice 07, I-010 point 3) : ferme la préparation et ouvre le rapport de problème. */
+      const reportBtn=el('button','rd-quit','Signaler un problème');reportBtn.type='button';reportBtn.dataset.role='report-problem';
+      reportBtn.addEventListener('click',()=>{const s=win.JarvisSupportReport;
+        if(!s||typeof s.open!=='function'){S.status={kind:'failed',text:'Le rapport de problème n’est pas disponible : rechargez la page.'};render();log('error','support_missing',{});return}
+        close('report');Promise.resolve(s.open({reason:'readiness'})).catch(error=>log('error','support_open_failed',{error:text(error&&error.message)}))});
+      actions.append(reportBtn,quitBtn,startBtn);footer.append(status,actions);
       card.append(header,body,footer);host.append(card);
       host.addEventListener('keydown',event=>{
         if(event.key==='Escape'){event.preventDefault();close('escape');return}

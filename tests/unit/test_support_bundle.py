@@ -72,7 +72,8 @@ def test_the_bundle_carries_bounded_redacted_diagnostics_and_no_content(tmp_path
     path = SB.write_bundle(sources)
     assert path.parent == sources.runtime_root / SB.SUPPORT_DIR and path.name.startswith("jarvis-support-")
     files = read_zip(path)
-    assert set(files) == {"bundle.json", "logs/errors.jsonl", "logs/trace-events.jsonl", "logs/core.log", "config-keys.json"}
+    assert set(files) == {"bundle.json", "logs/errors.jsonl", "logs/trace-events.jsonl", "logs/core.log", "config-keys.json",
+                          "manifest.json", "report.md"}  # V1.2 S07: every bundle says what it holds and why
     everything = "\n".join(files.values())
     for leak in (FAKE_KEY, "tok-FAKE", ROOM_WORDS, "circoe.com", "Jean.Dupont", str(tmp_path)):
         assert leak not in everything, leak

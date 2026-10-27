@@ -3379,7 +3379,7 @@ document.addEventListener('keydown',e=>{
     else if(!e.shiftKey&&document.activeElement===lastItem){e.preventDefault();first.focus()}
   }
 },true);
-async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){toast({title:'Archivage des erreurs impossible',sub:e.message,kind:'bad'});console.error('errors_archive_failed',e)}finally{archive.disabled=false}})}
+async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<button class="action" id="reportProblem">Signaler un problème</button><span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#reportProblem').addEventListener('click',()=>{const s=window.JarvisSupportReport;if(s&&typeof s.open==='function'){s.open({reason:'errors'}).catch(e=>console.error('[support] support.open_failed',e))}else{toast({title:'Signaler un problème indisponible',sub:'Le module de rapport n’a pas été chargé ; rechargez la page.',kind:'bad'});console.error('[support] support.module_missing')}});$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){toast({title:'Archivage des erreurs impossible',sub:e.message,kind:'bad'});console.error('errors_archive_failed',e)}finally{archive.disabled=false}})}
 /* La touche d'éveil et ce qu'elle fait maintenant (« F9 · DÉMARRER »…), l'état de la
    voix, de l'agent et des sous-agents : plus de capsule au bas-centre (orbital-ui Slice 06,
    D8), plus de ligne d'état au haut-gauche (Slice 02 de jarvis-board-ui-wheel-dossier-refactor,
@@ -3592,6 +3592,10 @@ const STATUS={
    `window.JarvisReadiness` (fenêtre de préparation, ligne de l'accueil des présentations). Il utilise `toast`, déclaration
    de fonction remontée de ce même `<script>`. Contrat : `docs/product-install.md` › *Onboarding UI*. */
 /*__CONTROL_CENTER_PRODUCT_READINESS_JS__*/
+/* « Signaler un problème » (jarvis-presentation-edition-v1-2, Slice 07) : `control_center_support_report.js`,
+   `window.JarvisSupportReport` (aperçu, consentement, envoi ou enregistrement du paquet de diagnostic). Ouvert depuis la
+   vue des erreurs et le pied de la fenêtre de préparation. Contrat : `docs/support-report.md`. */
+/*__CONTROL_CENTER_SUPPORT_REPORT_JS__*/
 /*__CONTROL_CENTER_WORKSPACE_RAIL_MODEL_JS__*/
 /*__CONTROL_CENTER_PRESENTATION_RAIL_JS__*/
 /* Inspecteur d'édition d'une présentation (studio de présentation, Slice 07) : panneau du dock `INS`, widgets générés de la route

@@ -61,6 +61,9 @@ def _parser() -> argparse.ArgumentParser:
     # Support (Slice 10 presentation-edition, docs/release.md) : zip borné et masqué, sans contenu de l'utilisateur.
     support = sub.add_parser("support-bundle", help="Write a bounded, redacted support bundle (no conversations, no keys)")
     support.add_argument("--out", help="Folder for the zip (default: <runtime>/support)")
+    support.add_argument("--full", action="store_true",
+                         help="Problem report: also the masked state databases, active Board memory and settings")
+    support.add_argument("--description", help="What went wrong, in your words (masked, --full only)")
     # Lancée par le CLI du cerveau via `--mcp-config` (scene.enabled), pas par
     # un humain : stdout est le protocole MCP.
     sub.add_parser("display-mcp", help="Serve the brain scene display MCP tools over stdio")
