@@ -548,6 +548,7 @@ class Launcher:
         self._voice_checked_at = now
         running = role.process is not None and role.process.poll() is None
         decision = self._decide_voice(running)
+        held_before = role.held
         changed = False
         if decision.start:
             if role.held is not None:
@@ -566,7 +567,8 @@ class Launcher:
                 role.process = None
                 changed = True
                 self.log.emit("child_stopped", f"{role.name} arrêté", role=role.name, reason=decision.code)
-        if changed and not force:
+        # Une tenue qui change (clé absente -> voix coupée, etc.) est publiée aussi : `launcher.json` dit la vérité.
+        if (changed or role.held != held_before) and not force:
             self.write_state()
 
     def _close_tree(self, role: Role) -> None:

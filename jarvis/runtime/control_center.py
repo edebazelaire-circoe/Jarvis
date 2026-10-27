@@ -228,6 +228,8 @@ from jarvis.v2_config import (
 VOICE_HEARTBEAT_MAX_AGE_S = 5.0
 #: Fraîcheur des faits coûteux du cycle de vie de la voix (clé du fournisseur, moteur du mot de réveil).
 VOICE_FACTS_TTL_S = 15.0
+#: Attente des requêtes encore ouvertes quand le Control Center s'arrête (aiohttp : 60 s par défaut).
+HTTP_SHUTDOWN_TIMEOUT_S = 3.0
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 #: Préfixe des routes de lecture des Conversation Events (Slice 04).
 CONVERSATIONS_ROUTE = "/api/conversations"
@@ -2466,7 +2468,10 @@ class ControlCenter:
         self.runtime_root.mkdir(parents=True, exist_ok=True)
         self._migrate_local_secrets()
         self._apply_agent_settings(self._settings())
-        self._runner = web.AppRunner(self._app)
+        # Requêtes encore ouvertes à l'arrêt (long-polls de la page : scène, Dossier, sous-agents) : 60 s d'attente par
+        # défaut dans aiohttp, au-delà du délai de grâce du lanceur (15 s) ; « Quitter JARVIS » finissait en arrêt forcé
+        # (bac à sable de la Slice 05 v1-2). Elles sont coupées après `HTTP_SHUTDOWN_TIMEOUT_S`.
+        self._runner = web.AppRunner(self._app, shutdown_timeout=HTTP_SHUTDOWN_TIMEOUT_S)
         await self._runner.setup()
         await web.TCPSite(self._runner, host, port).start()
         self.journal.emit("ui.start", "Jarvis Control Center started", data={"host": host, "port": port})

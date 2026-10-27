@@ -309,7 +309,12 @@ async def test_la_section_est_rendue_avec_ses_defauts_et_n_ecrit_rien(served, tm
 # ======================================================================
 
 
-async def test_enregistrer_ecrit_le_fichier_affiche_le_bandeau_et_se_relit(served, tmp_path):
+async def test_enregistrer_ecrit_le_fichier_affiche_le_bandeau_et_se_relit(served, tmp_path, monkeypatch):
+    # Moteur openWakeWord présent sur ce poste (Slice 05 v1-2 : sinon la page dit « Moteur absent », testé à part).
+    from jarvis.runtime import wake_word_install
+
+    monkeypatch.setattr(wake_word_install, "package_installed", lambda: True)
+    monkeypatch.setattr(wake_word_install, "read_states", lambda: [])
     shots = _shots(tmp_path)
     served.settings_file.write_text(json.dumps({"manual_wake_key": "f7"}), encoding="utf-8")
     out = await drive(served.url, [

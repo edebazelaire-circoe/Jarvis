@@ -437,3 +437,70 @@ def test_readiness_voice_line():
     assert sleep.state is ReadinessState.READY and "F9 la réveille" in sleep.summary
     unread = by_id(facts())["voice"]
     assert unread.state is ReadinessState.UNAVAILABLE and unread.detail == "voice_lifecycle_unavailable"
+
+
+def test_a_hold_that_changes_is_published_in_launcher_json(tmp_path):
+    """Bac à sable du 2026-10-27 : clé absente puis « voix coupée » laissait `held` à l'ancienne raison."""
+
+    preference = {"value": "sleep"}
+
+    def gate(running):
+        settings = {"voice_lifecycle": {"schema_version": 1, "preference": preference["value"]}}
+        return V.launch_decision(settings, key=lambda _s: V.ProviderKey(False, "openai", "OpenAI",
+                                                                         "voice_provider_key_missing"))
+
+    instance, spawned, _notices, _ = launcher(tmp_path, gate=gate)
+    seen = []
+    original_sleep = instance.sleep
+
+    def sleep(seconds):
+        original_sleep(seconds)
+        state = tmp_path / "runtime" / L.STATE_FILE
+        if state.exists():
+            seen.append(json.loads(state.read_text(encoding="utf-8"))["roles"]["voice"]["held"])
+        if instance.clock() >= 2.0:
+            preference["value"] = "off"
+        if instance.clock() >= 5.0:
+            (instance.plan.runtime_root / L.STOP_FILE).write_text("now", encoding="utf-8")
+
+    instance.sleep = sleep
+    assert instance.run() == 0 and roles_of(spawned) == ["core", "control-center"]
+    assert seen[0] == "voice_provider_key_missing" and seen[-1] == "voice_off"
+
+
+async def test_quit_is_not_held_by_an_open_request_of_the_page(tmp_path, no_env_keys):
+    """Bac à sable du 2026-10-27 : une requête encore ouverte (long-poll de la page) faisait attendre l'arrêt du Control
+    Center 60 s (aiohttp), au-delà des 15 s de grâce du lanceur : « Quitter JARVIS » finissait en arrêt forcé."""
+
+    import socket
+    import time
+
+    import aiohttp
+    from aiohttp import web
+
+    from jarvis.runtime import control_center as cc
+
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+    entered = asyncio.Event()
+
+    async def hang(_request):
+        entered.set()
+        await asyncio.sleep(120)
+        return web.Response(text="late")
+
+    control._app.router.add_get("/__test_hang", hang)
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    await control.start(port=port)
+    session = aiohttp.ClientSession()
+    pending = asyncio.ensure_future(session.get(f"http://127.0.0.1:{port}/__test_hang"))
+    try:
+        await asyncio.wait_for(entered.wait(), 10)
+        started = time.monotonic()
+        await control.stop()
+        assert time.monotonic() - started < cc.HTTP_SHUTDOWN_TIMEOUT_S + 5
+    finally:
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+        await session.close()
