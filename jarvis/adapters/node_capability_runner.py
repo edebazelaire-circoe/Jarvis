@@ -236,9 +236,16 @@ class NodeCapabilityRunner:
     def _npm_argv(self, node: str) -> list[str] | None:
         """`node npm-cli.js` (jamais `npm.cmd` : pas de shell, pas de guillemets à échapper)."""
 
-        cli = Path(node).resolve().parent / "node_modules" / "npm" / "bin" / "npm-cli.js"
-        if cli.is_file():
-            return [node, str(cli)]
+        bin_dir = Path(node).resolve().parent
+        # Windows : `node.exe` et `node_modules\npm` côte à côte. POSIX (macOS, Slice 08 V1.2) : `bin/node` et
+        # `lib/node_modules/npm`, la disposition des archives officielles de Node.
+        candidates = [bin_dir / "node_modules"]
+        if not self._windows:
+            candidates.append(bin_dir.parent / "lib" / "node_modules")
+        for modules in candidates:
+            cli = modules / "npm" / "bin" / "npm-cli.js"
+            if cli.is_file():
+                return [node, str(cli)]
         exe = self._which("npm.cmd" if self._windows else "npm")
         return [exe] if exe else None
 

@@ -1731,6 +1731,7 @@ class ClaudeLocalAgent:
             self._init_seen = asyncio.Event()
             self._start_diagnostics = []
             try:
+                from jarvis.runtime.owned_process_tree import spawn_kwargs as owned_spawn_kwargs
                 self.process = await asyncio.create_subprocess_exec(
                     executable,
                     "-p",
@@ -1765,7 +1766,7 @@ class ClaudeLocalAgent:
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    **({"creationflags": self._process_tree.creationflags} if self._process_tree else {}),
+                    **(owned_spawn_kwargs(self._process_tree) if self._process_tree else {}),
                 )
                 if self._process_tree:
                     self._process_tree.attach_and_resume(self.process.pid)

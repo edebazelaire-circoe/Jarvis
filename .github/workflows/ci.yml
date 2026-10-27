@@ -8,6 +8,10 @@
 # Known failures are an explicit, dated list (tests/known_failures.json), never a global ignore.
 # Status on 2026-10-27: written and validated locally only (YAML parsed, every script run on Windows 11); its first
 # execution on a clean GitHub-hosted Windows runner is NOT verified yet (docs/release.md, release gates).
+#
+# macOS (job `macos`, Slice 08 of V1.2, HD-V12-03, docs/macos-portability.md): portability gate on GitHub-hosted Macs.
+# A green macOS job is NOT macOS support: no macOS package is built yet, nothing is signed or notarized, and support
+# is claimed only after the real-Mac acceptance HV-V12-MAC-01. Written on Windows; never executed on a Mac yet.
 
 name: Jarvis release pipeline
 
@@ -45,7 +49,9 @@ jobs:
           python-version: ${{ env.JARVIS_CI_PYTHON }}
           cache: pip
       - name: Install Jarvis and its development tools
-        run: python -m pip install -e ".[dev]"
+        # Same extras as setup.ps1, the environment tests/known_failures.json was measured in. `dev` carries numpy,
+        # which tests/conftest.py needs through jarvis.core.v2_app.
+        run: python -m pip install -e ".[voice,dev]"
       - name: Release verifier (edition guard, execution primitives, Remotion and Studio evidence, artifact info)
         run: python scripts/verify_release.py
 
@@ -69,7 +75,9 @@ jobs:
         with:
           node-version: ${{ env.JARVIS_CI_NODE }}
       - name: Install Jarvis and its development tools
-        run: python -m pip install -e ".[dev]"
+        # Same extras as setup.ps1, the environment tests/known_failures.json was measured in. `dev` carries numpy,
+        # which tests/conftest.py needs through jarvis.core.v2_app.
+        run: python -m pip install -e ".[voice,dev]"
       - name: Test gate (known failures from tests/known_failures.json)
         run: python scripts/release_test_gate.py --suite unit --shard ${{ matrix.shard }}/4 --report gate/unit-${{ matrix.shard }}.json
       - uses: actions/upload-artifact@v4
@@ -103,7 +111,9 @@ jobs:
         with:
           node-version: ${{ env.JARVIS_CI_NODE }}
       - name: Install Jarvis and its development tools
-        run: python -m pip install -e ".[dev]"
+        # Same extras as setup.ps1, the environment tests/known_failures.json was measured in. `dev` carries numpy,
+        # which tests/conftest.py needs through jarvis.core.v2_app.
+        run: python -m pip install -e ".[voice,dev]"
       - name: Test gate, browser suite (Chrome of the runner)
         run: python scripts/release_test_gate.py --suite browser --shard ${{ matrix.shard }}/10 --report gate/browser-${{ matrix.shard }}.json
       - uses: actions/upload-artifact@v4
@@ -127,7 +137,9 @@ jobs:
           python-version: ${{ env.JARVIS_CI_PYTHON }}
           cache: pip
       - name: Install Jarvis and its development tools
-        run: python -m pip install -e ".[dev]"
+        # Same extras as setup.ps1, the environment tests/known_failures.json was measured in. `dev` carries numpy,
+        # which tests/conftest.py needs through jarvis.core.v2_app.
+        run: python -m pip install -e ".[voice,dev]"
       - name: Build download cache (pinned runtimes and wheels, re-verified by SHA-256 at every build)
         uses: actions/cache@v4
         with:
@@ -168,3 +180,72 @@ jobs:
             ${{ runner.temp }}/smoke/inst/*.json
             ${{ runner.temp }}/smoke/home/Local/CIRCOE/Jarvis/runtime/logs/
           if-no-files-found: ignore
+
+  macos:
+    name: macOS portability (${{ matrix.arch }}) - not a supported platform
+    runs-on: ${{ matrix.runner }}
+    # Sizing: install about 4 min (pip, no wheel cache on the first run), hard gate under 1 min (54 tests, 3 s on
+    # Windows), discovery suite about 3 min, Core smoke bounded by its own 2 x 180 s waits plus 15 s per stop. Worst case
+    # about 20 min; 35 leaves a margin for a cold runner without hiding a hang.
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # GitHub-hosted labels on 2026-10-27 (actions/runner-images README): macos-latest = macOS 26 arm64,
+          # macos-26-intel = macOS 26 x64. macos-13 no longer exists.
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-26-intel
+            arch: x64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.JARVIS_CI_PYTHON }}
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.JARVIS_CI_NODE }}
+      - name: Install Jarvis and its test tools
+        # `dev` alone (pytest + numpy for tests/conftest.py): the hard gate must not depend on the voice wheels.
+        run: python -m pip install -e ".[dev]"
+      - name: Discovery - voice extra on macOS (pynput pulls pyobjc, sounddevice bundles PortAudio)
+        continue-on-error: true
+        run: python -m pip install -e ".[voice,dev]"
+      - name: macOS runtime pins (https URLs, 64-hex SHA-256 form, sizes, versions aligned with Windows; no download)
+        run: python packaging/macos/macos_package.py check-pins
+      - name: macOS bundle plan for this architecture (no package is built)
+        run: python packaging/macos/macos_package.py plan --arch ${{ matrix.arch }}
+      # Hard gate: platform paths, process groups, single-instance flock, secrets refusal, private runtime layout and
+      # package verification, on a real POSIX kernel (the posix_only tests skipped on Windows run here).
+      - name: Portability gate (real macOS kernel)
+        run: python -m pytest -q -p no:cacheprovider tests/unit/test_macos_portability.py --junitxml=gate/macos-portability-${{ matrix.arch }}.xml
+      # Discovery steps until HV-V12-MAC-01: they report what fails on macOS without turning the job red, because the
+      # product is not claimed to run there yet. Their reports are uploaded and must be read before any macOS release.
+      - name: Discovery - does macOS accept the 127.77.0.x loopback addresses used by Core? (expected no)
+        continue-on-error: true
+        run: python -c "import socket; s = socket.socket(); s.bind(('127.77.0.1', 0)); print('bind 127.77.0.1 OK')"
+      - name: Discovery - neighbour suite (paths, installation, process tree, launcher, export, Board, research, Presentation compile)
+        continue-on-error: true
+        run: >-
+          python -m pytest -q -p no:cacheprovider --junitxml=gate/macos-neighbours-${{ matrix.arch }}.xml
+          tests/unit/test_data_root.py tests/unit/test_installed_product_root.py tests/unit/test_private_runtime.py
+          tests/unit/test_process_tree.py tests/unit/test_owned_process_tree.py tests/unit/test_product_launcher.py
+          tests/unit/test_local_secrets.py tests/unit/test_document_export.py tests/unit/test_schema_migrations.py
+          tests/unit/test_board_service.py tests/unit/test_board_store_sqlite.py tests/unit/test_board_memory_store.py
+          tests/unit/test_presentation_project_continuity.py tests/unit/test_presentation_board_discovery.py
+          tests/unit/test_research_freshness.py tests/unit/test_remotion_compiler.py tests/unit/test_dossier_service_api.py
+      - name: Discovery - Core and Control Center smoke (development checkout, sandbox data root, 127.0.0.1)
+        continue-on-error: true
+        run: python scripts/core_smoke.py --work "${{ runner.temp }}/core-smoke" --core-port 63653 --report gate/core-smoke-${{ matrix.arch }}.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-portability-${{ matrix.arch }}
+          path: |
+            gate/
+            ${{ runner.temp }}/core-smoke/logs/
+          if-no-files-found: warn

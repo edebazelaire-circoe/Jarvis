@@ -169,7 +169,7 @@ class InstanceLock:
 
                 handle.seek(0)
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:  # pragma: no cover - V1 is Windows-first
+            else:  # macOS : `flock`, libéré par le noyau à la mort du processus (tests de plateforme simulée)
                 import fcntl
 
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -251,9 +251,10 @@ def launcher_alive(state: object, *, pid_alive: Callable[[int], bool],
 
 
 def owned_tree_factory() -> Any | None:
-    """Un Job Object `KILL_ON_JOB_CLOSE` par enfant (`owned_process_tree.OwnedProcessTree`), `None` hors Windows."""
+    """Un Job Object `KILL_ON_JOB_CLOSE` par enfant (`owned_process_tree.OwnedProcessTree`) ; macOS (Slice 08 V1.2,
+    non exécuté sur un Mac) : un groupe de processus par enfant, tué entier à l'arrêt. `None` ailleurs (Linux de test)."""
 
-    if os.name != "nt":
+    if os.name != "nt" and sys.platform != "darwin":
         return None
     from jarvis.runtime.owned_process_tree import OwnedProcessTree
 
@@ -394,8 +395,10 @@ class Launcher:
             stop_file.unlink(missing_ok=True)  # une demande d'un arrêt précédent ne doit jamais arrêter ce lancement
             env[STOP_REQUEST_ENV] = str(stop_file)
         try:
+            # POSIX : l'isolement vient d'une session propre (`start_new_session`) ; Windows : argument jamais passé.
+            session = {"start_new_session": True} if getattr(tree, "start_new_session", False) else {}
             process = self.spawn(argv, env=env, stdin=subprocess.DEVNULL, stdout=role.log,
-                                 stderr=subprocess.STDOUT, creationflags=flags)
+                                 stderr=subprocess.STDOUT, creationflags=flags, **session)
         except OSError as exc:
             raise LaunchError("child_unstartable", f"JARVIS n'a pas pu démarrer ({role.name}).",
                               f"{type(exc).__name__}: {exc}") from exc

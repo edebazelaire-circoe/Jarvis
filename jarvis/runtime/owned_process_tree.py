@@ -1,14 +1,23 @@
 """Windows job-process containment, before any child instruction can execute.
 
 This owns process lifetime, not action permissions or external-service effects.
-No breakaway flag is enabled. Other platforms are explicitly unavailable here.
+No breakaway flag is enabled.
+
+POSIX (macOS, Slice 08 of V1.2, `docs/macos-portability.md`): `PosixProcessGroupAPI` puts the child in its own
+session/process group (`start_new_session`, see `spawn_kwargs(tree)`) and kills the whole group
+(`killpg`). It is weaker than a job object and says so: the child runs from its first instruction (no suspended
+start), a descendant that calls `setsid()` leaves the group, and nothing kills the group if the owner itself dies
+(no `KILL_ON_JOB_CLOSE`). Written and tested with simulated platform only; never executed on a Mac.
 """
 from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes as w
 import os
+import signal
 import sys
+
+IS_WINDOWS = os.name == "nt"
 
 CREATE_SUSPENDED = 0x4
 CREATE_NO_WINDOW = 0x08000000
@@ -151,13 +160,91 @@ class WindowsJobAPI:
         self._check(self.api.CloseHandle(handle))
 
 
+class _ProcessGroup:
+    """Mutable handle of `PosixProcessGroupAPI`: the group id once a child is attached."""
+
+    __slots__ = ("pgid",)
+
+    def __init__(self):
+        self.pgid: int | None = None
+
+
+class PosixProcessGroupAPI:
+    """Same contract as `WindowsJobAPI`, by process group. Functions are injectable for simulated-platform tests."""
+
+    def __init__(self, *, killpg=None, getpgid=None):
+        killpg = killpg if killpg is not None else getattr(os, "killpg", None)
+        getpgid = getpgid if getpgid is not None else getattr(os, "getpgid", None)
+        if killpg is None or getpgid is None:
+            raise OSError("owned_process_tree_unavailable")
+        self._killpg, self._getpgid = killpg, getpgid
+
+    def create(self):
+        return _ProcessGroup()
+
+    def assign(self, handle, pid):
+        # `start_new_session=True` made the child a session and group leader: its group id IS its pid. Anything
+        # else means the child was not started with `spawn_kwargs(tree)`, and killing "its" group could hit ours.
+        if self._getpgid(pid) != pid:
+            raise OSError("owned_process_tree_not_isolated")
+        handle.pgid = pid
+
+    def resume(self, pid):
+        """Nothing to resume: POSIX cannot start a child suspended (documented weakness)."""
+
+    def terminate(self, handle):
+        if handle.pgid is None:
+            return
+        try:
+            self._killpg(handle.pgid, getattr(signal, "SIGKILL", 9))
+        except ProcessLookupError:
+            pass  # intentional: the whole group is already gone, which is the requested outcome
+
+    def contains(self, handle, pid):
+        try:
+            return handle.pgid is not None and self._getpgid(pid) == handle.pgid
+        except ProcessLookupError:
+            return False
+
+    def active(self, handle):
+        if handle.pgid is None:
+            return 0
+        try:
+            self._killpg(handle.pgid, 0)
+        except ProcessLookupError:
+            return 0
+        except PermissionError:
+            return 1  # a member exists but belongs to someone else now: still not empty for us
+        return 1  # killpg cannot count members; "at least one" is all `close_if_empty` needs
+
+    def close(self, handle):
+        handle.pgid = None
+
+
+def spawn_kwargs(tree) -> dict:
+    """Spawn arguments for a child `tree` will own: `{"creationflags": tree.creationflags}` on Windows (exactly the
+    pre-Slice-08 argument), `{"start_new_session": True}` on POSIX (`creationflags` must be 0 there)."""
+
+    return {"creationflags": tree.creationflags} if IS_WINDOWS else {"start_new_session": True}
+
+
+def default_api():
+    """Job object on Windows, process group elsewhere (`OSError` if neither exists)."""
+
+    return WindowsJobAPI() if IS_WINDOWS else PosixProcessGroupAPI()
+
+
 class OwnedProcessTree:
     """Keep the job handle until the kernel confirms its entire membership empty."""
-    creationflags = CREATE_SUSPENDED | CREATE_NO_WINDOW
+    # Windows: start suspended, attach to the job, then resume. POSIX: `creationflags` must be 0 (Popen refuses
+    # anything else); the isolation comes from `start_new_session` instead.
+    creationflags = (CREATE_SUSPENDED | CREATE_NO_WINDOW) if IS_WINDOWS else 0
+    start_new_session = not IS_WINDOWS
 
     def __init__(self, *, api=None):
-        self.api = api if api is not None else WindowsJobAPI()
+        self.api = api if api is not None else default_api()
         self.handle = self.api.create()
+
         self.attached = False
         self.termination_requested = False
 

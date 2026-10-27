@@ -310,3 +310,8 @@ tester's own browser. Then `python.exe -B -m jarvis core` (and
   `models\wake-word` of the package).
 - Readiness UI, repair actions and the Claude CLI sign-in: Slice 07,
   [product-install.md](product-install.md) › *Readiness*.
+- macOS (V1.2 Slice 08, not supported before HV-V12-MAC-01): the same package
+  tree inside `Jarvis.app/Contents/Resources/package`, POSIX runtime layout
+  (`bin/python3`, `bin/node`, `lib/python3.X/site-packages`) chosen by
+  `PackageLayout(platform=…)`, pins and plan in `packaging/macos/`, one shared
+  `verify_package`: [macos-portability.md](macos-portability.md).

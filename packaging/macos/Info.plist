@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Modèle du bundle Jarvis.app (docs/macos-portability.md, Slice 08 V1.2). PLAN : jamais construit ni signé à ce jour.
+     __VERSION__ est remplacé par le packager. Les textes d'usage sont ceux que macOS montre à l'utilisateur. -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.circoe.jarvis</string>
+  <key>CFBundleName</key>
+  <string>Jarvis</string>
+  <key>CFBundleDisplayName</key>
+  <string>Jarvis</string>
+  <key>CFBundleExecutable</key>
+  <string>jarvis-launcher</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>__VERSION__</string>
+  <key>CFBundleVersion</key>
+  <string>__VERSION__</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.5</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.productivity</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Jarvis écoute votre voix pour vous répondre et préparer vos présentations.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Jarvis ouvre le Control Center dans votre navigateur.</string>
+</dict>
+</plist>
