@@ -58,6 +58,9 @@ def _parser() -> argparse.ArgumentParser:
     restore = sub.add_parser("secrets-restore", help="Write the original content of a sealed secrets backup (support)")
     restore.add_argument("backup", help="<file>.plain-backup[.N].dpapi")
     restore.add_argument("out", help="Output file (must not exist); it holds plaintext keys: delete it after use")
+    # Support (Slice 10 presentation-edition, docs/release.md) : zip borné et masqué, sans contenu de l'utilisateur.
+    support = sub.add_parser("support-bundle", help="Write a bounded, redacted support bundle (no conversations, no keys)")
+    support.add_argument("--out", help="Folder for the zip (default: <runtime>/support)")
     # Lancée par le CLI du cerveau via `--mcp-config` (scene.enabled), pas par
     # un humain : stdout est le protocole MCP.
     sub.add_parser("display-mcp", help="Serve the brain scene display MCP tools over stdio")
@@ -2171,6 +2174,10 @@ async def _amain(argv: list[str] | None = None) -> int:
         return wake_word_cli(args)
     if command == "drive-auth": return await _drive_auth()
     if command == "drive-mcp": return await _drive_mcp()
+    if command == "support-bundle":
+        from jarvis.runtime.support_bundle import run_cli as support_bundle_cli
+
+        return support_bundle_cli(args)
     if command == "secrets-restore":
         from jarvis.runtime.local_secrets import restore_backup
 

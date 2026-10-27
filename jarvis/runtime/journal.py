@@ -109,6 +109,12 @@ def _tail_lines(path: Path, limit: int) -> list[str]:
     return [line.decode("utf-8", errors="replace") for line in lines if line.strip()][-limit:]
 
 
+def tail_lines(path: Path, limit: int) -> list[str]:
+    """Les `limit` dernières lignes non vides d'un journal texte, lu par blocs depuis la fin (`OSError` remonte)."""
+
+    return _tail_lines(path, limit) if limit > 0 else []
+
+
 def read_jsonl_tail(path: Path, *, limit: int = 100) -> list[dict[str, Any]]:
     if limit <= 0 or not path.is_file():
         return []
