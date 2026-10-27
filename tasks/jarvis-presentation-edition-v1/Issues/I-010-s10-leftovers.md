@@ -36,3 +36,10 @@ Human, or a gate that cannot be run from this workstation. Owners in brackets.
 10. **A WAL after a hard stop**: killing the launcher leaves `jarvis.sqlite3-wal` / `-shm` next to the base (normal
     SQLite recovery at the next start, seen in the package smoke). The rollback procedure of `docs/release.md` moves
     them aside WITH their base; a support or recovery tool must never delete them.
+11. **One unreadable Presentation folder degrades the whole Studio** [Studio owner, post-V1 or Slice 11]: the first
+    package smoke seeded a fake `presentations/<id>/presentation.json`; Core then logged
+    `presentation_studio_corrupt_document` (« 1 presentation folder(s) are unreadable »), `pins_degraded` (« rien ne
+    sera archivé ») and failed the `all_variants` operation for every Presentation. The seed now writes a real
+    Presentation through the Studio service and the smoke fails on any `corrupt` error; the product behaviour itself
+    (one damaged folder blocking operations on the others, e.g. after a disk fault) is unchanged and worth a
+    recovery path (« mettre de côté » the unreadable folder, keep the others working).

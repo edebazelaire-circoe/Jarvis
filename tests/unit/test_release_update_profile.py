@@ -17,9 +17,11 @@ import pytest
 
 from jarvis import product_setup as S
 from jarvis.adapters import sqlite_scene, sqlite_state
+from jarvis.adapters.file_presentation_studio_store import FilePresentationStudioStore
 from jarvis.adapters.sqlite_scene import SQLiteSceneRepository
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
 from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository
+from jarvis.core.presentation_studio_service import PresentationStudioService
 from scripts import release_seed_profile as SEED
 from tests.unit.test_product_setup import RecordingShortcuts, make_package, quiet, targets
 
@@ -73,6 +75,11 @@ def test_an_update_keeps_the_profile_byte_for_byte_then_core_migrates_it_after_b
     assert report["databases"]["jarvis.sqlite3"] == {"now": sqlite_state._SCHEMA_VERSION, "backup": "jarvis.sqlite3.v10.bak",
                                                      "backup_version": 10}
     assert report["databases"]["scene.sqlite3"]["backup"] == "scene.sqlite3.v1.bak"
+    # La Presentation du profil reste lisible par le Studio du nouveau code (aucun dossier jugé abîmé).
+    studio = PresentationStudioService(FilePresentationStudioStore(t.home / "data"))
+    listed = asyncio.run(studio.list_presentations(50)).to_dict()
+    assert manifest["presentation"]["presentation_id"] in json.dumps(listed)
+    assert "corrupt" not in json.dumps(listed)
     # Un second démarrage ne rejoue rien et ne réécrit pas la sauvegarde.
     backup = t.home / "data" / "state" / "jarvis.sqlite3.v10.bak"
     stamp = backup.stat().st_mtime_ns

@@ -33,9 +33,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from jarvis.adapters import sqlite_scene, sqlite_state  # noqa: E402 - après le chemin du dépôt
+from jarvis.adapters.file_presentation_studio_store import FilePresentationStudioStore  # noqa: E402
 from jarvis.adapters.sqlite_scene import SQLiteSceneRepository  # noqa: E402
 from jarvis.adapters.sqlite_state import SQLiteStateRepository  # noqa: E402
 from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository  # noqa: E402
+from jarvis.core.presentation_studio_service import PresentationStudioService  # noqa: E402
 from jarvis.domain.workspace_board import Board, BoardKind, BoardStatus  # noqa: E402
 
 SCHEMA = "jarvis.seeded-profile"
@@ -43,13 +45,12 @@ SCHEMA = "jarvis.seeded-profile"
 STATE_FROM = 10
 SCENE_FROM = 1
 SEEDED_AT = datetime(2026, 10, 1, 9, 30, tzinfo=timezone.utc)
+PRESENTATION_TITLE = "Rapport annuel 2026"
 BOARDS = (("default", "Mes présentations", BoardKind.PRESENTATION, BoardStatus.ACTIVE),
           ("board_seed_rapport", "Rapport annuel 2026", BoardKind.PRESENTATION, BoardStatus.ACTIVE),
           ("board_seed_ancien", "Ancien espace assistant", BoardKind.ASSISTANT, BoardStatus.ARCHIVED))
 FILES = {
     "data/CONTEXT_GLOBAL/profil-seme.md": "# Profil semé\n\nPréférences de l'utilisateur : ton sobre, police lisible.\n",
-    "data/presentations/pres_seed/presentation.json": json.dumps(
-        {"presentation_id": "pres_seed", "title": "Rapport annuel 2026", "note": "semée pour la mise à jour"}, indent=2) + "\n",
     "data/artifacts/art_seed/export.mp4": "MP4-FAKE-PAYLOAD " * 64,
     "data/boards/board_seed_rapport/memory/notes.md": "Notes du Board semé.\n",
     "config/.env": "# .env du produit semé\nJARVIS_SEED_MARKER=1\n",
@@ -88,6 +89,13 @@ async def _scene_at(path: Path, version: int) -> None:
         sqlite_scene._SCHEMA_VERSION = saved
 
 
+async def _presentation(data_root: Path) -> str:
+    """Une vraie Presentation du Studio, écrite par le service de CE dépôt (dossier `presentations/<id>/`)."""
+
+    view = await PresentationStudioService(FilePresentationStudioStore(data_root)).create({"title": PRESENTATION_TITLE})
+    return view.presentation.presentation_id
+
+
 def seed(home: Path) -> dict:
     if home.exists() and any(home.iterdir()):
         raise SystemExit(f"[seed] ÉCHEC : {home} n'est pas vide (un profil semé part toujours d'un dossier vide)")
@@ -99,9 +107,13 @@ def seed(home: Path) -> dict:
         path = home / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8", newline="\n")
+    presentation_id = asyncio.run(_presentation(home / "data"))
+    folder = home / "data" / "presentations" / presentation_id
+    files = {relative: sha256(home / relative) for relative in FILES}
+    files.update({path.relative_to(home).as_posix(): sha256(path) for path in sorted(folder.rglob("*")) if path.is_file()})
     return {"schema": SCHEMA, "schema_version": 1, "state_from": STATE_FROM, "scene_from": SCENE_FROM,
             "state_current": sqlite_state._SCHEMA_VERSION, "scene_current": sqlite_scene._SCHEMA_VERSION,
-            "files": {relative: sha256(home / relative) for relative in FILES},
+            "files": files, "presentation": {"presentation_id": presentation_id, "title": PRESENTATION_TITLE},
             "boards": [{"board_id": b, "title": t, "board_kind": k.value, "status": s.value} for b, t, k, s in BOARDS]}
 
 

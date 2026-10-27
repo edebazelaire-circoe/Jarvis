@@ -278,9 +278,17 @@ class Smoke:
         check({"default", "board_seed_rapport", "board_seed_ancien"} <= set(ids), f"Boards du profil semé : {ids}")
         report = SEED.verify(self.home, self.seed_manifest)
         check(report["green"], f"profil après démarrage : {report['problems']}")
+        presentation_id = self.seed_manifest["presentation"]["presentation_id"]
+        status, listing = self.http("GET", self.core_url + "/v1/presentation-studio/presentations", token=True)
+        check(status == 200 and presentation_id in json.dumps(listing), f"Presentation semée absente : {status} {listing!r}"[:600])
+        errors = (self.home / "runtime" / "errors.jsonl")
+        corrupt = [line[:300] for line in (errors.read_text(encoding="utf-8").splitlines() if errors.is_file() else [])
+                   if "corrupt" in line]
+        check(not corrupt, f"Core juge un document du profil abîmé : {corrupt[:2]}")
         state = self.launcher_state()
         check(process_tree.parse_process_ref(state.get("process_ref", "")) is not None, f"launcher.json sans identité : {state}")
         return {"health_status": health.get("status"), "runtimes": runtimes.get("status"), "boards": ids,
+                "presentation": presentation_id,
                 "databases": report["databases"], "process_ref": True}
 
     def crash(self, role: str) -> dict:

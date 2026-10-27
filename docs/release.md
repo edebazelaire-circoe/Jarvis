@@ -101,7 +101,7 @@ with `PATH` = `System32;Windows`, no Python/Node variable, `JARVIS_OPEN_BROWSER=
 | `snapshot_before` / `snapshot_after` | the real profile (HKCU uninstall keys, `%LOCALAPPDATA%\Programs`, `%LOCALAPPDATA%\CIRCOE`, JARVIS shortcuts) is identical at the end |
 | `seed` | a profile of a previous version is present before the install ([Update](#update-over-an-existing-profile)) |
 | `install` | silent install; the seeded home is byte-identical afterwards; `verify_package` of the program is intact |
-| `launch` | `/v1/health` ready, `installation.mode` `installed`, private runtimes `ok` with the reduced PATH, edition `presentation`, the seeded Boards listed, the profile migrated with its backups, `launcher.json` carrying `process_ref` |
+| `launch` | `/v1/health` ready, `installation.mode` `installed`, private runtimes `ok` with the reduced PATH, edition `presentation`, the seeded Boards and the seeded Presentation listed, no document of the profile judged corrupt, the profile migrated with its backups, `launcher.json` carrying `process_ref` |
 | `crash_core`, `crash_ui` | the child is a verified descendant (PID and creation time) of the launcher **this script started**; it is killed; the launcher restarts it, Core is ready again, the profile is intact |
 | `support_bundle` | the packaged `support-bundle` command writes its zip; a planted fake secret, the home path and the user name are absent; `%LOCALAPPDATA%` replaces the root |
 | `quit` | « Quitter JARVIS » stops everything (no process of the program left) and the program folder was never written |
@@ -132,7 +132,7 @@ by an update.
 `scripts/release_seed_profile.py seed` builds such a profile in a throw-away home: `jarvis.sqlite3`
 created by the code of this repository brought back to schema **v10** (the real DDL and migrations up to
 it) with three Boards (two Presentation, one archived Assistant, as a profile from before the edition),
-`scene.sqlite3` at **v1**, and known bytes in `CONTEXT_GLOBAL`, a Studio presentation, an artifact, a
+`scene.sqlite3` at **v1**, and known bytes in `CONTEXT_GLOBAL`, a real Studio Presentation (written by the Studio service of the same code), an artifact, a
 Board memory and a product `.env`. `verify` checks, read-only (immutable opening when no `-wal`/`-shm`
 exists), that every seeded file is byte-identical, both bases are at the current version with their
 `.v10.bak` / `.v1.bak` still at the old version, and the Boards kept their id, title, kind and status.
