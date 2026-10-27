@@ -7,8 +7,8 @@
 5. [x] `04-research-documents-and-dossier` — **APPROUVÉE** le 2026-10-27 (I-004) — turn substantial research into durable reusable Board documents visible in Dossier.
 6. [x] `05-voice-lifecycle-wake-chat` — **APPROUVÉE** le 2026-10-27 (fusion `321bcdd1` ; suivi 05b packaging du mot de réveil en cours) — — launch/close lifecycle and Voice Off/Sleep/Active + chat contract.
 7. `06-settings-and-novice-ui` — simplify normal UX while retaining complete Settings/debug/transcription surfaces.
-8. `07-bug-report-diagnostic-bundle` — user-facing diagnostic report + sanitized AppData ZIP + send/fallback.
-9. `08-macos-portability-build-validation` — platform-path/packaging portability and macOS CI/real-device gate.
+8. [x] `07-bug-report-diagnostic-bundle` — **APPROUVÉE** le 2026-10-27 (I-005) — user-facing diagnostic report + sanitized AppData ZIP + send/fallback.
+9. [x] `08-macos-portability-build-validation` — **APPROUVÉE** le 2026-10-27, sans paquet macOS (écart déclaré, I-005) — platform-path/packaging portability and macOS CI/real-device gate.
 10. `09-v1-2-integration-e2e` — whole amendment E2E, regression and Human acceptance package.
 
 ## Dependencies
