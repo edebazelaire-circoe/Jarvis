@@ -31,7 +31,10 @@ Human, or a gate that cannot be run from this workstation. Owners in brackets.
 8. **Cross-machine reproducibility** of `package_sha256` [CI first run]: still proven on one machine only.
 9. **Observed during the full sweep** (not caused by the task): `test_memory_context.py::test_recall_over_2000_notes…`
    exceeds its wall-clock latency budget on a loaded machine (passes alone 2/2): listed as `intermittent` in
-   `tests/known_failures.json`. `test_product_setup.py::test_the_deferred_removal_waits…` failed once under load:
+   `tests/known_failures.json`; so is `test_presentation_integration.py::test_une_source_evincee_par_son_propre…`
+   (failed once in a shard, cause not diagnosed, passes alone 3/3 and with its file 3/3; review by 2026-11-30).
+   An architecture regression of Slice 03 (core importing the export destination adapter) was found by the sweep and
+   fixed (`jarvis/ports/document_export.py`). `test_product_setup.py::test_the_deferred_removal_waits…` failed once under load:
    fixed in the test (wait counted from the file hold), not listed.
 10. **A WAL after a hard stop**: killing the launcher leaves `jarvis.sqlite3-wal` / `-shm` next to the base (normal
     SQLite recovery at the next start, seen in the package smoke). The rollback procedure of `docs/release.md` moves
