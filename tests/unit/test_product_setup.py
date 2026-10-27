@@ -235,8 +235,11 @@ def test_the_deferred_removal_waits_for_the_real_end_of_the_process_then_removes
         assert (t.target / PR.RUNTIME_MANIFEST).exists() and t.registry.read() is not None
     finally:
         holder.wait(timeout=30)
-    assert wait_until(lambda: not t.target.exists() and t.registry.read() is None, 40)
-    assert not S.state_path(t.target).exists() and not Path(result["removal_script"]).exists()
+    # The script erases itself LAST (after the key, the state and the empty vendor folder): wait for that too, bounded
+    # (QA S10 second rework X2: checking the `.cmd` right after the folder raced with its last lines).
+    assert wait_until(lambda: not t.target.exists() and t.registry.read() is None
+                      and not Path(result["removal_script"]).exists(), 40)
+    assert not S.state_path(t.target).exists()
     assert "dossier supprime" in (tmp_path / "tmp" / S.UNINSTALL_LOG).read_text(encoding="utf-8")
     again = S.install(make_package(tmp_path / "src2"), t, move=False, progress=quiet(), shortcuts=RecordingShortcuts())
     assert again["ok"] and again["mode"] == "install"
@@ -608,6 +611,22 @@ def test_the_owner_of_a_work_folder_is_a_live_process_older_than_the_folder(tmp_
     assert S.setup_work_owner(".jarvis-setup-4242-bbbb2222") == 4242
     assert S.setup_work_owner(".jarvis-setup-4242-bbbb2222.removing") == 4242
     assert S.setup_work_owner(".jarvis-setup-0123456789ab") is None
+
+
+def test_an_owner_that_exists_but_cannot_be_read_is_alive_and_its_folder_is_kept(tmp_path):
+    """QA S10 x3 : identité inconnue (amorce lancée en administrateur : `OpenProcess` refusé) = vivant."""
+
+    assert S.setup_owner_alive(4242, 1000.0, probe=lambda pid: S.PROCESS_UNREADABLE)
+    assert not S.setup_owner_alive(4242, 1000.0, probe=lambda pid: S.PROCESS_DEAD)
+    assert S.setup_owner_alive(4242, 1000.0, probe=lambda pid: 900.0) and not S.setup_owner_alive(4242, 1000.0, probe=lambda pid: 1100.0)
+    parent = tmp_path / "Programs" / "CIRCOE"
+    folder = _setup_dir(parent, ".jarvis-setup-4242-ffff6666")
+    kept = S.remove_orphan_setup_dirs(parent, owner_alive=lambda pid, created: S.setup_owner_alive(
+        pid, created, probe=lambda _pid: S.PROCESS_UNREADABLE))
+    assert kept["removed"] == [] and folder.is_dir() and "vivante" in kept["kept"][0]["why"]
+    if os.name == "nt":  # the real probe: System (PID 4) exists (unreadable to a user, readable to an administrator)
+        assert S.probe_process(4) != S.PROCESS_DEAD and S.setup_owner_alive(4, time.time())
+        assert S.probe_process(0) == S.PROCESS_DEAD and isinstance(S.probe_process(os.getpid()), float)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows refuses to rename a folder with an open file")

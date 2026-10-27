@@ -547,17 +547,62 @@ def _filetime_epoch(filetime: str) -> float | None:
         return None
 
 
-def setup_owner_alive(pid: int, folder_created: float) -> bool:
-    """Le processus `pid` vit encore ET existait déjà quand le dossier a été créé : c'est son propriétaire. Un PID
-    réemployé depuis (processus plus jeune que le dossier) n'en est pas un. Identité inconnue : vivant (prudence)."""
+#: Issue d'une sonde de processus : mort (aucun processus de ce PID), inaccessible (il existe, mais son heure de
+#: création ne peut être lue : lancé en administrateur, protégé), ou son heure de création (époque Unix).
+PROCESS_DEAD = "dead"
+PROCESS_UNREADABLE = "unreadable"
+
+
+def probe_process(pid: int) -> str | float:
+    """`PROCESS_DEAD`, `PROCESS_UNREADABLE` ou l'heure de création de `pid`.
+
+    Windows : `OpenProcess` avec le seul droit `PROCESS_QUERY_LIMITED_INFORMATION` (accordé même sur un processus
+    d'un autre niveau d'intégrité) ; un refus `ERROR_ACCESS_DENIED` dit qu'un processus de ce PID EXISTE. Ailleurs :
+    `process_tree._posix_start_time` (identité inconnue `""` = inaccessible)."""
 
     from jarvis.adapters import process_tree
 
-    started = process_tree._windows_start_time(pid) if process_tree.IS_WINDOWS else process_tree._posix_start_time(pid)
-    if started is None:
+    if not process_tree.IS_WINDOWS:
+        started = process_tree._posix_start_time(pid)
+        if started is None:
+            return PROCESS_DEAD
+        return PROCESS_UNREADABLE  # an opaque `ps` stamp cannot be compared with a folder time: kept, by prudence
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    handle = kernel32.OpenProcess(0x1000, False, int(pid))  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return PROCESS_UNREADABLE if ctypes.get_last_error() == 5 else PROCESS_DEAD  # 5 = ERROR_ACCESS_DENIED
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return PROCESS_UNREADABLE
+        if code.value != 259:  # STILL_ACTIVE
+            return PROCESS_DEAD
+        created, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
+        if not kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited), ctypes.byref(kernel),
+                                        ctypes.byref(user)):
+            return PROCESS_UNREADABLE
+        epoch = _filetime_epoch(str((created.dwHighDateTime << 32) | created.dwLowDateTime))
+        return PROCESS_UNREADABLE if epoch is None else epoch
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def setup_owner_alive(pid: int, folder_created: float, *, probe: Callable[[int], str | float] = probe_process) -> bool:
+    """Le processus `pid` vit encore ET existait déjà quand le dossier a été créé : c'est son propriétaire. Un PID
+    réemployé depuis (processus plus jeune que le dossier) n'en est pas un. Identité inconnue (le processus existe
+    mais ne se laisse pas lire, par exemple une amorce lancée en administrateur) : VIVANT, son dossier est gardé
+    (QA S10 x3 : le choix sûr ; le dossier sera repris quand ce processus aura disparu)."""
+
+    state = probe(pid)
+    if state == PROCESS_DEAD:
         return False
-    epoch = _filetime_epoch(started) if process_tree.IS_WINDOWS else None
-    return epoch is None or epoch <= folder_created + 2.0
+    if state == PROCESS_UNREADABLE or not isinstance(state, float):
+        return True
+    return state <= folder_created + 2.0
 
 
 def _created(folder: Path) -> float:

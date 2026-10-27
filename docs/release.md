@@ -241,12 +241,23 @@ after the backup; a profile copied to another Windows user or PC loses its DPAPI
 
 Every file is capped at 1 MiB (the end is kept); a line is cut at 16 000 characters before being
 masked (the output keeps 2 000). Redaction (`jarvis/domain/diagnostic_redaction.py`):
-**known secrets first** (QA S10 M2): every value of `config\.env` that looks like a secret (any value
-of a variable whose name holds `TOKEN`, `KEY`, `SECRET`, `PASSWORD`, `PWD`, `PASS`, `CREDENTIAL`,
-`AUTH`, `COOKIE`, `SESSION`, `PRIVATE` or `SIGNATURE`; and, by prudence, any other value of 8
-characters or more without space that mixes letters and digits or is 20 characters long — a plain
-word such as `presentation` stays readable) and the content of `core.token`, so an opaque token with
-no recognisable shape is masked wherever a log prints it; then
+**known secrets first** (QA S10 M2, X1, x4, x6), unsealed or read **in memory only**:
+every value of `config\.env` read by the canonical parser `jarvis.environment.parse_environment_lines`
+(BOM, `export`, quotes, ` #` comments: the value the redactor knows is the value JARVIS loads; a line
+the parser refuses is counted, never copied, and does not hide the other lines) that looks like a secret
+— any non-trivial value of 6 characters or more of a variable whose name has a word `TOKEN`, `KEY`,
+`SECRET`, `PASSWORD`, `PASSWD`, `PWD`, `PASS`, `PASSPHRASE`, `CREDENTIAL(S)`, `COOKIE`, `SIGNATURE`,
+`AUTHORIZATION`, `BEARER` (or ends with `TOKEN`, `SECRET`, `PASSWORD`, `APIKEY`…), unless another word
+makes it a descriptive setting (`TYPE`, `FILE`, `MAX`, `TIMEOUT`, `HOST`…), so `KEYBOARD_LAYOUT=azerty`,
+`BYPASS_HOST=localhost` or `MAX_TOKEN=100000` stay readable; and, by prudence, any other value of 8
+characters or more without space that mixes letters and digits or is 20 characters long; the content of
+`core.token`; the API keys of the local settings (`control-center-settings.json`: plain in development,
+DPAPI-sealed in the product, where the provider keys of `.env` are moved at the first start); and the
+credentials of the MCP vault (`mcp_credentials` of `jarvis.sqlite3`, read like the schema versions,
+`immutable=1` without a `-shm`). `bundle.json` › `secret_sources` gives only counts per source, and
+`degraded` when a sealed value cannot be unsealed (another Windows account, no DPAPI): the bundle is
+still written, with that weaker masking said. An opaque token with no recognisable shape is thus masked
+wherever a log prints it; then
 the canonical secret masking of MCP plugins (`Bearer`, JWT, `Authorization`, cookies, any
 `token=` / `api_key:` / `password` pair, credential keys of structured data), bare key shapes
 (`sk-…`, `sk-ant-…`, `AIza…`, `ya29.…`, `1//0…`, `ghp_…`, `xox?-…`, Google client secret `GOCSPX-…`

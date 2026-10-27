@@ -91,3 +91,18 @@ list). Owners in brackets.
     another revision (m7). A local sweep interrupted by a commit must be rerun at the final revision before its
     reports can be joined (seen in the rework: the parts made at `8968850c` were refused for the `63697cfa`
     package; 13 reports of `63697cfa` were joined).
+
+## Second rework of Slice 10 (2026-10-27, counter-review `slices/10-…/qa/rework-review.md`)
+
+Fixed (LOG « 2026-10-27 — Slice 10, seconde reprise ») : X1 (canonical `.env` parser in the support bundle), X2
+(installer test waiting for the self-erasing script), x3 (unreadable owner = alive), x4 (ordinary settings with a
+sensitive-looking name stay readable, trivial values never secrets), x6 (sealed local keys and MCP vault credentials
+given to the redactor, in memory only, `secret_sources` counts and `degraded` in `bundle.json`). Recorded, not fixed:
+
+20. **x5 — the rest of m7: `release_info.py` does not require a COMPLETE set of gate reports** [agent 0, with A12].
+    One green report is enough, even an `--only` of a single file: the suites `unit`, `browser` and `release` and the
+    number of shards are not required (in CI, `needs: [static, tests, browser]` and the joined `gate-*` artifacts make
+    up for it). A gate report's `source_revision` is `HEAD` even when the working tree is modified
+    (`release_test_gate.py`, `source_revision()`), so a local run on uncommitted changes is reported at the last commit.
+    Fix: record `git status --porcelain` emptiness (`worktree_clean`) in the report and refuse a dirty one; let
+    `release_info.py` require one report per expected suite/shard (or a `--require unit:4,browser:10,release:1`).

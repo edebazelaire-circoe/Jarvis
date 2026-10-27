@@ -155,6 +155,96 @@ def test_an_opaque_token_of_the_env_or_of_core_token_is_masked_wherever_a_log_pr
     assert "edition presentation" in everything, "an ordinary setting value stays readable"
 
 
+OPAQUE = "Zq7Xv2Lm9Pw4Rt8Ks1Hd6Fn3"
+
+
+@pytest.mark.parametrize("line", [f"INFOMANIAK_TOKEN={OPAQUE} # jeton pro", f"INFOMANIAK_TOKEN='{OPAQUE}' # jeton",
+                                  f'export INFOMANIAK_TOKEN="{OPAQUE}"', f"﻿INFOMANIAK_TOKEN={OPAQUE}"],
+                         ids=["comment", "quoted-comment", "export-double-quotes", "bom"])
+def test_the_env_is_read_by_the_canonical_parser_so_a_commented_token_is_still_masked(tmp_path, line):
+    """QA S10 second rework X1 (`probe_m2.py`): the value JARVIS loads is the value the redactor knows."""
+
+    sources, _env = profile(tmp_path)
+    (sources.config_dir / ".env").write_text(line + "\nNOT A VALID LINE\nOTHER_TOKEN=Kp3Wq8Zr5Tn1Ly6Vb2\n", encoding="utf-8")
+    (sources.runtime_root / "logs" / "core.log").write_text(f"upstream with {OPAQUE} ok\nother Kp3Wq8Zr5Tn1Ly6Vb2\n",
+                                                            encoding="utf-8")
+    files = read_zip(SB.write_bundle(sources))
+    assert OPAQUE not in files["logs/core.log"] and "Kp3Wq8Zr5Tn1Ly6Vb2" not in files["logs/core.log"]
+    assert json.loads(files["config-keys.json"]) == {"config_env_keys": ["INFOMANIAK_TOKEN", "OTHER_TOKEN"]}, "no BOM"
+    assert json.loads(files["bundle.json"])["secret_sources"]["env"] == {"values": 2, "unreadable_lines": 1}
+
+
+def test_ordinary_settings_with_a_sensitive_looking_name_stay_readable(tmp_path):
+    """QA S10 x4 : un réglage ordinaire n'est pas un secret (et une valeur triviale n'en est jamais un)."""
+
+    sources, _env = profile(tmp_path)
+    (sources.config_dir / ".env").write_text(
+        "KEYBOARD_LAYOUT=azerty\nBYPASS_HOST=localhost\nJARVIS_SESSION_TIMEOUT=100000\nMAX_TOKEN=100000\n"
+        "TOKEN_CACHE=disabled\nAPI_KEY=enabled\nDB_PASSWORD=123456\nGOOGLE_TOKEN_FILE=token.json\n"
+        "DB_PASSWORD_2=hunter2x\nOPENAI_APIKEY=abcdef\n", encoding="utf-8")
+    secrets = SB.known_secrets(sources)
+    for ordinary in ("azerty", "localhost", "100000", "disabled", "enabled", "123456", "token.json"):
+        assert ordinary not in secrets, ordinary
+    assert "hunter2x" in secrets and "abcdef" in secrets
+
+
+class FakeSealer:
+    """Réversible, sans DPAPI : prouve le chemin du descellement en mémoire (jamais écrit)."""
+
+    available = True
+    scheme = "dpapi-user-v1"
+
+    def seal(self, plaintext: bytes) -> bytes:
+        return b"SEALED:" + plaintext[::-1]
+
+    def unseal(self, blob: bytes) -> bytes:
+        if not blob.startswith(b"SEALED:"):
+            raise ValueError("not ours")
+        return blob[len(b"SEALED:"):][::-1]
+
+
+def test_sealed_local_keys_and_mcp_vault_credentials_are_known_secrets_unsealed_in_memory_only(tmp_path):
+    """QA S10 x6 : dans le produit installé, les clés des fournisseurs ont quitté `.env` pour le coffre DPAPI."""
+
+    from jarvis.runtime.local_secrets import seal_value
+
+    sources, _env = profile(tmp_path)
+    sealer = FakeSealer()
+    local_key, vault_token, vault_header = "dg-Qm4Xr8Lp2Vn6Tz1Kw9", "mcpTok3nH7Jd2Lq9Pz5Rw1", "Wx5Yz1Ab7Cd3Ef9Gh2"
+    settings = {"credentials": [{"provider": "deepgram", "sealed": seal_value(local_key, sealer), "hint": "dg-…kw9"},
+                                {"provider": "other", "sealed": {"scheme": "dpapi-user-v1", "blob": "AAAA"}}]}
+    (sources.runtime_root / "control-center-settings.json").write_text(json.dumps(settings), encoding="utf-8")
+    body = {"v": 1, "plugin_id": "circuit", "endpoint_origin": "https://x.example", "kind": "static",
+            "static": {"headers": {"Authorization": f"Bearer {vault_header}"}, "api_token": vault_token, "token_type": "Bearer"}}
+    with sqlite3.connect(sources.data_root / "state" / "jarvis.sqlite3") as conn:
+        conn.execute("INSERT INTO mcp_credentials(credential_ref,plugin_id,scheme,created_at,updated_at,blob) VALUES (?,?,?,?,?,?)",
+                     ("cred_" + "0" * 32, "circuit", "dpapi-user-v1", "t", "t", sealer.seal(json.dumps(body).encode())))
+    conn.close()
+    with open(sources.runtime_root / "logs" / "core.log", "a", encoding="utf-8") as log:
+        log.write(f"deepgram key {local_key}\nmcp call token {vault_token} header {vault_header} type Bearer\n")
+    sources.credentials_sealer = sources.mcp_sealer = lambda: sealer
+    files = read_zip(SB.write_bundle(sources))
+    everything = "\n".join(files.values())
+    for leak in (local_key, vault_token, vault_header):
+        assert leak not in everything, leak
+    assert "type Bearer" in files["logs/core.log"], "a descriptive field (token_type) is not a secret"
+    report = json.loads(files["bundle.json"])["secret_sources"]
+    assert report["local_settings"] == {"present": True, "plain": 0, "sealed": 2, "unsealed": 1,
+                                        "degraded": "some_sealed_values_unreadable"}  # the "AAAA" blob is unreadable
+    assert report["mcp_vault"]["rows"] == 1 and report["mcp_vault"]["unsealed"] == 1
+    # Coffre indisponible : le paquet se fait quand même, la dégradation est dite, rien n'est descellé.
+    unavailable = type("Off", (), {"available": False})()
+    sources.credentials_sealer = sources.mcp_sealer = lambda: unavailable
+    degraded = json.loads(read_zip(SB.write_bundle(sources, tmp_path / "out2"))["bundle.json"])["secret_sources"]
+    assert degraded["local_settings"]["degraded"] == degraded["mcp_vault"]["degraded"] == "vault_unavailable"
+
+    def broken():
+        raise OSError("no DPAPI")
+
+    sources.credentials_sealer = sources.mcp_sealer = broken
+    assert SB.write_bundle(sources, tmp_path / "out3").is_file()
+
+
 def test_error_data_keeps_diagnostics_by_allowlist_and_drops_user_text(tmp_path):
     """QA S10 m3 : `data` passe par une liste blanche (titres, requêtes, mots de l'utilisateur n'entrent pas)."""
 
