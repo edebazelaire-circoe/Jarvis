@@ -13,7 +13,8 @@
     — allowed connectors, credentials, Drive/CIRCOE integration and IGuard seam.
 7. [x] `06-windows-private-runtime-packaging` — **APPROVED** on 2026-10-26 (`5ed074e8`..`3f2ba594`, rework `c89dd253`; reference fingerprint `ecdf881d…`). HV-PACKAGE-01..10 open. Leftovers: `Issues/I-007-s06-leftovers.md`.
     — private Python/Node/FFmpeg, dependency/license manifest, production package layout.
-8. `07-installer-onboarding-health` — installer, first-run provisioning, product readiness and repair UI.
+8. [x] `07-installer-onboarding-health` — **APPROVED** on 2026-10-27 (`f888775f`..`169db0c7`, rework `728201eb`). Includes Slice 08 criterion 7. HV-INSTALL-01..05 open. Leftovers: `Issues/I-009-s07-leftovers.md`.
+    — installer, first-run provisioning, product readiness and repair UI.
 9. [x] `08-presentation-product-ui` — **APPROVED** on 2026-10-26 (branch `-s08`: `abdfeea9`..`7b38db15`, rework `062b83d1`, merged). Criterion 7 deferred to Slice 07. Leftovers: `Issues/I-006-s08-leftovers.md`.
     — Presentation-only Board/product shell + end-to-end Presentation workspace UX pass.
 10. `09-presentation-editing-ui` — dedicated editing/variants/media/preview UX pass.

@@ -33,3 +33,11 @@ in brackets.
      Its `finally` (audio close) is therefore skipped; the Job Object ends its tree.
    - The deferred removal script waits at most 30 min for the uninstalling process, then tries anyway; a message box
      left open longer leaves a recognised leftover (key kept), never an orphan.
+
+## Rework counter-review (`qa/rework-review.md`, `cabd2782`)
+- mn1: the deferred uninstall script watches the process by PID + image name, without start time, and does not check it still owns the target: a reinstall made while it waits on a reused PID gets erased (probe R2; data untouched; very unlikely). Cheap fix: a token in the state file, checked before each delete.
+- mn2: a `.failed-*` folder that could not be deleted is never resumed (probe R10): a full package size left after a successful install.
+- mn3: `&`, `%`, `!`, `^` in the Windows profile name: default target refused `target_unsafe` (install needs `--target`), and `%` in `%TEMP%` loses the uninstall log.
+- mn4: no test checks the failed copy is set aside before deletion (surviving mutation).
+- mn5: the uninstall log says the key was removed without checking `reg delete` succeeded.
+- mn6: `/S` only catches `ArgumentException` on paths (`setup_stub.cs`); another path error would crash with a Windows dialog (read only).
