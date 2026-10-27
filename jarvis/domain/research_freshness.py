@@ -91,31 +91,38 @@ REASONS = frozenset({REASON_FRESH, REASON_PARTIALLY_STALE, REASON_STALE, REASON_
 # ------------------------------------------------------------- demande d'actualité
 
 #: Déclencheurs explicites d'une demande d'actualité (forme repliée -> forme dite). Comparés sans accents ni
-#: casse, en mots entiers. Écartés délibérément (reprise QA M3) : « maintenant » / « now » seuls (« maintenant,
-#: fais la slide 3 »), une année seule (« les chiffres de 2025 »), « nouveau ».
+#: casse, en mots entiers. Écartés délibérément : « maintenant » / « now » seuls (« maintenant, fais la slide 3 »),
+#: une année seule (« les chiffres de 2025 »), « nouveau » (reprise QA M3) ; « à jour » (« mets à jour la slide »,
+#: « le deck est-il à jour ? » : un verbe ou un état d'édition, seconde reprise F2).
 RECENCY_TRIGGERS: dict[str, str] = {
     "dernier": "dernier", "derniere": "dernière", "derniers": "derniers", "dernieres": "dernières",
     "actuel": "actuel", "actuelle": "actuelle", "actuels": "actuels", "actuelles": "actuelles",
     "actuellement": "actuellement", "aujourd'hui": "aujourd'hui", "aujourd hui": "aujourd'hui",
-    "en ce moment": "en ce moment", "a ce jour": "à ce jour", "a jour": "à jour",
+    "en ce moment": "en ce moment", "a ce jour": "à ce jour",
     "recent": "récent", "recente": "récente", "recents": "récents", "recentes": "récentes",
     "cette annee": "cette année", "cette semaine": "cette semaine",
     "latest": "latest", "current": "current", "currently": "currently", "today": "today", "newest": "newest",
     "up to date": "up to date", "up-to-date": "up-to-date",
 }
-#: « dernier·e·s » suivi (à deux mots près) d'un de ces noms parle du projet lui-même, pas de l'actualité :
-#: « la dernière diapo », « mes derniers messages ». `version` n'est écartée que suivie du deck ou du document.
+#: « dernier·e·s » ou « current » suivi (à deux mots près) d'un de ces noms parle du projet ou de la conversation,
+#: pas de l'état du monde : « la dernière diapo », « dernière chose », « le dernier mot », « current slide ».
+#: `version` n'est écartée que suivie du deck ou du document.
 RECENCY_EXCLUDED_NOUNS = frozenset({
     "diapo", "diapos", "diapositive", "diapositives", "slide", "slides", "page", "pages", "partie", "parties",
     "etape", "etapes", "section", "sections", "phrase", "phrases", "ligne", "lignes", "point", "points",
     "question", "questions", "chapitre", "chapitres", "image", "images", "scene", "scenes", "paragraphe",
     "paragraphes", "titre", "titres", "message", "messages", "modification", "modifications", "fois", "demande",
     "demandes", "reponse", "reponses", "minute", "minutes", "seconde", "secondes", "transition", "transitions",
-    "animation", "animations", "graphique", "graphiques", "puce", "puces",
+    "animation", "animations", "graphique", "graphiques", "puce", "puces", "chose", "choses", "mot", "mots",
+    "deck", "plan", "document", "fichier", "tour", "remarque", "detail", "details",
+    "slide", "page", "step", "item", "deck", "file", "line", "question", "thing",
 })
 _DECK_VERSION_FOLLOWERS = ("du deck", "de la presentation", "de ma presentation", "de notre presentation",
                            "de la diapo", "du document", "du plan", "de mon", "de ma", "de notre", "de nos")
-_DERNIER = frozenset({"dernier", "derniere", "derniers", "dernieres"})
+#: Marque d'ordre d'octets en tête d'un fichier : écrite par son code, jamais en littéral invisible.
+_BOM = chr(0xFEFF)
+#: Déclencheurs qui peuvent désigner un élément du projet (« la dernière diapo », « current slide », « en dernier »).
+_ORDINAL_TRIGGERS = frozenset({"dernier", "derniere", "derniers", "dernieres", "current"})
 _RECENCY_PATTERN = re.compile(r"(?<![a-z0-9])(" + "|".join(re.escape(term) for term in sorted(
     RECENCY_TRIGGERS, key=len, reverse=True)) + r")(?![a-z0-9])")
 
@@ -123,13 +130,15 @@ _RECENCY_PATTERN = re.compile(r"(?<![a-z0-9])(" + "|".join(re.escape(term) for t
 def _fold(text: str) -> str:
     """Minuscules sans accents, apostrophes typographiques ramenées à `'`."""
 
-    text = unicodedata.normalize("NFKD", text.replace("’", "'").lower())
+    text = unicodedata.normalize("NFKD", text.replace(chr(0x2019), "'").lower())
     return "".join(char for char in text if not unicodedata.combining(char))
 
 
-def _about_the_deck(folded: str, end: int) -> bool:
-    """« dernier·e·s » qui désigne un élément du projet (« la dernière diapo »), pas l'état du monde."""
+def _about_the_deck(folded: str, start: int, end: int) -> bool:
+    """« dernier·e·s » / « current » qui désigne un élément du projet ou de la conversation, pas l'état du monde."""
 
+    if re.search(r"(?<![a-z])en\s+$", folded[:start]):
+        return True  # « en dernier, ajoute une image »
     after = folded[end:].lstrip()
     words = re.findall(r"[a-z0-9']+", after)[:2]
     if any(word in RECENCY_EXCLUDED_NOUNS for word in words):
@@ -148,44 +157,76 @@ def recency_terms(request: str | None, today: date | None = None) -> tuple[str, 
     found = []
     for match in _RECENCY_PATTERN.finditer(folded):
         term = match.group(1)
-        if term in _DERNIER and _about_the_deck(folded, match.end()):
+        if term in _ORDINAL_TRIGGERS and _about_the_deck(folded, match.start(), match.end()):
             continue
         found.append(RECENCY_TRIGGERS[term])
     return tuple(dict.fromkeys(found))
 
 
-#: Mots trop généraux pour rapprocher une demande d'un document (`matches_topic`).
-_TOPIC_STOPWORDS = frozenset({
+#: Mots vides et mots génériques qui ne suffisent jamais à rapprocher une demande d'un document
+#: (`matches_topic`) : grammaire, consignes d'édition, et vocabulaire commun à toute recherche de présentation
+#: (« prix », « outils », « comparaison »… : seconde reprise F2, « le prix actuel de Synthesia » touchait Gamma).
+TOPIC_STOPWORDS = frozenset({
+    # grammaire et consignes
     "pour", "dans", "avec", "sans", "sont", "quels", "quelles", "quel", "quelle", "cette", "comment", "combien",
-    "faire", "fais", "peux", "pouvez", "rappelle", "rappelle-moi", "donne", "donne-moi", "dire", "entre", "plus",
-    "tous", "toutes", "tout", "leur", "leurs", "depuis", "apres", "avant", "sujet", "slide", "slides", "diapo",
-    "diapos", "presentation", "document", "note", "notes", "recherche", "recherches", "point", "aussi", "encore",
-    "votre", "notre", "nous", "vous", "elle", "elles", "mais", "donc", "alors", "chez", "selon", "what", "which",
-    "with", "from", "about", "the", "les", "des", "une", "est", "qui", "que", "quoi", "modifie", "change",
-    "mets", "ajoute", "besoin", "veux", "voudrais", "avez", "avons", "faut", "the", "this", "that",
+    "faire", "fais", "peux", "pouvez", "rappelle", "donne", "dire", "entre", "plus", "moins", "tous", "toutes",
+    "tout", "leur", "leurs", "depuis", "apres", "avant", "aussi", "encore", "votre", "notre", "nous", "vous", "elle",
+    "elles", "mais", "donc", "alors", "chez", "selon", "quoi", "modifie", "modifier", "change", "changer", "mets",
+    "mettre", "mise", "ajoute", "ajouter", "besoin", "veux", "voudrais", "avez", "avons", "faut", "parle", "parler",
+    "explique", "montre", "cherche", "chercher", "trouve", "resume", "resumer", "jour", "rien", "juste", "bien",
+    "what", "which", "with", "from", "about", "this", "that", "they", "have", "does", "show", "tell", "find",
+    "les", "des", "une", "est", "qui", "que", "sur", "par", "aux", "son", "ses", "mon", "mes", "nos", "vos", "the",
+    "and", "for", "are", "how", "moi", "toi", "lui", "ces", "pas", "ont", "dit", "fai", "mis", "via",
+    # vocabulaire générique d'une recherche de présentation
+    "prix", "tarif", "tarifs", "cout", "couts", "outil", "outils", "comparaison", "comparatif", "comparer",
+    "presentation", "presentations", "slide", "slides", "diapo", "diapos", "diapositive", "diapositives", "deck",
+    "document", "documents", "note", "notes", "recherche", "recherches", "sujet", "sujets", "point", "points",
+    "offre", "offres", "formule", "formules", "fonctionnalite", "fonctionnalites", "etat", "version", "versions",
+    "nouveaute", "nouveautes", "tendance", "tendances", "actualite", "actualites", "information", "informations",
+    "donnee", "donnees", "chiffre", "chiffres", "synthese", "analyse", "liste", "exemple", "exemples", "solution",
+    "solutions", "produit", "produits", "service", "services", "plateforme", "plateformes", "logiciel",
+    "logiciels", "application", "applications", "abonnement", "abonnements", "marche", "option", "options",
+    "price", "prices", "pricing", "tool", "tools", "comparison", "compare", "feature", "features", "plan", "plans",
+})
+#: Mots courts (2-3 lettres) gardés comme sujet, rapprochés par mot entier : « IA », « LLM », « GPT », « VAE ».
+_SHORT_TOPIC = re.compile(r"[a-z0-9]{2,3}\Z")
+#: Mots-outils courts, jamais un sujet (« de », « la », « j'ai »…).
+_SHORT_STOPWORDS = frozenset({
+    "de", "la", "le", "du", "en", "et", "ou", "un", "au", "il", "on", "je", "tu", "ce", "se", "sa", "ne", "ni",
+    "si", "ai", "as", "va", "vu", "ca", "me", "te", "qu", "of", "to", "in", "is", "it", "an", "at", "by", "or",
+    "be", "we", "my", "us", "do", "no", "so", "up", "if", "elle", "ils", "mai", "oui", "non", "car", "ici", "est",
+    "les", "des", "une", "qui", "que", "sur", "par", "aux", "son", "ses", "mon", "mes", "nos", "vos", "the",
+    "and", "for", "are", "how", "moi", "toi", "lui", "ces", "pas", "ont", "dit", "mis", "via", "peu", "bon",
 })
 
 
-def _topic_stems(text: str) -> set[str]:
-    words = re.findall(r"[a-z0-9]+", _fold(text))
-    stems = set()
-    for word in words:
-        if len(word) < 4 or word in _TOPIC_STOPWORDS or word in RECENCY_TRIGGERS:
+def _topic_tokens(text: str) -> set[str]:
+    """Racines significatives : mots de 4 lettres et plus (racine de 6 lettres, pluriel ôté) ; mots de 2-3 lettres
+    gardés entiers (`=ia`) ; nombres seuls, mots vides et génériques (`TOPIC_STOPWORDS`), déclencheurs écartés."""
+
+    tokens = set()
+    for word in re.findall(r"[a-z0-9]+", _fold(text)):
+        if word.isdigit() or word in TOPIC_STOPWORDS or word in RECENCY_TRIGGERS:
             continue
-        stems.add(word.rstrip("s")[:6])
-    return stems
+        if len(word) >= 4:
+            stem = word.rstrip("s")
+            if stem not in TOPIC_STOPWORDS:
+                tokens.add(stem[:6])
+        elif _SHORT_TOPIC.fullmatch(word) and word not in _SHORT_STOPWORDS:
+            tokens.add("=" + word)
+    return tokens
 
 
 def matches_topic(request: str | None, *texts: str) -> bool:
     """La demande parle-t-elle du sujet d'un document (`topic`, `scope`, nom de fichier) ? Recouvrement d'au moins
-    un mot significatif (4 lettres et plus, mots vides écartés, racine de 6 lettres). Sans mot : non."""
+    un mot significatif (`_topic_tokens`). Sans mot significatif dans la demande : non."""
 
-    asked = _topic_stems(str(request or ""))
+    asked = _topic_tokens(str(request or ""))
     if not asked:
         return False
     known: set[str] = set()
     for text in texts:
-        known |= _topic_stems(re.sub(r"[-_/.]", " ", str(text or "")))
+        known |= _topic_tokens(re.sub(r"[-_/.]", " ", str(text or "")))
     return bool(asked & known)
 
 
@@ -215,16 +256,20 @@ def parse_day(value: object) -> date | None:
         return None
 
 
-#: Une vérification ratée (page refusée, vide, illisible) : `status: failed` ou ces mots dans `checked` (m4).
+#: Une vérification ratée (page refusée, vide, illisible) : `status: failed` ou ces mots, entiers, dans `checked`
+#: (m4). Un code HTTP n'est reconnu que s'il est isolé : jamais les millisecondes d'un horodatage (`12.450Z`).
 _FAILED_STATUS = frozenset({"failed", "echec", "error", "erreur", "ko", "unreadable", "illisible"})
-_FAILED_WORDS = re.compile(r"echec|failed|erreur|error|non lue?|illisible|vide|empty|(?<!\d)[45]\d\d(?!\d)")
+_FAILED_WORDS = re.compile(r"(?<![a-z])(echec|failed|erreur|error|non lue?|illisible|vide|empty|refusee?|blocked|"
+                           r"bloquee?|forbidden|timeout)(?![a-z])|(?<![\w.:+-])[45]\d\d(?![\w.:])")
 
 
 @dataclass(frozen=True, slots=True)
 class ResearchSource:
-    """Une source citée : référence (lien ou chemin), date de la source, date de sa vérification, volatilité.
+    """Une source citée : référence (lien ou chemin), date de la source, date de sa dernière lecture réussie,
+    volatilité, et sa dernière tentative ratée (`failed`, `tried_at`).
 
-    `failed` : la dernière vérification a échoué ; la source ne compte pas comme vérifiée.
+    Une source en échec n'est pas « vérifiée » ; elle n'est réessayée qu'après l'âge toléré de sa volatilité
+    depuis `tried_at` (seconde reprise F1) : un refus durable (403) ne relance pas un rafraîchissement à chaque tour.
     """
 
     ref: str
@@ -232,6 +277,7 @@ class ResearchSource:
     checked_at: date | None = None
     volatility: Volatility | None = None
     failed: bool = False
+    tried_at: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,27 +290,38 @@ class ResearchMetadata:
     sources: tuple[ResearchSource, ...] = ()
 
 
-#: Codes d'un front-matter absent, mal fermé, ou plus long que `MAX_FRONT_MATTER_BYTES`.
+#: Codes d'un front-matter absent, jamais fermé (le fichier s'arrête avant), ou plus long que
+#: `MAX_FRONT_MATTER_BYTES` (on ne sait pas s'il se ferme). Les deux derniers sont signalés et jugés de la même
+#: façon prudente (`decide_for`) : métadonnées lues gardées pour l'affichage, fraîcheur inconnue.
 NO_FRONT_MATTER = "no_front_matter"
 UNTERMINATED_FRONT_MATTER = "unterminated_front_matter"
 FRONT_MATTER_TOO_LONG = "front_matter_too_long"
+HEADER_PROBLEMS = frozenset({UNTERMINATED_FRONT_MATTER, FRONT_MATTER_TOO_LONG})
+_BLOCK_SCALARS = frozenset({">", "|", ">-", "|-", ">+", "|+"})
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" \t"))
 
 
 def parse_front_matter(text: str, *, complete: bool = True) -> tuple[ResearchMetadata | None, str | None]:
-    """Le front-matter d'un document de recherche, ou `(None, code)`. Ne lève jamais.
+    """Le front-matter d'un document de recherche et un code de problème (ou `None`). Ne lève jamais.
 
-    Sous-ensemble délibérément simple : lignes `clé: valeur` (guillemets acceptés), et sous `sources:` une ligne
-    `- <réf>` par source, suivie de champs `| date: …`, `| checked: …`, `| volatility: …`, `| status: failed`.
-    `complete` faux (le texte est une tête coupée) et pas de `---` de fermeture : ce qui a été lu est rendu, avec
-    `front_matter_too_long` (signalé, jamais confondu avec « sans date »).
+    Sous-ensemble délibérément simple de YAML : lignes `clé: valeur` (guillemets acceptés, blocs `>` / `|` lus
+    sur leurs lignes indentées) ; sous `sources:`, une source par `- `, sur une ligne (`- <réf> | date: … |
+    checked: … | tried: … | status: failed`) ou en bloc imbriqué (`- url: …` suivi de `date:`, `checked:`,
+    `tried:`, `status:`, `volatility:` indentés). Pas de `---` de fermeture : ce qui a été lu est rendu, avec
+    `unterminated_front_matter` (le texte est complet) ou `front_matter_too_long` (`complete` faux : tête coupée).
     """
 
-    lines = str(text or "").lstrip("﻿").splitlines()
+    lines = str(text or "").lstrip(_BOM).splitlines()
     if not lines or lines[0].strip() != "---":
         return None, NO_FRONT_MATTER
     fields: dict[str, str] = {}
-    sources: list[ResearchSource] = []
+    sources: list[dict[str, str]] = []
     in_sources = False
+    block_key: str | None = None
+    item_indent = 0
 
     def meta() -> ResearchMetadata:
         return ResearchMetadata(
@@ -273,49 +330,80 @@ def parse_front_matter(text: str, *, complete: bool = True) -> tuple[ResearchMet
             checked_at=parse_day(fields.get("checked_at")),
             volatility=parse_volatility(fields.get("volatility")),
             uncertainty=" ".join(_unquote(fields.get("uncertainty", "")).split())[:MAX_TOPIC_CHARS],
-            sources=tuple(sources[:MAX_SOURCES]),
+            sources=tuple(_source(item) for item in sources[:MAX_SOURCES]),
         )
 
     for line in lines[1:]:
         stripped = line.strip()
         if stripped == "---":
             return meta(), None
+        if not stripped:
+            continue
+        if block_key is not None:
+            if _indent(line) > 0:
+                fields[block_key] = f"{fields.get(block_key, '')} {stripped}".strip()
+                continue
+            block_key = None
         if in_sources and stripped.startswith("-"):
-            sources.append(_parse_source(stripped[1:]))
+            sources.append(_source_fields(stripped[1:]))
+            item_indent = _indent(line)
+            continue
+        if in_sources and sources and _indent(line) > item_indent:
+            key, sep, value = stripped.partition(":")
+            if sep:
+                sources[-1].setdefault(key.strip().lower(), value.strip())
             continue
         key, sep, value = stripped.partition(":")
-        if not sep or line[:1] in (" ", "\t") and in_sources:
+        if not sep or _indent(line) > 0:
             continue
         key = key.strip().lower()
         in_sources = key == "sources"
         if not in_sources:
-            fields[key] = value.strip()
-    if not complete:
-        return meta(), FRONT_MATTER_TOO_LONG
-    return None, UNTERMINATED_FRONT_MATTER
+            if value.strip() in _BLOCK_SCALARS:
+                block_key, fields[key] = key, ""
+            else:
+                fields[key] = value.strip()
+    return meta(), (UNTERMINATED_FRONT_MATTER if complete else FRONT_MATTER_TOO_LONG)
 
 
-def _parse_source(text: str) -> ResearchSource:
-    ref, *parts = (part.strip() for part in text.split("|"))
+def _source_fields(text: str) -> dict[str, str]:
+    """Champs d'une source : `<réf> | clé: valeur | …` sur une ligne, ou `url: …` qui ouvre un bloc imbriqué."""
+
+    first, *parts = (part.strip() for part in text.split("|"))
     found: dict[str, str] = {}
+    key, sep, value = first.partition(":")
+    if sep and key.strip().lower() in ("url", "ref", "source", "lien", "link", "path", "chemin") and value.strip():
+        found["ref"] = value.strip()
+    else:
+        found["ref"] = first
     for part in parts:
         key, sep, value = part.partition(":")
         if sep:
             found[key.strip().lower()] = value.strip()
+    return found
+
+
+def _source(found: dict[str, str]) -> ResearchSource:
     checked_text = found.get("checked") or found.get("checked_at") or ""
     status = _fold(_unquote(found.get("status", ""))).strip()
-    failed = status in _FAILED_STATUS or bool(_FAILED_WORDS.search(_fold(checked_text)))
-    return ResearchSource(ref=_unquote(ref)[:MAX_SOURCE_REF_CHARS], date=parse_day(found.get("date")),
-                          checked_at=parse_day(checked_text), volatility=parse_volatility(found.get("volatility")),
-                          failed=failed)
+    failed_in_checked = bool(_FAILED_WORDS.search(_fold(checked_text)))
+    failed = status in _FAILED_STATUS or failed_in_checked
+    checked = parse_day(checked_text)
+    tried = parse_day(found.get("tried") or found.get("tried_at"))
+    if failed and tried is None:
+        # Ancienne forme : la date de `checked` est celle de la tentative ratée, pas d'une lecture réussie.
+        tried, checked = checked, None
+    return ResearchSource(ref=_unquote(found.get("ref", ""))[:MAX_SOURCE_REF_CHARS], date=parse_day(found.get("date")),
+                          checked_at=checked, volatility=parse_volatility(found.get("volatility")),
+                          failed=failed, tried_at=tried)
 
 
 # ------------------------------------------------------------- décision
 
 @dataclass(frozen=True, slots=True)
 class FreshnessDecision:
-    """`action`, sa raison stable, les sources à revérifier, les sources déjà anciennes à leur lecture
-    (information seulement) et les déclencheurs d'actualité **appliqués** à ce document."""
+    """`action`, sa raison stable, les sources à revérifier, les sources déjà anciennes à leur lecture et les
+    sources non vérifiables pour l'instant (information seulement), et les déclencheurs d'actualité **appliqués**."""
 
     action: FreshnessAction
     reason: str
@@ -323,20 +411,28 @@ class FreshnessDecision:
     recency: tuple[str, ...] = ()
     age_days: int | None = None
     old_sources: tuple[str, ...] = ()
+    unverifiable_sources: tuple[str, ...] = ()
 
 
 def _max_age(volatility: Volatility, recency: bool) -> int:
     return min(MAX_AGE_DAYS[volatility], RECENCY_MAX_AGE_DAYS) if recency else MAX_AGE_DAYS[volatility]
 
 
-def _stale(source: ResearchSource, meta: ResearchMetadata, today: date, recency: bool) -> bool:
-    """Périmée = vérification ratée, ou dernière vérification (de la source, sinon du document) trop ancienne."""
+def _source_state(source: ResearchSource, meta: ResearchMetadata, today: date, recency: bool) -> str:
+    """`fresh`, `stale` ou `unverifiable`.
 
-    if source.failed:
-        return True
-    checked = source.checked_at or meta.checked_at
+    Lecture réussie : jugée sur sa date (`checked`, sinon `checked_at` du document). Tentative ratée : la source
+    est `unverifiable` tant que la tentative a moins que l'âge toléré de sa volatilité (on ne la réessaie pas à
+    chaque tour), puis `stale` (on la réessaie) ; une lecture réussie plus récente que la tentative l'emporte.
+    """
+
     volatility = source.volatility or meta.volatility or DEFAULT_VOLATILITY
-    return checked is None or (today - checked).days > _max_age(volatility, recency)
+    max_age = _max_age(volatility, recency)
+    if source.failed and not (source.checked_at and source.tried_at and source.checked_at > source.tried_at):
+        tried = source.tried_at or meta.checked_at
+        return "unverifiable" if tried is not None and (today - tried).days <= max_age else "stale"
+    checked = source.checked_at or meta.checked_at
+    return "stale" if checked is None or (today - checked).days > max_age else "fresh"
 
 
 def _old_when_read(source: ResearchSource, meta: ResearchMetadata) -> bool:
@@ -355,10 +451,10 @@ def decide(meta: ResearchMetadata | None, *, today: date, request: str | None = 
     Règles, dans cet ordre : pas de document → `new_research` ; pas de date de vérification lisible →
     `full_refresh` (`freshness_unknown`) ; date future → `full_refresh` ; demande d'actualité **sur ce sujet**
     (`on_topic`) et document vérifié il y a plus de `RECENCY_MAX_AGE_DAYS` jours → `full_refresh`
-    (`recency_requested`) ; sinon chaque source est jugée sur sa dernière vérification, à l'âge toléré de sa
-    volatilité (réduit par une demande d'actualité sur ce sujet), une vérification ratée comptant comme absente :
-    aucune périmée → `reuse`, toutes → `full_refresh`, certaines → `partial_refresh` avec leurs références. Sans
-    source citée, le document entier est jugé à la volatilité du sujet.
+    (`recency_requested`) ; sinon chaque source est jugée (`_source_state`), à l'âge toléré de sa volatilité
+    (réduit par une demande d'actualité sur ce sujet) : aucune périmée → `reuse` (les non vérifiables pour
+    l'instant sont seulement signalées), toutes → `full_refresh`, certaines → `partial_refresh` avec leurs
+    références. Sans source citée, le document entier est jugé à la volatilité du sujet.
     """
 
     terms = recency_terms(request) if on_topic else ()
@@ -373,15 +469,28 @@ def decide(meta: ResearchMetadata | None, *, today: date, request: str | None = 
         return FreshnessDecision(FreshnessAction.FULL_REFRESH, REASON_RECENCY, recency=terms, age_days=age)
     sources = meta.sources or (ResearchSource(ref=""),)
     old = tuple(source.ref for source in meta.sources if _old_when_read(source, meta))
-    stale = [source for source in sources if _stale(source, meta, today, bool(terms))]
+    states = [(source, _source_state(source, meta, today, bool(terms))) for source in sources]
+    stale = [source for source, state in states if state == "stale"]
+    unverifiable = tuple(source.ref for source, state in states if state == "unverifiable")
+    common = {"recency": terms, "age_days": age, "old_sources": old, "unverifiable_sources": unverifiable}
     if not stale:
-        return FreshnessDecision(FreshnessAction.REUSE, REASON_FRESH, recency=terms, age_days=age, old_sources=old)
+        return FreshnessDecision(FreshnessAction.REUSE, REASON_FRESH, **common)
     if len(stale) == len(sources):
-        return FreshnessDecision(FreshnessAction.FULL_REFRESH, REASON_STALE, recency=terms, age_days=age,
-                                 old_sources=old)
+        return FreshnessDecision(FreshnessAction.FULL_REFRESH, REASON_STALE, **common)
     return FreshnessDecision(FreshnessAction.PARTIAL_REFRESH, REASON_PARTIALLY_STALE,
-                             stale_sources=tuple(source.ref for source in stale), recency=terms, age_days=age,
-                             old_sources=old)
+                             stale_sources=tuple(source.ref for source in stale), **common)
+
+
+def decide_for(meta: ResearchMetadata | None, problem: str | None, *, today: date, request: str | None = "",
+               on_topic: bool = True) -> FreshnessDecision:
+    """`decide`, sauf pour un en-tête jamais fermé ou trop long (`HEADER_PROBLEMS`) : décision prudente
+    identique quelle que soit la taille du fichier, `full_refresh` / `freshness_unknown` (on ne sait pas quelles
+    sources manquent). Les métadonnées lues restent affichées, et le problème est signalé."""
+
+    if problem in HEADER_PROBLEMS:
+        terms = recency_terms(request) if on_topic else ()
+        return FreshnessDecision(FreshnessAction.FULL_REFRESH, REASON_UNKNOWN, recency=terms)
+    return decide(meta, today=today, request=request, on_topic=on_topic)
 
 
 # ------------------------------------------------------------- statut d'un document, transporté dans le bloc `board`
@@ -391,7 +500,9 @@ class ResearchDocStatus:
     """Un document de `documents/research/` et la décision pour la demande du tour (bloc `board`, édition Presentation).
 
     `on_topic` : la demande du tour parle de son sujet (seuls ceux-là prennent la demande d'actualité) ;
-    `problem` : `front_matter_too_long` quand l'en-tête dépasse sa borne (décision prise sur ce qui a été lu).
+    `problem` : un en-tête jamais fermé ou trop long (`HEADER_PROBLEMS`, décision prudente de `decide_for`) ;
+    `unverifiable_*` : sources dont la dernière tentative a échoué et qu'on ne réessaie pas encore (seconde
+    reprise F1) ; `old_count` : sources déjà anciennes à leur lecture. Les deux sont des informations.
     """
 
     path: str
@@ -405,27 +516,32 @@ class ResearchDocStatus:
     on_topic: bool = False
     problem: str | None = None
     old_count: int = 0
+    unverifiable_sources: tuple[str, ...] = ()
+    unverifiable_count: int = 0
 
     def __post_init__(self) -> None:
         if not is_research_path(self.path):
             raise ValueError(f"research path must sit under {RESEARCH_DIR}/ and end in .md")
         if not isinstance(self.action, FreshnessAction) or self.reason not in REASONS:
             raise ValueError("unknown freshness action or reason")
-        if len(self.topic) > MAX_TOPIC_CHARS or len(self.stale_sources) > MAX_STALE_LISTED:
+        if (len(self.topic) > MAX_TOPIC_CHARS or len(self.stale_sources) > MAX_STALE_LISTED
+                or len(self.unverifiable_sources) > MAX_STALE_LISTED):
             raise ValueError("research status exceeds its bounds")
-        if self.problem not in (None, FRONT_MATTER_TOO_LONG):
+        if self.problem is not None and self.problem not in HEADER_PROBLEMS:
             raise ValueError("unknown research document problem")
 
     @classmethod
     def from_decision(cls, path: str, meta: ResearchMetadata | None, decision: FreshnessDecision, *,
                       on_topic: bool = False, problem: str | None = None) -> ResearchDocStatus:
         stale = tuple(ref[:MAX_SOURCE_REF_CHARS] for ref in decision.stale_sources if ref)
+        unverifiable = tuple(ref[:MAX_SOURCE_REF_CHARS] for ref in decision.unverifiable_sources if ref)
         return cls(path=path, action=decision.action, reason=decision.reason,
                    topic=meta.topic if meta else "", checked_at=meta.checked_at if meta else None,
                    volatility=meta.volatility if meta else None, stale_sources=stale[:MAX_STALE_LISTED],
                    stale_count=len(stale), on_topic=on_topic,
-                   problem=problem if problem == FRONT_MATTER_TOO_LONG else None,
-                   old_count=len(decision.old_sources))
+                   problem=problem if problem in HEADER_PROBLEMS else None,
+                   old_count=len(decision.old_sources), unverifiable_sources=unverifiable[:MAX_STALE_LISTED],
+                   unverifiable_count=len(unverifiable))
 
     def to_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"path": self.path, "action": self.action.value, "reason": self.reason}
@@ -444,6 +560,9 @@ class ResearchDocStatus:
             payload["problem"] = self.problem
         if self.old_count:
             payload["old_count"] = self.old_count
+        if self.unverifiable_count:
+            payload["unverifiable_sources"] = list(self.unverifiable_sources)
+            payload["unverifiable_count"] = self.unverifiable_count
         return payload
 
     @classmethod
@@ -456,12 +575,15 @@ class ResearchDocStatus:
             stale = payload.get("stale_sources") or []
             count = payload.get("stale_count") or 0
             old = payload.get("old_count") or 0
+            unverifiable = payload.get("unverifiable_sources") or []
+            unverifiable_count = payload.get("unverifiable_count") or 0
             if (not isinstance(stale, list) or not all(isinstance(ref, str) for ref in stale)
-                    or type(count) is not int or type(old) is not int):
+                    or not isinstance(unverifiable, list) or not all(isinstance(ref, str) for ref in unverifiable)
+                    or type(count) is not int or type(old) is not int or type(unverifiable_count) is not int):
                 return None
             topic = payload.get("topic") or ""
             problem = payload.get("problem")
-            if not isinstance(topic, str) or problem not in (None, FRONT_MATTER_TOO_LONG):
+            if not isinstance(topic, str) or (problem is not None and problem not in HEADER_PROBLEMS):
                 return None
             return cls(path=str(payload.get("path") or ""), action=FreshnessAction(payload.get("action")),
                        reason=str(payload.get("reason") or ""), topic=" ".join(topic.split()),
@@ -469,7 +591,10 @@ class ResearchDocStatus:
                        volatility=parse_volatility(payload.get("volatility")),
                        stale_sources=tuple(" ".join(ref.split())[:MAX_SOURCE_REF_CHARS] for ref in stale),
                        stale_count=max(count, len(stale)), on_topic=payload.get("on_topic") is True,
-                       problem=problem, old_count=max(old, 0))
+                       problem=problem, old_count=max(old, 0),
+                       unverifiable_sources=tuple(" ".join(ref.split())[:MAX_SOURCE_REF_CHARS]
+                                                  for ref in unverifiable),
+                       unverifiable_count=max(unverifiable_count, len(unverifiable)))
         except ValueError:
             return None
 

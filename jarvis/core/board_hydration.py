@@ -27,7 +27,7 @@ from jarvis.domain.brain_context import (
 )
 from jarvis.domain.research_freshness import (
     FRONT_MATTER_TOO_LONG, MAX_FRONT_MATTER_BYTES, MAX_RESEARCH_DOCS, MAX_RESEARCH_HEAD_BYTES, RESEARCH_DIR,
-    ResearchDocStatus, ResearchMetadata, decide, is_research_path, matches_topic, parse_front_matter, recency_terms,
+    ResearchDocStatus, ResearchMetadata, decide_for, is_research_path, matches_topic, parse_front_matter, recency_terms,
 )
 
 #: Entrées listées sous `documents/research/` pour choisir les documents du tour (au-delà : compté).
@@ -78,7 +78,8 @@ def with_board_research(memory: BrainBoardMemory, store: BoardMemoryStore, board
     Édition Presentation seulement (l'appelant décide). Au plus `MAX_RESEARCH_DOCS` fichiers `.md` (profondeur 2),
     ceux dont le nom parle du sujet du tour d'abord, puis les plus récents ; le surplus est compté
     (`research_unread`, dit au cerveau). Le front-matter seul sert : tête de `MAX_RESEARCH_HEAD_BYTES`, relue
-    jusqu'à `MAX_FRONT_MATTER_BYTES` quand l'en-tête est plus long (reprise QA B1) ; au-delà, `front_matter_too_long`.
+    jusqu'à `MAX_FRONT_MATTER_BYTES` quand l'en-tête est plus long (reprise QA B1) ; un en-tête jamais fermé ou
+    au-delà de la borne est signalé et jugé prudemment, de la même façon quelle que soit la taille (`decide_for`).
     La demande d'actualité ne vaut que pour les documents dont le sujet correspond au tour (`matches_topic`).
     Dossier absent : rien d'ajouté. Un document illisible est jugé `freshness_unknown` ; une panne du dossier
     lui-même laisse le bloc tel quel. Rend aussi le nombre de documents non lus.
@@ -102,7 +103,7 @@ def with_board_research(memory: BrainBoardMemory, store: BoardMemoryStore, board
         on_topic = matches_topic(request, entry.path.rsplit("/", 1)[-1][:-3],
                                  meta.topic if meta else "", meta.scope if meta else "")
         statuses.append(ResearchDocStatus.from_decision(
-            entry.path, meta, decide(meta, today=today, request=request, on_topic=on_topic),
+            entry.path, meta, decide_for(meta, problem, today=today, request=request, on_topic=on_topic),
             on_topic=on_topic, problem=problem))
     if not statuses:
         return memory, 0
@@ -118,6 +119,7 @@ def _read_front_matter(store: BoardMemoryStore, board_id: str, path: str) -> tup
         head = store.read(board_id, BoardMemoryPath.parse(path), max_bytes=MAX_RESEARCH_HEAD_BYTES)
         meta, problem = parse_front_matter(head.text, complete=head.eof)
         if problem == FRONT_MATTER_TOO_LONG:
+            # Pas de `---` dans les 2 premiers Kio d'un fichier plus long : relu avec la borne propre à l'en-tête.
             head = store.read(board_id, BoardMemoryPath.parse(path), max_bytes=MAX_FRONT_MATTER_BYTES)
             meta, problem = parse_front_matter(head.text, complete=head.eof)
     except (BoardMemoryError, BoardMemoryUnavailable, OSError, UnicodeDecodeError):

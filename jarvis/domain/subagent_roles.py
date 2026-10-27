@@ -667,9 +667,10 @@ RESEARCH_REUSE_BLOCK = (
     "mettre à jour : relire puis replace avec expected_sha256), qui commence par ces métadonnées :\n"
     f"{RESEARCH_FRONT_MATTER_TEMPLATE}\n"
     "volatility : high si le sujet change en semaines (modèles, prix, versions), medium en mois, low s'il est stable. "
-    "Après un rafraîchissement partiel, seules les sources revérifiées prennent la nouvelle date checked ; une "
-    "source que vous n'avez pas pu lire (refus, page vide) garde son ancienne date checked et reçoit "
-    "| status: failed."
+    "Après un rafraîchissement partiel, seules les sources revérifiées prennent la nouvelle date checked. Une "
+    "source que vous n'avez pas pu lire (refus, page vide) garde sa date checked de dernière lecture réussie et "
+    "reçoit | tried: <AAAA-MM-JJ de la tentative> | status: failed : JARVIS ne la fera pas réessayer avant l'âge "
+    "toléré de sa volatilité ; dites dans votre compte rendu que la donnée n'a pas pu être vérifiée."
 )
 #: En plus, pour la direction de recherche : orchestrer selon le besoin, jamais un graphe figé.
 RESEARCH_LEAD_REUSE_LINE = (

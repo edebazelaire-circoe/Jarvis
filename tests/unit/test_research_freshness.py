@@ -33,8 +33,8 @@ from jarvis.core.v2_services import ConversationService
 from jarvis.domain.agent_capabilities import PRESENTATION_CAPABILITIES, UNCONFINED
 from jarvis.domain.board_memory import BoardMemoryPath
 from jarvis.domain.research_freshness import (
-    MAX_RESEARCH_DOCS, RECENCY_MAX_AGE_DAYS, FreshnessAction, ResearchDocStatus, ResearchMetadata, ResearchSource,
-    Volatility, decide, matches_topic, parse_front_matter, recency_terms,
+    MAX_RESEARCH_DOCS, RECENCY_MAX_AGE_DAYS, TOPIC_STOPWORDS, FreshnessAction, FreshnessDecision, ResearchDocStatus,
+    ResearchMetadata, ResearchSource, Volatility, decide, matches_topic, parse_front_matter, recency_terms,
 )
 from jarvis.domain.subagent_roles import (
     RESEARCH_REUSE_MARK, ROLES, brain_rules, research_reuse_text, role_brief, role_by_id,
@@ -179,8 +179,14 @@ def test_a_failed_check_does_not_count_as_a_check():
     meta, _ = parse_front_matter(FAILED_NOTE)
     assert [source.failed for source in meta.sources] == [True, True, False]
     decision = decide(meta, today=TODAY)
-    assert decision.action is FreshnessAction.PARTIAL_REFRESH
-    assert decision.stale_sources == ("https://help.gamma.app", "https://gamma.app/pricing")
+    # Seconde reprise F1 : la date de `checked` d'une source ratée est celle de la tentative ; pas de nouvel essai
+    # avant l'âge toléré (30 j, `high`), la source est seulement « non vérifiable ».
+    assert [source.tried_at for source in meta.sources[:2]] == [TODAY, TODAY]
+    decision = decide(meta, today=TODAY)
+    assert decision.action is FreshnessAction.REUSE
+    assert decision.unverifiable_sources == ("https://help.gamma.app", "https://gamma.app/pricing")
+    later = decide(meta, today=date(2026, 11, 27))
+    assert later.action is FreshnessAction.FULL_REFRESH  # toutes au-delà de 30 j : on réessaie, et on revérifie
 
 
 def test_quoted_yaml_dates_are_read():
@@ -206,7 +212,8 @@ def test_recency_applies_only_to_documents_on_the_topic_of_the_turn():
 
 def test_the_front_matter_parser_is_small_strict_and_never_raises():
     assert parse_front_matter("# pas de métadonnées") == (None, "no_front_matter")
-    assert parse_front_matter("---\ntopic: x\n") == (None, "unterminated_front_matter")
+    meta, problem = parse_front_matter("---\ntopic: x\n")
+    assert problem == "unterminated_front_matter" and meta.topic == "x"
     meta, _ = parse_front_matter("---\nchecked_at: 27/10/2026\nvolatility: chaotique\n---\n")
     assert meta.checked_at is None and meta.volatility is None
     meta, _ = parse_front_matter(OLD_OPENAI_NOTE.replace("forte", "low"))
@@ -451,9 +458,11 @@ def test_a_header_beyond_its_own_bound_is_said_not_turned_into_unknown(tmp_path)
     memory = read_board_memory(store, tmp_path, DEFAULT_BOARD_ID)
     status = with_board_research(memory, store, DEFAULT_BOARD_ID, request="x", today=TODAY)[0].research[0]
     assert status.problem == "front_matter_too_long" and status.topic == "Sujet très sourcé"
-    assert status.action is FreshnessAction.REUSE and status.checked_at == date(2026, 10, 26)
-    lines = render_board_research({"documents": [status.to_payload()]})
-    assert "en-tête de métadonnées trop long, lu en partie" in lines[1]
+    # Seconde reprise m2 : décision prudente, la même que pour un en-tête jamais fermé ; sujet et date affichés.
+    assert status.action is FreshnessAction.FULL_REFRESH and status.reason == "freshness_unknown"
+    assert status.checked_at == date(2026, 10, 26)
+    lines = render_board_research({"documents": [{**status.to_payload(), "on_topic": True}]})
+    assert "jamais fermé ou trop long, lu en partie" in lines[1]
 
 
 def test_beyond_eight_documents_the_brain_is_told_how_many_are_missing_and_the_topic_comes_first(tmp_path):
@@ -530,3 +539,166 @@ async def test_a_stale_scope_relaunches_the_foreground_cli_before_the_turn(tmp_p
     # Portée à jour : le tour suivant ne relance rien.
     await control.agent_ask(JsonRequest({"text": "encore", "conversation": {"conversation_id": "conv-a"}}))
     assert len(agent.starts) == starts_before + 1
+
+
+# ------------------------------------------------------------------ 6. seconde reprise (contre-relecture)
+
+GAMMA_DOC = Path(__file__).parents[1] / "fixtures" / "research" / "gamma-outil.md"
+#: Les 12 demandes rejouées par la contre-relecture sur le bac QA (`scratchpad\v12s03cr\replay.py`).
+REPLAY_REQUESTS = (
+    "Rappelle-moi les prix de Synthesia et HeyGen", "Modifie la dernière diapo",
+    "Quels sont les derniers prix de Gamma ?", "Les dernières tendances de l'IA vidéo",
+    "Quel est le prix actuel de Synthesia en 2026 ?", "Mets à jour la slide sur les outils vidéo",
+    "Est-ce que le deck est à jour ?", "latest pricing for gamma", "Parle-moi de l'IA",
+    "Que dit la recherche sur les avatars ?", "Gamma coûte combien aujourd'hui ?", "les tarifs de GAMMA actuellement",
+)
+
+
+def _qa_board(tmp_path: Path) -> FileBoardMemoryStore:
+    store = FileBoardMemoryStore(tmp_path)
+    _write(store, DEFAULT_BOARD_ID, "documents/research/gamma-outil.md", GAMMA_DOC.read_text(encoding="utf-8"))
+    _write(store, DEFAULT_BOARD_ID, "documents/research/outils-video-presentation-ia-2026.md",
+           LONG_FRONT_MATTER.read_text(encoding="utf-8"))
+    return store
+
+
+def test_a_durable_403_is_not_retried_at_every_turn_on_the_real_gamma_document(tmp_path):
+    """F1 : le vrai document Gamma (gamma.app/pricing en 403 le 27/10), 12 demandes le jour même : aucun
+    rafraîchissement ; la source est signalée « non vérifiable » ; on ne la réessaie qu'au-delà de 30 j."""
+
+    store = _qa_board(tmp_path)
+    memory = read_board_memory(store, tmp_path, DEFAULT_BOARD_ID)
+    for request in REPLAY_REQUESTS:
+        enriched, _ = with_board_research(memory, store, DEFAULT_BOARD_ID, request=request, today=TODAY)
+        gamma = next(item for item in enriched.research if item.path.endswith("gamma-outil.md"))
+        # La source en 403 n'est jamais redemandée ; seules deux sources vérifiées le 10/10 le sont, et seulement
+        # quand le tour réclame l'actualité de Gamma (7 j tolérés) : c'est la règle d'actualité, pas une boucle.
+        assert "https://gamma.app/pricing" not in gamma.stale_sources, request
+        assert gamma.unverifiable_sources == ("https://gamma.app/pricing",), request
+        recency_on_gamma = gamma.on_topic and bool(recency_terms(request))
+        assert (gamma.action is FreshnessAction.REUSE) is not recency_on_gamma, request
+        lines = "\n".join(render_board_research(enriched.to_payload()["research"]))
+        if gamma.on_topic:
+            assert "non vérifiable pour l'instant" in lines and "dites-le si la donnée compte" in lines
+    # Le même document juste rafraîchi (les deux sources du 10/10 relues aujourd'hui, le 403 toujours en échec) :
+    # « réutiliser » pour les 12 demandes, sans aucun rafraîchissement.
+    refreshed = GAMMA_DOC.read_text(encoding="utf-8").replace("checked: 2026-10-10", "checked: 2026-10-27")
+    _write(store, DEFAULT_BOARD_ID, "documents/research/gamma-outil.md", refreshed)
+    for request in REPLAY_REQUESTS:
+        enriched, _ = with_board_research(memory, store, DEFAULT_BOARD_ID, request=request, today=TODAY)
+        gamma = next(item for item in enriched.research if item.path.endswith("gamma-outil.md"))
+        assert gamma.action is FreshnessAction.REUSE and gamma.stale_count == 0, request
+        lines = "\n".join(render_board_research(enriched.to_payload()["research"]))
+        assert "rafraîchir seulement" not in lines and "tout revérifier" not in lines, request
+    meta, _ = parse_front_matter(GAMMA_DOC.read_text(encoding="utf-8"))
+    pricing = meta.sources[0]
+    assert pricing.failed and pricing.tried_at == TODAY and pricing.checked_at is None
+    assert "https://gamma.app/pricing" in decide(meta, today=date(2026, 11, 20)).unverifiable_sources  # 24 j
+    assert "https://gamma.app/pricing" in decide(meta, today=date(2026, 11, 28)).stale_sources  # 32 j : réessai
+
+
+def test_a_successful_read_after_a_failed_try_counts_again():
+    meta, _ = parse_front_matter("---\ntopic: Gamma\nchecked_at: 2026-10-27\nvolatility: high\nsources:\n"
+                                 "  - https://gamma.app/pricing | checked: 2026-10-27 | tried: 2026-10-20 | status: failed\n"
+                                 "  - https://autre | checked: 2026-10-27\n---\n")
+    decision = decide(meta, today=TODAY)
+    assert decision.action is FreshnessAction.REUSE and decision.unverifiable_sources == ()
+
+
+def test_editing_wording_and_generic_words_do_not_touch_unrelated_documents(tmp_path):
+    """F2 : « à jour » n'est plus un déclencheur ; « prix », « outils », « slide »… ne rapprochent rien."""
+
+    for request in ("Mets à jour la slide sur les outils vidéo", "Fais une mise à jour de la diapo 3",
+                    "Est-ce que le deck est à jour ?", "mettre à jour le plan"):
+        assert recency_terms(request) == (), request
+    store = _qa_board(tmp_path)
+    memory = read_board_memory(store, tmp_path, DEFAULT_BOARD_ID)
+    enriched, _ = with_board_research(memory, store, DEFAULT_BOARD_ID,
+                                      request="Quel est le prix actuel de Synthesia en 2026 ?", today=TODAY)
+    by_name = {item.path.rsplit("/", 1)[-1]: item for item in enriched.research}
+    assert not by_name["gamma-outil.md"].on_topic
+    assert by_name["outils-video-presentation-ia-2026.md"].on_topic
+    for request in ("le prix des outils", "comparaison des tarifs pour la présentation", "une slide sur les offres"):
+        assert not matches_topic(request, "gamma-outil", "Gamma (gamma.app) : fonctionnalités et tarifs",
+                                 "outil de présentations par IA, offre et prix des formules"), request
+    for word in ("prix", "outils", "tarif", "comparaison", "presentation", "slide"):
+        assert word in TOPIC_STOPWORDS
+
+
+@pytest.mark.parametrize(("request_text", "texts", "expected"), [
+    ("Parle-moi de l'IA", ("Outils IA", "ia-video"), True),
+    ("Quoi de neuf sur les LLM ?", ("Modèles de langage", "llm-2026"), True),
+    ("les derniers prix de Synthesia", ("Gamma : fonctionnalités et tarifs", "gamma-outil"), False),
+    ("Les tarifs de Synthesia", ("Prix de Synthesia",), True),
+    ("la marge de l'IA", ("Diagramme", "paiement"), False),  # « ia » n'est pas un morceau de « diagramme »
+    ("j'ai une question", ("AI tools", "ai"), False),        # « ai » de « j'ai » n'est pas un sujet
+])
+def test_short_topics_match_on_whole_words(request_text, texts, expected):
+    assert matches_topic(request_text, *texts) is expected
+
+
+@pytest.mark.parametrize("request_text", [
+    "dernière chose : change le titre", "en dernier, ajoute une image", "le dernier mot", "current slide",
+    "show the current slide", "la toute dernière diapositive",
+])
+def test_conversation_and_deck_ordinals_are_not_recency(request_text):
+    assert recency_terms(request_text) == ()
+
+
+@pytest.mark.parametrize(("checked", "failed"), [
+    ("2026-10-27T11:35:12.450Z", False), ("2026-10-27 (vidéo regardée)", False), ("2026-10-27 (vide)", True),
+    ("2026-10-27 (HTTP 403)", True), ("2026-10-27 (échec)", True), ("2026-10-27 12:404", False),
+])
+def test_failure_words_are_whole_words_and_timestamps_are_not_http_codes(checked, failed):
+    meta, _ = parse_front_matter(f"---\ntopic: X\nchecked_at: 2026-10-27\nsources:\n  - https://a | checked: {checked}\n---\n")
+    assert meta.sources[0].failed is failed
+
+
+def test_an_unclosed_header_is_judged_the_same_whatever_the_file_size(tmp_path):
+    store = FileBoardMemoryStore(tmp_path)
+    head = "---\ntopic: Sujet\nchecked_at: 2026-10-26\nvolatility: low\nsources:\n  - https://a | checked: 2026-10-26\n"
+    _write(store, DEFAULT_BOARD_ID, "documents/research/petit.md", head + "corps sans fin\n")
+    _write(store, DEFAULT_BOARD_ID, "documents/research/grand.md", head + "corps sans fin\n" * 2000)
+    memory = read_board_memory(store, tmp_path, DEFAULT_BOARD_ID)
+    enriched, _ = with_board_research(memory, store, DEFAULT_BOARD_ID, request="le sujet", today=TODAY)
+    decisions = {item.path.rsplit("/", 1)[-1]: (item.action, item.reason, item.topic, item.problem is not None)
+                 for item in enriched.research}
+    assert decisions["petit.md"][:3] == decisions["grand.md"][:3] == (
+        FreshnessAction.FULL_REFRESH, "freshness_unknown", "Sujet")
+    assert decisions["petit.md"][3] and decisions["grand.md"][3]
+
+
+def test_nested_yaml_sources_and_block_scalars_are_read():
+    text = "\n".join(["---", "topic: >", "  Prix de", "  Synthesia", "checked_at: 2026-10-27", "volatility: high",
+                      "sources:", "  - url: https://a", "    date: 2026-01-01", "    checked: 2025-01-01",
+                      "  - url: https://b", "    checked: 2026-10-20", "    tried: 2026-10-26", "    status: failed",
+                      "  - https://c | checked: 2026-10-27", "---", "corps"])
+    meta, problem = parse_front_matter(text)
+    assert problem is None and meta.topic == "Prix de Synthesia"
+    assert [(s.ref, s.checked_at, s.failed, s.tried_at) for s in meta.sources] == [
+        ("https://a", date(2025, 1, 1), False, None), ("https://b", date(2026, 10, 20), True, date(2026, 10, 26)),
+        ("https://c", TODAY, False, None)]
+    decision = decide(meta, today=TODAY)
+    assert decision.stale_sources == ("https://a",) and decision.unverifiable_sources == ("https://b",)
+
+
+def test_the_brain_is_told_to_refresh_only_documents_on_the_topic_of_the_turn():
+    off = ResearchDocStatus.from_decision(
+        "documents/research/a.md", ResearchMetadata(topic="Autre"),
+        FreshnessDecision(FreshnessAction.PARTIAL_REFRESH, "partially_stale", stale_sources=("https://x",)))
+    on = ResearchDocStatus.from_decision(
+        "documents/research/b.md", ResearchMetadata(topic="Sujet"),
+        FreshnessDecision(FreshnessAction.PARTIAL_REFRESH, "partially_stale", stale_sources=("https://y",)),
+        on_topic=True)
+    lines = render_board_research({"documents": [off.to_payload(), on.to_payload()]})
+    assert "a.md" in lines[1] and "hors sujet du tour, aucune action" in lines[1] and "rafraîchir" not in lines[1]
+    assert "b.md" in lines[2] and "rafraîchir seulement" in lines[2] and "https://y" in lines[2]
+
+
+def test_the_source_holds_no_invisible_byte_order_mark():
+    from jarvis.domain import research_freshness
+
+    source = Path(research_freshness.__file__).read_text(encoding="utf-8")
+    assert chr(0xFEFF) not in source and chr(0x2019) not in source
+    meta, _ = parse_front_matter(chr(0xFEFF) + "---\ntopic: X\nchecked_at: 2026-10-27\n---\n")
+    assert meta.topic == "X"

@@ -219,12 +219,23 @@ def render_board_research(block: Any) -> list[str]:
         if item.volatility is not None:
             facts.append(f"volatilité {_VOLATILITY_WORDS[item.volatility.value]}")
         if item.problem:
-            facts.append("en-tête de métadonnées trop long, lu en partie")
-        decision = f"{_ACTION_WORDS[item.action]} ({_REASON_WORDS.get(item.reason, item.reason)})"
+            facts.append("en-tête de métadonnées jamais fermé ou trop long, lu en partie : à réécrire")
+        if not item.on_topic and item.action is not FreshnessAction.REUSE:
+            # Seconde reprise m5 : « rafraîchir » n'est dit que pour le sujet du tour ; ailleurs, un état neutre.
+            lines.append(f"- {item.path} : {', '.join(facts)} → hors sujet du tour, aucune action")
+            continue
+        reason = ("en-tête incomplet, fraîcheur des sources inconnue" if item.problem
+                  else _REASON_WORDS.get(item.reason, item.reason))
+        decision = f"{_ACTION_WORDS[item.action]} ({reason})"
         if item.stale_sources:
             more = item.stale_count - len(item.stale_sources)
             decision += " : " + ", ".join(_text(ref, 160) for ref in item.stale_sources) + (f" et {more} autre(s)"
                                                                                           if more > 0 else "")
+        if item.unverifiable_sources:
+            more = item.unverifiable_count - len(item.unverifiable_sources)
+            decision += (" ; non vérifiable pour l'instant (dernière tentative ratée, pas de nouvel essai avant l'âge "
+                         "toléré) : " + ", ".join(_text(ref, 160) for ref in item.unverifiable_sources)
+                         + (f" et {more} autre(s)" if more > 0 else "") + " ; dites-le si la donnée compte")
         if item.old_count:
             decision += f" ; {item.old_count} source(s) déjà ancienne(s) à leur lecture, à signaler sans rafraîchir"
         lines.append(f"- {item.path} : {', '.join(facts)} → {decision}")
