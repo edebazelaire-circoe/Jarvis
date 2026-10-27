@@ -2734,7 +2734,10 @@ Variants puts on screen — its continuous play included —, the editor's picke
 (`settleDrafts`); only then does the editor move, and it says « Saisie enregistrée sur la scène k « … » · l'éditeur montre maintenant la
 scène j « … » » (visible line + polite announce) and takes the caret out of the field (to the editor's title) so the next key never edits
 the other scene. If the save cannot be made (refused, Core unreachable), the editor **stays** on its scene with the value and says « L'éditeur
-reste sur la scène k » with « Abandonner ma saisie et continuer »; it moves on by itself once the value is saved or abandoned (Échap).
+reste sur la scène k » naming the settings kept (« Votre saisie (« Titre ») n'est pas enregistrée », a save still in flight included) with
+« Abandonner ma saisie et continuer »; it moves on by itself once the value is saved or abandoned (Échap). When the held move goes on,
+the warning is replaced (never left on screen): « « Titre » enregistré sur la scène k « … » · l'éditeur montre maintenant la scène j « … » »
+(Slice 09 mini-rework, QA M1/m1).
 Variants is never held back: it may show another scene meanwhile. Closing the editor saves first the same way (« Fermer sans enregistrer »
 when it cannot). A plain save never moves Variants (`jarvis:studio-variant-edited` carries `bring: false`); only an undo / redo does.
 

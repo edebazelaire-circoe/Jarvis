@@ -210,6 +210,49 @@ async def test_a_value_typed_when_variants_changes_the_scene_is_saved_on_its_sce
         assert reads["field"] != "Brouillon QA", "the field shows scene 2's own value"
 
 
+async def test_a_move_held_while_core_is_unreachable_names_the_setting_and_its_warning_leaves_once_saved(tmp_path, monkeypatch):
+    """Slice 09 mini-rework (QA M1, m1, captures `c06`/`c07`): the edit route is blocked in the page (as a stopped Core), a title is typed
+    and validated, Variants changes the scene: the editor stays and names « Titre ». The route comes back: the value is saved on scene 1,
+    the editor follows to scene 2, and the warning « … n’est pas enregistrée » is gone, replaced by what was saved and where."""
+
+    monkeypatch.setenv("JARVIS_PRODUCT_EDITION", "presentation")
+    monkeypatch.delenv("JARVIS_DEVELOPER_MODE", raising=False)
+    status = f"(document.querySelector('{PANEL} .jvi-status:not([hidden])')||{{textContent:''}}).textContent"
+    async with ExplorerRig(tmp_path, variants=1) as rig:
+        result = await drive(rig.url, [
+            open_variants(rig), READY,
+            {"until": f"{SHOWN}('{EDIT}')", "ms": 10000},
+            {"click": EDIT}, EDITOR_READY,
+            {"until": f"JarvisStudioInspector.instance.view().scene_id==='{S1}'", "ms": 5000},
+            {"block": ["*/edits*"]},
+            {"focus": f"{PANEL} input[type=text]"}, {"eval": f"document.querySelector('{PANEL} input[type=text]').select()"},
+            {"type": "Saisie gardée QA"}, {"key": "Enter"},
+            {"until": f"(document.querySelector('{PANEL}')||{{}}).textContent.includes('Réessayer')", "ms": 15000},
+            {"eval": f"JarvisStudioExplorer.showScene('{S2}')"},
+            {"until": f"{status}.includes('reste sur la')", "ms": 15000},
+            {"value": "held", "expr": status},
+            {"value": "held_scene", "expr": "JarvisStudioInspector.instance.view().scene_id"},
+            {"block": []},
+            {"eval": "JarvisStudioInspector.instance.pollReloads()"},
+            {"until": f"JarvisStudioInspector.instance.view().scene_id==='{S2}'&&!JarvisStudioInspector.instance.view().loading", "ms": 15000},
+            {"until": f"{status}.includes('enregistré')", "ms": 5000},
+            {"value": "back", "expr": status},
+            {"wait": 1500},
+            {"value": "still", "expr": status},
+        ])
+        reads = result["reads"]
+        assert "failed" not in reads, reads.get("failed")
+        assert reads["held_scene"] == S1 and "scène 1" in reads["held"], reads["held"]
+        assert "« Titre" in reads["held"] and "une valeur" not in reads["held"], reads["held"]
+        assert stored_scenes(rig, rig.vids[1])[S1]["props"]["title"] == "Saisie gardée QA", "saved on its scene once Core answers"
+        for line in (reads["back"], reads["still"]):
+            assert "reste sur la" not in line and "n’est pas enregistrée" not in line, line
+        assert "enregistré sur la scène 1" in reads["back"] and "scène 2" in reads["back"], reads["back"]
+        # The blocked route is provoked on purpose: the browser and the editor's journal say so (the failure is recorded, as it must be).
+        expected = ("ERR_BLOCKED_BY_CLIENT", "Failed to load resource", "[studio-inspector] commit_unreachable", "[studio-inspector] move_held")
+        assert not noise(result, expected), noise(result, expected)
+
+
 async def test_the_full_edition_edits_a_branch_the_same_way(tmp_path, monkeypatch):
     """QA m6: the `full` edition (developer surfaces shown) keeps « Modifier » on a non-active branch and Core's read-back."""
 

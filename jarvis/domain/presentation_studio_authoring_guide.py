@@ -271,7 +271,7 @@ MASTER_HINT = ("VIDEO ENTIERE : les scenes d'un deck forment une seule video Rem
                "incompatible = corrige ce qu'il nomme.")
 
 NATIVE_LOOP = ("CODE REMOTION NATIF (brief.authoring: native). 1) Storyboard : une scene = une composition (taille, fps, duree en images) et "
-               "une idee. 2) Ecris du React/TSX normal : texte, couleurs et mise en page dans le code, modules src/lib/*.tsx ; point d'entree "
+               "une idee. 2) Ecris du React/TSX normal : mise en page et couleurs secondaires dans le code, modules src/lib/*.tsx ; point d'entree "
                "src/Scene.tsx (export default) ; imports react et remotion seulement (polices systeme, pas de paquet) ; images en public/** "
                "(base64) ; aucun reseau. MODIFIABLE : les textes visibles et la couleur principale de chaque scene sont des props declarees "
                "par le bundle (props, avec default), lues par le TSX (props.titre), valuees par la scene (props) et exposees en controls "

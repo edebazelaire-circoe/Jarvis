@@ -75,6 +75,36 @@ def test_core_stopped_keeps_the_typed_value_says_it_in_french_and_saves_it_when_
     assert any("commit_unreachable" in e for e in out["errors"]), "the failure is in the journal"
 
 
+def test_a_held_move_names_the_setting_and_its_warning_gives_way_to_the_saved_line_when_core_answers(tmp_path):
+    """Slice 09 mini-rework (QA M1, m1): the save was still in flight when the move came (`move_held kept:[]`, « une valeur »), and the
+    warning « L’éditeur reste sur la scène 1… n’est pas enregistrée » stayed on screen after Core saved the value and the editor moved."""
+    out = run_js(tmp_path, SAY + r"""
+      const t=await boot();await t.open();
+      let open;t.hook.gate=new Promise(r=>{open=r});
+      t.core.st.down=true;
+      const field=text(t,'title');
+      field.value='Saisie en vol';field.dispatch('input');field.dispatch('change');await t.env.flush(5);
+      say(t,'pss_2');await t.env.flush(5);
+      open();t.hook.gate=null;await t.env.flush(40);
+      const held={scene:t.inspector.view().scene_id,status:status(t),
+        log:t.env.logs.map(l=>l[1]).filter(l=>/move_held/.test(l))};
+      t.core.st.down=false;
+      await t.inspector.pollReloads();await t.env.flush(40);await t.env.advance(10);await t.env.flush(40);
+      const back={scene:t.inspector.view().scene_id,stored:t.core.st.values.title,status:status(t)};
+      await t.env.advance(6000);await t.env.flush(10);
+      return {held,back,later:status(t)};
+    """)
+    held = out["held"]
+    assert held["scene"] == "pss_1"
+    assert any("L’éditeur reste sur la scène 1" in s and "« Titre »" in s for s in held["status"]), held["status"]
+    assert held["log"] and '"kept":["title"]' in held["log"][-1], held["log"]
+    back = out["back"]
+    assert back["stored"] == "Saisie en vol" and back["scene"] == "pss_2"
+    assert not any("reste sur la" in s or "n’est pas enregistrée" in s for s in back["status"]), back["status"]
+    assert any("« Titre » enregistré" in s and "scène 1" in s and "scène 2" in s for s in back["status"]), back["status"]
+    assert out["later"] == [], "the confirmation goes away by itself"
+
+
 def test_an_undo_waits_for_the_queued_writes_of_the_scene_on_screen(tmp_path):
     out = run_js(tmp_path, SAY + r"""
       const t=await boot();await t.open();
@@ -91,6 +121,23 @@ def test_an_undo_waits_for_the_queued_writes_of_the_scene_on_screen(tmp_path):
     """)
     assert out["on"] == ["pss_1", "pss_1"], "both queued writes landed on the scene they were made on"
     assert out["title"] == "Premier" and out.get("glow") is not True, "the undo undid the LAST change (the switch), after the queue"
+
+
+def test_enter_on_undo_never_hands_the_focus_to_redo(tmp_path):
+    """Slice 09 mini-rework (QA m2): « Annuler » pressed by Enter and then disabled (nothing left to undo) gives the focus to the title, as
+    the contract says, never to « Rétablir » (a second Enter would redo what the first one undid)."""
+    out = run_js(tmp_path, SAY + r"""
+      const t=await boot();await t.open();
+      const field=text(t,'title');field.value='Un';field.dispatch('input');field.dispatch('change');await t.env.flush(30);
+      const undo=t.find(t.panel(),n=>n.tagName==='BUTTON'&&String(n.attrs['aria-label']||'').startsWith('Annuler'))[0];
+      const redo=t.find(t.panel(),n=>n.tagName==='BUTTON'&&String(n.attrs['aria-label']||'').startsWith('Rétablir'))[0];
+      undo.focus&&undo.focus();t.env.doc.activeElement=undo;
+      await t.inspector.runHistory('undo');await t.env.flush(30);
+      const a=t.env.doc.activeElement;
+      return {undoDisabled:!!undo.disabled,redoDisabled:!!redo.disabled,focus:a===redo?'redo':a===undo?'undo':(a&&a.id)};
+    """)
+    assert out["undoDisabled"] is True and out["redoDisabled"] is False, out
+    assert out["focus"] == "jviTitle", out
 
 
 def test_the_context_line_is_not_rewritten_after_a_save_and_undo_names_its_scene_in_visible_text(tmp_path):

@@ -523,7 +523,7 @@
        first saves what is typed on the scene it was typed on and waits for the write queue; only then does the editor move. A save that
        fails (refused, Core unreachable) keeps the editor on its scene with the draft and says so, with a way out; Variants may show another
        scene meanwhile. The latest move asked wins; the focus leaves a field whose scene changed under it. */
-    const move={target:null,running:false,held:false};
+    const move={target:null,running:false,held:false,hold:null,resumed:null};
     function hasUnsaved(){
       for(const s of sessions.values())if(s.committing||(s.dirty&&s.draft!==undefined))return true;
       return queue.pending.size>0;
@@ -535,8 +535,16 @@
       await Promise.all(jobs);
       for(let i=0;i<8&&queue.pending.size;i++)await queue.tail;   /* a stale rebase queues once more behind itself */
       const kept=items.filter((it)=>{const w=widgets.get(it.id),x=sessions.get(it.id);return (x&&x.dirty)||!w||!sameJson(w.ctx.row.current,it.value)});
-      const left=[...sessions.values()].some((x)=>x.dirty&&x.draft!==undefined);
-      return {ok:!kept.length&&!left,saved:items.filter((it)=>!kept.includes(it)),kept};
+      const left=[...sessions.values()].filter((x)=>x.dirty&&x.draft!==undefined);
+      const saved=items.filter((it)=>!kept.includes(it));
+      /* A value whose save was already in flight when the move came is not in `items`; if it is still unsaved it is named too (Slice 09
+         mini-rework, QA m1: the held move said « une valeur » and logged `kept:[]`). */
+      for(const x of left){
+        if(kept.some((k)=>k.id===x.id))continue;
+        const w=widgets.get(x.id);
+        kept.push({id:x.id,value:x.draft,label:w?w.ctx.row.label:x.id});
+      }
+      return {ok:!kept.length,saved,kept};
     }
     function requestMove(target){
       move.target=target;
@@ -547,9 +555,20 @@
       if(!move.held)return;
       later(()=>{
         if(!move.held||hasUnsaved()||move.running)return;
-        move.held=false;
-        if(move.target)requestMove(move.target);
+        const hold=move.hold;
+        move.held=false;move.hold=null;
+        log('move_resumed',{target:!!move.target,kept:hold?hold.count:0});
+        /* Slice 09 mini-rework (QA M1): the warning « L’éditeur reste… n’est pas enregistrée » is false from here on; the move that goes on
+           replaces it with what was saved and where the editor is (`runMove`), or, with no move left, it is replaced right now. */
+        if(move.target){move.resumed=hold;requestMove(move.target);return}
+        if(hold&&S.status===hold.status){
+          const said=setStatus('ok',savedTitle(hold),'');
+          later(()=>{if(S.status===said)setStatus(null)},5000);
+        }
       },0);
+    }
+    function savedTitle(h){
+      return h.names?`${h.names} enregistré${h.count>1?'s':''} sur la ${h.origin}`:`Saisie enregistrée sur la ${h.origin}`;
     }
     async function runMove(){
       move.running=true;
@@ -567,23 +586,29 @@
             if(!r.ok){
               move.held=true;
               const names=r.kept.map((k)=>`« ${clip(k.label,40)} »`).join(', ')||'une valeur';
-              setStatus('warn',`L’éditeur reste sur la ${origin}`,
+              const said=setStatus('warn',`L’éditeur reste sur la ${origin}`,
                 ` Votre saisie (${names}) n’est pas enregistrée : l’éditeur ne change pas de scène tant qu’elle n’est ni enregistrée ni abandonnée.`,
-                [{label:'Abandonner ma saisie et continuer',run:()=>{const target=move.target;abandonDrafts('user');move.held=false;setStatus(null);if(target)requestMove(target)}}]);
+                [{label:'Abandonner ma saisie et continuer',run:()=>{const target=move.target;abandonDrafts('user');move.held=false;move.hold=null;setStatus(null);if(target)requestMove(target)}}]);
+              move.hold={status:said,origin,names:r.kept.length?names:'',count:r.kept.length};
               announce(`Saisie non enregistrée : l’éditeur reste sur la ${origin}.`);
               log('move_held',{kind:t.kind,kept:r.kept.map((k)=>k.id)},'warn');
               return;
             }
             saved={origin,count:r.saved.length,typing};
             if(move.target!==t)continue;      /* a newer move arrived while saving: that one is applied (the draft is saved) */
+          }else if(move.resumed){
+            const h=move.resumed;             /* a held move going on: its value was saved meanwhile (`resumeMove`) */
+            saved={origin:h.origin,count:h.count,names:h.names,
+              typing:!!(ui.root&&doc.activeElement&&ui.root.contains(doc.activeElement)&&inTextField(doc.activeElement))};
           }
+          move.resumed=null;
           move.target=null;
           await t.apply();
           if(saved){
             const where=sceneLabel(S.sceneId);
-            const said=setStatus('ok',`Saisie enregistrée sur la ${saved.origin}`,where?` · l’éditeur montre maintenant la ${where}.`:'');
+            const said=setStatus('ok',savedTitle(saved),where?` · l’éditeur montre maintenant la ${where}.`:'');
             later(()=>{if(S.status===said)setStatus(null)},5000);
-            announce(`Saisie enregistrée sur la ${saved.origin}.${where?` L’éditeur montre maintenant la ${where}.`:''}`);
+            announce(`${savedTitle(saved)}.${where?` L’éditeur montre maintenant la ${where}.`:''}`);
             log('move_after_save',{kind:t.kind,saved:saved.count});
             /* The field now shows another scene's value: the caret never stays there (the next key would edit that scene). */
             if(saved.typing&&ui.title)ui.title.focus();
@@ -1313,10 +1338,11 @@
       const h=S.history,entry=h&&(direction==='undo'?h.next_undo:h.next_redo);
       try{return await runHistoryStep(direction,entry)}
       finally{
-        /* The button pressed by Enter is disabled while it runs: the focus comes back to it, or to the title (never to the page, where Échap
-           would close Variants instead of the editor; Slice 09 QA). */
+        /* The button pressed by Enter is disabled while it runs: the focus comes back to it, or to the title when it stays disabled (never
+           to the page, where Échap would close Variants instead of the editor; Slice 09 QA). Never to the OTHER button: a second Enter
+           would then redo what the first one undid (Slice 09 mini-rework, QA m2). */
         if(trigger&&S.open&&ui.root&&!ui.root.hidden){
-          const back=!trigger.disabled?trigger:(trigger===ui.undo&&!ui.redo.disabled?ui.redo:(trigger===ui.redo&&!ui.undo.disabled?ui.undo:ui.title));
+          const back=!trigger.disabled?trigger:ui.title;
           if(back&&(doc.activeElement===doc.body||doc.activeElement===null||doc.activeElement===trigger||!ui.root.contains(doc.activeElement)))back.focus();
         }
       }
