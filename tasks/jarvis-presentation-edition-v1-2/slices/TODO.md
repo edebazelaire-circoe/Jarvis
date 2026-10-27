@@ -5,7 +5,7 @@
 3. [x] `02-board-project-continuity` — **APPROUVÉE** le 2026-10-27 (I-002) — — make Board resume behave as project resume using durable Board memory.
 4. `03-research-reuse-freshness-orchestration` — force existing-source lookup, freshness decision and proper use of Research Lead/sub-agents/relations.
 5. `04-research-documents-and-dossier` — turn substantial research into durable reusable Board documents visible in Dossier.
-6. `05-voice-lifecycle-wake-chat` — launch/close lifecycle and Voice Off/Sleep/Active + chat contract.
+6. [x] `05-voice-lifecycle-wake-chat` — **APPROUVÉE** le 2026-10-27 (fusion `321bcdd1` ; suivi 05b packaging du mot de réveil en cours) — — launch/close lifecycle and Voice Off/Sleep/Active + chat contract.
 7. `06-settings-and-novice-ui` — simplify normal UX while retaining complete Settings/debug/transcription surfaces.
 8. `07-bug-report-diagnostic-bundle` — user-facing diagnostic report + sanitized AppData ZIP + send/fallback.
 9. `08-macos-portability-build-validation` — platform-path/packaging portability and macOS CI/real-device gate.
