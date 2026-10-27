@@ -703,7 +703,8 @@ class SessionManager:
                               "recency": list(memory.research_recency), "unread": unread,
                               "documents": [{"path": item.path, "action": item.action.value, "reason": item.reason,
                                              "checked_at": item.checked_at.isoformat() if item.checked_at else None,
-                                             "stale_count": item.stale_count} for item in memory.research]})
+                                             "stale_count": item.stale_count, "on_topic": item.on_topic,
+                                             "problem": item.problem} for item in memory.research]})
         return memory
 
     async def _board_memory_block(self, board_id: str) -> BrainBoardMemory | None:

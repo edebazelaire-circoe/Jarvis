@@ -207,18 +207,29 @@ def render_board_research(block: Any) -> list[str]:
     if not kept:
         return []
     recency = [_text(term, 24) for term in block.get("recency") or [] if isinstance(term, str)][:8]
-    head = BRIEF_RESEARCH_HEAD + (f" (demande d'actualité : « {', '.join(recency)} »)" if recency else "") + " :"
+    head = BRIEF_RESEARCH_HEAD + (f" (demande d'actualité : « {', '.join(recency)} », appliquée aux documents du "
+                                  "sujet du tour)" if recency else "") + " :"
     lines = [head]
     for item in kept:
         facts = [f"« {_text(item.topic, 120)} »" if item.topic else "sans sujet déclaré"]
+        if item.on_topic:
+            facts.append("sujet du tour")
         if item.checked_at is not None:
             facts.append(f"vérifié le {item.checked_at.isoformat()}")
         if item.volatility is not None:
             facts.append(f"volatilité {_VOLATILITY_WORDS[item.volatility.value]}")
+        if item.problem:
+            facts.append("en-tête de métadonnées trop long, lu en partie")
         decision = f"{_ACTION_WORDS[item.action]} ({_REASON_WORDS.get(item.reason, item.reason)})"
         if item.stale_sources:
             more = item.stale_count - len(item.stale_sources)
             decision += " : " + ", ".join(_text(ref, 160) for ref in item.stale_sources) + (f" et {more} autre(s)"
                                                                                           if more > 0 else "")
+        if item.old_count:
+            decision += f" ; {item.old_count} source(s) déjà ancienne(s) à leur lecture, à signaler sans rafraîchir"
         lines.append(f"- {item.path} : {', '.join(facts)} → {decision}")
+    unread = block.get("unread")
+    if type(unread) is int and unread > 0:
+        lines.append(f"- et {unread} autre(s) document(s) non listé(s) ici : board_memory_tree sur documents/research "
+                     "pour les voir.")
     return lines

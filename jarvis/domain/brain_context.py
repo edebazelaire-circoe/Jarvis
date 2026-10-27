@@ -575,6 +575,8 @@ class BrainBoardMemory:
     research: tuple[ResearchDocStatus, ...] = ()
     #: Mots d'actualité trouvés dans la demande du tour (`research_freshness.recency_terms`).
     research_recency: tuple[str, ...] = ()
+    #: Documents de recherche non lus au-delà de la borne (dit au cerveau, qui peut les lister).
+    research_unread: int = 0
 
     def __post_init__(self) -> None:
         if not is_board_memory_locator(self.locator):
@@ -600,6 +602,8 @@ class BrainBoardMemory:
             raise ValueError(f"research must be a tuple of at most {MAX_RESEARCH_DOCS} ResearchDocStatus")
         if not isinstance(self.research_recency, tuple) or len(self.research_recency) > 8:
             raise ValueError("research_recency must be a short tuple")
+        if type(self.research_unread) is not int or self.research_unread < 0:
+            raise ValueError("research_unread must be a non-negative integer")
 
     @classmethod
     def bounded(cls, *, locator: str, path: str, entries: tuple[BrainBoardMemoryEntry, ...], more: bool,
@@ -635,6 +639,8 @@ class BrainBoardMemory:
         if self.research:
             payload["research"] = {"documents": [item.to_payload() for item in self.research],
                                    "recency": list(self.research_recency)}
+            if self.research_unread:
+                payload["research"]["unread"] = self.research_unread
         return payload
 
 

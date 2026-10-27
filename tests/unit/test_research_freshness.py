@@ -33,8 +33,8 @@ from jarvis.core.v2_services import ConversationService
 from jarvis.domain.agent_capabilities import PRESENTATION_CAPABILITIES, UNCONFINED
 from jarvis.domain.board_memory import BoardMemoryPath
 from jarvis.domain.research_freshness import (
-    RECENCY_MAX_AGE_DAYS, FreshnessAction, ResearchDocStatus, ResearchMetadata, ResearchSource, Volatility, decide,
-    parse_front_matter, recency_terms,
+    MAX_RESEARCH_DOCS, RECENCY_MAX_AGE_DAYS, FreshnessAction, ResearchDocStatus, ResearchMetadata, ResearchSource,
+    Volatility, decide, matches_topic, parse_front_matter, recency_terms,
 )
 from jarvis.domain.subagent_roles import (
     RESEARCH_REUSE_MARK, ROLES, brain_rules, research_reuse_text, role_brief, role_by_id,
@@ -102,10 +102,18 @@ def test_no_document_means_a_new_research():
     ("l’état actuel du marché", ("actuel",)),
     ("Qu'en est-il aujourd'hui ?", ("aujourd'hui",)),
     ("what is the latest version", ("latest",)),
-    ("les chiffres de 2026", ("2026",)),
-    ("la dernière présentation de l'équipe", ("derniere",)),
+    ("la dernière version de Remotion", ("dernière",)),
+    ("les prix actuellement pratiqués", ("actuellement",)),
+    ("la dernière présentation de l'équipe", ("dernière",)),
     ("résume la note", ()),
     ("les actualités du secteur", ()),
+    # Faux positifs écartés (reprise QA M3) : un élément du deck, « maintenant » seul, une année seule.
+    ("Modifie la dernière diapo", ()),
+    ("change la dernière slide et la dernière phrase", ()),
+    ("reprends la dernière version du deck", ()),
+    ("relis mes derniers messages", ()),
+    ("maintenant, fais la slide 3", ()),
+    ("les chiffres de 2026", ()),
 ])
 def test_recency_wording_is_detected_on_whole_words(request_text, terms):
     assert recency_terms(request_text, TODAY) == terms
@@ -131,11 +139,69 @@ def test_unknown_future_and_entirely_stale_documents_are_revalidated_in_full():
     assert decide(_meta(date(2025, 1, 1), Volatility.LOW), today=TODAY).action is FreshnessAction.REUSE
 
 
-def test_a_volatile_source_already_old_when_read_is_stale():
+def test_staleness_follows_the_last_check_not_the_publication_date():
+    """Reprise QA B2 : une source ancienne mais vérifiée hier reste valable ; son âge est seulement signalé."""
+
     meta = _meta(date(2026, 10, 26), Volatility.HIGH, ResearchSource("https://vieux", date(2024, 5, 1)),
                  ResearchSource("https://neuf", date(2026, 10, 20)))
     decision = decide(meta, today=TODAY)
-    assert decision.action is FreshnessAction.PARTIAL_REFRESH and decision.stale_sources == ("https://vieux",)
+    assert decision.action is FreshnessAction.REUSE and decision.old_sources == ("https://vieux",)
+    # Même avec une demande d'actualité sur ce sujet : vérifié hier, donc réutilisable.
+    assert decide(meta, today=TODAY, request="les derniers prix").action is FreshnessAction.REUSE
+    # Le jour même de son rafraîchissement, un document est réutilisable, quelle que soit la date de ses sources.
+    refreshed = _meta(TODAY, Volatility.HIGH,
+                      ResearchSource("https://usagepricing.com/gamma", date(2026, 9, 8), checked_at=TODAY),
+                      ResearchSource("https://help.gamma.app", date(2025, 1, 2), checked_at=TODAY))
+    assert decide(refreshed, today=TODAY, request="les derniers tarifs de Gamma").action is FreshnessAction.REUSE
+
+
+FAILED_NOTE = """---
+topic: Gamma
+checked_at: 2026-10-27
+volatility: high
+sources:
+  - https://help.gamma.app | checked: 2026-10-27 (échec HTTP 403, non lue)
+  - https://gamma.app/pricing | checked: 2026-10-27 | status: failed
+  - https://gamma.app/docs | checked: 2026-10-27
+---
+"""
+QUOTED_NOTE = """---
+topic: 'Sujet'
+checked_at: '2026-10-20'
+volatility: "medium"
+sources:
+  - https://a | date: "2026-10-01" | checked: '2026-10-20'
+---
+"""
+
+
+def test_a_failed_check_does_not_count_as_a_check():
+    meta, _ = parse_front_matter(FAILED_NOTE)
+    assert [source.failed for source in meta.sources] == [True, True, False]
+    decision = decide(meta, today=TODAY)
+    assert decision.action is FreshnessAction.PARTIAL_REFRESH
+    assert decision.stale_sources == ("https://help.gamma.app", "https://gamma.app/pricing")
+
+
+def test_quoted_yaml_dates_are_read():
+    meta, _ = parse_front_matter(QUOTED_NOTE)
+    assert meta.topic == "Sujet" and meta.checked_at == date(2026, 10, 20) and meta.volatility is Volatility.MEDIUM
+    assert meta.sources[0].date == date(2026, 10, 1) and meta.sources[0].checked_at == date(2026, 10, 20)
+
+
+def test_recency_applies_only_to_documents_on_the_topic_of_the_turn():
+    """Reprise QA M3 : « derniers modèles d'OpenAI » ne fait pas revérifier la note sur Gamma."""
+
+    gamma = _meta(date(2026, 10, 10), Volatility.HIGH, ResearchSource("https://gamma.app"))
+    request = "Quels sont les derniers modèles d'OpenAI ?"
+    assert not matches_topic(request, "gamma-outil", "Gamma (gamma.app) : fonctionnalités et tarifs")
+    assert matches_topic(request, "openai-modeles", "Modèles d'OpenAI disponibles")
+    off = decide(gamma, today=TODAY, request=request, on_topic=False)
+    assert off.action is FreshnessAction.REUSE and off.recency == ()
+    on = decide(gamma, today=TODAY, request=request, on_topic=True)
+    assert on.action is FreshnessAction.FULL_REFRESH and on.reason == "recency_requested"
+    assert not matches_topic("Modifie la dernière diapo", "gamma-outil", "Gamma")
+    assert not matches_topic("", "gamma-outil", "Gamma")
 
 
 def test_the_front_matter_parser_is_small_strict_and_never_raises():
@@ -220,7 +286,8 @@ async def test_the_turn_block_carries_the_decision_and_the_trace_says_it(present
     traced = journal.data("core.research.freshness_decided")
     assert traced["board_id"] == DEFAULT_BOARD_ID and traced["recency"] == ["derniers"]
     assert traced["documents"] == [{"path": "documents/research/openai.md", "action": "full_refresh",
-                                    "reason": "recency_requested", "checked_at": "2025-03-02", "stale_count": 0}]
+                                    "reason": "recency_requested", "checked_at": "2025-03-02", "stale_count": 0,
+                                    "on_topic": True, "problem": None}]
     brief = "\n".join(render_board_brief(block.to_payload()))
     assert "Recherches du Board" in brief and "tout revérifier" in brief
     # Un appelant d'avant (sans `request`) garde son bloc ; la décision suit alors une demande neutre.
@@ -350,3 +417,116 @@ async def test_the_full_edition_keeps_every_board_and_session_folder(monkeypatch
     assert str(tmp_path / "data" / "sessions") in dirs
     assert any(Path(item).name == "boards" for item in dirs)
     assert agent.launched_board_scope is None and not agent.board_scope_stale()
+
+
+# ------------------------------------------------------------------ 5. reprise QA : en-tête long, surplus, relances
+
+LONG_FRONT_MATTER = Path(__file__).parents[1] / "fixtures" / "research" / "long-front-matter.md"
+
+
+def test_the_real_3907_byte_header_written_by_the_research_lead_is_read_in_full(tmp_path):
+    """Reprise QA B1 : l'en-tête réel du bac (30 sources, 3 907 octets) n'est plus lu comme « sans date »."""
+
+    text = LONG_FRONT_MATTER.read_text(encoding="utf-8")
+    assert len(text[:text.index("\n---", 3) + 4].encode("utf-8")) == 3907
+    store = FileBoardMemoryStore(tmp_path)
+    _write(store, DEFAULT_BOARD_ID, "documents/research/outils-video-presentation-ia-2026.md", text)
+    memory = read_board_memory(store, tmp_path, DEFAULT_BOARD_ID)
+    enriched, _ = with_board_research(memory, store, DEFAULT_BOARD_ID,
+                                      request="Rappelle-moi les prix de Synthesia et HeyGen", today=TODAY)
+    status = enriched.research[0]
+    assert status.topic.startswith("Outils de génération de vidéos") and status.checked_at == TODAY
+    assert status.action is FreshnessAction.REUSE and status.problem is None
+    line = render_board_research(enriched.to_payload()["research"])[1]
+    assert "réutiliser tel quel" in line and "sans sujet" not in line and "trop long" not in line
+
+
+def test_a_header_beyond_its_own_bound_is_said_not_turned_into_unknown(tmp_path):
+    sources = "".join(f"  - https://exemple.org/{i:04d}/{'x' * 120} | date: 2026-10-01 | checked: 2026-10-26\n"
+                      for i in range(160))
+    text = (f"---\ntopic: Sujet très sourcé\nchecked_at: 2026-10-26\nvolatility: medium\nsources:\n{sources}---\n"
+            "# corps\n")
+    store = FileBoardMemoryStore(tmp_path)
+    _write(store, DEFAULT_BOARD_ID, "documents/research/sujet.md", text)
+    memory = read_board_memory(store, tmp_path, DEFAULT_BOARD_ID)
+    status = with_board_research(memory, store, DEFAULT_BOARD_ID, request="x", today=TODAY)[0].research[0]
+    assert status.problem == "front_matter_too_long" and status.topic == "Sujet très sourcé"
+    assert status.action is FreshnessAction.REUSE and status.checked_at == date(2026, 10, 26)
+    lines = render_board_research({"documents": [status.to_payload()]})
+    assert "en-tête de métadonnées trop long, lu en partie" in lines[1]
+
+
+def test_beyond_eight_documents_the_brain_is_told_how_many_are_missing_and_the_topic_comes_first(tmp_path):
+    store = FileBoardMemoryStore(tmp_path)
+    note = "---\ntopic: Sujet {n}\nchecked_at: 2026-10-26\n---\n"
+    for n in range(MAX_RESEARCH_DOCS + 2):
+        _write(store, DEFAULT_BOARD_ID, f"documents/research/a{n:02d}.md", note.format(n=n))
+    _write(store, DEFAULT_BOARD_ID, "documents/research/zz-tarifs-synthesia.md", note.format(n="Synthesia"))
+    memory = read_board_memory(store, tmp_path, DEFAULT_BOARD_ID)
+    enriched, unread = with_board_research(memory, store, DEFAULT_BOARD_ID, request="les tarifs de Synthesia",
+                                           today=TODAY)
+    assert unread == 3 and enriched.research_unread == 3 and len(enriched.research) == MAX_RESEARCH_DOCS
+    assert enriched.research[0].path == "documents/research/zz-tarifs-synthesia.md" and enriched.research[0].on_topic
+    lines = render_board_research(enriched.to_payload()["research"])
+    assert lines[-1].startswith("- et 3 autre(s) document(s) non listé(s)") and "board_memory_tree" in lines[-1]
+
+
+def test_the_last_slide_triggers_nothing_and_an_off_topic_note_keeps_its_decision(tmp_path):
+    store = FileBoardMemoryStore(tmp_path)
+    _write(store, DEFAULT_BOARD_ID, "documents/research/gamma-outil.md",
+           "---\ntopic: Gamma (gamma.app) : fonctionnalités et tarifs\nchecked_at: 2026-10-20\nvolatility: high\n---\n")
+    _write(store, DEFAULT_BOARD_ID, "documents/research/openai-modeles.md", OLD_OPENAI_NOTE)
+    memory = read_board_memory(store, tmp_path, DEFAULT_BOARD_ID)
+    slide, _ = with_board_research(memory, store, DEFAULT_BOARD_ID, request="Modifie la dernière diapo", today=TODAY)
+    assert slide.research_recency == () and {item.reason for item in slide.research} == {"fresh", "stale"}
+    latest, _ = with_board_research(memory, store, DEFAULT_BOARD_ID,
+                                    request="Quels sont les derniers modèles d'OpenAI ?", today=TODAY)
+    by_path = {item.path.rsplit("/", 1)[-1]: item for item in latest.research}
+    assert by_path["openai-modeles.md"].reason == "recency_requested" and by_path["openai-modeles.md"].on_topic
+    assert by_path["gamma-outil.md"].action is FreshnessAction.REUSE and not by_path["gamma-outil.md"].on_topic
+    head = render_board_research(latest.to_payload()["research"])[0]
+    assert "« derniers »" in head and "sujet du tour" in head
+
+
+async def test_a_new_session_on_the_same_board_makes_the_running_cli_stale(monkeypatch, tmp_path):
+    """Reprise QA m7 : comparer le seul Board laisserait le dossier de l'ancienne Session accordé."""
+
+    scope = {"value": ("board_a", "jsess_one")}
+    agent = _confined_brain(monkeypatch, tmp_path, ("x", "y"))
+    agent.board_scope = lambda: scope["value"]
+    await _launch(monkeypatch, agent)
+    monkeypatch.setattr(type(agent), "state", property(lambda self: "running"))
+    assert not agent.board_scope_stale()
+    scope["value"] = ("board_a", "jsess_two")
+    assert agent.board_scope_stale()
+
+
+async def test_a_stale_scope_relaunches_the_foreground_cli_before_the_turn(tmp_path):
+    """Reprise QA m7 : `agent_ask` relance (`--resume`) un CLI lancé pour une autre liaison avant de servir le tour."""
+
+    from tests.unit.test_board_brains_control_center import JsonRequest, binding, make_control, trace
+
+    control = make_control(tmp_path)
+    entry = await control.board_brains.activate(binding("conv-a"))
+    agent = entry.agent
+    stale = {"value": True}
+    agent.board_scope_stale = lambda: stale["value"]
+    starts_before = len(agent.starts)
+
+    def relaunched_once() -> None:
+        stale["value"] = False
+
+    original_start = agent.start
+
+    async def start(*, resume: bool = True) -> dict:
+        relaunched_once()
+        return await original_start(resume=resume)
+
+    agent.start = start
+    answered = await control.agent_ask(JsonRequest({"text": "bonjour", "conversation": {"conversation_id": "conv-a"}}))
+    assert answered.status == 200 and agent.asked == ["bonjour"]
+    assert len(agent.starts) == starts_before + 1 and agent.stops >= 1
+    assert trace(tmp_path, "board_brain.relaunched")[-1]["data"]["reason"] == "board_scope"
+    # Portée à jour : le tour suivant ne relance rien.
+    await control.agent_ask(JsonRequest({"text": "encore", "conversation": {"conversation_id": "conv-a"}}))
+    assert len(agent.starts) == starts_before + 1
