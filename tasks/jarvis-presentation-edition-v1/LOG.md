@@ -372,3 +372,35 @@ arrêtée, par son propre `Popen` (PID exact, sans `/T`) ; son Python enfant a f
 supprimé (clones, paquets, installeurs, essais). Aucune migration, aucun changement de schéma ; aucun tour payant du
 cerveau. Aucun redémarrage du JARVIS vivant n'est nécessaire (produit installé, outillage de release et masquage
 canonique seulement). Disque C : 42 Go libres au départ, 38 Go à la fin.
+
+## 2026-10-27 — Slice 10, seconde reprise (agent d'implémentation)
+
+Demandée par le PM après la contre-relecture `slices/10-production-readiness-recovery-ci/qa/rework-review.md`
+(`d509ed23`, FAIL : X1, X2 majeurs ; x3-x6 mineurs). Worktree `pev1`, commit `f6e397e4`, puis ce LOG. La Slice n'est
+**pas** marquée approuvée. Preuves sous
+`C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\448345f0-a514-4023-9dde-33aed523cf61\scratchpad\s10rw\evidence\`
+(`mutations-second-rework.txt`, `x2-five-runs.txt`, `gate-release-f6e397e4.*`, `gate-touched*-f6e397e4.*`).
+
+| Constat | Correction | Preuve |
+| --- | --- | --- |
+| **X1** `.env` relu par une copie d'analyseur (commentaire, guillemets + commentaire, BOM : jeton en clair) | `support_bundle.env_items` passe par `jarvis.environment.parse_environment_lines` (`utf-8-sig`), une ligne à la fois : une ligne refusée est comptée (`secret_sources.env.unreadable_lines`), jamais copiée, et ne fait perdre ni les autres noms ni les autres secrets | 4 cas paramétrés (commentaire, guillemets + commentaire, `export` + guillemets doubles, BOM) : jeton absent de `logs/core.log`, clé sans BOM dans `config-keys.json` ; la sonde `probe_m2.py` du relecteur donne « masked » dans les 4 cas ; mutations « lecture `utf-8` » et « ancien découpage » tuées |
+| **X2** test de l'installeur intermittent (script `.cmd` pas encore effacé) | côté test : l'attente bornée (40 s) porte aussi sur l'effacement du script, qui s'efface en dernier ; produit inchangé | `test_product_setup.py` entier 5 fois de suite : 33 passés × 5 ; porte `release` verte (ci-dessous) |
+| **x3** docstring « inconnu = vivant », code « inconnu = mort » | choix sûr, code et docstring alignés : `probe_process` ouvre avec le seul droit `PROCESS_QUERY_LIMITED_INFORMATION` ; `ERROR_ACCESS_DENIED` = le processus existe = VIVANT, son dossier est gardé | `test_an_owner_that_exists_but_cannot_be_read_is_alive…` (sonde simulée, nettoyage qui garde le dossier, et vraie sonde : PID 4 existant, PID 0 mort, ce processus lisible) ; mutation tuée |
+| **x4** valeur triviale ou réglage ordinaire pris pour un secret | noms jugés par MOTS (`KEYBOARD_LAYOUT`, `BYPASS_HOST` ne sont plus sensibles), mots descriptifs exclus (`TYPE`, `FILE`, `MAX`, `TIMEOUT`…), `enabled`/`disabled` triviaux ; un vrai `DB_PASSWORD_2=hunter2x`, `OPENAI_APIKEY` restent secrets | `test_ordinary_settings_with_a_sensitive_looking_name_stay_readable` ; mutations « trivial accepté » et « morceau de nom » tuées |
+| **x6** clés scellées DPAPI hors du masqueur | `secret_sources` : clés des réglages locaux (`control-center-settings.json`, en clair ou scellées, `unseal_value`) et identifiants du coffre MCP (`mcp_credentials` lu comme les versions de schéma, `immutable=1` sans `-shm`, charge `static`/`oauth` descellée), en mémoire seulement ; `bundle.json` › `secret_sources` ne porte que des comptes et `degraded` (coffre indisponible, blob d'un autre compte) ; le paquet se fait toujours ; « Bearer » d'un en-tête n'est pas pris pour un secret | `test_sealed_local_keys_and_mcp_vault_credentials_are_known_secrets_unsealed_in_memory_only` (faux descelleur réversible : clé locale, jeton et en-tête du coffre absents du zip ; blob illisible compté ; coffre indisponible puis descelleur qui lève : paquet écrit, dégradation dite) ; mutation « sources ignorées » tuée |
+| **x5** reste de m7 | consigné : I-010 point 20 | — |
+
+**Vérifications** : `test_support_bundle.py` + `test_diagnostic_redaction.py` 24 passés ; 6 mutations sur 6 tuées ;
+`verify_release.py` : `Release verification passed.` ; porte `release` à `f6e397e4` : **VERTE, 29 fichiers, 727 passés,
+2 sautés** ; balayage des fichiers touchés et de leurs voisins (`local_secrets`, `credential_vault`, `mcp_plugin*`,
+`mcp_oauth_adapter`, `product_*`, `product_connectors`, `local_capability_host`, `support_bundle`, `diagnostic*`,
+`windows_installer`, `release_*`, `app`, `control_center_mcp_plugins_api`) : 22 fichiers, 823 passés, 1 échec connu
+(`test_app` listé), VERT. Index en `i/lf`, aucun caractère de contrôle, aucun avertissement d'échappement.
+
+**Non refait** : pas de rebuild du paquet (aucun fichier de packaging touché ; `setup_stub.cs` inchangé depuis le
+candidat `63697cfa`) ; le produit installé du candidat précédent n'embarque donc pas ces corrections du paquet de
+support et de l'installeur (`product_setup.py`) : un prochain build les prendra. Pas de balayage `unit` complet ni de
+suite navigateur. CI GitHub (A12) toujours non vérifiée.
+
+**Machine** : JARVIS vivant non touché ; aucun processus lancé hors pytest ; aucune base hors `tmp_path` ; aucun tour
+payant ; aucune migration ; aucun redémarrage requis.
