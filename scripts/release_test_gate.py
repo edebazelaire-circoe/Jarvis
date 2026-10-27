@@ -10,7 +10,12 @@ de la CI) et juge le résultat contre `tests/known_failures.json`, une liste EXP
 - un test `failing` de la liste qui PASSE fait échouer la porte (l'entrée est périmée : la retirer) ;
 - un test `intermittent` de la liste qui échoue est relancé seul, au plus deux fois ; il doit alors passer ;
 - une entrée dont `review_by` est dépassée fait échouer la porte ;
-- une erreur de collecte (import) est un échec, jamais un saut.
+- une erreur de collecte (import) est un échec, jamais un saut ;
+- une session de pytest qui n'est pas allée au bout fait échouer la porte (QA S10 B1) : code de sortie autre que 0, ou
+  1 sans échec constaté, session interrompue (`KeyboardInterrupt`, `pytest.exit`, arrêt demandé), moins de tests
+  exécutés que collectés, rapport absent, aucun test passé (tout sauté) ;
+- un test `failing` de la liste dont le fichier a tourné mais qui n'a pas échoué (sauté, par exemple sans Chrome) fait
+  échouer la porte : l'échec connu n'a pas été VU (QA S10 m1). Le rapport compte les tests sautés et la durée.
 
 Il n'existe aucun « ignore » global. Code de sortie : 0 porte verte, 1 porte rouge, 2 usage ou liste invalide.
 """
@@ -18,7 +23,7 @@ Il n'existe aucun « ignore » global. Code de sortie : 0 porte verte, 1 porte r
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 import fnmatch
 import json
@@ -27,6 +32,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 KNOWN_FAILURES = ROOT / "tests" / "known_failures.json"
@@ -44,6 +50,9 @@ RELEASE_PATTERNS = ("test_product_*.py", "test_windows_*.py", "test_private_runt
                     "test_document_export*.py", "test_remotion_export_save_mcp.py", "test_presentation_export_after_edit.py",
                     "test_board_edition*.py", "test_workspace_board_contract.py")
 SUITES = ("unit", "browser", "release", "all")
+#: Codes de sortie de pytest qui disent que la session est allée au bout (0 tout passe, 1 des tests échouent).
+PYTEST_FINISHED = (0, 1)
+PYTEST_CODES = {2: "interrompue", 3: "erreur interne de pytest", 4: "erreur d'usage", 5: "aucun test collecté"}
 
 
 class GateError(RuntimeError):
@@ -127,10 +136,13 @@ def run_pytest(targets: list[str], report: Path, *, extra: list[str] | None = No
             *targets]
     done = subprocess.run(argv, cwd=ROOT, env=env, check=False)
     try:
-        return json.loads(report.read_text(encoding="utf-8"))
+        result = json.loads(report.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         # pytest died before its session finished (crash, killed): the gate cannot judge anything, so it is red.
-        return {"exitstatus": done.returncode, "tests": {"<pytest>": {"session": "failed"}}, "crash": str(exc)}
+        return {"exitstatus": done.returncode, "returncode": done.returncode, "tests": {"<pytest>": {"session": "failed"}},
+                "crash": str(exc)}
+    result["returncode"] = done.returncode
+    return result
 
 
 def failed_ids(result: dict) -> set[str]:
@@ -142,6 +154,35 @@ def passed_ids(result: dict) -> set[str]:
             if phases.get("call") == "passed" and "failed" not in phases.values()}
 
 
+def skipped_ids(result: dict) -> set[str]:
+    return {nodeid for nodeid, phases in result.get("tests", {}).items()
+            if "skipped" in phases.values() and "failed" not in phases.values() and phases.get("call") != "passed"}
+
+
+def session_problems(result: dict) -> list[str]:
+    """Pourquoi la session de pytest ne permet pas de juger (liste vide : elle est allée au bout)."""
+
+    problems = []
+    status, returncode = result.get("exitstatus"), result.get("returncode", result.get("exitstatus"))
+    if result.get("crash"):
+        problems.append(f"rapport de pytest absent (code {returncode}) : la session est morte avant sa fin")
+    elif returncode != status:
+        problems.append(f"code de sortie de pytest {returncode}, différent de celui de son rapport ({status})")
+    if status not in PYTEST_FINISHED:
+        problems.append(f"pytest a fini avec le code {status} ({PYTEST_CODES.get(status, 'inconnu')}) : session non jugeable")
+    if result.get("interrupted"):
+        problems.append("session interrompue avant sa fin (arrêt demandé)")
+    if status == 1 and not failed_ids(result):
+        problems.append("code 1 sans aucun échec constaté")
+    ran = sum(1 for phases in result.get("tests", {}).values() if set(phases) & {"setup", "call", "teardown"})
+    collected = result.get("collected")
+    if isinstance(collected, int) and ran < collected:
+        problems.append(f"{collected} tests collectés, {ran} exécutés : session coupée")
+    if not result.get("crash") and not passed_ids(result):
+        problems.append("aucun test n'a passé (tout sauté, ou rien lancé)")
+    return problems
+
+
 @dataclass
 class Verdict:
     unknown: list[str]
@@ -151,18 +192,27 @@ class Verdict:
     known_failed: list[str]
     passed: int
     failed: int
+    skipped: int = 0
+    unseen: list[str] = field(default_factory=list)
+    session: list[str] = field(default_factory=list)
+    exitstatus: int | None = None
+    collected: int | None = None
 
     @property
     def green(self) -> bool:
-        return not (self.unknown or self.stale or self.expired)
+        return not (self.unknown or self.stale or self.expired or self.unseen or self.session)
 
     def to_payload(self) -> dict:
-        return {"green": self.green, "passed": self.passed, "failed": self.failed, "unknown_failures": self.unknown,
-                "stale_known_failures": self.stale, "expired_entries": self.expired,
+        return {"green": self.green, "passed": self.passed, "failed": self.failed, "skipped": self.skipped,
+                "collected": self.collected, "exitstatus": self.exitstatus, "session_problems": self.session,
+                "unknown_failures": self.unknown, "stale_known_failures": self.stale,
+                "unseen_known_failures": self.unseen, "expired_entries": self.expired,
                 "intermittent_tolerated": self.tolerated, "known_failures_seen": self.known_failed}
 
 
-def judge(result: dict, known: dict[str, Known], *, today: date, rerun) -> Verdict:
+def judge(result: dict, known: dict[str, Known], *, today: date, rerun, files: list[str] | None = None) -> Verdict:
+    """`files` : les fichiers lancés ; un test `failing` listé d'un de ces fichiers doit y avoir échoué (m1)."""
+
     failed, passed = failed_ids(result), passed_ids(result)
     unknown, tolerated, known_failed = [], [], []
     for nodeid in sorted(failed):
@@ -176,8 +226,26 @@ def judge(result: dict, known: dict[str, Known], *, today: date, rerun) -> Verdi
         else:
             unknown.append(f"{nodeid} (intermittent listé, mais échoue aussi seul)")
     stale = sorted(nodeid for nodeid in passed if nodeid in known and known[nodeid].kind == "failing")
+    ran_files = set(files or ())
+    unseen = sorted(f"{k.nodeid} (listé `failing`, ni échoué ni passé : sauté ou absent)" for k in known.values()
+                    if k.kind == "failing" and k.nodeid.split("::", 1)[0] in ran_files
+                    and k.nodeid not in failed and k.nodeid not in passed)
     expired = sorted(f"{k.nodeid} (review_by {k.review_by.isoformat()}, {k.issue})" for k in known.values() if k.review_by < today)
-    return Verdict(unknown, stale, expired, tolerated, known_failed, len(passed), len(failed))
+    collected = result.get("collected")
+    return Verdict(unknown, stale, expired, tolerated, known_failed, len(passed), len(failed), len(skipped_ids(result)),
+                   unseen, session_problems(result), result.get("exitstatus"), collected if isinstance(collected, int) else None)
+
+
+def source_revision(root: Path = ROOT) -> str | None:
+    """Révision testée (`HEAD`), écrite dans le rapport : `release_info.py` refuse un verdict d'une autre révision (m7)."""
+
+    try:
+        done = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=30,
+                              check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    revision = done.stdout.strip()
+    return revision if done.returncode == 0 and len(revision) == 40 else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -211,26 +279,31 @@ def main(argv: list[str] | None = None) -> int:
         print("[test-gate] ERREUR : aucun fichier dans cette suite/part", file=sys.stderr)
         return 2
     today = date.fromisoformat(args.today) if args.today else date.today()
+    started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="jarvis-test-gate-") as work:
         result = run_pytest(files, Path(work) / "run.json")
 
         def rerun(nodeid: str) -> bool:
             for attempt in range(1, INTERMITTENT_RERUNS + 1):
                 again = run_pytest([nodeid], Path(work) / f"rerun-{attempt}.json")
-                if nodeid in passed_ids(again) and not failed_ids(again):
+                if nodeid in passed_ids(again) and not failed_ids(again) and not session_problems(again):
                     return True
             return False
 
-        verdict = judge(result, known, today=today, rerun=rerun)
+        verdict = judge(result, known, today=today, rerun=rerun, files=files)
     shards = ",".join(args.shard) or None
     payload = {"suite": args.suite, "shard": shards, "only": args.only or None, "files": len(files), "known_failures_file": KNOWN_FAILURES.name,
+               "duration_seconds": round(time.monotonic() - started, 1), "source_revision": source_revision(),
                **verdict.to_payload()}
     if args.report:
         Path(args.report).parent.mkdir(parents=True, exist_ok=True)
         Path(args.report).write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"[test-gate] suite {args.suite}{' ' + shards if shards else ''} : {len(files)} fichiers, "
-          f"{verdict.passed} passés, {verdict.failed} en échec dont {len(verdict.known_failed)} connus")
-    for label, rows in (("échec NON listé", verdict.unknown), ("entrée périmée (le test passe : la retirer)", verdict.stale),
+          f"{verdict.passed} passés, {verdict.failed} en échec dont {len(verdict.known_failed)} connus, {verdict.skipped} sautés, "
+          f"{payload['duration_seconds']} s")
+    for label, rows in (("session non jugeable", verdict.session), ("échec NON listé", verdict.unknown),
+                        ("entrée périmée (le test passe : la retirer)", verdict.stale),
+                        ("échec connu non vu (le test n'a pas échoué)", verdict.unseen),
                         ("entrée à revoir (review_by dépassé)", verdict.expired), ("intermittent toléré (passé seul)", verdict.tolerated)):
         for row in rows:
             print(f"[test-gate]   {label} : {row}")

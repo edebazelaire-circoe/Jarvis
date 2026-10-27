@@ -580,7 +580,10 @@ def mark_connection(plugin: McpPlugin, status: ConnectionStatus, *, now: datetim
 
 
 _BEARER = re.compile(r"Bearer\s+(?!\[secret masqué\])\S+", re.IGNORECASE)
-_JWT = re.compile(r"[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}")
+#: Le regard arrière ancre l'essai au DÉBUT d'une suite de caractères de jeton : sans lui, chaque position d'une longue
+#: suite sans `.` relançait un balayage jusqu'au bout (coût quadratique, 2 min 38 s sur une ligne de journal, QA S10).
+#: Même résultat : une correspondance qui commencerait au milieu d'une suite existe aussi depuis son début.
+_JWT = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}")
 _AUTH_SCHEMES = r"(?:basic|bearer|digest|negotiate|ntlm|token)"
 #: Une clé d'identifiant commence un mot : ni lettre, ni chiffre, ni `_` juste avant (QA 2 Slice 04 :
 #: `nextPageToken`, `$skiptoken`, `next_page_token`, `syncToken` ne sont pas des identifiants).

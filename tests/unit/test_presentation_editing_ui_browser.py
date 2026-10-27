@@ -235,7 +235,8 @@ async def test_a_move_held_while_core_is_unreachable_names_the_setting_and_its_w
             {"block": []},
             {"eval": "JarvisStudioInspector.instance.pollReloads()"},
             {"until": f"JarvisStudioInspector.instance.view().scene_id==='{S2}'&&!JarvisStudioInspector.instance.view().loading", "ms": 15000},
-            {"until": f"{status}.includes('enregistré')", "ms": 5000},
+            # Exact wording of the saved notice: « … n’est pas enregistrée » (the held warning) also contains « enregistré » (QA S10 R1).
+            {"until": f"(()=>{{const t={status};return t.includes('enregistré sur la scène')&&!t.includes('pas enregistrée')}})()", "ms": 5000},
             {"value": "back", "expr": status},
             {"wait": 1500},
             {"value": "still", "expr": status},
@@ -249,7 +250,10 @@ async def test_a_move_held_while_core_is_unreachable_names_the_setting_and_its_w
             assert "reste sur la" not in line and "n’est pas enregistrée" not in line, line
         assert "enregistré sur la scène 1" in reads["back"] and "scène 2" in reads["back"], reads["back"]
         # The blocked route is provoked on purpose: the browser and the editor's journal say so (the failure is recorded, as it must be).
-        expected = ("ERR_BLOCKED_BY_CLIENT", "Failed to load resource", "[studio-inspector] commit_unreachable", "[studio-inspector] move_held")
+        # A text preview may also be sent to the blocked route while typing (it depends on the typing pace): `preview_failed` is then
+        # provoked by the test as well (QA S10 R1).
+        expected = ("ERR_BLOCKED_BY_CLIENT", "Failed to load resource", "[studio-inspector] commit_unreachable", "[studio-inspector] move_held",
+                    "[studio-inspector] preview_failed")
         assert not noise(result, expected), noise(result, expected)
 
 

@@ -233,7 +233,10 @@ namespace Circoe.Jarvis.Setup
         public void Run()
         {
             string parent = Path.GetDirectoryName(options.Target.TrimEnd(Path.DirectorySeparatorChar));
-            string work = Path.Combine(parent, ".jarvis-setup-" + Guid.NewGuid().ToString("N").Substring(0, 12));
+            // `.jarvis-setup-<PID>-<hex>` : le PID de cette amorce dit à l'installation suivante (et à la désinstallation)
+            // si le dossier a encore un propriétaire vivant ; sinon c'est un reste d'une amorce tuée (QA S10 R3).
+            string work = Path.Combine(parent, ".jarvis-setup-" + Process.GetCurrentProcess().Id + "-"
+                                               + Guid.NewGuid().ToString("N").Substring(0, 8));
             string package = Path.Combine(work, "package");
             string progress = Path.Combine(work, "progress.jsonl");
             string result = options.ResultFile ?? Path.Combine(work, "result.json");

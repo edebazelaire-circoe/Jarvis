@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 import zipfile
 
@@ -128,6 +129,169 @@ def test_an_unreadable_database_is_reported_not_raised(tmp_path):
     assert "error" in summary["databases"]["state/scene.sqlite3"]
     with sqlite3.connect(sources.data_root / "state" / "jarvis.sqlite3") as conn:  # la vraie base reste lisible
         assert conn.execute("SELECT count(*) FROM schema_version").fetchone()[0] >= 1
+
+
+def test_an_opaque_token_of_the_env_or_of_core_token_is_masked_wherever_a_log_prints_it(tmp_path):
+    """QA S10 M2 : un jeton sans forme reconnaissable (Infomaniak, Circuit Toolbox, jeton local) n'est masqué que parce
+    que le masqueur le CONNAÎT ; un réglage ordinaire de `.env` reste lisible."""
+
+    sources, _env = profile(tmp_path)
+    opaque, unnamed, local = "Zq7Xv2Lm9Pw4Rt8Ks1Hd6Fn3", "a1b2c3d4e5f6g7h8", "tok-FAKE-0123456789"
+    with open(sources.config_dir / ".env", "a", encoding="utf-8") as env:
+        env.write(f'INFOMANIAK_TOKEN="{opaque}"\nCIRCUIT_TOOLBOX_ENDPOINT_ID={unnamed}\nJARVIS_PRODUCT_EDITION=presentation\n'
+                  "JARVIS_LAUNCH_VOICE=0\n")
+    with open(sources.runtime_root / "logs" / "core.log", "a", encoding="utf-8") as log:
+        log.write(f"connecting upstream with {opaque} then endpoint {unnamed} edition presentation\n")
+        log.write(f"local session {local}\n")
+    with open(sources.runtime_root / "errors.jsonl", "a", encoding="utf-8") as errors:
+        errors.write(json.dumps({"ts": "t", "kind": "k", "level": "error", "message": f"upstream refused {opaque}",
+                                 "data": {"detail": f"with {local}"}}) + "\n")
+    secrets = SB.known_secrets(sources)
+    assert opaque in secrets and unnamed in secrets and "tok-FAKE-0123456789" in secrets
+    assert "presentation" not in secrets and "0" not in secrets
+    everything = "\n".join(read_zip(SB.write_bundle(sources)).values())
+    for leak in (opaque, unnamed, local):
+        assert leak not in everything, leak
+    assert "edition presentation" in everything, "an ordinary setting value stays readable"
+
+
+OPAQUE = "Zq7Xv2Lm9Pw4Rt8Ks1Hd6Fn3"
+
+
+@pytest.mark.parametrize("line", [f"INFOMANIAK_TOKEN={OPAQUE} # jeton pro", f"INFOMANIAK_TOKEN='{OPAQUE}' # jeton",
+                                  f'export INFOMANIAK_TOKEN="{OPAQUE}"', f"﻿INFOMANIAK_TOKEN={OPAQUE}"],
+                         ids=["comment", "quoted-comment", "export-double-quotes", "bom"])
+def test_the_env_is_read_by_the_canonical_parser_so_a_commented_token_is_still_masked(tmp_path, line):
+    """QA S10 second rework X1 (`probe_m2.py`): the value JARVIS loads is the value the redactor knows."""
+
+    sources, _env = profile(tmp_path)
+    (sources.config_dir / ".env").write_text(line + "\nNOT A VALID LINE\nOTHER_TOKEN=Kp3Wq8Zr5Tn1Ly6Vb2\n", encoding="utf-8")
+    (sources.runtime_root / "logs" / "core.log").write_text(f"upstream with {OPAQUE} ok\nother Kp3Wq8Zr5Tn1Ly6Vb2\n",
+                                                            encoding="utf-8")
+    files = read_zip(SB.write_bundle(sources))
+    assert OPAQUE not in files["logs/core.log"] and "Kp3Wq8Zr5Tn1Ly6Vb2" not in files["logs/core.log"]
+    assert json.loads(files["config-keys.json"]) == {"config_env_keys": ["INFOMANIAK_TOKEN", "OTHER_TOKEN"]}, "no BOM"
+    assert json.loads(files["bundle.json"])["secret_sources"]["env"] == {"values": 2, "unreadable_lines": 1}
+
+
+def test_ordinary_settings_with_a_sensitive_looking_name_stay_readable(tmp_path):
+    """QA S10 x4 : un réglage ordinaire n'est pas un secret (et une valeur triviale n'en est jamais un)."""
+
+    sources, _env = profile(tmp_path)
+    (sources.config_dir / ".env").write_text(
+        "KEYBOARD_LAYOUT=azerty\nBYPASS_HOST=localhost\nJARVIS_SESSION_TIMEOUT=100000\nMAX_TOKEN=100000\n"
+        "TOKEN_CACHE=disabled\nAPI_KEY=enabled\nDB_PASSWORD=123456\nGOOGLE_TOKEN_FILE=token.json\n"
+        "DB_PASSWORD_2=hunter2x\nOPENAI_APIKEY=abcdef\n", encoding="utf-8")
+    secrets = SB.known_secrets(sources)
+    for ordinary in ("azerty", "localhost", "100000", "disabled", "enabled", "123456", "token.json"):
+        assert ordinary not in secrets, ordinary
+    assert "hunter2x" in secrets and "abcdef" in secrets
+
+
+class FakeSealer:
+    """Réversible, sans DPAPI : prouve le chemin du descellement en mémoire (jamais écrit)."""
+
+    available = True
+    scheme = "dpapi-user-v1"
+
+    def seal(self, plaintext: bytes) -> bytes:
+        return b"SEALED:" + plaintext[::-1]
+
+    def unseal(self, blob: bytes) -> bytes:
+        if not blob.startswith(b"SEALED:"):
+            raise ValueError("not ours")
+        return blob[len(b"SEALED:"):][::-1]
+
+
+def test_sealed_local_keys_and_mcp_vault_credentials_are_known_secrets_unsealed_in_memory_only(tmp_path):
+    """QA S10 x6 : dans le produit installé, les clés des fournisseurs ont quitté `.env` pour le coffre DPAPI."""
+
+    from jarvis.runtime.local_secrets import seal_value
+
+    sources, _env = profile(tmp_path)
+    sealer = FakeSealer()
+    local_key, vault_token, vault_header = "dg-Qm4Xr8Lp2Vn6Tz1Kw9", "mcpTok3nH7Jd2Lq9Pz5Rw1", "Wx5Yz1Ab7Cd3Ef9Gh2"
+    settings = {"credentials": [{"provider": "deepgram", "sealed": seal_value(local_key, sealer), "hint": "dg-…kw9"},
+                                {"provider": "other", "sealed": {"scheme": "dpapi-user-v1", "blob": "AAAA"}}]}
+    (sources.runtime_root / "control-center-settings.json").write_text(json.dumps(settings), encoding="utf-8")
+    body = {"v": 1, "plugin_id": "circuit", "endpoint_origin": "https://x.example", "kind": "static",
+            "static": {"headers": {"Authorization": f"Bearer {vault_header}"}, "api_token": vault_token, "token_type": "Bearer"}}
+    with sqlite3.connect(sources.data_root / "state" / "jarvis.sqlite3") as conn:
+        conn.execute("INSERT INTO mcp_credentials(credential_ref,plugin_id,scheme,created_at,updated_at,blob) VALUES (?,?,?,?,?,?)",
+                     ("cred_" + "0" * 32, "circuit", "dpapi-user-v1", "t", "t", sealer.seal(json.dumps(body).encode())))
+    conn.close()
+    with open(sources.runtime_root / "logs" / "core.log", "a", encoding="utf-8") as log:
+        log.write(f"deepgram key {local_key}\nmcp call token {vault_token} header {vault_header} type Bearer\n")
+    sources.credentials_sealer = sources.mcp_sealer = lambda: sealer
+    files = read_zip(SB.write_bundle(sources))
+    everything = "\n".join(files.values())
+    for leak in (local_key, vault_token, vault_header):
+        assert leak not in everything, leak
+    assert "type Bearer" in files["logs/core.log"], "a descriptive field (token_type) is not a secret"
+    report = json.loads(files["bundle.json"])["secret_sources"]
+    assert report["local_settings"] == {"present": True, "plain": 0, "sealed": 2, "unsealed": 1,
+                                        "degraded": "some_sealed_values_unreadable"}  # the "AAAA" blob is unreadable
+    assert report["mcp_vault"]["rows"] == 1 and report["mcp_vault"]["unsealed"] == 1
+    # Coffre indisponible : le paquet se fait quand même, la dégradation est dite, rien n'est descellé.
+    unavailable = type("Off", (), {"available": False})()
+    sources.credentials_sealer = sources.mcp_sealer = lambda: unavailable
+    degraded = json.loads(read_zip(SB.write_bundle(sources, tmp_path / "out2"))["bundle.json"])["secret_sources"]
+    assert degraded["local_settings"]["degraded"] == degraded["mcp_vault"]["degraded"] == "vault_unavailable"
+
+    def broken():
+        raise OSError("no DPAPI")
+
+    sources.credentials_sealer = sources.mcp_sealer = broken
+    assert SB.write_bundle(sources, tmp_path / "out3").is_file()
+
+
+def test_error_data_keeps_diagnostics_by_allowlist_and_drops_user_text(tmp_path):
+    """QA S10 m3 : `data` passe par une liste blanche (titres, requêtes, mots de l'utilisateur n'entrent pas)."""
+
+    sources, _env = profile(tmp_path)
+    row = {"ts": "t", "kind": "studio.failed", "level": "error", "message": "m" * 3000,
+           "data": {"title": "Plan secret de fusion", "query": "chiffres du trimestre", "words": ["mot un", "deux"],
+                    "error": "OSError: [Errno 22] Invalid argument", "presentation_id": "pres_0123", "count": 3,
+                    "ok": False, "nested": {"reason": "disk full", "label": "Bilan secret"}}}
+    (sources.runtime_root / "errors.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    kept = json.loads(read_zip(SB.write_bundle(sources))["logs/errors.jsonl"].splitlines()[-1])
+    data = kept["data"]
+    assert data["title"] == "<21 caractères retirés>" and data["query"] == "<21 caractères retirés>"
+    assert data["words"] == ["<6 caractères retirés>", "deux"] and data["nested"]["label"] == "<12 caractères retirés>"
+    assert data["error"] == "OSError: [Errno 22] Invalid argument" and data["nested"]["reason"] == "disk full"
+    assert data["presentation_id"] == "pres_0123" and data["count"] == 3 and data["ok"] is False
+    assert len(kept["message"]) < SB.MESSAGE_CHARS + 20
+
+
+def test_a_base_with_a_wal_but_no_shm_is_read_without_creating_anything(tmp_path):
+    """QA S10 m9 : `mode=ro` créerait un `-shm` à côté d'un `-wal` orphelin de son `-shm` ; rien ne doit apparaître."""
+
+    sources, _env = profile(tmp_path)
+    state = sources.data_root / "state"
+    live = tmp_path / "live"
+    live.mkdir()
+    base = live / "jarvis.sqlite3"
+    shutil.copyfile(state / "jarvis.sqlite3", base)
+    holder = sqlite3.connect(base)
+    try:
+        holder.execute("PRAGMA journal_mode=WAL")
+        holder.execute("PRAGMA wal_autocheckpoint=0")
+        holder.execute("CREATE TABLE IF NOT EXISTS qa_wal (x)")
+        holder.execute("INSERT INTO qa_wal VALUES (1)")
+        holder.commit()
+        for name in ("jarvis.sqlite3", "jarvis.sqlite3-wal"):  # a copy of a running base: base and -wal, no -shm
+            shutil.copyfile(live / name, state / name)
+    finally:
+        holder.close()
+    for leftover in state.glob("jarvis.sqlite3-shm"):
+        leftover.unlink()
+    assert (state / "jarvis.sqlite3-wal").exists() and not (state / "jarvis.sqlite3-shm").exists()
+    before = {name: (state / name).read_bytes() for name in ("jarvis.sqlite3", "jarvis.sqlite3-wal")}
+    summary = json.loads(read_zip(SB.write_bundle(sources))["bundle.json"])
+    entry = summary["databases"]["state/jarvis.sqlite3"]
+    assert entry["versions"] and entry["wal_not_read"] is True
+    assert not (state / "jarvis.sqlite3-shm").exists(), "nothing created next to the base"
+    assert {name: (state / name).read_bytes() for name in before} == before, "base and -wal byte-identical, never replayed"
 
 
 def test_the_cli_command_is_declared():
