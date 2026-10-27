@@ -114,20 +114,28 @@ Internal V1.2 builds ship openWakeWord (CC BY-NC-SA models) so Sleep arms the sp
 The package side is [windows-packaging.md](windows-packaging.md) › *Channels* (`build --channel internal`).
 
 Default of a **blank profile** (no `wake_word` block), decided by one question,
-`wake_word_install.installed_engine_ready()` (read once per process, `wake_word_settings.baseline`):
+`wake_word_install.installed_build_ships_engine()` (read once per process, `wake_word_settings.baseline`): is this
+an installed product (product marker `jarvis-product.json` next to the code) whose package manifest declares the
+wake word models (`runtime-manifest.json` › `models.wake_word`, written only by the internal build)?
 
-| Machine | `installed_engine_ready` | Blank profile |
+| Machine | `installed_build_ships_engine` | Blank profile |
 | --- | --- | --- |
-| installed product, **internal** build: `openwakeword` and `onnxruntime` importable, the three models verified in `<package>\models\wake-word` | true | « Hey Jarvis » armed in Sleep (`enabled: true`, `openwakeword`, `hey_jarvis`), **plus** F9; Settings say « actif par défaut » |
-| installed product, **production** build (engine absent) | false | F9 only (`enabled: false`); unchanged |
-| development checkout, `full` edition of the developer's machine (no product marker `jarvis-product.json`) | false, always | `DEFAULT_ENABLED = False` unchanged: nothing new listens |
+| installed product, **internal** build | true | « Hey Jarvis » armed in Sleep (`enabled: true`, `openwakeword`, `hey_jarvis`), **plus** F9; Settings say « actif par défaut » |
+| installed product, **production** build (manifest without `models`) | false | F9 only (`enabled: false`); unchanged |
+| development checkout, `full` edition of the developer's machine (no product marker) | false, always | `DEFAULT_ENABLED = False` unchanged: nothing new listens, even with the `wakeword` extra and verified models |
 
-The distinction is the product marker (an installed product) **and** the engine files, never the edition setting:
-a development checkout with the `wakeword` extra and downloaded models still defaults to F9 only. The user turns the
-spoken wake word off in Settings › Voix & audio › Mot d'éveil: the written block then wins over the default. A
-present but unreadable block always gives the safe defaults (disabled), never the armed default. If the engine
-files disappear after install, the default stays armed but the status line says why it does not listen
-(`wake_model_missing`, « Moteur absent »), and F9 still wakes.
+The distinction is the product marker and what the package declares, never the edition setting nor the files
+found on disk. The user turns the spoken wake word off in Settings › Voix & audio › Mot d'éveil: the written block
+then wins over the default. A present but unreadable block always gives the safe defaults (disabled), never the
+armed default.
+
+**A broken engine is said, never silent** (QA S05b MA1). The default does not depend on the engine files being
+present: if a model is missing or altered, or the Python package is gone, in an internal build (at any later start),
+the setting stays enabled and the engine status (`voice_lifecycle.wake_engine`) carries a stable code
+(`wake_model_missing`, `wake_model_mismatch`, `wake_package_missing`) with its message: the Mot d'éveil page shows
+« Moteur absent », the readiness « Voix » line adds that message and the code, the voice word is not armed, and F9
+still wakes. It never falls back to « Aucun mot de réveil vocal n'est activé ». `build_package.py verify` (and the
+installer's repair) report the altered package.
 
 ## Conformance
 

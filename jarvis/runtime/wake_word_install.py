@@ -29,9 +29,10 @@ télécharge jamais de modèle. Build de production : openWakeWord et les modèl
 dans le paquet (`<paquet>/models/wake-word`, lu par `catalog.default_model_dir`),
 donc rien à installer. `status` reste permis (lecture seule).
 
-`installed_engine_ready` dit si CE processus est un produit installé dont le moteur
-est présent (paquet importable, modèles vérifiés) : c'est la condition qui arme le
-mot de réveil d'un profil vierge (`wake_word_settings.baseline`).
+`installed_build_ships_engine` dit si CE processus est un produit installé dont le
+paquet déclare livrer le moteur (build interne) : c'est la condition qui arme le mot
+de réveil d'un profil vierge (`wake_word_settings.baseline`). Un fichier manquant ne
+la change pas : l'état du moteur dit alors pourquoi il n'écoute pas.
 """
 
 from __future__ import annotations
@@ -83,36 +84,33 @@ def package_installed() -> bool:
 
 
 @lru_cache(maxsize=1)
-def installed_engine_ready() -> bool:
-    """Vrai si ce processus est un produit installé dont le moteur openWakeWord est présent : `openwakeword` et
-    `onnxruntime` importables (sans les importer) et les trois modèles vérifiés (taille, SHA-256).
+def installed_build_ships_engine() -> bool:
+    """Vrai si ce processus est un produit installé dont le paquet DÉCLARE livrer le moteur du mot de réveil : manifeste
+    du paquet avec un bloc `models.wake_word` (build interne, HD-V12-01).
 
-    Lu une fois par processus : le paquet est en lecture seule et Voice ne relit ses réglages qu'au démarrage.
-    Toujours faux en développement (checkout, édition `full` du poste du développeur) : le défaut n'y change pas.
+    C'est la condition qui arme le mot de réveil d'un profil vierge (`wake_word_settings.baseline`). Elle ne dépend PAS
+    de la présence des fichiers (QA S05b MA1) : si un modèle ou le paquet Python manque, le réglage reste activé et
+    l'état du moteur (`voice_lifecycle.wake_engine`) dit pourquoi il n'écoute pas (`wake_model_missing`,
+    `wake_model_mismatch`, `wake_package_missing`), au lieu de retomber en silence sur « aucun mot de réveil ».
+
+    Lu une fois par processus. Toujours faux en développement (checkout, édition `full` du poste du développeur : pas de
+    marqueur produit) et dans un build de production (manifeste sans `models`).
     """
 
     from jarvis import private_runtime
     from jarvis.domain.errors import ConfigurationError
 
     try:
-        if private_runtime.package_layout() is None:
+        layout = private_runtime.package_layout()
+        if layout is None:
             return False
-    except ConfigurationError:
-        # Silence argumentée : un marqueur illisible refuse déjà le démarrage (`data_root`) et y est dit ; ici le
-        # défaut sûr (F9 seul) suffit.
+        manifest = layout.manifest()
+    except (ConfigurationError, ValueError):
+        # Silence argumentée : un marqueur ou un manifeste illisible est déjà dit au démarrage (`data_root`,
+        # `private_runtime.diagnostics`, `runtime_manifest_invalid`) ; ici le défaut sûr (F9 seul) suffit.
         return False
-    if not engine_modules_present():
-        return False
-    return all(state.state == "verified" for state in read_states())
-
-
-def engine_modules_present() -> bool:
-    """`openwakeword` ET `onnxruntime` importables, sans les importer."""
-
-    try:
-        return package_installed() and importlib.util.find_spec("onnxruntime") is not None
-    except (ImportError, ValueError):
-        return False
+    models = (manifest or {}).get("models")
+    return isinstance(models, dict) and bool(models.get("wake_word"))
 
 
 def read_states() -> list[ModelState]:

@@ -615,3 +615,15 @@ def test_a_wheel_without_licence_text_borrows_the_same_licence_from_another_whee
     policy["python_packages"]["flatbuffers"]["license"] = "MIT"
     with pytest.raises(B.BuildError, match="même licence"):
         B.collect_licenses(out, site, RUNTIMES, policy)
+
+
+@pytest.mark.parametrize("command", ["build", "lock"])
+def test_the_command_line_builds_production_unless_internal_is_asked(monkeypatch, tmp_path, command):
+    """QA S05b m2 : sans `--channel`, `build` et `lock` sont de production ; `internal` seulement sur demande."""
+
+    seen = []
+    monkeypatch.setattr(B, f"command_{command}", lambda args: seen.append(args.channel) or 0)
+    base = [command, "--out", str(tmp_path / "out")] if command == "build" else [command]
+    assert B.main(base) == 0
+    assert B.main([*base, "--channel", "internal"]) == 0
+    assert seen == ["production", "internal"]

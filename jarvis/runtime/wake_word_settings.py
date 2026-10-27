@@ -19,8 +19,8 @@ Le bloc ``wake_word``, à la racine de ``runtime/control-center-settings.json`` 
 - ``enabled`` : **faux par défaut** (D1). Sans réglage explicite, le comportement
   d'avant cette fonctionnalité est strictement inchangé : la touche manuelle, et
   le mot Porcupine si une clé Porcupine est configurée. Aucun micro de plus.
-  **Exception, profil vierge d'un produit installé dont le moteur est présent**
-  (build interne, HD-V12-01, `wake_word_install.installed_engine_ready`) : un bloc
+  **Exception, profil vierge d'un produit installé dont le paquet livre le moteur**
+  (build interne, HD-V12-01, `wake_word_install.installed_build_ships_engine`) : un bloc
   **absent** vaut ``{"enabled": true, "provider": "openwakeword"}`` (`baseline`),
   donc « Hey Jarvis » réveille en Sleep en plus de F9. L'utilisateur le désactive
   par les Réglages (le bloc écrit fait alors foi). Le checkout de développement
@@ -138,15 +138,16 @@ def defaults() -> WakeWordSettings:
 def baseline() -> WakeWordSettings:
     """Réglage d'un profil vierge (bloc ``wake_word`` absent).
 
-    Produit installé dont le moteur openWakeWord est livré et vérifié (build interne, HD-V12-01) : mot de réveil
-    armé, ``openwakeword`` / ``hey_jarvis``. Partout ailleurs (développement, build de production, moteur absent) :
-    les défauts sûrs. La décision vit dans `wake_word_install.installed_engine_ready` (lue une fois par processus) ;
+    Produit installé dont le paquet livre le moteur openWakeWord (build interne, HD-V12-01) : mot de réveil armé,
+    ``openwakeword`` / ``hey_jarvis``, même si un fichier du moteur manque ensuite (l'état du moteur dit alors
+    pourquoi il n'écoute pas). Partout ailleurs (développement, build de production) : les défauts sûrs. La décision
+    vit dans `wake_word_install.installed_build_ships_engine` (lue une fois par processus) ;
     import paresseux : ce module reste une frontière de réglages sans dépendance au chargement.
     """
 
     from jarvis.runtime import wake_word_install
 
-    if wake_word_install.installed_engine_ready():
+    if wake_word_install.installed_build_ships_engine():
         return WakeWordSettings(enabled=True, provider=PROVIDER_OPENWAKEWORD,
                                 keyword=DEFAULT_KEYWORDS[PROVIDER_OPENWAKEWORD])
     return defaults()
