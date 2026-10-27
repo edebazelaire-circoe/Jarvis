@@ -269,3 +269,18 @@ def test_a_refused_voice_switch_is_said_and_changes_nothing(tmp_path):
     assert after["checked"] == "true" and after["note"] == "veille · SLEEP"
     errors = [line["text"] for line in step["console"] if line["type"] == "error"]
     assert any("jarvis_wheel.voice_power_failed" in text and "voice_lifecycle_foreign_version" in text for text in errors)
+
+
+def test_an_unreadable_voice_choice_is_shown_and_one_click_rewrites_it(tmp_path):
+    """Reprise QA m1 : choix illisible -> « indisponible », décoché ; un clic enregistre « veille » (choix valide)."""
+
+    seed = {"voiceLifecycle": {"preference": "unreadable", "state": "degraded", "code": "voice_preference_unreadable",
+                               "message": "Le choix de voix enregistré est illisible."}}
+    step = _drive(tmp_path, [{"width": 1280, "height": 720, "seed": seed, "actions": [
+        *_open("jarvis"), ["eval", "before", POWER_READ, 100],
+        ["click", "fix", POWER, 700], *_open("jarvis"), ["eval", "after", POWER_READ, 100]]}])[0]
+    got = step["results"]
+    assert got["before"]["checked"] == "false" and got["before"]["note"] == "indisponible"
+    assert "voice_preference_unreadable" in got["before"]["name"]
+    assert got["after"]["bodies"] == [{"preference": "sleep"}] and got["after"]["checked"] == "true"
+    _no_errors(step)

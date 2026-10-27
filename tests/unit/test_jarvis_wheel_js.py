@@ -212,3 +212,19 @@ def test_the_voice_switch_projects_the_server_state_and_never_the_hoped_one(tmp_
     assert got["degraded"]["tone"] == "error" and "(voice_provider_key_missing)" in got["degraded"]["detail"]
     assert got["pending"]["disabled"] is True and got["pending"]["note"] == "enregistrement…"
     assert got["cat"] == {"tone": None, "text": "voix coupée · 2 sous-agents"}
+
+
+def test_the_voice_switch_without_launcher_and_with_an_unreadable_choice(tmp_path):
+    """Reprise QA m4 (sans lanceur : « à relancer », pas une panne) et m1 (choix illisible : décoché, un clic réécrit)."""
+
+    got = run(tmp_path, """
+      const L=(o)=>({...S,voice_online:false,voice_lifecycle:o});
+      const item=s=>J.jarvisItemsOf(J.factsOf(s,'ok')).find(r=>r.id==='voice_power');
+      out({restart:item(L({preference:'sleep',state:'not_running',code:'voice_not_running',
+          message:'La voix est rallumée mais ne tourne pas : relancez Voice (ou JARVIS) pour l’utiliser.'})),
+        unreadable:item(L({preference:'unreadable',state:'degraded',code:'voice_preference_unreadable',
+          message:'Le choix de voix enregistré est illisible.'}))})""")
+    assert got["restart"]["checked"] is True and got["restart"]["note"] == "à relancer"
+    assert got["restart"]["tone"] == "off" and "relancez Voice" in got["restart"]["detail"]
+    assert got["unreadable"]["checked"] is False and got["unreadable"]["tone"] == "error"
+    assert "rallumer" in got["unreadable"]["detail"] and "(voice_preference_unreadable)" in got["unreadable"]["detail"]

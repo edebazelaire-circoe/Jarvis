@@ -8,9 +8,11 @@ y ajoute la seule chose qui manquait : **une préférence persistée** de l'util
 
     {"schema_version": 1, "preference": "sleep"}     # ou "off"
 
-- ``sleep`` (défaut, bloc absent ou illisible) : le lanceur démarre Voice, qui attend en ``background`` avec le
+- ``sleep`` (défaut, bloc **absent**) : le lanceur démarre Voice, qui attend en ``background`` avec le
   réveil armé (touche F9 toujours ; mot de réveil vocal si le bloc ``wake_word`` l'active et que le moteur est là) ;
 - ``off`` : Voice n'est pas démarrée, ou est arrêtée ; aucun micro ni écouteur de réveil. Survit au redémarrage.
+- bloc **présent mais illisible** (reprise QA m1) : préférence ``unreadable``, traitée comme Off pour le micro (Voice
+  tenue, code ``voice_preference_unreadable``) jusqu'à ce que l'utilisateur réécrive un choix valide par l'interrupteur.
 
 Qui lit quoi :
 
@@ -23,7 +25,7 @@ Qui lit quoi :
 
 Codes stables (`code`) : ``voice_off``, ``voice_provider_key_missing``, ``voice_configuration_invalid``,
 ``voice_crash_loop``, ``voice_not_launched``, ``voice_not_running``, ``voice_runtime_error``, ``voice_starting``,
-``voice_stopping`` ; pour le moteur du mot de réveil : ``wake_package_missing``, ``wake_model_missing``,
+``voice_stopping``, ``voice_preference_unreadable`` ; pour le moteur du mot de réveil : ``wake_package_missing``, ``wake_model_missing``,
 ``wake_model_mismatch``, ``wake_porcupine_key_missing``, ``wake_porcupine_package_missing``.
 """
 
@@ -46,6 +48,8 @@ PREFERENCE_SLEEP = "sleep"
 PREFERENCE_OFF = "off"
 PREFERENCES = (PREFERENCE_SLEEP, PREFERENCE_OFF)
 DEFAULT_PREFERENCE = PREFERENCE_SLEEP
+#: Bloc présent mais illisible : jamais une valeur écrite, seulement lue. Voice tenue comme pour Off.
+PREFERENCE_UNREADABLE = "unreadable"
 
 STATE_OFF = "off"
 STATE_SLEEP = "sleep"
@@ -53,6 +57,8 @@ STATE_ACTIVE = "active"
 STATE_STARTING = "starting"
 STATE_STOPPING = "stopping"
 STATE_DEGRADED = "degraded"
+#: Sans lanceur (développement, édition `full`) : voix rallumée, mais personne ne relance Voice (reprise QA m4).
+STATE_NOT_RUNNING = "not_running"
 
 VOICE_OFF = "voice_off"
 VOICE_PROVIDER_KEY_MISSING = "voice_provider_key_missing"
@@ -63,6 +69,7 @@ VOICE_NOT_RUNNING = "voice_not_running"
 VOICE_RUNTIME_ERROR = "voice_runtime_error"
 VOICE_STARTING = "voice_starting"
 VOICE_STOPPING = "voice_stopping"
+VOICE_PREFERENCE_UNREADABLE = "voice_preference_unreadable"
 
 #: Ce que l'utilisateur lit pour chaque code (vouvoiement, sans jargon).
 MESSAGES: Mapping[str, str] = {
@@ -74,7 +81,10 @@ MESSAGES: Mapping[str, str] = {
     VOICE_CRASH_LOOP: ("La voix s'est arrêtée plusieurs fois de suite et n'est plus relancée. Coupez-la puis "
                        "rallumez-la pour réessayer ; le détail est dans le journal."),
     VOICE_NOT_LAUNCHED: "La voix n'est pas lancée sur ce poste (JARVIS_LAUNCH_VOICE=0).",
-    VOICE_NOT_RUNNING: "La voix ne tourne pas : relancez JARVIS (ou Voice) pour l'utiliser.",
+    VOICE_NOT_RUNNING: ("La voix est rallumée mais ne tourne pas : relancez Voice (ou JARVIS) pour l'utiliser. "
+                        "Le chat reste disponible."),
+    VOICE_PREFERENCE_UNREADABLE: ("Le choix de voix enregistré est illisible : la voix reste coupée par prudence. "
+                                  "Rallumez-la ou coupez-la pour l'enregistrer de nouveau."),
     VOICE_RUNTIME_ERROR: "La voix est en erreur. Elle revient en veille d'elle-même ; sinon, coupez-la puis rallumez-la.",
     VOICE_STARTING: "La voix démarre…",
     VOICE_STOPPING: "La voix s'arrête…",
@@ -102,23 +112,30 @@ class VoiceLifecycleError(ValueError):
 
 
 def inspect_preference(settings: Mapping[str, Any]) -> tuple[str, str | None]:
-    """(préférence qui s'applique, code du problème ou `None`). Ne lève jamais : au moindre doute, ``sleep``.
+    """(préférence qui s'applique, code du problème ou `None`). Ne lève jamais.
 
-    Un bloc abîmé n'est pas une demande « off » : seule une valeur ``off`` lisible coupe la voix.
+    Bloc absent : ``sleep`` (profil vierge). Bloc présent mais illisible (``"Off"`` écrit à la main, version d'un
+    autre JARVIS, pas un objet) : ``unreadable``, que tout lecteur traite comme Off pour le micro (reprise QA m1).
     """
 
     stored = settings.get(SETTING_KEY) if isinstance(settings, Mapping) else None
     if stored is None:
         return DEFAULT_PREFERENCE, None
     if not isinstance(stored, Mapping):
-        return DEFAULT_PREFERENCE, "voice_lifecycle_block_malformed"
+        return PREFERENCE_UNREADABLE, "voice_lifecycle_block_malformed"
     version = stored.get(SCHEMA_KEY, SCHEMA_VERSION)
     if isinstance(version, bool) or version != SCHEMA_VERSION:
-        return DEFAULT_PREFERENCE, "voice_lifecycle_stored_version_unreadable"
+        return PREFERENCE_UNREADABLE, "voice_lifecycle_stored_version_unreadable"
     value = stored.get("preference", DEFAULT_PREFERENCE)
     if value not in PREFERENCES:
-        return DEFAULT_PREFERENCE, "voice_lifecycle_preference_invalid"
+        return PREFERENCE_UNREADABLE, "voice_lifecycle_preference_invalid"
     return value, None
+
+
+def voice_allowed(preference: str) -> bool:
+    """Seule une préférence ``sleep`` lisible laisse tourner Voice (et donc ouvrir un micro)."""
+
+    return preference == PREFERENCE_SLEEP
 
 
 def load_preference(settings: Mapping[str, Any]) -> str:
@@ -126,7 +143,11 @@ def load_preference(settings: Mapping[str, Any]) -> str:
 
 
 def apply_preference(settings: dict[str, Any], payload: Any) -> str:
-    """Écriture stricte : ``{"preference": "off"|"sleep"}`` exactement ; ``settings`` n'est touché qu'en cas de succès."""
+    """Écriture stricte : ``{"preference": "off"|"sleep"}`` exactement ; ``settings`` n'est touché qu'en cas de succès.
+
+    Un bloc enregistré illisible (autre version, valeur inconnue) est **remplacé** : c'est le geste qui en sort
+    (reprise QA m1) ; le bloc ne porte qu'un choix, rien d'autre n'est perdu.
+    """
 
     if not isinstance(payload, Mapping) or set(payload) != {"preference"}:
         raise VoiceLifecycleError("voice_lifecycle_bad_payload", 'Attendu exactement {"preference": "off" | "sleep"}.')
@@ -134,12 +155,6 @@ def apply_preference(settings: dict[str, Any], payload: Any) -> str:
     if value not in PREFERENCES:
         raise VoiceLifecycleError("voice_lifecycle_preference_invalid",
                                   f"Préférence de voix inconnue : {str(value)[:20]!r} (off ou sleep).")
-    stored = settings.get(SETTING_KEY)
-    if isinstance(stored, Mapping):
-        version = stored.get(SCHEMA_KEY, SCHEMA_VERSION)
-        if isinstance(version, bool) or version != SCHEMA_VERSION:
-            raise VoiceLifecycleError("voice_lifecycle_foreign_version",
-                                      "La préférence enregistrée vient d'une autre version de JARVIS : rien n'est écrit.")
     settings[SETTING_KEY] = {SCHEMA_KEY: SCHEMA_VERSION, "preference": value}
     return value
 
@@ -201,8 +216,11 @@ class LaunchDecision:
 
 def launch_decision(settings: Mapping[str, Any], *, key: Callable[[Mapping[str, Any]], ProviderKey] = provider_key,
                     check_key: bool = True) -> LaunchDecision:
-    if load_preference(settings) == PREFERENCE_OFF:
+    preference = load_preference(settings)
+    if preference == PREFERENCE_OFF:
         return LaunchDecision(False, VOICE_OFF, stop_running=True)
+    if preference == PREFERENCE_UNREADABLE:
+        return LaunchDecision(False, VOICE_PREFERENCE_UNREADABLE, stop_running=True)
     if not check_key:
         return LaunchDecision(True, None)
     checked = key(settings)
@@ -274,6 +292,8 @@ def project(*, preference: str, voice_online: bool, runtime_state: str | None, l
     code: str | None = None
     if preference == PREFERENCE_OFF:
         state, code = (STATE_STOPPING, VOICE_STOPPING) if voice_online else (STATE_OFF, VOICE_OFF)
+    elif preference == PREFERENCE_UNREADABLE:
+        state, code = (STATE_STOPPING, VOICE_STOPPING) if voice_online else (STATE_DEGRADED, VOICE_PREFERENCE_UNREADABLE)
     elif voice_online:
         if runtime_state in ("active", "connecting"):
             state = STATE_ACTIVE
@@ -292,7 +312,8 @@ def project(*, preference: str, voice_online: bool, runtime_state: str | None, l
     elif managed:
         state, code = STATE_STARTING, VOICE_STARTING
     else:
-        state, code = STATE_DEGRADED, VOICE_NOT_RUNNING
+        # Sans lanceur, personne ne relance Voice : un fait à dire sobrement, pas une panne (reprise QA m4).
+        state, code = STATE_NOT_RUNNING, VOICE_NOT_RUNNING
     wake_view = dict(wake)
     # Le réveil n'est « armé » que si Voice attend vraiment ; le mot vocal, en plus, seulement si son moteur est là.
     armed = state == STATE_SLEEP
@@ -316,6 +337,7 @@ def project(*, preference: str, voice_online: bool, runtime_state: str | None, l
 
 STOP_REQUESTED = "stop_requested"
 RELEASED_OFF = "voice_off"
+RELEASED_UNREADABLE = VOICE_PREFERENCE_UNREADABLE
 
 
 async def wait_for_release(*, stop_file: Path | None, runtime_root: Path, poll_s: float = 0.5) -> str:
@@ -324,8 +346,11 @@ async def wait_for_release(*, stop_file: Path | None, runtime_root: Path, poll_s
     while True:
         if stop_file is not None and stop_file.exists():
             return STOP_REQUESTED
-        if read_preference(runtime_root) == PREFERENCE_OFF:
+        preference = read_preference(runtime_root)
+        if preference == PREFERENCE_OFF:
             return RELEASED_OFF
+        if preference == PREFERENCE_UNREADABLE:
+            return RELEASED_UNREADABLE
         await asyncio.sleep(poll_s)
 
 

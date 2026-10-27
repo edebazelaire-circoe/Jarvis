@@ -70,6 +70,10 @@ KILL_GRACE_S = 5.0
 GRACEFUL_ROLES = frozenset({"core", "ui", "voice"})
 #: Période de relecture de la préférence de voix pendant la veille.
 VOICE_GATE_EVERY_S = 1.0
+#: Sorties propres (code 0) de la Voix tolérées dans `RESTART_WINDOW_S` : une Voix qui se libère sur « voix coupée »,
+#: même vue trop tard par le lanceur, n'est pas un plantage (reprise QA m2) ; au-delà, elle est abandonnée quand même
+#: (une Voix qui sortirait 0 en boucle ne tourne pas sans fin).
+VOICE_CLEAN_EXITS_MAX = 10
 CREATE_NO_WINDOW = 0x08000000
 TITLE = "JARVIS"
 
@@ -207,6 +211,8 @@ class Role:
     last_exit: int | None = None
     #: Voix seulement : pourquoi elle n'est pas démarrée (`voice_off`, `voice_provider_key_missing`…), sinon `None`.
     held: str | None = None
+    #: Voix seulement : instants des sorties propres (code 0) dans la fenêtre, hors compteur de plantages.
+    clean_exits: list[float] = field(default_factory=list)
 
 
 def own_process_ref() -> str:
@@ -492,6 +498,23 @@ class Launcher:
                                   role=role.name, exit_code=code, code=role.held)
                     self.write_state()
                     continue
+                if role.name == "voice" and code == 0:
+                    # Voice s'est libérée d'elle-même (« voix coupée » vue par elle avant le lanceur, puis rallumée) :
+                    # pas un plantage. Relance par `sync_voice`, selon la préférence COURANTE (reprise QA m2).
+                    self._close_tree(role)
+                    role.process = None
+                    now = self.clock()
+                    role.clean_exits = [at for at in role.clean_exits if now - at < RESTART_WINDOW_S] + [now]
+                    if len(role.clean_exits) > VOICE_CLEAN_EXITS_MAX:
+                        role.abandoned = True
+                        self.log.emit("child_abandoned", f"voice abandonnée après {VOICE_CLEAN_EXITS_MAX} sorties propres",
+                                      level="warning", role=role.name, clean_exits=len(role.clean_exits))
+                    else:
+                        self.log.emit("voice_exited_clean", "voice s'est arrêtée proprement : relance selon la préférence",
+                                      role=role.name, exit_code=0)
+                        self._voice_checked_at = float("-inf")
+                    self.write_state()
+                    continue
                 self.log.emit("child_exited", f"{role.name} arrêté (code {code})", level="warning" if role.essential else "info",
                               role=role.name, exit_code=code, tail=tail(self._log_path(role), 6))
                 self._close_tree(role)
@@ -552,7 +575,8 @@ class Launcher:
         changed = False
         if decision.start:
             if role.held is not None:
-                role.abandoned, role.restarts = False, []  # rallumée : une Voix abandonnée a une nouvelle chance
+                # rallumée : une Voix abandonnée a une nouvelle chance
+                role.abandoned, role.restarts, role.clean_exits = False, [], []
             self._apply_hold(role, None)
             if role.process is None and not role.abandoned:
                 self.start_role(role)

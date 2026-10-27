@@ -1170,12 +1170,19 @@ async def _run_voice_v2() -> int:
     # Cycle de vie produit (docs/voice-lifecycle.md) : « voix coupée » est un choix persisté de l'utilisateur. Voice
     # ne démarre pas, n'ouvre ni micro ni écouteur de réveil, et sort proprement (code 0) ; le lanceur ne la relance pas.
     from jarvis.runtime import voice_lifecycle
-    if voice_lifecycle.load_preference(overrides) == voice_lifecycle.PREFERENCE_OFF:
+    preference, problem = voice_lifecycle.inspect_preference(overrides)
+    if not voice_lifecycle.voice_allowed(preference):
         from jarvis.runtime.journal import RuntimeJournal
+        unreadable = preference == voice_lifecycle.PREFERENCE_UNREADABLE
         RuntimeJournal(settings.runtime_root).emit(
-            "voice.lifecycle.start_refused_off", "Voix coupée par l'utilisateur : Voice ne démarre pas",
-            data={"code": voice_lifecycle.VOICE_OFF})
-        print("Voix coupée dans JARVIS (Réglages ou roue JARVIS) : Voice ne démarre pas.")
+            "voice.lifecycle.start_refused_off",
+            "Choix de voix illisible : Voice ne démarre pas" if unreadable
+            else "Voix coupée par l'utilisateur : Voice ne démarre pas",
+            level="warning" if unreadable else "info",
+            data={"code": voice_lifecycle.VOICE_PREFERENCE_UNREADABLE if unreadable else voice_lifecycle.VOICE_OFF,
+                  "problem": problem})
+        print("Choix de voix illisible : Voice ne démarre pas (rallumez la voix dans JARVIS)." if unreadable
+              else "Voix coupée dans JARVIS (Réglages ou roue JARVIS) : Voice ne démarre pas.")
         return 0
     from jarvis.runtime.prompt_overrides import prompt_override_document
     prompt_overrides = prompt_override_document(overrides)
@@ -1663,8 +1670,7 @@ async def _run_voice_v2() -> int:
                                                             runtime_root=settings.runtime_root)
         if released is not None:
             journal.emit("voice.lifecycle.released", "Voice s'arrête proprement",
-                         data={"reason": released, "code": voice_lifecycle.VOICE_OFF
-                               if released == voice_lifecycle.RELEASED_OFF else "stop_requested"})
+                         data={"reason": released, "code": released})
     finally:
         timeout_task.cancel(); await asyncio.gather(timeout_task, return_exceptions=True)
         try:

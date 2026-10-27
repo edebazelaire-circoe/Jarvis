@@ -29,7 +29,8 @@ chat »): that is Sleep again. Transitions and degraded reasons are said, never 
 | `degraded` | `voice_crash_loop` | Voice died `MAX_RESTARTS` times and was abandoned; switching Off then on again retries |
 | `degraded` | `voice_runtime_error` | Voice reports `error` |
 | `degraded` | `voice_not_launched` | the launcher runs without Voice (`JARVIS_LAUNCH_VOICE=0`) |
-| `degraded` | `voice_not_running` | no launcher (development) and no Voice heartbeat |
+| `degraded` | `voice_preference_unreadable` | the stored block is present but unreadable: Voice is held (no microphone) until the user switches |
+| `not_running` | `voice_not_running` | no launcher (development, `full` edition) and no Voice heartbeat: the voice is on, but Voice must be relaunched by hand (a fact, not a failure) |
 | `off` | `voice_off` | user choice |
 
 ## The one persisted preference
@@ -40,12 +41,17 @@ Block `voice_lifecycle` at the root of `runtime/control-center-settings.json` (n
 {"schema_version": 1, "preference": "sleep"}
 ```
 
-- `sleep` is the default: a fresh profile starts wake-ready. A missing, malformed or foreign-version block reads as
-  `sleep` with a `problem` code (`voice_lifecycle_block_malformed`, `voice_lifecycle_stored_version_unreadable`,
-  `voice_lifecycle_preference_invalid`): **only a readable `off` turns the voice off**.
+- `sleep` is the default: a fresh profile (block **absent**) starts wake-ready.
+- A block **present but unreadable** (not an object, another schema version, a value such as `"Off"`) reads as
+  preference `unreadable` with a `problem` code (`voice_lifecycle_block_malformed`,
+  `voice_lifecycle_stored_version_unreadable`, `voice_lifecycle_preference_invalid`). Every reader treats it like Off
+  for the microphone: the launcher holds Voice (`voice_preference_unreadable`), Voice refuses to start or releases,
+  the projection is `degraded` with a readable message, journaled once (`voice.lifecycle.state`, level warning, with
+  `problem`). The switch rewrites a valid choice (QA rework m1).
 - `off` survives every restart: nothing rewrites it but the user.
 - Strict write (`apply_preference`): exactly `{"preference": "off" | "sleep"}`; refusals `voice_lifecycle_bad_payload`,
-  `voice_lifecycle_preference_invalid`, `voice_lifecycle_foreign_version` (header `X-Jarvis-Error-Code`).
+  `voice_lifecycle_preference_invalid` (header `X-Jarvis-Error-Code`). An unreadable stored block is **replaced**: it
+  holds one choice only, and rewriting it is the way out.
 
 ## Who applies it
 
@@ -55,8 +61,16 @@ Block `voice_lifecycle` at the root of `runtime/control-center-settings.json` (n
   `launcher.voice_held`. During the watch it re-reads the preference every `VOICE_GATE_EVERY_S` (1 s; the key only
   while Voice is not running): Off → `voice_stopping`, stop request, `child_stopped`; Sleep → `voice_released`,
   Voice started again (an abandoned Voice gets a fresh restart budget). A Voice exit while it is not wanted is not a
-  crash (`voice_exited_held`).
-- **Voice** (`jarvis/app.py`): with `off` persisted it exits 0 before composing anything
+  crash (`voice_exited_held`). A Voice exit with code 0 is not a crash either, even when the Off that caused it was
+  too short for the launcher to see (Off→Sleep in 0.25 s): `voice_exited_clean`, no crash restart consumed, and Voice
+  is started again according to the **current** preference (QA rework m2). More than `VOICE_CLEAN_EXITS_MAX` (10)
+  clean exits in 120 s still abandon it, so a Voice that would exit 0 in a loop does not spin forever.
+  While Voice stops (`stop_role`, at most 15 + 5 s, measured 0.5 s) the watch loop waits (QA m3, accepted).
+- **Without the launcher** (development, the `full` edition the user runs daily through `project jarvis`): the
+  preference still applies to Voice itself (Off stops it, an unreadable block holds it), but nothing relaunches Voice
+  after Sleep: the switch reads « à relancer » and the message says to relaunch Voice (or JARVIS); the Chat stays
+  available. `project jarvis` and the user's scripts are unchanged (QA rework m4).
+- **Voice** (`jarvis/app.py`): with `off` (or an unreadable block) persisted it exits 0 before composing anything
   (`voice.lifecycle.start_refused_off`); while running, `voice_lifecycle.run_until_released` returns on the launcher's
   stop request **or** on `off`, and the `finally` closes the session and the microphone (`voice.close()`,
   `voice.lifecycle.released` with `reason`). This also works without the launcher (development).
@@ -75,7 +89,8 @@ Block `voice_lifecycle` at the root of `runtime/control-center-settings.json` (n
   secrets preserved), journals `voice.lifecycle.preference_saved {before, after, managed}`.
 - JARVIS wheel (`control_center_jarvis_wheel.js`): line **Voix activée**, a `menuitemcheckbox` checked unless Off;
   its note is the server state (`coupée · OFF`, `veille · SLEEP`, `en conversation`, `démarrage…`, `arrêt…`,
-  `indisponible`) and its detail the message and code. One POST per click, 8 s deadline, a refusal is a toast plus
+  `indisponible`, `à relancer`) and its detail the message and code. Checked only for a readable `sleep`; with an
+  unreadable choice a click writes `sleep`. One POST per click, 8 s deadline, a refusal is a toast plus
   `jarvis_wheel.voice_power_failed`.
 - Settings › Voix & audio › Mot d'éveil: `GET/POST /api/wake-word` carry `engine` (`voice_lifecycle.wake_engine`).
   Enabled but engine missing (`wake_package_missing`, `wake_model_missing`, `wake_model_mismatch`,

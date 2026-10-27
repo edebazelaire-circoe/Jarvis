@@ -96,6 +96,8 @@
     starting:Object.freeze({note:'démarrage…',tone:'busy'}),
     stopping:Object.freeze({note:'arrêt…',tone:'busy'}),
     degraded:Object.freeze({note:'indisponible',tone:'error'}),
+    /* Sans lanceur : rallumée, mais Voice est à relancer par vous (pas une panne). */
+    not_running:Object.freeze({note:'à relancer',tone:'off'}),
   });
 
   /* L'interrupteur « Voix activée » : coché quand la préférence n'est pas « coupée ». `pending` : une écriture est en
@@ -103,7 +105,8 @@
   function voicePowerItemOf(facts,pending){
     const lc=isObject(facts)&&facts.read==='ok'?facts.lifecycle:null;
     if(!lc)return null;
-    const on=lc.preference!=='off';
+    /* Cochée seulement pour un choix « veille » lisible ; un choix illisible se réécrit en la rallumant. */
+    const on=lc.preference==='sleep';
     const known=LIFECYCLE_NOTES[lc.state]||{note:String(lc.state||'état inconnu'),tone:'unknown'};
     const message=typeof lc.message==='string'?lc.message:'';
     const code=typeof lc.code==='string'&&lc.code&&lc.code!=='voice_off'?` (${lc.code})`:'';
@@ -257,7 +260,7 @@
     let powerPending=false;
     async function toggleVoice(source){
       if(powerPending||facts.read!=='ok'||!facts.lifecycle)return;
-      const preference=facts.lifecycle.preference==='off'?'sleep':'off';
+      const preference=facts.lifecycle.preference==='sleep'?'off':'sleep';
       powerPending=true;apply(facts);
       log('info','jarvis_wheel.voice_power_requested',{preference,source:source||null});
       const abort=typeof AbortController==='function'?new AbortController():null;

@@ -53,12 +53,16 @@ def write_settings(runtime: Path, settings: dict) -> None:
     ({}, "sleep", None),
     ({"voice_lifecycle": {"schema_version": 1, "preference": "off"}}, "off", None),
     ({"voice_lifecycle": {"preference": "off"}}, "off", None),
-    ({"voice_lifecycle": "off"}, "sleep", "voice_lifecycle_block_malformed"),
-    ({"voice_lifecycle": {"schema_version": 9, "preference": "off"}}, "sleep", "voice_lifecycle_stored_version_unreadable"),
-    ({"voice_lifecycle": {"preference": "muted"}}, "sleep", "voice_lifecycle_preference_invalid"),
+    ({"voice_lifecycle": "off"}, "unreadable", "voice_lifecycle_block_malformed"),
+    ({"voice_lifecycle": {"schema_version": 9, "preference": "off"}}, "unreadable",
+     "voice_lifecycle_stored_version_unreadable"),
+    ({"voice_lifecycle": {"preference": "Off"}}, "unreadable", "voice_lifecycle_preference_invalid"),
 ])
-def test_one_persisted_preference_defaults_to_sleep_and_a_damaged_block_never_reads_as_off(settings, expected, problem):
+def test_absent_block_is_sleep_and_a_present_but_unreadable_block_never_lets_voice_run(settings, expected, problem):
+    """Reprise QA m1 : bloc absent -> veille ; bloc présent mais illisible -> Voice tenue (jamais de micro)."""
+
     assert V.inspect_preference(settings) == (expected, problem)
+    assert V.voice_allowed(expected) is (expected == "sleep")
 
 
 @pytest.mark.parametrize("payload, code", [
@@ -72,11 +76,14 @@ def test_writing_the_preference_is_strict(payload, code):
     assert caught.value.code == code and settings == {"other": 1}
 
 
-def test_a_block_from_another_schema_version_is_never_overwritten():
-    settings = {"voice_lifecycle": {"schema_version": 2, "preference": "off", "extra": True}}
-    with pytest.raises(V.VoiceLifecycleError) as caught:
-        V.apply_preference(settings, {"preference": "sleep"})
-    assert caught.value.code == "voice_lifecycle_foreign_version"
+def test_the_switch_rewrites_an_unreadable_block_with_a_valid_choice():
+    """Reprise QA m1 : l'interrupteur doit permettre de sortir d'un bloc illisible (autre version, valeur inconnue)."""
+
+    for stored in ({"schema_version": 2, "preference": "off", "extra": True}, {"preference": "Off"}, "off"):
+        settings = {"voice_lifecycle": stored, "other": 1}
+        assert V.apply_preference(settings, {"preference": "sleep"}) == "sleep"
+        assert settings == {"voice_lifecycle": {"schema_version": 1, "preference": "sleep"}, "other": 1}
+        assert V.inspect_preference(settings) == ("sleep", None)
     assert V.apply_preference({}, {"preference": "off"}) == "off"
 
 
@@ -88,7 +95,10 @@ def test_launch_decision_matrix(no_env_keys, monkeypatch):
     assert V.launch_decision({}, check_key=False) == V.LaunchDecision(True, None)
     off = {"voice_lifecycle": {"schema_version": 1, "preference": "off"}}
     assert V.launch_decision(off) == V.LaunchDecision(False, "voice_off", stop_running=True)
+    bad = {"voice_lifecycle": {"preference": "Off"}}
+    assert V.launch_decision(bad) == V.LaunchDecision(False, "voice_preference_unreadable", stop_running=True)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert V.launch_decision(bad) == V.LaunchDecision(False, "voice_preference_unreadable", stop_running=True)
     assert V.launch_decision({}) == V.LaunchDecision(True, None)
     assert V.launch_decision(off) == V.LaunchDecision(False, "voice_off", stop_running=True)
 
@@ -259,7 +269,7 @@ def test_voice_with_off_persisted_exits_zero_before_opening_anything(tmp_path, m
     assert asyncio.run(app._run_voice_v2()) == 0
     rows = read_jsonl_tail(runtime / "trace.jsonl", limit=50)
     refused = [row for row in rows if row["kind"] == "voice.lifecycle.start_refused_off"]
-    assert refused and refused[0]["data"] == {"code": "voice_off"}
+    assert refused and refused[0]["data"] == {"code": "voice_off", "problem": None}
 
 
 @pytest.mark.parametrize("trigger, expected", [("off", V.RELEASED_OFF), ("stop", V.STOP_REQUESTED), (None, None)])
@@ -317,7 +327,9 @@ def view(**kw):
     ({"launcher": {"managed": True, "voice": None}}, "degraded", "voice_not_launched"),
     ({"key": V.ProviderKey(False, "openai", "OpenAI", "voice_provider_key_missing")}, "degraded",
      "voice_provider_key_missing"),
-    ({}, "degraded", "voice_not_running"),
+    ({}, "not_running", "voice_not_running"),
+    ({"preference": "unreadable"}, "degraded", "voice_preference_unreadable"),
+    ({"preference": "unreadable", "voice_online": True, "runtime_state": "background"}, "stopping", "voice_stopping"),
 ])
 def test_projection_matrix(kw, state, code):
     got = view(**kw)
@@ -386,7 +398,7 @@ async def test_fresh_profile_without_key_reads_degraded_and_off_is_saved_and_pro
     saved_rows = [row for row in rows if row["kind"] == "voice.lifecycle.preference_saved"]
     assert saved_rows[-1]["data"] == {"before": "sleep", "after": "off", "managed": False}
     states = [row["data"] for row in rows if row["kind"] == "voice.lifecycle.state"]
-    assert {"state": "off", "code": "voice_off", "preference": "off"} in states
+    assert {"state": "off", "code": "voice_off", "preference": "off", "problem": None} in states
 
 
 async def test_voice_online_in_background_reads_sleep_and_a_bad_payload_is_a_coded_400(control, tmp_path):
@@ -504,3 +516,126 @@ async def test_quit_is_not_held_by_an_open_request_of_the_page(tmp_path, no_env_
         pending.cancel()
         await asyncio.gather(pending, return_exceptions=True)
         await session.close()
+
+
+# ---------------------------------------------------------------------- reprise QA
+
+
+def test_an_unreadable_block_holds_voice_at_start_and_stops_a_running_voice(tmp_path, no_env_keys, monkeypatch):
+    """Reprise QA m1 : avec une clé, un bloc illisible ne démarre pas Voice ; écrit pendant qu'elle tourne, il l'arrête."""
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    runtime = tmp_path / "runtime"
+    write_settings(runtime, {"voice_lifecycle": {"preference": "Off"}})
+    instance, spawned, notices, _ = launcher(tmp_path, stop_after=3.0, gate=gate_from(runtime))
+    assert instance.run() == 0 and notices == [] and roles_of(spawned) == ["core", "control-center"]
+    held = [row for row in events(tmp_path) if row["kind"] == "voice_held"]
+    assert held[-1]["data"]["code"] == "voice_preference_unreadable" and held[-1]["level"] == "warning"
+
+    write_settings(runtime, {})
+    instance, spawned, _notices, _ = launcher(tmp_path, gate=gate_from(runtime))
+    original_spawn, original_sleep = instance.spawn, instance.sleep
+
+    def spawn(argv, **kwargs):
+        process = original_spawn(argv, **kwargs)
+        process.__class__ = CleanProcess
+        return process
+
+    def sleep(seconds):
+        original_sleep(seconds)
+        if instance.clock() >= 3.0:
+            write_settings(runtime, {"voice_lifecycle": {"schema_version": 7, "preference": "sleep"}})
+        if instance.clock() >= 6.0:
+            (runtime / L.STOP_FILE).write_text("now", encoding="utf-8")
+
+    instance.spawn, instance.sleep = spawn, sleep
+    assert instance.run() == 0
+    voices = [p for p in spawned if p.argv[-1] == "voice"]
+    assert len(voices) == 1 and voices[0].returncode == 0 and not voices[0].terminated
+    assert "voice_stopping" in [row["kind"] for row in events(tmp_path)]
+
+
+def test_voice_with_an_unreadable_block_exits_zero_and_says_why(tmp_path, monkeypatch):
+    runtime = tmp_path / "rt"
+    monkeypatch.setenv("JARVIS_RUNTIME_DIR", str(runtime))
+    monkeypatch.setenv("JARVIS_DATA_ROOT", str(tmp_path / "data"))
+    write_settings(runtime, {"voice_lifecycle": {"schema_version": 1, "preference": "OFF"}})
+    from jarvis import app
+
+    def boom(*_args, **_kwargs):  # pragma: no cover - would mean Voice went past the gate
+        raise AssertionError("Voice composed its stack despite an unreadable block")
+
+    monkeypatch.setattr("jarvis.runtime.voice_composition.resolve_voice_composition", boom)
+    assert asyncio.run(app._run_voice_v2()) == 0
+    rows = [row for row in read_jsonl_tail(runtime / "trace.jsonl", limit=50)
+            if row["kind"] == "voice.lifecycle.start_refused_off"]
+    assert rows[0]["level"] == "warning"
+    assert rows[0]["data"] == {"code": "voice_preference_unreadable", "problem": "voice_lifecycle_preference_invalid"}
+
+
+async def test_an_unreadable_block_is_visible_journaled_and_rewritten_by_the_switch(control, tmp_path):
+    control.settings_path.write_text(json.dumps({"voice_lifecycle": {"preference": "Off"}}), encoding="utf-8")
+    view = json.loads((await control.get_voice_lifecycle(None)).text)
+    assert (view["preference"], view["state"], view["code"], view["problem"]) == (
+        "unreadable", "degraded", "voice_preference_unreadable", "voice_lifecycle_preference_invalid")
+    assert "illisible" in view["message"]
+    rows = [row for row in read_jsonl_tail(tmp_path / "trace.jsonl", limit=50) if row["kind"] == "voice.lifecycle.state"]
+    assert rows[-1]["level"] == "warning" and rows[-1]["data"]["problem"] == "voice_lifecycle_preference_invalid"
+    saved = json.loads((await control.save_voice_lifecycle(JsonRequest({"preference": "sleep"}))).text)
+    assert saved["preference"] == "sleep" and saved["problem"] is None
+    assert json.loads(control.settings_path.read_text(encoding="utf-8"))["voice_lifecycle"] == {
+        "schema_version": 1, "preference": "sleep"}
+
+
+class ShortOffVoice(CleanProcess):
+    """Voice qui a vu une « voix coupée » trop brève pour le lanceur (bascules de 0,25 s, harnais QA) : elle se libère
+    (code 0) à l'instant `exit_at`, alors que la préférence est déjà revenue à « veille »."""
+
+    exit_at: float = 0.0
+    clock = None
+
+    def poll(self):
+        if self.returncode is None and self.clock() >= self.exit_at:
+            self.returncode = 0
+        return super().poll()
+
+
+def test_fast_off_sleep_toggles_never_count_as_crashes_and_voice_follows_the_current_preference(tmp_path):
+    """Reprise QA m2 : cinq Off -> Sleep plus brefs que la relecture du lanceur ; aucun plantage compté, jamais
+    d'abandon, Voice relancée chaque fois parce que la préférence courante est « veille »."""
+
+    board = Switchboard()  # « veille » à chaque lecture du lanceur : il ne voit jamais les Off brefs
+    instance, spawned, notices, _ = launcher(tmp_path, gate=board)
+    original_spawn, original_sleep = instance.spawn, instance.sleep
+    exits = iter([2.5, 6.5, 10.5, 14.5, 18.5])
+
+    def spawn(argv, **kwargs):
+        process = original_spawn(argv, **kwargs)
+        process.__class__ = ShortOffVoice if argv[-1] == "voice" else CleanProcess
+        if argv[-1] == "voice":
+            process.clock, process.exit_at = instance.clock, next(exits, 1e9)
+        return process
+
+    def sleep(seconds):
+        original_sleep(seconds)
+        if instance.clock() >= 25.0:
+            (instance.plan.runtime_root / L.STOP_FILE).write_text("now", encoding="utf-8")
+
+    instance.spawn, instance.sleep = spawn, sleep
+    assert instance.run() == 0 and notices == []
+    kinds = [row["kind"] for row in events(tmp_path)]
+    assert kinds.count("voice_exited_clean") == 5
+    assert "child_abandoned" not in kinds and "child_exited" not in kinds
+    voices = [p for p in spawned if p.argv[-1] == "voice"]
+    assert len(voices) == 6 and voices[-1].returncode == 0, "la dernière incarnation tournait jusqu'à Quitter"
+    assert instance.plan.roles[2].restarts == [], "aucun redémarrage de plantage consommé"
+
+
+def test_a_voice_that_keeps_exiting_zero_is_still_abandoned_eventually(tmp_path):
+    instance, spawned, _notices, _ = launcher(tmp_path, gate=Switchboard(),
+                                              behaviours={"voice": [{"exit_after_polls": 0, "code": 0}] * 40},
+                                              stop_after=40.0)
+    assert instance.run() == 0
+    kinds = [row["kind"] for row in events(tmp_path)]
+    assert "child_abandoned" in kinds
+    assert len([p for p in spawned if p.argv[-1] == "voice"]) == L.VOICE_CLEAN_EXITS_MAX + 1

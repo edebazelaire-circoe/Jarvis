@@ -4268,7 +4268,8 @@ class ControlCenter:
             self._voice_lifecycle_seen = seen
             self.journal.emit("voice.lifecycle.state", f"Voix : {seen[0]}" + (f" ({seen[1]})" if seen[1] else ""),
                               level="warning" if seen[0] in ("degraded", "unknown") else "info",
-                              data={"state": seen[0], "code": seen[1], "preference": view.get("preference")})
+                              data={"state": seen[0], "code": seen[1], "preference": view.get("preference"),
+                                    "problem": view.get("problem")})
         return view
 
     async def get_voice_lifecycle(self, request: web.Request) -> web.Response:
