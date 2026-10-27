@@ -86,3 +86,62 @@ Variante : sans messagerie par défaut, le refus `support_mail_client_missing` e
   prose n'est pas détectée mécaniquement (la consigne et l'annexe factuelle restent les garde-fous).
 - Hors périmètre, laissé : I-010 point 12 (noms de fichiers dans le texte libre des messages) s'applique aussi au
   paquet complet.
+
+## Reprise QA (2026-10-27, après le verdict FAIL de `qa/qa-report.md`)
+
+Commit de code `eefbd016` (plus ces notes). Chaque finding est corrigé ; les canaris et sondes de la QA
+(`v12s07qa/scripts/probe_canaries.py`, `probe_confine.py`) sont repris en tests de non-régression dans
+`tests/unit/test_support_report_qa.py`.
+
+| Finding | Correctif |
+| --- | --- |
+| **B1** | `DiagnosticRedactor.cell` / `deep` : une cellule de base ou un fichier de la mémoire qui se lit comme du JSON est masqué en structure, et une chaîne qui est elle-même du JSON est relue et masquée (6 niveaux) ; le contenu reste lisible. Noms sensibles (`sensitive_name`, `named_secret` : mots `TOKEN`, `KEY`, `SECRET`, `PASSWORD`…, fins `…TOKEN`, `…APIKEY`, découpage camelCase) : valeur masquée en JSON, en texte libre (`NOM=`, `export NOM=`, `NOM:`, avec ou sans guillemets) et dans les paires JSON échappées (`\"refresh_token\": \"…\"`, quel que soit le nombre d'échappements). Identifiants et horodatages sous un nom ordinaire restent lisibles. Règle unique, déplacée de `support_bundle.py` vers `diagnostic_redaction.py`. |
+| **M1** | En développement, le `.env` du dépôt (`jarvis.environment.PROJECT_ROOT`) alimente le masqueur, en mémoire seulement (`support_bundle._config_dir`). |
+| **M2** | Nom de fichier ou de dossier de la mémoire qui porte un secret → `masque-<sha256 10 hex><extension>`, stable, dans les noms des membres et dans `manifest.json`. |
+| **M3** | Blocs PGP, PEM chiffrée à l'ancienne (`Proc-Type` / `DEK-Info`), PuTTY (`PuTTY-User-Key-File` / `Private-Lines` jusqu'à `Private-MAC`) et JWT courts masqués ; `.ppk`, `.pem`, `.key`, `.asc`, `.gpg`, `.pgp`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.kdbx`, `.der`, `.p8` jamais inclus (`excluded`, `key_file_never_included`). |
+| m1 | Fichier à plus d'un lien dur refusé (`hard_link_not_followed`). |
+| m2 | Tests : BLOB hors coffre vidé et page libérée absente (la mutation « BLOB non vidés » est désormais tuée, vérifié), table FTS retirée, `freelist_count = 0`. |
+| m3 | Envoi en cours par paquet : un second envoi est refusé (409 `support_send_in_progress`) ; dans l'interface, « En attente de la messagerie… », « Envoyer » désactivé, aucun second appel (test navigateur). |
+| m4 | `sweep_work_folders` : tout `.work-*` retiré à l'ouverture du service et avant chaque création (sous le verrou de création). |
+| m5 | `.pending-send.json` : un paquet dont l'envoi a échoué est gardé hors de la règle des 5 jusqu'à son enregistrement, son téléchargement ou un envoi réussi, 30 jours au plus ; le message d'échec le dit ; documenté. |
+
+Linéarité : la nouvelle paire échappée était quadratique sur une longue suite de `\` (7 s) ; ancrée par un
+lookbehind, le test de linéarité existant repasse.
+
+### Preuves
+
+- Tests : `test_support_report_qa.py` (10), `test_support_report*.py`, `test_support_bundle.py`,
+  `test_diagnostic_redaction.py`, `test_release_tooling.py`, `test_control_center_relay_whitelist.py`,
+  `test_product_readiness*.py` (dont navigateur), `test_memory_consolidation_schema.py`, `test_v2_architecture.py`,
+  `test_control_center_shell_layers.py`, `test_brain_cli.py` : **231 passés**, 0 échec ; navigateur du rapport :
+  4/4 (dont l'attente de la messagerie).
+- Sondes de la QA rejouées sur le code corrigé : `probe_canaries.py` → `LEAKS: {}` (y compris le titre du Board),
+  `prompt leaks: []`, BLOB vidé ; `probe_confine.py` → `OUTSIDE content via hardlink: False`, reste inchangé.
+- **Essai réel par l'interface** (archive `eefbd016`, `%TEMP%\v12s07r`, édition `presentation`, ports 55653-55656,
+  transport `outbox`), en **mode développement** (`.env` à la racine du code archivé) puis en **mode produit
+  simulé** (marqueur `jarvis-product.json` dans le code, `LOCALAPPDATA` du bac, `config\.env` de la maison) :
+  17 canaris semés dans la base (JSON imbriqué sur deux niveaux, `refreshToken`, `OPENAI_API_KEY` en JSON,
+  `export ELEVENLABS_API_KEY=` collé, `Bearer`, `AIza`, la valeur du `.env`), dans la mémoire (PEM, PGP, PEM chiffrée,
+  PuTTY, `password=`, `ghp_`, valeur du `.env`), dans des noms de fichiers (forme `sk-ant-…` et valeur du `.env`),
+  un `.ppk`, les réglages et la description ; erreur contrôlée réelle (présentation tronquée). Préparation →
+  « Signaler un problème » → refus sans consentement → consentement → Envoyer → rapport IA réel → boîte d'envoi de
+  test. Scan complet des deux zips (octets décompressés, noms, bases ouvertes) : **aucun canari** (la seule alerte du
+  scanner était son heuristique de fragment : `0123456789abcdef`, la fin d'un canari, est aussi dans l'id de la
+  présentation tronquée ; la valeur complète est absente). Noms `masque-….md`, `.ppk` exclu, base sans coffre,
+  `freelist 0`, `integrity ok`, `unknown_mentions` vide.
+- Preuves (zips, décompressés, captures, journaux, copies des bases des deux bacs, dossiers des sondes) :
+  `C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\448345f0-a514-4023-9dde-33aed523cf61\scratchpad\v12s07r\`.
+  Bac supprimé après copie ; aucun processus du bac ne reste ; le JARVIS vivant n'a pas été touché.
+
+### Coût
+
+Deux rapports IA réels : 0,097 $ + 0,091 $ = **0,188 $** (budget 0,20 $).
+
+### Non vérifié (inchangé ou nouveau)
+
+- Le vrai MAPI (HV-SUPPORT-01) ; le DPAPI réel du produit installé (le produit simulé du bac n'a pas de clé scellée).
+- Un secret sous un nom ordinaire et sans forme reconnaissable (ni connu par `.env`, ni par le coffre) reste lisible :
+  limite assumée du masquage par règles.
+- Le balayage de `.work-*` à l'ouverture suppose une seule création à la fois sur ce dossier : une commande
+  `support-bundle` lancée pendant l'ouverture du Control Center pourrait perdre son dossier de travail (elle échoue
+  alors avec sa cause, sans paquet partiel).
