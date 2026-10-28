@@ -33,11 +33,11 @@ import json
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from jarvis.domain.research_freshness import MAX_RESEARCH_DOCS, ResearchDocStatus
 from jarvis.domain.v2 import BrainWorkingState
 from jarvis.domain.work_state import WorkItem, WorkSnapshot, WorkStatus, clip_text
 
 if TYPE_CHECKING:  # type only: the presentation import closures stay free of the Board contract
+    from jarvis.domain.research_freshness import ResearchDocStatus
     from jarvis.domain.workspace_board import Board
 
 #: Travaux actifs listés au cerveau, bloqués d'abord puis du plus ancien au
@@ -597,9 +597,16 @@ class BrainBoardMemory:
                 raise ValueError(f"{name} must be a short code")
         if self.error is not None and (self.entries or self.summary or self.research):
             raise ValueError("an unreadable memory carries no entries and no summary")
-        if (not isinstance(self.research, tuple) or len(self.research) > MAX_RESEARCH_DOCS
-                or not all(isinstance(item, ResearchDocStatus) for item in self.research)):
-            raise ValueError(f"research must be a tuple of at most {MAX_RESEARCH_DOCS} ResearchDocStatus")
+        if not isinstance(self.research, tuple):
+            raise ValueError("research must be a tuple of ResearchDocStatus")
+        if self.research:
+            # Import au point d'usage : seule l'édition Presentation joint des documents de recherche, et les
+            # fermetures d'import des modules Presentation (`ALLOWED_IMPORT_CLOSURE`) restent sans ce contrat.
+            from jarvis.domain.research_freshness import MAX_RESEARCH_DOCS, ResearchDocStatus
+
+            if (len(self.research) > MAX_RESEARCH_DOCS
+                    or not all(isinstance(item, ResearchDocStatus) for item in self.research)):
+                raise ValueError(f"research must be a tuple of at most {MAX_RESEARCH_DOCS} ResearchDocStatus")
         if not isinstance(self.research_recency, tuple) or len(self.research_recency) > 8:
             raise ValueError("research_recency must be a short tuple")
         if type(self.research_unread) is not int or self.research_unread < 0:
