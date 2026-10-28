@@ -493,3 +493,31 @@ def test_the_support_routes_are_guarded_like_the_product_routes():
     from jarvis.runtime import control_center as CC
     assert CC.SUPPORT_ROUTE_PREFIX in CC.READ_GUARDED_ROUTES
     assert subprocess.run([sys.executable, "-c", "import jarvis.runtime.support_routes"], check=False).returncode == 0
+
+
+def test_the_download_route_streams_the_bundle_as_a_zip_attachment(tmp_path):
+    """Le paquet part en pièce jointe, octet pour octet, sans second service de fichiers (S9, R2)."""
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from jarvis.runtime.support_routes import SupportReportRoutes
+
+    sources = seeded(tmp_path)
+    svc = service(tmp_path, sources)
+    name = asyncio.run(svc.create({"consent": True}))["bundle"]["name"]
+    expected = (svc.support_dir / name).read_bytes()
+
+    async def fetch() -> tuple[tuple[int, str, str, bytes], tuple[int, str]]:
+        app = web.Application()
+        app.add_routes(SupportReportRoutes(svc, journal=RuntimeJournal(sources.runtime_root)).routes())
+        async with TestClient(TestServer(app)) as client:
+            ok = await client.get(f"/api/support/reports/{name}/download")
+            body = await ok.read()
+            missing = await client.get("/api/support/reports/absent.zip/download")
+            return ((ok.status, ok.headers["Content-Type"], ok.headers["Content-Disposition"], body),
+                    (missing.status, (await missing.json())["error"]["code"]))
+
+    (status, kind, disposition, body), (missing_status, missing_code) = asyncio.run(fetch())
+    assert status == 200 and kind == "application/zip" and body == expected
+    assert disposition == f'attachment; filename="{name}"'
+    assert missing_status in (400, 404) and missing_code.startswith("support_bundle_")

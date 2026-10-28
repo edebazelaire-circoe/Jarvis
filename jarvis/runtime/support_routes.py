@@ -399,6 +399,10 @@ def _default_export(sources: SB.BundleSources) -> Any:
     return ExportDestination.from_environment(data_root=sources.data_root, environ=dict(sources.environ))
 
 
+#: Morceau lu puis écrit par le téléchargement d'un paquet (le zip n'est jamais chargé en entier en mémoire).
+_DOWNLOAD_CHUNK_BYTES = 256 * 1024
+
+
 class SupportReportRoutes:
     def __init__(self, service: SupportReportService, *, journal: RuntimeJournal) -> None:
         self._service = service
@@ -458,8 +462,18 @@ class SupportReportRoutes:
             return _error(exc.status, exc.code, str(exc), exc.detail)
         self._journal.emit("support.report.downloaded", "Paquet téléchargé par la page", data={"name": path.name})
         self._service.downloaded(path.name)
-        return web.FileResponse(path, headers={"Content-Disposition": f'attachment; filename="{path.name}"',
+        # Même mécanisme que l'export des conversations (`StreamResponse` en pièce jointe, écrit par morceaux) :
+        # pas de second service de fichiers sous `jarvis/` (garde `test_barehands_clean_room`), et le nom a déjà
+        # été vérifié contre `SB.BUNDLE_NAME` dans le seul dossier de support (`bundle_path`).
+        response = web.StreamResponse(headers={"Content-Disposition": f'attachment; filename="{path.name}"',
                                                "Content-Type": "application/zip", "Cache-Control": "no-store"})
+        response.content_length = path.stat().st_size
+        await response.prepare(request)
+        with path.open("rb") as handle:
+            while chunk := await asyncio.to_thread(handle.read, _DOWNLOAD_CHUNK_BYTES):
+                await response.write(chunk)
+        await response.write_eof()
+        return response
 
     async def destination(self, request: web.Request) -> web.Response:
         async def run() -> dict[str, Any]:
