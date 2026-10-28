@@ -34,3 +34,4 @@ Requires-Dist: imageio-ffmpeg==0.6.0; extra == "capture"
 Provides-Extra: dev
 Requires-Dist: pytest<10,>=8; extra == "dev"
 Requires-Dist: pytest-asyncio<2,>=0.24; extra == "dev"
+Requires-Dist: numpy<3,>=2.0; extra == "dev"
