@@ -338,7 +338,10 @@ def test_ecarter_l_avertissement_n_emet_aucune_requete(tmp_path):
     ])
     marks = [i for i, r in enumerate(out["requests"]) if r["method"] == "MARK"]
     assert len(marks) == 2, out["requests"]
-    between = out["requests"][marks[0] + 1:marks[1]]
+    # `GET /favicon.ico` est demandé par Chrome lui-même, à un moment qu'il choisit : ce n'est pas un appel de la
+    # page et il ne peut toucher aucun fait (balayage S9 : il tombait parfois entre les deux marqueurs).
+    between = [r for r in out["requests"][marks[0] + 1:marks[1]]
+               if not (r["path"] == "/favicon.ico" and r["method"] == "GET")]
     # Le rail de capture (session-context-recording, Slice 10) sonde son propre
     # statut, en lecture seule, à la même cadence : c'est un sondage de statut.
     # Le canal de plein écran (studio de présentation, Slice 03) long-poll de même : lecture seule, plancher d'une
