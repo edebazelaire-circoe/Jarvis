@@ -19,6 +19,7 @@ from jarvis.domain.speaker import (
 )
 from jarvis.domain.v2 import AddressingDecision, VoiceLifecycleState
 from jarvis.domain.voice_frontend import FrontendState, VoiceOperationResult, VoiceOperationStatus
+from jarvis.domain.voice_greeting import greeting_text
 from jarvis.ports.v2 import Clock, RealtimeSession, WakeWordBackend, supports_output_control
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.journal import RuntimeJournal
@@ -178,8 +179,13 @@ class PersistentVoiceRuntime:
         barge_in_decider: str = "provider",
         core_token_file: Path | None = None,
         manual_wake_key: str = "f9",
+        greet_on_first_wake: bool = False,
     ) -> None:
         self.voice_arch = voice_arch
+        # Accueil vocal (`jarvis/domain/voice_greeting.py`) : une fois par
+        # processus, à la première séance ouverte par un réveil.
+        self.greet_on_first_wake = greet_on_first_wake
+        self._greeted = False
         #: Nom de la touche manuelle, seulement pour dire la source d'une détection
         #: dans la trace (`activation_source_for_label`) ; jamais une branche.
         self.manual_wake_key = manual_wake_key
@@ -728,6 +734,10 @@ class PersistentVoiceRuntime:
             self.runtime.state = VoiceLifecycleState.BACKGROUND
         if self.runtime.state is not VoiceLifecycleState.BACKGROUND:
             return
+        # Ni la réouverture d'un `rebind_board` (sans source), ni la reprise
+        # d'une pile remplacée (`switch_handoff`) ne sont un « bonjour ».
+        greeting_due = (self.greet_on_first_wake and not self._greeted and source is not None
+                        and self.switch_handoff is None)
         capture: object | None = None
         capture_prepared = False
         if self.authorization.owner_enforced or self.authorization_error is not None:
@@ -1008,6 +1018,22 @@ class PersistentVoiceRuntime:
             speech.live_output_busy = bridge.live_output_busy
             await speech.start()
         self._bridge_task = asyncio.create_task(bridge.run(), name="jarvis-realtime-bridge")
+        if greeting_due and speech is not None:
+            self._greeted = True
+            speech.greet(greeting_text(await self._active_board()))
+
+    async def _active_board(self) -> object:
+        """`GET /v1/boards/active` pour l'accueil, ou `None` : un échec ne coûte que la reprise proposée."""
+
+        reader = getattr(self.core, "active_board", None)
+        if not callable(reader):
+            return None
+        try:
+            return await reader()
+        except Exception as exc:  # noqa: BLE001 - l'accueil se dit sans titre
+            self._trace("voice.greeting.board_unavailable", "Board actif illisible : accueil sans reprise",
+                        level="warning", data={"exception_type": type(exc).__name__})
+            return None
 
     def presentation_session(self):
         """La séance PRESENTATION vivante, ou rien.

@@ -37,7 +37,7 @@
   const CONTROL_HOSTS=Object.freeze([
     Object.freeze({selector:'.dock',zone:'top-right'}),
     Object.freeze({selector:'#bgPills',zone:'bottom-centre'}),
-    Object.freeze({selector:'.live-banner',zone:'top-centre'}),
+    Object.freeze({selector:'.live-banner',zone:'top-left'}),
     Object.freeze({selector:'#panel',zone:'right'}),
     Object.freeze({selector:'#chatPanel',zone:'right'}),
     Object.freeze({selector:'#barehandsHud',zone:'left-edge'}),
@@ -55,10 +55,10 @@
   const ZONES=Object.freeze({
     /* Libre au repos depuis la Slice 02 de jarvis-board-ui-wheel-dossier-refactor
        (ni sélecteur de Board, ni état permanent) ; depuis la Slice 04, les
-       indicateurs d'enregistrement s'y posent tant qu'une capture est ouverte. */
-    'top-left':'indicateurs d’enregistrement (REC, audio) tant qu’une capture est ouverte ; vide au repos',
+       indicateurs d'enregistrement s'y posent tant qu'une capture est ouverte ;
+       depuis le 2026-10-29, la puce GPT-Live au-dessus d'eux (ex-`top-centre`). */
+    'top-left':'puce GPT-Live tant qu’une session est ouverte, indicateurs d’enregistrement (REC, audio) tant qu’une capture est ouverte ; vide au repos',
     'top-right':'lanceur global : Conversation, Agents, Errors, « Plus d’outils » (Réglages y est replié, refonte S04)',
-    'top-centre':'bandeau GPT-Live (transitoire)',
     'left-edge':'ancre et roue d’outils (JARVIS, Sélection, Dossier, Capture, Paramètres)',
     'left-low':'aperçu de la dernière capture d’écran (Slice 05), au-dessus du contexte bas-gauche',
     'bottom-left':'zone de contexte : carte Board (type, titre, bascule, présence de la voix), notes de la scène',

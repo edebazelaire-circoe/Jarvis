@@ -89,6 +89,11 @@ BOARD_REBIND_DRAINED = "voice.board.rebind_drained"
 SPEECH_TURN_ABANDONED = "voice.speech.turn_abandoned"
 SPEECH_DECIDED = "voice.speech.presentation_decided"
 SPEECH_ERROR_WITHHELD = "voice.speech.error_withheld"
+#: Accueil de la première séance (`greet`) jamais mis en file : Core n'a pas
+#: annoncé d'intention courante avant son échéance.
+SPEECH_GREETING_DROPPED = "voice.speech.greeting_dropped"
+#: Passé ce délai, l'accueil ne répond plus au réveil qui l'a demandé.
+GREETING_TTL_S = 8.0
 # Verdict de Core qui ne trouve rien à retirer (parole déjà tentée, inconnue ou
 # déjà soldée) : rien ne change, mais c'est dit.
 SPEECH_VERDICT_IGNORED = "voice.speech.verdict_ignored"
@@ -511,6 +516,9 @@ class SpeechScheduler:
         self._current_source: SpeechSource | None = None
         self._source_complete = False
         self._intent_watermark = -1
+        # Accueil demandé avant que Core ait dit son intention courante :
+        # `(texte, échéance)`, mis en file dès qu'elle arrive.
+        self._greeting: tuple[str, datetime] | None = None
         self._invalidated_dependencies: set[SpeechDependency] = set()
         self._presentation_admissions: dict[str, OutputAdmission] = {}
         self._presentation_cancels: set[asyncio.Task] = set()
@@ -1945,6 +1953,7 @@ class SpeechScheduler:
             self._source_complete = complete
         except (ValueError, TypeError, KeyError):
             self._source_complete = False
+        self._flush_greeting()
         self._update_analysis_source()
         if self._floor is not None and self._intent_watermark > watermark:
             # Intention nouvelle de Core (tour adressé, ou incertain promu) : la
@@ -2405,6 +2414,46 @@ class SpeechScheduler:
     def _expire_presentation(self, active: _ActiveSpeech) -> None:
         self._presentation_expiries.pop(active.output_id, None)
         self._invalidate_presentation(active, "ttl")
+
+    def greet(self, text: str, *, ttl_s: float = GREETING_TTL_S) -> None:
+        """Dire l'accueil de la séance (`jarvis/domain/voice_greeting.py`).
+
+        Une parole sans `source` est différée pour toujours (`_eligibility`) :
+        l'accueil porte donc l'intention courante de Core, comme la
+        clarification. Elle arrive par le flux juste après `start()` ; tant
+        qu'elle manque, l'accueil attend, au plus `ttl_s`. C'est un accusé
+        (`ACK`, transitoire) : si l'utilisateur enchaîne sur une demande, la
+        nouvelle intention le périme au lieu de le faire dire par-dessus.
+        """
+
+        if self._stopping:
+            return
+        self._greeting = (text, self.clock.now() + timedelta(seconds=ttl_s))
+        self._flush_greeting()
+
+    def _flush_greeting(self) -> None:
+        if self._greeting is None or self._stopping:
+            return
+        text, deadline = self._greeting
+        if self.clock.now() >= deadline:
+            self._greeting = None
+            self._trace(SPEECH_GREETING_DROPPED, "Accueil non dit : aucune intention courante de Core à temps",
+                        level="warning", data={"conversation_id": self.conversation_id,
+                                               "source_complete": self._source_complete})
+            return
+        source = self._current_source
+        if source is None or not self._source_complete:
+            return
+        self._greeting = None
+        self.enqueue_controller_speech(SpeechRequest(
+            conversation_id=self.conversation_id,
+            text=text,
+            kind=SpeechKind.ACK,
+            correlation_id=source.correlation_id,
+            provenance=SpeechProvenance.SYSTEM_NOTIFICATION,
+            source=source,
+            expires_at=deadline,
+        ))
 
     def enqueue_controller_speech(self, request: SpeechRequest) -> None:
         """Present a source-bound controller notice through normal admission."""

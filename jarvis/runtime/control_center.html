@@ -67,29 +67,38 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    (D05). Le sélecteur de Board est devenu la carte Board du bas-gauche (`#boardsHud`,
    `control_center_boards.js`) et la ligne d'état permanente `VOICE … · CLAUDE …` est
    retirée. Depuis la Slice 04, seuls les indicateurs d'enregistrement `#recIndicators`
-   s'y posent, et seulement tant que Core dit une capture ouverte. La touche d'éveil
+   s'y posent, et seulement tant que Core dit une capture ouverte ; la puce GPT-Live
+   `#liveBanner` s'y pose au-dessus d'eux tant qu'une session est ouverte. La touche d'éveil
    (`F9 · DÉMARRER`, `F9 · VOICE HORS LIGNE`…), l'état de la voix, de l'agent et des
    sous-agents se lisent dans le sous-menu JARVIS de la roue
    (`control_center_jarvis_wheel.js`, nourri par `refreshStatus`) ; la touche
    elle-même est le raccourci global de Voice, inchangé. */
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-/* Bandeau GPT-Live (orbital-ui Slice 09) : centré entre les deux colonnes, il ne passe jamais sur le
-   rail de droite (`--shell-rail-w` : 300 / 72 px, 12 px d'air de chaque côté) ; 700 px et moins, il
-   descend sous la rangée de l'onglet du rail (40 + 8 px). Ancre `--jv-live` : le plateau de dépôt et
-   les infusions se posent dessous plutôt que dessus ou dessous en rang. */
-.live-banner{position:absolute;z-index:35;top:var(--shell-panel-top);left:50%;transform:translateX(-50%);width:min(680px,calc(100vw - 2 * (var(--shell-gutter) + var(--shell-rail-w) + 12px)));anchor-name:--jv-live;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:center;padding:12px 14px;background:rgba(35,7,12,.94);border:2px solid var(--danger);border-radius:10px;box-shadow:0 0 32px rgba(255,101,119,.28);pointer-events:auto}
-/* Rail masqué ou absent (QA S09) : le bandeau reprend la largeur des seules gouttières. */
-@media(min-width:701px){body:not(:has(>#presentationRail:not([hidden]))) .live-banner{width:min(680px,calc(100vw - 2 * (var(--shell-gutter) + 12px)))}}
-.live-banner.uncertain{border-color:var(--warn);background:rgba(38,23,5,.96);box-shadow:0 0 32px rgba(255,184,92,.24)}
-.live-led{width:13px;height:13px;border-radius:50%;background:var(--danger);box-shadow:0 0 15px var(--danger);animation:pulse 1.2s ease-in-out infinite}
-.live-banner.uncertain .live-led{background:var(--warn);box-shadow:0 0 15px var(--warn)}
-/* Mouvement réduit : le voyant reste allumé, sans pulsation (orbital-ui Slice 09, relevé par `test_reduced_motion`). */
-@media(prefers-reduced-motion:reduce){.live-led{animation:none}}
-.live-main{min-width:0}.live-title{font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#fff}.live-title strong{color:var(--danger)}
-.live-banner.uncertain .live-title strong{color:var(--warn)}
-.live-meta{margin-top:4px;font-size:11px;color:#d9b9bf;line-height:1.45}.live-banner.uncertain .live-meta{color:#ead1ae}.live-warning{display:block;color:var(--warn);margin-top:3px}
-.live-actions{display:flex;flex-direction:column;gap:6px}.live-ack{border:1px solid var(--warn);background:#2a1a05;color:#fff;padding:7px 13px;border-radius:7px;font:700 11px inherit;letter-spacing:.06em;cursor:pointer}.live-ack:hover{background:#3d2707}.live-ack.confirm{background:var(--warn);color:#1b1004}.live-ack:disabled{opacity:.6;cursor:wait}
-.live-stop{border:1px solid var(--danger);background:#26070c;color:#fff;padding:9px 13px;border-radius:7px;font:700 12px inherit;letter-spacing:.08em;cursor:pointer}.live-stop:hover{background:#3c0a12}.live-stop:disabled{opacity:.6;cursor:wait}
+/* Puce GPT-Live (retour utilisateur du 2026-10-29 : le bandeau centré prenait trop de place pour rien) :
+   haut-gauche, à la gouttière, au-dessus des indicateurs d'enregistrement qu'elle pousse d'une rangée. Une onde
+   animée, la durée, un carré d'arrêt ; l'état ne s'écrit qu'hors du régime normal (arrêt, clôture incertaine…) et
+   le détail (usage, coût, veille auto) se lit au survol et au lecteur d'écran. Jamais plus large que l'espace à
+   gauche du lanceur. */
+.live-banner{position:absolute;z-index:35;top:var(--shell-gutter);left:var(--shell-gutter);max-width:calc(100vw - 2 * var(--shell-gutter) - var(--shell-launcher-w) - 12px);display:flex;flex-wrap:wrap;align-items:center;gap:6px;pointer-events:auto;font:12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--text)}
+.live-chip{--live-ink:var(--danger);display:inline-flex;align-items:center;gap:8px;height:var(--shell-control);padding:0 5px 0 10px;border:1px solid color-mix(in srgb,var(--live-ink) 55%,transparent);border-radius:var(--shell-radius);background:var(--shell-glass-strong);backdrop-filter:blur(12px);color:var(--live-ink)}
+.live-banner.uncertain .live-chip{--live-ink:var(--warn);border-style:dashed}
+/* Le logo : trois barres qui respirent tant que la session est ouverte. */
+.live-led{flex:none;display:inline-flex;align-items:center;gap:2px;height:14px}
+.live-led i{display:block;width:2px;height:100%;border-radius:1px;background:var(--live-ink);transform-origin:50% 50%;animation:liveWave 1.1s ease-in-out infinite}
+.live-led i:nth-child(2){animation-delay:-.35s}.live-led i:nth-child(3){animation-delay:-.7s}
+@keyframes liveWave{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
+/* Mouvement réduit : l'onde reste affichée, immobile (orbital-ui Slice 09, relevé par `test_reduced_motion`). */
+@media(prefers-reduced-motion:reduce){.live-led i{animation:none;transform:scaleY(.7)}}
+.live-title{display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+.live-title strong{font-size:11px;font-weight:700;letter-spacing:.1em}.live-title strong:empty{display:none}
+#liveElapsed{font-variant-numeric:tabular-nums;color:var(--text)}
+.live-stop{flex:none;position:relative;width:24px;height:24px;padding:0;border-radius:7px;border:1px solid color-mix(in srgb,var(--live-ink) 55%,transparent);background:color-mix(in srgb,var(--live-ink) 14%,transparent);cursor:pointer}
+.live-stop::after{content:"";position:absolute;left:50%;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:1.5px;background:var(--live-ink)}
+.live-stop:hover{background:color-mix(in srgb,var(--live-ink) 30%,transparent)}.live-stop:disabled{opacity:.45;cursor:wait}
+.live-ack{height:var(--shell-control);border:1px solid var(--warn);background:#2a1a05;color:#fff;padding:0 12px;border-radius:var(--shell-radius);font-family:inherit;font-size:11px;font-weight:700;letter-spacing:.06em;cursor:pointer}.live-ack:hover{background:#3d2707}.live-ack.confirm{background:var(--warn);color:#1b1004}.live-ack:disabled{opacity:.6;cursor:wait}
+@media(forced-colors:active){.live-chip{border-color:CanvasText}.live-led i,.live-stop::after{forced-color-adjust:none;background:Highlight}}
+/* Puce affichée : les indicateurs d'enregistrement descendent d'une rangée. */
+body:has(#liveBanner:not([hidden])) #recIndicators{top:calc(var(--shell-gutter) + var(--shell-control) + 6px)}
 /* Carte Board (bas-gauche depuis la Slice 02) : sa place et son apparence viennent de
    `control_center_boards.js` (rail partagé avec Bare Hands et les notes de la scène) ;
    le panneau s'ouvre au-dessus d'elle (`place`, qui pose `left`/`bottom`). Rang 39 : il
@@ -135,7 +144,7 @@ html[data-developer-surfaces="hidden"] [data-surface="developer"]{display:none!i
 /* Étroit (700 px et moins) : les mêmes zones dans les deux thèmes. Panneau et bandeau
    prennent la largeur sous le lanceur (`--shell-panel-top`). Le lanceur, cinq
    boutons depuis la Slice 08, reste une rangée. */
-@media(max-width:700px){.panel{left:var(--shell-gutter);right:var(--shell-gutter);width:auto}.live-banner{top:calc(var(--shell-panel-top) + 48px);left:var(--shell-gutter);right:var(--shell-gutter);width:auto;transform:none}}
+@media(max-width:700px){.panel{left:var(--shell-gutter);right:var(--shell-gutter);width:auto}}
 .panel header{display:flex;justify-content:space-between;align-items:center;padding:15px 17px;border-bottom:1px solid var(--line)}
 .panel header h2{font-size:14px;margin:0;letter-spacing:.12em;text-transform:uppercase}
 .panel header button{background:none;color:var(--muted);border:0;font-size:20px;cursor:pointer}
@@ -464,11 +473,8 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
    ouvert fait monter le plateau en haut à gauche : la pile garde alors sa place du bas.
    Repli sans ancres CSS : un `anchor()` inconnu invalide toute la déclaration ; chaque règle à ancre est donc précédée
    d'une règle séparée qui pose la valeur de repli (QA S09 P1, `docs/control-center-shell.md` › *Stacking by geometry*).
-   `--jv-live-fb` : sans ancre, le bas estimé du bandeau GPT-Live sous `--shell-panel-top` (110 px de haut au plus
-   mesurés à 600 px, + 8) ; à 700 px et moins il descend sous la rangée de l'onglet du rail (+ 48). Un plateau affiché
-   y compte pour 200 px au plus (30vh) : au-delà, la pile le chevauche plutôt que de sortir de l'écran. */
-body:has(#liveBanner:not([hidden])){--jv-live-fb:118px}
-@media(max-width:700px){body:has(#liveBanner:not([hidden])){--jv-live-fb:166px}}
+   Un plateau affiché y compte pour 200 px au plus (30vh) : au-delà, la pile le chevauche plutôt que de sortir de
+   l'écran. La puce GPT-Live est en haut à gauche, dans la rangée du lanceur : elle ne pèse sur aucune de ces règles. */
 @media(min-width:701px){body:has(>#presentationRail:not([hidden])) .toasts{right:calc(var(--shell-gutter) + var(--shell-rail-w) + 12px)}}
 @media(min-width:1100px){#app:has(#boardDropTray:not([hidden])):not(:has(.chat-panel.open))~.toasts{bottom:calc(var(--shell-bottom) + var(--shell-status-h) + 16px + min(46vh,360px))}}
 @media(min-width:1100px){#app:has(#boardDropTray:not([hidden])):not(:has(.chat-panel.open))~.toasts{bottom:max(68px,calc(anchor(--jv-tray top,0px) + 8px))}}
@@ -496,11 +502,10 @@ body:has(#liveBanner:not([hidden])){--jv-live-fb:118px}
    Chat ouvert, la règle du panneau (ci-dessus) s'applique.
    Les deux thèmes partagent la géométrie de la coque (`docs/control-center-shell.md`) : le lanceur occupe le haut à
    droite (une rangée depuis la Slice 08), l'onglet du rail est dessous ; la pile passe sous cet onglet (136 px), sous
-   le bandeau GPT-Live et sous le plateau de dépôt s'ils sont affichés (ancres `--jv-live`, `--jv-tray`, orbital-ui
-   Slice 09 : avec le bandeau, elle restait en bas, sur le bouton hissé du bas-gauche) ; sans `bottom:auto`, la grille
+   le plateau de dépôt s'il est affiché (ancre `--jv-tray`, orbital-ui Slice 09) ; sans `bottom:auto`, la grille
    `.toasts` étirait une seule notification sur toute la hauteur. */
-@media(max-width:700px){#app:not(:has(.chat-panel.open))~.toasts{top:calc(var(--shell-panel-top) + max(48px,var(--jv-live-fb,0px)));bottom:auto}#app:has(:where(#boardDropTray:not([hidden]))):not(:has(.chat-panel.open))~.toasts{top:calc(var(--shell-panel-top) + max(48px,var(--jv-live-fb,0px)) + 8px + min(30vh,200px))}}
-@media(max-width:700px){#app:not(:has(.chat-panel.open))~.toasts{top:max(calc(var(--shell-panel-top) + 48px),calc(anchor(--jv-live bottom,0px) + 8px),calc(anchor(--jv-tray bottom,0px) + 8px));bottom:auto}}
+@media(max-width:700px){#app:not(:has(.chat-panel.open))~.toasts{top:calc(var(--shell-panel-top) + 48px);bottom:auto}#app:has(:where(#boardDropTray:not([hidden]))):not(:has(.chat-panel.open))~.toasts{top:calc(var(--shell-panel-top) + 56px + min(30vh,200px))}}
+@media(max-width:700px){#app:not(:has(.chat-panel.open))~.toasts{top:max(calc(var(--shell-panel-top) + 48px),calc(anchor(--jv-tray bottom,0px) + 8px));bottom:auto}}
 .chat-panel.open{animation:chatIn .2s ease-out}
 @keyframes chatIn{from{opacity:0;transform:translateX(28px)}}
 .chat-panel header{gap:12px}
@@ -648,9 +653,9 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
    docs/06-ui-visual-spec.md › E) : une puce par enregistrement ouvert (point rouge + REC +
    durée + arrêt pour l'écran, micro + onde + durée + arrêt pour l'audio), une attente, une
    capture d'écran prise ; côte à côte, à la ligne vers le bas ; la note d'un refus s'ouvre
-   sous elles. Haut-gauche, à la gouttière : sous rien (le lanceur est à droite, le bandeau
-   GPT-Live et les panneaux commencent à `--shell-panel-top`, la roue est centrée sur le bord
-   gauche), et leur largeur s'arrête avant le lanceur. Caché tant qu'il n'y a rien à dire :
+   sous elles. Haut-gauche, à la gouttière : sous rien (le lanceur est à droite, les panneaux
+   commencent à `--shell-panel-top`, la roue est centrée sur le bord gauche ; la puce GPT-Live,
+   affichée, les fait descendre d'une rangée), et leur largeur s'arrête avant le lanceur. Caché tant qu'il n'y a rien à dire :
    aucun encombrement sans enregistrement. */
 #recIndicators{position:absolute;z-index:40;left:var(--shell-gutter);top:var(--shell-gutter);max-width:calc(100vw - 2 * var(--shell-gutter) - var(--shell-launcher-w) - 12px);display:flex;flex-direction:column;align-items:flex-start;pointer-events:auto}
 #recIndicators[hidden]{display:none}
@@ -719,20 +724,17 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 @keyframes boardDropRun{from{transform:translateX(-100%)}to{transform:translateX(340%)}}
 @media(prefers-reduced-motion:reduce){.board-drop::before,.board-drop-item[data-status=uploading]::after{animation:none}}
 /* Écran étroit : le bas appartient au mode d'interaction et aux colonnes gauche/droite ; le plateau monte sous le lanceur,
-   sous la rangée de l'onglet du rail (40 px, qu'il recouvrait à 600 px) et sous le bandeau GPT-Live s'il est affiché
-   (ancre `--jv-live`, qu'il passait dessous à 600 px) : orbital-ui Slice 09, QA S01 P2, QA S06/S08. */
-@media(max-width:760px){.board-drop-tray{top:calc(var(--shell-panel-top) + max(48px,var(--jv-live-fb,0px)))}}
-@media(max-width:760px){.board-drop-tray{top:calc(max(anchor(--jv-live bottom,0px),var(--shell-panel-top) + 40px) + 8px);bottom:auto;width:calc(100vw - 180px);max-height:min(50vh,360px)}}
+   sous la rangée de l'onglet du rail (40 px, qu'il recouvrait à 600 px) : orbital-ui Slice 09, QA S01 P2, QA S06/S08. */
+@media(max-width:760px){.board-drop-tray{top:calc(var(--shell-panel-top) + 48px);bottom:auto;width:calc(100vw - 180px);max-height:min(50vh,360px)}}
 /* Panneau latéral ouvert (orbital-ui Slice 09) : le plateau (34) passait sur le bas du panneau (33). De 1100 px, il se
    centre dans l'espace libre entre la carte Board (bas-gauche, 254 px ; 338 px dès 1400 px) et le panneau ; plus étroit,
-   cet espace manque : il monte en haut à gauche, sous le haut de la page et le bandeau, à gauche du panneau. */
+   cet espace manque : il monte en haut à gauche, sous le haut de la page, à gauche du panneau. */
 @media(min-width:1100px){#app:has(.panel.open) .board-drop-tray{left:calc(var(--shell-gutter) + 254px);right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)));width:auto;max-width:460px;margin-inline:auto;transform:none}}
 /* Slice 08 : à 1400 px et plus la carte Board va jusqu'à 320 px (`GEO.wideMaxWidth`) ; le centre d'état et le plateau
    de dépôt réservent gutter + 338 px. */
 @media(min-width:1400px){.status-centre{left:calc(var(--shell-gutter) + 338px);right:calc(var(--shell-gutter) + 338px)}
   #app:has(.panel.open) .board-drop-tray{left:calc(var(--shell-gutter) + 338px)}}
-@media(min-width:761px) and (max-width:1099px){#app:has(.panel.open) .board-drop-tray{top:calc(var(--shell-panel-top) + max(8px,var(--jv-live-fb,0px)))}}
-@media(min-width:761px) and (max-width:1099px){#app:has(.panel.open) .board-drop-tray{top:calc(max(anchor(--jv-live bottom,0px),var(--shell-panel-top)) + 8px);bottom:auto;left:var(--shell-gutter);right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)));width:auto;transform:none}}
+@media(min-width:761px) and (max-width:1099px){#app:has(.panel.open) .board-drop-tray{top:calc(var(--shell-panel-top) + 8px);bottom:auto;left:var(--shell-gutter);right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)));width:auto;transform:none}}
 
 /* ---------- Pastilles d'arrière-plan (centre d'état du bas, Slice 06, D8) ----------
    Une pastille ronde de 32 px par catégorie non vue, dans l'ordre du registre
@@ -1491,11 +1493,6 @@ details.rd[open]>summary{margin-bottom:14px}
   .conn-key-actions{grid-column:1/-1;justify-content:flex-start}
 }
 @media(max-width:700px){
-  /* Géométrie de la coque à cette largeur : règle commune aux deux thèmes plus
-     haut (zones de docs/control-center-shell.md). Ici, seulement la mise en
-     page interne du bandeau GPT-Live. */
-  .live-banner{grid-template-columns:auto minmax(0,1fr)}
-  .live-actions{grid-column:1/-1}.live-stop,.live-ack{width:100%}
   .catalog-toolbar{grid-template-columns:1fr}
   .catalog-table-wrap{overflow:visible;border:0}
   .catalog-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
@@ -2645,15 +2642,16 @@ button.wsp-ename:hover{color:var(--accent)}
   <div id="boardsHud" data-keep-live="run" data-shell-control></div>
   <div id="boardsPanel" data-keep-live="run" hidden></div>
   <section class="live-banner" id="liveBanner" role="status" aria-live="assertive" aria-label="État de la session GPT-Live" data-shell-control hidden>
-    <span class="live-led" aria-hidden="true"></span>
-    <div class="live-main"><div class="live-title">GPT-LIVE <strong id="liveState">ACTIF</strong> · <span id="liveElapsed">00:00</span></div><div class="live-meta" id="liveMeta"></div></div>
-    <div class="live-actions">
-      <button class="live-stop" id="liveStop" type="button">ARRÊTER</button>
-      <!-- Clôture incertaine seulement : OpenAI n'a pas confirmé la fermeture
-           et son rattachement répond 503 ; sans ce constat, la voix reste
-           bloquée jusqu'à l'expiration d'une heure. Deux clics, sans dialogue. -->
-      <button class="live-ack" id="liveAck" type="button" hidden title="La session est terminée de votre côté : Core la clôt sans relevé d'usage final et la voix peut rouvrir.">CONSIDÉRER COMME FERMÉE</button>
+    <div class="live-chip">
+      <span class="live-led" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="live-title"><span class="sr-only">GPT-Live</span><strong id="liveState"></strong><span id="liveElapsed">00:00</span></span>
+      <span class="live-meta sr-only" id="liveMeta"></span>
+      <button class="live-stop" id="liveStop" type="button" aria-label="ARRÊTER" title="ARRÊTER"></button>
     </div>
+    <!-- Clôture incertaine seulement : OpenAI n'a pas confirmé la fermeture
+         et son rattachement répond 503 ; sans ce constat, la voix reste
+         bloquée jusqu'à l'expiration d'une heure. Deux clics, sans dialogue. -->
+    <button class="live-ack" id="liveAck" type="button" hidden title="La session est terminée de votre côté : Core la clôt sans relevé d'usage final et la voix peut rouvrir.">CONSIDÉRER COMME FERMÉE</button>
   </section>
   <!-- Lanceur global (zone haut-droit ; orbital-ui Slice 08, D11 ;
        docs/control-center-shell.md › Global launcher). Trois outils fréquents
@@ -3020,11 +3018,13 @@ function timeOf(ts){const t=String(ts||'');return t.length>19?t.slice(11,23):t}
 function entries(items){if(!items.length)return '<div class="empty">Aucune entrée.</div>';return items.slice().reverse().map(x=>{const data=x.data&&Object.keys(x.data).length?x.data:null;return `<details class="entry ${x.level==='error'?'error':''}"><summary><span class="ico">${iconFor(String(x.kind||''))}</span><span class="etxt"><span class="emsg">${esc(x.message)}</span><span class="emeta">${esc(timeOf(x.ts))} · ${esc(x.kind)}${x.archived_at?' · archivé le '+esc(timeOf(x.archived_at)):''}</span></span><span class="dot ${statusFor(x)}"></span></summary><div class="detail"><div class="emeta" style="margin-bottom:6px"><span class="chip">${esc(x.level)}</span>${esc(x.ts)}</div>${data?`<pre class="log">${esc(JSON.stringify(data,null,2))}</pre>`:'<div class="hint">Aucun détail supplémentaire.</div>'}</div></details>`}).join('')}
 const LIVE={base:0,received:0,running:false};
 function tickLive(){if(!LIVE.running)return;$('#liveElapsed').textContent=JarvisLiveView.duration(LIVE.base+(Date.now()-LIVE.received)/1000)}
-function renderLive(live){const view=JarvisLiveView.project(live),banner=$('#liveBanner');if(!view.visible){banner.hidden=true;LIVE.running=false;return}banner.hidden=false;banner.classList.toggle('uncertain',view.uncertain);$('#liveState').textContent=view.label;LIVE.base=view.elapsed;LIVE.received=Date.now();LIVE.running=!view.frozen;$('#liveElapsed').textContent=JarvisLiveView.duration(view.elapsed);tickLive();const parts=view.details.map(esc);if(view.warning)parts.push(`<span class="live-warning">${esc(view.warning)}</span>`);$('#liveMeta').innerHTML=parts.join(' · ');const stop=$('#liveStop');stop.disabled=view.disabled;stop.textContent=view.action;const ack=$('#liveAck');if(!view.acknowledge){ack.hidden=true;resetLiveAck()}else ack.hidden=false}
+function renderLive(live){const view=JarvisLiveView.project(live),banner=$('#liveBanner');if(!view.visible){banner.hidden=true;LIVE.running=false;return}banner.hidden=false;banner.classList.toggle('uncertain',view.uncertain);$('#liveState').textContent=view.badge;LIVE.base=view.elapsed;LIVE.received=Date.now();LIVE.running=!view.frozen;$('#liveElapsed').textContent=JarvisLiveView.duration(view.elapsed);tickLive();const parts=view.details.map(esc);if(view.warning)parts.push(`<span class="live-warning">${esc(view.warning)}</span>`);$('#liveMeta').innerHTML=parts.join(' · ');banner.title=[`GPT-Live · ${view.label}`,...view.details,view.warning].filter(Boolean).join('\n');const stop=$('#liveStop');stop.disabled=view.disabled;setLiveStop(view.action);const ack=$('#liveAck');if(!view.acknowledge){ack.hidden=true;resetLiveAck()}else ack.hidden=false}
+/* Le carré d'arrêt n'a pas de texte visible : ce qu'il fait se lit dans son nom et son infobulle. */
+function setLiveStop(text){const stop=$('#liveStop');stop.setAttribute('aria-label',text);stop.title=text}
 const LIVE_ACK={armed:false,timer:null};
 function resetLiveAck(){const ack=$('#liveAck');clearTimeout(LIVE_ACK.timer);LIVE_ACK.armed=false;ack.classList.remove('confirm');ack.disabled=false;ack.textContent='CONSIDÉRER COMME FERMÉE'}
-async function acknowledgeLive(){const ack=$('#liveAck');if(!LIVE_ACK.armed){LIVE_ACK.armed=true;ack.classList.add('confirm');ack.textContent='CONFIRMER : SESSION FERMÉE';LIVE_ACK.timer=setTimeout(resetLiveAck,6000);return}clearTimeout(LIVE_ACK.timer);ack.disabled=true;ack.textContent='CLÔTURE…';try{const result=await api('/api/live/acknowledge-closed',{method:'POST'});resetLiveAck();renderLive(result.live)}catch(e){resetLiveAck();const meta=$('#liveMeta');meta.innerHTML+=` · <span class="live-warning">${esc(e.message)}</span>`}}
-async function stopLive(){const button=$('#liveStop');button.disabled=true;button.textContent='DEMANDE…';try{const result=await api('/api/live/stop',{method:'POST'});renderLive(result.live)}catch(e){button.disabled=false;button.textContent='RÉESSAYER L’ARRÊT';const meta=$('#liveMeta');meta.innerHTML+=` · <span class="live-warning">${esc(e.message)}</span>`}}
+async function acknowledgeLive(){const ack=$('#liveAck');if(!LIVE_ACK.armed){LIVE_ACK.armed=true;ack.classList.add('confirm');ack.textContent='CONFIRMER : SESSION FERMÉE';LIVE_ACK.timer=setTimeout(resetLiveAck,6000);return}clearTimeout(LIVE_ACK.timer);ack.disabled=true;ack.textContent='CLÔTURE…';try{const result=await api('/api/live/acknowledge-closed',{method:'POST'});resetLiveAck();renderLive(result.live)}catch(e){resetLiveAck();toast({title:'GPT-Live : clôture refusée',sub:e.message,kind:'bad'})}}
+async function stopLive(){const button=$('#liveStop');button.disabled=true;setLiveStop('DEMANDE…');try{const result=await api('/api/live/stop',{method:'POST'});renderLive(result.live)}catch(e){button.disabled=false;setLiveStop('RÉESSAYER L’ARRÊT');toast({title:'GPT-Live : arrêt impossible',sub:e.message,kind:'bad'})}}
 $('#liveStop').addEventListener('click',stopLive);
 $('#liveAck').addEventListener('click',acknowledgeLive);
 let errorsView='active';

@@ -1617,6 +1617,8 @@ async def _run_voice_v2() -> int:
         # Ce qui a été demandé, face à ce que la capture applique : publié au
         # Control Center (`.voice_capture`, tâche 08). Hors mode continu, sans objet.
         echo_cancellation=echo_cancellation if continuous_capture else None,
+        # Retour utilisateur du 2026-10-29 : réveillé, JARVIS ne disait rien.
+        greet_on_first_wake=os.getenv("JARVIS_VOICE_GREETING", "1").strip().lower() not in {"0", "false", "no", "off"},
     )
     voice_holder["voice"] = voice
     if presentation is not None:

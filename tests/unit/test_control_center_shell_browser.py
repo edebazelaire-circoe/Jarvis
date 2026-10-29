@@ -974,16 +974,37 @@ def test_launcher_names_survive_a_theme_round_trip(tmp_path):
     assert _errors(step) == [], _errors(step)
 
 
-def test_the_banner_takes_the_width_back_when_the_rail_is_hidden(tmp_path):
-    """QA S09 : le bandeau GPT-Live gardait la largeur réduite par le rail une
-    fois le rail masqué. 1280 px : 620 px à côté du rail, 680 px sans lui."""
-    width = "Math.round(document.getElementById('liveBanner').getBoundingClientRect().width)"
-    hide = "(()=>{const r=document.getElementById('presentationRail');r.hidden=true;return r.hidden})()"
-    step = _centre(tmp_path, [{"width": 1280, "height": 720, "seed": {**MIXED, "live": LIVE, "mode": MODE}, "actions": [
-        ["eval", "beside", width, 400], ["eval", "hide", hide, 300], ["eval", "alone", width, 50]]}])[0]
-    r = step["results"]
-    assert r["beside"] == 620 and r["hide"] is True and r["alone"] == 680, r
-    assert _errors(step) == [], _errors(step)
+#: La puce GPT-Live, mesurée avec un enregistrement audio ouvert (`#recIndicators`).
+CHIP = r"""(()=>{const h=document.getElementById('recIndicators');h.hidden=false;let c=h.querySelector('.ri-chip');
+  if(!c){c=document.createElement('button');c.type='button';c.className='ri-chip';c.textContent='REC 00:12';h.appendChild(c)}return 1})()"""
+CHIP = r"""(()=>{const box=el=>{if(!el||el.closest('[hidden]'))return null;const r=el.getBoundingClientRect();
+  return r.width>0?{l:r.left,t:r.top,r:r.right,b:r.bottom,w:r.width,h:r.height}:null};const q=s=>document.querySelector(s);
+  const stop=q('#liveStop');return {chip:box(q('#liveBanner')),stop:box(stop),stopName:stop.getAttribute('aria-label'),
+    rec:box(q('#recIndicators .ri-chip')),dock:box(q('.dock')),state:q('#liveState').textContent,
+    elapsed:q('#liveElapsed').textContent,title:q('#liveBanner').title}})()"""
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_the_live_chip_is_small_top_left_and_pushes_the_recording_chip_down(tmp_path, theme):
+    """Retour utilisateur du 2026-10-29 : le bandeau GPT-Live centré prenait
+    trop de place. La puce tient en haut à gauche, sur une rangée de commande,
+    sans toucher le lanceur ; l'état « ACTIF » ne s'écrit pas, la durée oui ;
+    le carré d'arrêt a un nom ; un indicateur d'enregistrement passe dessous."""
+    sizes = ((1440, 900), (600, 800))
+    plan = [{"width": w, "height": h, "theme": theme, "seed": {**BUSY, "live": LIVE, "mode": MODE}, "actions": [
+        ["eval", "chip", CHIP, 600]]} for (w, h) in sizes]
+    for (w, h), step in zip(sizes, _centre(tmp_path, plan)):
+        c = step["results"]["chip"]
+        where = (theme, w, h)
+        gutter = 18 if w > 700 else 10
+        assert c["chip"] and abs(c["chip"]["l"] - gutter) < 1 and abs(c["chip"]["t"] - gutter) < 1, (where, c["chip"])
+        assert c["chip"]["h"] <= 36 and c["chip"]["w"] <= 160, (where, "puce compacte", c["chip"])
+        assert _no_overlap(c["chip"], c["dock"]) and _no_overlap(c["chip"], c["rec"]), (where, c)
+        assert c["rec"]["t"] >= c["chip"]["b"], (where, "l'enregistrement passe sous la puce", c)
+        assert c["state"] == "" and c["elapsed"] == "01:05", (where, c)
+        assert c["stopName"] == "ARRÊTER" and c["stop"]["w"] >= 20, (where, c)
+        assert "GPT-Live · ACTIF" in c["title"], (where, c["title"])
+        assert _errors(step) == [], _errors(step)
 
 
 #: Un navigateur sans ancres CSS : chaque déclaration à `anchor(` est retirée par le CSSOM (un parseur qui ne
@@ -1016,7 +1037,7 @@ def test_without_css_anchors_the_fallbacks_hold(tmp_path):
         ["shot", "s2", str(shots / f"no-anchor-{w}x{h}-panel.png"), 50]]} for (w, h) in sizes]
     for (w, h), step in zip(sizes, _centre(tmp_path, plan)):
         r = step["results"]
-        assert r["removed"] == 5, ("les cinq déclarations à ancre de control_center.html", r["removed"])
+        assert r["removed"] == 3, ("les trois déclarations à ancre de control_center.html", r["removed"])
         for state in ("closed", "opened"):
             s = r[state]
             where = (w, h, state)

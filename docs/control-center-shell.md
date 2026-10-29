@@ -55,9 +55,8 @@ wheel/dossier refactor), so neither skin styles it.
 
 | Zone | Surfaces today | Owner of the content |
 | --- | --- | --- |
-| `top-left` | empty at rest (wheel/dossier refactor Slice 02, D05: no Board selector, no permanent state badge); since its Slice 04 the recording indicators `#recIndicators` (red `REC` for the screen, audio cue), only while Core lists an open capture — see [capture.md](capture.md) › *Interface* | `control_center_capture_wheel.js` |
+| `top-left` | empty at rest (wheel/dossier refactor Slice 02, D05: no Board selector, no permanent state badge); since its Slice 04 the recording indicators `#recIndicators` (red `REC` for the screen, audio cue), only while Core lists an open capture — see [capture.md](capture.md) › *Interface*; since 2026-10-29 the GPT-Live chip `.live-banner` above them, only while a session is open | `control_center_capture_wheel.js`, page |
 | `top-right` | `.dock` (global launcher, Slice 08: one row of 34 px buttons — four since the wheel/dossier refactor Slice 04 folded Réglages into « Plus d’outils » —, the « Plus d’outils » popover under it; see [Global launcher](#global-launcher-dock)) | page |
-| `top-centre` | `.live-banner` (GPT-Live, transient) | page |
 | `left-edge` | `#toolWheel` anchor and orbital tool wheel (Slice 02; live by default since Slice 04; five categories since the wheel/dossier refactor Slice 03: JARVIS, Sélection, Dossier, Capture, Paramètres); `#barehandsHud`, `#barehandsPalette` hosts stay declared but hidden while the wheel is visible (Slice 03) | their modules |
 | `left-low` | `#screenshotPreview` (Slice 05): preview of the last successful screenshot, right of the wheel anchor, its bottom 172 px above the page bottom so it clears the bottom-left context zone (Board card and scene notes stacked up to 162 px) | `control_center_screenshot_preview.js` |
 | `bottom-left` | Board card `#boardsHud` (its panel `#boardsPanel` opens above it, see [Board card](#board-card-boardshud)), `.sc-status` notes of the scene | `control_center_boards.js`, scene |
@@ -76,6 +75,14 @@ Placement rules that hold in both themes (measured by
   Slice 04 it holds the recording indicators `#recIndicators` while, and only
   while, Core lists an open capture (top and left at `--shell-gutter`, chips
   wrapping downwards, never wider than the space left of the launcher). The
+  GPT-Live chip `.live-banner` (user feedback 2026-10-29: the centred banner
+  took too much room) sits at the same corner while a session is open: an
+  animated wave, the elapsed time and a square stop button, one
+  `--shell-control` high; the state word shows only outside the normal run
+  (stopping, uncertain close…), usage/cost/idle details are in its `title` and
+  for screen readers, and the uncertain close adds « CONSIDÉRER COMME FERMÉE »
+  beside it. While it shows, `#recIndicators` moves down one row
+  (`--shell-gutter` + `--shell-control` + 6 px). The
   wake key hint (`F9 · DÉMARRER`, `F9 · VOICE HORS LIGNE`…) and the
   voice/agent/sub-agent words of the old `.state` (`VOICE SLEEP · CLAUDE
   RUNNING`) are read in the wheel's **JARVIS** submenu (see [Tool
@@ -94,33 +101,24 @@ Placement rules that hold in both themes (measured by
 - **Board drop tray** (`bottom-centre`): above the status centre,
   `bottom: calc(var(--shell-bottom) + var(--shell-status-h) + 8px)`; at 760 px
   and below it climbs under the launcher, below the rail tab row
-  (`--shell-panel-top` + 40 px) and below the GPT-Live banner when it shows
-  (CSS anchor `--jv-live`), + 8 px. With a side panel open it never runs
+  (`--shell-panel-top` + 40 px), + 8 px. With a side panel open it never runs
   under the panel: from 1100 px it is centred between the Board card zone
   (gutter + 254 px) and the panel; from 761 to 1099 px it climbs top-left,
   beside the panel (Slice 09).
 - **Stacking by geometry, not by rank (Slice 09).** Surfaces whose height is
   only known at runtime are tied with CSS anchor positioning (Chrome/Edge
-  125+): `.live-banner`
-  (`anchor-name: --jv-live`) and `#boardDropTray` (`--jv-tray`). The GPT-Live
-  banner is centred between the two columns and never covers the rail
-  (`width: min(680px, 100vw - 2 × (gutter + --shell-rail-w + 12px))`;
-  rail hidden or absent: `min(680px, 100vw - 2 × (gutter + 12px))`); at
-  700 px and below it sits under the rail tab row (`--shell-panel-top` +
-  48 px). Toasts sit left of the visible rail above 700 px (`right: gutter +
+  125+): `#boardDropTray` (`--jv-tray`). The GPT-Live chip lives in the
+  launcher row (top-left) since 2026-10-29 and weighs on none of these rules
+  (its `--jv-live` anchor and `--jv-live-fb` estimate are gone). Toasts sit left of the visible rail above 700 px (`right: gutter +
   --shell-rail-w + 12px`), rise above a visible bottom drop tray
   (`bottom: max(68px, anchor(--jv-tray top) + 8px)`), and at 700 px and below
-  go under the rail tab, the banner and the tray (`top: max(--shell-panel-top
-  + 48px, banner bottom + 8, tray bottom + 8)`). Under 940 px with a side
+  go under the rail tab and the tray (`top: max(--shell-panel-top
+  + 48px, tray bottom + 8)`). Under 940 px with a side
   panel open the toasts stay at the right, over the panel, for the length of
   a toast (no room on its left) — the one accepted overlap.
   **Fallback without anchors (QA S09 P1).** An unknown `anchor()` invalidates its whole declaration, so each
-  anchored rule is preceded by a separate rule that sets the fallback value
-  with the banner's bottom estimated by `--jv-live-fb` (set on `body` while
-  `#liveBanner` shows: 118 px under `--shell-panel-top`, 166 px at 700 px and
-  below; 110 px is the tallest banner measured, at 600 px): the tray goes
-  under the rail tab row (`--shell-panel-top` + 48 px) or under that estimate,
-  or + 8 px beside an open panel; toasts go under the same row or estimate,
+  anchored rule is preceded by a separate rule that sets the fallback value:
+  toasts go under the rail tab row (`--shell-panel-top` + 48 px),
   plus 8 px + `min(30vh, 200px)` when the tray shows; above a bottom tray:
   `bottom: --shell-bottom + --shell-status-h + 16 px + min(46vh, 360px)`.
   Without anchors nothing leaves the screen at 500-1280 px and the tray covers
@@ -154,7 +152,7 @@ only in the `@media` blocks listed here. `JarvisShell.TOKENS` and
 | `--shell-status-h` | `44px` | | height of the bottom status centre (Slice 06); the drop tray and the lifted Board card sit above it |
 | `--shell-control` | `34px` | | launcher button size |
 | `--shell-launcher-w` | `154px` | | launcher width: 4 buttons × 34 + 3 gaps × 6 (Slice 08, then wheel/dossier refactor Slice 04: three tools and « Plus d’outils »), one row at every width; also bounds the top-left recording indicators |
-| `--shell-panel-top` | `64px` | `88px` at 700 | top of side panels and of the GPT-Live banner (below the launcher; at 700 px and below, 88 px: the launcher row plus the narrow gutter) |
+| `--shell-panel-top` | `64px` | `88px` at 700 | top of side panels (below the launcher; at 700 px and below, 88 px: the launcher row plus the narrow gutter) |
 | `--shell-panel-w` | `500px` | | side panel width (capped by the window) |
 | `--shell-panel-bottom` | `68px` | | bottom of side panels: they stop above the chat tab row (18 + 40 + 10), so the tab stays whole and clickable |
 | `--shell-rail-w` | `300px` | `72px` at `max-width:1099px`, `0px` at 700 | workspace rail width (Slice 07); `0px` = the rail is a tab |
@@ -207,7 +205,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 34 | `.board-drop-card` | `control_center.html` | `.board-drop-card` | drop card, readable over the left column at 600 px |
 | 34 | `#boardDropTray` | `control_center.html` | `.board-drop-tray` | drop tray, above the status centre and the chat tab |
 | 34 | `#jvStudioInspector` | `control_center_presentation_studio_inspector_core.js` | `#${PANEL_ID}` | Studio inspector side panel, above the panel it replaces (9120 while Variants is open, below) |
-| 35 | `.live-banner` | `control_center.html` | `.live-banner` | GPT-Live banner over the controls |
+| 35 | `.live-banner` | `control_center.html` | `.live-banner` | GPT-Live chip (top-left) over the controls |
 | 36 | `.bh-hud-pop` | `control_center_barehands_hud.js` | `#${DOM.hostId} .bh-hud-pop` | Bare Hands lifecycle selector |
 | 36 | `.dock[data-more-open]` | `control_center.html` | `.dock[data-more-open]` | launcher with its « Plus d’outils » popover open (Slice 08): the whole launcher rises to the choosers' rank, over the side panels and the banner it briefly covers |
 | 37 | `#toolWheel[data-open]` | `control_center.html` | `#toolWheel[data-open]` | open wheel and its curved submenu: above the choosers, the wheel is the user's latest focus; never open together with `#boardsPanel` ([Exclusive surfaces](#exclusive-surfaces-wheel-and-board-panel)) |
@@ -352,7 +350,7 @@ controls; the wheel and the indicators are placed by the sheet instead.)
 | `.dock` | top-right | page |
 | `#recIndicators` | top-left (wheel/dossier refactor Slice 04) | page (host); content by `control_center_capture_wheel.js` |
 | `#bgPills` | bottom-centre (status centre) | page (host); content by `renderBackgroundPills` |
-| `.live-banner` | top-centre | page |
+| `.live-banner` | top-left (2026-10-29; before: top-centre) | page |
 | `#panel`, `#chatPanel` | right | page |
 | `#barehandsHud`, `#barehandsPalette` | left-edge (hidden while the wheel is visible) | page (hosts) |
 | `#toolWheel` | left-edge | page |
@@ -1347,7 +1345,7 @@ text without its full text in a `title` / name, no control off-screen, no
 horizontal scroll, the state's surface whole and on top. Next to it: keyboard
 only and mouse only full paths, reduced motion (nothing in the shell animates
 or transitions), forced colours, axe-core (`JARVIS_AXE_JS`), 200 % zoom,
-700 px wide / 560 px high, the GPT-Live banner + drop tray + toasts + rail
+700 px wide / 560 px high, the GPT-Live chip + drop tray + toasts + rail
 stack at four sizes with a panel closed and open (and again with every
 `anchor()` declaration removed, for the fallbacks), and a real held object
 dragged into `#chatTab`, the Board card and the rail (it stops against each).

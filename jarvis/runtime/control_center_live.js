@@ -17,8 +17,11 @@
     if(live.idle)details.push(live.idle.waiting_for_safe_point?'inactivité atteinte · attente d’un point sûr':`veille auto dans ${duration(live.idle.remaining_seconds)}`);
     if(live.cost_estimate){const c=live.cost_estimate;details.push(`estimation ${Number(c.amount).toFixed(4)} ${c.currency} · ${c.source}`)}
     if(!live.cost_estimate&&!live.usage)details.push('coût indisponible · aucun tarif courant configuré');
-    return {visible:true,state,label:LABELS[state]||state.toUpperCase(),
-      uncertain:live.uncertain===true||live.core_reachable===false,
+    const label=LABELS[state]||state.toUpperCase(),uncertain=live.uncertain===true||live.core_reachable===false;
+    return {visible:true,state,label,uncertain,
+      // La puce ne nomme l'état qu'hors du régime normal : une session qui
+      // démarre ou tourne se dit par l'onde et la durée.
+      badge:!uncertain&&(state==='active'||state==='starting')?'':label,
       // Un temps actif figé ne doit pas être réanimé par le ticker de la page :
       // sinon l'écran remet à courir un compteur que Core a arrêté.
       frozen:live.elapsed_basis==='reaped',

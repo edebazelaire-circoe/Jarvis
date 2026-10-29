@@ -114,6 +114,20 @@ The Chat works in Off and Sleep (`chat_writable` for `absent` and `background`, 
 never changes the voice preference, never starts Voice, never opens a microphone, and a text turn's answer is never
 spoken (`speech_withheld_text_channel`). In Active the Chat stays locked exactly as before.
 
+## Greeting on the first wake
+
+User feedback 2026-10-29: woken after start, JARVIS said nothing until spoken to. The first session a Voice process
+opens from a wake (wake word or key) now says one fixed French sentence
+([`jarvis/domain/voice_greeting.py`](../jarvis/domain/voice_greeting.py)): « Oui, monsieur. Voulez-vous reprendre
+« <Board title> » ? » when the active Board is a named one, « Oui, monsieur. Je suis en ligne. » otherwise (default
+Board, unreadable `GET /v1/boards/active`, title over 80 characters). Never on later wakes of the same process, a
+`rebind_board` reopening or a stack switch hand-off; still nothing is opened before the wake.
+
+It goes through `SpeechScheduler.greet`: an `ACK` with `system.notification` provenance carrying Core's current
+speech source, held until Core announces it and dropped after `GREETING_TTL_S` (8 s,
+`voice.speech.greeting_dropped`). A request spoken right after the wake moves Core's intent on and supersedes it
+(`stale_source`). `JARVIS_VOICE_GREETING=0` turns it off.
+
 ## Wake word engine (HD-V12-01)
 
 Internal V1.2 builds ship openWakeWord (CC BY-NC-SA models) so Sleep arms the spoken wake word; this is a
