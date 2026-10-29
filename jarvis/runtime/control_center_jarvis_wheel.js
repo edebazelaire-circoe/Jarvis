@@ -49,7 +49,8 @@
 
   /* `voice_state` de Voice -> le mot de l'interface et l'étiquette de l'orbe. */
   const VOICE_STATES=Object.freeze({
-    idle:Object.freeze({word:'Veille',tag:'SLEEP'}),
+    idle:Object.freeze({word:'Veille',tag:'IDLE'}),
+    sleep:Object.freeze({word:'Sommeil',tag:'SLEEP'}),
     waiting:Object.freeze({word:'Attente',tag:'WAIT'}),
     listening:Object.freeze({word:'Écoute',tag:'LISTEN'}),
     speaking:Object.freeze({word:'Parole',tag:'TALK'}),

@@ -68,6 +68,24 @@ class CompositeWakeWordBackend:
         for backend in self.backends:
             await backend.resume()
 
+    def set_speech_listening(self, enabled: bool) -> None:
+        """Armer / désarmer la détection de parole d'IDLE des détecteurs qui en ont une (SLEEP : désarmée)."""
+
+        for backend in self.backends:
+            setter = getattr(backend, "set_speech_listening", None)
+            if callable(setter):
+                setter(enabled)
+
+    def take_speech_preroll(self) -> tuple[bytes, int] | None:
+        """La parole tampon du premier détecteur qui en a gardé, ou `None`."""
+
+        found = None
+        for backend in self.backends:
+            taker = getattr(backend, "take_speech_preroll", None)
+            if callable(taker):
+                found = taker() or found
+        return found
+
     async def close(self) -> None:
         if self._closed:
             return

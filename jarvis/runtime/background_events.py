@@ -213,7 +213,11 @@ def _classify(kind: str, data: dict[str, Any], message: str = "") -> str | None:
 
     if kind == "agent.subagent.finished":
         status = str(data.get("status") or "")
-        return FAILED if status in _FAILED_TASK_STATUSES else DONE
+        if status in _FAILED_TASK_STATUSES:
+            return FAILED  # une tâche ne meurt jamais en silence, entière ou non
+        # Une sous-tâche réussie dont le travail continue n'est pas une notification : seule la fin de la
+        # tâche entière l'est. Une trace d'avant ce champ compte comme entière.
+        return DONE if data.get("whole_task", True) is not False else None
     if kind in ("agent.unsolicited_failed", "core.brain.turn_failed", "agent.work_state_failed"):
         return FAILED
     if kind == "voice.speech.error_withheld":

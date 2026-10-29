@@ -919,6 +919,17 @@ class PresentationWakeRouter:
     async def resume(self) -> None:
         await self._both("resume")
 
+    def set_speech_listening(self, enabled: bool) -> None:
+        """La parole d'IDLE n'existe qu'en SIMPLE : seule la pile de repos la porte."""
+
+        setter = getattr(self.simple, "set_speech_listening", None)
+        if callable(setter):
+            setter(enabled)
+
+    def take_speech_preroll(self) -> tuple[bytes, int] | None:
+        taker = getattr(self.simple, "take_speech_preroll", None)
+        return taker() if callable(taker) else None
+
     async def _both(self, name: str) -> None:
         """Appeler `name` sur la pile de SIMPLE **et** sur la lane vivante."""
 

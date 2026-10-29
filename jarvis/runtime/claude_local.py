@@ -2440,7 +2440,17 @@ class ClaudeLocalAgent:
                 data={**data, "spoken": False, "ephemeral": True, "work_id": work_id},
             )
             return
-        # Relais de fin de sous-agent : un résultat durable, rattaché au travail
+        if data["origin"] == "task-notification" and not self.subtasks.whole_task_finished():
+            # Une sous-tâche vient de finir, le travail continue : seule la fin de la tâche entière se
+            # dit (voix et Control Center). Le résumé du brain reste dans sa conversation ; le relais
+            # qui conclura le travail le reprendra.
+            self.journal.emit(
+                "agent.unsolicited_result", "Fin d'une sous-tâche, le travail continue : rien n'est dit",
+                data={**data, "spoken": False, "held_subtask": True, "work_id": work_id,
+                      "running_work": self.subtasks.running_work_count()},
+            )
+            return
+        # Relais de fin de tâche entière : un résultat durable, rattaché au travail
         # qu'il conclut quand une seule tâche de fond vient de finir.
         self._append_notice(text, data, NoticeTyping(kind=SpeechKind.RESULT, work_id=work_id))
 

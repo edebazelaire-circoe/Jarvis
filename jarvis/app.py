@@ -680,6 +680,36 @@ def _speaker_verifier(overrides: dict[str, object], runtime_root: Path, journal=
         return None
 
 
+def _idle_speech_detector(overrides: dict[str, object], runtime_root: Path, journal=None):
+    """Détecteur de parole d'IDLE (`jarvis/audio/idle_speech.py`) : la parole rouvre la séance GPT-Live.
+
+    Rend `None` quand elle ne doit pas la rouvrir : `JARVIS_IDLE_SPEECH=0`, ou Solo Owner sans
+    vérificateur de locuteur (jamais de repli sur la salle ouverte : une voix inconnue ne déclenche
+    pas un coût fournisseur). Avec Solo Owner et un vérificateur, seule la voix du propriétaire
+    confirme la parole.
+    """
+    from jarvis.audio.idle_speech import IdleSpeechDetector, VerifierOwnerJudge
+
+    if os.getenv("JARVIS_IDLE_SPEECH", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return None
+    authorization, authorization_error = _conversation_authorization(overrides, journal)
+    judge = None
+    if authorization_error is not None:
+        return None
+    if authorization.owner_enforced:
+        verifier = _speaker_verifier(overrides, runtime_root, journal)
+        if verifier is None:
+            if journal is not None:
+                journal.emit(
+                    "voice.idle.speech_disabled",
+                    "Solo Owner sans vérificateur de locuteur : la parole ne rouvre pas la séance en IDLE",
+                    level="warning", data={"code": "idle_speech_needs_owner_verifier"},
+                )
+            return None
+        judge = VerifierOwnerJudge(verifier)
+    return IdleSpeechDetector(judge=judge)
+
+
 def _conversation_authorization(overrides: dict[str, object], journal=None):
     """Autorisation de conversation retenue par Voice, et l'erreur de réglage éventuelle.
 
@@ -1367,6 +1397,9 @@ async def _run_voice_v2() -> int:
     from jarvis.adapters.wakeword_own_stream import OwnStreamWakeWordBackend
     from jarvis.runtime.simple_wake_word import simple_wake_backends
 
+    # IDLE / SLEEP : propre à GPT-Live (Duplex). Les autres architectures gardent le repos unique.
+    live_rest = composition.selection.config if isinstance(composition.selection.config, DuplexVoiceConfig) else None
+    idle_speech = _idle_speech_detector(overrides, settings.runtime_root, journal) if live_rest is not None else None
     voice_wake_backends = simple_wake_backends(
         block=wake_word_settings.load(overrides),
         access_key=wake_key or "",
@@ -1374,6 +1407,7 @@ async def _run_voice_v2() -> int:
         device=audio_input_device,
         fallback_sample_rate=stack.input_sample_rate,
         journal=journal,
+        speech_detector=idle_speech,
     )
     wake = CompositeWakeWordBackend([KeyboardWakeWordBackend(key_name=manual_key), *voice_wake_backends])
     # Mode legacy : l'agent Claude est hébergé par le Control Center, et Voice
@@ -1619,6 +1653,11 @@ async def _run_voice_v2() -> int:
         echo_cancellation=echo_cancellation if continuous_capture else None,
         # Retour utilisateur du 2026-10-29 : réveillé, JARVIS ne disait rien.
         greet_on_first_wake=os.getenv("JARVIS_VOICE_GREETING", "1").strip().lower() not in {"0", "false", "no", "off"},
+        # IDLE puis SLEEP (docs/voice-lifecycle.md) : seulement GPT-Live ; la parole rouvre en IDLE si un
+        # détecteur local la porte (pile de repos openWakeWord).
+        sleep_timeout_s=live_rest.sleep_timeout_s if live_rest is not None else None,
+        idle_speech_wake=idle_speech is not None and any(
+            getattr(backend, "speech_detector", None) is idle_speech for backend in voice_wake_backends),
     )
     voice_holder["voice"] = voice
     if presentation is not None:

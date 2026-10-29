@@ -20,8 +20,11 @@ from jarvis.domain.speaker import (
 from jarvis.domain.v2 import AddressingDecision, VoiceLifecycleState
 from jarvis.domain.voice_frontend import FrontendState, VoiceOperationResult, VoiceOperationStatus
 from jarvis.domain.voice_greeting import greeting_text
+from jarvis.domain.voice_rest import RestLevel
 from jarvis.ports.v2 import Clock, RealtimeSession, WakeWordBackend, supports_output_control
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
+from jarvis.adapters.wakeword_own_stream import is_speech_label
+from jarvis.runtime.completion_watch import CompletionWatcher
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.interaction_mode_observer import InteractionModeObserver, follow_core_mode
 from jarvis.runtime.speech_scheduler import SpeechScheduler
@@ -32,6 +35,16 @@ from jarvis.v2_config import VoiceArchitecture
 #: Rebind de Board (Slice 04b) : temps laissé à la parole de l'ancien Board
 #: (ce qui joue et ce qui était déjà en file) avant de fermer la session.
 BOARD_REBIND_DRAIN_S = 6.0
+#: Parole détectée en IDLE : laisser « Hey Jarvis » finir de se prononcer avant de rouvrir,
+#: le mot d'éveil prend toujours le pas (il passe par `_wake_and_activate`, avec accueil).
+SPEECH_WAKE_GRACE_S = 1.0
+#: Un point sûr de fermeture (rien ne parle, rien n'est en vol) qui ne vient pas ne retient
+#: pas la séance plus longtemps : au-delà, l'inactivité l'emporte.
+IDLE_SAFE_POINT_MAX_S = 15.0
+#: Une question posée dont JARVIS n'a pas encore commencé la réponse n'est pas du silence : la séance
+#: n'est pas fermée dans ce délai après la fin de la parole de l'utilisateur. Fermer pendant que le
+#: fournisseur prépare sa réponse perdait la réponse, et la fermeture n'était plus confirmée.
+IDLE_AWAIT_REPLY_S = 12.0
 
 def activation_source_for_label(label: object, *, manual_key: str = "f9") -> ExplicitAddressSource | None:
     """UN seul endroit où l'étiquette d'un détecteur devient une source d'activation.
@@ -180,8 +193,28 @@ class PersistentVoiceRuntime:
         core_token_file: Path | None = None,
         manual_wake_key: str = "f9",
         greet_on_first_wake: bool = False,
+        sleep_timeout_s: float | None = None,
+        idle_speech_wake: bool = True,
     ) -> None:
         self.voice_arch = voice_arch
+        # Deux niveaux de repos (`jarvis/domain/voice_rest.py`) : IDLE (micro local, la parole
+        # rouvre) puis SLEEP (gris, seuls le mot d'éveil, la touche ou une fin de tâche rouvrent).
+        # `sleep_timeout_s=None` : l'ancien repos unique, ni IDLE ni SLEEP (legacy, SIMPLE, Front Brain).
+        self.sleep_timeout_s = sleep_timeout_s if sleep_timeout_s and sleep_timeout_s > 0 else None
+        #: La parole rouvre en IDLE seulement si le détecteur local existe et qu'aucune règle
+        #: (Solo Owner sans vérificateur) ne l'interdit ; décidé à la composition.
+        self.idle_speech_wake = bool(idle_speech_wake)
+        self._rest = RestLevel.SLEEP
+        #: Dernier engagement réel (réveil, adresse, parole de JARVIS) : l'horloge de SLEEP. La parole
+        #: ambiante qui rouvre la séance en IDLE ne la repousse pas.
+        self._engaged_at = None
+        self._idle_blocked_since = None
+        self._last_user_voice_at = None
+        self._last_output_at = None
+        #: Comptes rendus de fin de tâche reçus au repos, à faire dire par la séance qui s'ouvre.
+        self._pending_completions: list[dict[str, object]] = []
+        self._completion_wake = asyncio.Event()
+        self._completion_watcher: CompletionWatcher | None = None
         # Accueil vocal (`jarvis/domain/voice_greeting.py`) : une fois par
         # processus, à la première séance ouverte par un réveil.
         self.greet_on_first_wake = greet_on_first_wake
@@ -331,7 +364,17 @@ class PersistentVoiceRuntime:
         self.voice_incarnation_id = f"voice-{uuid.uuid4().hex}"
         self._channel_seq = 0
         self._channel_report_failing = False
-        self._visual("idle")
+        self._engaged_at = self.clock.now()
+        self._visual(self._rest_visual())
+
+    def _rest_visual(self) -> str:
+        """Ce que l'orbe montre au repos : le gris de SLEEP, ou la veille d'avant (IDLE, ou repos unique)."""
+
+        return "sleep" if self.sleep_timeout_s is not None and self._rest is RestLevel.SLEEP else "idle"
+
+    @property
+    def rest_level(self) -> RestLevel:
+        return self._rest
 
     @property
     def continuous(self) -> bool:
@@ -347,7 +390,7 @@ class PersistentVoiceRuntime:
             # La couleur de l'orbe n'était tracée nulle part : un état qui restait vert ne pouvait pas se démontrer.
             # Une ligne par changement, jamais par appel ; l'état initial de veille n'en est pas un.
             self._last_displayed = displayed
-            if previous is None and displayed == "idle":
+            if previous is None and displayed in {"idle", "sleep"}:
                 return self._signal_visual(displayed)
             self._trace("voice.visual", "Orb state changed", data={
                 "requested": state, "displayed": displayed,
@@ -377,8 +420,9 @@ class PersistentVoiceRuntime:
         seconde est la seule à savoir quand il a fini sur tous les chemins.
         """
 
-        if state == "idle":
-            # « idle » est la veille (SLEEP) : session au fond, ou pas encore ouverte.
+        if state in {"idle", "sleep"}:
+            # « idle » est la veille (IDLE : séance fermée, micro local), « sleep » le sommeil gris
+            # (SLEEP) : session au fond, ou pas encore ouverte.
             return state
         if self._user_voice:
             # LISTEN (vert) : l'utilisateur parle, rien ne passe devant.
@@ -498,18 +542,22 @@ class PersistentVoiceRuntime:
         detections = self.wakeword.detections()
         detection_task: asyncio.Task[str] | None = None
         rebind_task: asyncio.Task[bool] | None = None
+        completion_task: asyncio.Task[bool] | None = None
         stop_task = asyncio.create_task(self._stop.wait(), name="jarvis-voice-stop-wait")
         self._start_mode_follower()
+        self._start_completion_watch()
         try:
             while not self._stop.is_set():
                 if detection_task is None:
                     detection_task = asyncio.create_task(anext(detections), name="jarvis-manual-toggle")
                 if rebind_task is None:
                     rebind_task = asyncio.create_task(self._rebind_requested.wait(), name="jarvis-voice-rebind-wait")
+                if completion_task is None:
+                    completion_task = asyncio.create_task(self._completion_wake.wait(), name="jarvis-voice-completion-wait")
 
                 if self.runtime.state is VoiceLifecycleState.BACKGROUND:
                     try:
-                        done, _ = await asyncio.wait({detection_task, stop_task, rebind_task},
+                        done, _ = await asyncio.wait({detection_task, stop_task, rebind_task, completion_task},
                                                      return_when=asyncio.FIRST_COMPLETED)
                         if stop_task in done:
                             break
@@ -517,10 +565,32 @@ class PersistentVoiceRuntime:
                             rebind_task = None
                             await self.rebind_board()
                             continue
+                        if detection_task not in done:
+                            # Fin d'une tâche entière : le mot d'éveil, s'il arrive en même temps, passe devant.
+                            completion_task = None
+                            await self._activate_for_completion()
+                            continue
                         keyword = detection_task.result()
                     except StopAsyncIteration:
                         break
                     detection_task = None
+                    if is_speech_label(keyword):
+                        # La parole ne rouvre qu'après un court délai : « Hey Jarvis » est toujours prioritaire.
+                        detection_task = asyncio.create_task(anext(detections), name="jarvis-manual-toggle")
+                        done, _ = await asyncio.wait({detection_task, stop_task}, timeout=SPEECH_WAKE_GRACE_S)
+                        if stop_task in done:
+                            break
+                        if detection_task in done:
+                            try:
+                                keyword = detection_task.result()
+                            except StopAsyncIteration:
+                                break
+                            detection_task = None
+                            if not is_speech_label(keyword):
+                                await self._wake_and_activate(keyword)
+                                continue
+                        await self._reopen_on_speech()
+                        continue
                     await self._wake_and_activate(keyword)
                     continue
 
@@ -553,6 +623,8 @@ class PersistentVoiceRuntime:
                     except StopAsyncIteration:
                         break
                     detection_task = None
+                    if is_speech_label(keyword):
+                        continue  # une parole d'IDLE qui arrive en séance ne veut plus rien dire
                     if self.runtime.state is VoiceLifecycleState.ACTIVE:
                         if self.continuous and self.presentation_turns() is not None:
                             # Slice 04 (P2a) : en PRESENTATION l'appui vient de la
@@ -590,9 +662,122 @@ class PersistentVoiceRuntime:
             if rebind_task is not None:
                 rebind_task.cancel()
                 await asyncio.gather(rebind_task, return_exceptions=True)
+            if completion_task is not None:
+                completion_task.cancel()
+                await asyncio.gather(completion_task, return_exceptions=True)
+            if self._completion_watcher is not None:
+                await self._completion_watcher.stop()
             stop_task.cancel()
             await asyncio.gather(stop_task, return_exceptions=True)
             await self.close()
+
+    # -- repos : IDLE / SLEEP, parole et fins de tâche ------------------------
+
+    def _start_completion_watch(self) -> None:
+        """Écouter Core pendant le repos : une fin de tâche entière doit rouvrir une séance pour se dire."""
+
+        if self._completion_watcher is None:
+            self._completion_watcher = CompletionWatcher(
+                core=self.core, on_completion=self._on_completion, journal=self.journal)
+        self._completion_watcher.listening = self.runtime.state in (
+            VoiceLifecycleState.BACKGROUND, VoiceLifecycleState.CONNECTING)
+        self._completion_watcher.start()
+
+    async def _on_completion(self, envelope) -> None:
+        payload = dict(envelope.payload or {})
+        if not payload.get("conversation_id") and envelope.conversation_id:
+            payload["conversation_id"] = envelope.conversation_id
+        known = {item.get("id") or item.get("speech_id") for item in self._pending_completions}
+        if (payload.get("id") or payload.get("speech_id")) in known:
+            return
+        self._pending_completions.append(payload)
+        del self._pending_completions[:-8]
+        self._trace("voice.completion.received", "Fin de tâche reçue pendant le repos",
+                    data={"rest": self._rest.value, "state": self.runtime.state.value,
+                          "kind": payload.get("kind"), "work_id": payload.get("work_id")})
+        self._completion_wake.set()
+
+    async def _activate_for_completion(self) -> None:
+        self._completion_wake.clear()
+        if not self._pending_completions:
+            return
+        before = self.runtime.state
+        self._trace("voice.completion.wake", "Séance rouverte pour dire une fin de tâche",
+                    data={"rest": self._rest.value, "state_before": before.value})
+        if not await self._activate_unattended("completion"):
+            return
+        if self.runtime.state is not VoiceLifecycleState.ACTIVE:
+            self._trace("voice.completion.not_opened", "Fin de tâche non dite : la séance ne s'est pas ouverte",
+                        level="warning", data={"state_after": self.runtime.state.value,
+                                               "code": "completion_wake_not_opened"})
+
+    async def _reopen_on_speech(self) -> None:
+        """L'utilisateur parle pendant IDLE : rouvrir la séance avec la parole tampon."""
+
+        if self._rest is not RestLevel.IDLE or not self.idle_speech_wake:
+            self._take_speech_preroll()  # désarmé ou SLEEP : on n'en garde rien
+            return
+        self._trace("voice.idle.speech", "Parole détectée en IDLE : séance rouverte avec le pré-roll")
+        await self._activate_unattended("speech")
+
+    async def _activate_unattended(self, trigger: str) -> bool:
+        """Une ouverture que personne n'a demandée à l'instant (parole, fin de tâche) ne fait jamais tomber Voice.
+
+        Un appui sur la touche qui échoue lève, comme avant : l'utilisateur est là et le voit. Ici l'échec
+        (fournisseur injoignable, Core indisponible) est tracé et la voix reste au repos ; `activate` a déjà
+        refermé ce qu'il avait ouvert et alerté.
+        """
+
+        try:
+            await self.activate(None, trigger=trigger)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: the voice rests, the user wakes it again
+            self._trace("voice.unattended_activation_failed",
+                        f"Ouverture automatique ({trigger}) impossible : {type(exc).__name__}: {str(exc)[:200]}",
+                        level="error", data={"code": "voice_unattended_activation_failed", "trigger": trigger,
+                                             "exception_type": type(exc).__name__})
+            return False
+        return True
+
+    def _set_speech_listening(self, enabled: bool) -> None:
+        setter = getattr(self.wakeword, "set_speech_listening", None)
+        if callable(setter):
+            try:
+                setter(bool(enabled))
+            except Exception as exc:  # noqa: BLE001 - sans détecteur de parole, le mot d'éveil et la touche restent
+                self._trace("voice.idle.speech_unavailable", f"Détection de parole d'IDLE indisponible : {type(exc).__name__}",
+                            level="warning", data={"code": "idle_speech_unavailable"})
+
+    def _take_speech_preroll(self) -> tuple[bytes, int] | None:
+        taker = getattr(self.wakeword, "take_speech_preroll", None)
+        if not callable(taker):
+            return None
+        try:
+            return taker()
+        except Exception:  # noqa: BLE001 - un pré-roll perdu ne bloque jamais l'ouverture
+            return None
+
+    def _enter_rest(self, level: RestLevel, *, reason: str) -> None:
+        """Passer à IDLE ou SLEEP (séance fermée) : visuel, détecteur de parole, trace."""
+
+        changed = level is not self._rest
+        self._rest = level
+        self._set_speech_listening(
+            level is RestLevel.IDLE and self.idle_speech_wake and self.sleep_timeout_s is not None)
+        self._visual(self._rest_visual())
+        if changed:
+            self._trace(f"voice.{level.value}", "Voice au repos" if level is RestLevel.IDLE else "Voice endormie",
+                        data={"reason": reason, "idle_after_s": self.activity.timeout_s,
+                              "sleep_after_s": self.sleep_timeout_s})
+
+    def _engaged(self) -> None:
+        self._engaged_at = self.clock.now()
+
+    def _sleep_due(self) -> bool:
+        if self.sleep_timeout_s is None or self._engaged_at is None:
+            return False
+        return (self.clock.now() - self._engaged_at).total_seconds() >= self.sleep_timeout_s
 
     def _start_mode_follower(self) -> None:
         """Suivre le mode de Core tant que le processus vit (P1). Idempotent."""
@@ -713,8 +898,12 @@ class PersistentVoiceRuntime:
                           "board_id": binding.get("board_id")})
         return conversation_id
 
-    async def activate(self, source: ExplicitAddressSource | None = None) -> None:
+    async def activate(self, source: ExplicitAddressSource | None = None, *, trigger: str = "wake") -> None:
         """Ouvrir la séance depuis BACKGROUND - l'unique corps d'activation.
+
+        `trigger` : `wake` (mot d'éveil, touche, réouverture de Board), `speech` (l'utilisateur
+        parle pendant IDLE : sa parole tampon est transmise à la séance, pas d'accueil, SLEEP
+        n'est pas repoussé) ou `completion` (fin de tâche entière : la séance dit le compte rendu).
 
         `source` (`wake_word` / `manual_key`) n'est que de la métadonnée de
         trace, posée sur `voice.connecting` ; elle ne change aucun
@@ -737,7 +926,7 @@ class PersistentVoiceRuntime:
         # Ni la réouverture d'un `rebind_board` (sans source), ni la reprise
         # d'une pile remplacée (`switch_handoff`) ne sont un « bonjour ».
         greeting_due = (self.greet_on_first_wake and not self._greeted and source is not None
-                        and self.switch_handoff is None)
+                        and self.switch_handoff is None and trigger == "wake")
         capture: object | None = None
         capture_prepared = False
         if self.authorization.owner_enforced or self.authorization_error is not None:
@@ -864,7 +1053,18 @@ class PersistentVoiceRuntime:
             await self.mute()
             raise ConfigurationError(message)
         await self.wakeword.suspend_for_active_session()
+        # La parole tampon d'IDLE n'est reprise que par la séance que cette parole a ouverte ;
+        # pour tout autre déclencheur elle est jetée (rien de ce que le micro de repos a entendu ne survit).
+        preroll = self._take_speech_preroll()
+        if trigger != "speech":
+            preroll = None
+        self._set_speech_listening(False)
         self.activity.reset()
+        if trigger != "speech":
+            self._engaged()
+        self._idle_blocked_since = None
+        self._last_user_voice_at = None
+        self._last_output_at = None
         self._turn_submitted = False
         self._brain_working = False
         self.runtime.state = VoiceLifecycleState.ACTIVE
@@ -940,18 +1140,23 @@ class PersistentVoiceRuntime:
         barge_in_authority, owner_source = self._barge_in_policy(capture)
         if owner_source is not None:
             self._report_authorization("ready", phase="activation")
+        audio = SoundDeviceRealtimeAudio(
+            input_device=self.audio_input_device,
+            output_device=self.audio_output_device,
+            input_sample_rate=self.input_sample_rate,
+            output_sample_rate=self.output_sample_rate,
+            journal=self.journal,
+            **audio_options,
+        )
+        if preroll is not None:
+            primed_s = audio.prime_input(*preroll)
+            self._trace("voice.idle.preroll", "Parole tampon d'IDLE transmise à la séance",
+                        data={"primed_s": round(primed_s, 2), "conversation_id": self.runtime.conversation_id})
         bridge = RealtimeConversationBridge(
             core=self.core,
             session=self._session,
             conversation_id=self.runtime.conversation_id,
-            audio=SoundDeviceRealtimeAudio(
-                input_device=self.audio_input_device,
-                output_device=self.audio_output_device,
-                input_sample_rate=self.input_sample_rate,
-                output_sample_rate=self.output_sample_rate,
-                journal=self.journal,
-                **audio_options,
-            ),
+            audio=audio,
             on_addressed=self.addressed_activity,
             on_ambient=self.ambient_activity,
             on_mute=self.mute,
@@ -1021,6 +1226,17 @@ class PersistentVoiceRuntime:
         if greeting_due and speech is not None:
             self._greeted = True
             speech.greet(greeting_text(await self._active_board()))
+        # Les fins de tâche reçues pendant le repos (ou l'ouverture) passent à l'ordonnanceur, qui
+        # les dit ; le veilleur se tait tant que la séance écoute elle-même.
+        if self._completion_watcher is not None:
+            self._completion_watcher.listening = False
+        pending, self._pending_completions = self._pending_completions, []
+        self._completion_wake.clear()
+        for payload in pending:
+            if speech is None or not speech.announce_missed_result(payload):
+                self._trace("voice.completion.not_said", "Fin de tâche non transmise à la parole",
+                            level="warning", data={"code": "completion_not_announced",
+                                                   "speech_id": payload.get("id") or payload.get("speech_id")})
 
     async def _active_board(self) -> object:
         """`GET /v1/boards/active` pour l'accueil, ou `None` : un échec ne coûte que la reprise proposée."""
@@ -1477,8 +1693,19 @@ class PersistentVoiceRuntime:
         self.runtime.state = VoiceLifecycleState.BACKGROUND
         if self._metrics is not None:
             self._finish_metrics("stopped", live_record=live_record)
-        self._visual("idle")
-        self._trace("voice.background", "Voice returned to background")
+        # Repos : IDLE quand c'est l'inactivité qui a fermé la séance (la parole peut la rouvrir),
+        # SLEEP sinon (l'utilisateur a coupé, panne, changement de Board) ou si l'inactivité totale
+        # est déjà atteinte.
+        from jarvis.domain.voice_frontend import VoiceStopReason
+        idle_close = reason is VoiceStopReason.IDLE and self.sleep_timeout_s is not None and not self._sleep_due()
+        self._enter_rest(RestLevel.IDLE if idle_close else RestLevel.SLEEP,
+                         reason=getattr(reason, "value", str(reason)))
+        if self._completion_watcher is not None:
+            # Décision 33 : ce que l'utilisateur a coupé lui-même (touche, « Passer au chat ») ne se
+            # rattrape pas par une reprise surprise. Tout autre retour au repos (inactivité, panne,
+            # changement de Board) laisse une fin de tâche entière rouvrir la séance.
+            self._completion_watcher.listening = reason is not VoiceStopReason.USER
+        self._trace("voice.background", "Voice returned to background", data={"rest": self._rest.value})
 
     async def _close_provider_session(self, session, *, reason=None) -> bool:
         stop = getattr(session, "stop", None)
@@ -1545,6 +1772,7 @@ class PersistentVoiceRuntime:
 
     async def addressed_activity(self) -> None:
         self.activity.reset(AddressingDecision.ADDRESSED)
+        self._engaged()
 
     async def ambient_activity(self) -> None:
         """Signal entendu mais pas adressé : il ne réarme rien (Décision 10).
@@ -1608,6 +1836,8 @@ class PersistentVoiceRuntime:
         """
 
         self._user_voice = bool(active)
+        if active:
+            self._last_user_voice_at = self.clock.now()
         if self.runtime.state is VoiceLifecycleState.ACTIVE:
             self._visual(self._requested_visual)
 
@@ -1632,6 +1862,8 @@ class PersistentVoiceRuntime:
             # This callback follows an accepted local device write. It is real
             # conversational activity; backend progress/usage callbacks are not.
             self.activity.reset(AddressingDecision.ADDRESSED)
+            self._engaged()
+            self._last_output_at = self.clock.now()
             self._visual("speaking")
 
     def live_runtime_report(self) -> dict[str, object] | None:
@@ -1668,6 +1900,7 @@ class PersistentVoiceRuntime:
             "conversation_id": self.runtime.conversation_id,
             "session_id": getattr(session, "session_id", None),
             "runtime_state": self.runtime.state.value,
+            "rest_level": self._rest.value if self.runtime.state is VoiceLifecycleState.BACKGROUND else None,
         }
 
     def voice_channel_report(self, ack: dict[str, object] | None = None) -> dict[str, object]:
@@ -1712,6 +1945,11 @@ class PersistentVoiceRuntime:
         return answer if isinstance(answer, dict) else None
 
     async def check_timeout(self) -> bool:
+        # IDLE -> SLEEP : l'inactivité totale (depuis le dernier engagement réel) a atteint le délai.
+        if (self.runtime.state is VoiceLifecycleState.BACKGROUND and self._rest is RestLevel.IDLE
+                and self._sleep_due()):
+            self._enter_rest(RestLevel.SLEEP, reason="inactivity")
+            return False
         # Délai à 0 : `expired()` ne devient jamais vrai, donc ni mute ni
         # `voice.timeout_deferred` à chaque tic de la boucle de supervision.
         if self.runtime.state is not VoiceLifecycleState.ACTIVE:
@@ -1719,12 +1957,15 @@ class PersistentVoiceRuntime:
         from jarvis.domain.voice_architecture import VoiceArchitectureId
         duplex = self.conversation_architecture is VoiceArchitectureId.DUPLEX
         if duplex and self.activity.enabled and self._live_user_active():
+            self._last_user_voice_at = self.clock.now()
             # Tant que l'utilisateur parle, le délai repart de zéro à chaque tic :
             # il ne commence à courir qu'une fois qu'il s'est tu. Le fil Live
             # n'a pas de transcription finale qui le réarmerait en cours de route.
             self.activity.reset()
             return False
         if not self.activity.expired():
+            return False
+        if duplex and self._awaiting_reply():
             return False
         # Le délai mesure l'attente de l'utilisateur, pas la durée d'un outil.
         # Couper ici tuait une tâche Claude en plein travail : la session
@@ -1740,11 +1981,24 @@ class PersistentVoiceRuntime:
         # donc pas à connaître le cerveau, et un cerveau silencieux finit par
         # laisser le délai expirer normalement.
         if duplex and not self._live_idle_ready():
-            # Une parole en cours est de l'activité : sans ce réarmement le délai de 60 s expirait pendant
+            # Une parole en cours est de l'activité : sans ce réarmement le délai expirait pendant
             # un monologue et la session se coupait à la seconde où l'utilisateur se taisait.
             if self._live_user_active():
                 self.activity.reset()
-            return False
+                self._idle_blocked_since = None
+                self._last_user_voice_at = self.clock.now()
+                return False
+            # Ni parole ni sortie en cours, mais le point sûr (capteur inconnu, reprise immédiate en
+            # attente) ne vient pas : il ne retient pas la séance indéfiniment, sinon la facture court.
+            now = self.clock.now()
+            if self._idle_blocked_since is None:
+                self._idle_blocked_since = now
+            if (now - self._idle_blocked_since).total_seconds() < IDLE_SAFE_POINT_MAX_S:
+                return False
+            self._trace("voice.timeout_forced", "Point sûr de fermeture introuvable : l'inactivité l'emporte",
+                        level="warning", data={"code": "idle_safe_point_timeout",
+                                               "waited_s": round((now - self._idle_blocked_since).total_seconds(), 1)})
+        self._idle_blocked_since = None
         if not duplex and getattr(self._bridge, "tool_in_flight", False):
             self._trace(
                 "voice.timeout_deferred",
@@ -1765,6 +2019,14 @@ class PersistentVoiceRuntime:
         from jarvis.domain.voice_frontend import VoiceStopReason
         await self.mute(VoiceStopReason.IDLE)
         return True
+
+    def _awaiting_reply(self) -> bool:
+        """L'utilisateur a parlé et JARVIS n'a rien dit depuis : la réponse se prépare (bornée par `IDLE_AWAIT_REPLY_S`)."""
+
+        spoke = self._last_user_voice_at
+        if spoke is None or (self._last_output_at is not None and self._last_output_at >= spoke):
+            return False
+        return (self.clock.now() - spoke).total_seconds() < IDLE_AWAIT_REPLY_S
 
     def _live_user_active(self) -> bool:
         """L'utilisateur parle, ou une parole est en cours de sortie : le délai repart de zéro."""

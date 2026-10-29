@@ -425,6 +425,7 @@ class SoundDeviceRealtimeAudio:
         self.output_sample_rate = int(output_sample_rate or sample_rate)
         self.captured_bytes = 0
         self.sent_bytes = 0
+        self.primed_bytes = 0
         self._last_capture_at: float | None = None
         self._last_near_end_at: float | None = None
         # (instant, trames proches cumulées) des derniers blocs, pour mesurer
@@ -732,6 +733,37 @@ class SoundDeviceRealtimeAudio:
         samples = np.frombuffer(block, dtype=np.int16).astype(np.float32)
         ramp = np.linspace(start, target, num=len(samples), dtype=np.float32) if start != target else target
         return np.clip(samples * ramp, -32768, 32767).astype(np.int16).tobytes()
+
+    #: Plafond de la parole d'IDLE amorcée (`prime_input`), en secondes : la file d'envoi tient 64 blocs
+    #: et le direct doit pouvoir la rejoindre.
+    PRIMED_INPUT_MAX_S = 6.0
+    PRIMED_BLOCK_S = 0.2
+
+    def prime_input(self, pcm: bytes, sample_rate: int) -> float:
+        """Mettre en tête de la file d'envoi la parole captée avant l'ouverture (pré-roll d'IDLE).
+
+        Le micro local de repos a entendu l'utilisateur commencer à parler pendant que la
+        séance se rouvrait ; ces premiers mots partent vers le fournisseur avant le direct,
+        dans l'ordre, sans traitement duplex (la séance n'a pas encore de sortie à annuler).
+        À appeler avant `start()`. Rend la durée amorcée, en secondes (les plus récentes
+        si le tampon dépasse `PRIMED_INPUT_MAX_S`). Rien n'est persisté.
+        """
+
+        sample_rate = int(sample_rate)
+        if not pcm or sample_rate <= 0:
+            return 0.0
+        if sample_rate != self.sample_rate:
+            from jarvis.audio.resampling import StreamingPcm16Resampler
+
+            pcm = StreamingPcm16Resampler(source_rate=sample_rate, target_rate=self.sample_rate).process(pcm)
+        keep = int(self.PRIMED_INPUT_MAX_S * self.sample_rate) * 2
+        pcm = pcm[-keep:]
+        pcm = pcm[len(pcm) % 2:]
+        block = max(2, int(self.PRIMED_BLOCK_S * self.sample_rate) * 2)
+        for offset in range(0, len(pcm), block):
+            self._put_input(pcm[offset:offset + block])
+        self.primed_bytes += len(pcm)
+        return len(pcm) / 2 / self.sample_rate
 
     def _enqueue(self, raw: bytes) -> None:
         self.captured_bytes += len(raw)

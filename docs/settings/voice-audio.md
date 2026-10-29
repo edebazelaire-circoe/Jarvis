@@ -71,7 +71,8 @@ Générée depuis le serveur ; `test_the_documented_mapping_is_the_server_mappin
 | `speculative_deltas` | `advanced_diagnostics` › `architecture_compat` | Analyse des transcriptions provisoires |
 | `reasoning_effort` | `advanced_diagnostics` › `architecture_compat` | Effort de raisonnement |
 | `client_delegation` | `advanced_diagnostics` › `architecture_compat` | Délégation client active |
-| `idle_timeout_s` | `voice_audio` › `conversation` | Fermeture après inactivité (secondes) |
+| `idle_timeout_s` | `voice_audio` › `conversation` | Séance fermée après silence, IDLE (secondes) |
+| `sleep_timeout_s` | `voice_audio` › `conversation` | Sommeil, SLEEP, après inactivité totale (secondes) |
 | `brain_orchestration` | `advanced_diagnostics` › `architecture_compat` | Déléguer au cerveau (outils et sous-agents) |
 | `barge_in_decider` | `voice_audio` › `turns_interruptions` | Quand je parle par-dessus JARVIS : qui le fait taire ? |
 | `openai.model` | `voice_audio` › `voice_output` | Modèle Realtime |

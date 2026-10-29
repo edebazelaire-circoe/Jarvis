@@ -349,6 +349,10 @@ sans clé, modèle non commercial). F9 reste toujours disponible et mène au mê
 traces et codes de panne : « Diagnostic du mot d'éveil ». Fiche de validation sur
 micro réel : `docs/HARDWARE_ACCEPTANCE.md`, « Configurable wake word (openWakeWord) ».
 
+En IDLE (GPT-Live, `docs/voice-lifecycle.md`) le même flux micro alimente aussi le détecteur de
+parole locale : une parole confirmée laisse la trace `wake.own_stream.speech` (ce n'est pas un mot
+d'éveil), puis `voice.idle.speech` côté Voice. « Hey Jarvis » passe toujours devant.
+
 | Champ | Valeurs | Défaut |
 | --- | --- | --- |
 | `schema_version` | `1` | `1` |

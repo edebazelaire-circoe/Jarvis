@@ -103,7 +103,8 @@ def test_migration_maps_simple_projection_without_reinterpreting_execution(old_m
     assert migrated.uses_compatibility_runtime
     assert migrated.compatibility.architecture_source == "settings"
     assert settings == original
-    assert DuplexVoiceConfig(LIVE).idle_timeout_s == 60.0
+    assert DuplexVoiceConfig(LIVE).idle_timeout_s == 10.0
+    assert DuplexVoiceConfig(LIVE).sleep_timeout_s == 30.0
 
 
 def test_saved_arch_and_model_precede_environment_and_preserve_sources():
@@ -276,3 +277,34 @@ def test_runtime_journal_contract_has_safe_normal_and_rejected_events(tmp_path):
     assert events[1]["data"]["code"] == "voice_schema_version_unsupported"
     assert not journal.error_path.exists()
     assert "private" not in json.dumps(events)
+
+
+def test_idle_and_sleep_delays_default_to_ten_and_thirty_seconds_and_a_stored_block_is_migrated_on_read():
+    """Avant le modèle ACTIVE / IDLE / SLEEP, `idle_timeout_s` valait 60 s (fermeture de la séance)."""
+
+    def duplex(**fields):
+        raw = {"schema_version": 1, "config": {"architecture": "duplex",
+                                               "conversation_model": {"provider_id": LIVE.provider_id, "model_id": LIVE.model_id},
+                                               "client_delegation": True, "brain_orchestration": True, "barge_in_decider": "local",
+                                               **fields}, "compatibility": None}
+        return decode_voice_architecture(raw).config
+
+    fresh = DuplexVoiceConfig(LIVE)
+    assert (fresh.idle_timeout_s, fresh.sleep_timeout_s) == (10.0, 30.0)
+    # Le bloc de ce poste : 60 s écrit par l'ancien défaut, pas par un choix -> les nouveaux défauts.
+    migrated = duplex(idle_timeout_s=60.0)
+    assert (migrated.idle_timeout_s, migrated.sleep_timeout_s) == (10.0, 30.0)
+    assert (duplex().idle_timeout_s, duplex().sleep_timeout_s) == (10.0, 30.0)
+    # Un délai choisi est gardé ; SLEEP vient au moins 20 s plus tard.
+    chosen = duplex(idle_timeout_s=45.0)
+    assert (chosen.idle_timeout_s, chosen.sleep_timeout_s) == (45.0, 65.0)
+    # Un bloc au modèle courant ne bouge pas.
+    current = duplex(idle_timeout_s=60.0, sleep_timeout_s=120.0)
+    assert (current.idle_timeout_s, current.sleep_timeout_s) == (60.0, 120.0)
+    assert decode_voice_architecture(VoiceArchitectureSettings(chosen).to_dict()).config == chosen
+
+
+@pytest.mark.parametrize("idle,sleep", [(10, 10), (10, 5), (10, float("nan")), (10, True), (10, 86401)])
+def test_sleep_must_come_after_idle(idle, sleep):
+    with pytest.raises(VoiceConfigError):
+        DuplexVoiceConfig(LIVE, idle_timeout_s=idle, sleep_timeout_s=sleep)

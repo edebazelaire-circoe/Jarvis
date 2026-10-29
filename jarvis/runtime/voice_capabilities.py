@@ -73,8 +73,10 @@ class VoiceCapabilityRegistry:
             if mode is VoiceArchitectureId.DUPLEX:
                 fields.extend([
                     {"key": "client_delegation", "label": "Délégation client active", "kind": "toggle", "default": True, "readonly": True},
-                    {"key": "idle_timeout_s", "label": "Fermeture après inactivité (secondes)", "kind": "number",
-                     "default": 60, "min": 5, "max": 3600},
+                    {"key": "idle_timeout_s", "label": "Séance fermée après silence, IDLE (secondes)", "kind": "number",
+                     "default": 10, "min": 5, "max": 3600},
+                    {"key": "sleep_timeout_s", "label": "Sommeil, SLEEP, après inactivité totale (secondes)", "kind": "number",
+                     "default": 30, "min": 6, "max": 86400},
                     {"key": "brain_orchestration", "label": "Déléguer au cerveau (outils et sous-agents)",
                      "kind": "toggle", "default": True},
                     {"key": "barge_in_decider", "label": "Quand je parle par-dessus JARVIS : qui le fait taire ?",
@@ -82,7 +84,7 @@ class VoiceCapabilityRegistry:
                      "options": [{"id": "local", "label": "JARVIS lui-même, tout de suite (recommandé)"},
                                  {"id": "provider", "label": "Le fournisseur (GPT-Live), avec un délai variable"}]},
                 ])
-                defaults.update(client_delegation=True, idle_timeout_s=60, brain_orchestration=True,
+                defaults.update(client_delegation=True, idle_timeout_s=10, sleep_timeout_s=30, brain_orchestration=True,
                                 barge_in_decider="local")
             label, description = descriptions[mode]
             result.append({"id": mode.value, "label": label, "description": description,

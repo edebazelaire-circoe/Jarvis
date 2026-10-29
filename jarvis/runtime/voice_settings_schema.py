@@ -54,7 +54,7 @@ _ARCH_CATEGORY = {
     "conversation_model": "models", "reflex_model": "models", "analysis_model": "models",
     "speculative_deltas": "conversation", "reasoning_effort": "models",
     "client_delegation": "architecture", "idle_timeout_s": "conversation",
-    "brain_orchestration": "architecture", "barge_in_decider": "turn_taking",
+    "sleep_timeout_s": "conversation", "brain_orchestration": "architecture", "barge_in_decider": "turn_taking",
 }
 _ARCH_ADVANCED = frozenset({"speculative_deltas", "reasoning_effort", "client_delegation"})
 _ARCH_HELP = {
@@ -64,7 +64,15 @@ _ARCH_HELP = {
     "speculative_deltas": "Front Brain ; exige les deltas de transcription.",
     "reasoning_effort": "Front Brain ; options du descripteur du modèle d'analyse.",
     "client_delegation": "Invariant Duplex, affiché en lecture seule.",
-    "idle_timeout_s": "Durée facturable de la session Duplex.",
+    "idle_timeout_s": (
+        "Silence de votre part au bout duquel la séance GPT-Live est fermée (plus de coût fournisseur) : "
+        "JARVIS passe en IDLE, le micro local reste à l'écoute de « Hey Jarvis » et de votre voix. "
+        "10 s par défaut."
+    ),
+    "sleep_timeout_s": (
+        "Inactivité totale (IDLE compris) au bout de laquelle JARVIS dort (SLEEP, gris) : seuls « Hey Jarvis », "
+        "la touche de réveil ou la fin d'une tâche entière le rouvrent. 30 s par défaut."
+    ),
     "barge_in_decider": (
         "Quand vous parlez par-dessus JARVIS pendant qu'il parle, quelqu'un doit décider de couper sa voix. "
         "« JARVIS lui-même » (par défaut) : il se tait dès que ce poste mesure votre voix de façon soutenue "
@@ -81,7 +89,7 @@ _ARCH_HELP = {
 PERSISTABLE_OPTION_IDS: tuple[str, ...] = (
     "voice_stack", "voice_arch", "architecture", "conversation_model", "reflex_model",
     "analysis_model", "speculative_deltas", "reasoning_effort", "client_delegation",
-    "idle_timeout_s", "brain_orchestration", "barge_in_decider", "openai.model", "openai.voice", "openai.turn_mode",
+    "idle_timeout_s", "sleep_timeout_s", "brain_orchestration", "barge_in_decider", "openai.model", "openai.voice", "openai.turn_mode",
     "openai.transcription_model", "openai.transcription_language", "openai.noise_reduction",
     "openai.echo_cancellation", "openai.reflex_enabled", "openai.ack_delay_ms", "openai.vad_type",
     "openai.vad_eagerness", "openai.vad_threshold", "openai.vad_prefix_padding_ms",
@@ -124,7 +132,7 @@ _SURFACE: dict[str, str] = {
     "conversation_model": "voice_output", "reflex_model": "voice_output", "analysis_model": "voice_output",
     "speculative_deltas": "architecture_compat", "reasoning_effort": "architecture_compat",
     "client_delegation": "architecture_compat", "idle_timeout_s": "conversation",
-    "brain_orchestration": "architecture_compat", "barge_in_decider": "turns_interruptions",
+    "sleep_timeout_s": "conversation", "brain_orchestration": "architecture_compat", "barge_in_decider": "turns_interruptions",
     "openai.model": "voice_output", "openai.voice": "voice_output", "openai.turn_mode": "turns_interruptions",
     "openai.transcription_model": "voice_output", "openai.transcription_language": "voice_output",
     "openai.noise_reduction": "microphone_sound", "openai.echo_cancellation": "microphone_sound",

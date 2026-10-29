@@ -18,7 +18,8 @@ that already exist; no second state machine is added.
 | **Active** | a voice session is open (`connecting` or `active`), the Chat is locked (`chat_input_locked`, unchanged) | `.voice_runtime.runtime_state in {connecting, active}` |
 
 When an active interaction ends, Voice returns to `background` by its existing rules (idle timeout, key, « Passer au
-chat »): that is Sleep again. Transitions and degraded reasons are said, never guessed:
+chat »): that is Sleep again. With GPT-Live (Duplex) that product state **Sleep** has two levels, IDLE then SLEEP,
+described in the next section. Transitions and degraded reasons are said, never guessed:
 
 | `state` | `code` | Meaning |
 | --- | --- | --- |
@@ -32,6 +33,79 @@ chat »): that is Sleep again. Transitions and degraded reasons are said, never 
 | `degraded` | `voice_preference_unreadable` | the stored block is present but unreadable: Voice is held (no microphone) until the user switches |
 | `not_running` | `voice_not_running` | no launcher (development, `full` edition) and no Voice heartbeat: the voice is on, but Voice must be relaunched by hand (a fact, not a failure) |
 | `off` | `voice_off` | user choice |
+
+## Active, IDLE and SLEEP with GPT-Live (user request 2026-10-29)
+
+Off / Sleep / Active above is the **product** contract (what the user can switch and what the Control Center says).
+With GPT-Live (`voice_architecture` Duplex) the product state **Sleep** (`runtime_state == "background"`, no provider
+session) is refined into two **rest levels** held by the Voice process
+([`jarvis/domain/voice_rest.py`](../jarvis/domain/voice_rest.py)); `VoiceLifecycleState` is unchanged, so Core, the
+Chat lock and the lifecycle projection above read exactly what they read before. The level is published as
+`.voice_runtime.rest_level` (`idle` / `sleep`, `null` outside `background`) and in `.voice_state`.
+
+| Level | Provider session | Local microphone | What reopens a session | Orb (`.voice_state`) |
+| --- | --- | --- | --- | --- |
+| **ACTIVE** | open (billed) | the session's | — | `waiting` / `listening` / `thinking` / `speaking` |
+| **IDLE** | **closed** | open: wake word, key and **speech detector** | « Hey Jarvis » / F9 (always first), **the user speaking** (VAD, owner voice if Solo Owner), the end of a whole task | `idle` (the usual rest look; nothing is shown as listening without an address) |
+| **SLEEP** | closed | open: wake word and key only | « Hey Jarvis » / F9, the end of a whole task. **Not** speech | `sleep` (gray) |
+
+Transitions (delays are settings, see below; defaults 10 s and 30 s):
+
+1. **ACTIVE → IDLE** after `idle_timeout_s` (10 s) without the user speaking nor JARVIS speaking
+   (`PersistentVoiceRuntime.check_timeout`, ticked every second). The session is closed (`mute(IDLE)`), so the provider
+   stops billing. What used to hold a session open is now bounded: the delay restarts while the user speaks or an
+   output plays, but a « safe point » that never comes (sensor unknown, immediate continuation pending) holds it at
+   most `IDLE_SAFE_POINT_MAX_S` (15 s), and the brain working no longer holds it at all (the end of the task wakes
+   the voice, below).
+2. **IDLE → ACTIVE by speech.** While IDLE the wake listener's own microphone stream also feeds a local detector
+   ([`jarvis/audio/idle_speech.py`](../jarvis/audio/idle_speech.py)): an adaptive-floor energy gate, at least 4 voiced
+   frames out of 8 (80 ms each). With Solo Owner configured, only the owner's voice (the local speaker verifier)
+   confirms; without a verifier Solo Owner disables this path (`idle_speech_needs_owner_verifier`) instead of falling
+   back to the open room. On confirmation the run loop waits `SPEECH_WAKE_GRACE_S` (1 s): if « Hey Jarvis » (or F9)
+   arrives in that time it is handled as a wake, with its greeting — **the wake word always takes precedence**.
+   Otherwise `activate(trigger="speech")` reopens the session and hands it the **buffered speech** (1.2 s of lead-in
+   plus everything heard while the session connected, at most 6 s, resampled to the session rate and queued ahead of
+   the live microphone, `SoundDeviceRealtimeAudio.prime_input`) so the first words are not lost. No greeting, and it
+   does not push SLEEP back: the usual addressing decides whether the speech was for JARVIS (otherwise 10 s later the
+   session closes again).
+3. **IDLE → SLEEP** after `sleep_timeout_s` (30 s) of **total** inactivity — measured from the last real engagement
+   (a wake, an addressed turn, JARVIS speaking), so 20 s after entering IDLE with the defaults. The orb turns gray
+   and the speech detector is disarmed: from now on only « Hey Jarvis », F9 or the end of a whole task reopens.
+   A session closed by an explicit user mute (key, « Passer au chat »), by an error or by a Board switch rests
+   directly in SLEEP.
+4. **IDLE / SLEEP → ACTIVE by the end of a whole task.** While the voice rests, `CompletionWatcher`
+   ([`jarvis/runtime/completion_watch.py`](../jarvis/runtime/completion_watch.py)) keeps the Core event stream open
+   and retains one thing: a durable brain `result` / `error` speech request (`is_task_completion_speech`). Voice then
+   opens a session (`activate(trigger="completion")`, no greeting, SLEEP clock restarts) and
+   `SpeechScheduler.announce_missed_result` says it with the same speech id, bound to the new session's current
+   intent. Then the normal timers apply. Exception kept from Decision 33: what the user muted by hand is not caught
+   up by a surprise wake (the watcher stays quiet after an explicit mute until the next wake).
+
+### Notifications: whole tasks only
+
+Voice and Control Center report **only the end of a whole task**, never a sub-task nor an intermediate step, and
+never the start of a task.
+
+- Voice: `claude_local._push_notice` publishes the relay of a finished background task only when no other work is
+  running (`AgentTaskTracker.whole_task_finished`: no running non-shell, non-ephemeral task). A sub-task finishing
+  while the work continues is journaled `agent.unsolicited_result` with `held_subtask: true` and says nothing.
+  Acknowledgements and progress are transient speech kinds and never wake the voice.
+- Control Center: `agent.subagent.finished` carries `whole_task`; `background_events._classify` signals a successful
+  completion (badge, toast) only when it is true (an older trace without the field counts as whole). A failure is
+  always signalled: a task never dies in silence.
+
+### Settings
+
+`voice_architecture.config` (Duplex): `idle_timeout_s` (default 10, 5 to 3600) and `sleep_timeout_s` (default 30,
+strictly greater than `idle_timeout_s`, at most 86400); Settings › Voice & audio › Conversation. Migration on read, no
+schema bump (`voice_architecture_config.migrate_rest_timeouts`): a stored block with no `sleep_timeout_s` and
+`idle_timeout_s` absent or equal to the old default (60 s, which closed the session) reads as 10 / 30; any other
+`idle_timeout_s` is kept as the user's choice with SLEEP 20 s after it (30 s at least). The stored block is rewritten
+only by the next save of the settings. The other architectures keep the single rest.
+`JARVIS_IDLE_SPEECH=0` disables the speech-reopen path (wake word, key and end of task remain).
+
+Limits: the speech detector lives in the openWakeWord own-stream detector (`OwnStreamWakeWordBackend`); with Porcupine or
+no spoken wake word IDLE has no speech reopen (it still gives the orb its IDLE look for 20 s, then SLEEP).
 
 ## The one persisted preference
 

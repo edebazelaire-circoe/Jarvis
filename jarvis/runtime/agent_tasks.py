@@ -944,6 +944,9 @@ class AgentTaskTracker:
                 "tokens": task.tokens,
                 "tool_uses": task.tool_uses,
                 "summary": truncate(task.summary, 300),
+                # Vrai quand plus aucun travail ne tourne derrière celui-ci : c'est la fin d'une tâche
+                # entière, la seule dont le Control Center et la voix font une notification.
+                "whole_task": self.whole_task_finished(),
                 **event_ref,
             },
         )
@@ -991,6 +994,17 @@ class AgentTaskTracker:
         running = sorted((task for task in self._tasks if task.running), key=lambda task: task.started_ms)
         finished = sorted((task for task in self._tasks if not task.running), key=lambda task: -(task.ended_ms or 0))
         return [*running, *finished]
+
+    def running_work_count(self) -> int:
+        """Tâches encore en cours qui comptent comme du travail : ni commande shell, ni éphémère.
+
+        Une tâche qui vient de finir est la **fin d'une tâche entière** quand ce nombre est nul ;
+        sinon c'est une sous-tâche d'un travail qui continue, et personne n'a à l'entendre.
+        """
+        return sum(1 for task in self._tasks if task.running and task.kind != "shell" and not task.ephemeral)
+
+    def whole_task_finished(self) -> bool:
+        return self.running_work_count() == 0
 
     def counts(self) -> dict[str, int]:
         """`active` : sous-tâches en cours hors commandes shell — ce que le panneau

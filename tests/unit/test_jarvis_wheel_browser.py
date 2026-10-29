@@ -120,8 +120,8 @@ def test_jarvis_submenu_reads_the_beat_and_offers_no_fake_control(tmp_path):
         assert sub["open"] and sub["subs"] == 1 and sub["head"] == "État de Jarvis", sub
         assert [i["id"] for i in sub["items"]] == ["voice", "wake", "agent", "subagents", "voice_settings"]
         by = {i["id"]: i for i in sub["items"]}
-        assert by["voice"]["note"] == "Veille · SLEEP" and by["voice"]["kind"] == "status"
-        assert by["voice"]["disabled"] == "true" and by["voice"]["name"].startswith("Voix — Veille · SLEEP")
+        assert by["voice"]["note"] == "Veille · IDLE" and by["voice"]["kind"] == "status"
+        assert by["voice"]["disabled"] == "true" and by["voice"]["name"].startswith("Voix — Veille · IDLE")
         assert by["wake"]["text"] == "F9 · DÉMARRER" and by["wake"]["kind"] == "status"
         assert by["agent"]["text"] == "Agent : Claude" and by["agent"]["note"] == "actif"
         assert "modèle opus" in by["agent"]["name"]
@@ -152,7 +152,7 @@ def test_an_open_jarvis_submenu_follows_the_beat_then_says_unknown_when_status_i
         ["eval", "reads", STATUS_READS, 50],
     ]}])[0]
     r = step["results"]
-    assert r["before"]["items"][0]["note"] == "Veille · SLEEP"
+    assert r["before"]["items"][0]["note"] == "Veille · IDLE"
     assert r["afterEnter"]["open"] is True and r["afterEnter"]["focus"] == "voice", "rien n'agit, la roue reste ouverte"
     listening = r["listening"]
     assert listening["open"] and listening["subs"] == 1, "toujours ouvert, jamais rouvert"

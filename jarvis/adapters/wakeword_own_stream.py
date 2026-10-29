@@ -122,6 +122,15 @@ FAILURE_TRACE_EVERY_S = 60.0
 
 _END = object()
 
+#: Étiquette rendue par `detections()` quand le détecteur de parole d'IDLE confirme que
+#: l'utilisateur parle (`jarvis/audio/idle_speech.py`). Ce n'est pas un mot d'éveil : Voice
+#: la reconnaît (`is_speech_label`) et rouvre la séance avec le pré-roll, sans accueil.
+SPEECH_LABEL = "idle:speech"
+
+
+def is_speech_label(label: object) -> bool:
+    return label == SPEECH_LABEL
+
 
 class _Run:
     """Une ouverture du détecteur : file, drapeaux et thread qui lui appartiennent."""
@@ -184,8 +193,12 @@ class OwnStreamWakeWordBackend:
         fallback_sample_rate: int | None = None,
         journal: DiagnosticSink | None = None,
         owner: str = OWNER_WAKEWORD_OPENWAKEWORD,
+        speech_detector: Any | None = None,
     ) -> None:
         self.engine_factory = engine_factory
+        #: Détecteur de parole d'IDLE (`IdleSpeechDetector`), ou `None` : le micro de repos ne
+        #: sert alors qu'au mot d'éveil. Armé / désarmé par `set_speech_listening`.
+        self.speech_detector = speech_detector
         self.keyword = keyword
         self.provider = provider
         self.device = device
@@ -278,6 +291,10 @@ class OwnStreamWakeWordBackend:
             self._delete_engine(engine)
             return
         run = _Run(engine, self._carry)
+        detector = self.speech_detector
+        if detector is not None:
+            detector.sample_rate = int(engine.sample_rate)
+            detector.frame_ms = max(1, round(1000 * int(engine.frame_length) / int(engine.sample_rate)))
         stream = self._open_with_fallback(sd, engine, run)
         if stream is None:
             self._delete_engine(engine)
@@ -413,6 +430,7 @@ class OwnStreamWakeWordBackend:
         frame_length = int(engine.frame_length)
         frame_bytes = frame_length * _BYTES_PER_SAMPLE
         unpack = "h" * frame_length
+        speech = self.speech_detector
         carry = run.carry
         reported_drops = 0
         last_report = -DROP_REPORT_EVERY_S
@@ -428,6 +446,7 @@ class OwnStreamWakeWordBackend:
                 carry.extend(block)
                 while len(carry) >= frame_bytes and not run.stop.is_set():
                     frame = struct.unpack_from(unpack, carry, 0)  # tuple d'entiers
+                    raw_frame = bytes(carry[:frame_bytes]) if speech is not None and speech.enabled else None
                     del carry[:frame_bytes]
                     try:
                         detected = engine.process(frame)
@@ -443,6 +462,14 @@ class OwnStreamWakeWordBackend:
                             self._on_detected, run,
                             detection_trace_data(engine, self.keyword, self.provider),
                         )
+                    elif raw_frame is not None:
+                        # Le mot d'éveil passe toujours devant : une trame qu'il reconnaît
+                        # n'est jamais aussi comptée comme parole.
+                        try:
+                            if speech.feed(raw_frame):
+                                self._post(self._on_speech, run)
+                        except Exception:  # noqa: BLE001 - la parole d'IDLE ne tue jamais le mot d'éveil
+                            pass
                 dropped = self.pcm_blocks_dropped
                 now = time.monotonic()
                 if dropped != reported_drops and now - last_report >= DROP_REPORT_EVERY_S:
@@ -477,6 +504,15 @@ class OwnStreamWakeWordBackend:
             )
             return
         self._queue.put_nowait((self.keyword, {key: value for key, value in data.items() if key != "keyword"}))
+
+    def _on_speech(self, run: _Run) -> None:
+        if run is not self._run or not run.accepting:
+            return
+        self._trace("wake.own_stream.speech", "Parole détectée pendant IDLE")
+        if self._queue.full():
+            self.dropped += 1
+            return
+        self._queue.put_nowait((SPEECH_LABEL, {}))
 
     def _on_inference_ok(self, run: _Run) -> None:
         # Une trame traitée sans échec : le cycle d'inférence a réussi.
@@ -560,6 +596,21 @@ class OwnStreamWakeWordBackend:
     async def resume(self) -> None:
         if not self._closed:
             await self.start()
+
+    def set_speech_listening(self, enabled: bool) -> None:
+        """Armer la détection de parole d'IDLE (micro de repos ouvert), ou la désarmer (SLEEP)."""
+
+        if self.speech_detector is not None:
+            self.speech_detector.set_enabled(enabled)
+
+    def take_speech_preroll(self) -> tuple[bytes, int] | None:
+        """La parole tampon (pré-roll compris) captée depuis la détection, une seule fois, ou `None`."""
+
+        detector = self.speech_detector
+        if detector is None:
+            return None
+        pcm, rate = detector.take_preroll()
+        return (pcm, rate) if pcm else None
 
     async def detections(self) -> AsyncIterator[str]:
         await self.start()

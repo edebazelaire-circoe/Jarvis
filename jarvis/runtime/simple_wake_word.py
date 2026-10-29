@@ -38,6 +38,7 @@ def simple_wake_backends(
     fallback_sample_rate: int | None = None,
     model_dir: Any | None = None,
     journal: Any | None = None,
+    speech_detector: Any | None = None,
 ) -> list[Any]:
     """Les détecteurs de repos à composer avec la touche manuelle : zéro ou un."""
 
@@ -54,6 +55,7 @@ def simple_wake_backends(
                 device=device,
                 fallback_sample_rate=fallback_sample_rate,
                 journal=journal,
+                speech_detector=speech_detector,
             )
         ]
     if access_key:

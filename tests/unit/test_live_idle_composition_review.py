@@ -453,6 +453,10 @@ async def test_the_idle_delay_restarts_at_every_tick_while_the_user_speaks(monke
     clock.advance(4)
     assert await runtime.check_timeout() is False  # 8 s depuis l'ouverture, 4 s depuis sa voix
     clock.advance(1)
+    # 9 s : le délai est écoulé (5 s depuis sa voix) mais il a posé une question et JARVIS n'a pas encore
+    # répondu : la séance n'est pas fermée pendant que la réponse se prépare (12 s au plus).
+    assert await runtime.check_timeout() is False
+    clock.advance(8)
     assert await runtime.check_timeout() is True
     assert stops == [VoiceStopReason.IDLE]
 

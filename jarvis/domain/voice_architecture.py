@@ -67,11 +67,22 @@ class FrontBrainVoiceConfig:
             raise VoiceConfigError("voice_reasoning_invalid", "Select a supported reasoning effort")
 
 
+DEFAULT_IDLE_TIMEOUT_S = 10.0
+DEFAULT_SLEEP_TIMEOUT_S = 30.0
+
+
 @dataclass(frozen=True, slots=True)
 class DuplexVoiceConfig:
     conversation_model: VoiceModelRef
     client_delegation: bool = True
-    idle_timeout_s: float = 60.0
+    #: Silence de l'utilisateur au bout duquel la séance GPT-Live est fermée (IDLE) :
+    #: plus de coût fournisseur, le micro local reste à l'écoute (mot d'éveil, parole).
+    idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_S
+    #: Inactivité totale (depuis la dernière activité utile, donc IDLE compris) au bout
+    #: de laquelle JARVIS dort (SLEEP) : seuls « Hey Jarvis », la touche ou la fin
+    #: d'une tâche entière le rouvrent. Strictement plus grand que `idle_timeout_s`.
+    #: `None` : 30 s, ou 20 s après `idle_timeout_s` s'il est plus long (jamais en dessous).
+    sleep_timeout_s: float | None = None
     brain_orchestration: bool = True
     #: Qui décide de couper JARVIS quand on lui parle par-dessus : « provider »
     #: (le fournisseur, ancien comportement) ou « local » (voix mesurée, défaut).
@@ -94,6 +105,14 @@ class DuplexVoiceConfig:
                 or not 5 <= self.idle_timeout_s <= 3600
                 or not math.isfinite(self.idle_timeout_s)):
             raise VoiceConfigError("voice_idle_timeout_invalid", "Live idle_timeout_s must be finite, between 5 and 3600 seconds")
+        if self.sleep_timeout_s is None:
+            object.__setattr__(self, "sleep_timeout_s", max(DEFAULT_SLEEP_TIMEOUT_S, float(self.idle_timeout_s) + 20.0))
+        if (isinstance(self.sleep_timeout_s, bool)
+                or not isinstance(self.sleep_timeout_s, (int, float))
+                or not math.isfinite(self.sleep_timeout_s)
+                or not self.idle_timeout_s < self.sleep_timeout_s <= 86400):
+            raise VoiceConfigError("voice_sleep_timeout_invalid",
+                                   "Live sleep_timeout_s must be finite, greater than idle_timeout_s and at most 86400 seconds")
 
 
 VoiceModeConfig = SimpleVoiceConfig | FrontBrainVoiceConfig | DuplexVoiceConfig

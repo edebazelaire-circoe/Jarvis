@@ -9,7 +9,7 @@ import os
 import math
 
 from jarvis.domain.voice_architecture import (
-    DuplexVoiceConfig, FrontBrainVoiceConfig, SimpleVoiceConfig, VoiceArchitectureId,
+    DEFAULT_IDLE_TIMEOUT_S, DEFAULT_SLEEP_TIMEOUT_S, DuplexVoiceConfig, FrontBrainVoiceConfig, SimpleVoiceConfig, VoiceArchitectureId,
     VoiceConfigError, VoiceModeConfig, VoiceModelRef,
 )
 from jarvis.runtime.voice_capabilities import VoiceCapabilityRegistry, default_voice_registry
@@ -89,6 +89,31 @@ def _safe_stack_options(stack_id: str, raw: object) -> dict[str, object]:
     return deepcopy(options)
 
 
+#: Valeur par défaut de `idle_timeout_s` avant le modèle ACTIVE / IDLE / SLEEP : la
+#: séance se fermait après 60 s. Un bloc écrit à cette époque n'a pas de
+#: `sleep_timeout_s` ; son 60 n'est pas un choix, c'est l'ancien défaut.
+LEGACY_IDLE_TIMEOUT_S = 60.0
+
+
+def migrate_rest_timeouts(values: Mapping[str, object]) -> tuple[object, object]:
+    """Délais (IDLE, SLEEP) d'un bloc Duplex, en relisant sans les réécrire les blocs d'avant SLEEP.
+
+    - `sleep_timeout_s` présent : le bloc est au modèle courant, rien ne change.
+    - absent et `idle_timeout_s` absent ou égal à l'ancien défaut (60 s) : les nouveaux
+      défauts (10 s / 30 s), c'est ce que l'utilisateur a demandé.
+    - absent et `idle_timeout_s` choisi (autre valeur) : son choix est gardé comme délai
+      IDLE, et SLEEP vient 20 s plus tard au moins (30 s minimum).
+    Lecture seule : le bloc stocké n'est réécrit qu'à la prochaine sauvegarde des réglages.
+    """
+
+    idle = values.get("idle_timeout_s")
+    if "sleep_timeout_s" in values:
+        return (DEFAULT_IDLE_TIMEOUT_S if idle is None else idle), values["sleep_timeout_s"]
+    if idle is None or (isinstance(idle, (int, float)) and not isinstance(idle, bool) and idle == LEGACY_IDLE_TIMEOUT_S):
+        return DEFAULT_IDLE_TIMEOUT_S, DEFAULT_SLEEP_TIMEOUT_S
+    return idle, None  # choix gardé ; `DuplexVoiceConfig` déduit SLEEP (ou refuse un IDLE invalide, nommé)
+
+
 def parse_voice_mode(raw: object, registry: VoiceCapabilityRegistry, *, validate_models: bool = True) -> VoiceModeConfig:
     if not isinstance(raw, dict):
         raise VoiceConfigError("voice_schema_invalid", "Voice config must be an object")
@@ -105,11 +130,12 @@ def parse_voice_mode(raw: object, registry: VoiceCapabilityRegistry, *, validate
                                        values.get("speculative_deltas", True), values.get("reasoning_effort", "low"))  # type: ignore[arg-type]
     else:
         values = _object(raw, allowed={"architecture", "conversation_model", "client_delegation", "idle_timeout_s",
-                                       "brain_orchestration", "barge_in_decider"}, name="Duplex config")
+                                       "sleep_timeout_s", "brain_orchestration", "barge_in_decider"}, name="Duplex config")
+        idle_s, sleep_s = migrate_rest_timeouts(values)
         # Champ absent = orchestration cerveau active : les réglages écrits
         # avant ce champ restent lisibles sans migration ni bump de schéma.
         config = DuplexVoiceConfig(_ref(values.get("conversation_model")), values.get("client_delegation", True),
-                                   values.get("idle_timeout_s", 60.0),
+                                   idle_s, sleep_s,
                                    values.get("brain_orchestration", True),  # type: ignore[arg-type]
                                    values.get("barge_in_decider", "local"))  # type: ignore[arg-type]
     if validate_models:

@@ -106,16 +106,17 @@ if(typeof module!=='undefined'&&module.exports)
   const THEME_ID='cosmos';
   const LEGACY_THEME_ID='omega';
   const TAU=Math.PI*2;
-  const VALID_STATES=new Set(['idle','waiting','listening','thinking','speaking']);
+  const VALID_STATES=new Set(['idle','sleep','waiting','listening','thinking','speaking']);
   const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
   const lerp=(a,b,t)=>a+(b-a)*t;
   const rgba=(rgb,a)=>`rgba(${Math.round(rgb[0])},${Math.round(rgb[1])},${Math.round(rgb[2])},${a})`;
-  /* idle = SLEEP (bleu grisé), waiting = WAIT (bleu, session ouverte, personne
+  /* idle = IDLE (bleu grisé, séance fermée, micro local), sleep = SLEEP (gris), idle (ancien nom du repos unique), waiting = WAIT (bleu, session ouverte, personne
      ne parle), listening = LISTEN (vert, seulement quand la voix de
      l'utilisateur est captée). OFF (Voice hors ligne) : gris, `OFF_COLOR`. */
   const OFF_COLOR=[128,134,142];
   const STATE_COLORS={
     idle:[104,128,158],
+    sleep:[128,134,142],
     waiting:[67,170,255],
     listening:[70,247,164],
     speaking:[255,151,61],

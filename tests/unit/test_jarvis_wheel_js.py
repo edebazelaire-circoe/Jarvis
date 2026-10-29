@@ -67,7 +67,7 @@ def test_online_rows_are_facts_with_their_source_and_two_existing_routes(tmp_pat
     rows = run(tmp_path, "out(J.jarvisItemsOf(J.factsOf(S,'ok')))")
     assert [r["id"] for r in rows] == ["voice", "wake", "agent", "subagents", "voice_settings"]
     by = {r["id"]: r for r in rows}
-    assert by["voice"]["status"] is True and by["voice"]["note"] == "Veille · SLEEP"
+    assert by["voice"]["status"] is True and by["voice"]["note"] == "Veille · IDLE"
     assert by["voice"]["detail"] == "Voice en ligne, veille, pile Cerveau continu"
     assert by["wake"]["status"] is True and by["wake"]["label"] == "F9 · DÉMARRER"
     assert by["wake"]["note"] == "tour automatique" and by["wake"]["detail"] == "touche F9, raccourci global de Voice, tour automatique"
@@ -101,7 +101,7 @@ def test_each_voice_state_reads_with_the_orb_vocabulary_and_the_wake_key_sentenc
       const off=J.factsOf({...S,voice_online:false,voice_state:'listening'},'ok');
       o.offline={rows:J.jarvisItemsOf(off).slice(0,2),hint:J.wakeHintOf(off),cat:J.categoryStatusOf(off)};
       out(o)""")
-    assert got["idle:auto"] == {"note": "Veille · SLEEP", "hint": "F9 · DÉMARRER"}
+    assert got["idle:auto"] == {"note": "Veille · IDLE", "hint": "F9 · DÉMARRER"}
     assert got["waiting:manual"] == {"note": "Attente · WAIT", "hint": "F9 · ENVOYER"}
     assert got["waiting:auto"]["hint"] == "F9 · ANNULER"
     assert got["listening:manual"] == {"note": "Écoute · LISTEN", "hint": "F9 · ENVOYER"}

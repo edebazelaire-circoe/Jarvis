@@ -94,6 +94,11 @@ SPEECH_ERROR_WITHHELD = "voice.speech.error_withheld"
 SPEECH_GREETING_DROPPED = "voice.speech.greeting_dropped"
 #: Passé ce délai, l'accueil ne répond plus au réveil qui l'a demandé.
 GREETING_TTL_S = 8.0
+#: Compte rendu de fin de tâche (`announce_missed_result`) jamais mis en file : Core n'a pas
+#: annoncé d'intention courante avant l'échéance.
+SPEECH_MISSED_RESULT_DROPPED = "voice.speech.missed_result_dropped"
+#: Une fois la séance rouverte pour lui, un compte rendu attend l'intention courante de Core au plus ce délai.
+MISSED_RESULT_TTL_S = 20.0
 # Verdict de Core qui ne trouve rien à retirer (parole déjà tentée, inconnue ou
 # déjà soldée) : rien ne change, mais c'est dit.
 SPEECH_VERDICT_IGNORED = "voice.speech.verdict_ignored"
@@ -519,6 +524,9 @@ class SpeechScheduler:
         # Accueil demandé avant que Core ait dit son intention courante :
         # `(texte, échéance)`, mis en file dès qu'elle arrive.
         self._greeting: tuple[str, datetime] | None = None
+        # Comptes rendus de fin de tâche publiés pendant IDLE / SLEEP, que personne n'a dits :
+        # `(demande, échéance)`, mis en file dès que l'intention courante de Core est connue.
+        self._missed_results: list[tuple[SpeechRequest, datetime]] = []
         self._invalidated_dependencies: set[SpeechDependency] = set()
         self._presentation_admissions: dict[str, OutputAdmission] = {}
         self._presentation_cancels: set[asyncio.Task] = set()
@@ -1954,6 +1962,7 @@ class SpeechScheduler:
         except (ValueError, TypeError, KeyError):
             self._source_complete = False
         self._flush_greeting()
+        self._flush_missed_results()
         self._update_analysis_source()
         if self._floor is not None and self._intent_watermark > watermark:
             # Intention nouvelle de Core (tour adressé, ou incertain promu) : la
@@ -2454,6 +2463,47 @@ class SpeechScheduler:
             source=source,
             expires_at=deadline,
         ))
+
+    def announce_missed_result(self, payload: dict, *, ttl_s: float = MISSED_RESULT_TTL_S) -> bool:
+        """Dire le compte rendu d'une tâche terminée pendant que la voix était au repos.
+
+        `payload` est la demande de parole telle que Core l'a publiée (`brain.speech.requested`)
+        alors que personne n'écoutait. Même identité (`id`) : Core la voit dite, pas remise au
+        cerveau pour une seconde annonce. Elle prend l'intention courante de la séance qui vient
+        de s'ouvrir — une parole sans source reste différée pour toujours (`_eligibility`) — et,
+        comme le texte est un résultat durable, elle ne périme pas d'elle-même : seule une
+        nouvelle intention (l'utilisateur enchaîne) la remet au cerveau, comme tout résultat.
+        Rend True si la demande est retenue.
+        """
+
+        if self._stopping:
+            return False
+        request = self._read_request(payload)
+        if request is None or request.conversation_id != self.conversation_id:
+            return False
+        self._missed_results.append((request, self.clock.now() + timedelta(seconds=ttl_s)))
+        self._flush_missed_results()
+        return True
+
+    def _flush_missed_results(self) -> None:
+        if not self._missed_results or self._stopping:
+            return
+        source = self._current_source
+        ready = source is not None and self._source_complete
+        waiting: list[tuple[SpeechRequest, datetime]] = []
+        for request, deadline in self._missed_results:
+            if self.clock.now() >= deadline:
+                self._trace(SPEECH_MISSED_RESULT_DROPPED,
+                            "Compte rendu de fin de tâche non dit : aucune intention courante de Core à temps",
+                            level="warning", data={"conversation_id": self.conversation_id, "speech_id": request.id,
+                                                   "source_complete": self._source_complete})
+            elif not ready:
+                waiting.append((request, deadline))
+            else:
+                self.enqueue_controller_speech(replace(
+                    request, source=source, correlation_id=source.correlation_id,  # type: ignore[union-attr]
+                    expires_at=None))
+        self._missed_results = waiting
 
     def enqueue_controller_speech(self, request: SpeechRequest) -> None:
         """Present a source-bound controller notice through normal admission."""
