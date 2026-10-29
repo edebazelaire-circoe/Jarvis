@@ -4598,7 +4598,7 @@ are unchanged; « Supprimer… » became « Archiver… » (restorable) and a ne
 
 | Key | Value | Source |
 | --- | --- | --- |
-| `preview` | `{artifact_id, kind: "presentation_still", width, height}` or `null` | the newest `complete` `presentation_still` artifact `rendered_from` a snapshot of this presentation (`docs/presentation-artifacts.md`). Read by the page through `GET /api/artifacts/{id}/payload` (Core `/v1/artifacts/{id}/payload`, ≤ 8 MiB per answer); never a filesystem path |
+| `preview` | `{artifact_id, kind: "presentation_still" \| "presentation_video", width, height}` or `null` | the newest `complete` `presentation_still` artifact `rendered_from` a snapshot of this presentation (`docs/presentation-artifacts.md`); without one, its newest `complete` `presentation_video` (2026-10-29: the page shows its first frame). Read by the page through `GET /api/artifacts/{id}/payload` (Core `/v1/artifacts/{id}/payload`, ≤ 8 MiB per answer); never a filesystem path |
 | `type` | `{engine}` (`remotion`, `slidecar`) | the presentation's own engine |
 | `unreviewed` | `{since, label}` or `null` | `rail.json` (below); always `null` while the work state is `problem` |
 
@@ -4649,13 +4649,18 @@ from answer `409 artifact_has_dependents` and a second confirmation retries with
 24 newest). The pure adapter `jarvis/runtime/control_center_workspace_rail_model.js` (`window.JarvisWorkspaceRailModel`) turns each into a `WorkspaceRailItem`
 (view, never stored): type badge by kind, `mime_type` (PowerPoint, Word, Excel, PDF, Image, Vidéo…) or link host (`docs.google.com/presentation` -> Google Slides, Docs,
 Sheets, Drive, YouTube, Figma, GitHub, Notion; else the host name; the URL is never loaded; a link's title is its host, never a path cut mid-word), image preview only for a `complete` screenshot / image upload / still render
-through the payload route, typed placeholder otherwise; state `pending` « En cours », `complete` « Prêt », `failed` / `partial` « Problème », other « État inconnu »,
+through the payload route, a `complete` video (upload, screen recording, rendered MP4) shows its first frame, typed placeholder otherwise; state `pending` « En cours », `complete` « Prêt », `failed` / `partial` « Problème », other « État inconnu »,
 **no yellow** (no canonical review owner). The active Board comes from the page's 1 Hz status: a Board switch empties the section at once and re-reads; a late answer for
 the previous Board is dropped (no leakage). Re-read at most every 10 s while the rail is visible. Click: an image opens in the screenshot preview when its module is
 loaded (`JarvisScreenshotPreview.openLightbox`, Slice 05 seam), otherwise — and for every other item — the Artifact detail in the workspace inspector
 (`JarvisWorkspace.act('artifact-show')`); a link opens in a tab only from the menu. A failing read says « Éléments du Board indisponibles » with the real cause and is
 journalled (`workspace_items_failed`). Conformance: `tests/unit/test_workspace_rail_model_js.py`, `test_control_center_presentation_rail_browser.py`, and the e2e test
 (a real still linked to the active Board shows there through the real relay).
+
+**Videos (user request 2026-10-29: a video must be recognisable at a glance).** A video thumbnail is a muted `<video preload="metadata">` paused on its
+first frame (`#t=0.1`; only the first byte ranges are read, `Range` relayed by the bounded payload route), with a play mark (`.jvr-play`) at its centre; every
+Remotion presentation carries the play mark (a Remotion deck is a video), Slidecar decks do not. A frame that fails to load falls back to the typed placeholder, where
+the play mark replaces the glyph. Conformance: `test_videos_show_their_first_frame_under_a_play_mark` (a real H.264 fixture, `tests/fixtures/rail-video-frame.mp4`).
 
 **Limits.** The rail never renders a still itself; the yellow says « the brain finished work you have not opened from the rail since », not « the content differs ».
 

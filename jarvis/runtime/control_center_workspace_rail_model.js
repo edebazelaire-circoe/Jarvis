@@ -98,10 +98,12 @@
   function itemOf(a,boardId){
     if(!a||typeof a!=='object'||!KINDS.includes(a.kind)||typeof a.artifact_id!=='string'||!ID.test(a.artifact_id))return null;
     const type=typeOf(a),state=STATE[a.state]||'unknown';
-    const image=isImage(a)&&a.state==='complete'&&a.has_payload!==false;
+    const ready=a.state==='complete'&&a.has_payload!==false,image=isImage(a)&&ready;
+    // Une vidéo complète montre sa première image (la page la tire de ses premières plages) : retour utilisateur du 2026-10-29.
+    const frame=image?'image':type.key==='video'&&ready?'video':null;
     return Object.freeze({
       id:a.artifact_id,source_kind:'artifact',artifact_kind:a.kind,title:titleOf(a,type),media_type:type.key,type,
-      preview:image?{kind:'image',url:`/api/artifacts/${encodeURIComponent(a.artifact_id)}/payload`}:{kind:'placeholder',label:type.badge},
+      preview:frame?{kind:frame,url:`/api/artifacts/${encodeURIComponent(a.artifact_id)}/payload`}:{kind:'placeholder',label:type.badge},
       activity_state:state,updated_at:a.ended_at||a.created_at||null,
       primary_action:image?'lightbox':'detail',context_actions:Object.freeze(['detail']),
       source_scope:Object.freeze({board_id:boardId}),url:a.kind==='link'&&parseLink(a.preview)?parseLink(a.preview).href:null});

@@ -298,7 +298,8 @@ async def test_mcp_edit_lights_the_blue_dot_and_a_real_failure_the_orange_one(tm
 
 # ------------------------------------------------------------------ rail actif (S07, D10) : apercu, type, « a revoir »
 
-async def _still(core: Core, pid: str, *, width: int = 1280, height: int = 720, finish: bool = True, payload: bytes = b"PNG-still") -> str:
+async def _still(core: Core, pid: str, *, width: int = 1280, height: int = 720, finish: bool = True, payload: bytes = b"PNG-still",
+                 fmt: str = "STILL") -> str:
     """Un vrai `presentation_still` : snapshot fige de la revision vivante, puis rendu `rendered_from` ce snapshot (registre reel)."""
 
     import hashlib
@@ -317,7 +318,7 @@ async def _still(core: Core, pid: str, *, width: int = 1280, height: int = 720, 
         spool.write(b"PK-frozen")
         spool.finalize()
         await app.presentation_artifacts.finalize_snapshot(sid, content_sha256=hashlib.sha256(b"PK-frozen").hexdigest())
-    render = await app.presentation_artifacts.begin_render(sid, pa.RenderFormat.STILL)
+    render = await app.presentation_artifacts.begin_render(sid, getattr(pa.RenderFormat, fmt))
     if finish:
         spool = app.artifacts.open_spool(render)
         spool.write(payload)
@@ -338,6 +339,19 @@ async def test_row_preview_is_latest_complete_still_without_path(tmp_path):
         assert rows[shown]["type"] == {"engine": "remotion"} and rows[bare]["type"] == {"engine": "remotion"}
         wire = json.dumps(rows)
         assert str(tmp_path) not in wire and str(tmp_path).replace("\\", "/") not in wire and "payload_ref" not in wire, "never a filesystem path"
+
+
+async def test_a_rendered_video_is_the_preview_when_no_still_exists(tmp_path):
+    """2026-10-29 : sans still, la plus recente video complete sert d'apercu (la page en montre la premiere image) ; un still gagne."""
+
+    async with Core(tmp_path) as core:
+        video_only, both = await create(core, "Video seule"), await create(core, "Video et still")
+        video = await _still(core, video_only, width=1920, height=1080, payload=b"MP4-video", fmt="MP4")
+        await _still(core, both, payload=b"MP4-video", fmt="MP4")
+        still = await _still(core, both)
+        rows = {r["presentation_id"]: r for r in (await core.client.presentation_studio_rail())["presentations"]}
+        assert rows[video_only]["preview"] == {"artifact_id": video, "kind": "presentation_video", "width": 1920, "height": 1080}
+        assert rows[both]["preview"]["artifact_id"] == still and rows[both]["preview"]["kind"] == "presentation_still"
 
 
 async def test_preview_cache_bounded():
@@ -378,7 +392,7 @@ async def test_preview_cache_bounded():
     before = len(resolved)
     again = await rail.previews()
     assert len(resolved) == before and len(again) == len(stills), "same newest stills: nothing is resolved again"
-    assert queries[-1].limit == rail_module.PREVIEW_SCAN and [k.value for k in queries[-1].kinds] == ["presentation_still"]
+    assert queries[-1].limit == rail_module.PREVIEW_SCAN and [k.value for k in queries[-1].kinds] == ["presentation_still", "presentation_video"]
     assert [s.value for s in queries[-1].states] == ["complete"]
     start = 10_000
     while len(resolved) < PREVIEW_LINEAGE_MAX + 2 * rail_module.PREVIEW_SCAN:

@@ -122,7 +122,7 @@ def test_placeholder_when_no_preview():
     out = node(f"""const base={{presentation_id:'{P1}',title:'Deck',work:{{state:'done'}}}};
       return [R.previewOf({{...base,type:{{engine:'remotion'}},preview:null}}),R.previewOf({{...base,type:{{engine:'slidecar'}}}}),
         R.previewOf({{...base,preview:{{artifact_id:'../../etc/passwd',kind:'presentation_still'}}}}),
-        R.previewOf({{...base,preview:{{artifact_id:'jart_0123456789abcdef',kind:'presentation_video'}}}}),
+        R.previewOf({{...base,preview:{{artifact_id:'jart_0123456789abcdef',kind:'presentation_snapshot'}}}}),
         R.previewOf({{...base,type:{{engine:'remotion'}},preview:{{artifact_id:'jart_0123456789abcdef',kind:'presentation_still',width:1280,height:720}}}})]""")
     assert out[0] == {"kind": "placeholder", "label": "Présentation · Remotion"}
     assert out[1] == {"kind": "placeholder", "label": "Présentation · Slidecar"}
@@ -130,6 +130,20 @@ def test_placeholder_when_no_preview():
     assert out[4] == {"kind": "image", "url": "/api/artifacts/jart_0123456789abcdef/payload", "artifact_id": "jart_0123456789abcdef",
                       "width": 1280, "height": 720}, "the bounded payload route, never a path"
     assert node("return R.typeOf({}).label") == "Présentation", "unknown engine: a generic type, never a guess"
+
+
+def test_video_presentations_show_a_frame_and_a_play_mark():
+    """2026-10-29 : une présentation Remotion est une vidéo. Sans still, sa vidéo rendue fournit l'image (`<video>` arrêté sur la
+    première image) ; avec ou sans image, la carte porte le logo lecture. Slidecar (diapositives) non."""
+    out = node(f"""const base={{presentation_id:'{P1}',title:'Deck',work:{{state:'done'}}}};
+      const video={{artifact_id:'jart_0123456789abcdef',kind:'presentation_video',width:1920,height:1080}};
+      return [R.previewOf({{...base,preview:video}}),R.cardOf({{...base,type:{{engine:'remotion'}},preview:video}},0).video,
+        R.cardOf({{...base,type:{{engine:'remotion'}},preview:null}},0,{{plain:true}}).video,R.cardOf({{...base,type:{{engine:'slidecar'}}}},0).video]""")
+    assert out[0] == {"kind": "video", "url": "/api/artifacts/jart_0123456789abcdef/payload", "artifact_id": "jart_0123456789abcdef",
+                      "width": 1920, "height": 1080}
+    assert out[1:] == [True, True, False], "Remotion is a video even when its engine name is hidden (plain); Slidecar is slides"
+    source = (RUNTIME / "control_center_presentation_rail.js").read_text(encoding="utf-8")
+    assert "video.preload='metadata'" in source and "video.muted=true" in source, "only the first ranges are read, never played aloud"
 
 
 def test_card_metadata_density_and_review_menu():

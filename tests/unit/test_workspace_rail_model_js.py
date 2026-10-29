@@ -72,6 +72,13 @@ def test_items_from_board_artifacts_typed_by_mime_and_host():
     assert url.startswith(f"/api/workspace/artifacts?board_id={B1}&limit=24&kind=upload&kind=link") and "presentation_snapshot" not in url
     pending_image = node(f"return M.itemOf({json.dumps(art(20, 'screenshot', state='pending'))},{json.dumps(B1)}).preview.kind")
     assert pending_image == "placeholder", "an image that is not complete is never fetched"
+    # 2026-10-29 : une vidéo complète montre sa première image (vignette `<video>` arrêtée), par la même route bornée.
+    videos = node(f"""return [M.itemOf({json.dumps(art(21, 'upload', mime_type='video/mp4', preview='demo.mp4'))},{json.dumps(B1)}),
+      M.itemOf({json.dumps(art(22, 'presentation_video', mime_type='video/mp4'))},{json.dumps(B1)}),
+      M.itemOf({json.dumps(art(23, 'screen_recording', mime_type='video/webm', has_payload=False))},{json.dumps(B1)})]""")
+    assert videos[0]["preview"] == {"kind": "video", "url": "/api/artifacts/jart_00000000000000000000000000000015/payload"}
+    assert videos[0]["media_type"] == "video" and videos[0]["primary_action"] == "detail", "a video still opens its detail, never the image lightbox"
+    assert videos[1]["preview"]["kind"] == "video" and videos[2]["preview"]["kind"] == "placeholder", "no payload: nothing to fetch"
     js = node("return M.itemOf({artifact_id:'jart_0123456789abcdef',kind:'link',state:'complete',preview:'javascript:alert(1)'},'b').url")
     assert js is None, "only http(s) links are offered"
 

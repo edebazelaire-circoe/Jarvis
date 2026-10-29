@@ -41,6 +41,7 @@ premier plan. Captures : `JARVIS_S09_EVIDENCE_DIR=<dossier>` (sinon `tmp_path`).
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -982,8 +983,6 @@ def test_launcher_names_survive_a_theme_round_trip(tmp_path):
 
 
 #: La puce GPT-Live, mesurée avec un enregistrement audio ouvert (`#recIndicators`).
-CHIP = r"""(()=>{const h=document.getElementById('recIndicators');h.hidden=false;let c=h.querySelector('.ri-chip');
-  if(!c){c=document.createElement('button');c.type='button';c.className='ri-chip';c.textContent='REC 00:12';h.appendChild(c)}return 1})()"""
 CHIP = r"""(()=>{const box=el=>{if(!el||el.closest('[hidden]'))return null;const r=el.getBoundingClientRect();
   return r.width>0?{l:r.left,t:r.top,r:r.right,b:r.bottom,w:r.width,h:r.height}:null};const q=s=>document.querySelector(s);
   const stop=q('#liveStop');return {chip:box(q('#liveBanner')),stop:box(stop),stopName:stop.getAttribute('aria-label'),
@@ -1017,6 +1016,34 @@ def test_the_live_chip_is_small_top_right_and_pushes_the_recording_chip_down(tmp
         assert c["stopName"] == "ARRÊTER" and c["stop"]["w"] >= 20, (where, c)
         assert "GPT-Live · ACTIF" in c["title"], (where, c["title"])
         assert _errors(step) == [], _errors(step)
+
+
+#: Une vraie vidéo MP4 (H.264, 1 s, 640×360), servie à la place de la route bornée du payload pour un `<video>`.
+VIDEO_FRAME = "data:video/mp4;base64," + base64.b64encode(
+    (Path(__file__).resolve().parents[1] / "fixtures" / "rail-video-frame.mp4").read_bytes()).decode()
+VIDEO_UPLOAD, VIDEO_RENDER = "jart_" + "e" * 32, "jart_" + "f" * 32
+THUMBS = r"""(()=>[...document.querySelectorAll('#presentationRail .jvr-thumb')].map(t=>({kind:t.dataset.kind,
+  ready:(t.querySelector('video')||{}).readyState||0,play:!!t.querySelector('.jvr-play'),
+  name:(t.closest('.jvr-item')||t.parentElement).getAttribute('aria-label')||''})))()"""
+
+
+def test_videos_show_their_first_frame_under_a_play_mark(tmp_path):
+    """Retour utilisateur du 2026-10-29 : une vidéo se reconnaît d'un coup d'œil. Une présentation Remotion sans still montre la
+    première image de sa vidéo rendue, un fichier vidéo du Board la sienne, et toutes deux portent le logo lecture ; une image
+    (capture) ne le porte pas."""
+    rows = [{**row, "type": {"engine": "remotion"}} for row in RAIL_ROWS]
+    rows[2] = {**rows[2], "preview": {"artifact_id": VIDEO_RENDER, "kind": "presentation_video", "width": 640, "height": 360}}
+    video = {"artifact_id": VIDEO_UPLOAD, "kind": "upload", "state": "complete", "has_payload": True, "created_at": "2026-10-16T08:00:00Z",
+             "mime_type": "video/mp4", "preview": "demo.mp4"}
+    seed = {**MIXED, "railRows": rows, "boardArtifacts": [video, *BOARD_ITEMS], "mode": MODE,
+            "videos": {VIDEO_UPLOAD: VIDEO_FRAME, VIDEO_RENDER: VIDEO_FRAME}}
+    step = _centre(tmp_path, [{"width": 1440, "height": 900, "seed": seed, "actions": [["eval", "thumbs", THUMBS, 2500]]}])[0]
+    thumbs = step["results"]["thumbs"]
+    videos = [t for t in thumbs if t["kind"] == "video"]
+    assert len(videos) == 2 and all(t["ready"] >= 2 and t["play"] for t in videos), ("first frame decoded, play mark on top", thumbs)
+    assert all(t["play"] for t in thumbs if "Remotion" in t["name"] or "Vidéo" in t["name"]), thumbs
+    assert not any(t["play"] for t in thumbs if t["kind"] == "image" and "Capture" in t["name"]), ("an image is not a video", thumbs)
+    assert _errors(step) == [], _errors(step)
 
 
 #: Un navigateur sans ancres CSS : chaque déclaration à `anchor(` est retirée par le CSSOM (un parseur qui ne

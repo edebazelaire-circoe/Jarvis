@@ -138,8 +138,11 @@
   }
   /* `opts.plain` (Slice 08, surfaces de développement cachées) : le moteur par défaut n'est pas nommé ; un autre moteur
      (Slidecar, expérimental) l'est encore, parce que la présentation se comporte autrement. */
+  function engineOf(row){
+    return row&&row.type&&typeof row.type.engine==='string'?row.type.engine:(row&&typeof row.engine==='string'?row.engine:null);
+  }
   function typeOf(row,opts){
-    const engine=row&&row.type&&typeof row.type.engine==='string'?row.type.engine:(row&&typeof row.engine==='string'?row.engine:null);
+    const engine=engineOf(row);
     const name=engine&&!(opts&&opts.plain&&engine==='remotion')&&ENGINE_LABEL[engine]||null;
     return {engine:name?engine:null,badge:name||'Présentation',label:name?`Présentation · ${name}`:'Présentation'};
   }
@@ -154,11 +157,13 @@
     const w=Math.round(d/7);if(w<9)return `il y a ${w} sem.`;
     return `il y a ${Math.round(d/30)} mois`;
   }
-  /* Aperçu : l'image d'un rendu complet que Core désigne (`preview`), sinon une vignette typée. Jamais un chemin, jamais une fausse diapositive. */
+  /* Aperçu : l'image d'un rendu complet que Core désigne (`preview`) — un still, ou la première image d'une vidéo rendue (2026-10-29) —,
+     sinon une vignette typée. Jamais un chemin, jamais une fausse diapositive. */
+  const PREVIEW_KIND=Object.freeze({presentation_still:'image',presentation_video:'video'});
   function previewOf(row,opts){
     const p=row&&row.preview;
-    if(p&&typeof p==='object'&&p.kind==='presentation_still'&&typeof p.artifact_id==='string'&&ID_ARTIFACT.test(p.artifact_id))
-      return {kind:'image',url:payloadUrl(p.artifact_id),artifact_id:p.artifact_id,width:Number(p.width)||null,height:Number(p.height)||null};
+    if(p&&typeof p==='object'&&PREVIEW_KIND[p.kind]&&typeof p.artifact_id==='string'&&ID_ARTIFACT.test(p.artifact_id))
+      return {kind:PREVIEW_KIND[p.kind],url:payloadUrl(p.artifact_id),artifact_id:p.artifact_id,width:Number(p.width)||null,height:Number(p.height)||null};
     return {kind:'placeholder',label:typeOf(row,opts).label};
   }
   /* La carte, en données (pur, testé sous node) : ce que le DOM affiche, rien de plus. */
@@ -167,6 +172,8 @@
     const when=ago(row&&row.updated_at,nowMs);
     return {id:row.presentation_id,title:cleanLine(row.title,80)||'Sans titre',short:cleanLine(row.title,TITLE_SHORT)||'Sans titre',
       state:st,stateShort:STATE_SHORT[st],stateLabel:STATE_LABEL[st],color:STATE_COLOR[st],type,preview:previewOf(row,opts),
+      // Une présentation Remotion est une vidéo : sa vignette porte le logo lecture (retour utilisateur du 2026-10-29).
+      video:engineOf(row)==='remotion',
       meta:[type.badge,count>1?`${count} variantes`:null].filter(Boolean).join(' · '),when};
   }
 
@@ -251,7 +258,13 @@
 #${DOM.hostId} .jvr-thumb svg{width:34px;height:34px}
 #${DOM.hostId} .jvr-item:hover .jvr-thumb{border-color:var(--jvr-hot);transform:translateY(-1px)}
 #${DOM.hostId} .jvr-item[data-open=true] .jvr-thumb{border-color:var(--jvr-hot);box-shadow:0 0 0 1px var(--jvr-hot)}
-#${DOM.hostId} .jvr-thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;background:#05090d}
+#${DOM.hostId} .jvr-thumb :is(img,video){position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;background:#05090d;pointer-events:none}
+/* Logo lecture des vidéos (2026-10-29) : au centre de la vignette, sur l'image ; dans une vignette typée, à la place du pictogramme. */
+#${DOM.hostId} .jvr-play{position:relative;z-index:1;display:grid;place-items:center;width:42px;height:42px;border-radius:50%;background:rgba(2,6,9,.62);
+  border:1.5px solid rgba(255,255,255,.78);box-shadow:0 2px 14px rgba(0,0,0,.5);color:#fff;pointer-events:none}
+#${DOM.hostId} .jvr-play svg{width:18px;height:18px;margin-left:3px}
+#${DOM.hostId} .jvr-thumb:is([data-kind=image],[data-kind=video]) .jvr-play{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
+#${DOM.hostId} .jvr-item:hover .jvr-play{background:rgba(2,6,9,.78);border-color:#fff}
 #${DOM.hostId} .jvr-thumb[data-kind=placeholder] .jvr-ph{font:600 9px/1 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.08em;text-transform:uppercase;opacity:.82}
 #${DOM.hostId} .jvr-badge{position:absolute;left:6px;bottom:6px;padding:2px 5px;border-radius:4px;background:rgba(2,6,9,.74);color:#e8f4fa;font:600 8.5px/1 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.06em;text-transform:uppercase}
 #${DOM.hostId} .jvr-thumb[data-kind=placeholder] .jvr-badge{display:none}
@@ -300,7 +313,7 @@
 #${DOM.hostId}[data-density=compact] .jvr-list{gap:6px}
 #${DOM.hostId}[data-density=compact] .jvr-item{grid-template-columns:44px minmax(0,1fr);align-items:center;gap:8px}
 #${DOM.hostId}[data-density=compact] .jvr-thumb{width:44px}
-#${DOM.hostId}[data-density=compact] .jvr-thumb .jvr-ph,#${DOM.hostId}[data-density=compact] .jvr-thumb svg,#${DOM.hostId}[data-density=compact] .jvr-badge,#${DOM.hostId}[data-density=compact] .jvr-mark,#${DOM.hostId}[data-density=compact] :is(.jvr-more,.jvr-del){display:none}
+#${DOM.hostId}[data-density=compact] .jvr-thumb .jvr-ph,#${DOM.hostId}[data-density=compact] .jvr-thumb svg,#${DOM.hostId}[data-density=compact] .jvr-play,#${DOM.hostId}[data-density=compact] .jvr-badge,#${DOM.hostId}[data-density=compact] .jvr-mark,#${DOM.hostId}[data-density=compact] :is(.jvr-more,.jvr-del){display:none}
 #${DOM.hostId}[data-density=compact] .jvr-name{font-size:12px;-webkit-line-clamp:1}
 @media (max-width:700px){#${DOM.hostId}{top:var(--shell-panel-top,88px);bottom:var(--shell-panel-bottom,68px)}}
 html.jvr-studio #${DOM.hostId}{z-index:9100;top:8px;right:8px;left:auto;bottom:8px;width:${STUDIO_WIDTH_PX-16}px;background:rgba(3,8,12,.92);border:1px solid var(--jvr-line);border-radius:12px}
@@ -549,23 +562,37 @@ html.jvr-studio #jvStudioExplorer:not(:fullscreen){right:${STUDIO_WIDTH_PX}px}
     function thumbFor(row,card){
       const thumb=el('span','jvr-thumb');thumb.setAttribute('aria-hidden','true');thumb.style.setProperty('--h',String(hueOf(row.presentation_id)));
       const p=card.preview;
-      if(p.kind==='image'&&!brokenPreviews.has(p.artifact_id)){
-        thumb.dataset.kind='image';
-        const img=el('img');img.alt='';img.loading='lazy';img.decoding='async';img.draggable=false;
-        if(p.width&&p.height){img.width=p.width;img.height=p.height}
-        img.addEventListener('error',()=>{
+      if((p.kind==='image'||p.kind==='video')&&!brokenPreviews.has(p.artifact_id)){
+        thumb.dataset.kind=p.kind;
+        const frame=frameOf(p.kind,p.url,()=>{
           if(brokenPreviews.has(p.artifact_id))return;
           brokenPreviews.add(p.artifact_id);
           log('preview_failed',{presentation_id:row.presentation_id.slice(0,12),artifact_id:p.artifact_id},'warn');
           thumb.replaceWith(thumbFor(row,{...card,preview:{kind:'placeholder',label:card.type.label}}));
-        },{once:true});
-        img.src=p.url;
-        thumb.append(img,el('span','jvr-badge',card.type.badge));
+        });
+        if(p.width&&p.height){frame.width=p.width;frame.height=p.height}
+        thumb.append(frame,...(card.video?[playMark()]:[]),el('span','jvr-badge',card.type.badge));
       }else{
         thumb.dataset.kind='placeholder';
-        thumb.append(glyph('presentation'),el('span','jvr-ph',card.type.badge),el('span','jvr-badge',card.type.badge));
+        thumb.append(card.video?playMark():glyph('presentation'),el('span','jvr-ph',card.type.badge),el('span','jvr-badge',card.type.badge));
       }
       return thumb;
+    }
+    /* L'image d'une vignette : `<img>`, ou, pour une vidéo, un `<video>` muet arrêté sur sa première image (métadonnées seulement :
+       le navigateur ne lit que les premières plages, `Range` relayé par la route bornée). Un échec appelle `onFail` une fois. */
+    function frameOf(kind,url,onFail){
+      if(kind==='video'){
+        const video=el('video');video.muted=true;video.playsInline=true;video.preload='metadata';video.disablePictureInPicture=true;
+        video.setAttribute('tabindex','-1');video.addEventListener('error',onFail,{once:true});video.src=url+'#t=0.1';return video;
+      }
+      const img=el('img');img.alt='';img.loading='lazy';img.decoding='async';img.draggable=false;
+      img.addEventListener('error',onFail,{once:true});img.src=url;return img;
+    }
+    function playMark(){
+      const NS='http://www.w3.org/2000/svg',mark=el('span','jvr-play'),svg=doc.createElementNS(NS,'svg');
+      svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('aria-hidden','true');
+      const path=doc.createElementNS(NS,'path');path.setAttribute('d','M7 4.5v15l12.5-7.5z');path.setAttribute('fill','currentColor');
+      svg.appendChild(path);mark.appendChild(svg);return mark;
     }
     function glyph(kind){
       const NS='http://www.w3.org/2000/svg',svg=doc.createElementNS(NS,'svg');
@@ -583,21 +610,20 @@ html.jvr-studio #jvStudioExplorer:not(:fullscreen){right:${STUDIO_WIDTH_PX}px}
     }
     function wsThumb(item,card){
       const thumb=el('span','jvr-thumb');thumb.setAttribute('aria-hidden','true');
-      if(item.preview.kind==='image'&&!brokenPreviews.has(item.id)){
-        thumb.dataset.kind='image';
-        const img=el('img');img.alt='';img.loading='lazy';img.decoding='async';img.draggable=false;
-        img.addEventListener('error',()=>{
+      const video=item.media_type==='video';
+      if((item.preview.kind==='image'||item.preview.kind==='video')&&!brokenPreviews.has(item.id)){
+        thumb.dataset.kind=item.preview.kind;
+        const frame=frameOf(item.preview.kind,item.preview.url,()=>{
           if(brokenPreviews.has(item.id))return;
           brokenPreviews.add(item.id);
           log('preview_failed',{artifact_id:item.id,kind:item.artifact_kind},'warn');
           thumb.replaceWith(wsThumb({...item,preview:{kind:'placeholder',label:card.type.badge}},card));
-        },{once:true});
-        img.src=item.preview.url;
-        thumb.append(img,el('span','jvr-badge',card.type.badge));
+        });
+        thumb.append(frame,...(video?[playMark()]:[]),el('span','jvr-badge',card.type.badge));
       }else{
         thumb.dataset.kind='placeholder';
         thumb.dataset.media=item.media_type;
-        thumb.append(glyph(GLYPH_OF[item.media_type]||(item.artifact_kind==='link'?'link':'document')),el('span','jvr-ph',card.type.badge),el('span','jvr-badge',card.type.badge));
+        thumb.append(video?playMark():glyph(GLYPH_OF[item.media_type]||(item.artifact_kind==='link'?'link':'document')),el('span','jvr-ph',card.type.badge),el('span','jvr-badge',card.type.badge));
       }
       return thumb;
     }

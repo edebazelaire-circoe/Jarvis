@@ -75,7 +75,7 @@ const SERVER=`(()=>{
     /* Boards (test_global_launcher_browser.py) : la bascule change le Board actif du statut. */
     boards:[{board_id:'default',title:'Jarvis',status:'active'}],activeBoard:'default',
     /* Slice 09 : bandeau GPT-Live, rail, artefacts du Board, apercus. */
-    live:null,railRows:null,boardArtifacts:[],previews:{},payloads:[],mode:null,presentation:null,
+    live:null,railRows:null,boardArtifacts:[],previews:{},videos:{},payloads:[],mode:null,presentation:null,
   },seed);
   S.navPush=cmd=>{S.nav=S.nav||[];S.nav.push(cmd);return S.nav.length};
   S.dsrTouch=(board,path,text)=>{const f=S.dsr.boards[board].files[path];f.text=text;f.v=(f.v||1)+10;f.sha='sha'+f.v+'_'+path;return f.sha};
@@ -90,6 +90,13 @@ const SERVER=`(()=>{
     const m=String(v).match(/^\\/api\\/artifacts\\/([^/]+)\\/payload$/);
     if(m){S.payloads.push(m[1]);this.__jvRoute=new URL(String(v),location.href).href;v='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(S.previews[m[1]]||slide('#134e5e','#71b280','Capture'));}
     srcDesc.set.call(this,v)}});
+  /* Vignettes vidéo (2026-10-29) : la même route, doublée pour un <video> quand le seed en fournit les octets (videos, id -> data:).
+     Sans seed, l'adresse part telle quelle et échoue : la page retombe sur sa vignette typée, comme face à un Core muet. */
+  const mediaDesc=Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,'src');
+  Object.defineProperty(HTMLMediaElement.prototype,'src',{configurable:true,enumerable:true,get(){return mediaDesc.get.call(this)},set(v){
+    const m=String(v).match(/^\\/api\\/artifacts\\/([^/]+)\\/payload(#.*)?$/);
+    if(m&&S.videos[m[1]]){S.payloads.push(m[1]);v=S.videos[m[1]]+(m[2]||'')}
+    mediaDesc.set.call(this,v)}});
   /* Une capture semee avec \`age_s\` : ses heures sont posees par rapport a maintenant. */
   S.captures=S.captures.map(c=>c.age_s!=null?Object.assign({},c,{created_at:iso(now-c.age_s*1000-1000),activated_at:iso(now-c.age_s*1000)}):c);
   const labels={failed:'Sous-agent en échec : Build',attention:'Point à vérifier : diapositive 3',done:'Tâche terminée : Résumé',said:'Résultat non dit : Notes'};

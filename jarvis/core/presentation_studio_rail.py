@@ -19,7 +19,8 @@ Trois choses, un seul module, **aucune ne touche au schema d'un document de pres
    travail `success` ; effacee par l'action `review` (acteur `user` seulement : ouvrir depuis le rail, « Marquer comme vu »). Une ligne en
    `problem` ne la rapporte jamais (le probleme garde son traitement).
 5. **Apercu** (memoire, borne). La ligne porte `preview` = le plus recent `presentation_still` `complete` rendu d'un snapshot de cette
-   presentation (`{artifact_id, kind, width, height}`, lu par `/api/artifacts/{id}/payload`, jamais un chemin), ou `null`, et `type: {engine}`.
+   presentation, a defaut sa plus recente `presentation_video` `complete` (la page en montre la premiere image, 2026-10-29)
+   (`{artifact_id, kind, width, height}`, lu par `/api/artifacts/{id}/payload`, jamais un chemin), ou `null`, et `type: {engine}`.
 
 Contrat : `docs/presentation-studio.md` > *Rail des presentations*.
 """
@@ -277,15 +278,16 @@ class PresentationRail:
         return parse_rail(text)
 
     async def previews(self) -> dict[str, dict[str, Any]]:
-        """`presentation_id -> {artifact_id, kind, width, height}` : le plus recent still complet de chaque presentation. Borne (voir
+        """`presentation_id -> {artifact_id, kind, width, height}` : le plus recent still complet de chaque presentation, a defaut sa
+        plus recente video complete (la page en tire la premiere image : retour utilisateur du 2026-10-29). Borne (voir
         `PREVIEW_*`), jamais un chemin. Un registre en echec garde la derniere carte connue (l'apercu se replie sinon sur la vignette typee)
         et se dit au journal."""
 
         if self._artifacts is None:
             return {}
         try:
-            page = await self._artifacts.query(ArtifactQuery(kinds=(ArtifactKind.PRESENTATION_STILL,), states=(ArtifactState.COMPLETE,),
-                                                             limit=PREVIEW_SCAN))
+            page = await self._artifacts.query(ArtifactQuery(kinds=(ArtifactKind.PRESENTATION_STILL, ArtifactKind.PRESENTATION_VIDEO),
+                                                             states=(ArtifactState.COMPLETE,), limit=PREVIEW_SCAN))
         except Exception as exc:  # noqa: BLE001 - capture: a failing registry costs the previews (traced), never the rail itself
             self._studio.trace("core.presentation_studio.rail_preview_unavailable", "Apercus du rail indisponibles", level="warning",
                                data={"error": type(exc).__name__, "message": str(exc)[:160]})
@@ -294,6 +296,7 @@ class PresentationRail:
         if key == self._preview_key:
             return dict(self._preview_map)
         found: dict[str, dict[str, Any]] = {}
+        videos: dict[str, dict[str, Any]] = {}
         resolves, complete = 0, True
         for still in page.items:  # newest first
             owner = self._lineage.get(still.artifact_id)
@@ -314,8 +317,10 @@ class PresentationRail:
                     self._lineage.popitem(last=False)
             else:
                 self._lineage.move_to_end(still.artifact_id)
-            if owner and owner not in found:
-                found[owner] = {"artifact_id": still.artifact_id, "kind": still.kind.value, "width": still.width, "height": still.height}
+            shelf = found if still.kind is ArtifactKind.PRESENTATION_STILL else videos
+            if owner and owner not in shelf:
+                shelf[owner] = {"artifact_id": still.artifact_id, "kind": still.kind.value, "width": still.width, "height": still.height}
+        found = {**videos, **found}  # a still always wins over a video of the same presentation
         self._preview_map = found
         self._preview_key = key if complete else None  # an unfinished resolve is finished by the next read
         return dict(found)
