@@ -28,6 +28,7 @@ Core rendus tels quels, erreurs et résultats `refused`/`stale` compris ; Core i
 | `GET /api/presentation-studio/engine` | `GET /v1/presentation-studio/engine` (Slice 20) : moteur par defaut, etat de chaque moteur, registre des usages de Slidecar |
 | `GET /api/presentation-studio/rail` | `GET /v1/presentation-studio/rail` : le rail (toutes les presentations, `hidden`, `archived`, `work`, `unreviewed`, `preview`, `type`, `ui`) |
 | `POST /api/presentation-studio/rail/display-state` | idem : ce que la page constate (rail visible, fenetre ouverte) |
+| `POST /api/presentation-studio/rail/purge-plan`, `.../rail/purge` | idem (purge définitive des archivées : plan puis jeton + `confirmed: true`), **`actor` force a `user`** |
 | `POST .../presentations/{presentation_id}/rail` | idem, **`actor` force a `user`** ; `{action: hide|show|archive|restore|rename|acknowledge|review, confirmed?, title?}` |
 | `GET /api/presentation-studio/playback` | `GET /v1/presentation-studio/playback` : « où en est-on » (Slice 12) |
 | `GET /api/presentation-studio/playback/preload`, `.../playback/surface` | idem (Slice 23 ; native-studio-playback-fix Slice 09 : ce que le lecteur de Variantes monte pour la lecture) |
@@ -89,6 +90,12 @@ RAIL_ROUTE = "/api/presentation-studio/rail"
 CORE_RAIL = "/v1/presentation-studio/rail"
 RAIL_ACT_PATH = "/{presentation_id}/rail"
 RAIL_KEYS = frozenset({"action", "confirmed", "title", "actor"})
+#: Purge définitive des archivées (plan puis exécution avec jeton) : acteur forcé `user`, clés = celles de Core. Le plan fait un inventaire disque, la
+#: purge une sauvegarde complète de la base : délais plus longs que l'ordinaire.
+PURGE_PLAN_KEYS = frozenset({"presentation_ids", "actor"})
+PURGE_KEYS = PURGE_PLAN_KEYS | {"confirmation", "confirmed"}
+PURGE_PLAN_TIMEOUT_S = 30.0
+PURGE_TIMEOUT_S = 120.0
 ENGINE_ROUTE = "/api/presentation-studio/engine"
 CORE_ENGINE = "/v1/presentation-studio/engine"
 EXPERIMENT_PATH = "/{presentation_id}/experiment"
@@ -123,6 +130,10 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
                 web.get(RAIL_ROUTE, self._relay("studio_rail", CORE_RAIL)),
                 web.post(RAIL_ROUTE + "/display-state", self._relay("studio_rail_display_state", CORE_RAIL + "/display-state")),
                 web.post(STUDIO_ROUTE + RAIL_ACT_PATH, self._forced(RAIL_ACT_PATH, "studio_rail_act", allowed=RAIL_KEYS)),
+                web.post(RAIL_ROUTE + "/purge-plan", self._forced("/purge-plan", "studio_rail_purge_plan", prefix=CORE_RAIL,
+                                                                  allowed=PURGE_PLAN_KEYS, timeout_s=PURGE_PLAN_TIMEOUT_S)),
+                web.post(RAIL_ROUTE + "/purge", self._forced("/purge", "studio_rail_purge", prefix=CORE_RAIL, allowed=PURGE_KEYS,
+                                                             timeout_s=PURGE_TIMEOUT_S)),
                 web.post(STUDIO_ROUTE + "/mount-reports", self._relay("studio_mount_report", CORE_PREFIX + "/mount-reports")),
                 web.get(PLAYBACK_ROUTE, self._relay("studio_playback", PLAYBACK_PREFIX)),
                 web.get(f"{PLAYBACK_ROUTE}/preload", self._relay("studio_playback_preload", PLAYBACK_PREFIX + "/preload")),

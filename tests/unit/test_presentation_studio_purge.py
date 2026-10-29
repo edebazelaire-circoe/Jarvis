@@ -426,3 +426,30 @@ async def test_mcp_purge_of_one_live_presentation_is_refused(tmp_path):
         assert (data_root(core) / "presentations" / world.pid).is_dir()
     finally:
         await core.__aexit__(None, None, None)
+
+
+# ------------------------------------------------------------------ relais du Control Center (rail de droite : « Supprimer définitivement »)
+
+async def test_the_control_center_relays_plan_and_purge_with_the_actor_forced_to_user(tmp_path):
+    async with Core(tmp_path) as core:
+        a, _ = await create(core, "A supprimer")
+        keep, _ = await create(core, "Gardee")
+        await archive(core, a)
+        stack = core.stack
+        # Un corps étranger est refusé ; l'acteur « brain » réclamé par la page est remplacé par `user`.
+        status, bad, _ = await stack.call("POST", "/api/presentation-studio/rail/purge-plan", json={"hack": 1})
+        assert status == 400 and bad["error"]["code"] == "invalid_request"
+        status, planned, _ = await stack.call("POST", "/api/presentation-studio/rail/purge-plan",
+                                              json={"presentation_ids": [a], "actor": "brain"})
+        assert status == 200 and [r["presentation_id"] for r in planned["plan"]["presentations"]] == [a]
+        status, refused_, _ = await stack.call("POST", "/api/presentation-studio/rail/purge",
+                                               json={"confirmation": planned["confirmation"], "presentation_ids": [a]})
+        assert status == 400 and refused_["error"]["code"] == "presentation_studio_confirmation_required"
+        status, done, _ = await stack.call("POST", "/api/presentation-studio/rail/purge",
+                                           json={"confirmation": planned["confirmation"], "confirmed": True,
+                                                 "presentation_ids": [a], "actor": "brain"})
+        assert status == 200 and done["purged"] == [a] and done["complete"] is True
+        assert not (data_root(core) / "presentations" / a).exists() and (data_root(core) / "presentations" / keep).is_dir()
+        # Une présentation vivante ne se purge jamais, quelle que soit la page.
+        status, live, _ = await stack.call("POST", "/api/presentation-studio/rail/purge-plan", json={"presentation_ids": [keep]})
+        assert status == 409 and live["error"]["code"] == "presentation_studio_not_archived"
