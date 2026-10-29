@@ -90,6 +90,8 @@ class UploadOutcome:
     relinked: bool = False
     #: Rattrapage fait mais lien automatique du Board devenu actif impossible à retirer : ce Board le porte aussi.
     also_linked_board_id: str | None = None
+    #: Une image déposée est aussi montrée sur la scène du Board : l'objet (fenêtre) qui la porte, sinon `None`.
+    scene_object_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +106,9 @@ class BoardDropSeam:
     link: Callable[[str, str], Awaitable[Any]]
     #: Retrait d'un lien (`WorkspaceService.artifact_unlink(board_id, artifact_id, origin="user")`).
     unlink: Callable[[str, str], Awaitable[Any]]
+    #: Montre l'Artifact sur la scène du Board (`DossierService.present`) : rend l'`object_id` de la fenêtre.
+    #: Facultatif : sans lui (ou s'il échoue), l'image reste un Artifact du Board, sans objet de scène.
+    present: Callable[[str, str], Awaitable[str | None]] | None = None
 
 
 def storage_cause(exc: ArtifactPayloadError, stage: str) -> dict[str, Any]:
@@ -263,7 +268,27 @@ class UploadService:
             return outcome
         relinked, stray = await self._ensure_board_link(board_id, outcome.artifact.artifact_id,
                                                         fresh=not outcome.replayed)
-        return dataclasses.replace(outcome, board_id=board_id, relinked=relinked, also_linked_board_id=stray)
+        shown = await self._show_on_scene(board_id, outcome.artifact)
+        return dataclasses.replace(outcome, board_id=board_id, relinked=relinked, also_linked_board_id=stray,
+                                   scene_object_id=shown)
+
+    async def _show_on_scene(self, board_id: str, artifact: Artifact) -> str | None:
+        """Une image déposée devient une fenêtre de la scène du Board (même chemin que « Afficher sur le Board »).
+
+        Jamais bloquant : l'Artifact est déjà stocké et lié ; si la scène refuse, on le trace et l'image reste
+        dans les Artefacts du Board (rail, inspecteur). Rejeu : la fenêtre existante est réutilisée, pas doublée.
+        """
+
+        seam = self._board_drop
+        if seam is None or seam.present is None or not (artifact.mime_type or "").startswith("image/"):
+            return None
+        try:
+            return await seam.present(board_id, artifact.artifact_id)
+        except Exception as exc:  # noqa: BLE001 - capture: the file is stored and linked; the scene is a bonus
+            self._trace("core.upload.scene_present_failed", "dépôt : image stockée mais non montrée sur la scène",
+                        level="warning", data={"artifact_id": artifact.artifact_id, "board_id": board_id,
+                                               "exception_type": type(exc).__name__})
+            return None
 
     # ------------------------------------------------------------ dépôt sur un Board (Slice 08)
 

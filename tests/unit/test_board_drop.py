@@ -436,3 +436,59 @@ async def test_the_network_guard_bites(monkeypatch):
     with pytest.raises(pytest.fail.Exception):
         await asyncio.get_running_loop().getaddrinfo("example.invalid", 443)
     assert guard.attempts == ["example.invalid", "example.invalid"]
+
+
+# ------------------------------------------------------------------ l'image déposée est aussi sur la scène
+
+
+async def _dossier_windows(stack, artifact_id: str) -> list:
+    return [item for item in (await stack.core.scene.snapshot()).objects
+            if item.active and item.payload.registry_artifact_id == artifact_id]
+
+
+async def test_an_image_drop_is_shown_as_a_scene_window(stack):
+    """Cause racine du retour utilisateur : l'image devenait un Artifact du rail et rien dans la scène."""
+
+    board = await active_board(stack)
+    status, body, text = await drop_file(stack, board, "photo.png", "image/png", PNG)
+    assert status == 201, text
+    windows = await _dossier_windows(stack, body["artifact_id"])
+    assert len(windows) == 1, "l'image déposée doit avoir sa fenêtre dans la scène"
+    assert body["scene_object_id"] == windows[0].object_id
+    assert windows[0].kind.value == "window" and windows[0].representation.value == "window"
+    assert windows[0].visibility.value == "visible"
+    assert windows[0].payload.title == "photo.png"
+    # Toujours un vrai Artifact du Board.
+    assert body["artifact_id"] in await board_artifacts(stack, board)
+
+
+async def test_an_image_drop_replayed_does_not_double_the_window(stack):
+    board = await active_board(stack)
+    upload_id = str(uuid.uuid4())
+    _, first, _ = await drop_file(stack, board, "photo.png", "image/png", PNG, upload_id=upload_id)
+    status, second, _ = await drop_file(stack, board, "photo.png", "image/png", PNG, upload_id=upload_id)
+    assert status == 200 and second["scene_object_id"] == first["scene_object_id"]
+    assert len(await _dossier_windows(stack, first["artifact_id"])) == 1
+
+
+async def test_a_non_image_drop_and_a_link_stay_artifacts_only(stack):
+    board = await active_board(stack)
+    _, pdf, _ = await drop_file(stack, board, "rapport.pdf", "application/pdf", PDF)
+    assert pdf["scene_object_id"] is None and await _dossier_windows(stack, pdf["artifact_id"]) == []
+    _, link, _ = await drop_link(stack, board)
+    assert await _dossier_windows(stack, link["artifact_id"]) == []
+
+
+async def test_a_scene_refusal_never_fails_the_drop(stack, monkeypatch):
+    async def refuse(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("scène indisponible")
+
+    monkeypatch.setattr(stack.core.dossier, "present", refuse)
+    sink = RecordingSink()
+    stack.core.uploads._diagnostics = sink
+    board = await active_board(stack)
+    status, body, text = await drop_file(stack, board, "photo.png", "image/png", PNG)
+    assert status == 201, text
+    assert body["scene_object_id"] is None
+    assert body["artifact_id"] in await board_artifacts(stack, board)
+    assert [level for level, _ in sink.of("core.upload.scene_present_failed")] == ["warning"]

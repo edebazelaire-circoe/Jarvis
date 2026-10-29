@@ -2,7 +2,7 @@
 
    Un fichier, une image ou un lien glissé sur la scène du Board affiché devient
    un Artefact de ce Board (`upload` ou `link`, provenance `board_drop`) — jamais
-   un message du Chat, jamais un tour du Brain, jamais un objet de la scène.
+   un message du Chat, jamais un tour du Brain ; une image devient en plus une fenêtre de la scène (Core, `scene_object_id`).
 
    - **Zone** : `#app` lui-même, le fond (`.face`) et la scène (`#sceneLayer`,
      nœuds compris). Les commandes de la page (dock, barre, panneaux, Chat,
@@ -255,7 +255,7 @@
 
     function succeed(item,body){
       item.status='done';item.since=now();
-      item.text=`Ajouté au Board « ${item.boardTitle} »${body.relinked?' (le Board a changé pendant l’envoi : rattaché à celui-ci)':''}${body.replayed?' · déjà reçu, sans doublon':''}.`;
+      item.text=`Ajouté au Board « ${item.boardTitle} »${body.relinked?' (le Board a changé pendant l’envoi : rattaché à celui-ci)':''}${body.replayed?' · déjà reçu, sans doublon':''}${body.scene_object_id?' · image affichée sur la scène':''}.`;
       item.artifactId=body.artifact_id;
       setTimeout(()=>remove(item,'expired'),CONFIG.doneMs);
     }

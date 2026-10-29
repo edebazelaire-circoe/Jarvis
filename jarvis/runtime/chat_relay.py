@@ -281,7 +281,7 @@ class ChatRelayRoutes(CaptureRelayRoutes):
         if ok:
             keys = ("artifact_id", "original_name", "mime_type", "size_bytes", "state", "replayed")
             extra = {} if board_id is None else {key: payload.get(key)
-                                                 for key in ("board_id", "relinked", "also_linked_board_id")}
+                                                 for key in ("board_id", "relinked", "also_linked_board_id", "scene_object_id")}
             return web.json_response({"ok": True, **{key: payload.get(key) for key in keys},
                                       # La valeur de Core, calculée pour le même agent : jamais recalculée ici.
                                       "brain_readable": payload.get("brain_readable") is True, **extra},

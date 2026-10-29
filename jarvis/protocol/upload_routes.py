@@ -80,7 +80,7 @@ class UploadProtocolRoutes:
         body = {**upload_view(outcome.artifact), "replayed": outcome.replayed}
         if outcome.board_id is not None:
             body.update(board_id=outcome.board_id, relinked=outcome.relinked,
-                        also_linked_board_id=outcome.also_linked_board_id)
+                        also_linked_board_id=outcome.also_linked_board_id, scene_object_id=outcome.scene_object_id)
         return web.json_response(body, status=200 if outcome.replayed else 201)
 
     async def link(self, request: web.Request) -> web.Response:

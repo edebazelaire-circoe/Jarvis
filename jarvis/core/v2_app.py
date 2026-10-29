@@ -304,7 +304,8 @@ class JarvisCoreApplication:
             # Dépôt sur le Board affiché (Slice 08) : Board actif, liens, lien explicite de rattrapage. Lus à
             # l'appel : `self.workspace` et `self.board_artifact_links` sont construits plus bas.
             board_drop=BoardDropSeam(active_board=self._active_board_id, links_of=self._links_of_artifact,
-                                     link=self._link_dropped_artifact, unlink=self._unlink_dropped_artifact))
+                                     link=self._link_dropped_artifact, unlink=self._unlink_dropped_artifact,
+                                     present=self._present_dropped_artifact))
         # Propriétaire des captures (handoff session-context-recording, Slice
         # 05, D-CAP) : seule vérité d'état ; même base v7, même connexion ;
         # association prise au Context actif du démarrage. Aucune source réelle
@@ -1019,6 +1020,12 @@ class JarvisCoreApplication:
         """Après ce rattrapage : retrait du lien automatique posé sur le Board devenu actif (`origin=user`)."""
 
         await self.workspace.artifact_unlink(board_id, artifact_id, origin="user")
+
+    async def _present_dropped_artifact(self, board_id: str, artifact_id: str) -> str | None:
+        """Image déposée : fenêtre de la scène du Board affiché (`Dossier.present`), l'Artifact restant sa source."""
+
+        shown = await self.dossier.present(board_id, f"artifact:{artifact_id}", origin="user")
+        return shown["object_id"]
 
     async def _capture_association(self) -> CaptureAssociation:
         """Session et Context actifs au démarrage d'une capture (D-CAP, `docs/capture.md`)."""

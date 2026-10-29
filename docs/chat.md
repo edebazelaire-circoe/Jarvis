@@ -896,7 +896,7 @@ page (drop of a link) --JSON--> CC POST /api/boards/drop-link --> Core POST /v1/
   / « Pièce jointe du chat » by provenance, `link` « Lien »
   (`control_center_workspace.js`, `artifact_search` kind filter in
   `capture_mcp.py`).
-- **No scene object**: scene artifacts are explanations chosen by the Brain,
+- **Images on the scene**: a dropped image is also shown as a Dossier window (`scene_object_id` in the answer, same path as « Afficher sur le Board », `DossierService.present`; best effort, traced `core.upload.scene_present_failed`). Other files and links stay Artifacts only: scene artifacts are explanations chosen by the Brain,
   linked by `explains` to the star they explain
   ([scene-model.md](scene-model.md)); a dropped file is not one.
 
@@ -1122,8 +1122,8 @@ schema versions unchanged at 8 and 1).
    Held by `tests/unit/test_chat_attachments_brain_context.py::test_artifacts_root_is_granted_like_sessions_root`.
 4. **No file-only message**: a message must carry text. Held by
    `tests/unit/test_control_center_chat_attachments_browser.py::test_text_required_with_files`.
-5. **No scene object for a Board drop**: visible through the inspector only
-   (proposal: `tasks/jarvis-unified-chat-and-board-drop/Issues/`). A drop on a
+5. **Only images get a scene window on a Board drop** (files and links: inspector and rail only)
+   (`tests/unit/test_board_drop.py::test_an_image_drop_is_shown_as_a_scene_window`). A drop on a
    prefab window of the scene (its own `iframe`) reaches that frame, not the
    page: nothing happens there. Held by
    `tests/integration/test_chat_end_to_end.py::test_board_drop_file_image_url_visible_no_turn`
