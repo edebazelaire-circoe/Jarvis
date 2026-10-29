@@ -22,7 +22,7 @@ import jarvis.runtime.voice_v2 as voice_v2
 
 from jarvis.adapters.wakeword_own_stream import SPEECH_LABEL, is_speech_label
 from jarvis.audio.idle_speech import MIN_VOICED, IdleSpeechDetector, VerifierOwnerJudge
-from jarvis.domain.v2 import SpeechKind, VoiceLifecycleState
+from jarvis.domain.v2 import SpeechKind, VoiceLifecycleState, utc_now
 from jarvis.domain.voice_rest import RestLevel, is_task_completion_speech
 from jarvis.runtime.voice_v2 import PersistentVoiceRuntime
 from jarvis.v2_config import VoiceArchitecture
@@ -61,9 +61,15 @@ class RestWakeWord(FakeWakeWord):
 
 def _runtime(monkeypatch, *, journal, clock, greet=False):
     FakeAudio.instances.clear()
+    clock.value = utc_now()  # `ORIGIN` date de l'import : un accueil daté après lui serait déjà périmé
     monkeypatch.setattr(realtime_audio, "SoundDeviceRealtimeAudio", FakeAudio)
     monkeypatch.setattr(voice_v2, "SPEECH_WAKE_GRACE_S", 0.05)
     core, session, wakeword = FakeCore(), FakeVoiceSession(), RestWakeWord()
+
+    async def active_board():
+        return {}
+
+    core.active_board = active_board
 
     async def factory(context):
         del context
