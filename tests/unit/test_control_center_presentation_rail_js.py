@@ -66,17 +66,19 @@ def test_the_retired_window_and_focus_are_gone():
 
 def test_the_menu_has_every_action_says_why_one_is_unavailable_and_an_archived_row_only_restores():
     normal = node(f"return R.menuModel({{presentation_id:'{P1}',title:'A',hidden:false,archived:false,work:{{state:'done'}}}},{{}}).map(i=>i==='-'?'-':i.act)")
-    assert normal == ["open", "studio", "edit", "play", "-", "hide", "rename", "-", "archive"], "§ 1: « Remotion Studio… » (Slice 11)"
+    assert normal == ["open", "studio", "edit", "play", "-", "hide", "rename", "-", "archive", "delete"], "§ 1: « Remotion Studio… » (Slice 11) ; archiver, puis supprimer définitivement"
     labels = node(f"return R.menuModel({{presentation_id:'{P1}',title:'A',work:{{state:'done'}}}},{{}}).filter(i=>i!=='-').map(i=>i.label)")
     assert labels[:4] == ["Ouvrir les variantes", "Remotion Studio…", "Éditer", "Présenter"], "contract § 1: the rail opens Variants, then Remotion Studio, and « Présenter » starts a run"
     hidden = node(f"return R.menuModel({{presentation_id:'{P1}',title:'A',hidden:true,archived:false,work:{{state:'problem'}}}},{{}}).filter(i=>i!=='-').map(i=>i.act)")
     assert "show" in hidden and "hide" not in hidden and "ack" in hidden, "acknowledge only when orange"
     busy = node(f"return R.menuModel({{presentation_id:'{P1}',title:'A',work:{{state:'done'}}}},{{playing:true,playingThis:true}}).filter(i=>i!=='-').map(i=>[i.act,!!i.note])")
-    assert dict(map(tuple, busy)) == {"open": False, "studio": True, "edit": True, "play": True, "hide": False, "rename": False, "archive": True}
+    assert dict(map(tuple, busy)) == {"open": False, "studio": True, "edit": True, "play": True, "hide": False, "rename": False, "archive": True, "delete": True}
     other = node(f"return R.menuModel({{presentation_id:'{P1}',title:'A',work:{{state:'done'}}}},{{playing:true,playingThis:false}}).filter(i=>i!=='-').map(i=>[i.act,!!i.note])")
     assert dict(map(tuple, other))["open"] is True, "another presentation plays: Variants shows that one"
     archived = node(f"return R.menuModel({{presentation_id:'{P1}',title:'A',archived:true}},{{}}).map(i=>i.act)")
-    assert archived == ["restore"]
+    assert archived == ["restore", None, "delete"], "une archivée se restaure ou se supprime définitivement, rien d'autre"
+    danger = node(f"return R.menuModel({{presentation_id:'{P1}',title:'A',work:{{state:'done'}}}},{{}}).filter(i=>i.danger).map(i=>[i.act,i.label])")
+    assert danger == [["delete", "Supprimer définitivement…"]], "seule la suppression définitive est rouge ; « Archiver… » se restaure"
 
 
 def test_monograms_and_hues_are_stable_and_text_is_cleaned():
@@ -112,7 +114,8 @@ def test_label_accompanies_every_dot():
         assert short and long and color, state
     assert [c[1] for c in cards] == ["En cours", "Problème", "À revoir", "Prête", "État inconnu"]
     source = (RUNTIME / "control_center_presentation_rail.js").read_text(encoding="utf-8")
-    assert "status.append(dot,el('span','jvr-state',card.stateShort))" in source, "the dot is always drawn with its label beside it"
+    # 2026-10-29 : une carte n'est que sa vignette et son titre ; l'état est une marque sur la vignette, dite par l'ARIA et l'infobulle.
+    assert "function markFor()" in source and "b.setAttribute('aria-label',`${card.title}, ${card.type.label} : ${card.stateLabel.toLowerCase()}" in source, "the mark never goes without its words"
 
 
 def test_placeholder_when_no_preview():
@@ -135,8 +138,15 @@ def test_card_metadata_density_and_review_menu():
     assert agos == ["à l’instant", "il y a 30 min", "il y a 2 h", "il y a 3 j", "il y a 4 sem.", ""]
     card = node(f"return R.cardOf({{presentation_id:'{P1}',title:'Deck',variant_count:3,updated_at:'2026-10-16T10:00:00Z',work:{{state:'done'}},type:{{engine:'remotion'}}}},{now})")
     assert card["meta"] == "Remotion · 3 variantes" and card["when"] == "il y a 2 h"
-    densities = node("""return [R.densityOf({width:1440}),R.densityOf({width:1440,collapsed:true}),R.densityOf({width:1000}),R.densityOf({width:700}),
-      R.densityOf({width:375}),R.densityOf({width:1440,studio:true}),R.densityOf({width:1000,studio:true})]""")
-    assert densities == ["full", "slim", "slim", "drawer", "drawer", "compact", "slim"], "D10 widths: 300 / 72 below 1100 / tab below 700"
+    densities = node("""return [R.densityOf({width:1440}),R.densityOf({width:1000}),R.densityOf({width:375}),R.densityOf({width:1440,studio:true}),R.densityOf({width:1000,studio:true})]""")
+    assert densities == ["full", "full", "full", "compact", "compact"], "2026-10-29: une bande de largeur fixe (plus de bande étroite ni d'onglet) ; la colonne du Studio reste « compact »"
     menu = node(f"return R.menuModel({{presentation_id:'{P1}',title:'A',work:{{state:'done'}},unreviewed:{UNSEEN}}},{{}}).map(i=>i==='-'?'-':i.act)")
-    assert menu == ["open", "studio", "edit", "play", "-", "hide", "rename", "review", "-", "archive"], "« Marquer comme vu » only when yellow"
+    assert menu == ["open", "studio", "edit", "play", "-", "hide", "rename", "review", "-", "archive", "delete"], "« Marquer comme vu » only when yellow"
+
+
+def test_the_purge_routes_are_the_cores_and_the_archived_are_not_drawn_by_default():
+    routes = node("return [R.PURGE_PLAN_ROUTE,R.PURGE_ROUTE]")
+    assert routes == ["/api/presentation-studio/rail/purge-plan", "/api/presentation-studio/rail/purge"]
+    source = (RUNTIME / "control_center_presentation_rail.js").read_text(encoding="utf-8")
+    assert "showArchived:false" in source, "archived presentations start hidden"
+    assert "window.confirm" not in source and "alert(" not in source, "never the browser's confirm() or alert()"

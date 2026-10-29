@@ -282,7 +282,7 @@ def test_the_presentation_home_shows_the_journey_and_creates_through_core(tmp_pa
     drawer = width <= 700
     actions = [
         ["eval", "settle", "1", 1500],
-        *([["click", "tab", "#presentationRail .jvr-tool", 400]] if drawer else []),
+        *([["click", "tab", "#presentationRailTab", 400]] if drawer else []),
         ["eval", "rail", "(h=>({visible:!h.hidden,home:!!h.querySelector('.jvr-homebox:not([hidden]) .jvr-step'),"
                          "steps:[...h.querySelectorAll('.jvr-step strong')].map(s=>s.textContent),"
                          "acts:[...h.querySelectorAll('[data-home-act]')].map(b=>b.dataset.homeAct),"

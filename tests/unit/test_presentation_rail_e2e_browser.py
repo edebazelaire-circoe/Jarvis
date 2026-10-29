@@ -65,7 +65,7 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
             {"eval": "JarvisPresentationRail.setPref('shown')"},
             {"until": "JarvisPresentationRail.state().loaded===true&&document.querySelectorAll('#presentationRail .jvr-item:not([data-ws])').length>=3", "ms": 20000},
             {"value": "items", "expr": ITEMS},
-            {"value": "folds", "expr": "[...document.querySelectorAll('#presentationRail .jvr-folds .jvr-fold')].map(b=>b.textContent.trim())"},
+            {"value": "archived_button", "expr": "(b=>b&&!b.hidden?b.textContent:null)(document.querySelector('#presentationRail .jvr-arch'))"},
             {"until": "[...document.querySelectorAll('#presentationRail .jvr-thumb img')].every(i=>i.complete)", "ms": 8000},
             {"value": "zone", "expr": "(()=>{const b=s=>{const r=document.querySelector(s).getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom}};return {palette:b('#barehandsPalette'),rail:b('#presentationRail'),dock:b('.dock'),chat:b('#chatTab'),vw:innerWidth}})()"},
             # Stage B: the still is linked to the active Board by Core, so the real workspace route lists it under « Sur ce Board »
@@ -107,14 +107,14 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
         assert by_name["Bilan trimestriel"] == ("working", BLUE), "real work state from Core: the agent is working"
         assert by_name["Roadmap produit"] == ("problem", ORANGE), "real failure from Core"
         assert by_name["Atelier du cadran"] == ("done", GREEN)
-        assert [f.replace(" ", "") for f in reads["folds"]] == ["▸Archivées(1)"]
+        assert reads["archived_button"] == "Afficher les archivés (1)", "archived presentations are hidden by default (2026-10-29)"
         zone = reads["zone"]
-        # Slice 07 (D10) migrates « right of the tool palette » to the right zone: never over the left column, the launcher or the chat tab
-        assert zone["rail"]["l"] > zone["palette"]["r"] and zone["rail"]["r"] == zone["vw"] - 18 and zone["rail"]["t"] >= zone["dock"]["b"]
-        assert zone["rail"]["b"] <= zone["chat"]["t"]
+        # 2026-10-29: a full-height band at the right edge, never over the left column nor the launcher (top-left); the buttons sit left of it
+        assert zone["rail"]["l"] > zone["palette"]["r"] and zone["rail"]["r"] == zone["vw"] and zone["rail"]["t"] == 0 and zone["rail"]["b"] == 900
+        assert zone["chat"]["r"] <= zone["rail"]["l"], "the Présentations / Chat buttons stay left of the open band"
         assert reads["preview"] == {"src": f"/api/artifacts/{still}/payload", "ok": True}, "the real still, through the bounded payload route"
         assert ["Rendu image", "presentation_still", "done", True] in reads["board_items"], ("Stage B through the real workspace route", reads["board_items"])
-        assert reads["menu"] == ["open", "studio", "edit", "play", "hide", "rename", "ack", "archive"]  # « Remotion Studio… » (Slice 11)
+        assert reads["menu"] == ["open", "studio", "edit", "play", "hide", "rename", "ack", "archive", "delete"]  # « Remotion Studio… » (Slice 11)
         assert sorted(i[0] for i in reads["after_hide"]) == ["Atelier du cadran", "Bilan trimestriel"]
         assert reads["studio"]["pid"] == rig.pid, "the rail click opens Variants on that presentation"
         # Slice 07 (D10): the docking is mirrored, the rail is the right column and Variants stops at its left edge
@@ -151,18 +151,18 @@ async def test_archive_confirm_rename_and_restore_through_the_real_page(tmp_path
             {"eval": CONTEXT % pid2},
             {"until": "!!document.querySelector('.jvr-menu:not([hidden])')", "ms": 5000},
             {"click": ".jvr-menu button[data-act=\"archive\"]"},
-            {"until": "!!document.querySelector('.jvr-dialog-back:not([hidden]) .jvr-dialog')", "ms": 5000},
-            {"value": "dialog", "expr": "document.querySelector('.jvr-dialog').textContent"},
-            {"click": ".jvr-dialog button[data-danger]"},
+            {"until": "!document.getElementById('confirmBack').hidden", "ms": 5000},
+            {"value": "dialog", "expr": "document.getElementById('confirmDialog').textContent"},
+            {"click": "#confirmGo"},
             {"until": "document.querySelectorAll('#presentationRail .jvr-item:not([data-ws])').length===1", "ms": 8000},
-            {"click": "#presentationRail .jvr-folds .jvr-fold"},
+            {"click": "#presentationRail .jvr-arch"},
             {"value": "archived", "expr": ITEMS},
             # an archived row offers only "restore"
             {"eval": "document.querySelector('#presentationRail .jvr-item[data-dim=\"true\"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:120,clientY:130}))"},
             {"until": "!!document.querySelector('.jvr-menu:not([hidden])')", "ms": 5000},
             {"value": "archived_menu", "expr": "[...document.querySelectorAll('.jvr-menu button')].map(b=>b.dataset.act)"},
             {"click": ".jvr-menu button[data-act=\"restore\"]"},
-            {"until": "!document.querySelector('#presentationRail .jvr-folds .jvr-fold')&&document.querySelectorAll('#presentationRail .jvr-item:not([data-ws])').length===2", "ms": 8000},
+            {"until": "!document.querySelector('#presentationRail .jvr-arch:not([hidden])')&&document.querySelectorAll('#presentationRail .jvr-item:not([data-ws])').length===2", "ms": 8000},
             # rename
             {"eval": CONTEXT % pid2},
             {"until": "!!document.querySelector('.jvr-menu:not([hidden])')", "ms": 5000},
@@ -177,7 +177,7 @@ async def test_archive_confirm_rename_and_restore_through_the_real_page(tmp_path
         assert "final" in reads, (reads, [c for c in result["console"] if "presentation-rail" in c["text"]][-6:])
         assert "restaure" in reads["dialog"] and "Rien n’est effacé" in reads["dialog"]
         assert [i[0] for i in reads["archived"]][-1] == "A supprimer"
-        assert reads["archived_menu"] == ["restore"]
+        assert reads["archived_menu"] == ["restore", "delete"], "an archived card offers Restaurer and the permanent deletion"
         assert "Sauvee et renommee" in [i[0] for i in reads["final"]]
         assert not noise(result), noise(result)
         status, view = await core.call("GET", f"/{pid2}")
@@ -222,3 +222,38 @@ async def test_read_only_this_scene_never_starts_a_run_nor_closes_variants(tmp_p
         assert reads["explorer_open"] is True, "Variants stays open"
         assert state.get("running") is not True and state.get("role") != "rehearsal", f"no run started: {state}"
         assert not noise(result), noise(result)
+
+
+async def test_permanent_deletion_through_the_real_page_relay_and_core(tmp_path):
+    """2026-10-29 : « Supprimer définitivement… » de bout en bout. Vraie page, vrai relais, vrai Core : la présentation est archivée puis purgée
+    (plan, jeton, sauvegarde complète d'abord) ; son dossier a disparu, la sauvegarde existe, l'autre présentation n'a pas bougé."""
+
+    async with InspectorRig(tmp_path) as rig:
+        pid2, _, _ = await rig.new_presentation("A effacer")
+        folder = tmp_path / "data" / "presentations" / pid2
+        assert folder.is_dir()
+        result = await drive(rig.url, [
+            {"until": "!!window.JarvisPresentationRail", "ms": 20000},
+            {"eval": "JarvisPresentationRail.setPref('shown')"},
+            {"until": "document.querySelectorAll('#presentationRail .jvr-item:not([data-ws])').length===2", "ms": 20000},
+            {"eval": CONTEXT % pid2},
+            {"until": "!!document.querySelector('.jvr-menu:not([hidden])')", "ms": 5000},
+            {"click": ".jvr-menu button[data-act=\"delete\"]"},
+            {"until": "!document.getElementById('confirmBack').hidden", "ms": 5000},
+            {"value": "dialog", "expr": "[document.getElementById('confirmTitle').textContent,document.getElementById('confirmGo').textContent]"},
+            {"click": "#confirmGo"},
+            {"until": "document.querySelectorAll('#presentationRail .jvr-item:not([data-ws])').length===1", "ms": 30000},
+            {"until": "/Supprimée définitivement/.test(document.querySelector('#presentationRail .jvr-note').textContent)", "ms": 15000},
+            {"value": "after", "expr": "[...document.querySelectorAll('#presentationRail .jvr-name')].map(n=>n.textContent)"},
+            {"value": "archive_button", "expr": "(b=>!!b&&!b.hidden)(document.querySelector('#presentationRail .jvr-arch'))"},
+        ], viewport="1440x900", timeout=240)
+        reads = result["reads"]
+        assert reads["dialog"] == ["Supprimer définitivement « A effacer » ?", "Supprimer définitivement"]
+        assert "A effacer" not in reads["after"] and len(reads["after"]) == 1
+        assert reads["archive_button"] is False, "nothing left in the archive: its button disappears"
+        assert not noise(result), noise(result)
+        assert not folder.exists(), "the purge removed the presentation's folder"
+        backups = list((tmp_path / "data" / "backups").glob("purge-presentations-*"))
+        assert backups and backups[0].is_dir(), "a full backup is made before anything is deleted"
+        status, view = await rig.core.call("GET", f"/{rig.pid}")
+        assert status == 200, "the other presentation did not move"

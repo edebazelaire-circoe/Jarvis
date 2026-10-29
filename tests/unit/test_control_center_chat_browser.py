@@ -72,7 +72,7 @@ BUBBLES = "document.querySelectorAll('#chatLog .chat-msg').length"
 TOAST = {"eval": "toast({title:'Notification de test',sub:'au-dessus de l’onglet',ms:60000});1"}
 
 
-def test_opens_bottom_right_no_overlap_with_dock_and_toasts(tmp_path):
+def test_opens_as_a_right_band_no_overlap_with_the_buttons_the_launcher_and_toasts(tmp_path):
     out = _drive(tmp_path, [
         TOAST, {"value": "closed"}, OPEN, _until(f"{BUBBLES}===4"), {"wait": 300}, READ, _shot(tmp_path, "desktop-1440x900"),
         {"click": ".dock button[data-panel=errors]"}, {"wait": 300}, {"value": "errors"},
@@ -80,10 +80,10 @@ def test_opens_bottom_right_no_overlap_with_dock_and_toasts(tmp_path):
     ])
     closed, r = out["reads"]["closed"], out["reads"]["r"]
     tab, dock = r["tab"], r["dock"]
-    assert (tab["r"], tab["b"]) == (1440 - 18, 900 - 18), "fixed bottom right, right:18px bottom:18px"
+    assert tab["r"] == r["panel"]["l"] - 18 and abs((tab["t"] + tab["b"]) / 2 - 900 / 2) < 40, "an icon button at the right edge (left of the open band), centred in height (below « Présentations »)"
     assert r["tabHit"] is True and not _overlap(tab, dock)
-    # Toasts sit above the tab (18 + 40 + 10 px), panel closed; panel open, they move to its left.
-    # Chat closed: toasts sit left of the dock column, bottom right — never over the tab, the dock (AGT) or the pills.
+    # Chat closed: toasts sit bottom right — never over the button, the launcher (AGT, top-left) or the pills; panel open, they move to its left.
+    assert r["panel"]["l"] == 1440 - 500 and r["panel"]["r"] == 1440 and r["panel"]["t"] == 0 and r["panel"]["b"] == 900, "a full-height band at the right edge"
     assert not _overlap(closed["toasts"], tab) and not _overlap(closed["toasts"], dock) and not _overlap(closed["toast"], closed["agt"])
     assert r["open"] and r["expanded"] == "true" and r["panel"]["z"] == "33"
     assert not _overlap(r["panel"], tab) and not _overlap(r["panel"], dock) and not _overlap(r["toasts"], r["panel"])
@@ -412,7 +412,7 @@ def test_cosmos_theme_keeps_tab_panel_and_dock_apart(tmp_path, width, height):
     r = out["reads"]["r"]
     assert not _overlap(r["panel"], r["tab"]) and not _overlap(r["tab"], r["dock"]) and not _overlap(r["panel"], r["dock"])
     assert r["tabHit"] is True and r["inputHit"] is True
-    assert r["panel"]["b"] <= r["tab"]["t"] - 10 + 0.5
+    assert r["tab"]["r"] <= r["panel"]["l"] and r["panel"]["t"] == (0 if width > 700 else 88), "the buttons sit left of the Chat band (full height above 700 px)"
 
 
 # ---------- Polish QA S06, réglé en Slice 07b ----------

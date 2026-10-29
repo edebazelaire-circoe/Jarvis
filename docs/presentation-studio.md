@@ -4582,14 +4582,17 @@ the export of a still or a PDF from the rail (I-003 point 1); French default exp
 ### Active workspace rail (Level 3, orbital shell Slice 07)
 
 Status: implemented by handoff `jarvis-board-orbital-ui-workspace-rail`, Slice 07, decision D10 (Stage A). Owners: `jarvis/core/presentation_studio_rail.py` (`preview`,
-`type`, `unreviewed`, action `review`), `control_center_presentation_rail.js` (cards, densities, docking). Geometry and densities: `docs/control-center-shell.md` ›
-*Workspace rail*. Conformance: `tests/unit/test_presentation_studio_rail.py` (`test_row_preview_is_latest_complete_still_without_path`, `test_preview_cache_bounded`,
+`type`, `unreviewed`, action `review`), `control_center_presentation_rail.js` (cards, densities, docking). Geometry: `docs/control-center-shell.md` ›
+*Right bands*. Conformance: `tests/unit/test_presentation_studio_rail.py` (`test_row_preview_is_latest_complete_still_without_path`, `test_preview_cache_bounded`,
 `test_brain_success_marks_unreviewed_user_review_clears`, `test_old_rail_json_reads_without_unreviewed`, `test_problem_never_reported_as_unreviewed`),
 `test_control_center_presentation_rail_js.py`, `test_control_center_presentation_rail_browser.py`, `test_presentation_rail_e2e_browser.py` (real still, real relay).
 
-**Where.** The rail moved from the left edge to the shell's `right` zone (under the launcher, above the chat tab, `--shell-rail-w` wide: 300 px, 72 px below 1100 px,
-a tab below 700 px). With Variants open it docks as the right column (rank 9100) and Variants stops at its left edge (`right: 188px`): the mirror of the old docking.
-Visibility (`shouldShow`), `Alt+Shift+P`, the brain's `rail_show` / `rail_hide`, the page's display-state report and every context action are unchanged.
+**Where.** The rail moved from the left edge to the shell's `right` zone. **Since 2026-10-29 it is a full-height band** at the right edge (`--shell-rail-w` = 272 px, fixed,
+not resizable, no rounded corner; translucent black with a fine texture, `--shell-band-*`), left of the Chat band when both are open (the Chat is always the rightmost), opened and
+folded by the « Présentations » icon button of `#railDock` (folded = the band is gone, only the button remains; the choice is remembered). It no longer has a 72 px strip nor a tab.
+With Variants open it docks as the right column (rank 9100) and Variants stops at its left edge (`right: 188px`): the mirror of the old docking.
+Visibility (`shouldShow`, now the default when the user has not chosen), `Alt+Shift+P`, the brain's `rail_show` / `rail_hide`, the page's display-state report and every context action
+are unchanged; « Supprimer… » became « Archiver… » (restorable) and a new « Supprimer définitivement… » (see *Permanent deletion* below).
 
 **Row keys added by Core** (additive; an older page ignores them):
 
@@ -4624,12 +4627,22 @@ placeholder (« Présentation · Remotion » / « Slidecar », a drawn screen gl
 - Persisted, unlike the work state: a Core restart keeps the yellow.
 
 **Displayed state** (page, `displayState`): `working` (blue) > `problem` (orange-red, triangle, own card stroke) > `unreviewed` (yellow) > `done` (green); a row without a
-readable work state is `unknown` (dashed ring, « État inconnu »), never green. Each state has its own mark shape in every density (ring, triangle, diamond,
-check, dashed ring) and a text label always accompanies it (« En cours », « Problème », « À revoir », « Prête »,
-« État inconnu »); the tooltip and the accessible name carry the long label and, for a problem, its message.
+readable work state is `unknown` (dashed ring, « État inconnu »), never green. Each state has its own mark shape (ring, triangle, diamond,
+check, dashed ring); since 2026-10-29 the mark sits on the thumbnail's corner (absent for `done`) and the words (« En cours », « Problème », « À revoir », « Prête »,
+« État inconnu ») live in the tooltip and the accessible name, which also carry, for a problem, its message.
 
-**Card.** Preview (or placeholder) with the engine badge, title (40 characters, two lines; full title in the tooltip), `engine · N variantes`, dot + label + « il y a … »
-(from `updated_at`), and a « ⋯ » button that opens the same context menu as a right click.
+**Card.** The preview (or the typed placeholder) at full band width, 16:9, and the title below (40 characters, two lines; full title, engine, variants and age in the tooltip). Nothing
+else is drawn. On hover or focus the corner shows « ⋯ » (the same context menu as a right click) and a trash button (permanent deletion).
+
+**Archived, hidden by default.** Archived presentations are not drawn. The footer button « Afficher les archivés (n) » reveals an « Archivés (n) » section (dimmed cards, « Restaurer » /
+« Supprimer définitivement… »); « Masquer les archivés » hides it again.
+
+**Permanent deletion** (user request 2026-10-29: nothing in the rail may be undeletable). « Supprimer définitivement… » (menu, trash button, `Delete` key), after the page's confirmation dialog
+(`confirmDialog`), on a presentation: archive it if it is not (restorable if the next steps fail), then Core's two-step purge from this document's *Purge* section, relayed by the Control Center
+as `POST /api/presentation-studio/rail/purge-plan` (body `{presentation_ids: [id]}`, nothing written) and `POST /api/presentation-studio/rail/purge` (`{confirmation, confirmed: true,
+presentation_ids: [id]}`), the actor forced to `user` (`presentation_studio_relay.py`; `test_presentation_studio_purge.py`). A presentation being played is refused (`presentation_studio_variant_in_playback`).
+On a « Sur ce Board » element (an Artifact): the page's confirmation, then `DELETE /api/artifacts/{id}` (the capture relay's existing route, `docs/artifacts.md` › *Deletion*); Artifacts others derive
+from answer `409 artifact_has_dependents` and a second confirmation retries with `?cascade=true`; one still being acquired answers `409 artifact_still_pending`. No schema change.
 
 **Stage B: « Sur ce Board ».** Under the presentations, the rail lists the Artifacts linked to the active Board (`upload`, `link`, `screenshot`,
 `screen_recording`, `presentation_still` / `_video` / `_pdf`) read from `GET /api/workspace/artifacts?board_id=<active Board>` (relay of `/v1/workspace/artifacts`,

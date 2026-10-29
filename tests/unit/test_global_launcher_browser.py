@@ -75,7 +75,7 @@ GEOMETRY = r"""(()=>{const box=el=>{if(!el)return null;const cs=getComputedStyle
     retired:{topbar:!!q('.topbar'),state:!!q('.state'),mode:!!q('#interactionModeHud')},boards:box(q('#boardsButton')),
     boardsInDock:!!q('.dock #boardsHud'),
     rail:box(q('#presentationRail')),panel:box(q('#panel.open')),centre:[...document.querySelectorAll('#bgPills .bgpill')].map(box).filter(Boolean),
-    chatTab:box(q('#chatTab')),wheel:box(q('#toolWheel .tw-anchor')),
+    chatTab:box(q('#chatTab')),railDock:box(q('#railDock')),wheel:box(q('#toolWheel .tw-anchor')),
     z:getComputedStyle(q('.dock')).zIndex,expanded:q('#dockMore').getAttribute('aria-expanded'),
     overflowX:document.documentElement.scrollWidth>innerWidth}})()"""
 
@@ -250,7 +250,7 @@ def test_board_control_visible_and_switches_board(tmp_path):
 
 @pytest.mark.parametrize("theme", THEMES)
 def test_board_card_bottom_left_unchanged(tmp_path, theme):
-    """Le lanceur est une rangée de quatre en haut à droite, son popover tient dans
+    """Le lanceur est une rangée de quatre en haut à GAUCHE (2026-10-29), son popover tient dans
     l’écran ; la carte Board reste en bas à gauche, hors du lanceur et du haut,
     et rien ne se chevauche — popover ouvert compris, aux quatre tailles."""
     plan = []
@@ -267,7 +267,12 @@ def test_board_card_bottom_left_unchanged(tmp_path, theme):
         # Rangée : quatre boutons de 34 px, au bord, un seul rang ; noms accessibles = infobulles pour l'icône seule.
         assert [b["id"] for b in closed["row"]] == ["openTimeline", "agentsButton", "errors", "dockMore"]
         assert all(b["box"] and round(b["box"]["w"]) == 34 and round(b["box"]["t"]) == gutter for b in closed["row"]), closed["row"]
-        assert round(closed["dock"]["r"]) == w - gutter and round(closed["dock"]["w"]) == 154, closed["dock"]
+        assert round(closed["dock"]["l"]) == gutter and round(closed["dock"]["w"]) == 154, closed["dock"]
+        # Les boutons des rails (Présentations, Chat) : au bord droit, centrés en hauteur, à gauche de la bande ouverte ; jamais sur le lanceur.
+        buttons = closed["railDock"]
+        assert buttons and round(buttons["w"]) == 34 and round(buttons["h"]) == 74, buttons
+        assert round(w - buttons["r"]) == gutter + (round(w - closed["rail"]["l"]) if closed["rail"] else 0), (buttons, closed["rail"])
+        assert abs((buttons["t"] + buttons["b"]) / 2 - h / 2) <= 1 and not _overlap(buttons, closed["dock"]), buttons
         more = closed["row"][-1]
         assert more["name"] == more["title"] == "Plus d’outils"
         assert closed["pop"] is None and closed["z"] == "32" and closed["expanded"] == "false"
@@ -278,7 +283,7 @@ def test_board_card_bottom_left_unchanged(tmp_path, theme):
         # carte quitte le rail gauche (`narrowLeft` 84) et se hisse de `narrowLift` 62 au-dessus du centre d'état.
         assert round(card["l"]) == (84 if w <= 700 else 18), card
         assert round(h - card["b"]) == (22 + 62 if w <= 700 else 22), (h - card["b"], card)
-        for other in ("dock", "chatTab", "rail", "wheel"):
+        for other in ("dock", "chatTab", "railDock", "rail", "wheel"):
             assert not _overlap(card, closed[other]), (other, card, closed[other])
         for chip in closed["centre"]:
             assert not _overlap(card, chip), (card, chip)
@@ -286,6 +291,7 @@ def test_board_card_bottom_left_unchanged(tmp_path, theme):
         assert opened["expanded"] == "true" and opened["z"] == "36"
         pop = opened["pop"]
         assert pop and pop["t"] >= opened["dock"]["t"] + 34 and pop["r"] <= w and pop["l"] >= 0 and pop["b"] <= h, pop
+        assert round(pop["l"]) == round(opened["dock"]["l"]), ("le popover s'ouvre sous la rangée, aligné à gauche", pop, opened["dock"])
         assert [i["id"] for i in opened["items"]] == ["openSettings", "trace", "openTestLab", "openMcpInspector", "openWorkspace",
                                                       "openPrefabs", "openStudioInspector"]
         for item in opened["items"]:

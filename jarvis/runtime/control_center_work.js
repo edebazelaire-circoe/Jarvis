@@ -163,14 +163,18 @@ html[data-jarvis-theme="cosmos"] #app{background:
    tests/unit/test_control_center_shell_layers.py refuse toute position ou tout
    rang posé ici sur une surface de la coque. */
 html[data-jarvis-theme="cosmos"] .dock .tool{display:block}
-html[data-jarvis-theme="cosmos"] .dock button{
+html[data-jarvis-theme="cosmos"] .dock button,
+html[data-jarvis-theme="cosmos"] .rail-dock button{
   border-radius:10px;display:grid;place-items:center;
   border:1px solid var(--shell-stroke,rgba(174,205,220,.12));background:var(--shell-glass-bg,rgba(5,11,16,.46));
   color:rgba(213,231,239,.65);backdrop-filter:blur(16px);
   box-shadow:0 8px 24px rgba(0,0,0,.18);transition:var(--shell-dur,.18s) var(--shell-ease,ease)}
-html[data-jarvis-theme="cosmos"] .dock button svg{width:var(--shell-icon-sm,15px);height:var(--shell-icon-sm,15px);display:block}
+html[data-jarvis-theme="cosmos"] .dock button svg,
+html[data-jarvis-theme="cosmos"] .rail-dock button svg{width:var(--shell-icon-sm,15px);height:var(--shell-icon-sm,15px);display:block}
 html[data-jarvis-theme="cosmos"] .dock button:hover,
-html[data-jarvis-theme="cosmos"] .dock button.active{
+html[data-jarvis-theme="cosmos"] .dock button.active,
+html[data-jarvis-theme="cosmos"] .rail-dock button:hover,
+html[data-jarvis-theme="cosmos"] .rail-dock button[aria-expanded=true]{
   color:var(--accent,#6ee7ff);border-color:var(--shell-stroke-active,color-mix(in srgb,var(--accent,#6ee7ff) 46%,transparent));
   background:rgba(10,19,26,.72);transform:translateY(-1px)}
 html[data-jarvis-theme="cosmos"] .dock .badge{right:-4px;top:-4px;transform:scale(.82)}
@@ -203,7 +207,7 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
 .theme-preview.cosmos::after{content:'';position:absolute;width:12px;height:12px;border-radius:50%;
   left:50%;top:50%;transform:translate(-50%,-50%);background:#43aaff;box-shadow:0 0 16px #43aaff}
 @media(prefers-reduced-motion:reduce){
-  html[data-jarvis-theme="cosmos"] .dock button{transition:none}
+  html[data-jarvis-theme="cosmos"] .dock button,html[data-jarvis-theme="cosmos"] .rail-dock button{transition:none}
 }`;
 
   function ensureStyle(){

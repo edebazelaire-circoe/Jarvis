@@ -5,8 +5,8 @@ screenshot — and its continuity guarantee (handoff
 `jarvis-session-context-recording-runtime`, Slice 05; decisions D01, D11–D13,
 D18, D-CAP). Media families plug into this owner: microphone in Slice 06,
 desktop in Slice 07. HTTP/MCP (Slice 09) and the interface (left rail in
-Slice 10, the wheel's Capture category and its transient top-left indicators since the
-wheel/Dossier refactor Slice 04) only
+Slice 10, the wheel's Capture category and its transient indicators since the
+wheel/Dossier refactor Slice 04, top-right since 2026-10-29) only
 read and call it. Overview of the whole feature (guarantees, operations,
 costs, privacy, troubleshooting, rollback):
 [session-context-capture.md](session-context-capture.md).
@@ -816,7 +816,7 @@ behaviour of each channel is unchanged. **Slice 04 of the same task**
 renamed the rows after what they do (Capture d'écran, Enregistrer l'écran,
 Enregistrer l'audio), made an open Capture submenu follow Core live
 (`JarvisToolWheel.refresh`), and moved the indicators out of the bottom status
-centre to the **top-left** corner as a transient HUD: red `● REC 0:12 ■` for
+centre to the **top-left** corner (top-right since 2026-10-29) as a transient HUD: red `● REC 0:12 ■` for
 the screen, microphone + wave + duration + `■` for audio, side by side, shown
 only while Core lists an open capture.
 
@@ -932,11 +932,13 @@ refusal opens **under** the chips, left-aligned (close button, `Escape`);
 state changes are announced in a polite live region. A chip that disappears
 while focused hands the focus to the next chip, else to the wheel anchor.
 **Place** (wheel/dossier refactor Slice 04, before: first item of the bottom
-status centre): the **top-left** zone, at `--shell-gutter` from the top and
-left edges, chips side by side and wrapping **downwards**, never wider than
-the space left of the launcher (`max-width: 100vw − 2 × gutter −
---shell-launcher-w − 12px`). Nothing else lives there: the launcher is
-top-right, the GPT-Live banner and the side panels start at
+status centre): the **top-left** zone until 2026-10-29, since then the
+**top-right** zone (the launcher took the top-left), at `--shell-gutter` from the top and
+right edges — left of the open right bands and side panel (`--shell-rails-open-w`) —, chips side by side,
+right-aligned and wrapping **downwards**, never wider than
+the space right of the launcher (`max-width: 100vw − 2 × gutter −
+--shell-launcher-w − 12px`), one row under the GPT-Live chip when it shows. Nothing else lives there: the launcher is
+top-left, the side panels start at
 `--shell-panel-top`, the wheel anchor is vertically centred on the left edge
 (measured with three recordings from 1440×900 down to 375×667,
 `test_indicators_cover_no_neighbouring_control`). The bottom status centre
@@ -994,12 +996,12 @@ toggles against `status()`, REC timer through a wheel close, a reload and a
 second tab, a real one-shot screenshot artifact, the sub-arc with one and two
 displays chosen by keyboard, Core really stopped then restarted (status
 loss), a stop sent during a page-only loss, independence, refused start,
-keyboard, no overlap and top-left place at five sizes, reduced motion, forced
+keyboard, no overlap and top-right place at five sizes, reduced motion, forced
 colours, axe-core when `JARVIS_AXE_JS` points to `axe.min.js`; Slice 04 of the
 wheel/dossier refactor: two open screen recordings → primary click on
 « Enregistrer l'écran » opens the stop list and stops the chosen one, an open
 Capture submenu checks its row when Core starts a capture elsewhere, focus
-kept); `tests/unit/test_status_centre_browser.py` (the chip top-left, out of
+kept); `tests/unit/test_status_centre_browser.py` (the chip top-right, out of
 the status centre, stops its capture).
 
 ### Screenshot preview and quick actions (orbital UI Slice 05)

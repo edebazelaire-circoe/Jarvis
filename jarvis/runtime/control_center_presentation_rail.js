@@ -1,11 +1,15 @@
-/* Rail permanent des présentations — rail actif de l'espace de travail, zone `right` de la coque (Slice 07 du handoff
-   jarvis-board-orbital-ui-workspace-rail, décision D10 ; docs/control-center-shell.md › Zones, docs/presentation-studio.md › Rail).
+/* Rail des présentations — bande du bord DROIT de l'écran (zone `right` de la coque ; docs/control-center-shell.md › Workspace rail,
+   docs/presentation-studio.md › Rail).
 
-   Une colonne au bord DROIT (`--shell-rail-w` : 300 px, 72 px sous 1100 px, un onglet sous 700 px), sous le lanceur et au-dessus de
-   l'onglet Chat, qui liste TOUTES les présentations en cartes : un aperçu réel (le dernier rendu `presentation_still` complet, lu par la
-   route bornée `/api/artifacts/{id}/payload`) ou une vignette typée « Présentation · Remotion / Slidecar » quand aucun rendu n'existe
-   (jamais une fausse diapositive), un badge de type, le titre, une métadonnée légère (variantes, modifiée il y a…), et l'état (pastille
-   ET libellé). Plusieurs présentations vivent en parallèle ; un agent peut en corriger une pendant que l'utilisateur en regarde une autre.
+   Une bande noire translucide et grainée, pleine hauteur, de largeur fixe (`--shell-rail-w`), au bord droit — à gauche du Chat quand
+   les deux sont ouverts (le Chat est toujours le plus à droite). Ce n'est pas une carte flottante : pas de coins arrondis, pas de
+   redimensionnement, une seule liste qui défile. REPLIÉE, elle disparaît entièrement ; il ne reste que le bouton « Présentations »
+   (`#presentationRailTab`, dans `#railDock` au bord droit, au-dessus du bouton Chat) qui la déplie, et porte la marque de l'état le
+   plus pressant (anneau bleu : un agent travaille ; triangle orange : problème ; losange jaune : à revoir).
+
+   Une carte = sa vignette, grande (le dernier rendu `presentation_still` complet, lu par la route bornée `/api/artifacts/{id}/payload`,
+   ou une vignette typée « Présentation · Remotion / Slidecar » quand aucun rendu n'existe : jamais une fausse diapositive) et son titre.
+   L'état est une petite marque sur la vignette (absente quand tout va bien), dite aussi par l'ARIA et l'infobulle.
 
    État, par priorité : bleu `working` (un agent travaille) > orange `problem` (forme propre, triangle ; reste jusqu'à l'acquittement ou au
    prochain travail) > jaune `unreviewed` (travail du cerveau terminé que vous n'avez pas revu ; tenu par Core dans `rail.json`, effacé par
@@ -18,16 +22,23 @@
      écriture de Core (`POST .../presentations/{id}/rail`, acteur `user` imposé par le relais) puis une relecture ; un échec est dit à l'écran ;
    - le lieu des gestes : clic = ouvrir Variantes sur la présentation (fenêtré, `JarvisStudioExplorer`), clic droit (ou touche Menu,
      Maj+F10, ou le bouton « ⋯ » de la carte) = menu Ouvrir les variantes / Remotion Studio… / Éditer / Présenter / Masquer ou Afficher /
-     Renommer / Acquitter (orange) / Marquer comme vu (jaune) / Supprimer (archiver, restaurable, avec confirmation) ; une archivée ne
-     propose que Restaurer ;
+     Renommer / Acquitter (orange) / Marquer comme vu (jaune) / Archiver (restaurable) / Supprimer définitivement… ; une archivée ne propose
+     que Restaurer et Supprimer définitivement. La corbeille de la carte (et la touche Suppr) est la suppression DÉFINITIVE ;
+   - la suppression définitive : une confirmation dans la page (`confirmDialog`, le dialogue `.cdialog`), puis, pour une présentation,
+     l'archivage (s'il reste à faire) et la purge de Core en deux temps (`POST /api/presentation-studio/rail/purge-plan`, puis `.../purge`
+     avec le jeton du plan : sauvegarde complète d'abord) ; pour un élément « Sur ce Board » (Artifact), `DELETE /api/artifacts/{id}`.
+     Un Artifact dont d'autres dérivent demande un second accord (`cascade=true`) ;
+   - les archivées : cachées par défaut. Le bouton « Afficher les archivés » du pied de la bande fait apparaître la section « Archivés » ;
    - le récepteur des demandes d'écran du cerveau (`ui.request` : montrer ou masquer le rail), et le rapporteur de ce que la page
      constate (`POST .../rail/display-state` : rail visible, Variantes ouvert et sur quelle présentation), pour que
      `presentation_inspect target rail` ne devine rien.
 
-   Quand il est visible : dans un Board de nature « présentation », en mode d'interaction PRESENTATION, dès qu'un agent travaille ou qu'un
-   problème attend, quand Variantes est ouvert, ou si l'utilisateur l'a épinglé (Alt+Maj+P : automatique, toujours visible, masqué). Épinglé
-   « masqué », il ne se montre que sur demande du cerveau. Pendant le Studio (Variantes, fenêtré) il se range en colonne à DROITE de
-   l'explorateur (miroir de l'ancien rangement à gauche), hors de la zone rendue inerte : la voix et le rail restent utilisables.
+   Ouvert ou replié : le choix de l'utilisateur (bouton, mémorisé), sinon la règle d'avant — un Board de nature « présentation », le mode
+   d'interaction PRESENTATION, un agent qui travaille ou un problème qui attend, Variantes ouvert — sauf à 700 px et moins, où la bande couvrirait la scène et
+   où le rail reste replié tant que l'utilisateur ne l'a pas ouvert. Alt+Maj+P fait tourner automatique /
+   toujours visible / masqué. Sous 900 px de large, les deux bandes ne tiennent pas côte à côte : ouvrir l'une ferme l'autre. Pendant le
+   Studio (Variantes, fenêtré) le rail se range en colonne à DROITE de l'explorateur, hors de la zone rendue inerte : la voix et le rail
+   restent utilisables.
 
    Étape B (adaptateur pur `control_center_workspace_rail_model.js`, séparable) : sous les présentations, une section « Sur ce Board » montre les
    Artifacts liés au Board actif (fichiers déposés, liens, captures, enregistrements, rendus) en cartes du même dessin, état sans jaune ; le
@@ -44,7 +55,7 @@
 (function(root){
   'use strict';
 
-  const DOM=Object.freeze({hostId:'presentationRail',styleId:'presentationRailStyle'});
+  const DOM=Object.freeze({hostId:'presentationRail',styleId:'presentationRailStyle',tabId:'presentationRailTab'});
   const ROUTE='/api/presentation-studio/rail';
   const STATE_ROUTE=ROUTE+'/display-state';
   const act=pid=>`/api/presentation-studio/presentations/${encodeURIComponent(pid)}/rail`;
@@ -60,6 +71,9 @@
   const ITEM_STATE=Object.freeze({working:{state:'working',short:'En cours',label:'En cours d’acquisition'},ready:{state:'done',short:'Prêt',label:'Prêt'},
     problem:{state:'problem',short:'Problème',label:'Acquisition en échec ou partielle'},unknown:{state:'unknown',short:'État inconnu',label:'État inconnu'}});
   const WORKSPACE_REFRESH_MS=10000;
+  /* Suppression définitive (Core) : le plan fait un inventaire disque, la purge une sauvegarde complète de la base d'abord. */
+  const PURGE_PLAN_ROUTE=ROUTE+'/purge-plan',PURGE_ROUTE=ROUTE+'/purge',PURGE_TIMEOUT_MS=125000;
+  const ws_delete=id=>`/api/artifacts/${encodeURIComponent(id)}`;
   const STATE_COLOR=Object.freeze({working:'var(--sem-working,#4da3ff)',problem:'var(--sem-problem,#ff6a4d)',unreviewed:'var(--sem-review,#ffd166)',
     done:'var(--sem-done,#68e0a0)',unknown:'transparent'});
   const ENGINE_LABEL=Object.freeze({remotion:'Remotion',slidecar:'Slidecar'});
@@ -90,10 +104,10 @@
   const POLL_BUSY_MS=2000,POLL_IDLE_MS=4000,POLL_HIDDEN_MS=20000,REPORT_EVERY_MS=15000,REQUEST_TIMEOUT_MS=8000,NOTICE_MS=6000;
   const TITLE_SHORT=40;
   const STUDIO_WIDTH_PX=188;
-  const SLIM_WIDTH_PX=72;
-  const SLIM_BELOW_PX=1100;
-  /* Sous cette largeur le rail devient un onglet (`--shell-rail-w` vaut 0) : un geste l'ouvre par-dessus la scène. */
-  const DRAWER_BELOW_PX=701;
+  /* Sous cette largeur le rail (272 px) et le Chat (400 px) ne tiennent pas côte à côte : ouvrir l'un ferme l'autre. */
+  const NARROW_BELOW_PX=900;
+  /* À cette largeur et en dessous, le rail ne s'ouvre pas de lui-même (règle automatique) : il reste à l'utilisateur de le déplier. */
+  const NARROW_AUTO_PX=700;
   /* Sous cette largeur le Studio garde tout l'écran : le rail se retire le temps du Studio (il revient à sa fermeture). */
   const HIDE_IN_STUDIO_BELOW_PX=900;
 
@@ -174,17 +188,11 @@
     if(!model.total)return !!(c.home&&(c.boardKind==='presentation'||c.mode==='presentation'));
     return !!(c.boardKind==='presentation'||c.mode==='presentation'||model.working.length||model.problems.length||c.studioOpen);
   }
-  /* Densité de la carte (pur) : `full` (300 px), `slim` (72 px : vignette, libellé au focus), `drawer` (onglet sous 700 px),
-     `compact` (colonne à côté du Studio). */
-  function densityOf(ctx){
-    const c=ctx||{},w=Number(c.width)||1280;
-    if(c.studio)return c.collapsed||w<SLIM_BELOW_PX?'slim':'compact';
-    if(w<DRAWER_BELOW_PX)return 'drawer';
-    return c.collapsed||w<SLIM_BELOW_PX?'slim':'full';
-  }
+  /* Densité (pur) : `full` (la bande) ou `compact` (colonne à côté du Studio). Plus de bande étroite ni d'onglet : replié, le rail disparaît. */
+  function densityOf(ctx){return ctx&&ctx.studio?'compact':'full'}
   function menuModel(row,ctx){
     const c=ctx||{};
-    if(row.archived)return [{act:'restore',label:'Restaurer'}];
+    if(row.archived)return [{act:'restore',label:'Restaurer'},'-',{act:'delete',label:'Supprimer définitivement…',danger:true}];
     const items=[
       {act:'open',label:'Ouvrir les variantes',note:c.playing&&!c.playingThis?'Une autre présentation est en cours : Variantes la montre.':null},
       /* native-studio-playback-fix Slice 11 (§ 1): Variants on the active variant, then Remotion Studio on the scene on screen, after the confirmation. */
@@ -197,7 +205,8 @@
       {act:'rename',label:'Renommer…'}];
     if(stateOf(row)==='problem')items.push({act:'ack',label:'Acquitter le problème'});
     if(row.unreviewed&&typeof row.unreviewed==='object')items.push({act:'review',label:'Marquer comme vu'});
-    items.push('-',{act:'archive',label:'Supprimer…',danger:true,note:c.playingThis?'Cette présentation est jouée : arrêtez la lecture d’abord.':null});
+    const playingNote=c.playingThis?'Cette présentation est jouée : arrêtez la lecture d’abord.':null;
+    items.push('-',{act:'archive',label:'Archiver…',note:playingNote},{act:'delete',label:'Supprimer définitivement…',danger:true,note:playingNote});
     return items;
   }
 
@@ -213,94 +222,93 @@
     file:'document',powerpoint:'presentation',google_slides:'presentation',google_docs:'document',google_sheets:'document',image:'image'});
 
   const CSS=`
-#${DOM.hostId}{--jvr-ink:var(--text,#d8edf7);--jvr-mute:var(--muted,#7190a0);--jvr-line:var(--shell-stroke,rgba(174,205,220,.12));--jvr-bg:var(--shell-glass-strong,rgba(4,10,15,.8));--jvr-hot:var(--shell-stroke-active,rgba(110,231,255,.4));
-  position:fixed;z-index:30;top:var(--shell-panel-top,64px);right:var(--shell-gutter,18px);width:var(--shell-rail-w,300px);max-height:calc(100vh - var(--shell-panel-top,64px) - var(--shell-panel-bottom,68px));
-  display:flex;flex-direction:column;gap:6px;padding:10px 8px 8px;background:var(--jvr-bg);border:1px solid var(--jvr-line);border-radius:var(--shell-radius,12px);
-  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);color:var(--jvr-ink);font:12px/1.35 system-ui,"Segoe UI",sans-serif;box-shadow:0 14px 40px rgba(0,0,0,.4);user-select:none}
+#${DOM.hostId}{--jvr-ink:var(--text,#d8edf7);--jvr-mute:var(--muted,#7190a0);--jvr-line:var(--shell-stroke,rgba(174,205,220,.12));--jvr-hot:var(--shell-stroke-active,rgba(110,231,255,.4));
+  position:fixed;z-index:30;top:0;bottom:0;right:var(--shell-chat-open-w,0px);width:var(--shell-rail-w,272px);
+  display:flex;flex-direction:column;gap:6px;padding:14px 10px 10px;background:var(--shell-band-grain,none),var(--shell-band-bg,rgba(3,7,11,.74));border-left:1px solid var(--jvr-line);
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);color:var(--jvr-ink);font:12px/1.35 system-ui,"Segoe UI",sans-serif;
+  box-shadow:var(--shell-band-shadow,-10px 0 36px rgba(0,0,0,.4));user-select:none}
+#${DOM.hostId}:not([hidden]){animation:jvr-in var(--shell-dur,180ms) var(--shell-ease,ease)}
+@keyframes jvr-in{from{opacity:0}}
 #${DOM.hostId}[hidden]{display:none}
 #${DOM.hostId} *{box-sizing:border-box}
 #${DOM.hostId} button{font:inherit;color:inherit;cursor:pointer;background:none;border:0;padding:0}
-#${DOM.hostId} .jvr-head{display:flex;align-items:center;gap:8px;padding:0 4px 2px;color:var(--jvr-mute);letter-spacing:.14em;font:600 10.5px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace}
+#${DOM.hostId} .jvr-head{display:flex;align-items:center;gap:8px;padding:2px 4px 6px;color:var(--jvr-mute);letter-spacing:.14em;font:600 10.5px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace}
 #${DOM.hostId} .jvr-title{flex:1;min-width:0;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--jvr-ink)}
 #${DOM.hostId} .jvr-count{color:var(--jvr-mute);font-weight:400}
-#${DOM.hostId} .jvr-voice{flex:none;width:8px;height:8px;border-radius:50%;border:1px solid #5b7686;background:transparent}
-#${DOM.hostId} .jvr-voice[data-v=listening]{background:#6ee7ff;border-color:#6ee7ff;box-shadow:0 0 6px #6ee7ff}#${DOM.hostId} .jvr-voice[data-v=speaking],#${DOM.hostId} .jvr-voice[data-v=thinking]{background:#a78bfa;border-color:#a78bfa;box-shadow:0 0 6px #a78bfa}
-#${DOM.hostId} .jvr-voice[data-v="hors ligne"]{border-style:dashed;opacity:.6}
-#${DOM.hostId} .jvr-tool{flex:none;width:24px;height:24px;border-radius:6px;color:var(--jvr-mute);display:grid;place-items:center;font-size:14px;letter-spacing:0}
-#${DOM.hostId} .jvr-tool:hover,#${DOM.hostId} .jvr-tool[aria-pressed=true]{color:var(--jvr-ink);background:rgba(110,231,255,.12)}
-#${DOM.hostId} .jvr-urgent{flex:none;width:8px;height:8px;border-radius:50%;background:var(--c);display:none}
-#${DOM.hostId} .jvr-list{list-style:none;margin:0;padding:0 2px 0 0;overflow:auto;display:flex;flex-direction:column;gap:6px;min-height:0;scrollbar-width:thin}
+#${DOM.hostId} .jvr-tool{flex:none;width:26px;height:26px;border-radius:7px;color:var(--jvr-mute);display:grid;place-items:center;font-size:15px;letter-spacing:0}
+#${DOM.hostId} .jvr-tool:hover,#${DOM.hostId} .jvr-tool:focus-visible{color:var(--jvr-ink);background:rgba(110,231,255,.12)}
+/* Une seule zone qui défile (présentations, Sur ce Board, masquées, archivées) ; l'en-tête et le pied restent en place. */
+#${DOM.hostId} .jvr-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:12px;padding:2px 6px 8px 2px;scrollbar-width:thin;scrollbar-color:rgba(174,205,220,.22) transparent}
+#${DOM.hostId} .jvr-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:14px}
+#${DOM.hostId} .jvr-list[hidden]{display:none}
 #${DOM.hostId} .jvr-card{position:relative}
-#${DOM.hostId} .jvr-item{display:grid;grid-template-columns:88px minmax(0,1fr);align-items:center;gap:10px;width:100%;min-height:62px;padding:6px 30px 6px 6px;border-radius:10px;text-align:left;
-  background:rgba(255,255,255,.025);border:1px solid var(--jvr-line);transition:border-color var(--shell-dur-fast,120ms) var(--shell-ease,ease),background-color var(--shell-dur-fast,120ms) var(--shell-ease,ease)}
-#${DOM.hostId} .jvr-item:hover{background:rgba(110,231,255,.06);border-color:var(--jvr-hot)}
-#${DOM.hostId} .jvr-item:focus-visible{outline:var(--shell-focus-w,2px) solid var(--shell-focus,#6ee7ff);outline-offset:1px}
-#${DOM.hostId} .jvr-item[data-open=true]{border-color:var(--jvr-hot);background:rgba(110,231,255,.09)}
-#${DOM.hostId} .jvr-item[data-dim=true]{opacity:.55}
-#${DOM.hostId} .jvr-thumb{position:relative;width:88px;aspect-ratio:16/9;border-radius:7px;overflow:hidden;display:grid;place-items:center;align-content:center;gap:2px;color:rgba(232,244,250,.86);
-  background:linear-gradient(135deg,hsl(var(--h) 42% 24%),hsl(calc(var(--h) + 40) 38% 12%));border:1px solid rgba(255,255,255,.1)}
+/* Une carte : la vignette, grande, et le titre dessous. Rien d'autre (l'état est une petite marque sur la vignette, dite aussi par l'ARIA). */
+#${DOM.hostId} .jvr-item{position:relative;display:grid;grid-template-columns:minmax(0,1fr);gap:7px;width:100%;padding:0;text-align:left;border-radius:10px}
+#${DOM.hostId} .jvr-item:focus-visible{outline:var(--shell-focus-w,2px) solid var(--shell-focus,#6ee7ff);outline-offset:3px}
+#${DOM.hostId} .jvr-item[data-dim=true]{opacity:.62}
+#${DOM.hostId} .jvr-thumb{position:relative;width:100%;aspect-ratio:16/9;border-radius:9px;overflow:hidden;display:grid;place-items:center;align-content:center;gap:5px;color:rgba(232,244,250,.88);
+  background:linear-gradient(135deg,hsl(var(--h) 42% 24%),hsl(calc(var(--h) + 40) 38% 12%));border:1px solid rgba(255,255,255,.1);transition:border-color var(--shell-dur-fast,120ms) var(--shell-ease,ease),transform var(--shell-dur-fast,120ms) var(--shell-ease,ease)}
+#${DOM.hostId} .jvr-thumb svg{width:34px;height:34px}
+#${DOM.hostId} .jvr-item:hover .jvr-thumb{border-color:var(--jvr-hot);transform:translateY(-1px)}
+#${DOM.hostId} .jvr-item[data-open=true] .jvr-thumb{border-color:var(--jvr-hot);box-shadow:0 0 0 1px var(--jvr-hot)}
 #${DOM.hostId} .jvr-thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;background:#05090d}
-#${DOM.hostId} .jvr-thumb[data-kind=placeholder] .jvr-ph{font:600 8.5px/1 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.08em;text-transform:uppercase;opacity:.82}
-#${DOM.hostId} .jvr-badge{position:absolute;left:4px;bottom:4px;padding:2px 4px;border-radius:4px;background:rgba(2,6,9,.74);color:#e8f4fa;font:600 8.5px/1 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.06em;text-transform:uppercase}
+#${DOM.hostId} .jvr-thumb[data-kind=placeholder] .jvr-ph{font:600 9px/1 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.08em;text-transform:uppercase;opacity:.82}
+#${DOM.hostId} .jvr-badge{position:absolute;left:6px;bottom:6px;padding:2px 5px;border-radius:4px;background:rgba(2,6,9,.74);color:#e8f4fa;font:600 8.5px/1 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.06em;text-transform:uppercase}
 #${DOM.hostId} .jvr-thumb[data-kind=placeholder] .jvr-badge{display:none}
-#${DOM.hostId} .jvr-body{min-width:0;display:flex;flex-direction:column;gap:3px}
-#${DOM.hostId} .jvr-name{font-size:13px;font-weight:600;line-height:1.25;color:var(--jvr-ink);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
-#${DOM.hostId} .jvr-meta{color:var(--jvr-mute);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#${DOM.hostId} .jvr-status{display:flex;align-items:center;gap:6px;min-width:0;font-size:11px;white-space:nowrap}
-#${DOM.hostId} .jvr-state{color:color-mix(in srgb,var(--c) 72%,var(--jvr-ink));font-weight:600}
-#${DOM.hostId} .jvr-item[data-state=unknown] .jvr-state{color:var(--jvr-mute)}
-#${DOM.hostId} .jvr-when{color:var(--jvr-mute);overflow:hidden;text-overflow:ellipsis}
-#${DOM.hostId} .jvr-dot{flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--c);box-shadow:0 0 0 2px rgba(0,0,0,.35)}
-/* A shape per state (status never by colour alone, also in the 72 px strip where the label hides): working = ring (pulsing), problem =
-   triangle, unreviewed = diamond, done = check, unknown = dashed hollow ring. Same rules for the header's « most urgent » mark and the bubble. */
-#${DOM.hostId} :is([data-state=working] .jvr-dot,.jvr-urgent[data-state=working]){-webkit-mask:radial-gradient(circle,transparent 2px,#000 2.6px);mask:radial-gradient(circle,transparent 2px,#000 2.6px);box-shadow:none}
-#${DOM.hostId} .jvr-item[data-state=working] .jvr-dot{animation:jvr-pulse 1.3s ease-in-out infinite}
-#${DOM.hostId} :is([data-state=problem] .jvr-dot,.jvr-urgent[data-state=problem]){width:10px;height:9px;border-radius:1px;clip-path:polygon(50% 0,100% 100%,0 100%);box-shadow:none}
-#${DOM.hostId} :is([data-state=unreviewed] .jvr-dot,.jvr-urgent[data-state=unreviewed]){width:9px;height:9px;border-radius:1px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);box-shadow:none}
-#${DOM.hostId} :is([data-state=done] .jvr-dot,.jvr-urgent[data-state=done]){width:10px;height:9px;border-radius:0;clip-path:polygon(0 52%,16% 36%,40% 60%,84% 8%,100% 24%,40% 94%);box-shadow:none}
-#${DOM.hostId} [data-state=unknown] .jvr-dot{border:1px dashed var(--jvr-mute);box-shadow:none}
-#${DOM.hostId} .jvr-item[data-state=problem]{border-color:color-mix(in srgb,var(--sem-problem,#ff6a4d) 45%,transparent)}
+#${DOM.hostId} .jvr-body{min-width:0;display:flex;flex-direction:column;padding:0 2px}
+#${DOM.hostId} .jvr-name{font-size:13px;font-weight:600;line-height:1.3;color:var(--jvr-ink);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+#${DOM.hostId} .jvr-mark{position:absolute;left:7px;top:7px;display:grid;place-items:center;width:20px;height:20px;border-radius:6px;background:rgba(2,6,9,.74);pointer-events:none}
+#${DOM.hostId} .jvr-item[data-state=done] .jvr-mark{display:none}
+#${DOM.hostId} .jvr-dot,.jvr-urgent{flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--c)}
+/* A shape per state (status never by colour alone): working = ring (pulsing), problem = triangle, unreviewed = diamond, done = check,
+   unknown = dashed hollow ring. Same marks on a card (over its thumbnail) and on the Présentations button (\`.jvr-urgent\`). */
+:is(#${DOM.hostId} [data-state=working] .jvr-dot,.jvr-urgent[data-state=working]){-webkit-mask:radial-gradient(circle,transparent 2px,#000 2.6px);mask:radial-gradient(circle,transparent 2px,#000 2.6px)}
+#${DOM.hostId} .jvr-item[data-state=working] .jvr-dot,.jvr-urgent[data-state=working]{animation:jvr-pulse 1.3s ease-in-out infinite}
+:is(#${DOM.hostId} [data-state=problem] .jvr-dot,.jvr-urgent[data-state=problem]){width:10px;height:9px;border-radius:1px;clip-path:polygon(50% 0,100% 100%,0 100%)}
+:is(#${DOM.hostId} [data-state=unreviewed] .jvr-dot,.jvr-urgent[data-state=unreviewed]){width:9px;height:9px;border-radius:1px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%)}
+:is(#${DOM.hostId} [data-state=done] .jvr-dot,.jvr-urgent[data-state=done]){width:10px;height:9px;border-radius:0;clip-path:polygon(0 52%,16% 36%,40% 60%,84% 8%,100% 24%,40% 94%)}
+#${DOM.hostId} [data-state=unknown] .jvr-dot{border:1px dashed var(--jvr-mute);background:transparent}
+#${DOM.hostId} .jvr-item[data-state=problem] .jvr-thumb{border-color:color-mix(in srgb,var(--sem-problem,#ff6a4d) 55%,transparent)}
 @keyframes jvr-pulse{50%{opacity:.35;transform:scale(.8)}}
-@media (prefers-reduced-motion:reduce){#${DOM.hostId} .jvr-item[data-state=working] .jvr-dot{animation:none}#${DOM.hostId} .jvr-item{transition:none}}
-#${DOM.hostId} .jvr-more{position:absolute;top:6px;right:4px;width:24px;height:24px;border-radius:6px;display:grid;place-items:center;color:var(--jvr-mute);font-size:15px;line-height:1}
-#${DOM.hostId} .jvr-more:hover,#${DOM.hostId} .jvr-more:focus-visible{color:var(--jvr-ink);background:rgba(110,231,255,.12)}
-#${DOM.hostId} .jvr-fold{display:flex;align-items:center;gap:6px;padding:6px 6px 2px;color:var(--jvr-mute);font:600 10px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.1em;text-transform:uppercase;text-align:left;width:100%;border-top:1px solid var(--jvr-line);margin-top:2px}
-#${DOM.hostId} .jvr-fold:hover{color:var(--jvr-ink)}
-#${DOM.hostId} .jvr-fold + .jvr-list{margin-top:6px}
-#${DOM.hostId} .jvr-ws{display:flex;flex-direction:column;min-height:0;flex:0 1 auto;max-height:42vh}
-#${DOM.hostId} .jvr-ws>.jvr-list{overflow:auto;min-height:0}
-#${DOM.hostId} .jvr-ws:empty{display:none}
+@media (prefers-reduced-motion:reduce){#${DOM.hostId} .jvr-item[data-state=working] .jvr-dot,.jvr-urgent[data-state=working]{animation:none}#${DOM.hostId}{animation:none}#${DOM.hostId} .jvr-thumb{transition:none}}
+/* Gestes de la carte, sur le coin de la vignette : « ⋯ » (menu) et la corbeille (suppression définitive, avec confirmation). */
+#${DOM.hostId} .jvr-more,#${DOM.hostId} .jvr-del{position:absolute;top:6px;width:26px;height:26px;border-radius:7px;display:grid;place-items:center;color:#e8f4fa;background:rgba(2,6,9,.72);
+  font-size:15px;line-height:1;opacity:0;transition:opacity var(--shell-dur-fast,120ms) var(--shell-ease,ease)}
+#${DOM.hostId} .jvr-more{right:38px}#${DOM.hostId} .jvr-del{right:6px}
+#${DOM.hostId} .jvr-del svg{width:15px;height:15px}
+#${DOM.hostId} .jvr-card:hover :is(.jvr-more,.jvr-del),#${DOM.hostId} .jvr-card:focus-within :is(.jvr-more,.jvr-del){opacity:1}
+@media (hover:none){#${DOM.hostId} :is(.jvr-more,.jvr-del){opacity:1}}
+#${DOM.hostId} .jvr-more:hover,#${DOM.hostId} .jvr-more:focus-visible{background:rgba(110,231,255,.28)}
+#${DOM.hostId} .jvr-del:hover,#${DOM.hostId} .jvr-del:focus-visible{color:#ffb3bc;background:rgba(120,16,32,.82)}
+#${DOM.hostId} .jvr-fold{display:flex;align-items:center;gap:6px;padding:8px 4px 2px;color:var(--jvr-mute);font:600 10px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.1em;text-transform:uppercase;text-align:left;width:100%;border-top:1px solid var(--jvr-line)}
+#${DOM.hostId} button.jvr-fold:hover{color:var(--jvr-ink)}
+#${DOM.hostId} .jvr-fold + .jvr-list{margin-top:10px}
+#${DOM.hostId} .jvr-folds{display:flex;flex-direction:column;gap:10px}
+#${DOM.hostId} .jvr-folds:empty,#${DOM.hostId} .jvr-ws:empty{display:none}
+#${DOM.hostId} .jvr-ws{display:flex;flex-direction:column;gap:2px}
 #${DOM.hostId} .jvr-ws .jvr-empty[data-kind=failed]{color:var(--sem-alert,#ff9f43)}
 #${DOM.hostId} .jvr-ws .jvr-thumb{--h:200}
 #${DOM.hostId} .jvr-empty,#${DOM.hostId} .jvr-note{padding:6px;color:var(--jvr-mute);font-size:11.5px;line-height:1.4}
 #${DOM.hostId} .jvr-note[data-kind=failed]{color:var(--sem-alert,#ff9f43)}
-#${DOM.hostId} .jvr-peek{position:absolute;right:calc(100% + 8px);top:0;width:220px;padding:8px 10px;border-radius:9px;background:var(--panel,rgba(6,12,18,.96));border:1px solid var(--jvr-hot);box-shadow:0 10px 30px rgba(0,0,0,.45);
-  transform:translateY(-50%);pointer-events:none;display:flex;flex-direction:column;gap:3px}
-#${DOM.hostId} .jvr-peek[hidden]{display:none}
-#${DOM.hostId}[data-density=slim]{width:${SLIM_WIDTH_PX}px;padding:8px 6px}
-#${DOM.hostId}[data-density=slim] .jvr-title,#${DOM.hostId}[data-density=slim] .jvr-voice,#${DOM.hostId}[data-density=slim] .jvr-fold span+span{display:none}
-#${DOM.hostId}[data-density=slim] .jvr-head{justify-content:center;padding:0}
-#${DOM.hostId}[data-density=slim] .jvr-item,#${DOM.hostId}[data-density=compact] .jvr-item{grid-template-columns:minmax(0,1fr);min-height:0;padding:4px;gap:6px}
-#${DOM.hostId}[data-density=slim] .jvr-thumb{width:100%}
-#${DOM.hostId}[data-density=slim] .jvr-body{position:absolute;top:7px;right:7px}
-#${DOM.hostId}[data-density=slim] .jvr-list :is(.jvr-name,.jvr-meta,.jvr-state,.jvr-when,.jvr-more,.jvr-badge,.jvr-ph){display:none}
-#${DOM.hostId}[data-density=compact] .jvr-item{grid-template-columns:44px minmax(0,1fr);padding:4px 6px 4px 4px;gap:8px}
+#${DOM.hostId} .jvr-foot{flex:none;display:flex;flex-direction:column;gap:4px}
+#${DOM.hostId} .jvr-arch{width:100%;padding:8px 10px;border:1px solid var(--jvr-line);border-radius:8px;color:var(--jvr-mute);font:600 10.5px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.06em;text-align:center}
+#${DOM.hostId} .jvr-arch:hover,#${DOM.hostId} .jvr-arch[aria-pressed=true]{color:var(--jvr-ink);border-color:var(--jvr-hot)}
+#${DOM.hostId} .jvr-arch:focus-visible{outline:var(--shell-focus-w,2px) solid var(--shell-focus,#6ee7ff);outline-offset:2px}
+#${DOM.hostId} .jvr-arch[hidden]{display:none}
+#${DOM.hostId}[data-density=compact]{padding:10px 8px}
+#${DOM.hostId}[data-density=compact] .jvr-scroll{gap:8px}
+#${DOM.hostId}[data-density=compact] .jvr-list{gap:6px}
+#${DOM.hostId}[data-density=compact] .jvr-item{grid-template-columns:44px minmax(0,1fr);align-items:center;gap:8px}
 #${DOM.hostId}[data-density=compact] .jvr-thumb{width:44px}
-#${DOM.hostId}[data-density=compact] .jvr-thumb .jvr-ph,#${DOM.hostId}[data-density=compact] .jvr-thumb svg,#${DOM.hostId}[data-density=compact] .jvr-badge,#${DOM.hostId}[data-density=compact] .jvr-meta,#${DOM.hostId}[data-density=compact] .jvr-when,#${DOM.hostId}[data-density=compact] .jvr-more{display:none}
+#${DOM.hostId}[data-density=compact] .jvr-thumb .jvr-ph,#${DOM.hostId}[data-density=compact] .jvr-thumb svg,#${DOM.hostId}[data-density=compact] .jvr-badge,#${DOM.hostId}[data-density=compact] .jvr-mark,#${DOM.hostId}[data-density=compact] :is(.jvr-more,.jvr-del){display:none}
 #${DOM.hostId}[data-density=compact] .jvr-name{font-size:12px;-webkit-line-clamp:1}
-#${DOM.hostId}[data-density=drawer]{width:auto;max-width:calc(100vw - 2 * var(--shell-gutter,10px));padding:6px 8px}
-#${DOM.hostId}[data-density=drawer][data-drawer=open]{width:min(300px,calc(100vw - 2 * var(--shell-gutter,10px)));padding:10px 8px 8px}
-#${DOM.hostId}[data-density=drawer]:not([data-drawer=open]) .jvr-list,#${DOM.hostId}[data-density=drawer]:not([data-drawer=open]) .jvr-folds,#${DOM.hostId}[data-density=drawer]:not([data-drawer=open]) .jvr-ws,#${DOM.hostId}[data-density=drawer]:not([data-drawer=open]) .jvr-note{display:none}
-#${DOM.hostId}[data-density=drawer]:not([data-drawer=open]) .jvr-urgent{display:block}
-html.jvr-studio #${DOM.hostId}{z-index:9100;top:8px;right:8px;left:auto;bottom:8px;max-height:none;width:${STUDIO_WIDTH_PX-16}px;background:rgba(3,8,12,.92)}
-html.jvr-studio #${DOM.hostId} .jvr-list{flex:1 1 auto}
+@media (max-width:700px){#${DOM.hostId}{top:var(--shell-panel-top,88px);bottom:var(--shell-panel-bottom,68px)}}
+html.jvr-studio #${DOM.hostId}{z-index:9100;top:8px;right:8px;left:auto;bottom:8px;width:${STUDIO_WIDTH_PX-16}px;background:rgba(3,8,12,.92);border:1px solid var(--jvr-line);border-radius:12px}
 /* Colonne du Studio (156 px utiles) : le titre se resserre et passe à la ligne au besoin, il ne se coupe plus en « PRÉSENTATION… » (QA S09 P7). */
 html.jvr-studio #${DOM.hostId} .jvr-head{letter-spacing:.04em}
 html.jvr-studio #${DOM.hostId} .jvr-title{white-space:normal}
 html.jvr-studio #jvStudioExplorer:not(:fullscreen){right:${STUDIO_WIDTH_PX}px}
-html.jvr-studio.jvr-slim #jvStudioExplorer:not(:fullscreen){right:60px}
-html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
-@media (forced-colors:active){#${DOM.hostId} .jvr-item{border-color:CanvasText}#${DOM.hostId} .jvr-dot{forced-color-adjust:none}}
+@media (forced-colors:active){#${DOM.hostId} .jvr-item{border:1px solid CanvasText}#${DOM.hostId} .jvr-thumb{border-color:CanvasText}#${DOM.hostId} .jvr-dot,.jvr-urgent{forced-color-adjust:none}}
 .jvr-menu{position:fixed;z-index:9300;min-width:190px;padding:5px;background:rgba(6,12,18,.97);border:1px solid rgba(110,231,255,.28);border-radius:9px;box-shadow:0 14px 40px rgba(0,0,0,.55);
   color:#d8edf7;font:12px ui-monospace,SFMono-Regular,Consolas,monospace}
 .jvr-menu[hidden]{display:none}
@@ -325,8 +333,8 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
 #${DOM.hostId} .jvr-new:hover:not([aria-disabled=true]){background:color-mix(in srgb,var(--accent,#6ee7ff) 18%,transparent)}
 #${DOM.hostId} .jvr-new[aria-disabled=true]{opacity:.55;cursor:progress}
 #${DOM.hostId} .jvr-new:focus-visible{outline:var(--shell-focus-w,2px) solid var(--shell-focus,#6ee7ff);outline-offset:var(--shell-focus-offset,2px)}
-#${DOM.hostId}[data-density=slim] .jvr-new span,#${DOM.hostId}[data-density=compact] .jvr-new span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
-#${DOM.hostId}[data-density=slim] .jvr-new,#${DOM.hostId}[data-density=compact] .jvr-new{padding:5px;margin-left:0}
+#${DOM.hostId}[data-density=compact] .jvr-new span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+#${DOM.hostId}[data-density=compact] .jvr-new{padding:5px;margin-left:0}
 #${DOM.hostId} .jvr-home{list-style:none;margin:0;padding:6px 4px 4px;display:grid;gap:10px;counter-reset:jvr-step}
 #${DOM.hostId} .jvr-home-title{margin:2px 4px 0;color:var(--jvr-ink);font:600 13px/1.3 inherit;letter-spacing:.01em}
 #${DOM.hostId} .jvr-step{counter-increment:jvr-step;display:grid;grid-template-columns:22px 1fr;gap:2px 9px;align-items:start}
@@ -354,8 +362,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
 #${DOM.hostId} .jvr-home-voice-btn[aria-disabled=true]{opacity:.6;cursor:progress}
 #${DOM.hostId} .jvr-home-voice-btn:focus-visible{outline:var(--shell-focus-w,2px) solid var(--shell-focus,#6ee7ff);outline-offset:var(--shell-focus-offset,2px)}
 #${DOM.hostId} .jvr-homebox[hidden],
-#${DOM.hostId}[data-density=slim] .jvr-homebox,#${DOM.hostId}[data-density=compact] .jvr-homebox{display:none}
-#${DOM.hostId} .jvr-list[hidden]{display:none}
+#${DOM.hostId}[data-density=compact] .jvr-homebox{display:none}
 @media (prefers-reduced-motion:reduce){#${DOM.hostId} .jvr-new{transition:none}}
 `;
 
@@ -378,7 +385,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
     const homeUnread=()=>{try{const v=edition&&typeof edition.state==='function'?edition.state():null;
       return v&&!v.model&&v.error&&(v.status==='error'||v.status==='loading')&&v.pageEdition&&v.pageEdition!=='full'?v:null}catch(_e){return null /* intentional: no edition = previous behaviour */}};
     const developer=()=>{try{return !(edition&&typeof edition.developerSurfacesShown==='function')||edition.developerSurfacesShown()}catch(_e){return true /* intentional */}};
-    const S={coreOk:false,rows:[],loaded:false,lost:false,pref:'auto',collapsed:false,drawer:false,density:'full',boardKind:null,boardId:null,mode:null,voice:'idle',foldHidden:false,foldArchived:false,foldWorkspace:false,
+    const S={coreOk:false,rows:[],loaded:false,lost:false,pref:'auto',open:null,density:'full',boardKind:null,boardId:null,mode:null,voice:'idle',foldHidden:false,showArchived:false,foldWorkspace:false,
       lastSeq:null,firstPoll:true,studioOpen:false,notice:null,busy:new Set(),playing:null,selected:null,menuRow:null,dialog:null,lastReport:'',lastReportAt:0};
     const ui={};
     let pollTimer=null,reportTimer=null,noticeTimer=null,polling=false,destroyed=false,failures=0;
@@ -391,12 +398,12 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
     function load(){
       try{const raw=storage()&&storage().getItem(STORAGE_KEY);if(!raw)return;const v=JSON.parse(raw);
         if(v&&(v.pref==='auto'||v.pref==='shown'||v.pref==='hidden'))S.pref=v.pref;
-        if(v&&typeof v.collapsed==='boolean')S.collapsed=v.collapsed;
-        if(v&&typeof v.foldHidden==='boolean')S.foldHidden=v.foldHidden;if(v&&typeof v.foldArchived==='boolean')S.foldArchived=v.foldArchived;
+        if(v&&typeof v.open==='boolean')S.open=v.open;
+        if(v&&typeof v.foldHidden==='boolean')S.foldHidden=v.foldHidden;
         if(v&&typeof v.foldWorkspace==='boolean')S.foldWorkspace=v.foldWorkspace}
       catch(_e){/* intentional: corrupt remembered layout -> defaults */}
     }
-    function save(){try{if(storage())storage().setItem(STORAGE_KEY,JSON.stringify({pref:S.pref,collapsed:S.collapsed,foldHidden:S.foldHidden,foldArchived:S.foldArchived,foldWorkspace:S.foldWorkspace}))}catch(_e){/* intentional */}}
+    function save(){try{if(storage())storage().setItem(STORAGE_KEY,JSON.stringify({pref:S.pref,open:S.open,foldHidden:S.foldHidden,foldWorkspace:S.foldWorkspace}))}catch(_e){/* intentional */}}
     function log(key,data,level){
       const line=`[presentation-rail] ${key} ${JSON.stringify(data||{})}`;
       try{if(sink){if(level==='error')sink.error(line);else if(level==='warn')sink.warn(line);else sink.info(line)}}catch(_e){/* intentional */}
@@ -439,9 +446,29 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
 
     /* ------------------------------------------------------------ rendu */
     function model(){return modelOf(S.rows,S.pref)}
+    /* Ouvert ou replié : le choix de l'utilisateur (le bouton) prime sur la règle automatique, sauf pendant le Studio (la colonne suit Variantes)
+       et quand Alt+Maj+P ou le cerveau a imposé « toujours visible » / « masqué ». */
     function shown(){
       if(S.studioOpen&&(Number(win.innerWidth)||1280)<HIDE_IN_STUDIO_BELOW_PX&&S.pref!=='shown')return false;
+      if(S.open!==null&&S.pref==='auto'&&!S.studioOpen)return S.open;
+      /* Sans choix de l'utilisateur, un écran étroit (700 px et moins : il y avait un onglet fermé) garde le rail replié : la bande couvrirait la scène. */
+      if(S.open===null&&S.pref==='auto'&&!S.studioOpen&&(Number(win.innerWidth)||1280)<=NARROW_AUTO_PX)return false;
       return shouldShow(model(),{pref:S.pref,boardKind:S.boardKind,mode:S.mode,studioOpen:S.studioOpen,home:home()||!!homeUnread()})}
+    const narrow=()=>(Number(win.innerWidth)||1280)<NARROW_BELOW_PX;
+    /* Le bouton « Présentations » (ou « Replier ») : déplie ou replie. Sous 900 px le Chat se ferme pour lui faire place. */
+    function toggle(force,opts){
+      const next=typeof force==='boolean'?force:!shown();
+      S.open=next;S.pref='auto';save();
+      if(next&&narrow()){
+        const chat=d.chat||root.JarvisChat;
+        try{if(chat&&typeof chat.close==='function')chat.close()}catch(error){log('chat_close_failed',{error:cleanLine(error&&error.message,120)},'warn')}
+      }
+      render();reportSoon(true);
+      if(opts&&opts.restoreFocus&&ui.tab)ui.tab.focus({preventScroll:true});
+      return next;
+    }
+    /* Le Chat s'ouvre : sous 900 px il ne tient pas à côté du rail. */
+    function closeIfNarrow(){if(narrow()&&ui.host&&!ui.host.hidden&&!S.studioOpen)return toggle(false);return false}
     function build(){
       if(ui.host)return ui.host;
       if(!doc.getElementById(DOM.styleId)){const style=el('style');style.id=DOM.styleId;style.textContent=CSS;(doc.head||doc.documentElement).appendChild(style)}
@@ -452,29 +479,30 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       const head=el('div','jvr-head');
       ui.title=el('span','jvr-title','Présentations');ui.count=el('span','jvr-count','');
       ui.title.append(' ',ui.count);
-      ui.urgent=el('span','jvr-urgent');ui.urgent.setAttribute('aria-hidden','true');
-      ui.voice=el('span','jvr-voice');ui.voice.setAttribute('role','status');
-      ui.collapseBtn=el('button','jvr-tool','›');ui.collapseBtn.type='button';
-      /* Sous 700 px le bouton ouvre ou ferme l'onglet ; au-dessus il replie le rail en bande de vignettes (72 px). */
-      ui.collapseBtn.addEventListener('click',()=>{if(S.density==='drawer')S.drawer=!S.drawer;else{S.collapsed=!S.collapsed;save()}render()});
+      /* Replié, le rail disparaît entièrement : il ne reste que le bouton « Présentations » (`#presentationRailTab`). */
+      ui.closeBtn=el('button','jvr-tool','›');ui.closeBtn.type='button';ui.closeBtn.setAttribute('aria-label','Replier le rail des présentations');ui.closeBtn.title='Replier le rail des présentations';
+      ui.closeBtn.addEventListener('click',()=>{toggle(false,{restoreFocus:true})});
       /* Slice 08 : « Nouvelle présentation », montré par `render` quand l'édition est une édition produit. */
       ui.newBtn=el('button','jvr-new');ui.newBtn.type='button';ui.newBtn.hidden=true;ui.newBtn.setAttribute('aria-label','Nouvelle présentation');ui.newBtn.title='Nouvelle présentation';
       ui.newBtn.append(svgIcon([['path',{d:'M12 5v14M5 12h14'}]]),el('span','','Nouvelle'));
       ui.newBtn.addEventListener('click',()=>{createPresentation('head')});
-      head.append(ui.title,ui.urgent,ui.voice,ui.newBtn,ui.collapseBtn);
+      head.append(ui.title,ui.newBtn,ui.closeBtn);
+      ui.scroll=el('div','jvr-scroll');
       ui.list=el('ul','jvr-list');ui.list.setAttribute('role','listbox');ui.list.setAttribute('aria-label','Présentations');
       ui.folds=el('div','jvr-folds');ui.hiddenFold=el('div');ui.archivedFold=el('div');ui.folds.append(ui.hiddenFold,ui.archivedFold);
       ui.note=el('div','jvr-note');ui.note.setAttribute('role','status');ui.note.setAttribute('aria-live','polite');
       ui.note.addEventListener('click',()=>{if(S.notice){S.notice=null;render()}});
-      /* Bande de vignettes : le titre et l'état d'une carte s'affichent à côté d'elle au survol et au focus (une seule bulle, hors de la liste
-         qui défile, pour ne pas être rognée). */
-      ui.peek=el('div','jvr-peek');ui.peek.hidden=true;ui.peek.setAttribute('aria-hidden','true');
+      /* Les archivées sont cachées par défaut : ce bouton du pied les montre (section « Archivés ») ou les recache. */
+      ui.archBtn=el('button','jvr-arch');ui.archBtn.type='button';ui.archBtn.hidden=true;
+      ui.archBtn.addEventListener('click',()=>{S.showArchived=!S.showArchived;render()});
       ui.ws=el('div','jvr-ws');ui.ws.setAttribute('role','group');ui.ws.setAttribute('aria-label','Sur ce Board');
       ui.home=el('div','jvr-homebox');ui.home.hidden=true;ui.home.setAttribute('role','group');ui.home.setAttribute('aria-label','Accueil des présentations');
-      host.append(head,ui.list,ui.home,ui.ws,ui.folds,ui.note,ui.peek);
-      const peekOn=event=>{const item=event.target&&event.target.closest&&event.target.closest('.jvr-item');if(item&&S.density==='slim')showPeek(item);else hidePeek()};
-      host.addEventListener('focusin',peekOn);host.addEventListener('mouseover',peekOn);
-      host.addEventListener('focusout',()=>hidePeek());host.addEventListener('mouseleave',()=>hidePeek());
+      ui.scroll.append(ui.list,ui.home,ui.ws,ui.folds);
+      ui.foot=el('div','jvr-foot');ui.foot.append(ui.archBtn,ui.note);
+      host.append(head,ui.scroll,ui.foot);
+      /* Le bouton du rail dans `#railDock` (la page le déclare ; absent d'un banc d'essai, le rail s'ouvre alors par `toggle`). */
+      ui.tab=doc.getElementById(DOM.tabId)||null;ui.tabMark=ui.tab?ui.tab.querySelector('.jvr-urgent'):null;
+      if(ui.tab)ui.tab.addEventListener('click',()=>{toggle()});
       ui.menu=el('div','jvr-menu');ui.menu.hidden=true;ui.menu.setAttribute('role','menu');ui.menu.setAttribute('data-keep-live','true');
       ui.back=el('div','jvr-dialog-back');ui.back.hidden=true;ui.back.setAttribute('data-keep-live','true');
       doc.body.append(ui.menu,ui.back);
@@ -485,6 +513,18 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       ui.host=host;
       return host;
     }
+    /* La marque d'état d'une carte, posée sur le coin de sa vignette (absente quand tout va bien : `done`). */
+    function markFor(){const mark=el('span','jvr-mark');mark.setAttribute('aria-hidden','true');mark.append(el('span','jvr-dot'));return mark}
+    /* Les deux gestes du coin d'une carte : « ⋯ » (le menu) et la corbeille (suppression définitive, confirmée). Cachés de l'arbre
+       d'accessibilité (axe-core : une liste d'options ne contient que des options) ; le clavier a le menu (Menu, Maj+F10) et Suppr. */
+    function cornerButtons(onMenu,onDelete){
+      const more=el('button','jvr-more','⋯');more.type='button';more.tabIndex=-1;more.setAttribute('aria-hidden','true');more.title='Actions';
+      more.addEventListener('click',e=>{e.stopPropagation();onMenu()});
+      const del=el('button','jvr-del');del.type='button';del.tabIndex=-1;del.setAttribute('aria-hidden','true');del.title='Supprimer définitivement';
+      del.append(svgIcon([['path',{d:'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3'}]]));
+      del.addEventListener('click',e=>{e.stopPropagation();onDelete()});
+      return [more,del];
+    }
     function itemFor(row,opts){
       const card=cardOf(row,now(),{plain:!developer()});
       const li=el('li','jvr-card');li.setAttribute('role','none');
@@ -493,26 +533,16 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       const open=variantsPid()===row.presentation_id;
       b.dataset.open=String(open);b.setAttribute('aria-selected',String(open));
       if(opts&&opts.dim)b.dataset.dim='true';
-      b.append(thumbFor(row,card));
+      b.append(thumbFor(row,card),markFor());
       const body=el('span','jvr-body');
       const name=el('span','jvr-name',card.short);name.setAttribute('dir','auto');
-      const meta=el('span','jvr-meta',card.meta);
-      const status=el('span','jvr-status');
-      const dot=el('span','jvr-dot');dot.setAttribute('aria-hidden','true');
-      status.append(dot,el('span','jvr-state',card.stateShort));
-      if(card.when)status.append(el('span','jvr-when',`· ${card.when}`));
-      body.append(name,meta,status);b.append(body);
+      body.append(name);b.append(body);
       const detail=card.state==='problem'&&row.work&&row.work.message?` — ${cleanLine(row.work.message,120)}`:'';
       b.title=`${card.title}\n${card.meta}\n${card.stateLabel}${detail}${card.when?`\nModifiée ${card.when}`:''}${row.hidden?'\nMasquée du rail':''}${row.archived?'\nArchivée (restaurable)':''}`;
       b.setAttribute('aria-label',`${card.title}, ${card.type.label} : ${card.stateLabel.toLowerCase()}${row.hidden?', masquée':''}${row.archived?', archivée':''}`);
       b.addEventListener('click',()=>{if(row.archived){openMenuFor(row,b);return}openRow(row.presentation_id,'click')});
       b.addEventListener('contextmenu',e=>{e.preventDefault();openMenuFor(row,b,e.clientX,e.clientY)});
-      /* « ⋯ » : le même menu, pour la souris et la main ; le clavier a déjà Menu / Maj+F10 (pas de seconde tabulation par carte).
-         Caché de l'arbre d'accessibilité (orbital-ui Slice 09, axe-core) : une liste d'options ne contient que des options, et
-         l'option porte déjà le menu (Menu, Maj+F10, clic droit). */
-      const more=el('button','jvr-more','⋯');more.type='button';more.tabIndex=-1;more.setAttribute('aria-hidden','true');more.title='Actions';
-      more.addEventListener('click',e=>{e.stopPropagation();openMenuFor(row,b)});
-      li.append(b,more);return li;
+      li.append(b,...cornerButtons(()=>openMenuFor(row,b),()=>run('delete',row.presentation_id)));return li;
     }
     /* Vignette : l'image du dernier rendu complet (route bornée de Core) ou la vignette typée. Une image qui ne se charge pas retombe sur la
        vignette typée, une fois, et le dit au journal (jamais un cadre vide ni une image cassée). */
@@ -543,18 +573,6 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       for(const [tag,attrs] of GLYPHS[kind]||GLYPHS.presentation){const n=doc.createElementNS(NS,tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,v);svg.appendChild(n)}
       return svg;
     }
-    function showPeek(item){
-      const wsItem=item.dataset.ws?wsItemOf(item.dataset.id):null;
-      const row=wsItem?null:rowOf(item.dataset.id);if((!row&&!wsItem)||!ui.peek)return;
-      const card=wsItem?wsCardOf(wsItem):cardOf(row,now());
-      clear(ui.peek);
-      const status=el('span','jvr-status');status.style.setProperty('--c',card.color);status.dataset.state=card.state;
-      const dot=el('span','jvr-dot');status.append(dot,el('span','jvr-state',card.stateShort));
-      ui.peek.append(el('span','jvr-name',card.title),el('span','jvr-meta',card.meta),status);
-      const h=ui.host.getBoundingClientRect(),r=item.getBoundingClientRect();
-      ui.peek.style.top=`${Math.round(r.top-h.top+r.height/2)}px`;ui.peek.hidden=false;
-    }
-    function hidePeek(){if(ui.peek&&!ui.peek.hidden){ui.peek.hidden=true;clear(ui.peek)}}
     /* ------------------------------------------------------------ étape B : Artifacts du Board actif */
     const wsItemOf=id=>ws?ws.view().items.find(i=>i.id===id)||null:null;
     function wsCardOf(item){
@@ -588,20 +606,15 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       const li=el('li','jvr-card');li.setAttribute('role','none');
       const b=el('button','jvr-item');b.type='button';b.setAttribute('role','option');b.dataset.id=item.id;b.dataset.ws=item.artifact_kind;
       b.dataset.state=card.state;b.style.setProperty('--c',card.color);b.setAttribute('aria-selected','false');
-      b.append(wsThumb(item,card));
+      b.append(wsThumb(item,card),markFor());
       const body=el('span','jvr-body');
       const name=el('span','jvr-name',card.short);name.setAttribute('dir','auto');
-      const status=el('span','jvr-status');const dot=el('span','jvr-dot');dot.setAttribute('aria-hidden','true');
-      status.append(dot,el('span','jvr-state',card.stateShort));
-      if(card.when)status.append(el('span','jvr-when',`· ${card.when}`));
-      body.append(name,el('span','jvr-meta',card.meta),status);b.append(body);
+      body.append(name);b.append(body);
       b.title=`${card.title}\n${card.meta}\n${card.stateLabel}${card.when?`\nAjouté ${card.when}`:''}`;
       b.setAttribute('aria-label',`${card.title}, ${card.meta} : ${card.stateLabel.toLowerCase()}`);
       b.addEventListener('click',()=>openWsItem(item,'click'));
       b.addEventListener('contextmenu',e=>{e.preventDefault();openWsMenu(item,b,e.clientX,e.clientY)});
-      const more=el('button','jvr-more','⋯');more.type='button';more.tabIndex=-1;more.setAttribute('aria-hidden','true');more.title='Actions';
-      more.addEventListener('click',e=>{e.stopPropagation();openWsMenu(item,b)});
-      li.append(b,more);return li;
+      li.append(b,...cornerButtons(()=>openWsMenu(item,b),()=>deleteWsItem(item)));return li;
     }
     function renderWorkspace(){
       clear(ui.ws);
@@ -642,14 +655,54 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       const items=[{act:'ws-open',label:item.primary_action==='lightbox'?'Ouvrir l’image':'Ouvrir le détail'}];
       if(item.primary_action==='lightbox')items.push({act:'ws-detail',label:'Ouvrir le détail'});
       if(item.url)items.push({act:'ws-link',label:'Ouvrir le lien dans un onglet'});
+      items.push('-',{act:'ws-delete',label:'Supprimer définitivement…',danger:true});
       openMenu(item.title,items,origin,x,y,act=>{
         if(act==='ws-open')openWsItem(item,'menu');
         else if(act==='ws-detail')openWsItem({...item,primary_action:'detail'},'menu');
+        else if(act==='ws-delete')deleteWsItem(item);
         else if(act==='ws-link'){
           try{const w=win.open(item.url,'_blank','noopener,noreferrer');log('workspace_link_opened',{artifact_id:item.id,opened:!!w});if(!w)say('failed','Le navigateur a bloqué l’ouverture de l’onglet.')}
           catch(error){log('workspace_link_failed',{artifact_id:item.id,error:cleanLine(error&&error.message,120)},'error');say('failed',`Lien : ${cleanLine(error&&error.message,100)}`)}
         }
       });
+    }
+    /* Suppression DÉFINITIVE d'un élément « Sur ce Board » (un Artifact : fichier, lien, capture, rendu) : `DELETE /api/artifacts/{id}`
+       (Core : base, liens, relations, puis dossier). Des dérivés (un rendu issu d'une source…) demandent un second accord. */
+    const WS_DELETE_ERRORS=Object.freeze({
+      artifact_still_pending:'Cet élément est encore en cours d’acquisition : arrêtez-le d’abord.',
+      core_unreachable:'Jarvis ne répond pas : rien n’a été supprimé.',core_unconfigured:'Ce Control Center ne connaît pas Jarvis : rien n’a été supprimé.',
+      core_timeout:'Jarvis n’a pas répondu à temps : l’issue est inconnue, la liste est relue.',timeout:'Pas de réponse à temps : l’issue est inconnue, la liste est relue.',
+      network:'La connexion avec le Control Center a échoué : rien n’a été supprimé.'});
+    async function deleteWsItem(item,cascade){
+      const label=cleanLine(item.title,40);
+      if(!cascade){
+        const ok=await ask({title:`Supprimer définitivement « ${label} » ?`,
+          lines:['Irréversible : l’élément et son fichier sont effacés du disque, et retirés de tous les Boards.'],confirmLabel:'Supprimer définitivement',danger:true});
+        if(!ok)return null;
+      }
+      const key='ws:'+item.id;
+      if(S.busy.has(key))return null;
+      S.busy.add(key);
+      try{
+        const answer=await call('DELETE',ws_delete(item.id)+(cascade?'?cascade=true':''),undefined,30000);
+        log('workspace_item_deleted',{artifact_id:item.id,deleted:answer&&Array.isArray(answer.deleted)?answer.deleted.length:null,cascade:!!cascade});
+        if(ws)await ws.refresh();
+        say('ok',answer&&answer.deleted&&answer.deleted.length>1?`Supprimé définitivement, avec ${answer.deleted.length-1} élément(s) dérivé(s).`:'Supprimé définitivement.');
+        return answer;
+      }catch(error){
+        const code=error&&error.code||'network';
+        if(code==='artifact_has_dependents'&&!cascade){
+          S.busy.delete(key);
+          const ok=await ask({title:`Supprimer aussi ce qui en dérive ?`,
+            lines:[`« ${label} » a des éléments dérivés (rendus, transcriptions…).`,'Ils seront supprimés avec lui, définitivement.'],confirmLabel:'Tout supprimer',danger:true});
+          return ok?deleteWsItem(item,true):null;
+        }
+        log('workspace_item_delete_failed',{artifact_id:item.id,code,status:error&&error.status||null,message:cleanLine(error&&error.message,160)},'error');
+        if(code==='artifact_not_found'){if(ws)ws.refresh();say('info','Cet élément était déjà supprimé.');return null}
+        if(code==='timeout'||code==='core_timeout'){if(ws)ws.refresh()}
+        say('failed',WS_DELETE_ERRORS[code]||`Suppression impossible : ${cleanLine(error&&error.message,120)||code}`);
+        return null;
+      }finally{S.busy.delete(key)}
     }
     function foldButton(label,count,open,onToggle){
       const b=el('button','jvr-fold');b.type='button';b.setAttribute('aria-expanded',String(open));
@@ -661,30 +714,24 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       build();
       const m=model(),visible=shown();
       ui.host.hidden=!visible;
-      /* Densité (pure, `densityOf`) : pleine, bande de vignettes (72 px, ou repliée), onglet sous 700 px, colonne à côté du Studio. */
-      const density=densityOf({width:Number(win.innerWidth)||1280,collapsed:S.collapsed,studio:!!(S.studioOpen&&visible)});
-      if(density!=='drawer')S.drawer=false;
+      /* Densité (pure, `densityOf`) : la bande, ou la colonne à côté du Studio. */
+      const density=densityOf({studio:!!(S.studioOpen&&visible)});
       S.density=density;
-      const slim=density==='slim';
-      ui.host.dataset.density=density;ui.host.dataset.drawer=S.drawer?'open':'closed';
-      ui.host.dataset.collapsed=String(slim);
-      if(!slim)hidePeek();
+      ui.host.dataset.density=density;
       ui.count.textContent=m.visible.length?`(${m.visible.length})`:'';
-      const offer=home();ui.newBtn.hidden=!offer||density==='drawer'&&!S.drawer;
+      const offer=home();ui.newBtn.hidden=!offer;
       if(offer){const busy=!!S.creating;if(busy)ui.newBtn.setAttribute('aria-disabled','true');else ui.newBtn.removeAttribute('aria-disabled');
         ui.newBtn.title=busy?`Création de « ${cleanLine(S.creating.title,40)} »…`:'Nouvelle présentation'}
       const urgent=m.problems.length?'problem':m.working.length?'working':m.unreviewed.length?'unreviewed':null;
-      ui.urgent.style.setProperty('--c',urgent?STATE_COLOR[urgent]:'transparent');ui.urgent.title=urgent?STATE_LABEL[urgent]:'';
-      if(urgent)ui.urgent.dataset.state=urgent;else delete ui.urgent.dataset.state;
-      if(density==='drawer'){
-        ui.collapseBtn.textContent=S.drawer?'›':'‹';ui.collapseBtn.setAttribute('aria-expanded',String(S.drawer));
-        ui.collapseBtn.setAttribute('aria-label',S.drawer?'Fermer le rail des présentations':`Ouvrir le rail des présentations${urgent?` (${STATE_SHORT[urgent].toLowerCase()})`:''}`);
-      }else{
-        ui.collapseBtn.removeAttribute('aria-expanded');
-        ui.collapseBtn.textContent=slim?'‹':'›';ui.collapseBtn.setAttribute('aria-label',S.collapsed?'Déplier le rail':'Replier le rail');
+      /* Le bouton « Présentations » de la page : ouvert ou non, et la marque de l'état le plus pressant (forme + couleur, jamais la couleur seule). */
+      if(ui.tab){
+        const label=visible?'Replier le rail des présentations':`Déplier le rail des présentations${urgent?` (${STATE_SHORT[urgent].toLowerCase()})`:''}`;
+        ui.tab.setAttribute('aria-expanded',String(visible));ui.tab.setAttribute('aria-label',label);ui.tab.title=label;
+        if(ui.tabMark){
+          ui.tabMark.style.setProperty('--c',urgent?STATE_COLOR[urgent]:'transparent');ui.tabMark.hidden=!urgent;
+          if(urgent)ui.tabMark.dataset.state=urgent;else delete ui.tabMark.dataset.state;
+        }
       }
-      ui.collapseBtn.title=ui.collapseBtn.getAttribute('aria-label');
-      ui.voice.dataset.v=S.voice||'idle';ui.voice.setAttribute('aria-label',`Voix : ${S.voice||'idle'}`);ui.voice.title=`Voix de Jarvis : ${S.voice||'idle'} (elle reste utilisable pendant l’affichage)`;
       /* La liste est reconstruite à chaque relevé : la carte qui avait le focus le retrouve (sinon le clavier le perdrait toutes les 2 à 4 s). */
       const active=doc.activeElement;
       const focused=active&&ui.host.contains(active)&&active.classList&&active.classList.contains('jvr-item')?active.dataset.id:null;
@@ -707,9 +754,18 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
         ui.hiddenFold.appendChild(foldButton('Masquées',m.hidden.length,S.foldHidden,()=>{S.foldHidden=!S.foldHidden;save();render()}));
         if(S.foldHidden){const ul=el('ul','jvr-list');for(const row of m.hidden)ul.appendChild(itemFor(row,{dim:true}));ui.hiddenFold.appendChild(ul)}
       }
+      /* Archivées : cachées tant que « Afficher les archivés » n'a pas été pressé ; alors une section « Archivés ». */
+      ui.archBtn.hidden=!m.archived.length;
       if(m.archived.length){
-        ui.archivedFold.appendChild(foldButton('Archivées',m.archived.length,S.foldArchived,()=>{S.foldArchived=!S.foldArchived;save();render()}));
-        if(S.foldArchived){const ul=el('ul','jvr-list');for(const row of m.archived)ul.appendChild(itemFor(row,{dim:true}));ui.archivedFold.appendChild(ul)}
+        ui.archBtn.textContent=S.showArchived?'Masquer les archivés':`Afficher les archivés (${m.archived.length})`;
+        ui.archBtn.setAttribute('aria-pressed',String(S.showArchived));
+      }
+      if(m.archived.length&&S.showArchived){
+        const sec=el('div','jvr-folds');sec.dataset.section='archived';
+        sec.appendChild(el('div','jvr-fold',`Archivés (${m.archived.length})`));
+        const ul=el('ul','jvr-list');ul.setAttribute('role','listbox');ul.setAttribute('aria-label','Présentations archivées');
+        for(const row of m.archived)ul.appendChild(itemFor(row,{dim:true}));
+        sec.appendChild(ul);ui.archivedFold.appendChild(sec);
       }
       renderWorkspace();
       const note=S.lost?{kind:'failed',text:'Rail injoignable : l’état affiché n’est plus confirmé.'}
@@ -719,8 +775,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       /* Les secondes d'une création ne se lisent pas à voix haute chaque seconde : l'annonce part au début et à l'issue. */
       ui.note.setAttribute('aria-live',S.creating?'off':'polite');
       doc.documentElement.classList.toggle('jvr-studio',!!(S.studioOpen&&visible));
-      doc.documentElement.classList.toggle('jvr-slim',!!(S.studioOpen&&visible&&slim));
-      if(focused&&doc.activeElement!==ui.host.querySelector(`.jvr-item[data-id="${focused}"]`)){const again=itemById(focused);if(again){again.focus({preventScroll:true});if(slim)showPeek(again)}}
+      if(focused&&doc.activeElement!==ui.host.querySelector(`.jvr-item[data-id="${focused}"]`)){const again=itemById(focused);if(again)again.focus({preventScroll:true})}
       syncStudioInset(visible);
       reportSoon();
     }
@@ -875,7 +930,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
     }
     function syncStudioInset(visible){
       const html=doc.documentElement;
-      if(html&&html.style)html.style.setProperty('--jvr-width',visible&&S.studioOpen?`${S.collapsed?60:STUDIO_WIDTH_PX}px`:'0px');
+      if(html&&html.style)html.style.setProperty('--jvr-width',visible&&S.studioOpen?`${STUDIO_WIDTH_PX}px`:'0px');
     }
     function say(kind,text){
       S.notice={kind,text};
@@ -1032,12 +1087,59 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
         return;
       }
       if(action==='archive'){
-        const ok=await askConfirm({title:`Supprimer « ${cleanLine(row.title,40)} » ?`,
-          body:'Elle quitte le rail et ne se lit plus. Rien n’est effacé : elle se restaure à tout moment (Archivées, en bas du rail).',confirmLabel:'Supprimer',danger:true});
+        const ok=await ask({title:`Archiver « ${cleanLine(row.title,40)} » ?`,
+          lines:['Elle quitte le rail et ne se lit plus. Rien n’est effacé : elle se restaure à tout moment (bouton « Afficher les archivés », en bas du rail).'],confirmLabel:'Archiver'});
         if(!ok)return;
         const ex=explorerApi();if(variantsPid()===id&&ex&&typeof ex.close==='function')ex.close({reason:'archived',quiet:true});
-        const a=await write(id,{action:'archive'},'Supprimer');if(a)say('ok','Archivée : restaurable depuis « Archivées ».');
+        const a=await write(id,{action:'archive'},'Archiver');if(a)say('ok','Archivée : restaurable depuis « Afficher les archivés ».');
       }
+      if(action==='delete')return deleteForever(row);
+    }
+    /* Confirmation dans la page : le dialogue `.cdialog` de la page (`confirmDialog`), jamais `confirm()` ; la boîte du rail ne sert que si la page n'en a pas. */
+    function ask(spec){
+      const g=d.confirm||(typeof confirmDialog==='function'?confirmDialog:null);
+      if(!g)return askConfirm({title:spec.title,body:(spec.lines||[]).join(' '),confirmLabel:spec.confirmLabel,danger:spec.danger});
+      return Promise.resolve(g({title:spec.title,lines:spec.lines||[],confirmLabel:spec.confirmLabel,danger:!!spec.danger})).then(v=>v===true);
+    }
+    const PURGE_ERRORS=Object.freeze({
+      presentation_studio_variant_in_playback:'elle est jouée : arrêtez la lecture d’abord.',
+      presentation_studio_confirmation_stale:'le plan a changé entre-temps : réessayez.',
+      presentation_studio_storage_io:'le disque ou la sauvegarde a refusé : rien n’a été effacé.',
+      core_unreachable:'Jarvis ne répond pas.',core_unconfigured:'ce Control Center ne connaît pas Jarvis.',
+      core_timeout:'Jarvis n’a pas répondu à temps : l’issue est inconnue, la liste est relue.',timeout:'pas de réponse à temps : l’issue est inconnue, la liste est relue.',
+      network:'la connexion avec le Control Center a échoué.'});
+    /* Suppression DÉFINITIVE d'une présentation : confirmation, archivage s'il reste à faire (la purge de Core ne prend que des archivées),
+       plan (rien d'écrit) puis purge avec son jeton : sauvegarde complète d'abord, côté Core. Un échec laisse la présentation archivée
+       (restaurable) et le dit. */
+    async function deleteForever(row){
+      const id=row.presentation_id,label=cleanLine(row.title,40);
+      if(playingId()===id){say('failed','Cette présentation est jouée : arrêtez la lecture d’abord.');return null}
+      const ok=await ask({title:`Supprimer définitivement « ${label} » ?`,
+        lines:['Irréversible : la présentation, ses variantes, ses rendus et ses fichiers sont effacés du disque.','Une sauvegarde complète est faite juste avant.'],
+        confirmLabel:'Supprimer définitivement',danger:true});
+      if(!ok)return null;
+      const key=id+':purge';
+      if(S.busy.has(key))return null;
+      S.busy.add(key);
+      const ex=explorerApi();if(variantsPid()===id&&ex&&typeof ex.close==='function')ex.close({reason:'deleted',quiet:true});
+      try{
+        if(!row.archived){const a=await write(id,{action:'archive'},'Supprimer');if(!a)return null}
+        const planned=await call('POST',PURGE_PLAN_ROUTE,{presentation_ids:[id]},35000);
+        if(!planned||typeof planned.confirmation!=='string')throw Object.assign(new Error('Core n’a pas rendu de plan de suppression.'),{code:'purge_no_plan'});
+        const done=await call('POST',PURGE_ROUTE,{confirmation:planned.confirmation,confirmed:true,presentation_ids:[id]},PURGE_TIMEOUT_MS);
+        const gone=!!(done&&Array.isArray(done.purged)&&done.purged.includes(id));
+        log('purged',{presentation_id:id.slice(0,12),gone,complete:!!(done&&done.complete)});
+        await refresh();
+        if(gone)say('ok',done.complete===false?'Supprimée ; quelques fichiers restent sur le disque (voir le journal de Core).':'Supprimée définitivement.');
+        else say('failed','Suppression incomplète : la présentation reste archivée (restaurable).');
+        return done;
+      }catch(error){
+        const code=error&&error.code||'network';
+        log('purge_failed',{presentation_id:id.slice(0,12),code,status:error&&error.status||null,message:cleanLine(error&&error.message,160)},'error');
+        await refresh();
+        say('failed',`Suppression impossible : ${PURGE_ERRORS[code]||cleanLine(error&&error.message,120)||code} La présentation reste archivée (restaurable).`);
+        return null;
+      }finally{S.busy.delete(key)}
     }
 
     /* ------------------------------------------------------------ menu contextuel et boîtes (propres au rail : elles doivent passer AU-DESSUS du Studio) */
@@ -1095,7 +1197,10 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       else if(event.key==='ArrowUp'&&i>0){event.preventDefault();all[i-1].focus()}
       else if(event.key==='ContextMenu'||(event.key==='F10'&&event.shiftKey)){event.preventDefault();if(row)openMenuFor(row,item);else if(item.dataset.ws){const w=wsItemOf(item.dataset.id);if(w)openWsMenu(w,item)}}
       else if(event.key==='F2'&&row&&!row.archived){event.preventDefault();run('rename',row.presentation_id)}
-      else if(event.key==='Delete'&&row&&!row.archived){event.preventDefault();run('archive',row.presentation_id)}
+      else if(event.key==='Delete'){
+        if(row){event.preventDefault();run('delete',row.presentation_id)}
+        else if(item.dataset.ws){const w=wsItemOf(item.dataset.id);if(w){event.preventDefault();deleteWsItem(w)}}
+      }
     }
     function dialogShell(title,bodyText){
       const box=el('div','jvr-dialog');box.setAttribute('role','alertdialog');box.setAttribute('aria-modal','true');
@@ -1173,7 +1278,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       if(d.assumeCore){S.coreOk=true;refresh().then(()=>{render()})}
       doc.addEventListener('visibilitychange',()=>{if(!doc.hidden&&S.coreOk)refresh()});
       doc.addEventListener('jarvis:voice-line',()=>{try{refreshHomeVoice()}catch(error){log('home_voice_failed',{error:cleanLine(error&&error.message,120)},'error')}});
-      win.addEventListener&&win.addEventListener('resize',()=>{const next=densityOf({width:Number(win.innerWidth)||1280,collapsed:S.collapsed,studio:!!(S.studioOpen&&ui.host&&!ui.host.hidden)});if(S.studioOpen||next!==S.density)render()});
+      win.addEventListener&&win.addEventListener('resize',()=>{if(S.studioOpen)render()});
       win.addEventListener&&win.addEventListener('jarvis:studio-explorer-opened',()=>{S.studioOpen=true;render();reportSoon(true)});
       win.addEventListener&&win.addEventListener('jarvis:studio-explorer-closed',()=>{S.studioOpen=false;render();reportSoon(true)});
       /* Slice 08 : l'édition lue (ou relue) sur Core peut ouvrir l'accueil ou cacher les noms de moteur. */
@@ -1202,21 +1307,21 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
     function setPref(value){if(value==='auto'||value==='shown'||value==='hidden'){S.pref=value;save();render();return true}return false}
     function cyclePref(){const order=['auto','shown','hidden'];setPref(order[(order.indexOf(S.pref)+1)%order.length]);return S.pref}
 
-    return {start,stop,refresh,render,gate,setPref,cyclePref,run,openMenuFor,closeMenu,createPresentation,
-      state:()=>({pref:S.pref,collapsed:S.collapsed,density:S.density,drawer:S.drawer,loaded:S.loaded,lost:S.lost,visible:!!(ui.host&&!ui.host.hidden),rows:S.rows.length,home:home(),creating:!!S.creating,
+    return {start,stop,refresh,render,gate,setPref,cyclePref,toggle,closeIfNarrow,run,openMenuFor,closeMenu,createPresentation,deleteForever,deleteWsItem,
+      state:()=>({pref:S.pref,open:S.open,showArchived:S.showArchived,density:S.density,loaded:S.loaded,lost:S.lost,visible:!!(ui.host&&!ui.host.hidden),rows:S.rows.length,home:home(),creating:!!S.creating,
         studioOpen:S.studioOpen,menuOpen:!!S.menuRow,dialogOpen:!!S.dialog,notice:S.notice}),
       model,host:()=>ui.host,rows:()=>S.rows.slice(),workspace:()=>ws?ws.view():null,setStudio:on=>{S.studioOpen=!!on;render()}};
   }
 
   const API=Object.freeze({DOM,ROUTE,STATE_ROUTE,STATE_LABEL,STATE_SHORT,STATE_COLOR,CSS,cleanLine,monogram,hueOf,stateOf,displayState,typeOf,ago,previewOf,cardOf,
-    densityOf,modelOf,shouldShow,menuModel,createRail,JOURNEY,CREATE_ROUTE,CREATE_ERRORS,CREATE_UNKNOWN_OUTCOME,editionCause});
+    densityOf,modelOf,shouldShow,menuModel,createRail,JOURNEY,CREATE_ROUTE,CREATE_ERRORS,CREATE_UNKNOWN_OUTCOME,editionCause,PURGE_PLAN_ROUTE,PURGE_ROUTE});
   root.JarvisPresentationRailCore=API;
   if(typeof module!=='undefined'&&module.exports)module.exports=API;
 
   if(typeof window==='undefined'||typeof document==='undefined')return;
   function installRail(){
     const rail=createRail({document,window,toast:typeof toast==='function'?toast:null});
-    root.JarvisPresentationRail=Object.freeze({gate:rail.gate,refresh:rail.refresh,state:rail.state,setPref:rail.setPref,cyclePref:rail.cyclePref,run:rail.run,createPresentation:rail.createPresentation,
+    root.JarvisPresentationRail=Object.freeze({gate:rail.gate,refresh:rail.refresh,state:rail.state,setPref:rail.setPref,cyclePref:rail.cyclePref,toggle:rail.toggle,closeIfNarrow:rail.closeIfNarrow,run:rail.run,createPresentation:rail.createPresentation,
       model:rail.model,render:rail.render,workspace:rail.workspace});
     /* Pas de bouton au dock (sa géométrie est comptée pour dix outils, y compris celle du thème Cosmos) : Alt+Maj+P fait tourner automatique / toujours visible / masqué. */
     document.addEventListener('keydown',event=>{

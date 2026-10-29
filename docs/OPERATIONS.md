@@ -1941,7 +1941,7 @@ Approchez la souris du bord gauche (ou Entrée sur l'ancre de la roue) :
 - **Paramètres** liste les onglets des réglages ; un clic ouvre la fenêtre sur
   l'onglet choisi.
 
-**Pendant un enregistrement**, un indicateur apparaît **en haut à gauche** et
+**Pendant un enregistrement**, un indicateur apparaît **en haut à droite** (à gauche des bandes ouvertes) et
 seulement à ce moment : rouge « ● REC 0:12 ■ » pour l'écran, ambre avec un
 micro et une onde pour l'audio, côte à côte. La durée vient de Core (elle est
 la même après un rechargement de la page ou dans un second onglet). Cliquer

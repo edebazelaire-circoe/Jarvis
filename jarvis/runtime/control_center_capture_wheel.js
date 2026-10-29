@@ -272,7 +272,7 @@
   const STYLE=`
 ${H}{font:12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--text,#d8edf7)}
 ${H} [hidden]{display:none!important}
-${H} .ri-chips{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:6px}
+${H} .ri-chips{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}
 ${H} .ri-chip{--ri-ink:var(--sem-alert,#ff9f43);position:relative;display:inline-flex;align-items:center;gap:7px;
   height:34px;margin:0;padding:0 10px 0 9px;border:1px solid color-mix(in srgb,var(--ri-ink) 55%,transparent);
   border-radius:var(--shell-radius,12px);background:var(--shell-glass-strong,rgba(4,10,15,.8));
@@ -314,9 +314,9 @@ ${H} .ri-wait{position:absolute;left:9px;right:9px;bottom:3px;height:2px;border-
 ${H} .ri-wait::after{content:"";position:absolute;top:0;bottom:0;left:0;width:42%;border-radius:2px;
   background:var(--ri-ink);animation:riSweep 1.25s ease-in-out infinite}
 @keyframes riSweep{from{transform:translateX(-115%)}to{transform:translateX(255%)}}
-/* La note : la phrase d'un refus, posée sous les puces, alignée sur leur bord gauche (Slice 04). Elle
+/* La note : la phrase d'un refus, posée sous les puces, alignée sur leur bord droit (haut-droite depuis le 2026-10-29 ; Slice 04). Elle
    s'arrête avant le lanceur comme l'hôte (Slice 08 : sous 600 px elle couvrait CNV, AGT, ERR, « Plus d'outils »). */
-${H} .ri-note{position:absolute;left:0;top:calc(100% + 8px);
+${H} .ri-note{position:absolute;right:0;top:calc(100% + 8px);
   width:max-content;max-width:min(420px,calc(100vw - 2 * var(--shell-gutter,18px) - var(--shell-launcher-w,154px) - 12px));margin:0;
   padding:8px 32px 8px 11px;border:1px solid var(--shell-stroke-active,rgba(110,231,255,.4));border-radius:10px;
   background:var(--panel,rgba(6,12,18,.94));color:var(--text,#d8edf7);font-size:11.5px;line-height:1.45;

@@ -22,7 +22,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    @shell-layer 20: #sceneLayer
    @shell-layer 21: .board-drop::before
    @shell-layer 30: #toolWheel, #barehandsPalette, #presentationRail
-   @shell-layer 32: .dock, #chatTab, #barehandsHud, #boardsHud
+   @shell-layer 32: .dock, #railDock, #barehandsHud, #boardsHud
    @shell-layer 33: .panel
    @shell-layer 34: .board-drop-card, #boardDropTray, #jvStudioInspector
    @shell-layer 35: .live-banner
@@ -52,11 +52,18 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    @shell-layer 2147483000: #jarvisHands */
 /* Jetons de la coque (docs/control-center-shell.md › Tokens), définis une
    seule fois ici ; miroir : JarvisShell.TOKENS (control_center_shell.js). */
-:root{--shell-gutter:18px;--shell-bottom:18px;--shell-status-h:44px;--shell-control:34px;--shell-launcher-w:154px;--shell-panel-top:64px;--shell-panel-w:500px;--shell-panel-bottom:68px;--shell-rail-w:300px;--shell-anchor-w:14px;--shell-wheel-r:224px;--shell-wedge-min:48px;--shell-icon:20px;--shell-icon-sm:15px;--shell-radius:12px;--shell-glass-bg:rgba(5,11,16,.46);--shell-glass-strong:rgba(4,10,15,.80);--shell-stroke:rgba(174,205,220,.12);--shell-stroke-active:color-mix(in srgb,var(--accent) 46%,transparent);--shell-focus:var(--accent);--shell-focus-w:2px;--shell-focus-offset:2px;--sem-alert:#ff9f43;--sem-done:var(--ok);--sem-question:var(--accent);--sem-working:#4da3ff;--sem-review:#ffd166;--sem-problem:#ff6a4d;--shell-ease:cubic-bezier(.2,.7,.2,1);--shell-dur-fast:120ms;--shell-dur:180ms}
-@media(max-width:1099px){:root{--shell-rail-w:72px}}
+:root{--shell-gutter:18px;--shell-bottom:18px;--shell-status-h:44px;--shell-control:34px;--shell-launcher-w:154px;--shell-panel-top:64px;--shell-panel-w:500px;--shell-panel-bottom:68px;--shell-rail-w:272px;--shell-chat-w:min(500px,calc(100vw - 2 * var(--shell-gutter) - var(--shell-control) - 8px));--shell-band-bg:linear-gradient(180deg,rgba(2,6,10,.82),rgba(3,8,13,.68));--shell-band-grain:repeating-linear-gradient(0deg,rgba(255,255,255,.028) 0 1px,transparent 1px 3px),repeating-linear-gradient(90deg,rgba(255,255,255,.016) 0 1px,transparent 1px 3px);--shell-band-shadow:-12px 0 40px rgba(0,0,0,.42),inset 1px 0 0 rgba(174,205,220,.08);--shell-chat-open-w:0px;--shell-rails-open-w:0px;--shell-panel-open-w:0px;--shell-anchor-w:14px;--shell-wheel-r:224px;--shell-wedge-min:48px;--shell-icon:20px;--shell-icon-sm:15px;--shell-radius:12px;--shell-glass-bg:rgba(5,11,16,.46);--shell-glass-strong:rgba(4,10,15,.80);--shell-stroke:rgba(174,205,220,.12);--shell-stroke-active:color-mix(in srgb,var(--accent) 46%,transparent);--shell-focus:var(--accent);--shell-focus-w:2px;--shell-focus-offset:2px;--sem-alert:#ff9f43;--sem-done:var(--ok);--sem-question:var(--accent);--sem-working:#4da3ff;--sem-review:#ffd166;--sem-problem:#ff6a4d;--shell-ease:cubic-bezier(.2,.7,.2,1);--shell-dur-fast:120ms;--shell-dur:180ms}
+/* Largeur prise au bord droit par les bandes ouvertes (rail des présentations, Chat) et par le panneau latéral : tout ce qui se pose en haut
+   à droite (puce GPT-Live, indicateurs d'enregistrement, boutons des rails), les notifications et le bas de page s'écartent d'autant. */
+:root:has(.chat-panel.open){--shell-chat-open-w:var(--shell-chat-w);--shell-rails-open-w:var(--shell-chat-w)}
+:root:has(#presentationRail:not([hidden])){--shell-rails-open-w:var(--shell-rail-w)}
+:root:has(#presentationRail:not([hidden])):has(.chat-panel.open){--shell-rails-open-w:calc(var(--shell-rail-w) + var(--shell-chat-w))}
+:root:has(#panel.open){--shell-panel-open-w:min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter))}
 /* Étroit : le lanceur (4 boutons de 34 px depuis la Slice 04 de la refonte roue/dossier) reste une rangée à
    toutes les largeurs ; panneaux et bandeau se reposent sous lui. */
-@media(max-width:700px){:root{--shell-gutter:10px;--shell-panel-top:88px;--shell-rail-w:0px}}
+@media(max-width:700px){:root{--shell-gutter:10px;--shell-panel-top:88px}}
+/* À 700 px et moins le panneau latéral prend toute la largeur : il passe sur les bandes et sur les boutons (rangs), rien ne s'écarte pour lui. */
+@media(max-width:700px){:root:has(#panel.open){--shell-panel-open-w:0px}}
 @media(prefers-reduced-motion:reduce){:root{--shell-dur-fast:0ms;--shell-dur:0ms}}
 /* Anneau de focus des commandes de la coque, à spécificité nulle : un module
    peut dessiner le sien, jamais le retirer. */
@@ -75,11 +82,11 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    elle-même est le raccourci global de Voice, inchangé. */
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 /* Puce GPT-Live (retour utilisateur du 2026-10-29 : le bandeau centré prenait trop de place pour rien) :
-   haut-gauche, à la gouttière, au-dessus des indicateurs d'enregistrement qu'elle pousse d'une rangée. Une onde
+   haut-droite, à la gouttière (à gauche des bandes ouvertes), au-dessus des indicateurs d'enregistrement qu'elle pousse d'une rangée. Une onde
    animée, la durée, un carré d'arrêt ; l'état ne s'écrit qu'hors du régime normal (arrêt, clôture incertaine…) et
    le détail (usage, coût, veille auto) se lit au survol et au lecteur d'écran. Jamais plus large que l'espace à
    gauche du lanceur. */
-.live-banner{position:absolute;z-index:35;top:var(--shell-gutter);left:var(--shell-gutter);max-width:calc(100vw - 2 * var(--shell-gutter) - var(--shell-launcher-w) - 12px);display:flex;flex-wrap:wrap;align-items:center;gap:6px;pointer-events:auto;font:12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--text)}
+.live-banner{position:absolute;z-index:35;top:var(--shell-gutter);right:calc(var(--shell-gutter) + max(var(--shell-rails-open-w),var(--shell-panel-open-w)));max-width:calc(100vw - 2 * var(--shell-gutter) - var(--shell-launcher-w) - 12px);display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:6px;pointer-events:auto;font:12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--text)}
 .live-chip{--live-ink:var(--danger);display:inline-flex;align-items:center;gap:8px;height:var(--shell-control);padding:0 5px 0 10px;border:1px solid color-mix(in srgb,var(--live-ink) 55%,transparent);border-radius:var(--shell-radius);background:var(--shell-glass-strong);backdrop-filter:blur(12px);color:var(--live-ink)}
 .live-banner.uncertain .live-chip{--live-ink:var(--warn);border-style:dashed}
 /* Le logo : trois barres qui respirent tant que la session est ouverte. */
@@ -105,24 +112,25 @@ body:has(#liveBanner:not([hidden])) #recIndicators{top:calc(var(--shell-gutter) 
    s'ouvre dans la zone de l'aperçu de capture (38) et de la roue ouverte (37), et c'est le
    dernier geste de l'utilisateur ; sous le centre d'état (40) et les infusions. */
 #boardsPanel{position:fixed;z-index:58;inset:0}
-/* Lanceur global (zone haut-droit, orbital-ui Slice 08) : une rangée de quatre boutons
+/* Lanceur global (zone haut-gauche depuis le 2026-10-29 ; orbital-ui Slice 08) : une rangée de quatre boutons
    de 34 px dans les deux thèmes — Conversation, Agents, Errors, « Plus d’outils » (Réglages
    y est replié depuis la Slice 04 de jarvis-board-ui-wheel-dossier-refactor) ; le
    circuit imprimé y garde ses étiquettes (CNV, ERR…), Cosmos ses
-   icônes. Le popover « Plus d’outils » s'ouvre sous la rangée, aligné à droite ;
+   icônes. Le popover « Plus d’outils » s'ouvre sous la rangée, aligné à gauche ;
    ouvert, tout le lanceur passe au rang des sélecteurs (36), au-dessus des
    panneaux latéraux (33) et du bandeau (35) qu'il recouvre un instant. */
-.dock{position:absolute;z-index:32;right:var(--shell-gutter);top:var(--shell-gutter);display:flex;gap:6px}
+.dock{position:absolute;z-index:32;left:var(--shell-gutter);top:var(--shell-gutter);display:flex;gap:6px}
 /* Variantes ouvert, fenêtré (`html.jvr-studio`) : la page dessous est inerte et le Studio couvre le lanceur et l'onglet Chat,
    sauf un demi-rond de CNV dans l'interstice de 8 px entre le Studio et le rail, visible mais non cliquable (QA S09 P7).
    Ils ne se dessinent pas tant que le Studio est là. */
-html.jvr-studio .dock,html.jvr-studio #chatTab{visibility:hidden}
+html.jvr-studio .dock,html.jvr-studio #railDock{visibility:hidden}
 .dock[data-more-open]{z-index:36}
 #dockMore svg{width:var(--shell-icon-sm);height:var(--shell-icon-sm);display:block;margin:auto}
 #dockMore[aria-expanded="true"],#dockMore.active{border-color:var(--accent);color:var(--accent)}
 #dockMore{position:relative}
 #dockMore.active::after{content:"";position:absolute;right:4px;top:4px;width:6px;height:6px;border-radius:50%;background:var(--accent)}
-.dock-pop{position:absolute;top:calc(100% + 6px);right:0;width:max-content;min-width:216px;max-width:calc(100vw - 2 * var(--shell-gutter));display:grid;gap:2px;padding:6px;background:var(--shell-glass-strong);border:1px solid var(--shell-stroke);border-radius:var(--shell-radius);backdrop-filter:blur(22px);box-shadow:0 18px 50px rgba(0,0,0,.45);transform-origin:top right;animation:dockPopIn var(--shell-dur) var(--shell-ease)}
+.dock .dock-more{position:static}
+.dock-pop{position:absolute;top:calc(100% + 6px);left:0;width:max-content;min-width:216px;max-width:calc(100vw - 2 * var(--shell-gutter));display:grid;gap:2px;padding:6px;background:var(--shell-glass-strong);border:1px solid var(--shell-stroke);border-radius:var(--shell-radius);backdrop-filter:blur(22px);box-shadow:0 18px 50px rgba(0,0,0,.45);transform-origin:top left;animation:dockPopIn var(--shell-dur) var(--shell-ease)}
 .dock-pop[hidden]{display:none}
 .dock-pop .tool{display:block}
 /* Édition produit (Slice 08 presentation-edition ; docs/control-center-shell.md › Product edition UI) : une surface
@@ -135,8 +143,8 @@ html[data-developer-surfaces="hidden"] [data-surface="developer"]{display:none!i
 #dockMorePop button:hover,#dockMorePop button:focus-visible,#dockMorePop button.active,#dockMorePop button[aria-expanded="true"]{background:color-mix(in srgb,var(--accent) 10%,transparent);border-color:var(--shell-stroke-active)}
 #dockMorePop button:disabled{opacity:.5;cursor:not-allowed}
 @keyframes dockPopIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
-.dock button{width:var(--shell-control);height:var(--shell-control);padding:0;border:1px solid rgba(110,231,255,.26);background:rgba(3,8,12,.82);color:var(--text);border-radius:10px;cursor:pointer;font-family:inherit;font-size:10px;letter-spacing:.02em;backdrop-filter:blur(12px)}
-.dock button:hover,.dock button.active{border-color:var(--accent);color:var(--accent)}
+.dock button,.rail-dock button{width:var(--shell-control);height:var(--shell-control);padding:0;border:1px solid rgba(110,231,255,.26);background:rgba(3,8,12,.82);color:var(--text);border-radius:10px;cursor:pointer;font-family:inherit;font-size:10px;letter-spacing:.02em;backdrop-filter:blur(12px)}
+.dock button:hover,.dock button.active,.rail-dock button:hover,.rail-dock button[aria-expanded=true]{border-color:var(--accent);color:var(--accent)}
 .badge{position:absolute;right:-5px;top:-5px;min-width:18px;height:18px;border-radius:9px;background:var(--danger);color:white;font-size:10px;display:none;align-items:center;justify-content:center}
 .tool{position:relative}
 .panel{position:absolute;z-index:33;top:var(--shell-panel-top);right:var(--shell-gutter);bottom:var(--shell-panel-bottom);width:min(var(--shell-panel-w),calc(100% - 2 * var(--shell-gutter)));background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(18px);display:none;flex-direction:column;box-shadow:0 0 50px rgba(0,0,0,.45)}
@@ -475,25 +483,30 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
    d'une règle séparée qui pose la valeur de repli (QA S09 P1, `docs/control-center-shell.md` › *Stacking by geometry*).
    Un plateau affiché y compte pour 200 px au plus (30vh) : au-delà, la pile le chevauche plutôt que de sortir de
    l'écran. La puce GPT-Live est en haut à gauche, dans la rangée du lanceur : elle ne pèse sur aucune de ces règles. */
-@media(min-width:701px){body:has(>#presentationRail:not([hidden])) .toasts{right:calc(var(--shell-gutter) + var(--shell-rail-w) + 12px)}}
+body:has(>#presentationRail:not([hidden])) .toasts,body:has(.chat-panel.open) .toasts{right:calc(var(--shell-gutter) + var(--shell-rails-open-w) + 12px);width:min(340px,calc(100vw - var(--shell-rails-open-w) - 2 * var(--shell-gutter) - 12px))}
 @media(min-width:1100px){#app:has(#boardDropTray:not([hidden])):not(:has(.chat-panel.open))~.toasts{bottom:calc(var(--shell-bottom) + var(--shell-status-h) + 16px + min(46vh,360px))}}
 @media(min-width:1100px){#app:has(#boardDropTray:not([hidden])):not(:has(.chat-panel.open))~.toasts{bottom:max(68px,calc(anchor(--jv-tray top,0px) + 8px))}}
 @media(min-width:761px) and (max-width:1099px){#app:has(#boardDropTray:not([hidden])):not(:has(.panel.open))~.toasts{bottom:calc(var(--shell-bottom) + var(--shell-status-h) + 16px + min(46vh,360px))}}
 @media(min-width:761px) and (max-width:1099px){#app:has(#boardDropTray:not([hidden])):not(:has(.panel.open))~.toasts{bottom:max(68px,calc(anchor(--jv-tray top,0px) + 8px))}}
-@media(min-width:940px){#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)));width:min(340px,calc(100vw - 548px))}}
+@media(min-width:940px){#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + max(min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)),var(--shell-rails-open-w)));width:min(340px,calc(100vw - 548px))}}
 @media(prefers-reduced-motion:reduce){.adot.running,.acard.eph .adot.running,.toast{animation:none}.acard.eph{transition:none}}
 
 /* ---------- Chat (handoff jarvis-unified-chat-and-board-drop, Slice 06) ----------
-   Contrat : `docs/chat.md` › *Panel*. Onglet fixe en bas à droite, dans la
-   zone bas-droit de la coque, rang 32 comme le lanceur. Le panneau
-   réutilise `.panel` (rang 33, mêmes jetons) et la règle « un seul panneau
-   latéral » : `openPanel`/`closePanel` le ferment, il ferme `#panel` et
-   l'inspecteur du Studio en s'ouvrant. Logique : `control_center_chat.js`. */
-.chat-tab{position:absolute;z-index:32;right:var(--shell-gutter);bottom:var(--shell-bottom);width:52px;height:40px;padding:0;display:grid;place-items:center;border:1px solid rgba(110,231,255,.26);background:rgba(3,8,12,.82);color:var(--text);border-radius:10px;cursor:pointer;font:inherit;font-size:12px;letter-spacing:.06em;backdrop-filter:blur(12px);transition:border-color .15s,color .15s}
-.chat-tab:hover,.chat-tab[aria-expanded=true]{border-color:var(--accent);color:var(--accent)}
-.chat-tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-/* Le panneau du Chat s'arrête au-dessus de l'onglet (18 + 40 + 10 px) : l'onglet reste entier et cliquable. */
-.panel.chat-panel{bottom:68px}
+   Contrat : `docs/chat.md` › *Panel*. Depuis le 2026-10-29 le Chat est une BANDE pleine hauteur au bord droit (comme le rail des
+   présentations, même habillage : `--shell-band-*`), et son bouton une icône du dock des rails `#railDock` (rang 32, bord droit,
+   centré en hauteur) : « Présentations » au-dessus, « Chat » dessous. Le Chat est toujours la bande la plus à droite ; le rail des
+   présentations se range à sa gauche (`--shell-chat-open-w`), les boutons à gauche de la bande la plus à gauche
+   (`--shell-rails-open-w`). Le panneau réutilise `.panel` (rang 33, mêmes jetons) et la règle « un seul panneau latéral » :
+   `openPanel`/`closePanel` le ferment, il ferme `#panel` et l'inspecteur du Studio en s'ouvrant. Logique : `control_center_chat.js`. */
+#railDock{position:absolute;z-index:32;right:min(calc(var(--shell-gutter) + max(var(--shell-rails-open-w),var(--shell-panel-open-w))),calc(100vw - var(--shell-gutter) - var(--shell-control)));top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:6px}
+.rail-dock button{position:relative;display:grid;place-items:center;padding:0}
+.rail-dock button svg{width:var(--shell-icon);height:var(--shell-icon);display:block}
+.rail-dock .jvr-urgent{position:absolute;right:3px;top:3px}
+.rail-dock .jvr-urgent[hidden]{display:none}
+.rail-dock button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* La bande du Chat : pleine hauteur, bord droit, sans coins arrondis ni redimensionnement (largeur `--shell-chat-w`). */
+html:root .panel.chat-panel{top:0;bottom:0;right:0;left:auto;width:var(--shell-chat-w);border:0;border-left:1px solid var(--shell-stroke);border-radius:0;
+  background:var(--shell-band-grain),var(--shell-band-bg);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);box-shadow:var(--shell-band-shadow);overflow:hidden}
 /* Étroit (moins de 940 px), Chat ouvert : la pile passe sous l'en-tête et la ligne d'état du panneau
    (`--chat-toasts-top`, mesuré par `control_center_chat.js`) : elle ne couvre ni le composer, ni le titre, ni ×. */
 @media(max-width:939px){#app:has(.chat-panel.open)~.toasts{top:var(--chat-toasts-top,124px);bottom:auto}}
@@ -612,10 +625,7 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 .chat-att .chat-link{margin-left:8px}
 @media(prefers-reduced-motion:reduce){.chat-file.indeterminate .chat-file-bar i,.chat-attnote.flash{animation:none}.chat-file-bar i{transition:none}}
 .chat-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-@media(prefers-reduced-motion:reduce){.chat-panel.open,.chat-lock.flash,.chat-note .chat-dots i,.chat-feed[data-tone=busy] .chat-led{animation:none}.chat-note .chat-dots i{opacity:.8}.chat-tab,.chat-compose textarea{transition:none}}
-/* Cosmos : onglet aux formes du lanceur Cosmos (peau seulement). */
-html[data-jarvis-theme="cosmos"] .chat-tab{border-radius:12px;border-color:rgba(174,205,220,.12);background:rgba(5,11,16,.46);color:rgba(213,231,239,.75);backdrop-filter:blur(16px);box-shadow:0 8px 24px rgba(0,0,0,.18)}
-html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"] .chat-tab[aria-expanded=true]{color:var(--accent,#6ee7ff);border-color:color-mix(in srgb,var(--accent,#6ee7ff) 46%,transparent);background:rgba(10,19,26,.72)}
+@media(prefers-reduced-motion:reduce){.chat-panel.open,.chat-lock.flash,.chat-note .chat-dots i,.chat-feed[data-tone=busy] .chat-led{animation:none}.chat-note .chat-dots i{opacity:.8}.rail-dock,.chat-compose textarea{transition:none}}
 
 /* Hôte de la roue d'outils (zone bord-gauche) : déclaré vide et caché ; le
    module `control_center_tool_wheel.js` le remplit quand son drapeau est
@@ -645,9 +655,9 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
    puces : la rangée passe à la ligne vers le haut. Panneau ouvert, et la place le
    permet (1100 px et plus) : elle se recentre dans l'espace libre à gauche du panneau.
    Clic au travers ailleurs que sur ses commandes. */
-.status-centre{position:absolute;left:calc(var(--shell-gutter) + 254px);right:calc(var(--shell-gutter) + 254px);bottom:var(--shell-bottom);min-height:var(--shell-status-h);display:flex;flex-wrap:wrap-reverse;align-items:center;justify-content:center;gap:8px;pointer-events:none}
-@media(max-width:820px){.status-centre{left:calc(var(--shell-gutter) + 64px);right:calc(var(--shell-gutter) + 64px)}}
-@media(min-width:1100px){#app:has(.panel.open) .status-centre{right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)))}}
+.status-centre{position:absolute;left:calc(var(--shell-gutter) + 254px);right:max(calc(var(--shell-gutter) + 254px),calc(var(--shell-rails-open-w) + 12px));bottom:var(--shell-bottom);min-height:var(--shell-status-h);display:flex;flex-wrap:wrap-reverse;align-items:center;justify-content:center;gap:8px;pointer-events:none}
+@media(max-width:820px){.status-centre{left:var(--shell-gutter);right:max(var(--shell-gutter),calc(var(--shell-rails-open-w) + 12px))}}
+@media(min-width:1100px){#app:has(.panel.open) .status-centre{right:calc(var(--shell-gutter) + 12px + max(min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)),var(--shell-rails-open-w)))}}
 /* Indicateurs d'enregistrement (orbital-ui Slice 04, `control_center_capture_wheel.js` ;
    haut-gauche depuis la Slice 04 de jarvis-board-ui-wheel-dossier-refactor,
    docs/06-ui-visual-spec.md › E) : une puce par enregistrement ouvert (point rouge + REC +
@@ -657,8 +667,13 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
    commencent à `--shell-panel-top`, la roue est centrée sur le bord gauche ; la puce GPT-Live,
    affichée, les fait descendre d'une rangée), et leur largeur s'arrête avant le lanceur. Caché tant qu'il n'y a rien à dire :
    aucun encombrement sans enregistrement. */
-#recIndicators{position:absolute;z-index:40;left:var(--shell-gutter);top:var(--shell-gutter);max-width:calc(100vw - 2 * var(--shell-gutter) - var(--shell-launcher-w) - 12px);display:flex;flex-direction:column;align-items:flex-start;pointer-events:auto}
+#recIndicators{position:absolute;z-index:40;right:calc(var(--shell-gutter) + max(var(--shell-rails-open-w),var(--shell-panel-open-w)));top:var(--shell-gutter);max-width:calc(100vw - 2 * var(--shell-gutter) - var(--shell-launcher-w) - 12px);display:flex;flex-direction:column;align-items:flex-end;pointer-events:auto}
 #recIndicators[hidden]{display:none}
+/* Petit écran : les deux bandes ne font plus toute la hauteur (elles recouvriraient le lanceur, la puce, le centre d'état) ; comme un panneau latéral, elles
+   vont de `--shell-panel-top` à `--shell-panel-bottom`, et la puce, les enregistrements et le centre d'état n'ont plus à s'écarter d'elles. */
+@media(max-width:700px){html:root .panel.chat-panel{top:var(--shell-panel-top);bottom:var(--shell-panel-bottom)}
+  .live-banner,#recIndicators{right:var(--shell-gutter)}
+  .status-centre{left:calc(var(--shell-gutter) + 64px);right:calc(var(--shell-gutter) + 64px)}}
 /* Aperçu de capture d'écran (orbital-ui Slice 05, `control_center_screenshot_preview.js`) : zone
    `left-low`, à droite de l'ancre de la roue et AU-DESSUS du contexte bas-gauche (carte Board et
    notes de la scène, jusqu'à 162 px du bas quand elles s'empilent ; 174 px sous 700 px de large, où la
@@ -725,16 +740,19 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 @media(prefers-reduced-motion:reduce){.board-drop::before,.board-drop-item[data-status=uploading]::after{animation:none}}
 /* Écran étroit : le bas appartient au mode d'interaction et aux colonnes gauche/droite ; le plateau monte sous le lanceur,
    sous la rangée de l'onglet du rail (40 px, qu'il recouvrait à 600 px) : orbital-ui Slice 09, QA S01 P2, QA S06/S08. */
-@media(max-width:760px){.board-drop-tray{top:calc(var(--shell-panel-top) + 48px);bottom:auto;width:calc(100vw - 180px);max-height:min(50vh,360px)}}
+@media(max-width:760px){.board-drop-tray{top:calc(var(--shell-panel-top) + 48px);bottom:auto;width:calc(100vw - 180px);max-height:min(50vh,360px)}
+  :is(#app:has(.chat-panel.open),#app:has(~ #presentationRail:not([hidden]))) .board-drop-tray{left:var(--shell-gutter);right:calc(var(--shell-gutter) + var(--shell-rails-open-w) + 12px);width:auto;transform:none}}
 /* Panneau latéral ouvert (orbital-ui Slice 09) : le plateau (34) passait sur le bas du panneau (33). De 1100 px, il se
    centre dans l'espace libre entre la carte Board (bas-gauche, 254 px ; 338 px dès 1400 px) et le panneau ; plus étroit,
    cet espace manque : il monte en haut à gauche, sous le haut de la page, à gauche du panneau. */
-@media(min-width:1100px){#app:has(.panel.open) .board-drop-tray{left:calc(var(--shell-gutter) + 254px);right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)));width:auto;max-width:460px;margin-inline:auto;transform:none}}
+@media(min-width:1100px){:is(#app:has(.panel.open),#app:has(~ #presentationRail:not([hidden]))) .board-drop-tray{left:calc(var(--shell-gutter) + 254px);right:calc(var(--shell-gutter) + 12px + max(min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)),var(--shell-rails-open-w)));width:auto;max-width:460px;margin-inline:auto;transform:none}}
 /* Slice 08 : à 1400 px et plus la carte Board va jusqu'à 320 px (`GEO.wideMaxWidth`) ; le centre d'état et le plateau
    de dépôt réservent gutter + 338 px. */
-@media(min-width:1400px){.status-centre{left:calc(var(--shell-gutter) + 338px);right:calc(var(--shell-gutter) + 338px)}
-  #app:has(.panel.open) .board-drop-tray{left:calc(var(--shell-gutter) + 338px)}}
-@media(min-width:761px) and (max-width:1099px){#app:has(.panel.open) .board-drop-tray{top:calc(var(--shell-panel-top) + 8px);bottom:auto;left:var(--shell-gutter);right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)));width:auto;transform:none}}
+@media(min-width:1400px){.status-centre{left:calc(var(--shell-gutter) + 338px);right:max(calc(var(--shell-gutter) + 338px),calc(var(--shell-rails-open-w) + 12px))}
+  :is(#app:has(.panel.open),#app:has(~ #presentationRail:not([hidden]))) .board-drop-tray{left:calc(var(--shell-gutter) + 338px)}}
+@media(min-width:761px) and (max-width:1099px){#app:has(.panel.open) .board-drop-tray{top:calc(var(--shell-panel-top) + 8px);bottom:auto;left:var(--shell-gutter);right:calc(var(--shell-gutter) + 12px + max(min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)),var(--shell-rails-open-w)));width:auto;transform:none}}
+/* Rail seul ouvert (sans panneau) : le plateau se centre dans la place libre à gauche de la bande, sans quitter le bas. */
+@media(min-width:761px) and (max-width:1099px){#app:has(~ #presentationRail:not([hidden])):not(:has(.panel.open)) .board-drop-tray{left:calc((100vw - var(--shell-rails-open-w)) / 2);width:min(460px,calc(100vw - var(--shell-rails-open-w) - 32px))}}
 
 /* ---------- Pastilles d'arrière-plan (centre d'état du bas, Slice 06, D8) ----------
    Une pastille ronde de 32 px par catégorie non vue, dans l'ordre du registre
@@ -2703,10 +2721,13 @@ button.wsp-ename:hover{color:var(--accent)}
   </div>
   <section class="panel" id="panel" data-shell-control><header><h2 id="panelTitle">Panel</h2><button id="closePanel" aria-label="Fermer">×</button></header><div class="body" id="panelBody"></div></section>
   <!-- Chat (handoff jarvis-unified-chat-and-board-drop, Slice 06, `docs/chat.md` › Panel) :
-       onglet bas-droit et panneau latéral. Rangs au registre du haut (onglet 32
-       comme le dock, panneau 33 comme `.panel`). Tout le contenu des messages est
+       bouton (icône du dock des rails `#railDock`, bord droit) et bande latérale pleine hauteur. Rangs au registre du haut (dock 32
+       comme le lanceur, panneau 33 comme `.panel`). Tout le contenu des messages est
        posé par `control_center_chat.js` en `textContent`, jamais en HTML. -->
-  <button type="button" class="chat-tab" id="chatTab" data-shell-control aria-controls="chatPanel" aria-expanded="false" title="Chat · écrire à Jarvis" aria-label="Chat · écrire à Jarvis">CHAT</button>
+  <nav class="rail-dock" id="railDock" aria-label="Rails de droite" data-shell-control>
+    <button type="button" class="rail-tab" id="presentationRailTab" aria-controls="presentationRail" aria-expanded="false" title="Présentations" aria-label="Présentations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M12 16v4M8 20h8M7 12l3-3 2 2 3-4 2 2"/></svg><span class="jvr-urgent" aria-hidden="true" hidden></span></button>
+    <button type="button" class="chat-tab rail-tab" id="chatTab" aria-controls="chatPanel" aria-expanded="false" title="Chat · écrire à Jarvis" aria-label="Chat · écrire à Jarvis"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 5h16v11H10l-4 4v-4H4z"/><path d="M8 9.5h8M8 12.5h5"/></svg></button>
+  </nav>
   <section class="panel chat-panel" id="chatPanel" data-shell-control aria-labelledby="chatTitle" hidden>
     <header><div class="chat-head"><h2 id="chatTitle">Chat</h2><span class="chat-sub" id="chatSub">Même conversation que la voix</span></div><button type="button" id="chatClose" aria-label="Fermer le chat (Échap)">×</button></header>
     <div class="chat-feed" id="chatFeed" role="status" data-tone="muted"><span class="chat-led" aria-hidden="true"></span><span class="chat-feedtxt" id="chatFeedText">Fermé</span><span class="chat-feedtime" id="chatFeedTime" aria-hidden="true"></span><button type="button" class="chat-link" id="chatTimeline">Voir la chronologie complète</button></div>

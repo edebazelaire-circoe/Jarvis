@@ -70,14 +70,14 @@ SETUP = r"""(()=>{
   if(!boards.textContent.trim()){const b=document.createElement('button');b.textContent='BOARD · Présentation Jarvis';boards.appendChild(b)}
   let rail=document.getElementById('presentationRail');
   if(!rail){rail=document.createElement('div');rail.id='presentationRail';rail.setAttribute('data-shell-control','');
-    rail.style.cssText='position:fixed;top:64px;right:18px;width:300px;height:120px;z-index:30';document.body.appendChild(rail)}
+    rail.style.cssText='position:fixed;top:0;bottom:0;right:0;width:272px;z-index:30';document.body.appendChild(rail)}
   rail.hidden=false;
   return document.documentElement.getAttribute('data-jarvis-theme')||'';
 })()"""
 
 READ = r"""(()=>{
   const shell=window.JarvisShell;
-  const out={selector:shell?shell.CONTROL_SELECTOR:null,controls:[],vw:innerWidth,
+  const out={selector:shell?shell.CONTROL_SELECTOR:null,controls:[],vw:innerWidth,vh:innerHeight,
     overflowX:document.documentElement.scrollWidth>innerWidth};
   if(!shell)return out;
   for(const el of document.querySelectorAll(shell.CONTROL_SELECTOR)){
@@ -87,7 +87,7 @@ READ = r"""(()=>{
     out.controls.push({name:el.id?'#'+el.id:'.'+el.classList[0],l:r.left,t:r.top,r:r.right,b:r.bottom});
   }
   const z=s=>{const e=document.querySelector(s);return e?getComputedStyle(e).zIndex:null};
-  out.z={card:z('#boardsButton'),dock:z('.dock'),panel:z('#panel'),pills:z('#bgPills'),chat:z('#chatTab'),
+  out.z={card:z('#boardsButton'),dock:z('.dock'),panel:z('#panel'),pills:z('#bgPills'),chat:z('#railDock'),
     banner:z('.live-banner'),boards:z('#boardsPanel'),tray:z('#boardDropTray')};
   return out;
 })()"""
@@ -95,7 +95,7 @@ READ = r"""(()=>{
 OPEN_PANEL = r"""(()=>{
   const p=document.getElementById('panel');p.classList.add('open');
   const box=e=>{const r=e.getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom}};
-  const out={panel:box(p),dock:box(document.querySelector('.dock')),chat:box(document.getElementById('chatTab')),
+  const out={panel:box(p),dock:box(document.querySelector('.dock')),chat:box(document.getElementById('railDock')),
     pills:box(document.getElementById('bgPills')),vw:innerWidth};
   p.classList.remove('open');
   return out;
@@ -138,16 +138,20 @@ def test_one_geometry_and_one_rank_set_for_both_themes(measured, size):
     assert cosmos["theme"] == "cosmos"
     assert circuit["read"]["z"] == cosmos["read"]["z"]
     assert circuit["read"]["z"] == {"card": "32", "dock": "32", "panel": "33", "pills": "40", "chat": "32",
-                                    "banner": "35", "boards": "39", "tray": "34"}
-    # Les zones : lanceur en haut à droite, onglet Chat en bas à droite, aux
-    # mêmes bords dans les deux thèmes (la peau change, la place non).
+                                    "banner": "35", "boards": "58", "tray": "34"}  # #boardsPanel : voile plein écran au rang 58 (registre)
+    # Les zones (refonte du 2026-10-29) : lanceur en haut à GAUCHE, boutons des rails (Présentations, Chat) au bord droit, centrés en hauteur, à
+    # gauche de la bande du rail ouverte ; aux mêmes bords dans les deux thèmes (la peau change, la place non).
     for theme in (circuit, cosmos):
         controls = {c["name"]: c for c in theme["read"]["controls"]}
         width = theme["read"]["vw"]
         gutter = 18 if width > 700 else 10
-        assert round(width - controls[".dock"]["r"]) == gutter
-        assert round(controls[".dock"]["t"]) == gutter
-        assert round(width - controls["#chatTab"]["r"]) == gutter
+        assert round(controls[".dock"]["l"]) == gutter and round(controls[".dock"]["t"]) == gutter, controls[".dock"]
+        rail, buttons = controls["#presentationRail"], controls["#railDock"]
+        # À 700 px et moins la bande va de `--shell-panel-top` à `--shell-panel-bottom` (comme un panneau latéral) : elle ne recouvre ni le lanceur ni le centre d'état.
+        assert round(width - rail["r"]) == 0 and round(rail["t"]) == (0 if width > 700 else 88), ("la bande est collée au bord droit, du haut de l'écran", rail)
+        assert round(rail["r"] - rail["l"]) == 272, rail
+        assert round(width - buttons["r"]) == gutter + 272, ("les boutons restent à gauche de la bande ouverte", buttons)
+        assert abs((buttons["t"] + buttons["b"]) / 2 - theme["read"]["vh"] / 2) <= 1, ("centrés en hauteur", buttons)
 
 
 @pytest.mark.parametrize("theme", THEMES)
@@ -156,7 +160,7 @@ def test_every_control_is_measured_and_none_covers_another(measured, theme, size
     read = measured[(theme, size)]["read"]
     assert read["selector"] == "[data-shell-control],#sceneLayer>.sc-status"
     names = [c["name"] for c in read["controls"]]
-    for required in ("#chatTab", "#presentationRail", ".dock", "#bgPills", "#toolWheel", "#boardsHud"):
+    for required in ("#railDock", "#presentationRail", ".dock", "#bgPills", "#toolWheel", "#boardsHud"):
         assert required in names, (required, names)
     # Slice 02 de jarvis-board-ui-wheel-dossier-refactor : ni état du haut, ni contrôle de mode, ni œil.
     for gone in (".state", "#interactionModeHud", "#hiddenEye"):
@@ -170,8 +174,7 @@ def test_every_control_is_measured_and_none_covers_another(measured, theme, size
     # (Sélection la tient) et le rail de capture n'existe plus.
     for gone in ("#barehandsHud", "#barehandsPalette", "#captureRail"):
         assert gone not in names, (gone, names)
-    # Slice 09 (migration close) : depuis la Slice 07 le rail est dans la zone de
-    # droite, sous le lanceur et au-dessus de l'onglet Chat ; il n'a plus d'exemption.
+    # Slice 09 (migration close) : le rail est une bande au bord droit, à droite des boutons des rails ; il n'a pas d'exemption.
     placed = read["controls"]
     overlaps = [(a["name"], b["name"]) for i, a in enumerate(placed)
                 for b in placed[i + 1:] if _overlap(a, b)]
@@ -181,12 +184,14 @@ def test_every_control_is_measured_and_none_covers_another(measured, theme, size
 
 @pytest.mark.parametrize("theme", THEMES)
 @pytest.mark.parametrize("size", VIEWPORTS)
-def test_an_open_side_panel_stays_under_the_launcher_and_above_the_chat_tab(measured, theme, size):
+def test_an_open_side_panel_covers_neither_the_launcher_nor_the_rail_buttons(measured, theme, size):
     seen = measured[(theme, size)]["panel"]
     panel, dock, chat, pills = seen["panel"], seen["dock"], seen["chat"], seen["pills"]
     assert not _overlap(panel, dock), (panel, dock)
-    assert not _overlap(panel, chat), (panel, chat)
     assert not _overlap(panel, pills), (panel, pills)
+    # Les boutons des rails s'écartent du panneau ; à 700 px et moins il prend toute la largeur et passe dessus (rang 33 > 32), comme sur la bande.
+    if seen["vw"] > 700:
+        assert not _overlap(panel, chat), (panel, chat)
     assert panel["r"] <= seen["vw"]
 
 
@@ -270,7 +275,7 @@ AUDIT = r"""(keys=>{
   const controls=[...document.querySelectorAll(sel)].filter(vis);
   const name=el=>el.id?'#'+el.id:'.'+el.classList[0];
   /* Le panneau latéral s'ouvre sur le rail (33 > 30, registre) ; le bandeau GPT-Live passe sur un panneau (35). */
-  const allowed=[['#panel','#presentationRail'],['#chatPanel','#presentationRail'],['#liveBanner','#panel'],['#liveBanner','#chatPanel']];
+  const allowed=[['#panel','#presentationRail']];
   const overlaps=[];
   for(let i=0;i<controls.length;i+=1)for(let j=i+1;j<controls.length;j+=1){
     const a=name(controls[i]),b=name(controls[j]);
@@ -901,7 +906,7 @@ PANEL_OPEN = "(()=>{document.getElementById('panel').classList.add('open');retur
 STACK = r"""(()=>{const box=el=>{if(!el||el.closest('[hidden]')||!el.checkVisibility())return null;const r=el.getBoundingClientRect();
   return r.width>0?{l:r.left,t:r.top,r:r.right,b:r.bottom}:null};const q=s=>document.querySelector(s);
   return {vw:innerWidth,banner:box(q('#liveBanner')),tray:box(q('#boardDropTray')),toasts:[...document.querySelectorAll('#toasts .toast')].map(box).filter(Boolean),
-    rail:box(q('#presentationRail')),card:box(q('#boardsButton')),dock:box(q('.dock')),chat:box(q('#chatTab')),panel:box(q('#panel.open')),
+    rail:box(q('#presentationRail')),card:box(q('#boardsButton')),dock:box(q('.dock')),chat:box(q('#railDock')),panel:box(q('#panel.open')),
     centre:[...document.querySelectorAll('#bgPills .bgpill,#recIndicators .ri-chip')].map(box).filter(Boolean)}})()"""
 
 
@@ -921,6 +926,8 @@ def test_banner_tray_toasts_and_rail_never_cover_each_other(tmp_path, theme):
     plan = []
     for (w, h) in VIEWPORTS:
         plan.append({"width": w, "height": h, "theme": theme, "seed": {**MIXED, "live": LIVE, "mode": MODE, "previews": PREVIEWS}, "actions": [
+            # 700 px et moins : le rail reste replié de lui-même (la bande couvrirait la scène) ; le bouton l'ouvre.
+            *([["click", "railtab", "#presentationRailTab", 400]] if w <= 700 else []),
             ["eval", "tray", TRAY, 100], ["eval", "toasts", TOASTS, 500], ["eval", "closed", STACK, 50],
             ["eval", "audit", _audit("#liveBanner", "#boardDropTray"), 50],
             ["shot", "s1", str(shots / f"stack-{theme}-{w}x{h}.png"), 50],
@@ -980,16 +987,18 @@ CHIP = r"""(()=>{const h=document.getElementById('recIndicators');h.hidden=false
 CHIP = r"""(()=>{const box=el=>{if(!el||el.closest('[hidden]'))return null;const r=el.getBoundingClientRect();
   return r.width>0?{l:r.left,t:r.top,r:r.right,b:r.bottom,w:r.width,h:r.height}:null};const q=s=>document.querySelector(s);
   const stop=q('#liveStop');return {chip:box(q('#liveBanner')),stop:box(stop),stopName:stop.getAttribute('aria-label'),
-    rec:box(q('#recIndicators .ri-chip')),dock:box(q('.dock')),state:q('#liveState').textContent,
+    rec:box(q('#recIndicators .ri-chip')),dock:box(q('.dock')),rail:box(q('#presentationRail')),buttons:box(q('#railDock')),state:q('#liveState').textContent,
     elapsed:q('#liveElapsed').textContent,title:q('#liveBanner').title}})()"""
 
 
 @pytest.mark.parametrize("theme", THEMES)
-def test_the_live_chip_is_small_top_left_and_pushes_the_recording_chip_down(tmp_path, theme):
+def test_the_live_chip_is_small_top_right_and_pushes_the_recording_chip_down(tmp_path, theme):
     """Retour utilisateur du 2026-10-29 : le bandeau GPT-Live centré prenait
-    trop de place. La puce tient en haut à gauche, sur une rangée de commande,
-    sans toucher le lanceur ; l'état « ACTIF » ne s'écrit pas, la durée oui ;
-    le carré d'arrêt a un nom ; un indicateur d'enregistrement passe dessous."""
+    trop de place ; depuis le même jour la puce est en haut à DROITE (le lanceur
+    est en haut à gauche), à gauche de la bande du rail quand elle est ouverte.
+    Une rangée de commande, sans toucher le lanceur ; l'état « ACTIF » ne
+    s'écrit pas, la durée oui ; le carré d'arrêt a un nom ; un indicateur
+    d'enregistrement passe dessous, aligné sur son bord droit."""
     sizes = ((1440, 900), (600, 800))
     plan = [{"width": w, "height": h, "theme": theme, "seed": {**BUSY, "live": LIVE, "mode": MODE}, "actions": [
         ["eval", "chip", CHIP, 600]]} for (w, h) in sizes]
@@ -997,10 +1006,13 @@ def test_the_live_chip_is_small_top_left_and_pushes_the_recording_chip_down(tmp_
         c = step["results"]["chip"]
         where = (theme, w, h)
         gutter = 18 if w > 700 else 10
-        assert c["chip"] and abs(c["chip"]["l"] - gutter) < 1 and abs(c["chip"]["t"] - gutter) < 1, (where, c["chip"])
+        beside = (w - c["rail"]["l"]) if c["rail"] and w > 700 else 0  # 700 px et moins : la bande commence sous la rangée du haut
+        assert c["chip"] and abs((w - c["chip"]["r"]) - (gutter + beside)) < 1 and abs(c["chip"]["t"] - gutter) < 1, (where, c["chip"], c["rail"])
         assert c["chip"]["h"] <= 36 and c["chip"]["w"] <= 160, (where, "puce compacte", c["chip"])
         assert _no_overlap(c["chip"], c["dock"]) and _no_overlap(c["chip"], c["rec"]), (where, c)
-        assert c["rec"]["t"] >= c["chip"]["b"], (where, "l'enregistrement passe sous la puce", c)
+        assert c["chip"]["l"] > c["dock"]["r"], (where, "la puce est à droite du lanceur", c)
+        assert c["rail"] is None or _no_overlap(c["chip"], c["rail"]), (where, "ni sur la bande du rail", c)  # (sous la rangée du haut à 700 px et moins)
+        assert c["rec"]["t"] >= c["chip"]["b"] and abs(c["rec"]["r"] - c["chip"]["r"]) < 1, (where, "l'enregistrement passe sous la puce, à son bord droit", c)
         assert c["state"] == "" and c["elapsed"] == "01:05", (where, c)
         assert c["stopName"] == "ARRÊTER" and c["stop"]["w"] >= 20, (where, c)
         assert "GPT-Live · ACTIF" in c["title"], (where, c["title"])
@@ -1057,14 +1069,17 @@ NODE_BOX = r"""(()=>{const b=s=>{const e=document.querySelector(s);const r=e.get
   return {node:b('%s'),wall:b(%s)}})()"""
 
 
-@pytest.mark.parametrize("wall", ["#chatTab", "#boardsHud .bd-btn", "#presentationRail"])
-def test_a_held_object_stops_against_the_control(tmp_path, wall):
+#: (où l'on emmène l'objet, la commande contre laquelle il doit s'arrêter) : la bande du rail se vise par son en-tête, en haut, loin
+#: des boutons des rails (centrés en hauteur, ils la précèdent à gauche).
+@pytest.mark.parametrize("aim, wall", [("#railDock", "#railDock"), ("#boardsHud .bd-btn", "#boardsHud .bd-btn"),
+                                       ("#presentationRail .jvr-head", "#presentationRail")])
+def test_a_held_object_stops_against_the_control(tmp_path, aim, wall):
     """QA S01 P4 : la preuve par un vrai objet tenu, pas par l'appartenance au
     sélecteur. Un vrai glisser souris emmène l'objet au centre de la commande ;
     il s'arrête contre elle (bord à bord, sans la chevaucher) et la place
     commise, rejouée par Core, l'y redessine."""
     step = _centre(tmp_path, [{"width": 1280, "height": 720, "seed": {"mode": MODE}, "actions": [
-        ["dragto", "drag", NODE, 1200, wall], ["eval", "after", NODE_BOX % (NODE, json.dumps(wall)), 50]]}])[0]
+        ["dragto", "drag", NODE, 1200, aim], ["eval", "after", NODE_BOX % (NODE, json.dumps(wall)), 50]]}])[0]
     r = step["results"]
     node, box = r["after"]["node"], r["after"]["wall"]
     commits = [b["body"] for b in step["bodies"] if b["path"] == "/api/scene/commands" and b["body"].get("op") == "set_geometry"]

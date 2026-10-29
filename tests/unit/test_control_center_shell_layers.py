@@ -43,7 +43,7 @@ COSMOS = 'html[data-jarvis-theme="cosmos"]'
 #: Surfaces de la coque dont un thème ne peut pas changer la place ni le rang.
 SHELL_SURFACES = (
     "#boardsHud", ".dock", ".bgpills", "#bgPills", ".panel", ".live-banner",
-    ".voicehint", ".chat-tab", ".board-drop-tray", "#boardsPanel", ".toasts", "#toolWheel",
+    ".voicehint", ".chat-tab", ".rail-dock", "#railDock", ".board-drop-tray", "#boardsPanel", ".toasts", "#toolWheel",
     "#barehandsHud", "#barehandsPalette", "#recIndicators", "#presentationRail",
 )
 GEOMETRY_PROPERTIES = (
@@ -220,7 +220,7 @@ def test_registry_lists_chat_drop_and_rail_dialog_ranks():
     ranks = {(row["sheet"], row["rule"]): row["rank"] for row in page_layers()}
     html = "control_center.html"
     rail = "control_center_presentation_rail.js"
-    assert ranks[(html, ".chat-tab")] == 32
+    assert ranks[(html, "#railDock")] == 32  # les boutons « Présentations » et « Chat »
     assert ranks[(html, ".panel")] == 33  # `#chatPanel` est un `.panel`
     assert ranks[(html, ".board-drop::before")] == 21
     assert ranks[(html, ".board-drop-card")] == 34
@@ -265,7 +265,7 @@ def test_relative_order_of_the_old_registry_is_kept():
     assert rank_of("#dossierView") < rank_of("#jvStudioExplorer"), "Variantes covers the Dossier (Slice 07)"
     assert len(views) == 1
     view = views.pop()
-    for control in (".dock", ".panel", ".live-banner", "#bgPills", "#chatTab"):
+    for control in (".dock", ".panel", ".live-banner", "#bgPills", "#railDock"):
         assert rank_of(control) < view, control
     assert view < rank_of("#boardsPanel") < rank_of(".overlay")
     assert view < rank_of(".overlay") < rank_of(".toasts") < rank_of(".ctxmenu") < rank_of(".cdialog-back")
@@ -439,7 +439,7 @@ def test_every_declared_control_host_matches_control_selector():
     assert "setAttribute('data-shell-control','')" in rail
     # Les surfaces qui manquaient à l'ancienne liste de la scène sont mesurées.
     selectors = {host["selector"] for host in hosts}
-    assert {"#boardsHud", "#chatTab", "#presentationRail", "#boardDropTray", "#toolWheel"} <= selectors
+    assert {"#boardsHud", "#railDock", "#presentationRail", "#boardDropTray", "#toolWheel"} <= selectors
     # Slice 02 : la ligne d'état du haut, le contrôle de mode et l'œil ne sont plus des commandes.
     assert not selectors & {".topbar>.state", "#interactionModeHud", "#hiddenEye"}, selectors
     # L'hôte de la roue est déclaré vide (aucun comportement avant la Slice 02).

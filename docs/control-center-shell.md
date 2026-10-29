@@ -23,6 +23,10 @@ then emptied the top-left zone (no Board selector, no permanent state line),
 moved the Board control to a bottom-left **Board card** in place of the
 interaction-mode control (removed with its chooser), and removed the permanent
 hidden-object eye from the status centre (decisions D03-D06 of that handoff).
+On 2026-10-29 the right side was redesigned (user feedback: « le rail de droite est méga moche, même replié »): the launcher moved
+to the **top-left**, the GPT-Live chip and the recording indicators to the **top-right**, the workspace rail and the Chat became two
+full-height **bands** at the right edge (one geometry, one skin: `--shell-band-*`), each with an icon button in the `#railDock`
+(see [Right bands](#right-bands-presentationrail-and-chatpanel)).
 
 **Rule for every later change.** A surface that is added, moved, or gets a
 `z-index` updates, in the same commit: its row below, the stylesheet, the
@@ -55,14 +59,14 @@ wheel/dossier refactor), so neither skin styles it.
 
 | Zone | Surfaces today | Owner of the content |
 | --- | --- | --- |
-| `top-left` | empty at rest (wheel/dossier refactor Slice 02, D05: no Board selector, no permanent state badge); since its Slice 04 the recording indicators `#recIndicators` (red `REC` for the screen, audio cue), only while Core lists an open capture — see [capture.md](capture.md) › *Interface*; since 2026-10-29 the GPT-Live chip `.live-banner` above them, only while a session is open | `control_center_capture_wheel.js`, page |
-| `top-right` | `.dock` (global launcher, Slice 08: one row of 34 px buttons — four since the wheel/dossier refactor Slice 04 folded Réglages into « Plus d’outils » —, the « Plus d’outils » popover under it; see [Global launcher](#global-launcher-dock)) | page |
+| `top-left` | `.dock` (global launcher, Slice 08: one row of 34 px buttons — four since the wheel/dossier refactor Slice 04 folded Réglages into « Plus d’outils » —, the « Plus d’outils » popover under it, left-aligned; moved here from the top-right on 2026-10-29; see [Global launcher](#global-launcher-dock)) | page |
+| `top-right` | since 2026-10-29 the GPT-Live chip `.live-banner`, only while a session is open, and under it the recording indicators `#recIndicators` (red `REC` for the screen, audio cue), only while Core lists an open capture — see [capture.md](capture.md) › *Interface*; both stop left of the open right bands (`--shell-rails-open-w`) and of an open side panel; empty at rest | `control_center_capture_wheel.js`, page |
 | `left-edge` | `#toolWheel` anchor and orbital tool wheel (Slice 02; live by default since Slice 04; five categories since the wheel/dossier refactor Slice 03: JARVIS, Sélection, Dossier, Capture, Paramètres); `#barehandsHud`, `#barehandsPalette` hosts stay declared but hidden while the wheel is visible (Slice 03) | their modules |
 | `left-low` | `#screenshotPreview` (Slice 05): preview of the last successful screenshot, right of the wheel anchor, its bottom 172 px above the page bottom so it clears the bottom-left context zone (Board card and scene notes stacked up to 162 px) | `control_center_screenshot_preview.js` |
 | `bottom-left` | Board card `#boardsHud` (its panel `#boardsPanel` opens above it, see [Board card](#board-card-boardshud)), `.sc-status` notes of the scene | `control_center_boards.js`, scene |
 | `bottom-centre` | status centre `#statusCentre` (Slice 06): `#bgPills` (the recording indicators moved top-left in the wheel/dossier refactor Slice 04), see [Status centre](#status-centre-statuscentre); `#boardDropTray` above it | page, `control_center_board_drop.js` |
-| `bottom-right` | `#chatTab` | `control_center_chat.js` |
-| `right` | active workspace rail `#presentationRail` (Slice 07, see [Workspace rail](#workspace-rail-presentationrail)); side panels (`#panel`, `#chatPanel`, `#jvStudioInspector`, and the relation board `#relationBoard` of organic-agent-orchestration Slice 09, class `.panel`, opened from a relation mark of the scene) open over it | `control_center_presentation_rail.js`, page, modules, `control_center_relation_board.js` |
+| `right-edge` | `#railDock` (2026-10-29): two 34 px icon buttons, stacked and centred in height — `#presentationRailTab` « Présentations » above `#chatTab` « Chat » —, left of the leftmost open band (`--shell-rails-open-w`), so they stay reachable; see [Right bands](#right-bands-presentationrail-and-chatpanel) | page, `control_center_presentation_rail.js`, `control_center_chat.js` |
+| `right` | two full-height bands at the right edge: the workspace rail `#presentationRail` (Slice 07, see [Right bands](#right-bands-presentationrail-and-chatpanel)), and the Chat `#chatPanel`, always the rightmost; other side panels (`#panel`, `#chatPanel`, `#jvStudioInspector`, and the relation board `#relationBoard` of organic-agent-orchestration Slice 09, class `.panel`, opened from a relation mark of the scene) open over it | `control_center_presentation_rail.js`, page, modules, `control_center_relation_board.js` |
 | `centre` | Board / scene (`#sceneLayer`) | scene |
 
 `JarvisShell.ZONES` mirrors this table (one line per zone).
@@ -71,46 +75,53 @@ Placement rules that hold in both themes (measured by
 `tests/unit/test_control_center_shell_browser.py` at 1440×900, 1280×720,
 900×600 and 600×800):
 
-- **Top-left** is empty at rest (wheel/dossier refactor Slice 02). Since its
-  Slice 04 it holds the recording indicators `#recIndicators` while, and only
-  while, Core lists an open capture (top and left at `--shell-gutter`, chips
-  wrapping downwards, never wider than the space left of the launcher). The
-  GPT-Live chip `.live-banner` (user feedback 2026-10-29: the centred banner
-  took too much room) sits at the same corner while a session is open: an
-  animated wave, the elapsed time and a square stop button, one
-  `--shell-control` high; the state word shows only outside the normal run
-  (stopping, uncertain close…), usage/cost/idle details are in its `title` and
-  for screen readers, and the uncertain close adds « CONSIDÉRER COMME FERMÉE »
-  beside it. While it shows, `#recIndicators` moves down one row
-  (`--shell-gutter` + `--shell-control` + 6 px). The
-  wake key hint (`F9 · DÉMARRER`, `F9 · VOICE HORS LIGNE`…) and the
-  voice/agent/sub-agent words of the old `.state` (`VOICE SLEEP · CLAUDE
-  RUNNING`) are read in the wheel's **JARVIS** submenu (see [Tool
-  wheel](#tool-wheel-toolwheel) › *JARVIS and Paramètres*); the hidden
+- **Top-left** holds the launcher `.dock` (see below). The top-left corner is
+  otherwise empty at rest (wheel/dossier refactor Slice 02: no Board selector,
+  no permanent state badge); the tool wheel is centred on the left edge and
+  the Board card is bottom-left, so nothing else lives there.
+- **Top-right** holds the GPT-Live chip `.live-banner` while a session is open
+  (user feedback 2026-10-29: the centred banner took too much room; moved from
+  the top-left to the top-right with the right-side redesign): an animated
+  wave, the elapsed time and a square stop button, one `--shell-control` high;
+  the state word shows only outside the normal run (stopping, uncertain
+  close…), usage/cost/idle details are in its `title` and for screen readers,
+  and the uncertain close adds « CONSIDÉRER COMME FERMÉE » beside it. Under it,
+  while, and only while, Core lists an open capture, the recording indicators
+  `#recIndicators` (chips wrapping downwards, right-aligned, never wider than
+  the space right of the launcher); while the chip shows they move down one row
+  (`--shell-gutter` + `--shell-control` + 6 px). Both sit at
+  `right: --shell-gutter + max(--shell-rails-open-w, --shell-panel-open-w)`:
+  they step left of the open bands and of an open side panel instead of
+  covering them. The wake key hint (`F9 · DÉMARRER`, `F9 · VOICE HORS
+  LIGNE`…) and the voice/agent/sub-agent words of the old `.state` (`VOICE
+  SLEEP · CLAUDE RUNNING`) are read in the wheel's **JARVIS** submenu (see
+  [Tool wheel](#tool-wheel-toolwheel) › *JARVIS and Paramètres*); the hidden
   `#wakeHint` and `setWakeHint` are gone. The key itself is Voice's global
   shortcut, unchanged; the dock keeps the sub-agent count badge (`#agentBadge`).
-- **Launcher** (`top-right`): one row of four 34 px buttons at
+- **Launcher** (`top-left`): one row of four 34 px buttons at
   `--shell-gutter`, at every width (Slice 08; four since the wheel/dossier
-  refactor Slice 04); its popover opens under the row, right-aligned.
+  refactor Slice 04; top-left since 2026-10-29); its popover opens under the
+  row, left-aligned.
+- **Right bands** (`right`): see [Right bands](#right-bands-presentationrail-and-chatpanel).
 - **Side panels** (`right`): `#panel`, `#chatPanel`, the Studio inspector
   `#jvStudioInspector` and the relation board `#relationBoard` (one open at a
   time: opening one closes the others, `closePanel()` closes them all) share the zone: top `--shell-panel-top` (under the
-  launcher and the pills), bottom `--shell-panel-bottom` (above the chat tab),
-  right `--shell-gutter`, full width minus the gutters at 700 px and below.
-  Toasts move left of an open panel from 940 px up.
+  launcher and the pills), bottom `--shell-panel-bottom`, right `--shell-gutter`, full width
+  minus the gutters at 700 px and below (`#chatPanel` is the exception: a band, see below).
+  Toasts move left of an open panel or band from 940 px up.
 - **Board drop tray** (`bottom-centre`): above the status centre,
   `bottom: calc(var(--shell-bottom) + var(--shell-status-h) + 8px)`; at 760 px
-  and below it climbs under the launcher, below the rail tab row
-  (`--shell-panel-top` + 40 px), + 8 px. With a side panel open it never runs
-  under the panel: from 1100 px it is centred between the Board card zone
-  (gutter + 254 px) and the panel; from 761 to 1099 px it climbs top-left,
-  beside the panel (Slice 09).
+  and below it climbs under the launcher
+  (`--shell-panel-top` + 48 px). With a side panel or a band open it never runs
+  under it: from 1100 px it is centred between the Board card zone
+  (gutter + 254 px) and the panel or the bands; from 761 to 1099 px it climbs top-left,
+  beside them (Slice 09; the bands count since 2026-10-29).
 - **Stacking by geometry, not by rank (Slice 09).** Surfaces whose height is
   only known at runtime are tied with CSS anchor positioning (Chrome/Edge
-  125+): `#boardDropTray` (`--jv-tray`). The GPT-Live chip lives in the
-  launcher row (top-left) since 2026-10-29 and weighs on none of these rules
-  (its `--jv-live` anchor and `--jv-live-fb` estimate are gone). Toasts sit left of the visible rail above 700 px (`right: gutter +
-  --shell-rail-w + 12px`), rise above a visible bottom drop tray
+  125+): `#boardDropTray` (`--jv-tray`). The GPT-Live chip lives at the
+  top-right since 2026-10-29 and weighs on none of these rules
+  (its `--jv-live` anchor and `--jv-live-fb` estimate are gone). Toasts sit left of the open bands above 700 px (`right: gutter +
+  --shell-rails-open-w + 12px`), rise above a visible bottom drop tray
   (`bottom: max(68px, anchor(--jv-tray top) + 8px)`), and at 700 px and below
   go under the rail tab and the tray (`top: max(--shell-panel-top
   + 48px, tray bottom + 8)`). Under 940 px with a side
@@ -151,11 +162,14 @@ only in the `@media` blocks listed here. `JarvisShell.TOKENS` and
 | `--shell-bottom` | `18px` | | bottom baseline of bottom surfaces |
 | `--shell-status-h` | `44px` | | height of the bottom status centre (Slice 06); the drop tray and the lifted Board card sit above it |
 | `--shell-control` | `34px` | | launcher button size |
-| `--shell-launcher-w` | `154px` | | launcher width: 4 buttons × 34 + 3 gaps × 6 (Slice 08, then wheel/dossier refactor Slice 04: three tools and « Plus d’outils »), one row at every width; also bounds the top-left recording indicators |
+| `--shell-launcher-w` | `154px` | | launcher width: 4 buttons × 34 + 3 gaps × 6 (Slice 08, then wheel/dossier refactor Slice 04: three tools and « Plus d’outils »), one row at every width; also bounds the top-right chip and recording indicators (they stop before the top-left launcher) |
 | `--shell-panel-top` | `64px` | `88px` at 700 | top of side panels (below the launcher; at 700 px and below, 88 px: the launcher row plus the narrow gutter) |
 | `--shell-panel-w` | `500px` | | side panel width (capped by the window) |
 | `--shell-panel-bottom` | `68px` | | bottom of side panels: they stop above the chat tab row (18 + 40 + 10), so the tab stays whole and clickable |
-| `--shell-rail-w` | `300px` | `72px` at `max-width:1099px`, `0px` at 700 | workspace rail width (Slice 07); `0px` = the rail is a tab |
+| `--shell-rail-w` | `272px` | | workspace rail band width: fixed, not resizable (since 2026-10-29: no `72px` strip, no tab) |
+| `--shell-chat-w` | `min(500px,calc(100vw - 2 * var(--shell-gutter) - var(--shell-control) - 8px))` | | Chat band width: 500 px, fixed (2026-10-29); on a window narrower than that it leaves room for the rail buttons on its left |
+| `--shell-band-bg` / `--shell-band-grain` / `--shell-band-shadow` | a near-black translucent vertical gradient / two 1-px hatch layers (a fine mesh, ≈ 3 % white) / `-12px 0 40px` drop shadow + a 1-px inner light edge | | the skin of the right bands (rail and Chat): translucent black, subtle texture, a slight floating effect (2026-10-29) |
+| `--shell-chat-open-w` / `--shell-rails-open-w` / `--shell-panel-open-w` | `0px` | `:root:has(…)` rules of the page set them: chat open = `--shell-chat-w`; open bands = rail `--shell-rail-w`, chat `--shell-chat-w`, both = the sum; `#panel` open = `min(--shell-panel-w, 100vw − 2 gutters)`, `0px` at 700 px and below (the panel then covers everything by rank) | derived, never set by a module: the rail sits `--shell-chat-open-w` from the right edge (so the Chat is always the rightmost band), and the chip, the recording indicators, `#railDock`, toasts, the status centre and the drop tray step left of `--shell-rails-open-w` / `--shell-panel-open-w` |
 | `--shell-anchor-w` | `14px` | | visible part of the wheel anchor at rest (Slice 02) |
 | `--shell-wheel-r` | `224px` | | wheel radius: rim of the category band (Slice 02; 200 → 224 px in the wheel/dossier refactor Slice 03, five labelled categories). The module scales the whole wheel with its own `--tw-scale` (`.86` / `.76` / `.84` on short or narrow windows, [Tool wheel](#tool-wheel-toolwheel)) |
 | `--shell-wedge-min` | `48px` | | minimum target size of a wheel category (icon + label block; the whole sector is the target) |
@@ -195,22 +209,22 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 21 | `.board-drop::before` | `control_center.html` | `.board-drop::before` | drop frame, just above the scene, below the controls |
 | 30 | `#toolWheel` | `control_center.html` | `#toolWheel` | wheel anchor at rest |
 | 30 | `#barehandsPalette` | `control_center_barehands_hud.js` | `#${DOM.paletteId}` | below the Bare Hands control and its selector, which open over it |
-| 30 | `#presentationRail` | `control_center_presentation_rail.js` | `#${DOM.hostId}` | workspace rail (right zone) outside the Studio; side panels (33) open over it |
+| 30 | `#presentationRail` | `control_center_presentation_rail.js` | `#${DOM.hostId}` | workspace rail band (right zone) outside the Studio; side panels (33) open over it |
 | 32 | `.dock` | `control_center.html` | `.dock` | launcher |
-| 32 | `#chatTab` | `control_center.html` | `.chat-tab` | page control of the same class as the launcher |
+| 32 | `#railDock` | `control_center.html` | `#railDock` | the « Présentations » and « Chat » icon buttons (right edge), same class as the launcher |
 | 32 | `#barehandsHud` | `control_center_barehands_hud.js` | `#${DOM.hostId} .bh-hud-btn` | Bare Hands control button |
 | 32 | `#barehandsHud` | `control_center_barehands_hud.js` | `#${DOM.hostId} .bh-hud-cap` | its state cap |
 | 32 | `#boardsHud` | `control_center_boards.js` | `${H} .bd-btn` | Board card button (bottom-left, wheel/dossier refactor Slice 02); the host has no rank of its own |
-| 33 | `.panel` | `control_center.html` | `.panel` | side panels (`#panel`, `#chatPanel`) |
+| 33 | `.panel` | `control_center.html` | `.panel` | side panels (`#panel`) and the Chat band (`#chatPanel`, `.panel.chat-panel`) |
 | 34 | `.board-drop-card` | `control_center.html` | `.board-drop-card` | drop card, readable over the left column at 600 px |
-| 34 | `#boardDropTray` | `control_center.html` | `.board-drop-tray` | drop tray, above the status centre and the chat tab |
+| 34 | `#boardDropTray` | `control_center.html` | `.board-drop-tray` | drop tray, above the status centre |
 | 34 | `#jvStudioInspector` | `control_center_presentation_studio_inspector_core.js` | `#${PANEL_ID}` | Studio inspector side panel, above the panel it replaces (9120 while Variants is open, below) |
-| 35 | `.live-banner` | `control_center.html` | `.live-banner` | GPT-Live chip (top-left) over the controls |
+| 35 | `.live-banner` | `control_center.html` | `.live-banner` | GPT-Live chip (top-right) over the controls |
 | 36 | `.bh-hud-pop` | `control_center_barehands_hud.js` | `#${DOM.hostId} .bh-hud-pop` | Bare Hands lifecycle selector |
 | 36 | `.dock[data-more-open]` | `control_center.html` | `.dock[data-more-open]` | launcher with its « Plus d’outils » popover open (Slice 08): the whole launcher rises to the choosers' rank, over the side panels and the banner it briefly covers |
 | 37 | `#toolWheel[data-open]` | `control_center.html` | `#toolWheel[data-open]` | open wheel and its curved submenu: above the choosers, the wheel is the user's latest focus; never open together with `#boardsPanel` ([Exclusive surfaces](#exclusive-surfaces-wheel-and-board-panel)) |
 | 38 | `#screenshotPreview` | `control_center.html` | `#screenshotPreview` | screenshot preview (Slice 05): transient, non-modal, above the open wheel that took the shot, below the status centre, toasts and the lightbox |
-| 40 | `#recIndicators` | `control_center.html` | `#recIndicators` | recording indicators (orbital UI Slice 04), top-left since the wheel/dossier refactor Slice 04 (before: left of the status centre); an open recording stays visible above the open wheel and the side panels, below toasts |
+| 40 | `#recIndicators` | `control_center.html` | `#recIndicators` | recording indicators (orbital UI Slice 04), top-right since 2026-10-29 (top-left from the wheel/dossier refactor Slice 04, before left of the status centre); an open recording stays visible above the open wheel and the side panels, below toasts |
 | 40 | `#bgPills` | `control_center.html` | `.bgpills` | status centre, middle: background pills |
 | 55 | `.tl` | `control_center.html` | `.tl` | conversation timeline, full-screen launcher view |
 | 55 | `.tlab` | `control_center.html` | `.tlab` | Test Lab (one full-screen view at a time) |
@@ -305,7 +319,7 @@ Checked on the registry rows by `test_relative_order_of_the_old_registry_is_kept
   Board chooser `#boardsPanel` is a full-screen veil at 58, above everything
   the page shows at rest; it is never open together with the
   wheel (37): [Exclusive surfaces](#exclusive-surfaces-wheel-and-board-panel);
-- the open wheel (37) is above the choosers and below rank 40 (the top-left
+- the open wheel (37) is above the choosers and below rank 40 (the top-right
   capture indicators `#recIndicators` and the status-centre pills), toasts and context menu; closed, its
   anchor is at the left-edge rank (30);
 - the screenshot preview (38) is above the open wheel and below the status
@@ -318,15 +332,15 @@ Checked on the registry rows by `test_relative_order_of_the_old_registry_is_kept
 - `#jarvisHands` is the top of the page.
 
 **Cosmos rank collapse (Slice 01).** Cosmos used to raise `.topbar` (removed since) 45,
-`.panel` 42, `.live-banner` 48, `.dock`/`.bgpills`/`.chat-tab` 50,
+`.panel` 42, `.live-banner` 48, `.dock`/`.bgpills`/`.chat-tab` (now `#railDock`) 50,
 `.board-drop-tray` 49, `#boardsPanel` 51. `git log -S` traces them to the
 theme's first commit (`2868528e`, "add Omega visual theme") and to slices
 that kept "one above the Cosmos dock" (`98f28604`, `4b99853b`); none records
 a stacking conflict. With the geometry shared, the surfaces they ordered no
 longer overlap (panel and banner start at `--shell-panel-top`, below the
 launcher row; the Board chooser opens above the bottom-left Board card at every width; every
-side panel stops at `--shell-panel-bottom`, above the chat tab, where Cosmos
-used to draw the tab over the panel's last row), so the base ranks apply to
+side panel stops at `--shell-panel-bottom`, where Cosmos
+used to draw the chat tab over the panel's last row), so the base ranks apply to
 both themes.
 
 ## Controls (`CONTROL_SELECTOR`)
@@ -347,21 +361,21 @@ controls; the wheel and the indicators are placed by the sheet instead.)
 
 | Host | Zone | Declared by |
 | --- | --- | --- |
-| `.dock` | top-right | page |
-| `#recIndicators` | top-left (wheel/dossier refactor Slice 04) | page (host); content by `control_center_capture_wheel.js` |
+| `.dock` | top-left (2026-10-29; before: top-right) | page |
+| `#recIndicators` | top-right (2026-10-29; top-left since the wheel/dossier refactor Slice 04) | page (host); content by `control_center_capture_wheel.js` |
 | `#bgPills` | bottom-centre (status centre) | page (host); content by `renderBackgroundPills` |
-| `.live-banner` | top-left (2026-10-29; before: top-centre) | page |
-| `#panel`, `#chatPanel` | right | page |
+| `.live-banner` | top-right (2026-10-29; before: top-centre, then top-left) | page |
+| `#panel`, `#chatPanel` | right (`#chatPanel` is a full-height band) | page |
 | `#barehandsHud`, `#barehandsPalette` | left-edge (hidden while the wheel is visible) | page (hosts) |
 | `#toolWheel` | left-edge | page |
 | `#presentationRail` | right | `control_center_presentation_rail.js` (creates the host and the attribute) |
 | `#boardsHud` | bottom-left | page (host), `control_center_boards.js` (card) |
 | `#boardDropTray` | bottom-centre | page |
-| `#chatTab` | bottom-right | page |
+| `#railDock` (holds `#presentationRailTab` and `#chatTab`) | right-edge | page |
 | `#screenshotPreview` | left-low | page (host), `control_center_screenshot_preview.js` (content) |
 
 Before Slice 01 the scene's literal list missed the bottom-left control (then
-`#interactionModeHud`), `#chatTab`, `#presentationRail` and `#boardDropTray`: a held object could
+`#interactionModeHud`), the chat button (`#chatTab`, now in `#railDock`), `#presentationRail` and `#boardDropTray`: a held object could
 stop under them. They are now measured. Not controls: transient layers that
 open over everything by rank (choosers, menus, popovers, toasts, dialogs,
 full-screen views, `#barehandsCards`) and the Studio surfaces.
@@ -373,7 +387,7 @@ else does.
 ## Global launcher (`.dock`)
 
 Slice 08, decision D11 of the handoff's resolved architecture. The former
-right dock of ten buttons is a compact top-right launcher: **three frequent
+right dock of ten buttons is a compact launcher (top-right at first, **top-left since 2026-10-29**): **three frequent
 tools visible, the seven others in a « Plus d’outils » popover** (four and six
 until the wheel/dossier refactor Slice 04 folded Réglages). Nothing was
 deleted or renamed: `<nav class="dock">` keeps every button with its id, its
@@ -601,59 +615,98 @@ tray or scene notes), `tests/unit/test_scene_view_prefs.py`
 (`showHidden`), `tests/unit/test_scene_renderer_logic.py` (ghosts, one
 reveal = one `set_visibility`).
 
-## Workspace rail (`#presentationRail`)
+## Right bands (`#presentationRail` and `#chatPanel`)
 
-Slice 07, decision D10 of the handoff's resolved architecture. Module
-`jarvis/runtime/control_center_presentation_rail.js` (`window.JarvisPresentationRail`);
-data, actions and Core contract: `docs/presentation-studio.md` › *Rail des
-presentations* › *Active workspace rail*.
+Slice 07, decision D10 of the handoff's resolved architecture created the workspace
+rail; the redesign of 2026-10-29 made it, and the Chat, two full-height **bands**.
+Modules `jarvis/runtime/control_center_presentation_rail.js`
+(`window.JarvisPresentationRail`) and `control_center_chat.js`; data, actions and Core
+contract of the rail: `docs/presentation-studio.md` › *Rail des presentations* ›
+*Active workspace rail*; the Chat: [chat.md](chat.md) › *Panel*.
 
-**Place.** Zone `right`: top `--shell-panel-top` (under the launcher and the
-pills), right `--shell-gutter`, bottom at most `--shell-panel-bottom` (above
-the chat tab), width `--shell-rail-w`. It never covers the left column, the
-launcher, the pills or the chat tab (`test_rail_right_no_overlap_launcher_chat_tab`,
-1440×900, 1280×720, 900×600, 600×800). Side panels (33) open over it.
+**Place.** Both bands are `position:fixed`/`absolute`, `top:0; bottom:0`, no rounded corner,
+**fixed width, not resizable**: the rail `--shell-rail-w` (272 px), the Chat `--shell-chat-w`
+(500 px). The Chat is at `right:0`; the rail is at `right: --shell-chat-open-w`, i.e. at
+the right edge when the Chat is closed and just left of it when both are open: **the Chat
+is always the rightmost band**. Under 900 px the two bands do not fit side by side:
+opening one closes the other (`JarvisPresentationRail.closeIfNarrow`, `JarvisPresentationRail.toggle`).
+Rank 30 for the rail, 33 for the Chat (`.panel`); the other side panels (33) still open over the rail.
+**700 px and below**: the bands are no longer full height — like a side panel they run from `--shell-panel-top` to
+`--shell-panel-bottom`, so they never cover the launcher row, the chip and the recording indicators (which then stay at the
+right gutter), nor the status centre (which keeps its old 64 px margins); the Chat is as wide as the window allows. `#railDock`
+never leaves the screen (its offset is capped), and the open Chat may then cover it by rank (the Chat has its own ×).
 
-**Densities** (`JarvisPresentationRailCore.densityOf`, from the window width):
+**Skin (both bands, both themes).** `--shell-band-bg` over `--shell-band-grain`, a blur, a 1 px
+left edge (`--shell-stroke`) and `--shell-band-shadow` (the slight floating effect): a translucent
+black strip with a fine hatch texture. A band appears with a short fade
+(`--shell-dur`; none under reduced motion; no transform, so measured geometry is never mid-flight).
 
-| Density | When | Card |
-| --- | --- | --- |
-| `full` | ≥ 1100 px | 300 px: preview 88 px 16:9 with type badge, title (2 lines), type · variants, dot + state label · age, « ⋯ » |
-| `slim` | < 1100 px, or folded by the user | 72 px: preview + dot; the title, type and state label show in a bubble beside the card on hover and focus |
-| `drawer` | ≤ 700 px (`--shell-rail-w` = 0) | a tab (title, count, most urgent dot); its button opens the list over the scene and closes it |
-| `compact` | beside the Studio | 172 px column: small preview, title, dot + label |
+**Buttons.** `#railDock` (right edge, vertically centred, rank 32) stacks two 34 px icon
+buttons: `#presentationRailTab` « Présentations » (screen on a stand) and, just below,
+`#chatTab` « Chat » (bubble); `aria-expanded` and the label follow the band. The dock sits left
+of the leftmost open band, so a band is always closable from its button (and the rail by the
+`›` in its header). The Présentations button carries the mark of the most urgent state
+(pulsing ring `working`, triangle `problem`, diamond `unreviewed`) while the rail is folded.
+
+**Folded = gone.** A folded rail is `hidden` (`display:none`): nothing remains but its button.
+The choice is remembered (`localStorage` `jarvis.presentationRail.v1`, `open`); without one
+the rule of before applies (a presentation Board, the PRESENTATION mode, an agent working,
+a problem, Variantes open), except at 700 px and below, where the band would cover the scene: the rail then stays folded until the user opens it. `Alt+Shift+P` and the brain's `ui.request` still force
+« toujours visible » / « masqué »; the button overrides them.
+
+**Cards.** One scrolling column (`.jvr-scroll`) holds the presentations, « Sur ce Board », the
+Masquées fold and the archived section. A card is its **16:9 thumbnail** (the last complete render, or
+a typed placeholder) and its **title** (two lines), nothing else. The state is a small mark on the thumbnail's
+corner (absent when `done`), with its own **shape** and the ARIA label / tooltip carrying the words:
+`working` pulsing ring `--sem-working`; `problem` triangle `--sem-problem` and an orange-red thumbnail
+stroke; `unreviewed` diamond `--sem-review`; `unknown` dashed hollow ring. Precedence working > problem >
+unreviewed > done. `JarvisPresentationRailCore.densityOf` knows two densities: `full` (the band) and
+`compact` (172 px column beside the Studio).
+
+**Archived hidden by default.** Archived presentations are not drawn. The footer button
+« Afficher les archivés (n) » (shown only when there is at least one) reveals an « Archivés (n) »
+section; « Masquer les archivés » hides it again. Not remembered: every page load starts hidden.
+
+**Permanent deletion of anything in the rail.** Hovering or focusing a card shows its `⋯` (menu) and
+a trash button; `Delete` on a focused card, and the menu entry « Supprimer définitivement… », do the same.
+Always behind a confirmation in the page (`confirmDialog`, the `.cdialog`, never `confirm()`).
+- A **presentation** (also an archived one): archive first if needed, then Core's purge in two steps
+  — `POST /api/presentation-studio/rail/purge-plan` (writes nothing; a HMAC token) and
+  `POST /api/presentation-studio/rail/purge` (`confirmed: true`, token; a full backup under
+  `backups/purge-presentations-<timestamp>/` first). Relayed with the actor forced to `user`
+  (`presentation_studio_relay.py`). Refused while the presentation is played. A failure leaves it archived (restorable) and says so.
+- A **« Sur ce Board » element** (an Artifact: upload, image, link, capture, render):
+  `DELETE /api/artifacts/{artifact_id}[?cascade=true]` (the capture relay's existing route → Core `ArtifactService.delete`:
+  row, Board links, relations, then the payload folder; no new route was needed). Artifacts others derive from:
+  `409 artifact_has_dependents`, the page asks a second confirmation then retries with `cascade=true`; still
+  being acquired: `409 artifact_still_pending`. No schema change.
+- « Archiver… » stays the restorable removal; « Restaurer » is offered on an archived card.
 
 **Studio docking** is the mirror of the old left docking: with Variants open
 (windowed) the rail is the right column (`html.jvr-studio`, rank 9100, 8 px
-from the edges) and `#jvStudioExplorer:not(:fullscreen)` stops at
-`right: 188px` (60 px when slim); during a run the Board card (and its
+from the edges, rounded) and `#jvStudioExplorer:not(:fullscreen)` stops at
+`right: 188px`; during a run the Board card (and its
 panel) sits at the bottom of that right column, above Variantes, so Voice's
 presence line stays visible (`control_center_presentation_studio_explorer_core.js`).
-The page under the Studio is inert; the launcher and the chat tab, which it
-covers, are not drawn meanwhile (`html.jvr-studio .dock, #chatTab
-{visibility:hidden}`: a half CNV button showed, unclickable, in the 8 px gap
-before the rail). In that column the rail title tightens and may wrap
-(« PRÉSENTATIONS » / « (1) »), never cut (QA S09 P7, matrix state 9).
+The page under the Studio is inert; the launcher and the rail dock, which it
+covers, are not drawn meanwhile (`html.jvr-studio .dock, #railDock
+{visibility:hidden}`). In that column the rail title tightens and may wrap
+(« PRÉSENTATIONS » / « (1) »), never cut (QA S09 P7, matrix state 9). The rail is shown there
+whatever the user's folded choice (Variantes decides).
 
-**State, never by colour alone.** Every card shows a mark with its own
-**shape** in every density (also in the 72 px strip, where the label shows
-only on hover and focus) **and** a label: `working` « En cours »
-`--sem-working`, pulsing ring; `problem` « Problème » `--sem-problem`,
-triangle and an orange-red card stroke (never relabelled as review);
-`unreviewed` « À revoir » `--sem-review`, diamond; `done` « Prête » / « Prêt »
-`--sem-done`, check; `unknown` « État inconnu », dashed hollow ring. Precedence
-working > problem > unreviewed > done.
-
-**Stage B.** A second listbox « Sur ce Board » under the presentations shows the Artifacts linked to the active Board in the same cards
-(adapter `control_center_workspace_rail_model.js`, contract in `docs/presentation-studio.md` › *Active workspace rail*); it scrolls on its own
-(at most 42 vh) and hides in the closed tab.
+**Stage B.** The « Sur ce Board » section under the presentations shows the Artifacts linked to the active Board in the same cards
+(adapter `control_center_workspace_rail_model.js`, contract in `docs/presentation-studio.md` › *Active workspace rail*).
 
 **Focus.** The list is one listbox (arrows, `ContextMenu` / `Shift+F10`, `F2`,
-`Delete`); the « ⋯ » button is a pointer and Bare Hands affordance with
+`Delete`); the `⋯` and trash buttons are pointer and Bare Hands affordances with
 `tabindex=-1`. The list is rebuilt on every Core read and the focused card
 keeps the focus, wherever it is (main list, « Sur ce Board », the Masquées /
-Archivées folds); closing a card's menu with `Esc` returns the focus to that
+Archivés sections); closing a card's menu with `Esc` returns the focus to that
 card even if it was redrawn meanwhile (restored by its id).
+
+**Tests.** `tests/unit/test_control_center_presentation_rail_browser.py` (fold, archived, deletion, two
+bands, both themes, 1440×900 and 600×800), `test_control_center_presentation_rail_js.py`,
+`test_presentation_studio_purge.py` (purge relay).
 
 ## Tool wheel (`#toolWheel`)
 

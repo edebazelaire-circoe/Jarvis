@@ -1396,7 +1396,7 @@ def test_the_scene_layer_sits_above_the_face_and_below_every_control():
     # `.voicehint` est retirée par la Slice 06 de l'orbital UI ; le centre d'état
     # (indicateurs, pastilles) est au-dessus de la scène. La ligne d'état du haut et
     # l'œil permanent sont retirés par la Slice 02 de jarvis-board-ui-wheel-dossier-refactor.
-    for selector in (".dock", ".panel", ".live-banner", ".bgpills", "#recIndicators", ".chat-tab",
+    for selector in (".dock", ".panel", ".live-banner", ".bgpills", "#recIndicators", "#railDock",
                      ".board-drop-tray", "#toolWheel", ".overlay", ".toasts", ".bgpop", ".ctxmenu", ".tl", ".cdialog-back"):
         assert _z(html, selector) > scene, selector
     # Une géométrie, deux peaux : aucun thème ne reclasse une surface, donc les

@@ -35,9 +35,9 @@
      hôte pas encore déclaré serait listé avec la slice qui le déclarera
      (`slice`) ; l'aperçu de capture l'est depuis la Slice 05. */
   const CONTROL_HOSTS=Object.freeze([
-    Object.freeze({selector:'.dock',zone:'top-right'}),
+    Object.freeze({selector:'.dock',zone:'top-left'}),
     Object.freeze({selector:'#bgPills',zone:'bottom-centre'}),
-    Object.freeze({selector:'.live-banner',zone:'top-left'}),
+    Object.freeze({selector:'.live-banner',zone:'top-right'}),
     Object.freeze({selector:'#panel',zone:'right'}),
     Object.freeze({selector:'#chatPanel',zone:'right'}),
     Object.freeze({selector:'#barehandsHud',zone:'left-edge'}),
@@ -46,25 +46,25 @@
     Object.freeze({selector:'#presentationRail',zone:'right',createdBy:'control_center_presentation_rail.js'}),
     Object.freeze({selector:'#boardsHud',zone:'bottom-left'}),
     Object.freeze({selector:'#boardDropTray',zone:'bottom-centre'}),
-    Object.freeze({selector:'#recIndicators',zone:'top-left'}),
-    Object.freeze({selector:'#chatTab',zone:'bottom-right'}),
+    Object.freeze({selector:'#recIndicators',zone:'top-right'}),
+    Object.freeze({selector:'#railDock',zone:'right-edge'}),
     Object.freeze({selector:'#screenshotPreview',zone:'left-low'}),
   ]);
   /* Zones de la coque (docs/06 §9). `right` : le rail actif de l'espace de
      travail (Slice 07), sous les panneaux latéraux qui s'ouvrent par-dessus. */
   const ZONES=Object.freeze({
-    /* Libre au repos depuis la Slice 02 de jarvis-board-ui-wheel-dossier-refactor
-       (ni sélecteur de Board, ni état permanent) ; depuis la Slice 04, les
-       indicateurs d'enregistrement s'y posent tant qu'une capture est ouverte ;
-       depuis le 2026-10-29, la puce GPT-Live au-dessus d'eux (ex-`top-centre`). */
-    'top-left':'puce GPT-Live tant qu’une session est ouverte, indicateurs d’enregistrement (REC, audio) tant qu’une capture est ouverte ; vide au repos',
-    'top-right':'lanceur global : Conversation, Agents, Errors, « Plus d’outils » (Réglages y est replié, refonte S04)',
+    /* Libre au repos : le lanceur y est depuis le 2026-10-29 (il était en haut à droite). */
+    'top-left':'lanceur global : Conversation, Agents, Errors, « Plus d’outils » (Réglages y est replié, refonte S04)',
+    /* Depuis le 2026-10-29 : la puce GPT-Live, et sous elle les indicateurs d'enregistrement (REC, audio) tant qu'une capture est
+       ouverte, à gauche des bandes ouvertes (`--shell-rails-open-w`). Vide au repos. */
+    'top-right':'puce GPT-Live tant qu’une session est ouverte, indicateurs d’enregistrement (REC, audio) tant qu’une capture est ouverte ; vide au repos',
     'left-edge':'ancre et roue d’outils (JARVIS, Sélection, Dossier, Capture, Paramètres)',
     'left-low':'aperçu de la dernière capture d’écran (Slice 05), au-dessus du contexte bas-gauche',
     'bottom-left':'zone de contexte : carte Board (type, titre, bascule, présence de la voix), notes de la scène',
     'bottom-centre':'centre d’état (Slice 06) : pastilles d’arrière-plan ; plateau de dépôt au-dessus',
-    'bottom-right':'onglet Chat',
-    'right':'rail actif de l’espace de travail (#presentationRail, Slice 07) ; panneaux latéraux par-dessus',
+    /* Les boutons « Présentations » et « Chat » (`#railDock`), empilés, centrés en hauteur, à gauche de la bande ouverte la plus à gauche. */
+    'right-edge':'boutons des rails : Présentations, et dessous Chat (#railDock)',
+    'right':'bandes pleine hauteur : rail des présentations (#presentationRail, Slice 07), et le Chat (#chatPanel) toujours le plus à droite ; panneaux latéraux par-dessus',
     'centre':'Board / scène',
   });
 
@@ -79,7 +79,8 @@
     '--shell-panel-top':'64px',
     '--shell-panel-w':'500px',
     '--shell-panel-bottom':'68px',
-    '--shell-rail-w':'300px',
+    '--shell-rail-w':'272px',
+    '--shell-chat-w':'min(500px,calc(100vw - 2 * var(--shell-gutter) - var(--shell-control) - 8px))',
     '--shell-anchor-w':'14px',
     '--shell-wheel-r':'224px',
     '--shell-wedge-min':'48px',
@@ -93,6 +94,12 @@
     '--shell-focus':'var(--accent)',
     '--shell-focus-w':'2px',
     '--shell-focus-offset':'2px',
+    '--shell-band-bg':'linear-gradient(180deg,rgba(2,6,10,.82),rgba(3,8,13,.68))',
+    '--shell-band-grain':'repeating-linear-gradient(0deg,rgba(255,255,255,.028) 0 1px,transparent 1px 3px),repeating-linear-gradient(90deg,rgba(255,255,255,.016) 0 1px,transparent 1px 3px)',
+    '--shell-band-shadow':'-12px 0 40px rgba(0,0,0,.42),inset 1px 0 0 rgba(174,205,220,.08)',
+    '--shell-chat-open-w':'0px',
+    '--shell-rails-open-w':'0px',
+    '--shell-panel-open-w':'0px',
     '--sem-alert':'#ff9f43',
     '--sem-done':'var(--ok)',
     '--sem-question':'var(--accent)',
@@ -104,8 +111,7 @@
     '--shell-dur':'180ms',
   });
   const RESPONSIVE_TOKENS=Object.freeze({
-    'max-width:1099px':Object.freeze({'--shell-rail-w':'72px'}),
-    'max-width:700px':Object.freeze({'--shell-gutter':'10px','--shell-panel-top':'88px','--shell-rail-w':'0px'}),
+    'max-width:700px':Object.freeze({'--shell-gutter':'10px','--shell-panel-top':'88px'}),
   });
   /* Sous `prefers-reduced-motion: reduce`, ces durées valent 0 ms. */
   const MOTION_TOKENS=Object.freeze(['--shell-dur-fast','--shell-dur']);

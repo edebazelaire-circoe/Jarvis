@@ -26,7 +26,7 @@ MODULE = ROOT / "jarvis" / "runtime" / "control_center_chat.js"
 
 
 def _chat_markup(html: str) -> str:
-    start = html.index('<button type="button" class="chat-tab" id="chatTab"')
+    start = html.index('<button type="button" class="chat-tab rail-tab" id="chatTab"')
     return html[start: html.index("</section>", start)]
 
 
@@ -41,8 +41,8 @@ async def test_markers_are_replaced_model_before_view_inside_the_page_script(tmp
 
 def test_tab_and_panel_ids_roles_and_reuse_of_panel():
     markup = _chat_markup(PAGE.read_text(encoding="utf-8"))
-    tab = re.search(r'<button type="button" class="chat-tab" id="chatTab"[^>]*>CHAT</button>', markup)
-    assert tab, "the Chat tab is a real button labelled in text"
+    tab = re.search(r'<button type="button" class="chat-tab rail-tab" id="chatTab"[^>]*><svg [^>]*>.*?</svg></button>', markup)
+    assert tab, "the Chat button is a real button, an icon (no « CHAT » text since 2026-10-29)"
     for attribute in ('aria-controls="chatPanel"', 'aria-expanded="false"', 'aria-label="Chat · écrire à Jarvis"'):
         assert attribute in tab.group(0)
     head = re.search(r'<section class="panel chat-panel" id="chatPanel"[^>]*>', markup).group(0)
@@ -67,21 +67,23 @@ def test_tab_and_panel_ids_roles_and_reuse_of_panel():
         assert f'id="{element_id}"' in markup, element_id
 
 
-def test_layout_rules_tab_bottom_right_toasts_above_it_one_panel_at_a_time():
+def test_layout_rules_button_in_the_rail_dock_chat_is_a_right_band_one_panel_at_a_time():
     html = PAGE.read_text(encoding="utf-8")
-    # Bottom-right zone of the shell (docs/control-center-shell.md), the same in both themes.
-    assert re.search(r"\.chat-tab\{position:absolute;z-index:32;right:var\(--shell-gutter\);bottom:var\(--shell-bottom\);width:52px;height:40px;", html)
-    # Toasts: bottom-right above the tab row (18 + 40 + 10 px), never over the left column; the launcher and
-    # the pills live in the top row since Slice 01 of the orbital UI, so the stack no longer dodges a dock column.
+    # `#railDock` (right edge, vertically centred, rank 32) holds the Chat button below the « Présentations » one (docs/control-center-shell.md › Right bands).
+    assert re.search(r"#railDock\{position:absolute;z-index:32;right:min\(calc\(var\(--shell-gutter\) \+ max\(var\(--shell-rails-open-w\),var\(--shell-panel-open-w\)\)\),calc\(100vw - var\(--shell-gutter\) - var\(--shell-control\)\)\);top:50%;", html)
+    rail_dock = html[html.index('<nav class="rail-dock" id="railDock"'): html.index("</nav>", html.index('id="railDock"'))]
+    assert rail_dock.index('id="presentationRailTab"') < rail_dock.index('id="chatTab"'), "Présentations above, Chat just below"
+    # Toasts: bottom-right, left of the open bands; the Chat is a full-height band at the right edge, never a rounded card.
     assert ".toasts{position:fixed;right:var(--shell-gutter);bottom:68px;z-index:70;display:grid;gap:8px;width:clamp(220px,calc(100vw - 164px),340px);" in html
-    assert ".panel.chat-panel{bottom:68px}" in html, "the open Chat never covers its own tab"
+    assert re.search(r"html:root \.panel\.chat-panel\{top:0;bottom:0;right:0;left:auto;width:var\(--shell-chat-w\);border:0;border-left:1px solid var\(--shell-stroke\);border-radius:0;", html), "a band"
+    assert ".panel.chat-panel{bottom:68px}" not in html
     # Orbital UI Slice 06 : plus d'indication vocale à masquer. Le centre d'état
     # du bas (haut à 18 + 44 = 62 px) reste sous le bas du panneau (68 px) : le
     # panneau ouvert ne le recouvre jamais (mesuré par test_status_centre_browser.py).
     assert "voicehint" not in html
     assert ".status-centre{position:absolute;" in html and "bottom:var(--shell-bottom);min-height:var(--shell-status-h);" in html
     assert "#app:has(.chat-panel.open)~.toasts{top:var(--chat-toasts-top,124px);bottom:auto}" in html
-    assert "#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)))" in html
+    assert "#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + max(min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)),var(--shell-rails-open-w)))" in html
     assert "@media(prefers-reduced-motion:reduce){.chat-panel.open," in html
     assert "async function openPanel(name){if(window.JarvisChat)window.JarvisChat.close();" in html
     assert "function closePanel(){if(window.JarvisChat)window.JarvisChat.close();" in html
@@ -148,14 +150,14 @@ def test_low_viewport_toasts_follow_the_shifted_panel():
 
     Avant la Slice 01 de l'orbital UI, à 480 px de haut le dock vertical passait
     en deux colonnes et le panneau reculait à right:136px ; la pile reculait
-    d'autant. Le lanceur est désormais une rangée en haut à droite : le panneau
+    d'autant. Le lanceur est désormais une rangée en haut à gauche : le panneau
     ne recule plus à aucune hauteur, et la pile suit la seule géométrie du
     panneau (mêmes jetons)."""
 
     html = PAGE.read_text(encoding="utf-8")
     assert "max-height:480px" not in html and "right:136px" not in html
     assert ".panel{position:absolute;z-index:33;top:var(--shell-panel-top);right:var(--shell-gutter);bottom:var(--shell-panel-bottom);width:min(var(--shell-panel-w),calc(100% - 2 * var(--shell-gutter)));" in html
-    offset = "#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)))"
+    offset = "#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + max(min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)),var(--shell-rails-open-w)))"
     assert html.count(offset) == 1
 
 

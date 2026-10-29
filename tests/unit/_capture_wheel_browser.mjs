@@ -97,7 +97,7 @@ const READ=`(()=>{
       controls:Object.fromEntries(Object.entries(view.controls).map(([k,c])=>[k,{state:c.state,action:c.action,pressed:c.pressed,
         captureId:c.captureId,timer:c.timer,captures:(c.captures||[]).map(x=>({id:x.captureId,device:x.device,state:x.state,timer:x.timer}))}])),
       shot:view.shot?{artifact:view.shot.artifact,capture:view.shot.capture&&view.shot.capture.capture_id,device:view.shot.device}:null}:null,
-    boxes:{boardCard:box(q('#boardsButton')),chat:box(q('#chatTab')),
+    boxes:{boardCard:box(q('#boardsButton')),chat:box(q('#chatTab')),railDock:box(q('#railDock')),rail:shown(q('#presentationRail'))?box(q('#presentationRail')):null,
       pills:shown(q('#bgPills'))?box(q('#bgPills')):null,dock:box(q('.dock')),tray:shown(q('#boardDropTray'))?box(q('#boardDropTray')):null,
       scene:shown(q('#sceneLayer>.sc-status'))?box(q('#sceneLayer>.sc-status')):null},
     bareHands:{hud:shown(q('#barehandsHud')),palette:shown(q('#barehandsPalette'))},

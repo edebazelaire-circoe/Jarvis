@@ -988,6 +988,8 @@
       try{if(typeof root.closePanel==='function')root.closePanel()}catch(error){log('close_panel_failed',{error:String(error)},'warn')}
       try{const insp=root.JarvisStudioInspector&&root.JarvisStudioInspector.instance;if(insp&&typeof insp.close==='function')insp.close()}
       catch(error){log('close_inspector_failed',{error:String(error)},'warn')}
+      /* Sous 900 px la bande du Chat et celle des présentations ne tiennent pas côte à côte : le rail se replie (au-dessus, il reste à gauche du Chat). */
+      try{const rail=root.JarvisPresentationRail;if(rail&&typeof rail.closeIfNarrow==='function')rail.closeIfNarrow()}catch(error){log('close_rail_failed',{error:String(error)},'warn')}
       S.open=true;el.panel.hidden=false;el.panel.classList.add('open');
       el.tab.setAttribute('aria-expanded','true');
       store('set',STORAGE.open,'1');

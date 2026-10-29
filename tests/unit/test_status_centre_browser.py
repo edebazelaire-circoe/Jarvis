@@ -59,7 +59,7 @@ BOXES = r"""(()=>{
   const items=[...document.querySelectorAll('#recIndicators .ri-chip, #bgPills .bgpill, #hiddenEye')].map(el=>({id:el.id||el.dataset.bgCat||el.dataset.riKey,box:box(el)})).filter(i=>i.box);
   return {vw:innerWidth,vh:innerHeight,items,eyeHost:!!q('#hiddenEye'),
     card:box(q('#boardsButton')),chatTab:box(q('#chatTab')),rail:box(q('#presentationRail')),
-    railTab:box(q('#presentationRail .jvr-tab')),tray:box(q('#boardDropTray')),chatPanel:box(q('#chatPanel')),
+    railTab:box(q('#presentationRailTab')),railDock:box(q('#railDock')),tray:box(q('#boardDropTray')),chatPanel:box(q('#chatPanel')),
     wheel:box(q('#toolWheel .tw-anchor')),scStatus:box(q('#sceneLayer>.sc-status')),toasts:box(q('#toasts .toast')),
     dock:box(q('.dock')),liveBanner:box(q('#liveBanner')),
     overflowX:document.documentElement.scrollWidth>innerWidth,
@@ -254,8 +254,9 @@ def test_icons_have_label_and_count_not_colour_only(tmp_path):
 def test_recording_indicator_distinct_from_counters_and_stops(tmp_path):
     chip = r"""(()=>{const c=document.querySelector('#recIndicators .ri-chip');if(!c)return null;const r=c.getBoundingClientRect();
       const pills=document.getElementById('bgPills').getBoundingClientRect();
-      return {label:c.getAttribute('aria-label'),text:c.textContent.replace(/\s+/g,' ').trim(),cls:c.className,state:c.dataset.riState,
-        bgpill:c.classList.contains('bgpill'),left:r.left,top:r.top,bottom:r.bottom,pillsTop:pills.top,inCentre:!!c.closest('#statusCentre'),
+      const rail=document.getElementById('presentationRail');
+      return {railLeft:rail&&!rail.hidden?rail.getBoundingClientRect().left:null,label:c.getAttribute('aria-label'),text:c.textContent.replace(/\s+/g,' ').trim(),cls:c.className,state:c.dataset.riState,
+        bgpill:c.classList.contains('bgpill'),left:r.left,right:r.right,top:r.top,bottom:r.bottom,pillsTop:pills.top,inCentre:!!c.closest('#statusCentre'),
         desc:c.getAttribute('aria-describedby')?document.getElementById(c.getAttribute('aria-describedby')).textContent:null}})()"""
     step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": {"captures": [SCREEN_CAPTURE]}, "actions": [
         ["eval", "chip", chip, 1200],
@@ -268,9 +269,9 @@ def test_recording_indicator_distinct_from_counters_and_stops(tmp_path):
     first, second = step["results"]["chip"], step["results"]["chip2"]
     assert first and not first["inCentre"] and not first["bgpill"]
     assert first["state"] == "active" and "REC" in first["text"]
-    # Slice 04 de la refonte roue/dossier (docs/06 › E) : en haut à gauche, loin des pastilles du bas ; un
-    # enregistrement ne se lit pas comme un compteur.
-    assert round(first["left"]) == 18 and round(first["top"]) == 18 and first["bottom"] < first["pillsTop"] / 2
+    # Slice 04 de la refonte roue/dossier (docs/06 › E), puis refonte du 2026-10-29 : en haut à DROITE (le lanceur est en haut à
+    # gauche), loin des pastilles du bas ; un enregistrement ne se lit pas comme un compteur.
+    assert round(1440 - first["right"]) == 18 + (round(1440 - first["railLeft"]) if first["railLeft"] else 0) and round(first["top"]) == 18 and first["bottom"] < first["pillsTop"] / 2
     # Le nom ne bouge pas avec le temps ; la durée est la description (et ce que l'œil lit).
     assert first["label"] == second["label"] and not any(ch.isdigit() for ch in first["label"])
     assert first["desc"].startswith("en cours depuis 1:0")
@@ -311,19 +312,20 @@ def test_no_overlap_with_board_card_rail_chat_tab_tray_at_1440_1280_900_600(meas
     assert seen["theme"] == ("cosmos" if theme == "cosmos" else seen["theme"])
     every = seen["items"]
     ids = [i["id"] for i in every]
-    # L'enregistrement (haut-gauche depuis la Slice 04 de la refonte), quatre pastilles ; au rang 40. Plus d'œil (D06).
+    # L'enregistrement (haut-droite depuis le 2026-10-29), quatre pastilles ; au rang 40. Plus d'œil (D06).
     assert ids == ["jcap_s", "failed", "attention", "done", "said"], ids
     rec = every[0]["box"]
     gutter = 18 if seen["vw"] > 700 else 10
-    assert round(rec["l"]) == gutter and round(rec["t"]) == gutter, rec
-    for name in ("card", "chatTab", "rail", "railTab", "wheel", "dock", "tray", "scStatus"):
+    beside = (seen["vw"] - seen["rail"]["l"]) if seen["rail"] and seen["vw"] > 700 else 0
+    assert round(seen["vw"] - rec["r"]) == gutter + beside and round(rec["t"]) == gutter, (rec, "à gauche de la bande du rail ouverte")
+    for name in ("card", "chatTab", "rail", "railTab", "railDock", "wheel", "dock", "tray", "scStatus"):
         assert not _overlap(rec, seen[name]), ("enregistrement", name, rec, seen[name])
     # Le centre d'état du bas ne tient plus que les pastilles.
     items = every[1:]
     assert seen["eyeHost"] is False
     assert seen["z"] == {"pills": "40", "rec": "40"}
-    others = {name: seen[name] for name in ("card", "chatTab", "rail", "railTab", "wheel")}
-    assert others["card"] and others["chatTab"] and (others["rail"] or others["railTab"]), others
+    others = {name: seen[name] for name in ("card", "chatTab", "rail", "railTab", "railDock", "wheel")}
+    assert others["card"] and others["chatTab"] and others["railTab"] and others["railDock"], others
     for item in items:
         box = item["box"]
         assert 0 <= box["l"] and box["r"] <= seen["vw"] and box["b"] <= seen["vh"], item

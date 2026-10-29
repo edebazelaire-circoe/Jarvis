@@ -470,12 +470,14 @@ async def test_indicators_cover_no_neighbouring_control(stack, tmp_path, width, 
             overlap = min(box["r"], other["r"]) - max(box["l"], other["l"]), min(box["b"], other["b"]) - max(box["t"], other["t"])
             assert not (overlap[0] > 0.5 and overlap[1] > 0.5), (name, box, other)
     anchor = seen["anchor"]["box"]
-    # Haut-gauche depuis la Slice 04 : la colonne de l'ancre (centrée sur le bord gauche) est sous les puces.
+    # Haut-droite depuis le 2026-10-29 : la colonne de l'ancre (centrée sur le bord gauche) est loin des puces.
     assert box["b"] < anchor["t"] or box["l"] > anchor["r"], ("jamais sur l'ancre de la roue", box, anchor)
-    # Slice 04 de la refonte roue/dossier (docs/06 › E) : en haut à gauche, à la gouttière, sous rien.
+    # Slice 04 de la refonte roue/dossier (docs/06 › E), puis refonte du 2026-10-29 : en haut à droite, à la gouttière
+    # (à gauche d'une bande de rail ouverte), le lanceur étant en haut à gauche.
     gutter = 18 if width > 700 else 10
-    assert round(box["l"]) == gutter and round(box["t"]) == gutter, box
-    assert box["r"] <= seen["boxes"]["dock"]["l"], ("jamais sous le lanceur", box, seen["boxes"]["dock"])
+    rail = seen["boxes"].get("rail")
+    assert round(width - box["r"]) == gutter + (round(width - rail["l"]) if rail and width > 700 else 0) and round(box["t"]) == gutter, box
+    assert box["l"] >= seen["boxes"]["dock"]["r"], ("jamais sous le lanceur", box, seen["boxes"]["dock"])
     assert seen["overflowX"] is False
     for row in stack.core.captures.status().captures:
         await stack.core.captures.stop(row.capture_id)

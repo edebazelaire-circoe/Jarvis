@@ -908,16 +908,18 @@ page (drop of a link) --JSON--> CC POST /api/boards/drop-link --> Core POST /v1/
   `/*__CONTROL_CENTER_CHAT_JS__*/` of `control_center.html`, replaced by
   `control_center.py` like `LIVE_SCRIPT_MARKER`. `control_center_timeline.js`
   and its tests are not modified.
-- A **Chat** tab fixed bottom right (`right:18px; bottom:18px`), outside the
-  centred vertical dock (gone since the orbital UI: the tools are a top-right
-  launcher, [control-center-shell.md](control-center-shell.md) › *Global
-  launcher*; the tab is the `#chatTab` host of the shell's `bottom-right` zone). Toasts, bottom right today, move above the tab
-  (`bottom` = 18 px + tab height + 10 px); their existing offset when a panel
-  is open still applies.
-- Panel `<section class="panel chat-panel" id="chatPanel">` reusing `.panel`
-  and its tokens; one side panel open at a time (opening `#panel` closes the
-  Chat and back). Horizontal slide from the right, off under
-  `prefers-reduced-motion`.
+- Since 2026-10-29 the **Chat button** is an icon (a speech bubble, `#chatTab`, still the control the Chat module
+  drives: `aria-expanded`, `aria-controls="chatPanel"`, focus returns to it on Esc) in the `#railDock` at the **right edge**,
+  vertically centred, just **below** the « Présentations » button; the old bottom-right « CHAT » text tab is gone
+  ([control-center-shell.md](control-center-shell.md) › *Right bands*). The dock steps left of the open bands.
+- Panel `<section class="panel chat-panel" id="chatPanel">` reusing `.panel` (rank 33) and its tokens, but drawn as a **full-height
+  band** at the right edge: `top:0; bottom:0; right:0`, `--shell-chat-w` (500 px, the old panel width) wide, no rounded corner, the shared band skin
+  (`--shell-band-*`: translucent black, fine texture, slight shadow) in both themes. It is **always the rightmost band**: the
+  workspace rail (272 px) sits just left of it when both are open (`--shell-chat-open-w`). Under 900 px they do not fit side by side:
+  opening the Chat folds the rail (`JarvisPresentationRail.closeIfNarrow`), opening the rail closes the Chat. One *side panel* at a
+  time still holds for `#panel` and the Studio inspector (opening `#panel` closes the Chat and back). Horizontal slide from the right,
+  off under `prefers-reduced-motion`. The old « stops 68 px above the tab » rule is gone (the tab is no longer at the bottom); at 700 px and below the band, like any side panel,
+  runs from `--shell-panel-top` to `--shell-panel-bottom` so the launcher row and the status centre stay clear.
 - User and Brain bubbles through `textContent` (never HTML from content), line
   breaks kept. Multi-line composer: Enter sends, Shift+Enter breaks a line;
   Send button; no double send (button inert during the request, same
@@ -934,28 +936,14 @@ page (drop of a link) --JSON--> CC POST /api/boards/drop-link --> Core POST /v1/
 - A « Voir la chronologie complète » link opens the existing timeline
   (`#openTimeline`).
 
-Implementation (Slice 06), beyond the rules above:
+Implementation (Slice 06), beyond the rules above (the bottom-right tab rules of Slice 06 are superseded by the 2026-10-29 band; what remains):
 
-- Tab 52 × 40 px, aligned with the dock column. Toasts sit left of the dock
-  column (`right: 86px`) above the tab row (`bottom: 68px` = 18 + 40 + 10), so
-  they never cover the tab, the dock (AGT) or the pills; Cosmos (dock and pills
-  at the top): `right: 18px; bottom: 68px`. When background pills are shown
-  (default theme, column under the dock) the tab moves left of them
-  (`right: 70px`). The Chat panel always stops at `bottom: 68px`, above the
-  tab. Below 940 px wide with the Chat open, toasts sit under the panel header
+- Toasts sit left of the open bands above 700 px (`right: gutter + --shell-rails-open-w + 12px`) and, from 940 px with a side
+  panel open, left of the panel. Below 940 px wide with the Chat open, toasts sit under the panel header
   and status line (`--chat-toasts-top`, measured by the view): never over the
-  composer, the title or ×. At 700 px wide or less with the Chat closed, the
-  bottom-left Board card (before it, the interaction-mode button) leaves the
-  left rail (`left: 84px`, up to ~260 px) and the bottom stack covered it
-  (115 × 41 px at 500 × 700): toasts then sit at the top, under the launcher
-  row, still left of the dock, so they cover neither that card nor the tab; while the GPT-Live banner is shown
-  (same place, stop button) they stay at the bottom. At 480 px high or less (and ≥ 940 px wide) the
-  dock turns into rows and the panel moves to `right: 136px`; the toast stack
-  moves left by the same 50 px (it overlapped the panel by 38 px and hid the
-  « Entrée » hint at 1024×480). Since the orbital UI Slice 06 there is no
-  bottom-centre F9 voice hint any more; the bottom status centre stays visible
-  with the Chat open (its top, 62 px, is below the panel's bottom, 68 px) and
-  re-centres in the free space left of the panel from 1100 px up.
+  composer, the title or ×. At 700 px wide or less with the Chat closed, toasts sit at the top, under the launcher
+  row (now top-left). The bottom status centre stays visible with the Chat open and
+  re-centres in the free space left of the bands (`--shell-rails-open-w`).
 - One side panel: `openPanel` / `closePanel` of the page close the Chat;
   opening the Chat calls `closePanel` and closes the Studio inspector, whose
   own opening calls `closePanel`. Esc in the panel closes it and gives focus
