@@ -1247,8 +1247,10 @@ async def _wake(runtime, wakeword, journal):
     return run_task
 
 
-async def test_nothing_is_spoken_once_voice_returned_to_background(monkeypatch):
-    """Décision 33 : un résultat arrivé après le mute ne réveille pas la surface."""
+async def test_a_result_after_a_manual_mute_is_not_said_by_the_dead_session_but_wakes_the_voice(monkeypatch):
+    """Décision 33, amendée le 2026-10-29 : la fin d'une tâche entière rouvre la séance même après une coupure
+    volontaire (« je ne me réveille qu'au Hey Jarvis ou si je reçois une notification de tâche complète »).
+    La séance fermée, elle, ne dit rien : c'est la séance rouverte qui parle."""
 
     journal = RecordingJournal()
     runtime, wakeword, core, session = _runtime(monkeypatch, journal=journal)
@@ -1263,12 +1265,13 @@ async def test_nothing_is_spoken_once_voice_returned_to_background(monkeypatch):
         await runtime.mute()
         assert runtime.runtime.state is VoiceLifecycleState.BACKGROUND
         assert journal.of("voice.speech.expired")[0]["data"]["reason"] == "voice_background"
+        assert session.spoken == []  # la file de la séance fermée est périmée, pas dite
 
-        # Le cerveau termine après le retour au fond : personne ne l'entend, et
-        # rien n'est prononcé sans une nouvelle activation.
+        # Le cerveau termine après la coupure : une séance neuve s'ouvre et dit le compte rendu.
+        await journal.wait_until(lambda: core.subscriptions >= 1)
         await core.publish(speech_envelope("Et voici le détail.", kind=SpeechKind.RESULT, created_offset_s=5))
-        await asyncio.sleep(0.05)
-        assert session.spoken == []
+        await journal.wait_until(lambda: journal.count("audio.start") == 2)
+        await journal.wait_until(lambda: "Et voici le détail." in session.texts())
         assert core.turns == []
     finally:
         run_task.cancel()

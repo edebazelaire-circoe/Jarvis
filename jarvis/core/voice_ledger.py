@@ -89,6 +89,19 @@ class VoiceLedgerService:
             result = ledger.state.bind_session(session_id)
             return self._response(conversation_id, ledger, result=asdict(result))
 
+    async def settle_unconfirmed_close(self, conversation_id: str) -> dict:
+        """Voice a constaté, par Core, que la séance Live restée incertaine est soldée : le registre la solde aussi."""
+
+        await self._known_conversation(conversation_id)
+        async with self._lock:
+            ledger = await self._ledger(conversation_id)
+            if ledger is None:
+                return {"conversation_id": conversation_id, "settled": False}
+            settled = ledger.state.settle_unconfirmed_close()
+            if settled:
+                await self._conversations.state.save_voice_snapshot(ledger.state.snapshot)
+            return self._response(conversation_id, ledger, settled=settled)
+
     async def ingest(self, conversation_id: str, session_id: str, payloads: object) -> dict:
         await self._known_conversation(conversation_id)
         state_id(session_id, "session_id")

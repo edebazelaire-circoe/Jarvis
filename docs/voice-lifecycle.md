@@ -78,8 +78,23 @@ Transitions (delays are settings, see below; defaults 10 s and 30 s):
    and retains one thing: a durable brain `result` / `error` speech request (`is_task_completion_speech`). Voice then
    opens a session (`activate(trigger="completion")`, no greeting, SLEEP clock restarts) and
    `SpeechScheduler.announce_missed_result` says it with the same speech id, bound to the new session's current
-   intent. Then the normal timers apply. Exception kept from Decision 33: what the user muted by hand is not caught
-   up by a surprise wake (the watcher stays quiet after an explicit mute until the next wake).
+   intent. Then the normal timers apply. This also holds after a manual mute (F9, « Passer au chat »): the user's rule is
+   « I only wake on Hey Jarvis or on a whole-task notification », which amends Decision 33. Only the voice switched Off
+   (no Voice process) never wakes.
+
+### A close the provider never confirms
+
+Closing every 10 s exposes GPT-Live's `session.close` flakiness: measured on real GPT-Live, 3 closes out of 12 on the
+code before this series (`569cd2cd`) and 5 out of 20 after it were never confirmed (`session.closed` missing after 5 s,
+`unknown_reap_required`) — a provider behaviour, not caused by IDLE. The recovery is bounded and loop-free
+(`PersistentVoiceRuntime._recover_unconfirmed_close`): Core's durable reaper owns it first (sideband attach, Voice
+releases itself as soon as Core holds no unresolved Live session, and returns to the rest level it was closing to);
+after `UNCONFIRMED_CLOSE_ACK_AFTER_S` (8 s) without result, Voice acknowledges the close in the user's place (same route
+as the Control Center button, `operator_acknowledged`, traced `voice.live_close_auto_acknowledged`) because its websocket
+is cut on our side and Core's single-unresolved-session index forbids any opening before. It then asks Core to settle
+the voice ledger (`POST /v1/conversations/{id}/voice/session/settle`, only for an uncertain lifecycle), otherwise the next
+bind is refused (`voice_ledger_bind_rejected`). Automatic openings (speech, end of task) never crash Voice: a failure is
+traced `voice.unattended_activation_failed` and the voice rests.
 
 ### Notifications: whole tasks only
 

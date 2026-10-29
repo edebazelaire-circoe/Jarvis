@@ -222,6 +222,12 @@ class LocalCoreClient:
                                 json={"session_id": session_id}) as response:
             return await self._json(response)
 
+    async def settle_voice_session(self, conversation_id: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.post(self.base_url + f"/v1/conversations/{conversation_id}/voice/session/settle",
+                                headers=self.headers, json={}) as response:
+            return await self._json(response)
+
     async def submit_voice_observations(self, conversation_id: str, session_id: str, events: list[dict]) -> dict[str, Any]:
         session = await self._http()
         async with session.post(self.base_url + f"/v1/conversations/{conversation_id}/voice/observations", headers=self.headers,

@@ -45,6 +45,11 @@ IDLE_SAFE_POINT_MAX_S = 15.0
 #: n'est pas fermée dans ce délai après la fin de la parole de l'utilisateur. Fermer pendant que le
 #: fournisseur prépare sa réponse perdait la réponse, et la fermeture n'était plus confirmée.
 IDLE_AWAIT_REPLY_S = 12.0
+#: Une fermeture fournisseur que ni Voice ni le réapeur de Core n'ont confirmée au bout de ce délai est
+#: constatée fermée à la place de l'utilisateur (le bouton « CONFIRMER : SESSION FERMÉE » du Control Center) :
+#: le websocket est coupé de notre côté, et l'index « une seule session Live non résolue » de Core empêche toute
+#: ouverture tant que l'ancienne n'est pas soldée. Sans cela une fermeture ratée bloquait la voix pour de bon.
+UNCONFIRMED_CLOSE_ACK_AFTER_S = 8.0
 
 def activation_source_for_label(label: object, *, manual_key: str = "f9") -> ExplicitAddressSource | None:
     """UN seul endroit où l'étiquette d'un détecteur devient une source d'activation.
@@ -211,6 +216,8 @@ class PersistentVoiceRuntime:
         self._idle_blocked_since = None
         self._last_user_voice_at = None
         self._last_output_at = None
+        self._unconfirmed_close_since = None
+        self._unconfirmed_close_reason = None
         #: Comptes rendus de fin de tâche reçus au repos, à faire dire par la séance qui s'ouvre.
         self._pending_completions: list[dict[str, object]] = []
         self._completion_wake = asyncio.Event()
@@ -601,7 +608,7 @@ class PersistentVoiceRuntime:
                     # Do not retry it at scheduler speed while no bridge can
                     # make progress; the durable Live reaper owns recovery.
                     if self._pending_canonical_close is not None:
-                        if await self._release_if_core_resolved():
+                        if await self._recover_unconfirmed_close():
                             continue
                         try:
                             await asyncio.wait_for(self._stop.wait(), timeout=self.PENDING_CLOSE_RECHECK_S)
@@ -1701,13 +1708,16 @@ class PersistentVoiceRuntime:
         self._enter_rest(RestLevel.IDLE if idle_close else RestLevel.SLEEP,
                          reason=getattr(reason, "value", str(reason)))
         if self._completion_watcher is not None:
-            # Décision 33 : ce que l'utilisateur a coupé lui-même (touche, « Passer au chat ») ne se
-            # rattrape pas par une reprise surprise. Tout autre retour au repos (inactivité, panne,
-            # changement de Board) laisse une fin de tâche entière rouvrir la séance.
-            self._completion_watcher.listening = reason is not VoiceStopReason.USER
+            # Consigne de l'utilisateur (2026-10-29), qui amende la Décision 33 : « je ne me réveille qu'au
+            # Hey Jarvis ou si je reçois une notification de tâche complète ». Une fin de tâche entière
+            # rouvre donc la séance après tout retour au repos, coupure volontaire comprise. Seule la voix
+            # coupée (Off) l'empêche : Voice n'est alors plus lancée.
+            self._completion_watcher.listening = True
         self._trace("voice.background", "Voice returned to background", data={"rest": self._rest.value})
 
     async def _close_provider_session(self, session, *, reason=None) -> bool:
+        if reason is not None and self._unconfirmed_close_reason is None:  # la première raison, pas celle des relectures
+            self._unconfirmed_close_reason = reason
         stop = getattr(session, "stop", None)
         result = await stop(reason) if reason is not None and callable(stop) else await session.close()
         if isinstance(result, VoiceOperationResult) and (
@@ -2134,9 +2144,76 @@ class PersistentVoiceRuntime:
             return False
         self._trace("voice.live_close_released", "Core no longer holds an unresolved Live session",
                     data={"code": "voice_close_resolved_by_core"})
+        self._unconfirmed_close_since = None
+        await self._settle_voice_ledger()
         self.runtime.state = VoiceLifecycleState.BACKGROUND
-        await self.mute()
+        # Avec la raison d'origine : une séance fermée pour inactivité retrouve IDLE, pas SLEEP.
+        released_reason, self._unconfirmed_close_reason = self._unconfirmed_close_reason, None
+        await self.mute(released_reason)
         return True
+
+    async def _settle_voice_ledger(self) -> None:
+        """Core ne tient plus de séance Live en suspens : son registre vocal ne doit plus tenir l'ancienne pour incertaine.
+
+        Sans cela la liaison de la séance suivante est refusée (`voice_ledger_bind_rejected`) même une fois
+        la fermeture soldée. Au mieux : un échec est tracé, la séance suivante le dira.
+        """
+
+        settle = getattr(self.core, "settle_voice_session", None)
+        conversation_id = self.runtime.conversation_id
+        if not callable(settle) or conversation_id is None:
+            return
+        try:
+            answer = await settle(conversation_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - best effort
+            self._trace("voice.live_close_ledger_settle_failed", f"Registre vocal non soldé : {type(exc).__name__}",
+                        level="warning", data={"code": "voice_ledger_settle_failed", "exception_type": type(exc).__name__})
+            return
+        self._trace("voice.live_close_ledger_settled", "Registre vocal soldé après fermeture incertaine",
+                    data={"settled": bool(isinstance(answer, dict) and answer.get("settled"))})
+
+    async def _recover_unconfirmed_close(self) -> bool:
+        """Sortir d'une fermeture fournisseur non confirmée, sans boucle infinie ni voix bloquée.
+
+        1. Core seul est juge : son réapeur durable attache la séance par le canal latéral et la solde ;
+           Voice se libère dès qu'il n'a plus de séance en suspens (`_release_if_core_resolved`).
+        2. Au bout de `UNCONFIRMED_CLOSE_ACK_AFTER_S` sans solde, la fermeture est constatée à la place de
+           l'utilisateur (même route que son bouton, `operator_acknowledged`, usage conservé non final) et
+           tracée en avertissement ; la voix peut alors se rouvrir. Une fois par épisode, puis relecture.
+        """
+
+        if await self._release_if_core_resolved():
+            return True
+        now = self.clock.now()
+        if self._unconfirmed_close_since is None:
+            self._unconfirmed_close_since = now
+            self._trace("voice.live_close_unconfirmed", "Fermeture fournisseur non confirmée : Core la reprend",
+                        level="warning", data={"code": "voice_close_unconfirmed_handed_to_core"})
+            return False
+        if (now - self._unconfirmed_close_since).total_seconds() < UNCONFIRMED_CLOSE_ACK_AFTER_S:
+            return False
+        reader = getattr(self.core, "live_session_status", None)
+        acknowledge = getattr(self.core, "acknowledge_live_session_closed", None)
+        if not callable(reader) or not callable(acknowledge):
+            return False
+        self._unconfirmed_close_since = now  # un nouvel essai dans le même délai, jamais en rafale
+        try:
+            record = await reader()
+            if record is not None:
+                await acknowledge(getattr(record, "session_id", None) or record["session_id"])
+                self._trace("voice.live_close_auto_acknowledged",
+                            "Fermeture jamais confirmée : constatée fermée (websocket coupé de notre côté)",
+                            level="warning", data={"code": "voice_close_auto_acknowledged",
+                                                   "after_s": UNCONFIRMED_CLOSE_ACK_AFTER_S})
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: the next episode retries, the voice stays blocked meanwhile
+            self._trace("voice.live_close_ack_failed", f"Constat de fermeture impossible : {type(exc).__name__}",
+                        level="error", data={"code": "voice_close_ack_failed", "exception_type": type(exc).__name__})
+            return False
+        return await self._release_if_core_resolved()
 
     def accept_reaped_live_close(self) -> bool:
         """Release a local Live facade only after Core proves no unresolved lease."""

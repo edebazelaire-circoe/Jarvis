@@ -104,6 +104,20 @@ class VoiceConversationState:
         )
         return result
 
+    def settle_unconfirmed_close(self) -> bool:
+        """Solder une fermeture jamais confirmée que le cycle de vie Live de Core a, lui, soldée.
+
+        Seul `UNKNOWN_REAP_REQUIRED` (ou `STOPPING`) est concerné : la séance n'a jamais rendu son évènement de
+        fin, donc le registre la tient pour incertaine et refuse toute nouvelle liaison
+        (`voice_state_close_required`). L'appelant (Voice) n'y vient qu'une fois que Core a prouvé qu'aucune
+        séance Live n'est en suspens. Une séance active n'est jamais soldée ici.
+        """
+
+        if self.snapshot.lifecycle not in (FrontendState.UNKNOWN_REAP_REQUIRED, FrontendState.STOPPING):
+            return False
+        self._snapshot = replace(self.snapshot, lifecycle=FrontendState.STOPPED, revision=self.snapshot.revision + 1)
+        return True
+
     def bind_session(self, session_id: str) -> VoiceStateResult:
         state_id(session_id, "session_id")
         if self.snapshot.current_session_id == session_id:

@@ -448,3 +448,15 @@ def test_runtime_journal_records_safe_normal_drop_divergence_and_failure_evidenc
     assert [row["data"]["code"] for row in read_jsonl_tail(journal.error_path)] == [VoiceErrorCode.TRANSPORT.value]
     assert "PRIVATE_" not in json.dumps(rows)
     assert all("revision" in row["data"] and "session_id" in row["data"] for row in rows)
+
+
+def test_an_unconfirmed_close_settled_by_core_lets_the_next_session_bind():
+    h = StateHarness()
+    h.apply(FrontendLifecycleChanged(FrontendState.STARTING), SESSION)
+    h.apply(FrontendLifecycleChanged(FrontendState.ACTIVE), SESSION)
+    h.apply(FrontendLifecycleChanged(FrontendState.UNKNOWN_REAP_REQUIRED), SESSION)
+    assert h.state.bind_session("session-b").code == "voice_state_close_required"
+    assert h.state.settle_unconfirmed_close() is True
+    assert h.state.bind_session("session-b").disposition == Disposition.APPLIED
+    # Une séance active n'est jamais soldée de cette façon.
+    assert h.state.settle_unconfirmed_close() is False

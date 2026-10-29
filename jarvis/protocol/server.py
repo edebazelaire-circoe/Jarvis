@@ -195,6 +195,7 @@ class LocalProtocolServer:
             web.get("/v1/conversations/{conversation_id}/outcomes/{outcome_id}", self.get_brain_outcome),
             web.post("/v1/conversations/{conversation_id}/outcomes/{outcome_id}/select", self.select_brain_outcome),
             web.post("/v1/conversations/{conversation_id}/voice/session", self.bind_voice_session),
+            web.post("/v1/conversations/{conversation_id}/voice/session/settle", self.settle_voice_session),
             web.post("/v1/conversations/{conversation_id}/voice/observations", self.submit_voice_observations),
             web.post("/v1/conversations/{conversation_id}/voice/admitted-turns", self.admit_voice_turn),
             web.post("/v1/conversations/{conversation_id}/back-brain/tasks", self.submit_back_brain_task),
@@ -410,6 +411,13 @@ class LocalProtocolServer:
             return unavailable
         body = await self._voice_body(request, {"session_id"})
         return web.json_response(await self.core.voice_ledger.bind_session(request.match_info["conversation_id"], body["session_id"]))
+
+    async def settle_voice_session(self, request: web.Request) -> web.Response:
+        unavailable = self._voice_unavailable()
+        if unavailable is not None:
+            return unavailable
+        await self._voice_body(request, set())
+        return web.json_response(await self.core.voice_ledger.settle_unconfirmed_close(request.match_info["conversation_id"]))
 
     async def submit_voice_observations(self, request: web.Request) -> web.Response:
         unavailable = self._voice_unavailable()

@@ -303,8 +303,8 @@ async def test_a_progress_or_an_acknowledgement_never_wakes_the_voice(monkeypatc
         await _stop(run_task)
 
 
-async def test_a_result_arriving_after_a_user_mute_does_not_wake_the_voice(monkeypatch):
-    """Décision 33 : ce que l'utilisateur a coupé lui-même ne se rattrape pas par une reprise surprise."""
+async def test_a_result_arriving_after_a_user_mute_still_wakes_the_voice(monkeypatch):
+    """Consigne de l'utilisateur : une fin de tâche entière réveille même après F9 / « Passer au chat »."""
 
     journal, clock = RecordingJournal(), FakeClock()
     runtime, wakeword, core, session = _runtime(monkeypatch, journal=journal, clock=clock)
@@ -312,10 +312,11 @@ async def test_a_result_arriving_after_a_user_mute_does_not_wake_the_voice(monke
     try:
         await _wake(runtime, wakeword, journal)
         await runtime.mute()
+        assert runtime.rest_level is RestLevel.SLEEP
         await journal.wait_until(lambda: core.subscriptions >= 1)
         await core.publish(speech_envelope("Fini.", kind=SpeechKind.RESULT))
-        await _sleep_for_a_while()
-        assert journal.count("audio.start") == 1
+        await journal.wait_until(lambda: journal.count("audio.start") == 2)
+        await journal.wait_until(lambda: "Fini." in session.texts())
     finally:
         await _stop(run_task)
 
@@ -539,5 +540,128 @@ async def test_an_automatic_reopening_that_fails_leaves_the_voice_resting_instea
         await journal.wait_until(lambda: journal.count("voice.unattended_activation_failed") == 1)
         assert not run_task.done()  # Voice vit toujours : le lanceur n'a pas à la relancer
         assert runtime.runtime.state is not VoiceLifecycleState.ACTIVE
+    finally:
+        await _stop(run_task)
+
+
+# ---------------------------------------------------------------------------
+# Une fermeture fournisseur jamais confirmée ne bloque pas la voix pour de bon
+# ---------------------------------------------------------------------------
+
+
+class UnconfirmedCloseSession(FakeVoiceSession):
+    """Séance dont le fournisseur n'envoie jamais `session.closed` : `stop()` rend UNKNOWN, comme GPT-Live."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._lifecycle_owner = object()
+        self.stops = 0
+
+    async def stop(self, reason=None):  # noqa: ANN001, ANN201
+        from jarvis.domain.voice_frontend import (
+            FrontendState, VoiceCorrelation, VoiceErrorCode, VoiceFrontendError, VoiceOperation,
+            VoiceOperationId, VoiceOperationKind, VoiceOperationResult, VoiceOperationStatus, VoiceSessionId,
+        )
+
+        self.stops += 1
+        operation = VoiceOperation(VoiceOperationId(f"stop-{self.stops}"), VoiceCorrelation(VoiceSessionId("s")))
+        error = VoiceFrontendError(VoiceErrorCode.CLOSE_UNCONFIRMED, VoiceOperationKind.STOP,
+                                   FrontendState.UNKNOWN_REAP_REQUIRED)
+        return VoiceOperationResult(operation, VoiceOperationKind.STOP, VoiceOperationStatus.UNKNOWN,
+                                    FrontendState.UNKNOWN_REAP_REQUIRED, error)
+
+
+class CoreHoldingTheSession:
+    """Core vu de Voice : une séance non résolue tant que le réapeur n'a pas réussi (ou que Voice ne la constate pas fermée)."""
+
+    def __init__(self, core: FakeCore, *, reaper_succeeds: bool) -> None:
+        self.core, self.held, self.acknowledged = core, True, []
+        self.reaper_succeeds = reaper_succeeds
+
+    def __getattr__(self, name):  # noqa: ANN001, ANN204
+        return getattr(self.core, name)
+
+    async def live_session_status(self):  # noqa: ANN201
+        from types import SimpleNamespace
+
+        return SimpleNamespace(session_id="live-1") if self.held else None
+
+    async def acknowledge_live_session_closed(self, session_id):  # noqa: ANN001, ANN201
+        self.acknowledged.append(session_id)
+        self.held = False
+
+    async def settle_voice_session(self, conversation_id):  # noqa: ANN001, ANN201
+        self.settled = getattr(self, 'settled', []) + [conversation_id]
+        return {'settled': True}
+
+    def reaper_closes_it(self) -> None:
+        self.held = False
+
+
+async def _runtime_with_unconfirmed_close(monkeypatch, *, journal, clock):
+    FakeAudio.instances.clear()
+    monkeypatch.setattr(realtime_audio, "SoundDeviceRealtimeAudio", FakeAudio)
+    monkeypatch.setattr(voice_v2, "SPEECH_WAKE_GRACE_S", 0.05)
+    monkeypatch.setattr(PersistentVoiceRuntime, "PENDING_CLOSE_RECHECK_S", 0.02)
+    clock.value = utc_now()
+    wakeword, core = RestWakeWord(), CoreHoldingTheSession(FakeCore(), reaper_succeeds=False)
+    sessions = [UnconfirmedCloseSession(), FakeVoiceSession()]
+
+    async def factory(context):
+        del context
+        return sessions.pop(0)
+
+    runtime = PersistentVoiceRuntime(
+        wakeword=wakeword, core=core, realtime_factory=factory, active_timeout_s=IDLE_AFTER_S,
+        sleep_timeout_s=SLEEP_AFTER_S, clock=clock, journal=journal, auto_turn=True,
+        voice_arch=VoiceArchitecture.CONTINUOUS_BRAIN, greet_on_first_wake=False,
+    )
+    return runtime, wakeword, core
+
+
+async def test_a_close_the_provider_never_confirms_is_released_when_the_core_reaper_settles_it(monkeypatch):
+    journal, clock = RecordingJournal(), FakeClock()
+    runtime, wakeword, core = await _runtime_with_unconfirmed_close(monkeypatch, journal=journal, clock=clock)
+    run_task = asyncio.create_task(runtime.run())
+    try:
+        await _wake(runtime, wakeword, journal)
+        clock.advance(IDLE_AFTER_S + 1)
+        await runtime.check_timeout()
+        assert runtime.runtime.state is VoiceLifecycleState.ERROR  # fermeture non confirmée : pas de nouvelle séance
+        await journal.wait_until(lambda: journal.count("voice.live_close_unconfirmed") == 1)
+        core.reaper_closes_it()  # le réapeur durable de Core a attaché la séance et l'a soldée
+        await journal.wait_until(lambda: journal.count("voice.live_close_released") == 1)
+        await journal.wait_until(lambda: journal.count("voice.background") == 1)
+        assert runtime.runtime.state is VoiceLifecycleState.BACKGROUND
+        assert runtime.rest_level is RestLevel.IDLE  # la raison d'origine est gardée : la parole peut rouvrir
+        assert core.acknowledged == []  # Voice n'a rien constaté à la place de Core
+        wakeword.preroll = (b"\x05\x00" * 16000, 16000)
+        await wakeword.queue.put(SPEECH_LABEL)
+        await journal.wait_until(lambda: journal.count("audio.start") == 2)
+    finally:
+        await _stop(run_task)
+
+
+async def test_a_close_nobody_confirms_is_acknowledged_after_the_bound_and_the_voice_reopens(monkeypatch):
+    journal, clock = RecordingJournal(), FakeClock()
+    runtime, wakeword, core = await _runtime_with_unconfirmed_close(monkeypatch, journal=journal, clock=clock)
+    run_task = asyncio.create_task(runtime.run())
+    try:
+        await _wake(runtime, wakeword, journal)
+        clock.advance(IDLE_AFTER_S + 1)
+        await runtime.check_timeout()
+        await journal.wait_until(lambda: journal.count("voice.live_close_unconfirmed") == 1)
+        await asyncio.sleep(0.1)
+        assert core.acknowledged == [] and runtime.runtime.state is VoiceLifecycleState.ERROR  # borne pas atteinte
+        clock.advance(voice_v2.UNCONFIRMED_CLOSE_ACK_AFTER_S + 1)
+        await journal.wait_until(lambda: journal.count("voice.live_close_auto_acknowledged") == 1)
+        assert core.acknowledged == ["live-1"]  # une fois, sans boucle
+        await journal.wait_until(lambda: journal.count("voice.live_close_ledger_settled") == 1)
+        assert len(core.settled) == 1  # le registre vocal de Core est soldé avant la séance suivante
+        await journal.wait_until(lambda: runtime.runtime.state is VoiceLifecycleState.BACKGROUND)
+        await wakeword.queue.put("jarvis")  # « Hey Jarvis » rouvre une séance neuve
+        await journal.wait_until(lambda: journal.count("audio.start") == 2)
+        assert runtime.runtime.state is VoiceLifecycleState.ACTIVE
+        assert journal.count("voice.live_close_auto_acknowledged") == 1
     finally:
         await _stop(run_task)
