@@ -109,7 +109,18 @@
     mutate:(board,op)=>`/api/workspace/boards/${seg(board)}/memory/${op}`,
     artifact:id=>`/api/artifacts/${seg(id)}${query({text_chars:ARTIFACT_TEXT_CHARS})}`,
     payload:id=>`/api/artifacts/${seg(id)}/payload`,
+    memoryImage:(board,path)=>`/api/workspace/boards/${seg(board)}/memory/image${query({path})}`,
   });
+  /* Image montrable d'une entrée (grille du Dossier, 2026-10-29) : le payload d'un Artifact image complet, ou une image
+     matricielle de la mémoire (route d'octets bornée de Core ; jamais un SVG, document actif). Sinon `null` : une icône. */
+  const RASTER=/\.(png|jpe?g|gif|webp|bmp)$/i;
+  function imageUrlOf(entry,board){
+    if(!isObject(entry)||entry.kind!=='image')return null;
+    if(entry.source==='artifact'&&entry.open==='media'&&entry.state==='complete'&&text(entry.entry_id).startsWith('artifact:'))
+      return PATHS.payload(text(entry.entry_id).slice('artifact:'.length));
+    if(entry.source==='memory'&&board&&RASTER.test(text(entry.path)))return PATHS.memoryImage(board,text(entry.path));
+    return null;
+  }
   const MUTATIONS=Object.freeze(['write','move','delete']);
   /* GET : la liste, une entrée, la lecture et la recherche de la mémoire, un Artifact ; POST : Afficher sur le
      Board et les trois mutations de mémoire. Une adresse absolue de la page, aucun segment vide, `.` ou `..`. */
@@ -463,7 +474,7 @@
   }
   const api=Object.freeze({
     DEADLINE_MS,LIST_LIMIT,READ_BYTES,MAX_EDIT_BYTES,MAX_TABS,PAIR_WINDOW_MS,SPLIT_MIN_PX,NARROW_PX,WIDE_PX,
-    COMMAND_ROUTE,PAGE_TOKEN_HEADER,BOARD_KINDS,COLLECTIONS,KIND_LABELS,ERRORS,REPRESENTATIONS,PATHS,
+    COMMAND_ROUTE,PAGE_TOKEN_HEADER,BOARD_KINDS,COLLECTIONS,KIND_LABELS,ERRORS,REPRESENTATIONS,PATHS,imageUrlOf,
     errorOf,allowed,createClient,collectionOf,collectionOfEntry,organize,filterEntries,entriesOfSection,splitMachine,inline,markdownBlocks,leadHeading,
     openTab,closeTab,layoutFor,pairFor,editGuard,EDIT_IN_PROGRESS,writeOutcome,presentOutcome,capabilities,safeLinkUrl,openDecision,rebindOnSwitch,
     relativeTime,absoluteTime,formatBytes,sourceLine,researchLine,

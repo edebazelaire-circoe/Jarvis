@@ -638,6 +638,18 @@ class WorkspaceService:
         return {"board_id": board_id, "path": text.path, "text": text.text, "offset": text.offset,
                 "next_offset": text.next_offset, "size": text.size, "eof": text.eof, "sha256": text.sha256}
 
+    async def memory_image(self, board_id: str, *, path: str) -> tuple[bytes, str]:
+        """Octets d'une image de la mémoire, pour la grille du Dossier (`BoardMemoryStore.read_image`)."""
+
+        target = BoardMemoryPath.parse(path)
+        started = time.monotonic()
+        board_id, exists = await self._memory_board(board_id)
+        if not exists:
+            raise self._missing(target)
+        data, mime = await asyncio.to_thread(self._memory.read_image, board_id, target)
+        self._read("memory_image", started, board_id=board_id, bytes=len(data))
+        return data, mime
+
     async def memory_search(self, board_id: str, *, query: str, path: str | None = None,
                             limit: int = DEFAULT_SEARCH_LIMIT) -> dict[str, Any]:
         check_limit("limit", limit, 1, MAX_SEARCH_LIMIT)

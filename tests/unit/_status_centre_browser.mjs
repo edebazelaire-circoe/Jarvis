@@ -87,8 +87,8 @@ const SERVER=`(()=>{
   /* Le getter rend l'adresse de la route, comme le navigateur la resoudrait : la page compare sa source a l'URL qu'elle a posee. */
   Object.defineProperty(HTMLImageElement.prototype,'src',{configurable:true,enumerable:true,get(){return this.__jvRoute||srcDesc.get.call(this)},set(v){
     this.__jvRoute=null;
-    const m=String(v).match(/^\\/api\\/artifacts\\/([^/]+)\\/payload$/);
-    if(m){S.payloads.push(m[1]);this.__jvRoute=new URL(String(v),location.href).href;v='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(S.previews[m[1]]||slide('#134e5e','#71b280','Capture'));}
+    const m=String(v).match(/^\\/api\\/artifacts\\/([^/]+)\\/payload$/)||String(v).match(/^\\/api\\/workspace\\/boards\\/[^/]+\\/memory\\/image\\?path=(.+)$/);
+    if(m){S.payloads.push(decodeURIComponent(m[1]));this.__jvRoute=new URL(String(v),location.href).href;v='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(S.previews[m[1]]||slide('#134e5e','#71b280','Capture'));}
     srcDesc.set.call(this,v)}});
   /* Vignettes vidéo (2026-10-29) : la même route, doublée pour un <video> quand le seed en fournit les octets (videos, id -> data:).
      Sans seed, l'adresse part telle quelle et échoue : la page retombe sur sa vignette typée, comme face à un Core muet. */

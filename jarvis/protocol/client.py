@@ -74,6 +74,8 @@ UPLOAD_PATH = re.compile(r"/v1/uploads/[A-Za-z0-9][A-Za-z0-9_-]{7,127}")
 ANNOTATION_PATH = re.compile(r"/v1/artifacts/[A-Za-z0-9_%-]{1,200}/annotations")
 #: Seule route relayée en octets (`forward_bytes`) : le payload d'un Artifact, pour l'interface.
 PAYLOAD_ROUTE_SUFFIX = "/payload"
+#: ... et, depuis le 2026-10-29, l'image matricielle de la mémoire d'un Board (grille du Dossier) : rien d'autre.
+MEMORY_IMAGE_PATH = re.compile(r"/v1/workspace/boards/[A-Za-z0-9_%-]{1,200}/memory/image\?path=[A-Za-z0-9_.~%-]{1,1200}")
 #: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
 QueryParams = Mapping[str, str] | Sequence[tuple[str, str]]
 #: Une edition de source attend la rafale (secondes), la publication et le rapport de montage de l'hote (8 s) : la
@@ -1611,8 +1613,9 @@ class LocalCoreClient:
         """
 
         parts = path.split("/")
-        if len(parts) != 5 or path[:13] != "/v1/artifacts" or "/" + parts[4] != PAYLOAD_ROUTE_SUFFIX:
-            raise ValueError(f"forward_bytes only relays artifact payloads, not {path[:80]!r}")
+        payload = len(parts) == 5 and path[:13] == "/v1/artifacts" and "/" + parts[4] == PAYLOAD_ROUTE_SUFFIX
+        if not payload and not MEMORY_IMAGE_PATH.fullmatch(path):
+            raise ValueError(f"forward_bytes only relays artifact payloads and memory images, not {path[:80]!r}")
         session = await self._http()
         headers = dict(self.headers)
         if range_header:

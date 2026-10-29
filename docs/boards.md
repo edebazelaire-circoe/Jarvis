@@ -628,6 +628,7 @@ memory mutations* below.
 | `/boards/{board_id}/memory/tree[?path&depth&max_entries]` | `exists`, `locator`, entries (path, kind, size, mtime, depth), `truncated`, `skipped` | `depth` 1..8 (2), `max_entries` 1..500 (200) |
 | `/boards/{board_id}/memory/stat?path=` | one entry | |
 | `/boards/{board_id}/memory/read?path=[&offset&max_bytes]` | UTF-8 page, `next_offset`, `eof`, `size`, `sha256` (whole file, ≤ 1 MiB) | `max_bytes` 4..262 144 (65 536) |
+| `/boards/{board_id}/memory/image?path=` | the bytes of a raster image (`.png .jpg .jpeg .gif .webp .bmp`; never SVG), `Content-Type` from the suffix, `nosniff`; 415 `memory_not_image` otherwise. For the Dossier grid (2026-10-29), relayed in bytes by the Control Center (`forward_bytes` allows only this and Artifact payloads) | whole file ≤ 8 MiB (413 `memory_too_large`) |
 | `/boards/{board_id}/memory/search?q=[&path&limit]` | literal, case-insensitive matches (`path`, `line`, `preview`), `files_scanned`, `files_skipped`, `truncated` (see below) | `q` 1..200 printable characters, `limit` 1..100 (50) |
 
 **Dropping on a Board** (code since Slice 08, handoff jarvis-unified-chat-and-board-drop):

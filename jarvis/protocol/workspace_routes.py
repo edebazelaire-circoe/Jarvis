@@ -24,6 +24,7 @@ l'URL, jamais le Board actif implicite, et n'activent rien. Contrat :
 | GET | `/v1/workspace/boards/{board_id}/memory/tree[?path&depth&max_entries]` | arbre borné |
 | GET | `/v1/workspace/boards/{board_id}/memory/stat?path=` | une entrée |
 | GET | `/v1/workspace/boards/{board_id}/memory/read?path=[&offset&max_bytes]` | texte UTF-8 borné |
+| GET | `/v1/workspace/boards/{board_id}/memory/image?path=` | octets d'une image matricielle (png, jpg, gif, webp, bmp ; ≤ 8 Mio) |
 | GET | `/v1/workspace/boards/{board_id}/memory/search?q=[&path&limit]` | recherche littérale bornée |
 | POST | `/v1/workspace/boards/{board_id}/memory/write` | `{path, content, mode?=create\\|replace\\|append, expected_sha256?, origin?}` (201 créé, 200 sinon) |
 | POST | `/v1/workspace/boards/{board_id}/memory/mkdir` | `{path, origin?}` (201 créé, 200 déjà là) |
@@ -121,6 +122,7 @@ class WorkspaceProtocolRoutes:
             web.get(board + "/memory/tree", g("memory_tree", self.memory_tree)),
             web.get(board + "/memory/stat", g("memory_stat", self.memory_stat)),
             web.get(board + "/memory/read", g("memory_read", self.memory_read)),
+            web.get(board + "/memory/image", g("memory_image", self.memory_image)),
             web.get(board + "/memory/search", g("memory_search", self.memory_search)),
             web.post(board + "/memory/write", g("memory_write", self.memory_write)),
             web.post(board + "/memory/mkdir", g("memory_mkdir", self.memory_mkdir)),
@@ -268,6 +270,16 @@ class WorkspaceProtocolRoutes:
             offset=_int(request, "offset", 0, 0, MAX_READ_OFFSET) or 0,
             max_bytes=_int(request, "max_bytes", DEFAULT_READ_BYTES, MIN_READ_BYTES, MAX_READ_BYTES)
             or DEFAULT_READ_BYTES))
+
+    async def memory_image(self, request: web.Request) -> web.Response:
+        """Octets d'une image de la mémoire (grille du Dossier). Jamais rendue comme document : type fixé par le suffixe,
+        `nosniff`, et pas de SVG."""
+
+        _only(request, {"path"})
+        self._ready()
+        data, mime = await self._service.memory_image(request.match_info["board_id"], path=self._required(request, "path"))
+        return web.Response(body=data, content_type=mime,
+                            headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=60"})
 
     async def memory_search(self, request: web.Request) -> web.Response:
         _only(request, {"q", "path", "limit"})

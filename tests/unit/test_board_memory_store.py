@@ -628,3 +628,34 @@ def test_a_file_above_the_hash_bound_is_never_read_whole(store, data_root, monke
 
     monkeypatch.setattr(board_memory_store, "_bounded_sha256", forbidden)
     assert store.read(BOARD, P("large.md"), max_bytes=16).sha256 is None
+
+
+# ------------------------------------------------------------------ images en octets (grille du Dossier, 2026-10-29)
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+
+
+def test_a_raster_image_is_read_whole_with_its_type(store, data_root):
+    (memory(data_root) / "captures").mkdir(parents=True)
+    (memory(data_root) / "captures" / "ui_full.PNG").write_bytes(PNG)
+    assert store.read_image(BOARD, P("captures/ui_full.PNG")) == (PNG, "image/png")
+    refused(C.MEMORY_NOT_TEXT, store.read, BOARD, P("captures/ui_full.PNG"))  # le texte reste refusé, inchangé
+
+
+def test_only_raster_images_under_the_bound_are_served(store, data_root, monkeypatch):
+    memory(data_root).mkdir(parents=True)
+    (memory(data_root) / "logo.svg").write_text("<svg onload='x()'/>", encoding="utf-8")
+    (memory(data_root) / "plan.md").write_text("# plan", encoding="utf-8")
+    (memory(data_root) / "big.jpg").write_bytes(b"\xff\xd8" + b"\x00" * 40)
+    refused(C.MEMORY_NOT_IMAGE, store.read_image, BOARD, P("logo.svg"))  # un SVG est un document actif
+    refused(C.MEMORY_NOT_IMAGE, store.read_image, BOARD, P("plan.md"))
+    refused(C.MEMORY_NOT_FOUND, store.read_image, BOARD, P("absent.png"))
+    monkeypatch.setattr(board_memory_store, "MAX_MEMORY_IMAGE_BYTES", 16)
+    refused(C.MEMORY_TOO_LARGE, store.read_image, BOARD, P("big.jpg"))
+
+
+def test_an_image_behind_a_junction_is_never_served(store, data_root, outside):
+    store.mkdir(BOARD, P("notes"))
+    (outside / "secret.png").write_bytes(PNG)
+    junction(memory(data_root) / "notes" / "door", outside)
+    refused(C.MEMORY_PATH_ESCAPE, store.read_image, BOARD, P("notes/door/secret.png"))

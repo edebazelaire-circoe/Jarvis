@@ -169,7 +169,7 @@ def test_memory_path_is_immutable():
 def test_memory_error_codes_are_stable_and_mapped_to_http():
     assert {c.value: MEMORY_HTTP_STATUS[c] for c in BoardMemoryErrorCode} == {
         "memory_path_invalid": 400, "memory_path_escape": 400, "memory_not_found": 404, "memory_exists": 409,
-        "memory_conflict": 409, "memory_too_large": 413, "memory_not_text": 415,
+        "memory_conflict": 409, "memory_too_large": 413, "memory_not_text": 415, "memory_not_image": 415,
     }
     err = BoardMemoryError(BoardMemoryErrorCode.MEMORY_CONFLICT, "x")
     assert isinstance(err, ValueError) and err.code == "memory_conflict" and err.status == 409

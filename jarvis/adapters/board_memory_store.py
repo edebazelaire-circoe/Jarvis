@@ -73,7 +73,8 @@ from jarvis.adapters import safe_folders
 from jarvis.adapters.file_replace import replace_with_retry, retry_on_permission
 from jarvis.diagnostics.logger import PrivacyLogger
 from jarvis.domain.board_memory import (
-    MAX_MEMORY_IO_BYTES, MEMORY_TEMP_PREFIX, MEMORY_TEMP_SUFFIX, BoardMemoryError, BoardMemoryErrorCode,
+    MAX_MEMORY_IMAGE_BYTES, MAX_MEMORY_IO_BYTES, MEMORY_IMAGE_TYPES, MEMORY_TEMP_PREFIX, MEMORY_TEMP_SUFFIX,
+    BoardMemoryError, BoardMemoryErrorCode,
     BoardMemoryPath, board_memory_root, is_memory_temporary_name,
 )
 from jarvis.ports.board_memory import (
@@ -476,6 +477,30 @@ class FileBoardMemoryStore:
         # Le décodeur garde un caractère coupé en fin de tampon : la page suivante le reprend.
         return MemoryText(path=relative, text=text, offset=offset, next_offset=offset + len(text.encode("utf-8")),
                           size=size, sha256=sha256)
+
+    def read_image(self, board_id: str, path: BoardMemoryPath) -> tuple[bytes, str]:
+        """Octets et type MIME d'une image matricielle de la mémoire (par suffixe, `MEMORY_IMAGE_TYPES`), entière, au plus
+        `MAX_MEMORY_IMAGE_BYTES`. Mêmes gardes que `read` : chemin résolu sous la racine, fichier ordinaire, identique entre
+        l'inspection et l'ouverture."""
+
+        mime = MEMORY_IMAGE_TYPES.get(Path(path.value).suffix.casefold())
+        if mime is None:
+            raise _refuse(_C.MEMORY_NOT_IMAGE, f"{path}: not a raster image (png, jpg, gif, webp, bmp)")
+        target, info, _relative = self._existing_read(self._read_root(board_id), path)
+        if not stat.S_ISREG(info.st_mode):
+            raise _refuse(_C.MEMORY_CONFLICT, f"{path}: is a folder, a file is expected")
+        if info.st_size > MAX_MEMORY_IMAGE_BYTES:
+            raise _refuse(_C.MEMORY_TOO_LARGE, f"{path}: {info.st_size} bytes, above {MAX_MEMORY_IMAGE_BYTES}")
+        try:
+            with open(target, "rb") as handle:
+                if not _same_file(os.fstat(handle.fileno()), info):
+                    raise _refuse(_C.MEMORY_PATH_ESCAPE, f"{path}: changed between inspection and opening")
+                data = handle.read(MAX_MEMORY_IMAGE_BYTES + 1)
+        except OSError as exc:
+            raise _os_error(exc, path.value) from exc
+        if len(data) > MAX_MEMORY_IMAGE_BYTES:
+            raise _refuse(_C.MEMORY_TOO_LARGE, f"{path}: grew above {MAX_MEMORY_IMAGE_BYTES} bytes while read")
+        return data, mime
 
     def search(self, board_id: str, query: str, *, path: BoardMemoryPath | None = None,
                limit: int = 50) -> MemorySearch:

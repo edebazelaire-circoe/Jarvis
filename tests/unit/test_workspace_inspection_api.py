@@ -626,3 +626,25 @@ async def test_a_memory_root_deleted_between_exists_and_walk_is_not_recreated(tm
         root.mkdir(parents=True, exist_ok=True)
         status, found, _, _ = await core(stack, "GET", base + "/search", params={"q": "x"})
         assert status == 200 and found["matches"] == [] and not root.exists()
+
+
+async def test_a_memory_image_reaches_the_page_as_bytes_through_the_control_center(tmp_path):
+    """Grille du Dossier (2026-10-29) : une image de la mémoire du Board arrive en octets, type fixé par son suffixe,
+    `nosniff`, par la route relayée et gardée du Control Center ; ni SVG ni texte, et le relais binaire ne sert rien d'autre."""
+
+    async with CaptureStack(tmp_path) as stack:
+        w = await build(stack)
+        png = b"\x89PNG\r\n\x1a\n" + bytes(range(64))
+        folder = stack.data_root / "boards" / w.board_a / "memory" / "captures"
+        folder.mkdir()
+        (folder / "ui full.png").write_bytes(png)
+        (folder / "logo.svg").write_text("<svg/>", encoding="utf-8")
+        response = await stack.cc.get(f"/api/workspace/boards/{w.board_a}/memory/image", params={"path": "captures/ui full.png"})
+        assert response.status == 200 and await response.read() == png
+        assert response.headers["Content-Type"] == "image/png" and response.headers["X-Content-Type-Options"] == "nosniff"
+        status, body, _ = await stack.call("GET", f"/api/workspace/boards/{w.board_a}/memory/image", params={"path": "captures/logo.svg"})
+        assert (status, body["error"]["code"]) == (415, "memory_not_image")
+        status, body, _ = await stack.call("GET", f"/api/workspace/boards/{w.board_a}/memory/image", params={"path": "../x.png"})
+        assert (status, body["error"]["code"]) == (400, "memory_path_escape")
+        status, body, _ = await stack.call("GET", f"/api/workspace/boards/{w.board_a}/memory/image")
+        assert (status, body["error"]["code"]) == (400, "invalid_request")

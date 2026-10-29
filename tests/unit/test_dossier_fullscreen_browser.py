@@ -191,7 +191,7 @@ def test_large_tree_long_document_image_and_side_by_side(tmp_path):
         ["click", "twisty", "#dossierView [data-twisty='archives']", 300], ["eval", "foldersAfter", folder, 50],
         ["click", "twisty2", "#dossierView [data-twisty='archives']", 300],
         ["click", "section", "#dossierView [data-section='f:archives/2021']", 400],
-        ["eval", "rows", "document.querySelectorAll('#dossierView .dsr-browse .dsr-row').length", 50],
+        ["eval", "rows", "document.querySelectorAll('#dossierView .dsr-browse .dsr-tile').length", 50],
         ["click", "home", "#dossierView [data-section='home']", 300],
         _open("memory:notes/journal.md", 900),
         ["eval", "long", "document.querySelectorAll('#dossierView .dsr-prose p').length", 50],
@@ -591,3 +591,38 @@ def test_a_hanging_status_never_piles_up_and_is_said_lost(tmp_path):
     assert r["max"] == 1, ("one status read in flight at most", r["max"])
     assert r["lost"] is True, "said lost after the 4 s deadline, never frozen on the last state"
     assert r["back"] is False
+
+
+# ------------------------------------------------------------------ grille d'icônes (2026-10-29)
+
+TILES = r"""(()=>[...document.querySelectorAll('#dossierView .dsr-browse .dsr-tile')].map(t=>({id:t.dataset.open,image:t.dataset.image==='1',
+  src:t.querySelector('img')?t.querySelector('img').src:null,
+  shown:(t.querySelector('img')||{}).naturalWidth>0,svg:!!t.querySelector('.dsr-tile-face > svg'),
+  titleOpacity:getComputedStyle(t.querySelector('.dsr-row-title')).opacity,tip:t.title})))()"""
+
+
+def test_the_dossier_is_a_grid_of_large_icons_and_images_are_thumbnails(tmp_path):
+    """Retour utilisateur du 2026-10-29 : « des grandes icônes, un grid d'images ; le titre au survol ; un clic montre l'image en
+    grand ; un document a son logo et son titre ». Une image d'Artifact et une image de la mémoire du Board se voient en
+    vignette (route bornée), un SVG reste une icône (jamais servi), et ouvrir une image de la mémoire la montre en grand."""
+    world = seed()
+    world["dsr"]["boards"][A]["entries"][4:4] = [{**_mem("captures/ui_full.png", "image", minutes=90, size=180_000), "open": "none"},
+                                                {**_mem("captures/logo.svg", "image", minutes=80, size=900), "open": "none"}]
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": world, "actions": [
+        *OPEN_DOSSIER, ["eval", "tiles", TILES, 600],
+        ["click", "open", ROW.format("memory:captures/ui_full.png"), 900],
+        ["eval", "big", "(()=>{const i=document.querySelector('#dossierView article.dsr-doc .dsr-figure img');return i?{src:i.src,w:i.getBoundingClientRect().width}:null})()", 50],
+    ]}])[0]
+    r = step["results"]
+    tiles = {t["id"]: t for t in r["tiles"]}
+    shot, memory, svg = tiles[f"artifact:{IMG}"], tiles["memory:captures/ui_full.png"], tiles["memory:captures/logo.svg"]
+    assert shot["image"] and shot["shown"] and shot["src"].endswith(f"/api/artifacts/{IMG}/payload"), shot
+    assert memory["image"] and memory["shown"] and memory["src"].endswith("/memory/image?path=captures%2Fui_full.png"), memory
+    assert shot["titleOpacity"] == "0" and "Schéma d'architecture" in shot["tip"], "an image shows itself, its title on hover"
+    assert not svg["image"] and svg["svg"], "an SVG is never fetched: an icon"
+    note = tiles["memory:notes/decision-budget.md"]
+    assert not note["image"] and note["svg"] and note["titleOpacity"] == "1", "a document: a large icon and its title"
+    ids = [t["id"] for t in r["tiles"]]
+    assert ids.index(f"artifact:{IMG}") < ids.index("memory:notes/decision-budget.md"), "images first"
+    assert r["big"] and r["big"]["src"].endswith("/memory/image?path=captures%2Fui_full.png") and r["big"]["w"] > 400, r["big"]
+    assert not [line for line in step["console"] if line["type"] == "exception"]

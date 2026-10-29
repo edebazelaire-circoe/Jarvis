@@ -262,19 +262,27 @@
     work.appendChild(panes);
   }
 
-  function entryRow(e){
-    const b=btn('dsr-row','',{'data-open':e.entry_id,'data-fk':`row:${e.entry_id}`});
-    const ic=el('span','dsr-row-ic');ic.appendChild(icon(kindIcon(e.kind),18));ic.dataset.kind=e.kind;
-    const main=el('span','dsr-row-main');
-    main.appendChild(el('span','dsr-row-title',titleOf(e.entry_id)));
+  /* Une entrée = une tuile (retour utilisateur du 2026-10-29 : « des grandes icônes, un grid d'images ») : une image se voit
+     en grande vignette, son titre seulement au survol ; un document a une grande icône et son titre. Nature, dossier, date
+     et taille passent dans l'infobulle et le nom accessible. Une vignette qui ne se charge pas redevient une icône. */
+  function entryTile(e){
+    const title=titleOf(e.entry_id),url=C.imageUrlOf(e,S.boardId);
     const research=C.researchLine(e);
     const meta=[research?'Recherche':C.KIND_LABELS[e.kind]||e.kind];
     if(research)meta.push(research);else if(e.folder)meta.push(e.folder);
     const when=C.relativeTime(e.modified_at,now());if(when)meta.push(when);
     if(e.size!=null&&e.source==='memory')meta.push(C.formatBytes(e.size));
-    main.appendChild(el('span','dsr-row-meta',meta.join(' · ')));
-    if(e.preview&&e.source==='artifact')main.appendChild(el('span','dsr-row-preview',e.preview));
-    b.append(ic,main);
+    const b=btn('dsr-tile','',{'data-open':e.entry_id,'data-fk':`row:${e.entry_id}`,title:`${title}\n${meta.join(' · ')}`,
+      'aria-label':`${title}, ${meta.join(', ')}`});
+    const face=el('span','dsr-tile-face');face.dataset.kind=e.kind;
+    const name=el('span','dsr-row-title',title);
+    const iconFace=()=>{face.textContent='';face.appendChild(icon(kindIcon(e.kind),52));delete b.dataset.image;b.append(name)};
+    if(url){
+      b.dataset.image='1';
+      const img=el('img');img.alt='';img.loading='lazy';img.decoding='async';img.draggable=false;
+      img.addEventListener('error',()=>{log('warn','dossier.thumb_failed',{entry:short(e.entry_id)});iconFace()},{once:true});
+      img.src=url;face.append(img,name);b.appendChild(face);
+    }else{b.appendChild(face);iconFace()}
     return b;
   }
   function renderBrowse(){
@@ -309,11 +317,19 @@
       const h=el('h3','dsr-h',S.filter?`« ${S.filter} »`:sectionName(S.section));
       h.appendChild(el('span','dsr-count',filtered.length));pane.appendChild(h);
     }
-    const rows=el('div','dsr-rows');rows.setAttribute('role','list');
     const shown=S.section==='home'&&!S.filter?l.entries.slice(0,10):filtered;
-    for(const e of shown){const li=el('div','dsr-li');li.setAttribute('role','listitem');li.appendChild(entryRow(e));rows.appendChild(li)}
-    if(!shown.length)rows.appendChild(el('p','dsr-quiet',S.filter?'Aucun titre ne correspond. Entrée : chercher ces mots dans le texte des notes.':'Rien dans cette collection.'));
-    pane.appendChild(rows);
+    /* Les images d'abord, en grille de vignettes ; les documents ensuite, en grille d'icônes. Un titre de groupe seulement
+       quand les deux sont là. */
+    const images=shown.filter(e=>C.imageUrlOf(e,S.boardId)),others=shown.filter(e=>!C.imageUrlOf(e,S.boardId));
+    const grid=(list,label)=>{
+      const g=el('div','dsr-grid');g.setAttribute('role','list');if(label)g.setAttribute('aria-label',label);
+      for(const e of list){const li=el('div','dsr-li');li.setAttribute('role','listitem');li.appendChild(entryTile(e));g.appendChild(li)}
+      return g;
+    };
+    const both=images.length&&others.length;
+    if(images.length){if(both)pane.appendChild(el('h4','dsr-h4','Images'));pane.appendChild(grid(images,'Images'))}
+    if(others.length){if(both)pane.appendChild(el('h4','dsr-h4','Documents'));pane.appendChild(grid(others,'Documents'))}
+    if(!shown.length)pane.appendChild(el('p','dsr-quiet',S.filter?'Aucun titre ne correspond. Entrée : chercher ces mots dans le texte des notes.':'Rien dans cette collection.'));
     if(S.filter)pane.appendChild(renderSearch());
     if(l.truncated)pane.appendChild(el('p','dsr-quiet',`Le Dossier compte ${l.total} entrées ; les ${l.entries.length} plus récentes sont listées. Filtrez, ou cherchez dans le texte.`));
     return pane;
@@ -471,7 +487,7 @@
     if(d.status==='error'){box.appendChild(errorBox(d.error,`reload-doc:${e.entry_id}`));return box}
     if(d.mode==='image'){
       const fig=el('figure','dsr-figure');fig.dataset.zoom=d.zoom?'1':'0';
-      const img=el('img');img.alt=e.title||'Image';img.src=C.PATHS.payload(d.artifactId);img.decoding='async';
+      const img=el('img');img.alt=e.title||'Image';img.src=d.imageUrl||C.PATHS.payload(d.artifactId);img.decoding='async';
       img.addEventListener('error',()=>{d.status='error';d.error=C.errorOf('artifact_payload_unreadable',0,'image illisible');log('warn','dossier.image_failed',{entry:short(e.entry_id)});render()},{once:true});
       fig.appendChild(img);
       const z=btn('dsr-btn dsr-zoom',d.zoom?'Ajuster à la fenêtre':'Taille réelle',{'data-act':'zoom','data-entry':e.entry_id});
@@ -649,7 +665,9 @@
     if(S.open)render();
     let patch;
     if(entry.source==='memory'){
-      if(entry.open!=='text')patch={status:'ok',mode:'none',blocks:[]};
+      const imageUrl=C.imageUrlOf(entry,board);
+      if(imageUrl)patch={status:'ok',mode:'image',imageUrl};
+      else if(entry.open!=='text')patch={status:'ok',mode:'none',blocks:[]};
       else{
         const answer=await client.get(C.PATHS.read(board,entry.path,0));
         if(gen!==S.gen)return;
@@ -1304,6 +1322,22 @@
 #dossierView .dsr-lead>.dsr-h4:first-child{margin-top:0}
 #dossierView .dsr-lead-title{margin:0 0 6px;font-size:19px;font-weight:600;color:var(--dsr-ink)}
 #dossierView .dsr-rows{display:flex;flex-direction:column}
+/* Grille de tuiles (2026-10-29) : grandes vignettes pour les images, grandes icônes et titre pour les documents. */
+#dossierView .dsr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(176px,1fr));gap:16px 14px;margin:6px 0 20px}
+#dossierView .dsr-grid .dsr-li{min-width:0}
+#dossierView .dsr-tile{display:flex;flex-direction:column;gap:8px;width:100%;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;border-radius:12px}
+#dossierView .dsr-tile-face{position:relative;display:grid;place-items:center;aspect-ratio:4/3;border-radius:12px;overflow:hidden;color:var(--dsr-soft);
+  background:rgba(110,231,255,.05);border:1px solid rgba(110,231,255,.12);transition:border-color .12s,transform .12s}
+#dossierView .dsr-tile:hover .dsr-tile-face,#dossierView .dsr-tile:focus-visible .dsr-tile-face{border-color:var(--accent);transform:translateY(-1px)}
+#dossierView .dsr-tile-face img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;background:#05090d}
+#dossierView .dsr-tile-face[data-kind=image],#dossierView .dsr-tile-face[data-kind=media]{color:#9fd0ff}
+#dossierView .dsr-tile-face[data-kind=memory_summary],#dossierView .dsr-tile-face[data-kind=report]{color:var(--dsr-k-meeting)}
+#dossierView .dsr-tile-face[data-kind=presentation]{color:var(--dsr-k-presentation)}
+#dossierView .dsr-tile .dsr-row-title{font-size:13.5px;font-weight:500;line-height:1.3;color:var(--dsr-ink);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+/* Une image : rien que l'image ; son titre monte au survol, sur un dégradé. */
+#dossierView .dsr-tile[data-image] .dsr-row-title{position:absolute;left:0;right:0;bottom:0;padding:22px 10px 8px;color:#fff;
+  background:linear-gradient(transparent,rgba(2,6,9,.88));opacity:0;transition:opacity .12s}
+#dossierView .dsr-tile[data-image]:is(:hover,:focus-visible) .dsr-row-title{opacity:1}
 #dossierView .dsr-row{display:flex;align-items:flex-start;gap:12px;width:100%;padding:10px 10px;border:0;border-bottom:1px solid rgba(110,231,255,.07);background:none;text-align:left;cursor:pointer;border-radius:6px}
 #dossierView .dsr-row:hover{background:rgba(110,231,255,.05)}
 #dossierView .dsr-row-ic{flex:none;display:inline-flex;width:32px;height:32px;align-items:center;justify-content:center;border-radius:8px;background:rgba(110,231,255,.07);color:var(--accent)}

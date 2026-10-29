@@ -301,7 +301,7 @@ decisions) and `jarvis/runtime/control_center_dossier.js` (view). Shell rules
 | --- | --- | --- |
 | header | « Dossier », Board type chip, Board title, « Archivé · lecture seule » when so; filter field; Contexte; Retour au Board (Échap) | the `board` of the list answer (never the status block) |
 | organisation (left) | Vue d'ensemble; collections (Synthèses, Recherches, Notes, Documents, Transcriptions, Images et médias, Liens) with counts; the memory folders as a tree. « Recherches » (V1.2 Slice 04) gathers the entries that carry `research`, whatever their `kind`; their row and header say « Recherche · vérifiée le 27 octobre 2026 · 3 sources (1 non lue) » (`researchLine`), the side panel adds a « Recherche » fact, and an opened document keeps its leading `---` front-matter as a monospace block before the body (its `#` title still becomes the document title) | the list entries only (`kind`, `folder`, `research`) |
-| centre | a « Parcourir » tab (overview: `summary.md` excerpt and the 10 most recent; or the chosen section or filter, then « Chercher dans le texte » = `memory/search`) and one tab per opened document (8 at most, the oldest unmodified one leaves) | entries; documents read on demand |
+| centre | a « Parcourir » tab (overview: `summary.md` excerpt and the 10 most recent; or the chosen section or filter, then « Chercher dans le texte » = `memory/search`) and one tab per opened document (8 at most, the oldest unmodified one leaves). Entries are a **grid of large tiles** (user request 2026-10-29): an image is its thumbnail alone, its title rising on hover; any other entry is a large icon and its title; kind, folder, date and size are in the tooltip and the accessible name; images come first (« Images », then « Documents » when both exist) | entries; documents read on demand; thumbnails by `imageUrlOf` |
 | context (right, collapsible) | En bref (Artifact preview or first paragraph), nature, source, modified, size, provenance; « Jarvis peut lire ce document à la demande… » (no read telemetry exists: nothing is claimed); « Détails techniques » disclosure | the entry; `…/dossier/entry?advanced=true` read only when the disclosure opens; Ranger's machine comment |
 | status line | entry count, reading or waiting with a seconds counter, refusals | the reads in flight |
 
@@ -311,9 +311,12 @@ quotes, code, links opening in a new tab); author HTML stays text. The first
 `#` heading becomes the document title (tab and header). Ranger's machine
 comment leaves the reading and shows under « Détails techniques ». Long notes
 read by 64 KiB chunks (« Lire la suite »). An image Artifact shows its payload
-(`/api/artifacts/{id}/payload`, fit or real size); audio and video play the
-payload; a PDF opens in a new tab; a link shows its URL (never fetched); a
-binary memory file says it is listed, not readable.
+(`/api/artifacts/{id}/payload`, fit or real size); so does a raster image of the
+Board's memory (`.png .jpg .jpeg .gif .webp .bmp`, through
+`GET /api/workspace/boards/{id}/memory/image?path=`, whole file ≤ 8 MiB, type fixed
+by the suffix, `nosniff`; an SVG is an active document and stays an icon); audio
+and video play the payload; a PDF opens in a new tab; a link shows its URL (never
+fetched); another binary memory file says it is listed, not readable.
 
 ### Actions and their canonical path
 

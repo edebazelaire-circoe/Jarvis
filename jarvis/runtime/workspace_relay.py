@@ -27,10 +27,13 @@ statut, code), jamais un corps. Une panne de Core :
 
 from __future__ import annotations
 
+import asyncio
+from urllib.parse import quote
+
 from aiohttp import web
 
 from jarvis.core.workspace_service import MAX_MUTATION_BODY_BYTES
-from jarvis.runtime.capture_relay import CaptureRelayRoutes
+from jarvis.runtime.capture_relay import PAYLOAD_TIMEOUT_S, CaptureRelayRoutes, _error
 
 WORKSPACE_ROUTE = "/api/workspace"
 GUARDED_PREFIXES = (WORKSPACE_ROUTE,)
@@ -75,5 +78,32 @@ class WorkspaceRelayRoutes(CaptureRelayRoutes):
     MAX_BODY_BYTES = MAX_MUTATION_BODY_BYTES
 
     def routes(self) -> list[web.RouteDef]:
-        return [web.route(method, WORKSPACE_ROUTE + path, self._relay(action, "/v1/workspace" + path, timeout_s))
-                for method, action, path, timeout_s in _ROUTES]
+        return [*(web.route(method, WORKSPACE_ROUTE + path, self._relay(action, "/v1/workspace" + path, timeout_s))
+                  for method, action, path, timeout_s in _ROUTES),
+                web.get(WORKSPACE_ROUTE + "/boards/{board_id}/memory/image", self.memory_image)]
+
+    async def memory_image(self, request: web.Request) -> web.Response:
+        """`GET /api/workspace/boards/{id}/memory/image?path=` : octets d'une image de la mémoire, pour la grille du Dossier
+        (2026-10-29). Relais binaire borné (`forward_bytes`), même garde que le reste de `/api/workspace`."""
+
+        if set(request.query) != {"path"} or len(request.query.getall("path")) != 1:
+            return _error(400, "invalid_request", "exactly one path parameter is expected")
+        transport = self._transport()
+        if transport is None:
+            return _error(503, "core_unconfigured", "the control center does not know Core")
+        path = (f"/v1/workspace/boards/{quote(request.match_info['board_id'], safe='')}/memory/image"
+                f"?path={quote(request.query['path'], safe='')}")
+        try:
+            status, headers, data = await transport.forward_bytes(path, timeout_s=PAYLOAD_TIMEOUT_S)
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            self._unreachable("workspace_memory_image", "GET", path, "core_timeout", "TimeoutError")
+            return _error(504, "core_timeout", "Core did not send the image in time")
+        except ValueError as exc:
+            return _error(400 if "only relays" in str(exc) else 502, "invalid_request" if "only relays" in str(exc)
+                          else "payload_too_large_for_relay", str(exc)[:200])
+        except Exception as exc:  # noqa: BLE001 - surfaced: 503 with the real cause, and journaled
+            self._unreachable("workspace_memory_image", "GET", path, "core_unreachable", type(exc).__name__)
+            return _error(503, "core_unreachable", f"Core is unreachable: {type(exc).__name__}: {str(exc)[:200]}")
+        return web.Response(body=data, status=status, headers=headers)

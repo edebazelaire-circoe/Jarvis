@@ -51,6 +51,13 @@ MEMORY_SUMMARY_NAME = "summary.md"
 MAX_MEMORY_PATH_CHARS = 240
 #: Octets lus ou écrits au plus par appel (R4).
 MAX_MEMORY_IO_BYTES = 256 * 1024
+#: Image matricielle de la mémoire servie en octets au Dossier (2026-10-29) : au plus la borne du relais binaire du
+#: Control Center (`MAX_FORWARDED_PAYLOAD_BYTES`). Par suffixe, jamais SVG (un document actif, pas une image inerte).
+MAX_MEMORY_IMAGE_BYTES = 8 * 1024 * 1024
+MEMORY_IMAGE_TYPES: Mapping[str, str] = MappingProxyType({
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+    ".bmp": "image/bmp",
+})
 #: Temporaire d'écriture du magasin (Slice 02) : `<préfixe><hex><suffixe>` dans
 #: le dossier de la cible. Un segment de cette forme (casse ignorée, comme
 #: NTFS) est refusé aux clients : sinon un client pourrait lire, remplacer ou
@@ -96,6 +103,8 @@ class BoardMemoryErrorCode(StrEnum):
     MEMORY_TOO_LARGE = "memory_too_large"
     #: Fichier binaire ou pas en UTF-8 : listé avec sa taille, jamais lu.
     MEMORY_NOT_TEXT = "memory_not_text"
+    #: Lecture en octets d'un fichier qui n'est pas une image matricielle (`MEMORY_IMAGE_TYPES`).
+    MEMORY_NOT_IMAGE = "memory_not_image"
 
 
 #: Statut HTTP que les routes (Slice 04) rendent pour chaque code.
@@ -107,6 +116,7 @@ MEMORY_HTTP_STATUS: Mapping[BoardMemoryErrorCode, int] = MappingProxyType({
     BoardMemoryErrorCode.MEMORY_CONFLICT: 409,
     BoardMemoryErrorCode.MEMORY_TOO_LARGE: 413,
     BoardMemoryErrorCode.MEMORY_NOT_TEXT: 415,
+    BoardMemoryErrorCode.MEMORY_NOT_IMAGE: 415,
 })
 
 

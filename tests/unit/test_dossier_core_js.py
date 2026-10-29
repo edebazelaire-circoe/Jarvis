@@ -233,3 +233,15 @@ def test_a_research_document_has_its_own_collection_its_check_and_a_readable_hea
     assert r["first"]["t"] == "code" and r["first"]["fm"] is True and r["first"]["v"].startswith("topic: X\nsources:")
     assert r["heading"] == "Titre" and r["rest"] == ["code", "h", "p"]
     assert r["plain"] == ["p", "hr", "p"], "a separator in the body stays a separator"
+
+
+def test_image_url_of_an_entry_only_for_complete_artifact_images_and_raster_memory_images(tmp_path):
+    """Grille du Dossier (2026-10-29) : quelle entrée se montre en vignette, et par quelle route bornée. Jamais un SVG."""
+    r = run(tmp_path, r"""
+      const art=(o)=>Object.assign({entry_id:'artifact:jart_x',source:'artifact',kind:'image',open:'media',state:'complete'},o);
+      const mem=(path,o)=>Object.assign({entry_id:'memory:'+path,source:'memory',kind:'image',open:'none',path},o);
+      return [C.imageUrlOf(art({}),'b1'),C.imageUrlOf(art({state:'pending'}),'b1'),C.imageUrlOf(art({kind:'document'}),'b1'),
+        C.imageUrlOf(mem('captures/ui full.PNG'),'b1'),C.imageUrlOf(mem('logo.svg'),'b1'),C.imageUrlOf(mem('a.png'),''),
+        C.imageUrlOf(mem('notes/a.md',{kind:'note'}),'b1'),C.imageUrlOf(null,'b1')]""")
+    assert r == ["/api/artifacts/jart_x/payload", None, None, "/api/workspace/boards/b1/memory/image?path=captures%2Fui%20full.PNG",
+                 None, None, None, None]
