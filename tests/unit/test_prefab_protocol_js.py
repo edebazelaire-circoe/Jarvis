@@ -22,7 +22,7 @@ CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline
 def test_sandbox_and_csp_are_the_contract_values(tmp_path):
     result = run_node(tmp_path, "return {sandbox:P.SANDBOX,csp:P.CSP,jv:P.JV,host:P.HOST_TYPES,frame:P.FRAME_TYPES};")
     assert result == {"sandbox": "allow-scripts", "csp": CSP, "jv": 1, "host": ["init", "update", "teardown", "event_result"],
-                      "frame": ["ready", "event", "resize", "open_url", "error"]}
+                      "frame": ["ready", "event", "resize", "open_url", "error", "escape"]}
 
 
 async def test_build_srcdoc_puts_the_csp_before_anything_that_can_load(tmp_path):

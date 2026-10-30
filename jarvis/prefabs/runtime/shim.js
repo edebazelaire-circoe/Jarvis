@@ -110,6 +110,15 @@
       try{env.post(message)}catch(_error){/* intentional: the host is gone (frame being removed); nothing to tell */}
     }
 
+    /* Native dialog cannot receive Escape from an opaque child frame. This is
+       an Escape-only UI notice, never a keyboard/text/command forwarding bus.
+       A host without the optional local callback ignores it. */
+    function escapeKey(event){
+      if(!started||closed||event.key!=='Escape'||event.isTrusted!==true||event.repeat||event.altKey||event.ctrlKey||event.metaKey||event.shiftKey)return;
+      post({jv:JV,type:'escape'});
+    }
+    if(doc&&typeof doc.addEventListener==='function')doc.addEventListener('keydown',escapeKey,true);
+
     function reportError(error){
       if(errors>=MAX_ERRORS)return;
       errors+=1;
@@ -313,6 +322,7 @@
       if(message.type==='teardown'){
         call('teardown',context(null));
         closed=true;
+        if(doc&&typeof doc.removeEventListener==='function')doc.removeEventListener('keydown',escapeKey,true);
         if(observer&&typeof observer.disconnect==='function')observer.disconnect();
         return true;
       }

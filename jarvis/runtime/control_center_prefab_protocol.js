@@ -46,7 +46,7 @@
   const HOST_TYPES=Object.freeze(['init','update','teardown','event_result']);
   const EVENT_OUTCOMES=Object.freeze(['applied','recorded','stale','refused','failed']);
   const REASON=/^[a-z][a-z0-9_]{0,39}$/;
-  const FRAME_TYPES=Object.freeze(['ready','event','resize','open_url','error']);
+  const FRAME_TYPES=Object.freeze(['ready','event','resize','open_url','error','escape']);
   const MODES=Object.freeze(['scene','preview']);
   const MAX_ERROR_CHARS=300;
   const MAX_STATE_EVENT_PAYLOAD_BYTES=16*1024;
@@ -58,7 +58,7 @@
   const EVENT_NAME=/^[a-z][a-z0-9_]{0,39}$/;
   const EVENT_NAME_MAX=40;
   /* Champs exacts de chaque message du cadre, en plus de `jv` et `type`. */
-  const FRAME_FIELDS=Object.freeze({ready:[],event:['name','payload'],resize:['height'],open_url:['url'],error:['message']});
+  const FRAME_FIELDS=Object.freeze({ready:[],event:['name','payload'],resize:['height'],open_url:['url'],error:['message'],escape:[]});
   /* Fermetures qui sortiraient d'un bloc de style ou de script du document : neutralisées.
      Ce fichier est inséré dans le bloc de script de la page : il n'écrit jamais en
      clair une balise de script ni une ouverture de commentaire HTML (test statique). */
@@ -197,6 +197,7 @@
       if(key!=='jv'&&key!=='type'&&!allowed.includes(key))return refuse(`unexpected field ${bounded(key,40)}`);
     }
     switch(data.type){
+      case 'escape':return {ok:true,message:{type:'escape'}};
       case 'ready':return {ok:true,message:{type:'ready'}};
       case 'event':{
         if(typeof data.name!=='string'||data.name.length>EVENT_NAME_MAX||!EVENT_NAME.test(data.name))return refuse('event name');

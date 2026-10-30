@@ -603,7 +603,7 @@ ordinary window (title, fallback summary).
   `slices/09-integration-hardening/evidence/` of the handoff.
 - **Host API.** `createPrefabHost({fetchBundle, document, window, now,
   setTimeout, clearTimeout, log, postEvent, mode, theme, onResize,
-  onPreviewEvent, openUrl, onOutcome, swapPrefix})` → `mount(slot, instance)`, `update(objectId,
+  onPreviewEvent, openUrl, onOutcome, swapPrefix, onEscape})` → `mount(slot, instance)`, `update(objectId,
   props, data, theme)`, `unmount(objectId)`, `pause` / `resume` / `touch` /
   `reload(objectId)`, `height(objectId)`, `state(objectId)`, `counters(objectId)`, `key(objectId)`,
   `pendingKey(objectId)`, `stats()` (adds `starts`, `mounted`, `failed`, `staging`), `destroy()`
@@ -691,6 +691,24 @@ Status: implemented by Slice 03 (`control_center_prefab_protocol.js`, `shim.js`)
 | frame→host | `resize` | `height` (CSS px, number) |
 | frame→host | `open_url` | `url` (the scene link rule `JarvisSceneLayout.linkOf` — http/https, no credentials, ≤ 2048 — **minus local and private hosts**: `localhost`/`*.localhost`, 127/8, 0/8, 10/8, 172.16/12, 192.168/16, 169.254/16, `::`, `::1`, fc00::/7, fe80::/10, IPv4-mapped private; opened with `noopener,noreferrer`; `linkOf` itself is unchanged for scene links) |
 | frame→host | `error` | `message` ≤ 300 (the shim catches behavior exceptions, `onerror`, `onunhandledrejection`) |
+| frame→host | `escape` | no fields: exact `{jv:1,type:"escape"}`; optional local UI callback only, see below |
+
+The object viewer adds an Escape-only UI bridge (mouse-organization-viewer S03):
+a native modal cannot receive Escape while focus belongs to its opaque child
+frame. After `init`, the shim forwards a trusted, plain, non-repeated Escape
+keydown as the exact bounded notice above. It forwards no other key, text,
+modifier or command and removes its listener on teardown. Existing source and
+opaque-origin checks apply. The optional `onEscape(objectId)` callback runs
+only for the current live, ready, focused iframe
+(`document.activeElement === rec.iframe`), never staged, stale, paused,
+unmounted or unfocused frames; at most once per second per frame/generation.
+The ordinary scene host has no callback and keeps its behavior. This bridge
+does not write Core state, synthesize a keyboard event or touch browser
+fullscreen. The viewer's provider host binds `onEscape` to the viewer's local
+`close()`. A callback failure is shown in the existing prefab note and logged
+as `scene.prefab_error`; accepted notices log `scene.prefab_escape`.
+Conformance: `tests/unit/test_prefab_escape_bridge.py` and the iframe-focused
+Escape scenario in `tests/unit/test_object_viewer_browser.py`.
 
 - Every message is `{jv: 1, type, ...}` over `postMessage`, with exactly the
   fields above (an unknown field is refused). Anything else is dropped and

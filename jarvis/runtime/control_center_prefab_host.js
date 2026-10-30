@@ -389,7 +389,7 @@
       if(!rec.staged)clearSlot(rec.slot);
       rec.band=null;rec.note=null;rec.ready=false;rec.bundle=null;rec.events=new Map();
       rec.remotion=false;rec.shellUp=false;
-      rec.logs=0;rec.errorsIn=[];rec.outcomeSent=false;
+      rec.logs=0;rec.errorsIn=[];rec.escapesIn=[];rec.outcomeSent=false;
       rec.counters.starts++;totals.starts++;
       const iframe=element('iframe',rec.staged?'sc-prefab-frame sc-prefab-staged':'sc-prefab-frame');
       if(rec.staged)setStagedAttrs(iframe,true);
@@ -787,7 +787,7 @@
       const rec={objectId,prefab,key,slot,title:typeof instance.title==='string'?instance.title:'',
         props:P.cloneJson(instance.props||{}),data:P.cloneJson(instance.data||{}),
         theme:Object.assign({},baseTheme,instance.theme||{}),state:'loading',generation:0,lastDraw:now(),
-        outputs:[],errorsIn:[],dropped:0,rateLimited:0,height:0,pendingHeight:null,resizeTimer:null,sentData:null,
+        outputs:[],errorsIn:[],escapesIn:[],dropped:0,rateLimited:0,height:0,pendingHeight:null,resizeTimer:null,sentData:null,
         iframe:null,readyTimer:null,renderTimer:null,rendered:false,logs:0,outcomeSent:false,settleTimer:null,holdTimer:null,staged:false,preload:false,parked:false,ordered:false,claimed:false,queued:null,ahead:false,next:null,sceneId:typeof instance.scene_id==='string'&&instance.scene_id?instance.scene_id:null,
         restMs:Number.isInteger(instance.rest_ms)&&instance.rest_ms>=0?instance.rest_ms:null,
         counters:counters||{starts:0,mounted:0,failed:0,remounts:0}};
@@ -1025,6 +1025,18 @@
       if(!parsed.ok){drop(rec,parsed.reason);return}
       const message=parsed.message;
       switch(message.type){
+        case 'escape':
+          /* Current, focused, live incarnation only. No scene/fullscreen/Core
+             write; ordinary scene hosts without this callback keep behavior. */
+          if(typeof d.onEscape!=='function')break;
+          if(frames.get(rec.objectId)!==rec||rec.staged||!rec.ready||rec.state!=='ready'||doc.activeElement!==rec.iframe){drop(rec,'escape is not from the focused live frame');break}
+          if(!withinRate(rec,rec.escapesIn,1))break;
+          safeLog('scene.prefab_escape',{object_id:rec.objectId,generation:rec.generation});
+          try{d.onEscape(rec.objectId)}catch(error){
+            const message='Fermeture impossible : '+describe(error);
+            frameLog(rec,'scene.prefab_error',{reason:'escape',message});setNote(rec,'sc-prefab-error',message);
+          }
+          break;
         case 'ready':
           if(rec.ready){violate(rec,'second ready (the frame reloaded or navigated)','protocol');break}
           cancel(rec.readyTimer);

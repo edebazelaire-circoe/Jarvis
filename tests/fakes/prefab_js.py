@@ -117,6 +117,7 @@ class FakeDocument{
   getElementById(id){return [this.head,this.body,...this.head.descendants(),...this.body.descendants()].find(n=>n.id===id)||null}
   querySelectorAll(sel){return this.body.querySelectorAll(sel)}
   addEventListener(t,fn){(this.listeners[t]=this.listeners[t]||[]).push(fn)}
+  removeEventListener(t,fn){const list=this.listeners[t]||[];const at=list.indexOf(fn);if(at>=0)list.splice(at,1)}
   /* Un événement envoyé au document (`keydown`, `scroll`) ; rend l'événement pour lire `defaultPrevented`. */
   dispatch(type,fields){const ev=Object.assign({type,defaultPrevented:false,preventDefault(){this.defaultPrevented=true}},fields||{});
     (this.listeners[type]||[]).slice().forEach(fn=>fn(ev));return ev}
@@ -147,7 +148,7 @@ function bench(opts){
     document:doc,window:win,now:c.now,setTimeout:c.setTimeout,clearTimeout:c.clearTimeout,mode:o.mode,
     log:(k,d)=>logs.push({key:k,data:d}),
     postEvent:o.noSink?undefined:(e)=>{posted.push(e);return o.postEvent?o.postEvent(e):Promise.resolve({outcome:'applied'})},
-    onPreviewEvent:(e)=>preview.push(e),onResize:(id,h)=>resizes.push([id,h]),
+    onPreviewEvent:(e)=>preview.push(e),onResize:(id,h)=>resizes.push([id,h]),onEscape:o.onEscape,swapPrefix:o.swapPrefix,
     fetchBundle:o.fetchBundle||((id,v)=>{fetches.push(`${id}@${v}`);const b=bundles[`${id}@${v}`];
       return b?Promise.resolve(JSON.parse(JSON.stringify(b))):Promise.reject(new Error(`unknown_prefab: no prefab ${id}`))})
   });
