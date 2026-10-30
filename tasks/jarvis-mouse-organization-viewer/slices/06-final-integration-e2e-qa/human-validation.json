@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-FINAL-001",
+      "description": "Final human acceptance: complete a representative mouse-and-keyboard-only Board session using selection, 8-way resize, Shift ratio lock, organize, undo, multi-document viewer and agent viewer, and confirm the interaction feels coherent rather than tool-heavy."
+    }
+  ]
+}

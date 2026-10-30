@@ -1,0 +1,45 @@
+{
+  "slice_id": "05-scene-integration-organize-viewer",
+  "title": "05 - Scene integration: organize, open and undo",
+  "task_type": "Feature",
+  "task_type_blocker": null,
+  "dependencies": [
+    "02-mouse-resize-selection-input"
+  ],
+  "requires": [
+    {
+      "slice_id": "01-atomic-layout-and-undo-contract",
+      "need": "atomic arbitrary geometry command and stale-undo semantics",
+      "fallback": "fixture command adapter that records target boxes and simulates batch outcomes",
+      "integration_required_before": "05-scene-integration-organize-viewer approval",
+      "mismatch_policy": "adapt UI adapter to canonical contract; never fall back to per-object writes"
+    },
+    {
+      "slice_id": "03-multi-object-viewer-shell",
+      "need": "viewer launch/view-model/focus API",
+      "fallback": "fixture viewer event adapter",
+      "integration_required_before": "05-scene-integration-organize-viewer approval",
+      "mismatch_policy": "adapt scene-to-viewer entry mapping; do not duplicate viewer shell"
+    },
+    {
+      "slice_id": "04-agent-viewer-projection",
+      "need": "agent public projection and Stop/Ask descriptors",
+      "fallback": "fixture running/completed/unknown projections",
+      "integration_required_before": "05-scene-integration-organize-viewer approval",
+      "mismatch_policy": "adapt identity/action mapping; never synthesize missing agent facts in browser"
+    }
+  ],
+  "frontend": true,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ],
+  "agent_routing": "Frontend Work Agent, dedicated worktree"
+}

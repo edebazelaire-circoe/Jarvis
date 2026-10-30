@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-MOUSE-001",
+      "description": "After machine QA, manually verify all four edges and four corners resize naturally, Shift preserves proportions without jumps, and right-click keeps an existing multi-selection."
+    }
+  ]
+}

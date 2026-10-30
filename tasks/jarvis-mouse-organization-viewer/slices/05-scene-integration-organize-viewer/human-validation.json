@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "id": "HV-INTEGRATION-001",
+      "description": "After machine QA, verify double-click/Enter/context Open feel natural on single and multi-selection, organization actions are discoverable, and returning from the viewer leaves the Board exactly where it was."
+    },
+    {
+      "id": "HV-AGENT-001",
+      "description": "After machine QA with a real running agent, verify mission, elapsed time, current activity, visible progress/steps, findings, artifacts, Stop and Ask are understandable at a glance without exposing raw logs or reasoning."
+    }
+  ]
+}

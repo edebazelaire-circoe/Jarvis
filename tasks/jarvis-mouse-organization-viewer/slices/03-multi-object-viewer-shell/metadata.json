@@ -1,0 +1,29 @@
+{
+  "slice_id": "03-multi-object-viewer-shell",
+  "title": "03 - Multi-object viewer shell",
+  "task_type": "Feature",
+  "task_type_blocker": null,
+  "dependencies": [],
+  "requires": [
+    {
+      "slice_id": "external-current-prefab-document-provider",
+      "need": "safe existing prefab/document preview providers when available",
+      "fallback": "typed fixture adapters for image/text/unsupported entries",
+      "integration_required_before": "05-scene-integration-organize-viewer",
+      "mismatch_policy": "adapt viewer entry adapter; never duplicate provider/runtime"
+    }
+  ],
+  "frontend": true,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ],
+  "agent_routing": "Frontend Work Agent, dedicated worktree"
+}
