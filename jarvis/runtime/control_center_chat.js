@@ -269,11 +269,23 @@
     }
 
     /* ---------- état ---------- */
-    async function readState(){
+    let stateRead=null;
+    async function readState({fresh=false,signal=null}={}){
+      if(stateRead){
+        const settled=await stateRead;
+        if(!fresh)return settled;
+        if(signal&&signal.aborted)return null;
+      }
+      if(stateRead)return readState({signal});
+      const reading=readChannelState(signal);stateRead=reading;
+      try{return await reading}finally{if(stateRead===reading)stateRead=null}
+    }
+    async function readChannelState(signal){
       const seq=++S.stateSeq;S.stats.stateReads++;S.stateReadSince=now();
       try{
-        const {value}=await request(ROUTES.state,{timeoutMs:config.stateTimeoutMs});
+        const {value}=await request(ROUTES.state,{timeoutMs:config.stateTimeoutMs,signal});
         S.stateReadSince=null;
+        if(signal&&signal.aborted)return null;
         if(S.lastStateErrorCode)log('state_restored',{after:S.lastStateErrorCode});
         S.state=value;S.stateError=null;S.lastStateErrorCode=null;
         if(S.serverLock&&value.chat_writable&&seq>S.serverLock.seq)S.serverLock=null;
@@ -284,14 +296,17 @@
         if(S.stateSig!==null&&sig!==S.stateSig)fast('state_changed');
         S.stateSig=sig;
         if(value.conversation_id!==model.conversationId)rescope(value.conversation_id||null);
+        return value;
       }catch(error){
         S.stateReadSince=null;
+        if(signal&&signal.aborted){log('state_cancelled',{});return null}
         const code=error.code||'unknown';
         S.stateError={code,at:now(),since:S.stateError&&S.stateError.code===code?S.stateError.since:now()};
         /* Session fermée ou Board sans binding : plus rien à montrer ni à écrire. */
         if(error.status===404){S.state=null;if(model.conversationId)rescope(null)}
         if(S.lastStateErrorCode!==S.stateError.code)log('state_failed',{code:S.stateError.code,status:error.status},'warn');
         S.lastStateErrorCode=S.stateError.code;
+        return null;
       }
     }
     function followSwitch(state){
@@ -1006,12 +1021,15 @@
     async function prefill(spec){
       const value=spec&&spec.text;
       if(typeof value!=='string'||!value||value.length>MAX_TEXT)return {ok:false,code:'chat_prefill_invalid',message:'Brouillon à ajouter invalide.'};
+      if(spec.signal&&spec.signal.aborted)return {ok:false,code:'cancelled',message:'Ouverture du brouillon annulée.'};
       const board=()=>root.JarvisBoardsControl&&root.JarvisBoardsControl.activeId?root.JarvisBoardsControl.activeId():null;
       const initialBoard=board();open({noFocus:true});
-      if(!model.conversationId)await readState();
+      // Opening starts a background read. Settle it, then read the current
+      // channel afresh: a retained conversation ID can belong to a closed Board.
+      const scope=await readState({fresh:true,signal:spec.signal});
       if(spec.signal&&spec.signal.aborted)return {ok:false,code:'cancelled',message:'Ouverture du brouillon annulée.'};
-      if(board()!==initialBoard)return {ok:false,code:'chat_scope_changed',message:'Le Board a changé : aucun texte n’a été ajouté.'};
-      if(!model.conversationId||S.stateError)return {ok:false,code:'chat_not_ready',message:'Le chat n’est pas encore disponible. Réessayez après sa lecture.'};
+      if(board()!==initialBoard||scope&&initialBoard&&scope.board_id!==initialBoard)return {ok:false,code:'chat_scope_changed',message:'Le Board a changé : aucun texte n’a été ajouté.'};
+      if(!scope||!scope.conversation_id||scope!==S.state||scope.conversation_id!==model.conversationId||S.stateError)return {ok:false,code:'chat_not_ready',message:'Le chat n’est pas encore disponible. Réessayez après sa lecture.'};
       const before=el.input.value,combined=before+(before?'\n\n':'')+value;
       if(combined.length>MAX_TEXT)return {ok:false,code:'chat_draft_full',message:'Votre brouillon est conservé mais trop long pour ajouter cette question. Raccourcissez-le puis réessayez.'};
       el.input.value=combined;draftEdited();el.input.setSelectionRange(combined.length,combined.length);

@@ -8,6 +8,11 @@ a second Brain pipeline or a voice bridge.
 
 The canonical `JarvisChat.prefill({text,target?,signal?})` seam opens the current
 Board chat and appends text after any existing draft, separated by two newlines.
+It settles any current channel-state read, then awaits a fresh canonical
+`/api/chat/state` read and checks its returned Board/conversation against the
+active Board and current model before editing. A retained conversation ID from
+a closed chat never authorizes editing the previous Board's draft. State reads
+are coalesced while in flight; cancellation cannot append late text.
 It retains attachments, persists through the normal draft owner, and never sends
 a turn or switches Voice. It returns `{ok:true,conversation_id}` or a readable
 `{ok:false,code,message}` for unavailable chat, changed Board, cancellation or the

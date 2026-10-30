@@ -166,3 +166,31 @@ Desktop/mobile PNGs in `evidence/` were visually inspected: viewport-contained
 header/close/layout controls, readable skip notice, independently bounded panes,
 document padding. One bounded visual adjustment added normal document padding;
 the final capture pass confirms it. Detector remains `[]`.
+
+### S05 rework: closed-chat Board scope freshness
+
+Independent review found that retaining a non-null conversation ID while chat
+was closed bypassed the asynchronous channel refresh on reopen. Ask could append
+to the previous Board's draft. Canonical `prefill` now settles the shared state
+read and performs a fresh `/api/chat/state` read before editing. It verifies the
+returned Board and conversation against the current Board/model and ignores
+cancelled reads; reads are coalesced so background polling cannot overtake or
+overlap the foreground freshness check. The existing rescope/draft owner loads
+the correct draft. No send, Voice switch or attachment semantics changed.
+
+The real-browser regression switches A→B→A with chat closed, explicitly observes
+the old non-null conversation ID, delays channel responses, preserves both saved
+drafts, cancels during the first scope read, then appends only to each fresh
+conversation. No turn or Voice-disable POST occurs. Replacing only `prefill`
+temporarily with the exact previous-commit function kills this regression
+(old function returns success before cancellation settles). Product bytes were
+restored exactly in `finally`; no temporary fixture reaches production.
+
+Final focused rework validation count is recorded below before its separate
+commit. Earlier S05 implementation remains `80607352`.
+
+Rework checks: `test_chat_prefill_browser.py` (existing draft/overflow/abort +
+closed two-Board delayed-read/cancellation regression) and
+`test_control_center_chat_ui.py`: **11 passed, 34.01 s**. Previous prefill
+replacement: **1 failed, 15.53 s**, product restored exactly. `node --check`
+and `git diff --check` pass. No full suite or user runtime touched.
