@@ -144,3 +144,21 @@ in progress when this evidence was captured; its final trace must match these
 phases/conditions before classifying the four gate outcomes as unrelated. Do
 not substitute the source hypothesis for that comparison or mark the red
 canonical verdict green. No additional execution is proposed without PM request.
+
+## Final root trace comparison and PM disposition
+
+The completed root shard-09 JSON/log were subsequently read. Canonical totals:
+**979 passed, 4 failed, 5 skipped**, 988 collected, exit 1, green false,
+502.5 seconds, no session problems. Its four unknown nodes are exactly the
+three mute replays and ambient-noise case above.
+
+All four root tracebacks match the baseline failures: mute test line 344 or
+ambient line 447 → virtual harness line 796 → helper line 132, with the exact
+`condition never reached: the /v1/events subscription is closed` message.
+
+PM accepted all four observed outcomes as **proven pre-existing and unrelated**
+after this comparison. No actual subscriber values or more specific internal
+root cause are claimed. The original canonical shard stays truthfully red;
+no global ignore, product change, root commit, additional runtime or broader
+test execution was introduced by this QA work. Remaining browser unknowns keep
+their separate pending dispositions.
