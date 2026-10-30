@@ -283,6 +283,7 @@ value.
 | `.tl` (55) | `control_center.html` | `.tl-` | timeline internals 1–30 |
 | `.overlay` / `.panel` | `control_center.html` | `.catalog-table` | sticky table header |
 | `#chatPanel` (33) | `control_center.html` | `.chat-drop` | drop veil inside the chat panel |
+| `#presentationRail` (30/9100) | `control_center_presentation_rail.js` | `#${DOM.hostId} .jvr-play` | rank 1 keeps the play indicator over the first-frame thumbnail inside the rail item (existing 2026-10-29 rail behavior) |
 | `#jarvisFlow` | `control_center_barehands_calibration.js` | `${R} ` | calibration internals |
 | `#jarvisFlow` | `control_center_barehands_benchmark_ui.js` | `${R} ` | benchmark internals |
 | `#jarvisFlow` | `control_center_barehands_calibration_agent.js` | `${sel} ` | calibration agent card |

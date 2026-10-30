@@ -8,3 +8,4 @@ Result:2 failed in3.33s.
 
 Disposition: pre-existing test/doc drift, not S01/S02 regressions. Batch small test/registry hygiene in S06 if useful; no product defect established here.
 
+Resolution2026-10-30: PM added the missing canonical contained-rank row for existing rail play indicator. Complete shell layer suite now12 passed14.33s. No CSS/product behavior changed. Obsolete group source assertion remains release polish.
