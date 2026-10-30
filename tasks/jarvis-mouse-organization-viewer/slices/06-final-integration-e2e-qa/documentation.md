@@ -6,3 +6,8 @@ Environment: work only in assigned isolated worktree, use C:/Projects/jarvis/jar
 
 Exact lifecycle: remote folder current; final Human acceptance pending. No merge to main/push main/cleanup local handoff.
 
+## Final runtime evidence requirements
+S02 browser fixtures prove input/UI execution but intercept fetch. Final convergence must also exercise integrated UI against real isolated Core/SQLite/ControlCenter HTTP routes for layout + compare undo + public work detail, not only fixture bodies. Reuse CoreProcess from tests/integration/test_scene_transport.py and TestServer on ephemeral non-live ports, execute Node CDP asynchronously so server event loop stays responsive. Existing _cdp_profile.mjs guards live ports/data and cleans only browser profiles.
+CLI executables claude.exe and codex are available. Exercise at least one actual running/terminal agent projection when possible; no model/prompt path is intentionally changed. Existing tests/integration/test_chat_end_to_end.py RealStack cleanup still contains taskkill /T (line901); do not blindly use that fixture against user's runtime. Use owned process handles/unique sandbox and verified process identity for cleanup. Never touch live Core/ControlCenter/Voice.
+Use --assert=plain --tb=short for broad pytest to avoid huge HTML failure rendering. Full suite once after integration; preserve raw output/report and all failures, prove unrelated failures at original baseline before disposition. Baseline known issues I-001..I-003 are already independently reproduced. Browser tests and real-model opt-in layers have separate documented requirements; do not invent --include-category-2 (Jarvis uses JARVIS_LIVE_CLAUDE opt-in).
+
