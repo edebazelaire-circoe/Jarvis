@@ -8,14 +8,14 @@ and independently accepted by PM; its internals are not self-certified here.
 
 ## Findings
 
-**F1 — MAJOR, scoped rework pending: canonical chat conversation freshness.**
+**F1 — MAJOR, resolved by scoped rework: canonical chat conversation freshness.**
 Initial `JarvisChat.prefill` refreshed state only if its retained model had no
 conversation ID. A closed chat could retain BoardA's cid after Core switched
 to BoardB; opening it starts an async state loop, while prefill can append/save
 the question into A before the later rescope. The new active-Board check alone
 does not prove the retained cid belongs to the current canonical binding. PM
 accepted this source finding and assigned the focused correction to S2.
-Reverification will cover the rework diff and closed A→B→A draft retention.
+Reverification below covers the rework diff and closed A→B→A draft retention.
 
 No additional blocking product defect was established by the reviewed final
 code or eight distinct actual-Core browser scenarios. Preparatory QA selector,
@@ -66,5 +66,28 @@ PrefabHost pause can tear down opaque iframe internals. The optional real-model
 probe is quota blocked, not a successful inference. These limits are stated,
 not silently replaced by mocked success.
 
-Recommendation is pending only F1's focused rework verification. PM decides the
-Slice transition and later Human acceptance/release.
+## F1 rework verification
+
+Integrated PM commit `3bf96f89` (source
+`ba2f3b92f851c21fceaa342f56d6346a70112d4e`) into QA at `8a1156ad`.
+Read the exact chat module/test/docs diff. `prefill` now settles any in-flight
+state read, requires a fresh canonical channel response, and validates returned
+Board/cid/current model identity before appending. Coalescing keeps one state
+read in flight; a concurrent fresh request may share the newly started fresh
+read. Cancelled signal results cannot mutate the draft or apply their response
+as new channel state. Existing rescope/draft ownership remains canonical.
+
+Independently ran both `test_chat_prefill_browser.py` regressions plus the
+actual-Core Stop/Ask scenario: **3 passed in37.62s**. The closed-chat test
+explicitly demonstrates stale retained A identity, delayed read cancellation
+without an append, correct B draft/question, and A return with both saved drafts
+preserved. The other test retains existing text through append/overflow/abort
+without turn/Voice writes. Actual Core confirms the production Ask/Stop route
+still works after coalescing. JUnit is
+`chat-freshness-reverification-junit.xml`; refreshed actual-Core evidence remains
+`live-stop-ask.json`. Only the rework/affected path was repeated.
+
+No unresolved blocking finding remains in this scoped independent review.
+Recommend S05 acceptance based on this code review and eight actual-Core
+scenarios, with the stated PDF/provider/model limits and S06/Human gates still
+applying. PM decides the Slice transition and later Human acceptance/release.

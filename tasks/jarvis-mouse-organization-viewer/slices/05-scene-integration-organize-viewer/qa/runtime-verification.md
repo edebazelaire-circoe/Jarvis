@@ -65,8 +65,16 @@ honest unknown duration, and cancellation feedback visible in the native
 top-layer surface. `live-documents.png`, `live-documents-orbit.png`,
 `live-document-scroll.png`, `live-agent-unknown.png`, `live-job-stopped.png`.
 
-## Remaining verification
+## Scoped rework verification
 
-The scoped stale-conversation prefill finding is being fixed separately. Only
-that rework diff and its focused regression/prefill scenarios need verification
-before the S05 recommendation is finalized. PM owns orchestration/acceptance.
+Chat-freshness correction `3bf96f89` was integrated into QA at `8a1156ad`.
+Reviewed coalesced state-read scope/cancellation, then ran only both focused
+`tests/unit/test_chat_prefill_browser.py` cases and the actual-Core
+`test_stop_uses_real_canonical_job_cancel_and_ask_preserves_existing_chat_draft`:
+**3 passed in37.62s**, recorded in
+`chat-freshness-reverification-junit.xml`. This includes delayed closed-chat
+BoardA→B→A, cancellation while reading, both retained drafts, append/overflow,
+no automatic turn/Voice switch, and the real cancellation/draft adapter path.
+Actual-Core Stop/Ask JSON/screenshot were refreshed on this version. No full
+campaign repeat or full suite. No unresolved blocker remains; the code review
+recommends S05 acceptance, while PM owns orchestration and later Human gates.

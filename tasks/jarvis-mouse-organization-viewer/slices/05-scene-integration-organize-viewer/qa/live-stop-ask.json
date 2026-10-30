@@ -6,7 +6,7 @@
     "stopped": {
       "snapshot": {
         "schema_version": 1,
-        "scene_id": "f2d18d8b-10b4-4103-8736-3ffb002c1120",
+        "scene_id": "ffc3d555-3635-4967-9ce4-abe00d536aef",
         "revision": 21,
         "objects": [
           {
@@ -156,7 +156,7 @@
             },
             "role_ref": {
               "role_id": "coder",
-              "instance_id": "ainst_c0f9199b05f24aad96d79b9e54300090",
+              "instance_id": "ainst_b78ffe8bb3f84c148ee1653efcf13d16",
               "mission_id": "qa-mission",
               "mission_owner": true
             }
@@ -194,7 +194,7 @@
             }
           },
           {
-            "object_id": "job:ad82d42d-dba0-4a96-838b-2ff9d08f7515",
+            "object_id": "job:21aed876-412a-4dd3-893c-cd77c324075b",
             "kind": "job",
             "category": "job",
             "constraints": {
@@ -216,7 +216,7 @@
             "disposition": "active",
             "work_ref": {
               "source": "job",
-              "external_id": "ad82d42d-dba0-4a96-838b-2ff9d08f7515",
+              "external_id": "21aed876-412a-4dd3-893c-cd77c324075b",
               "work_id": null
             },
             "payload": {
@@ -246,7 +246,7 @@
       },
       "revision": 21,
       "job_status": "cancelled",
-      "job_id": "ad82d42d-dba0-4a96-838b-2ff9d08f7515",
+      "job_id": "21aed876-412a-4dd3-893c-cd77c324075b",
       "agent_id": "claude:qa-parent",
       "note_ids": [
         "qa-note-a",
@@ -324,7 +324,7 @@
     },
     {
       "type": "info",
-      "text": "[dossier] dossier.installed {\"page\":\"dsrcvtfd64sdt\"}"
+      "text": "[dossier] dossier.installed {\"page\":\"dsro2zkxvpwox\"}"
     },
     {
       "type": "info",
@@ -392,15 +392,15 @@
     },
     {
       "type": "info",
+      "text": "[presentation-rail] workspace_items {\"board_id\":\"default\",\"count\":1}"
+    },
+    {
+      "type": "info",
       "text": "[scène] scene.role Object"
     },
     {
       "type": "info",
       "text": "[scène] scene.loop_started Object"
-    },
-    {
-      "type": "info",
-      "text": "[presentation-rail] workspace_items {\"board_id\":\"default\",\"count\":1}"
     },
     {
       "type": "info",
@@ -416,11 +416,11 @@
     },
     {
       "type": "info",
-      "text": "[chat] chat.rescoped {\"from\":null,\"to\":\"1f56ab38-a700-486c-983a-76adf0ab8f1b\",\"stale_attachments\":0}"
+      "text": "[chat] chat.rescoped {\"from\":null,\"to\":\"58253f8c-0822-4df3-a4f5-6ffbe767f93a\",\"stale_attachments\":0}"
     },
     {
       "type": "info",
-      "text": "[chat] chat.leading {\"conversation_id\":\"1f56ab38-a700-486c-983a-76adf0ab8f1b\",\"cursor\":0}"
+      "text": "[chat] chat.leading {\"conversation_id\":\"58253f8c-0822-4df3-a4f5-6ffbe767f93a\",\"cursor\":0}"
     },
     {
       "type": "warning",
@@ -460,19 +460,11 @@
     },
     {
       "type": "info",
-      "text": "[chat] chat.opened {\"conversation_id\":\"1f56ab38-a700-486c-983a-76adf0ab8f1b\"}"
+      "text": "[chat] chat.opened {\"conversation_id\":\"58253f8c-0822-4df3-a4f5-6ffbe767f93a\"}"
     },
     {
       "type": "info",
-      "text": "[chat] chat.prefilled {\"conversation_id\":\"1f56ab38-a700-486c-983a-76adf0ab8f1b\",\"added_chars\":39,\"kept_draft\":true,\"target_source\":\"claude\"}"
-    },
-    {
-      "type": "info",
-      "text": "[scène] viewer.closed Object"
-    },
-    {
-      "type": "info",
-      "text": "[chat] chat.leading {\"conversation_id\":\"1f56ab38-a700-486c-983a-76adf0ab8f1b\",\"cursor\":0}"
+      "text": "[chat] chat.leading {\"conversation_id\":\"58253f8c-0822-4df3-a4f5-6ffbe767f93a\",\"cursor\":0}"
     },
     {
       "type": "warning",
@@ -480,11 +472,19 @@
     },
     {
       "type": "info",
-      "text": "[chat] chat.closed {}"
+      "text": "[scène] scene.selection_backing Object"
     },
     {
       "type": "info",
-      "text": "[scène] scene.selection_backing Object"
+      "text": "[chat] chat.prefilled {\"conversation_id\":\"58253f8c-0822-4df3-a4f5-6ffbe767f93a\",\"added_chars\":39,\"kept_draft\":true,\"target_source\":\"claude\"}"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.closed Object"
+    },
+    {
+      "type": "info",
+      "text": "[chat] chat.closed {}"
     },
     {
       "type": "info",
@@ -541,223 +541,229 @@
   ],
   "requests": [
     {
-      "id": "457C430A6D6ED5B484380BE55DB5C0B3",
+      "id": "9ADC850E913BBAE4890286DDECC1E550",
       "method": "GET",
       "path": "/",
       "body": null
     },
     {
-      "id": "22024.2",
+      "id": "9916.2",
       "method": "GET",
       "path": "/api/captures/status",
       "body": null
     },
     {
-      "id": "22024.3",
+      "id": "9916.3",
       "method": "GET",
       "path": "/api/fullscreen/commands",
       "body": null
     },
     {
-      "id": "22024.4",
+      "id": "9916.4",
       "method": "GET",
       "path": "/api/presentation-studio/explorer/commands",
       "body": null
     },
     {
-      "id": "22024.5",
+      "id": "9916.5",
       "method": "GET",
       "path": "/api/presentation-studio/playback",
       "body": null
     },
     {
-      "id": "22024.6",
+      "id": "9916.6",
       "method": "GET",
       "path": "/api/shortcuts",
       "body": null
     },
     {
-      "id": "22024.7",
+      "id": "9916.7",
       "method": "GET",
       "path": "/api/status",
       "body": null
     },
     {
-      "id": "22024.8",
+      "id": "9916.8",
       "method": "GET",
       "path": "/api/status",
       "body": null
     },
     {
-      "id": "22024.9",
+      "id": "9916.9",
       "method": "GET",
       "path": "/api/barehands",
       "body": null
     },
     {
-      "id": "22024.10",
+      "id": "9916.10",
       "method": "GET",
       "path": "/api/barehands/profile",
       "body": null
     },
     {
-      "id": "22024.11",
+      "id": "9916.11",
       "method": "GET",
       "path": "/api/presentation-studio/rail",
       "body": null
     },
     {
-      "id": "22024.12",
+      "id": "9916.12",
       "method": "GET",
       "path": "/api/workspace/artifacts",
       "body": null
     },
     {
-      "id": "22024.13",
+      "id": "9916.13",
       "method": "GET",
       "path": "/api/agent/tasks",
       "body": null
     },
     {
-      "id": "22024.14",
+      "id": "9916.14",
       "method": "GET",
       "path": "/api/work",
       "body": null
     },
     {
-      "id": "22024.15",
+      "id": "9916.15",
       "method": "GET",
       "path": "/favicon.ico",
       "body": null
     },
     {
-      "id": "22024.16",
+      "id": "9916.17",
       "method": "GET",
       "path": "/api/scene",
       "body": null
     },
     {
-      "id": "22024.18",
+      "id": "9916.18",
       "method": "GET",
       "path": "/api/scene/patches",
       "body": null
     },
     {
-      "id": "22024.19",
+      "id": "9916.19",
       "method": "GET",
       "path": "/api/subagent-roles",
       "body": null
     },
     {
-      "id": "22024.20",
+      "id": "9916.20",
       "method": "GET",
       "path": "/api/missions/qa-mission",
       "body": null
     },
     {
-      "id": "22024.21",
+      "id": "9916.21",
       "method": "GET",
       "path": "/api/chat/state",
       "body": null
     },
     {
-      "id": "22024.22",
+      "id": "9916.22",
       "method": "GET",
       "path": "/api/conversations/events",
       "body": null
     },
     {
-      "id": "22024.23",
+      "id": "9916.23",
       "method": "GET",
       "path": "/api/work",
       "body": null
     },
     {
-      "id": "22024.24",
+      "id": "9916.24",
       "method": "GET",
       "path": "/api/missions/work/claude/qa-parent",
       "body": null
     },
     {
-      "id": "22024.25",
+      "id": "9916.25",
       "method": "GET",
       "path": "/api/missions/qa-mission",
       "body": null
     },
     {
-      "id": "22024.26",
+      "id": "9916.26",
       "method": "GET",
       "path": "/api/chat/state",
       "body": null
     },
     {
-      "id": "22024.27",
+      "id": "9916.27",
+      "method": "GET",
+      "path": "/api/workspace/boards/default/dossier/backing",
+      "body": null
+    },
+    {
+      "id": "9916.28",
+      "method": "GET",
+      "path": "/api/chat/state",
+      "body": null
+    },
+    {
+      "id": "9916.29",
       "method": "GET",
       "path": "/api/conversations/events",
       "body": null
     },
     {
-      "id": "22024.28",
-      "method": "GET",
-      "path": "/api/workspace/boards/default/dossier/backing",
-      "body": null
-    },
-    {
-      "id": "22024.29",
+      "id": "9916.30",
       "method": "GET",
       "path": "/api/work",
       "body": null
     },
     {
-      "id": "22024.30",
+      "id": "9916.31",
       "method": "GET",
-      "path": "/api/missions/work/job/ad82d42d-dba0-4a96-838b-2ff9d08f7515",
+      "path": "/api/missions/work/job/21aed876-412a-4dd3-893c-cd77c324075b",
       "body": null
     },
     {
-      "id": "22024.31",
+      "id": "9916.32",
       "method": "POST",
       "path": "/api/jobs/cancel",
-      "body": "{\"source\":\"job\",\"external_id\":\"ad82d42d-dba0-4a96-838b-2ff9d08f7515\"}"
+      "body": "{\"source\":\"job\",\"external_id\":\"21aed876-412a-4dd3-893c-cd77c324075b\"}"
     },
     {
-      "id": "22024.32",
+      "id": "9916.33",
       "method": "GET",
       "path": "/qa/state",
       "body": null
     },
     {
-      "id": "22024.33",
-      "method": "GET",
-      "path": "/api/workspace/boards/default/dossier/backing",
-      "body": null
-    },
-    {
-      "id": "22024.34",
+      "id": "9916.34",
       "method": "GET",
       "path": "/api/work",
       "body": null
     },
     {
-      "id": "22024.35",
+      "id": "9916.35",
       "method": "GET",
-      "path": "/api/missions/work/job/ad82d42d-dba0-4a96-838b-2ff9d08f7515",
+      "path": "/api/missions/work/job/21aed876-412a-4dd3-893c-cd77c324075b",
       "body": null
     },
     {
-      "id": "22024.36",
+      "id": "9916.36",
       "method": "GET",
       "path": "/api/scene/patches",
       "body": null
     },
     {
-      "id": "22024.37",
+      "id": "9916.37",
       "method": "GET",
       "path": "/qa/state",
       "body": null
     },
     {
-      "id": "22024.38",
+      "id": "9916.38",
+      "method": "GET",
+      "path": "/api/workspace/boards/default/dossier/backing",
+      "body": null
+    },
+    {
+      "id": "9916.39",
       "method": "GET",
       "path": "/api/status",
       "body": null
@@ -765,172 +771,177 @@
   ],
   "responses": [
     {
-      "id": "457C430A6D6ED5B484380BE55DB5C0B3",
+      "id": "9ADC850E913BBAE4890286DDECC1E550",
       "status": 200,
       "path": "/"
     },
     {
-      "id": "22024.2",
+      "id": "9916.2",
       "status": 200,
       "path": "/api/captures/status"
     },
     {
-      "id": "22024.5",
+      "id": "9916.5",
       "status": 200,
       "path": "/api/presentation-studio/playback"
     },
     {
-      "id": "22024.6",
+      "id": "9916.6",
       "status": 200,
       "path": "/api/shortcuts"
     },
     {
-      "id": "22024.7",
+      "id": "9916.7",
       "status": 200,
       "path": "/api/status"
     },
     {
-      "id": "22024.9",
+      "id": "9916.9",
       "status": 200,
       "path": "/api/barehands"
     },
     {
-      "id": "22024.10",
+      "id": "9916.10",
       "status": 200,
       "path": "/api/barehands/profile"
     },
     {
-      "id": "22024.8",
+      "id": "9916.8",
       "status": 200,
       "path": "/api/status"
     },
     {
-      "id": "22024.13",
+      "id": "9916.13",
       "status": 200,
       "path": "/api/agent/tasks"
     },
     {
-      "id": "22024.15",
+      "id": "9916.15",
       "status": 404,
       "path": "/favicon.ico"
     },
     {
-      "id": "22024.14",
+      "id": "9916.14",
       "status": 200,
       "path": "/api/work"
     },
     {
-      "id": "22024.11",
+      "id": "9916.11",
       "status": 200,
       "path": "/api/presentation-studio/rail"
     },
     {
-      "id": "22024.12",
+      "id": "9916.12",
       "status": 200,
       "path": "/api/workspace/artifacts"
     },
     {
-      "id": "22024.16",
+      "id": "9916.17",
       "status": 200,
       "path": "/api/scene"
     },
     {
-      "id": "22024.19",
+      "id": "9916.19",
       "status": 200,
       "path": "/api/subagent-roles"
     },
     {
-      "id": "22024.20",
+      "id": "9916.20",
       "status": 200,
       "path": "/api/missions/qa-mission"
     },
     {
-      "id": "22024.21",
+      "id": "9916.21",
       "status": 200,
       "path": "/api/chat/state"
     },
     {
-      "id": "22024.22",
+      "id": "9916.22",
       "status": 503,
       "path": "/api/conversations/events"
     },
     {
-      "id": "22024.23",
+      "id": "9916.23",
       "status": 200,
       "path": "/api/work"
     },
     {
-      "id": "22024.24",
+      "id": "9916.24",
       "status": 200,
       "path": "/api/missions/work/claude/qa-parent"
     },
     {
-      "id": "22024.25",
+      "id": "9916.25",
       "status": 200,
       "path": "/api/missions/qa-mission"
     },
     {
-      "id": "22024.26",
+      "id": "9916.26",
       "status": 200,
       "path": "/api/chat/state"
     },
     {
-      "id": "22024.27",
+      "id": "9916.29",
       "status": 503,
       "path": "/api/conversations/events"
     },
     {
-      "id": "22024.28",
+      "id": "9916.27",
       "status": 200,
       "path": "/api/workspace/boards/default/dossier/backing"
     },
     {
-      "id": "22024.29",
+      "id": "9916.28",
+      "status": 200,
+      "path": "/api/chat/state"
+    },
+    {
+      "id": "9916.30",
       "status": 200,
       "path": "/api/work"
     },
     {
-      "id": "22024.30",
+      "id": "9916.31",
       "status": 404,
-      "path": "/api/missions/work/job/ad82d42d-dba0-4a96-838b-2ff9d08f7515"
+      "path": "/api/missions/work/job/21aed876-412a-4dd3-893c-cd77c324075b"
     },
     {
-      "id": "22024.32",
+      "id": "9916.33",
       "status": 200,
       "path": "/qa/state"
     },
     {
-      "id": "22024.31",
+      "id": "9916.32",
       "status": 200,
       "path": "/api/jobs/cancel"
     },
     {
-      "id": "22024.18",
+      "id": "9916.18",
       "status": 200,
       "path": "/api/scene/patches"
     },
     {
-      "id": "22024.34",
+      "id": "9916.34",
       "status": 200,
       "path": "/api/work"
     },
     {
-      "id": "22024.35",
+      "id": "9916.35",
       "status": 404,
-      "path": "/api/missions/work/job/ad82d42d-dba0-4a96-838b-2ff9d08f7515"
+      "path": "/api/missions/work/job/21aed876-412a-4dd3-893c-cd77c324075b"
     },
     {
-      "id": "22024.33",
-      "status": 200,
-      "path": "/api/workspace/boards/default/dossier/backing"
-    },
-    {
-      "id": "22024.37",
+      "id": "9916.37",
       "status": 200,
       "path": "/qa/state"
     },
     {
-      "id": "22024.38",
+      "id": "9916.38",
+      "status": 200,
+      "path": "/api/workspace/boards/default/dossier/backing"
+    },
+    {
+      "id": "9916.39",
       "status": 200,
       "path": "/api/status"
     }
