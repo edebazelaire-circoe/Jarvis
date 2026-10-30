@@ -26,6 +26,7 @@ from jarvis.runtime.control_center import (
     ControlCenter,
 )
 from jarvis.runtime.display_mcp import SCENE_FRAME_NOTE
+from tests.unit.test_scene_hold_desk import run_desk
 
 RUNTIME = Path(__file__).resolve().parents[2] / "jarvis" / "runtime"
 CLIENT_JS = RUNTIME / "control_center_scene.js"
@@ -511,14 +512,60 @@ def test_the_dropped_place_is_pending_before_the_hand_lets_go(tmp_path):
     page = PAGE_JS.read_text(encoding="utf-8")
     # La place voulue part en attente, *puis* la main lâche — souris, main
     # nue et clavier dans le même ordre.
-    # Le bureau (`desk.drop`) inscrit chaque place (`commit`) **avant** de
-    # relâcher ; la souris, la main nue et le clavier passent tous par lui.
-    desk = (RUNTIME / "control_center_scene_interact.js").read_text(encoding="utf-8")
-    drop = desk[desk.index("      drop(handle,kind){"):desk.index("      cancel(handle){")]
-    assert drop.index("sent.push([id,d.commit(id,box,") < drop.index("for(const id of handle.ids)release(id,false);")
-    # Et un objet qui n'a pas bougé n'envoie rien, la main lâche quand même,
-    # sans dégel (QA 5, point 4).
-    assert "if(sameBox(box,handle.hold.origin(id)))continue;" in drop
+    # Le vrai bureau appelle le seam synchrone avant la première libération,
+    # même si sa promesse réseau n'est pas encore résolue. Les anciens hôtes
+    # sans commitMany, l'objet seul et le resize gardent le seam individuel.
+    result = run_desk(tmp_path, r"""
+      const out=[];
+      for(const c of [
+        {name:'group',ids:['p','c'],atomic:true},
+        {name:'partial-group',ids:['p','c'],atomic:true,partial:true},
+        {name:'fallback',ids:['p','c'],atomic:false},
+        {name:'single',ids:['p'],atomic:true},
+        {name:'resize',ids:['w','c'],atomic:true,mode:'resize'},
+        {name:'still-group',ids:['p','c'],atomic:true,still:true},
+        {name:'still-single',ids:['p'],atomic:true,still:true},
+      ]){
+        const P=page(1920,1080,OBJECTS,{gravity:false}),pending=I.createPending(30000);
+        const events=[],releases=[];let answer;
+        const waiting=new Promise(resolve=>answer=resolve),mode=c.mode||'move';
+        const hold=P.deps.view.hold;
+        P.deps.view.hold=(id,on)=>{
+          if(!on){events.push('release:'+id);releases.push({id,pending:OBJECTS.filter(o=>pending.has(o.id)).map(o=>o.id)})}
+          hold(id,on);
+        };
+        P.deps.commit=(id,box,kind)=>{
+          events.push('single:'+id);pending.begin(id,{geometry:box},0);return waiting;
+        };
+        if(c.atomic)P.deps.commitMany=(targets,kind)=>{
+          events.push('batch');
+          for(const t of targets)pending.begin(t.id,{geometry:t.box},0);
+          return waiting;
+        };
+        const h=P.desk.take('mouse',c.ids,{pointer:{x:0,y:0},mode});
+        if(c.partial)P.desk.to(h,'p',{...P.box('p'),x:43},'move');
+        else if(!c.still)P.desk.drag(h,18,12);
+        const sent=P.desk.drop(h,mode);
+        out.push({name:c.name,ids:c.ids,events,releases,sent:sent.length,held:P.desk.heldIds()});
+        answer();await Promise.all(sent.map(s=>s[1]));
+      }
+      return out;
+    """)
+    expected = {
+        "group": (["batch"], ["p", "c"], 1),
+        "partial-group": (["batch"], ["p", "c"], 1),
+        "fallback": (["single:p", "single:c"], ["p", "c"], 2),
+        "single": (["single:p"], ["p"], 1),
+        "resize": (["single:w"], ["w"], 1),
+        "still-group": ([], [], 0),
+        "still-single": ([], [], 0),
+    }
+    for row in result:
+        commits, pending, count = expected[row["name"]]
+        assert [r["id"] for r in row["releases"]] == row["ids"], row
+        assert row["events"] == commits + ["release:" + r["id"] for r in row["releases"]], row
+        assert all(sorted(r["pending"]) == sorted(pending) for r in row["releases"]), row
+        assert row["sent"] == count and row["held"] == [], row
     for start, end in (("function dropGesture(", "function cancelGesture("), ("    commit(id,box,mode){", "    cancel(id){if(framesRelease(id))"),
                        ("function flushKeyEdit(", "function cancelKeyEdit(")):
         body = page[page.index(start):page.index(end)]
@@ -531,8 +578,8 @@ def test_a_gesture_on_a_selected_object_carries_the_whole_selection(tmp_path):
 
     Le geste emmène donc toute la sélection quand il part de l'un des siens :
     le même écart pour tous, chacun borné pour son compte — un objet déjà au
-    bord garde sa place sans arrêter les autres —, une commande par objet qui a
-    bougé, et les fils de tous les objets tenus qui suivent. Un
+    bord garde sa place sans arrêter les autres —, une commande atomique pour
+    tout le groupe, et les fils de tous les objets tenus qui suivent. Un
     redimensionnement, lui, ne concerne que la poignée qu'on tient."""
 
     page = PAGE_JS.read_text(encoding="utf-8")
@@ -543,11 +590,32 @@ def test_a_gesture_on_a_selected_object_carries_the_whole_selection(tmp_path):
     assert "takeHold('mouse',carried.map(member=>member.id)," in down
     move = page[page.index("function onPointerMove("):page.index("function endGesture(")]
     assert "desk.drag(g.handle," in move
-    # Un objet par commande : Core valide chaque place, et un refus n'emporte
-    # pas les autres.
-    desk = (RUNTIME / "control_center_scene_interact.js").read_text(encoding="utf-8")
-    drop = desk[desk.index("      drop(handle,kind){"):desk.index("      cancel(handle){")]
-    assert "for(const id of kind==='resize'?[handle.primary]:handle.ids){" in drop and "d.commit(id,box," in drop
+    # Le même bureau produit toutes les cibles, leur origine et leur forme,
+    # puis appelle le seam atomique une seule fois, sans commits individuels.
+    result = run_desk(tmp_path, r"""
+      const P=page(1920,1080,OBJECTS,{gravity:false}),batches=[],singles=[];
+      P.deps.commit=(...args)=>singles.push(args);
+      P.deps.commitMany=(targets,kind)=>{
+        batches.push({targets,kind,held:P.desk.heldIds()});return Promise.resolve();
+      };
+      const ids=OBJECTS.map(o=>o.id),h=P.desk.take('mouse',ids,{pointer:{x:0,y:0}});
+      P.desk.drag(h,18,12);
+      const sent=P.desk.drop(h,'move');await sent[0][1];
+      return {batches,singles,sent:sent.length,held:P.desk.heldIds(),
+        originals:OBJECTS,delta:I.pxToUnits(P.vp,18,12)};
+    """)
+    assert result["singles"] == [] and result["sent"] == 1 and result["held"] == []
+    batch, = result["batches"]
+    assert batch["kind"] == "move" and batch["held"] == ["p", "c", "w"]
+    assert [t["id"] for t in batch["targets"]] == batch["held"]
+    for target, original in zip(batch["targets"], result["originals"], strict=True):
+        assert target["before"] == original["box"]
+        assert target["representation"] == original["representation"]
+        assert target["box"]["w"] == original["box"]["w"]
+        assert target["box"]["h"] == original["box"]["h"]
+        assert target["box"]["x"] - target["before"]["x"] == pytest.approx(result["delta"]["dx"], abs=0.1)
+        assert target["box"]["y"] - target["before"]["y"] == pytest.approx(result["delta"]["dy"], abs=0.1)
+    assert 'commit:commitUserGeometry,commitMany:commitManyGeometry' in page
     report = page[page.index("  function reportSent("):page.index("  function holdNode(")]
     assert "promise.catch(error=>actionFailed(action,id,error))" in report
     # Les fils de tous les objets tenus suivent, pas seulement ceux du dernier.

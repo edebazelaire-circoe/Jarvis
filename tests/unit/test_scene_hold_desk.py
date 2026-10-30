@@ -52,7 +52,7 @@ function page(W,H,objects,{gain=1,gravity=true,rate=1,t0=1790003799000,controls=
     preview(id,box){els.get(id).preview={...box}},
     stopThaw(id){els.get(id).anim=null;P.desk.thawEnded(id)},
   };
-  P.desk=I.createHoldDesk({layout:L,now:()=>P.now,field:()=>P.field,fieldFor,viewport:()=>P.vp,
+  P.desk=I.createHoldDesk(P.deps={layout:L,now:()=>P.now,field:()=>P.field,fieldFor,viewport:()=>P.vp,
     controls:()=>{P.measured++;return P.controls},
     node:id=>boxes.has(id)?{node:nodeAt(P.vp,id),box:{...boxes.get(id)},representation:reps.get(id)}:null,
     /* Ce que l'animation d'un nœud libre dessine, lu sur elle (`shownOffset`). */
