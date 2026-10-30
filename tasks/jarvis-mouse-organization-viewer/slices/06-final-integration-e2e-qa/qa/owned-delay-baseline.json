@@ -1,0 +1,102 @@
+{
+  "case": "test_persistent_storage_read_failure_preserves_owner_and_bounds_stop[owned_read]",
+  "delay_seconds": 0.4,
+  "injection_count": 1,
+  "stops": [
+    {
+      "phase": 1,
+      "before": {
+        "health_status": "ok",
+        "health_detail": "",
+        "stop_task": null,
+        "running_count": 1,
+        "running_done_flags": [
+          false
+        ],
+        "worker_call_count": 0
+      },
+      "duration_seconds": 0.313104,
+      "after": {
+        "health_status": "state_persistence_unknown",
+        "health_detail": "back brain finalization remains owned and unconfirmed",
+        "stop_task": {
+          "done": false,
+          "cancelled": false
+        },
+        "running_count": 1,
+        "running_done_flags": [
+          false
+        ],
+        "worker_call_count": 0
+      }
+    },
+    {
+      "phase": 2,
+      "before": {
+        "health_status": "state_persistence_unknown",
+        "health_detail": "back brain finalization remains owned and unconfirmed",
+        "stop_task": {
+          "done": false,
+          "cancelled": false
+        },
+        "running_count": 1,
+        "running_done_flags": [
+          false
+        ],
+        "worker_call_count": 0
+      },
+      "duration_seconds": 0.13503,
+      "after": {
+        "health_status": "stopped",
+        "health_detail": "back brain finalization remains owned and unconfirmed",
+        "stop_task": {
+          "done": true,
+          "cancelled": false
+        },
+        "running_count": 0,
+        "running_done_flags": [],
+        "worker_call_count": 0
+      }
+    },
+    {
+      "phase": 3,
+      "before": {
+        "health_status": "stopped",
+        "health_detail": "back brain finalization remains owned and unconfirmed",
+        "stop_task": {
+          "done": true,
+          "cancelled": false
+        },
+        "running_count": 0,
+        "running_done_flags": [],
+        "worker_call_count": 0
+      },
+      "duration_seconds": 1.2e-05,
+      "after": {
+        "health_status": "stopped",
+        "health_detail": "back brain finalization remains owned and unconfirmed",
+        "stop_task": {
+          "done": true,
+          "cancelled": false
+        },
+        "running_count": 0,
+        "running_done_flags": [],
+        "worker_call_count": 0
+      }
+    }
+  ],
+  "delay_start_phase": 2,
+  "cleanup": [
+    {
+      "health_status": "stopped",
+      "health_detail": "back brain finalization remains owned and unconfirmed",
+      "stop_task": {
+        "done": true,
+        "cancelled": false
+      },
+      "running_count": 0,
+      "running_done_flags": [],
+      "worker_call_count": 0
+    }
+  ]
+}
