@@ -9,7 +9,7 @@
 - [x] `01-atomic-layout-and-undo-contract`
 - [x] `02-mouse-resize-selection-input`
 - [ ] `03-multi-object-viewer-shell`
-- [ ] `04-agent-viewer-projection`
+- [x] `04-agent-viewer-projection`
 
 These are intentionally parallel-safe at the planning level. Slice 00 must re-check real HEAD/file ownership before dispatch.
 
@@ -29,6 +29,7 @@ These are intentionally parallel-safe at the planning level. Slice 00 must re-ch
 `00 -> 02 -> 05 -> 06`
 
 Branches `01`, `03` and `04` converge before final approval without being placed on the hot-file critical path unless Slice 00 discovers a real dependency.
+
 
 
 
