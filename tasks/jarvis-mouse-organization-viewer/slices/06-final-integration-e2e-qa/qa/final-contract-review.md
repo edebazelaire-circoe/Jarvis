@@ -89,3 +89,17 @@ truthful limits, not substituted claims. Historical S02 baseline wording about
 group drag is superseded by the explicit S05 atomic correction/amendment and
 real before/after evidence; canonical shipped semantics now describe the fixed
 shared seam.
+
+## S06 convergence source addendum
+
+Subsequently merged root's exact full-gate revision `97d56f11` into the QA
+worktree at `bbf09459`, read-only. No root HEAD change or execution was performed.
+Inspected the small source diff: the selected-layout schematic is a bounded,
+aria-hidden decorative grid beside the existing labeled select, with current
+layout/dimensions in its title. It reuses the current layout plan and does not
+mount content, change geometry, rank a new layer or add a parallel layout owner.
+The raw404 refinement changes only user-visible copy; it retains the same
+degraded public model/provenance. No new blocker found in those product edits.
+S2's own focused source-guard/browser proof and root's running sequential broad
+gate remain separate evidence. The prepared coexistence probe still has not
+been launched and awaits PM's explicit browser-slot release after that gate.
