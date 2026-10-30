@@ -1,4 +1,4 @@
-# Slice 00 — READY (2026-10-30)
+﻿# Slice 00 — READY (2026-10-30)
 
 Baseline: origin/main c0858a8000e2ca23b57231edb8f46c643080ad07 after git fetch. Main checkout remains untouched. Dedicated integration worktree C:/Projects/jarvis/mov; branch task/jarvis-mouse-organization-viewer.
 
@@ -14,7 +14,7 @@ Audit started from scene input, multi-object geometry and public execution detai
 - Fullscreen: domain/surface_fullscreen.py plus runtime/control_center_fullscreen.js is browser Fullscreen API authority. Viewer is independent transient in-app overlay, never changes its state.
 - Work State domain has bounded public fields, progress_fraction, canonical started_at/ended_at, explicit source/external_id/work_id and parent identity. No published future-step contract found. Show no published plan and actual children only.
 - Mission History runtime/mission_view.py reads /api/missions/work/{source}/{external_id} and /api/missions/{id}; objective/instance/role remain historical, never status authority. Existing mission cache/role identity can be reused.
-- IMPORTANT CORRECTION: protocol/server.py cancel_work explicitly refuses non-job work (not_cancellable). /api/scene/work/cancel relay is canonical; confirm exact registered path. Stop is enabled only for cancellable Core jobs, with truthful disabled explanation for CLI child agents; do not invent individual sub-agent stop.
+- IMPORTANT CORRECTION: protocol/server.py cancel_work explicitly refuses non-job work (not_cancellable). /api/jobs/cancel relay is canonical (registered in control_center.py:1699). Stop is enabled only for cancellable Core jobs, with truthful disabled explanation for CLI child agents; do not invent individual sub-agent stop.
 - Ask: unified chat is implemented; JarvisChat.open exists, but no public prefill method or direct agent-question channel. S05 may minimally extend canonical chat API to prefill a target-identified draft; no auto-send and no new bus.
 
 ## Overlap and ownership
@@ -28,4 +28,5 @@ Feature retained as explicit user choice and task metadata. No workspace task-ty
 00 docs (PM audit); 01 critical (atomic persistence, authority, stale compares; independent adversarial QA/code review, at most 10 foreground mutations); 02 ui; 03 ui; 04 glue (public read composition; privacy/identity/error tests); 05 ui; 06 ui + critical integration checks. Every code Slice has qa-verification/code-review and appropriate runtime evidence, independent review. No full suite until S06 per handoff. New agent projection alone changes no model or prompt; agent-trace-analysis and real model testing become mandatory if runtime/prompt/provider publication paths change. Final S06 exercises a real running/terminal agent when available, truthful unavailable work, all layouts, keyboard, actual pointer resizing and regression neighbors. Sandboxes only: own ports/data; never start/stop/restart user's live Jarvis.
 
 No product decision remains unresolved. No implementation dispatched before this READY.
+
 
