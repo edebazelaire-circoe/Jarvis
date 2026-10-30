@@ -93,7 +93,7 @@ class LiveAcceptance:
             payload=ScenePayload(title=['Compte rendu','Hypothèses','Sources'][index],summary='Texte public de QA '+str(index),
                 registry_artifact_id=ARTIFACT if index==0 else '')
             await self.apply(SceneOp.UPSERT_OBJECT,object_id=object_id,
-                fields=SceneObjectFields(kind=SceneObjectKind.WINDOW,category='note',representation=Representation.WINDOW,
+                fields=SceneObjectFields(kind=SceneObjectKind.ARTIFACT if index==0 else SceneObjectKind.WINDOW,category='note',representation=Representation.WINDOW,
                     geometry=SceneGeometry(-65+index*55,-18+index*15,30+index*4,20+index*4),payload=payload))
             await self.apply(SceneOp.PIN,object_id=object_id)
         image=await core.artifacts.create(kind=ArtifactKind.SCREENSHOT,source='qa',payload_name='fixture.png',mime_type='image/png',artifact_id=IMAGE)
@@ -264,7 +264,7 @@ async def test_one_real_layout_revision_then_geometry_undo_and_viewer_preserve_s
     plan=[{'view':{'orbit':orbit,'breathe':False,'speed':2}}]+layout_setup()+[
         {'eval':"document.querySelector("+json.dumps(node(NOTE_IDS[1]))+").focus()"},
         {'key':'Enter'},{'until':"document.querySelector('#jvObjectViewer')?.open===true"},
-        {'until':"document.querySelector('#jvObjectViewer .jvov-text')!==null"},
+        {'until':"document.querySelector('#jvObjectViewer .scv-document')!==null"},
         {'read':'viewer','expr':'JarvisScene.inspect()'},
         {'shot':str(QA/('live-documents-orbit.png' if orbit else 'live-documents.png'))},
         {'eval':"const s=document.querySelector('#jvObjectViewer select');s.value='quad';s.dispatchEvent(new Event('change',{bubbles:true}))"},
@@ -312,8 +312,8 @@ async def test_real_registry_image_text_mapping_agent_artifact_back_and_truthful
         {'until':"document.querySelector('.scv-agent')?.dataset.status==='running'"},
         {'read':'running','expr':"({text:document.querySelector('.scv-agent').textContent,stop:document.querySelector('[data-agent-action=stop]').disabled})"},
         {'click':'.scv-agent [data-agent-artifact="qa-note-a"]'},
-        {'until':"document.querySelector('#jvObjectViewer .jvov-text')?.textContent.includes('Document de QA')"},
-        {'read':'artifact','expr':"document.querySelector('#jvObjectViewer .jvov-text').textContent"},
+        {'until':"document.querySelector('#jvObjectViewer .scv-document')?.textContent.includes('Document de QA')"},
+        {'read':'artifact','expr':"document.querySelector('#jvObjectViewer .scv-document').textContent"},
         {'click':'#jvObjectViewer .jvov-head button:first-child'},
         {'until':"document.querySelector('.scv-agent')?.dataset.status==='running'"},
         {'eval':"fetch('/qa/work-complete',{method:'POST'}).then(r=>r.json())"},
@@ -322,7 +322,7 @@ async def test_real_registry_image_text_mapping_agent_artifact_back_and_truthful
         {'key':'Escape'},
         {'eval':"fetch('/qa/restart',{method:'POST'}).then(r=>r.json())"},
         {'click':node(AGENT),'count':2},
-        {'until':"document.querySelector('.scv-agent')?.dataset.status==='unknown'",'ms':12000},
+        {'until':"document.querySelector('.scv-agent')?.dataset.status==='unknown'&&document.querySelector('[data-agent-status]')?.textContent.includes('État inconnu')",'ms':12000},
         {'read':'unknown','expr':"document.querySelector('.scv-agent').textContent"},
         {'shot':str(QA/'live-agent-unknown.png')},
     ]);save('live-artifacts-agent-states',out)
@@ -336,13 +336,39 @@ async def test_real_registry_image_text_mapping_agent_artifact_back_and_truthful
     assert 'Comparer trois sources' in reads['unknown']
 
 
+async def test_registered_text_scroll_survives_layout_without_any_scene_mutation(stack):
+    out=await stack.browser([
+        {'until':"JarvisScene.inspect().nodes>=7&&JarvisScene.inspect().pending===0"},
+        {'click':node(NOTE_IDS[0])},{'click':node(NOTE_IDS[1]),'ctrl':True},{'click':node(NOTE_IDS[2]),'ctrl':True},
+        actual('before'),{'read':'selection_before','expr':'JarvisScene.inspect().selection'},
+        {'key':'Enter'},{'until':"document.querySelector('#jvObjectViewer .scv-document')?.textContent.includes('Document de QA')"},
+        {'eval':"window.__nativeDoc=document.querySelector('#jvObjectViewer [data-entry-id=qa-note-a] .scv-document')"},
+        {'wheel':'#jvObjectViewer [data-entry-id=qa-note-a] .scv-document','dy':280},
+        {'until':'window.__nativeDoc.scrollTop>200'},
+        {'read':'scroll_before','expr':'window.__nativeDoc.scrollTop'},
+        {'eval':"const picker=document.querySelector('#jvObjectViewer select');picker.value='horizontal';picker.dispatchEvent(new Event('change',{bubbles:true}))"},
+        {'read':'scroll_after','expr':'window.__nativeDoc.scrollTop'},
+        {'read':'same_dom','expr':"window.__nativeDoc===document.querySelector('#jvObjectViewer [data-entry-id=qa-note-a] .scv-document')"},
+        {'shot':str(QA/'live-document-scroll.png')},
+        {'key':'Escape'},actual('after'),{'read':'selection_after','expr':'JarvisScene.inspect().selection'},
+    ]);save('live-document-scroll',out)
+    assert not out['errors'],out['errors']
+    data=out['reads'];assert data['same_dom'] and data['scroll_before']>200
+    assert data['scroll_after']==pytest.approx(data['scroll_before'],abs=1)
+    assert data['before']['revision']==data['after']['revision']
+    assert boxes(data['before'])==boxes(data['after'])
+    assert set(data['selection_before'])==set(data['selection_after'])==set(NOTE_IDS)
+    assert not [req for req in out['requests'] if req['method']=='POST' and req['path']=='/api/scene/commands']
+
+
 async def test_stop_uses_real_canonical_job_cancel_and_ask_preserves_existing_chat_draft(stack):
     job_node=node('job:'+stack.job.id)
     out=await stack.browser([
         {'until':"JarvisScene.inspect().nodes>=7"},
         {'eval':'JarvisChat.open()'},
-        {'until':"document.querySelector('#chatInput')&&!document.querySelector('#chatInput').disabled"},
+        {'until':"JarvisChat.instance.snapshot().conversation_id&&document.querySelector('#chatInput')&&!document.querySelector('#chatInput').readOnly"},
         {'type':'#chatInput','text':'Question déjà rédigée.'},
+        {'read':'original_draft','expr':"document.querySelector('#chatInput').value"},
         {'click':node(AGENT),'count':2},
         {'until':"document.querySelector('.scv-agent')?.dataset.status==='running'"},
         {'click':'[data-agent-action=ask]'},
@@ -359,6 +385,7 @@ async def test_stop_uses_real_canonical_job_cancel_and_ask_preserves_existing_ch
         {'shot':str(QA/'live-job-stopped.png')},
     ]);save('live-stop-ask',out)
     assert not out['errors'],out['errors']
+    assert out['reads']['original_draft']=='Question déjà rédigée.'
     assert 'Question déjà rédigée.' in out['reads']['draft'] and 'claude/qa-parent' in out['reads']['draft']
     assert out['reads']['stop_enabled'] and out['reads']['stopped']['job_status']=='cancelled'
     assert out['reads']['stop_feedback']

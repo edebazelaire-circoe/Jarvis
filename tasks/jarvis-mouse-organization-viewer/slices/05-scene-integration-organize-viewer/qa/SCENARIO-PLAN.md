@@ -1,6 +1,7 @@
 # Independent S05 live acceptance preparation
 
-Status: harness prepared; S05 implementation/review verdict pending integration.
+Status: final S05 integration exercised; see `runtime-verification.md` and
+`code-review.md`. Scoped chat-freshness rework verification remains pending.
 
 The harness starts the existing isolated `JobCore` fixture (real SQLite and
 Core HTTP, controlled blocking worker) and the actual Control Center app on

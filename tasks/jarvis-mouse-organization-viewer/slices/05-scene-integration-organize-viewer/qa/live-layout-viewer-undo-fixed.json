@@ -1,0 +1,1785 @@
+{
+  "reads": {
+    "selection_before": [
+      "qa-note-a",
+      "qa-note-b",
+      "qa-note-c"
+    ],
+    "before": {
+      "snapshot": {
+        "schema_version": 1,
+        "scene_id": "7605d33e-3458-4642-b717-d7750262fe75",
+        "revision": 20,
+        "objects": [
+          {
+            "object_id": "qa-note-a",
+            "kind": "artifact",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": -65,
+              "y": -18,
+              "w": 30,
+              "h": 20
+            },
+            "layer": 120,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Compte rendu",
+              "summary": "Texte public de QA 0",
+              "items": [],
+              "registry_artifact_id": "jart_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          },
+          {
+            "object_id": "qa-note-b",
+            "kind": "window",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": -10,
+              "y": -3,
+              "w": 34,
+              "h": 24
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Hypothèses",
+              "summary": "Texte public de QA 1",
+              "items": []
+            }
+          },
+          {
+            "object_id": "qa-note-c",
+            "kind": "window",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": 45,
+              "y": 12,
+              "w": 38,
+              "h": 28
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Sources",
+              "summary": "Texte public de QA 2",
+              "items": []
+            }
+          },
+          {
+            "object_id": "qa-image",
+            "kind": "window",
+            "category": "image",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": 40,
+              "y": -40,
+              "w": 26,
+              "h": 20
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Image réelle du registre",
+              "summary": "",
+              "items": [],
+              "registry_artifact_id": "jart_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          },
+          {
+            "object_id": "claude:qa-parent",
+            "kind": "agent",
+            "category": "agent",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -70,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "claude",
+              "external_id": "qa-parent",
+              "work_id": null
+            },
+            "payload": {
+              "title": "Comparer les documents",
+              "summary": "Deux sources concordent.",
+              "items": []
+            },
+            "role_ref": {
+              "role_id": "coder",
+              "instance_id": "ainst_440510f6d9b445ca8c899d0dfd65968b",
+              "mission_id": "qa-mission",
+              "mission_owner": true
+            }
+          },
+          {
+            "object_id": "claude:qa-child",
+            "kind": "agent",
+            "category": "agent",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -45,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "claude",
+              "external_id": "qa-child",
+              "work_id": null
+            },
+            "payload": {
+              "title": "Vérifier une source",
+              "summary": "",
+              "items": []
+            }
+          },
+          {
+            "object_id": "job:ab1ffed0-41c9-46e2-a98d-a3eb8f872937",
+            "kind": "job",
+            "category": "job",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -20,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "job",
+              "external_id": "ab1ffed0-41c9-46e2-a98d-a3eb8f872937",
+              "work_id": null
+            },
+            "payload": {
+              "title": "demo",
+              "summary": "",
+              "items": []
+            }
+          }
+        ],
+        "relations": [
+          {
+            "relation_id": "parent_of!claude:qa-child",
+            "kind": "parent_of",
+            "from_id": "claude:qa-parent",
+            "to_id": "claude:qa-child",
+            "layer": 50
+          },
+          {
+            "relation_id": "qa-produced",
+            "kind": "explains",
+            "from_id": "qa-note-a",
+            "to_id": "claude:qa-parent",
+            "layer": 50
+          }
+        ],
+        "archived_ids": []
+      },
+      "revision": 20,
+      "job_status": "running",
+      "job_id": "ab1ffed0-41c9-46e2-a98d-a3eb8f872937",
+      "agent_id": "claude:qa-parent",
+      "note_ids": [
+        "qa-note-a",
+        "qa-note-b",
+        "qa-note-c"
+      ]
+    },
+    "selection_menu": [
+      "qa-note-a",
+      "qa-note-c",
+      "qa-note-b"
+    ],
+    "organized": {
+      "snapshot": {
+        "schema_version": 1,
+        "scene_id": "7605d33e-3458-4642-b717-d7750262fe75",
+        "revision": 21,
+        "objects": [
+          {
+            "object_id": "qa-note-a",
+            "kind": "artifact",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": -45,
+              "y": 1,
+              "w": 30,
+              "h": 20
+            },
+            "layer": 120,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Compte rendu",
+              "summary": "Texte public de QA 0",
+              "items": [],
+              "registry_artifact_id": "jart_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          },
+          {
+            "object_id": "qa-note-b",
+            "kind": "window",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": -12,
+              "y": -1,
+              "w": 34,
+              "h": 24
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Hypothèses",
+              "summary": "Texte public de QA 1",
+              "items": []
+            }
+          },
+          {
+            "object_id": "qa-note-c",
+            "kind": "window",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": 25,
+              "y": -3,
+              "w": 38,
+              "h": 28
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Sources",
+              "summary": "Texte public de QA 2",
+              "items": []
+            }
+          },
+          {
+            "object_id": "qa-image",
+            "kind": "window",
+            "category": "image",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": 40,
+              "y": -40,
+              "w": 26,
+              "h": 20
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Image réelle du registre",
+              "summary": "",
+              "items": [],
+              "registry_artifact_id": "jart_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          },
+          {
+            "object_id": "claude:qa-parent",
+            "kind": "agent",
+            "category": "agent",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -70,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "claude",
+              "external_id": "qa-parent",
+              "work_id": null
+            },
+            "payload": {
+              "title": "Comparer les documents",
+              "summary": "Deux sources concordent.",
+              "items": []
+            },
+            "role_ref": {
+              "role_id": "coder",
+              "instance_id": "ainst_440510f6d9b445ca8c899d0dfd65968b",
+              "mission_id": "qa-mission",
+              "mission_owner": true
+            }
+          },
+          {
+            "object_id": "claude:qa-child",
+            "kind": "agent",
+            "category": "agent",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -45,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "claude",
+              "external_id": "qa-child",
+              "work_id": null
+            },
+            "payload": {
+              "title": "Vérifier une source",
+              "summary": "",
+              "items": []
+            }
+          },
+          {
+            "object_id": "job:ab1ffed0-41c9-46e2-a98d-a3eb8f872937",
+            "kind": "job",
+            "category": "job",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -20,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "job",
+              "external_id": "ab1ffed0-41c9-46e2-a98d-a3eb8f872937",
+              "work_id": null
+            },
+            "payload": {
+              "title": "demo",
+              "summary": "",
+              "items": []
+            }
+          }
+        ],
+        "relations": [
+          {
+            "relation_id": "parent_of!claude:qa-child",
+            "kind": "parent_of",
+            "from_id": "claude:qa-parent",
+            "to_id": "claude:qa-child",
+            "layer": 50
+          },
+          {
+            "relation_id": "qa-produced",
+            "kind": "explains",
+            "from_id": "qa-note-a",
+            "to_id": "claude:qa-parent",
+            "layer": 50
+          }
+        ],
+        "archived_ids": []
+      },
+      "revision": 21,
+      "job_status": "running",
+      "job_id": "ab1ffed0-41c9-46e2-a98d-a3eb8f872937",
+      "agent_id": "claude:qa-parent",
+      "note_ids": [
+        "qa-note-a",
+        "qa-note-b",
+        "qa-note-c"
+      ]
+    },
+    "viewer": {
+      "enabled": true,
+      "mode": "shared",
+      "role": "leader",
+      "leader": {
+        "held": true,
+        "mode": "lock"
+      },
+      "loop": "polling",
+      "revision": 21,
+      "nodes": 7,
+      "commits": {
+        "sent": 0,
+        "applied": 0,
+        "duplicate": 0,
+        "refused": 0,
+        "invalid": 0,
+        "retried": 0,
+        "failed": 0,
+        "pending": 0
+      },
+      "stats": {
+        "snapshots": 1,
+        "polls": 2,
+        "catchUps": 0,
+        "resyncs": 0,
+        "retries": 0,
+        "errors": 0,
+        "received": 0,
+        "broadcasts": 3
+      },
+      "health": {
+        "level": "ok",
+        "code": null,
+        "message": "",
+        "since": null,
+        "retryAt": null
+      },
+      "resolved": 0,
+      "pending": 0,
+      "actions": {
+        "moves": 0,
+        "resizes": 0,
+        "representations": 0,
+        "visibility": 0,
+        "pins": 0,
+        "archives": 0,
+        "bulkArchives": 0,
+        "stops": 0,
+        "menus": 1,
+        "refused": 0,
+        "failed": 0,
+        "rolledBack": 0
+      },
+      "gesture": null,
+      "selected": "qa-note-b",
+      "selection": [
+        "qa-note-a",
+        "qa-note-c",
+        "qa-note-b"
+      ],
+      "stopping": [],
+      "jobCancelTimeoutS": 24,
+      "captures": {
+        "offered": 0,
+        "declined": 0,
+        "rendered": 0,
+        "sent": 0,
+        "refused": 0,
+        "abandoned": 0,
+        "expired": 0,
+        "failed": 0
+      },
+      "barehands": [],
+      "holding": [],
+      "viewer": {
+        "open": true,
+        "depth": 1,
+        "kind": "objects",
+        "layout": "auto",
+        "page": 0,
+        "entries": [
+          {
+            "id": "qa-note-a",
+            "state": "ready",
+            "code": null,
+            "visible": true,
+            "paused": false,
+            "image": null
+          },
+          {
+            "id": "qa-note-c",
+            "state": "ready",
+            "code": null,
+            "visible": true,
+            "paused": false,
+            "image": null
+          },
+          {
+            "id": "qa-note-b",
+            "state": "ready",
+            "code": null,
+            "visible": true,
+            "paused": false,
+            "image": null
+          }
+        ]
+      },
+      "undo": 1,
+      "geometryBusy": false,
+      "tabStops": 1,
+      "animated": 0
+    },
+    "after_view": {
+      "snapshot": {
+        "schema_version": 1,
+        "scene_id": "7605d33e-3458-4642-b717-d7750262fe75",
+        "revision": 21,
+        "objects": [
+          {
+            "object_id": "qa-note-a",
+            "kind": "artifact",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": -45,
+              "y": 1,
+              "w": 30,
+              "h": 20
+            },
+            "layer": 120,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Compte rendu",
+              "summary": "Texte public de QA 0",
+              "items": [],
+              "registry_artifact_id": "jart_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          },
+          {
+            "object_id": "qa-note-b",
+            "kind": "window",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": -12,
+              "y": -1,
+              "w": 34,
+              "h": 24
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Hypothèses",
+              "summary": "Texte public de QA 1",
+              "items": []
+            }
+          },
+          {
+            "object_id": "qa-note-c",
+            "kind": "window",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": 25,
+              "y": -3,
+              "w": 38,
+              "h": 28
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Sources",
+              "summary": "Texte public de QA 2",
+              "items": []
+            }
+          },
+          {
+            "object_id": "qa-image",
+            "kind": "window",
+            "category": "image",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": 40,
+              "y": -40,
+              "w": 26,
+              "h": 20
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Image réelle du registre",
+              "summary": "",
+              "items": [],
+              "registry_artifact_id": "jart_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          },
+          {
+            "object_id": "claude:qa-parent",
+            "kind": "agent",
+            "category": "agent",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -70,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "claude",
+              "external_id": "qa-parent",
+              "work_id": null
+            },
+            "payload": {
+              "title": "Comparer les documents",
+              "summary": "Deux sources concordent.",
+              "items": []
+            },
+            "role_ref": {
+              "role_id": "coder",
+              "instance_id": "ainst_440510f6d9b445ca8c899d0dfd65968b",
+              "mission_id": "qa-mission",
+              "mission_owner": true
+            }
+          },
+          {
+            "object_id": "claude:qa-child",
+            "kind": "agent",
+            "category": "agent",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -45,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "claude",
+              "external_id": "qa-child",
+              "work_id": null
+            },
+            "payload": {
+              "title": "Vérifier une source",
+              "summary": "",
+              "items": []
+            }
+          },
+          {
+            "object_id": "job:ab1ffed0-41c9-46e2-a98d-a3eb8f872937",
+            "kind": "job",
+            "category": "job",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -20,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "job",
+              "external_id": "ab1ffed0-41c9-46e2-a98d-a3eb8f872937",
+              "work_id": null
+            },
+            "payload": {
+              "title": "demo",
+              "summary": "",
+              "items": []
+            }
+          }
+        ],
+        "relations": [
+          {
+            "relation_id": "parent_of!claude:qa-child",
+            "kind": "parent_of",
+            "from_id": "claude:qa-parent",
+            "to_id": "claude:qa-child",
+            "layer": 50
+          },
+          {
+            "relation_id": "qa-produced",
+            "kind": "explains",
+            "from_id": "qa-note-a",
+            "to_id": "claude:qa-parent",
+            "layer": 50
+          }
+        ],
+        "archived_ids": []
+      },
+      "revision": 21,
+      "job_status": "running",
+      "job_id": "ab1ffed0-41c9-46e2-a98d-a3eb8f872937",
+      "agent_id": "claude:qa-parent",
+      "note_ids": [
+        "qa-note-a",
+        "qa-note-b",
+        "qa-note-c"
+      ]
+    },
+    "selection_after": [
+      "qa-note-a",
+      "qa-note-c",
+      "qa-note-b"
+    ],
+    "undone": {
+      "snapshot": {
+        "schema_version": 1,
+        "scene_id": "7605d33e-3458-4642-b717-d7750262fe75",
+        "revision": 22,
+        "objects": [
+          {
+            "object_id": "qa-note-a",
+            "kind": "artifact",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": -65,
+              "y": -18,
+              "w": 30,
+              "h": 20
+            },
+            "layer": 120,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Compte rendu",
+              "summary": "Texte public de QA 0",
+              "items": [],
+              "registry_artifact_id": "jart_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          },
+          {
+            "object_id": "qa-note-b",
+            "kind": "window",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": -10,
+              "y": -3,
+              "w": 34,
+              "h": 24
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Hypothèses",
+              "summary": "Texte public de QA 1",
+              "items": []
+            }
+          },
+          {
+            "object_id": "qa-note-c",
+            "kind": "window",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": 45,
+              "y": 12,
+              "w": 38,
+              "h": 28
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Sources",
+              "summary": "Texte public de QA 2",
+              "items": []
+            }
+          },
+          {
+            "object_id": "qa-image",
+            "kind": "window",
+            "category": "image",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": 40,
+              "y": -40,
+              "w": 26,
+              "h": 20
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Image réelle du registre",
+              "summary": "",
+              "items": [],
+              "registry_artifact_id": "jart_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          },
+          {
+            "object_id": "claude:qa-parent",
+            "kind": "agent",
+            "category": "agent",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -70,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "claude",
+              "external_id": "qa-parent",
+              "work_id": null
+            },
+            "payload": {
+              "title": "Comparer les documents",
+              "summary": "Deux sources concordent.",
+              "items": []
+            },
+            "role_ref": {
+              "role_id": "coder",
+              "instance_id": "ainst_440510f6d9b445ca8c899d0dfd65968b",
+              "mission_id": "qa-mission",
+              "mission_owner": true
+            }
+          },
+          {
+            "object_id": "claude:qa-child",
+            "kind": "agent",
+            "category": "agent",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -45,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "claude",
+              "external_id": "qa-child",
+              "work_id": null
+            },
+            "payload": {
+              "title": "Vérifier une source",
+              "summary": "",
+              "items": []
+            }
+          },
+          {
+            "object_id": "job:ab1ffed0-41c9-46e2-a98d-a3eb8f872937",
+            "kind": "job",
+            "category": "job",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -20,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "job",
+              "external_id": "ab1ffed0-41c9-46e2-a98d-a3eb8f872937",
+              "work_id": null
+            },
+            "payload": {
+              "title": "demo",
+              "summary": "",
+              "items": []
+            }
+          }
+        ],
+        "relations": [
+          {
+            "relation_id": "parent_of!claude:qa-child",
+            "kind": "parent_of",
+            "from_id": "claude:qa-parent",
+            "to_id": "claude:qa-child",
+            "layer": 50
+          },
+          {
+            "relation_id": "qa-produced",
+            "kind": "explains",
+            "from_id": "qa-note-a",
+            "to_id": "claude:qa-parent",
+            "layer": 50
+          }
+        ],
+        "archived_ids": []
+      },
+      "revision": 22,
+      "job_status": "running",
+      "job_id": "ab1ffed0-41c9-46e2-a98d-a3eb8f872937",
+      "agent_id": "claude:qa-parent",
+      "note_ids": [
+        "qa-note-a",
+        "qa-note-b",
+        "qa-note-c"
+      ]
+    }
+  },
+  "errors": [],
+  "logs": [
+    {
+      "type": "info",
+      "text": "[shell] shell.installed {\"controls\":13}"
+    },
+    {
+      "type": "info",
+      "text": "[barehands] barehands.hud_installed {\"seam\":[\"hud\"]}"
+    },
+    {
+      "type": "info",
+      "text": "[barehands] barehands.palette_installed {\"tools\":[\"pointer\",\"pan\",\"select\"],\"seam\":[\"palette\"]}"
+    },
+    {
+      "type": "info",
+      "text": "[barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}"
+    },
+    {
+      "type": "info",
+      "text": "[capture] capture_rail.installed {\"views\":\"control_center_capture_wheel.js\"}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.installed {\"host\":\"toolWheel\"}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.registered {\"slot\":\"capture\",\"secondary\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[capture] capture_views.installed {\"host\":\"recIndicators\",\"category\":\"capture\",\"items\":[\"screenshot\",\"video\",\"audio\"]}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.registered {\"slot\":\"jarvis\",\"secondary\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.registered {\"slot\":\"settings\",\"secondary\":false}"
+    },
+    {
+      "type": "info",
+      "text": "[jarvis] jarvis_wheel.installed {\"categories\":[\"jarvis\",\"settings\"]}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.status {\"slot\":\"selection\",\"tone\":null,\"text\":\"Souris\",\"checked\":null}"
+    },
+    {
+      "type": "info",
+      "text": "[input_arbitration] selection.projected {\"method\":\"mouse\",\"tone\":null,\"lifecycle\":\"off\",\"starting\":false}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.registered {\"slot\":\"selection\",\"secondary\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[input_arbitration] input_arbitration.installed {\"distancePx\":48,\"netPx\":24,\"windowMs\":400,\"cooldownMs\":1500}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.registered {\"slot\":\"dossier\",\"secondary\":false}"
+    },
+    {
+      "type": "info",
+      "text": "[dossier] dossier.installed {\"page\":\"dsrybnjcfx873\"}"
+    },
+    {
+      "type": "info",
+      "text": "[boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}"
+    },
+    {
+      "type": "info",
+      "text": "[attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[presentation-rail] installed {}"
+    },
+    {
+      "type": "info",
+      "text": "[studio-inspector] installed {\"dock\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[workspace] workspace.installed {}"
+    },
+    {
+      "type": "info",
+      "text": "[prefabs] prefabs.installed {}"
+    },
+    {
+      "type": "info",
+      "text": "[chat] chat.installed {\"panel\":\"chatPanel\",\"shared\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[board-drop] board_drop.installed {\"layer\":\"boardDrop\",\"tray\":\"boardDropTray\"}"
+    },
+    {
+      "type": "info",
+      "text": "[screenshot_preview] installed {\"host\":\"screenshotPreview\",\"dismiss_ms\":6000}"
+    },
+    {
+      "type": "info",
+      "text": "[launcher] launcher.installed {\"visible\":4,\"more\":7}"
+    },
+    {
+      "type": "info",
+      "text": "[capture] capture_rail.status_received {\"open\":0}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.status {\"slot\":\"jarvis\",\"tone\":null,\"text\":\"voix hors ligne\",\"checked\":null}"
+    },
+    {
+      "type": "info",
+      "text": "[jarvis] jarvis_wheel.facts {\"read\":\"ok\",\"hint\":\"F9 · VOICE HORS LIGNE\"}"
+    },
+    {
+      "type": "info",
+      "text": "[settings] support_mode.state {\"enabled\":false,\"problem\":null}"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.enabled Object"
+    },
+    {
+      "type": "info",
+      "text": "[barehands] profil de calibration relu aucune mesure"
+    },
+    {
+      "type": "info",
+      "text": "[presentation-rail] workspace_items {\"board_id\":\"default\",\"count\":1}"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.role Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.loop_started Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.snapshot_loaded Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.role_registry_loaded Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.selection_backing Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.geometry_started Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.selection_backing Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.geometry_applied Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.open_requested Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.opened Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.entry_loading Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.detail_opened Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.objects_opened Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.entry_loading Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.entry_ready Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.entry_loading Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.entry_ready Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.entry_loading Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.entry_ready Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.layout_changed Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.closed Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.geometry_started Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.geometry_applied Object"
+    }
+  ],
+  "requests": [
+    {
+      "id": "A4188651ADE47E4ED561AA25DB964791",
+      "method": "GET",
+      "path": "/",
+      "body": null
+    },
+    {
+      "id": "35752.2",
+      "method": "GET",
+      "path": "/api/captures/status",
+      "body": null
+    },
+    {
+      "id": "35752.3",
+      "method": "GET",
+      "path": "/api/fullscreen/commands",
+      "body": null
+    },
+    {
+      "id": "35752.4",
+      "method": "GET",
+      "path": "/api/presentation-studio/explorer/commands",
+      "body": null
+    },
+    {
+      "id": "35752.5",
+      "method": "GET",
+      "path": "/api/presentation-studio/playback",
+      "body": null
+    },
+    {
+      "id": "35752.6",
+      "method": "GET",
+      "path": "/api/shortcuts",
+      "body": null
+    },
+    {
+      "id": "35752.7",
+      "method": "GET",
+      "path": "/api/status",
+      "body": null
+    },
+    {
+      "id": "35752.8",
+      "method": "GET",
+      "path": "/api/status",
+      "body": null
+    },
+    {
+      "id": "35752.9",
+      "method": "GET",
+      "path": "/api/barehands",
+      "body": null
+    },
+    {
+      "id": "35752.10",
+      "method": "GET",
+      "path": "/api/barehands/profile",
+      "body": null
+    },
+    {
+      "id": "35752.11",
+      "method": "GET",
+      "path": "/api/presentation-studio/rail",
+      "body": null
+    },
+    {
+      "id": "35752.12",
+      "method": "GET",
+      "path": "/api/workspace/artifacts",
+      "body": null
+    },
+    {
+      "id": "35752.13",
+      "method": "GET",
+      "path": "/api/agent/tasks",
+      "body": null
+    },
+    {
+      "id": "35752.14",
+      "method": "GET",
+      "path": "/api/work",
+      "body": null
+    },
+    {
+      "id": "35752.15",
+      "method": "GET",
+      "path": "/favicon.ico",
+      "body": null
+    },
+    {
+      "id": "35752.17",
+      "method": "GET",
+      "path": "/api/scene",
+      "body": null
+    },
+    {
+      "id": "35752.18",
+      "method": "GET",
+      "path": "/api/scene/patches",
+      "body": null
+    },
+    {
+      "id": "35752.19",
+      "method": "GET",
+      "path": "/api/subagent-roles",
+      "body": null
+    },
+    {
+      "id": "35752.20",
+      "method": "GET",
+      "path": "/api/missions/qa-mission",
+      "body": null
+    },
+    {
+      "id": "35752.21",
+      "method": "GET",
+      "path": "/qa/state",
+      "body": null
+    },
+    {
+      "id": "35752.22",
+      "method": "GET",
+      "path": "/api/workspace/boards/default/dossier/backing",
+      "body": null
+    },
+    {
+      "id": "35752.23",
+      "method": "GET",
+      "path": "/api/status",
+      "body": null
+    },
+    {
+      "id": "35752.24",
+      "method": "GET",
+      "path": "/qa/state",
+      "body": null
+    },
+    {
+      "id": "35752.25",
+      "method": "GET",
+      "path": "/api/workspace/boards/default/dossier/backing",
+      "body": null
+    },
+    {
+      "id": "35752.26",
+      "method": "POST",
+      "path": "/api/scene/commands",
+      "body": "{\"schema_version\":1,\"op\":\"layout_selection\",\"selection\":{\"ids\":[\"qa-note-a\",\"qa-note-b\",\"qa-note-c\"]},\"targets\":[{\"object_id\":\"qa-note-a\",\"geometry\":{\"x\":-45,\"y\":1,\"w\":30,\"h\":20},\"expected_geometry\":{\"x\":-65,\"y\":-18,\"w\":30,\"h\":20}},{\"object_id\":\"qa-note-b\",\"geometry\":{\"x\":-12,\"y\":-1,\"w\":34,\"h\":24},\"expected_geometry\":{\"x\":-10,\"y\":-3,\"w\":34,\"h\":24}},{\"object_id\":\"qa-note-c\",\"geometry\":{\"x\":25,\"y\":-3,\"w\":38,\"h\":28},\"expected_geometry\":{\"x\":45,\"y\":12,\"w\":38,\"h\":28}}],\"pin\":true}"
+    },
+    {
+      "id": "35752.27",
+      "method": "GET",
+      "path": "/qa/state",
+      "body": null
+    },
+    {
+      "id": "35752.28",
+      "method": "GET",
+      "path": "/api/scene/patches",
+      "body": null
+    },
+    {
+      "id": "35752.29",
+      "method": "GET",
+      "path": "/api/presentation-studio/rail",
+      "body": null
+    },
+    {
+      "id": "35752.30",
+      "method": "GET",
+      "path": "/api/status",
+      "body": null
+    },
+    {
+      "id": "35752.31",
+      "method": "GET",
+      "path": "/qa/state",
+      "body": null
+    },
+    {
+      "id": "35752.33",
+      "method": "GET",
+      "path": "/qa/state",
+      "body": null
+    },
+    {
+      "id": "35752.34",
+      "method": "GET",
+      "path": "/api/artifacts/jart_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "body": null
+    },
+    {
+      "id": "35752.35",
+      "method": "GET",
+      "path": "/api/status",
+      "body": null
+    },
+    {
+      "id": "35752.36",
+      "method": "GET",
+      "path": "/api/captures/status",
+      "body": null
+    },
+    {
+      "id": "35752.37",
+      "method": "GET",
+      "path": "/qa/state",
+      "body": null
+    },
+    {
+      "id": "35752.38",
+      "method": "POST",
+      "path": "/api/scene/commands",
+      "body": "{\"schema_version\":1,\"op\":\"layout_selection\",\"selection\":{\"ids\":[\"qa-note-a\",\"qa-note-b\",\"qa-note-c\"]},\"targets\":[{\"object_id\":\"qa-note-a\",\"geometry\":{\"x\":-65,\"y\":-18,\"w\":30,\"h\":20},\"expected_geometry\":{\"x\":-45,\"y\":1,\"w\":30,\"h\":20}},{\"object_id\":\"qa-note-b\",\"geometry\":{\"x\":-10,\"y\":-3,\"w\":34,\"h\":24},\"expected_geometry\":{\"x\":-12,\"y\":-1,\"w\":34,\"h\":24}},{\"object_id\":\"qa-note-c\",\"geometry\":{\"x\":45,\"y\":12,\"w\":38,\"h\":28},\"expected_geometry\":{\"x\":25,\"y\":-3,\"w\":38,\"h\":28}}]}"
+    },
+    {
+      "id": "35752.39",
+      "method": "GET",
+      "path": "/qa/state",
+      "body": null
+    },
+    {
+      "id": "35752.40",
+      "method": "GET",
+      "path": "/api/scene/patches",
+      "body": null
+    },
+    {
+      "id": "35752.41",
+      "method": "GET",
+      "path": "/qa/state",
+      "body": null
+    }
+  ],
+  "responses": [
+    {
+      "id": "A4188651ADE47E4ED561AA25DB964791",
+      "status": 200,
+      "path": "/"
+    },
+    {
+      "id": "35752.2",
+      "status": 200,
+      "path": "/api/captures/status"
+    },
+    {
+      "id": "35752.5",
+      "status": 200,
+      "path": "/api/presentation-studio/playback"
+    },
+    {
+      "id": "35752.6",
+      "status": 200,
+      "path": "/api/shortcuts"
+    },
+    {
+      "id": "35752.7",
+      "status": 200,
+      "path": "/api/status"
+    },
+    {
+      "id": "35752.9",
+      "status": 200,
+      "path": "/api/barehands"
+    },
+    {
+      "id": "35752.10",
+      "status": 200,
+      "path": "/api/barehands/profile"
+    },
+    {
+      "id": "35752.8",
+      "status": 200,
+      "path": "/api/status"
+    },
+    {
+      "id": "35752.13",
+      "status": 200,
+      "path": "/api/agent/tasks"
+    },
+    {
+      "id": "35752.15",
+      "status": 404,
+      "path": "/favicon.ico"
+    },
+    {
+      "id": "35752.11",
+      "status": 200,
+      "path": "/api/presentation-studio/rail"
+    },
+    {
+      "id": "35752.14",
+      "status": 200,
+      "path": "/api/work"
+    },
+    {
+      "id": "35752.12",
+      "status": 200,
+      "path": "/api/workspace/artifacts"
+    },
+    {
+      "id": "35752.17",
+      "status": 200,
+      "path": "/api/scene"
+    },
+    {
+      "id": "35752.19",
+      "status": 200,
+      "path": "/api/subagent-roles"
+    },
+    {
+      "id": "35752.20",
+      "status": 200,
+      "path": "/api/missions/qa-mission"
+    },
+    {
+      "id": "35752.21",
+      "status": 200,
+      "path": "/qa/state"
+    },
+    {
+      "id": "35752.22",
+      "status": 200,
+      "path": "/api/workspace/boards/default/dossier/backing"
+    },
+    {
+      "id": "35752.24",
+      "status": 200,
+      "path": "/qa/state"
+    },
+    {
+      "id": "35752.23",
+      "status": 200,
+      "path": "/api/status"
+    },
+    {
+      "id": "35752.25",
+      "status": 200,
+      "path": "/api/workspace/boards/default/dossier/backing"
+    },
+    {
+      "id": "35752.26",
+      "status": 200,
+      "path": "/api/scene/commands"
+    },
+    {
+      "id": "35752.18",
+      "status": 200,
+      "path": "/api/scene/patches"
+    },
+    {
+      "id": "35752.27",
+      "status": 200,
+      "path": "/qa/state"
+    },
+    {
+      "id": "35752.29",
+      "status": 200,
+      "path": "/api/presentation-studio/rail"
+    },
+    {
+      "id": "35752.31",
+      "status": 200,
+      "path": "/qa/state"
+    },
+    {
+      "id": "35752.30",
+      "status": 200,
+      "path": "/api/status"
+    },
+    {
+      "id": "35752.33",
+      "status": 200,
+      "path": "/qa/state"
+    },
+    {
+      "id": "35752.34",
+      "status": 200,
+      "path": "/api/artifacts/jart_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "id": "35752.35",
+      "status": 200,
+      "path": "/api/status"
+    },
+    {
+      "id": "35752.36",
+      "status": 200,
+      "path": "/api/captures/status"
+    },
+    {
+      "id": "35752.37",
+      "status": 200,
+      "path": "/qa/state"
+    },
+    {
+      "id": "35752.38",
+      "status": 200,
+      "path": "/api/scene/commands"
+    },
+    {
+      "id": "35752.28",
+      "status": 200,
+      "path": "/api/scene/patches"
+    },
+    {
+      "id": "35752.39",
+      "status": 200,
+      "path": "/qa/state"
+    },
+    {
+      "id": "35752.41",
+      "status": 200,
+      "path": "/qa/state"
+    }
+  ]
+}
