@@ -30,6 +30,16 @@ try{
   const evaluate=async expression=>{const out=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(out.exceptionDetails)throw new Error(out.exceptionDetails.exception?.description||out.exceptionDetails.text);return out.result.value};
   const point=selector=>evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)throw Error('Missing selector '+${JSON.stringify(selector)});el.scrollIntoView({block:'nearest',inline:'nearest'});const r=el.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
   const click=async action=>{const at=await point(action.click),button=action.button||'left',clickCount=action.count||1,modifiers=(action.ctrl?2:0)+(action.shift?8:0);await send('Input.dispatchMouseEvent',{type:'mouseMoved',...at});await send('Input.dispatchMouseEvent',{type:'mousePressed',...at,button,clickCount,modifiers});await send('Input.dispatchMouseEvent',{type:'mouseReleased',...at,button,clickCount,modifiers})};
+  const drag=async action=>{
+    const at=await point(action.drag),dx=action.dx??48,dy=action.dy??24;
+    await send('Input.dispatchMouseEvent',{type:'mouseMoved',...at});
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',...at,button:'left',buttons:1,clickCount:1});
+    for(let step=1;step<=12;step++){
+      await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:at.x+dx*step/12,y:at.y+dy*step/12,button:'left',buttons:1});
+      await sleep(16);
+    }
+    await send('Input.dispatchMouseEvent',{type:'mouseReleased',x:at.x+dx,y:at.y+dy,button:'left',buttons:0,clickCount:1});
+  };
   const key=async action=>{
     const codes={Tab:9,Escape:27,Enter:13,ArrowLeft:37,ArrowRight:39,ArrowUp:38,ArrowDown:40,Delete:46};
     const code=action.key.length===1?'Key'+action.key.toUpperCase():action.key,virtual=codes[action.key]||action.key.toUpperCase().charCodeAt(0),modifiers=(action.ctrl?2:0)+(action.shift?8:0)+(action.alt?1:0);
@@ -45,6 +55,7 @@ try{
     if(action.eval!==undefined)await evaluate(action.eval);
     else if(action.read)reads[action.read]=await evaluate(action.expr);
     else if(action.click)await click(action);
+    else if(action.drag)await drag(action);
     else if(action.key)await key(action);
     else if(action.type){await click({click:action.type});await key({key:'a',ctrl:true});await send('Input.insertText',{text:action.text})}
     else if(action.wait)await sleep(action.wait);

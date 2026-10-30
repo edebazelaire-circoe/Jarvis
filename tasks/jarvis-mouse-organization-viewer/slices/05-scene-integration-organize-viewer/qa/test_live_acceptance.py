@@ -226,6 +226,39 @@ def save(name,out):
     (QA/(name+'.json')).write_text(json.dumps(out,ensure_ascii=False,indent=2),encoding='utf-8')
 
 
+async def test_real_group_mouse_drag_commits_one_atomic_revision_with_offsets_preserved(stack):
+    """Actual mouse input through shared hold desk; no per-member pin/write."""
+    out=await stack.browser([
+        {'until':"JarvisScene.inspect().nodes>=7&&JarvisScene.inspect().pending===0"},
+        {'click':node(NOTE_IDS[0])},{'click':node(NOTE_IDS[1]),'ctrl':True},{'click':node(NOTE_IDS[2]),'ctrl':True},
+        {'read':'selection_before','expr':'JarvisScene.inspect().selection'},
+        {'eval':"fetch('/qa/state').then(r=>r.json()).then(v=>window.__before=v)"},actual('before'),
+        {'drag':node(NOTE_IDS[1])+' .sc-title','dx':48,'dy':24},
+        {'until':"fetch('/qa/state').then(r=>r.json()).then(v=>v.revision>window.__before.revision)"},
+        {'until':"JarvisScene.inspect().pending===0"},
+        # A second snapshot after the response/render cycle catches late member writes.
+        {'wait':300},actual('dragged'),
+        {'read':'selection_after','expr':'JarvisScene.inspect().selection'},
+    ]);save('live-group-drag',out)
+    assert not out['errors'],out['errors']
+    data=out['reads'];before=boxes(data['before']);after=boxes(data['dragged'])
+    assert set(data['selection_before'])==set(NOTE_IDS)==set(data['selection_after'])
+    commands=[json.loads(req['body']) for req in out['requests'] if req['method']=='POST' and req['path']=='/api/scene/commands']
+    assert len(commands)==1,commands
+    assert commands[0]['op']=='layout_selection',commands
+    assert set(commands[0]['selection']['ids'])==set(NOTE_IDS)
+    assert {target['object_id'] for target in commands[0]['targets']}==set(NOTE_IDS)
+    assert data['dragged']['revision']==data['before']['revision']+1
+    dx=after[NOTE_IDS[0]]['x']-before[NOTE_IDS[0]]['x']
+    dy=after[NOTE_IDS[0]]['y']-before[NOTE_IDS[0]]['y']
+    assert abs(dx)+abs(dy)>0.01
+    for object_id in NOTE_IDS:
+        assert after[object_id]['x']-before[object_id]['x']==pytest.approx(dx,abs=1e-5)
+        assert after[object_id]['y']-before[object_id]['y']==pytest.approx(dy,abs=1e-5)
+        assert after[object_id]['w']==before[object_id]['w']
+        assert after[object_id]['h']==before[object_id]['h']
+
+
 @pytest.mark.parametrize('orbit',[False,True])
 async def test_one_real_layout_revision_then_geometry_undo_and_viewer_preserve_selection(stack,orbit):
     plan=[{'view':{'orbit':orbit,'breathe':False,'speed':2}}]+layout_setup()+[

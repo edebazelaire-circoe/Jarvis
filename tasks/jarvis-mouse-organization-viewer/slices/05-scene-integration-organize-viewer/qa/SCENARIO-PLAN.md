@@ -22,6 +22,24 @@ No provider traces/private reasoning supplied or inferred.
 
 Prepared executable scenarios:
 
+0. Ctrl-select three notes, then physically drag the middle title with a CDP
+   mouse press, twelve held moves and release. Verify exactly one actual
+   `layout_selection` POST, exactly one Core revision, explicit full selection
+   and targets, nonzero common displacement, original dimensions and pairwise
+   offsets retained, and selection retained. No per-member pin/set_geometry
+   writes are allowed. This exercises `createHoldDesk.drop` through the page,
+   rather than treating the obsolete static group-drag source assertion as
+   sufficient. The audited baseline currently loops per member in `drop` and
+   wires `commitUserGeometry`; the final S05 shared atomic seam must resolve
+   that actual defect before this scenario can pass.
+
+   Baseline runtime reproduced on2026-10-30, before S05 integration: the single
+   scenario failed at the one-command assertion in15.82s. Actual CDP evidence
+   records three `set_geometry` requests (qa-note-a/b/c), Core revision20→23,
+   full selection retained and zero browser exceptions. Evidence is
+   `live-group-drag-baseline.json`. This is a known baseline defect, not a
+   verdict on the unfinished S05 fix; final run writes `live-group-drag.json`.
+
 1. Multi-select three notes with real Ctrl-clicks; right-click selected member
    preserves group; context Organize→Row results in exactly one Core revision
    and one layout_selection command. Enter opens compatible selection;
