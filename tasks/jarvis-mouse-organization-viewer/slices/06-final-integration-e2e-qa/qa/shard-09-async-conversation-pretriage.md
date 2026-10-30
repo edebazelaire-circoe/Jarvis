@@ -102,3 +102,45 @@ Baseline worktree is already detached at
 do not widen to all replays/module. If it fails, compare the exact traceback and
 phase before requesting any further bounded replay. Other naturally observed
 failures retain their own pending classifications. PM owns disposition.
+
+## Later bounded baseline allocation: four actual outcomes retained
+
+PM subsequently authorized exactly the three mute replays and the single
+ambient-noise case together after checking the resource budget. This superseded
+the proposed replay-zero-only command above. No other test/file was run.
+
+Cwd was `C:/Projects/jarvis/movb`; HEAD was verified as
+`c0858a8000e2ca23b57231edb8f46c643080ad07`. Main checkout interpreter,
+`PYTHONDONTWRITEBYTECODE=1`, `--assert=plain --tb=short -p no:cacheprovider -q`:
+
+```powershell
+& C:/Projects/jarvis/jarvis/.venv/Scripts/python.exe -m pytest --assert=plain --tb=short -p no:cacheprovider -q tests/integration/test_v2_async_conversation.py::test_jarvis_mute_leaves_the_work_in_core_and_speaks_nothing_stale tests/integration/test_v2_async_conversation.py::test_ambient_noise_during_live_does_not_keep_the_session_alive --junitxml=C:/Projects/jarvis/mov5/tasks/jarvis-mouse-organization-viewer/slices/06-final-integration-e2e-qa/qa/baseline-shard-09-async-conversation.xml
+```
+
+Result: **4 failed in 140.21 s**, exit 1. Evidence:
+[stdout](baseline-shard-09-async-conversation.log),
+[JUnit](baseline-shard-09-async-conversation.xml).
+
+| Baseline node | Actual traceback |
+| --- | --- |
+| mute `[0]` | test line 344 → virtual harness wait_background line 796 → wait_until line 132 |
+| mute `[1]` | same lines/condition |
+| mute `[2]` | same lines/condition |
+| ambient noise | test line 447 → virtual harness wait_background line 796 → wait_until line 132 |
+
+Every failure is
+`AssertionError: condition never reached: the /v1/events subscription is closed`.
+The helper's preceding Voice-background predicate completed before this second
+wait. **No actual subscriber count was recorded**, and this does not establish
+that a websocket leaked or identify an internal cause; only the existing
+subscription-settlement predicate's timeout is proven.
+
+The pytest process completed, including the harness's owned fixture teardown.
+No manual or broad process cleanup, hardware, provider, Chrome, model call or
+daily runtime interaction occurred. Product files and root HEAD remain frozen.
+
+These four exact baseline failures are established. The root shard was still
+in progress when this evidence was captured; its final trace must match these
+phases/conditions before classifying the four gate outcomes as unrelated. Do
+not substitute the source hypothesis for that comparison or mark the red
+canonical verdict green. No additional execution is proposed without PM request.

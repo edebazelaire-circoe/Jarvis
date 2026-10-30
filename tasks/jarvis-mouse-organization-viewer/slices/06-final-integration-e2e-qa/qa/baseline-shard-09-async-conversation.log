@@ -1,0 +1,40 @@
+FFFF                                                                     [100%]
+================================== FAILURES ===================================
+____ test_jarvis_mute_leaves_the_work_in_core_and_speaks_nothing_stale[0] _____
+tests\integration\test_v2_async_conversation.py:344: in test_jarvis_mute_leaves_the_work_in_core_and_speaks_nothing_stale
+    await stack.wait_background()
+jarvis\testlab\virtual\harness.py:796: in wait_background
+    await wait_until(
+jarvis\testlab\virtual\harness.py:132: in wait_until
+    raise AssertionError(f"condition never reached: {message or predicate}")
+E   AssertionError: condition never reached: the /v1/events subscription is closed
+____ test_jarvis_mute_leaves_the_work_in_core_and_speaks_nothing_stale[1] _____
+tests\integration\test_v2_async_conversation.py:344: in test_jarvis_mute_leaves_the_work_in_core_and_speaks_nothing_stale
+    await stack.wait_background()
+jarvis\testlab\virtual\harness.py:796: in wait_background
+    await wait_until(
+jarvis\testlab\virtual\harness.py:132: in wait_until
+    raise AssertionError(f"condition never reached: {message or predicate}")
+E   AssertionError: condition never reached: the /v1/events subscription is closed
+____ test_jarvis_mute_leaves_the_work_in_core_and_speaks_nothing_stale[2] _____
+tests\integration\test_v2_async_conversation.py:344: in test_jarvis_mute_leaves_the_work_in_core_and_speaks_nothing_stale
+    await stack.wait_background()
+jarvis\testlab\virtual\harness.py:796: in wait_background
+    await wait_until(
+jarvis\testlab\virtual\harness.py:132: in wait_until
+    raise AssertionError(f"condition never reached: {message or predicate}")
+E   AssertionError: condition never reached: the /v1/events subscription is closed
+_______ test_ambient_noise_during_live_does_not_keep_the_session_alive ________
+tests\integration\test_v2_async_conversation.py:447: in test_ambient_noise_during_live_does_not_keep_the_session_alive
+    await stack.wait_background()
+jarvis\testlab\virtual\harness.py:796: in wait_background
+    await wait_until(
+jarvis\testlab\virtual\harness.py:132: in wait_until
+    raise AssertionError(f"condition never reached: {message or predicate}")
+E   AssertionError: condition never reached: the /v1/events subscription is closed
+=========================== short test summary info ===========================
+FAILED tests/integration/test_v2_async_conversation.py::test_jarvis_mute_leaves_the_work_in_core_and_speaks_nothing_stale[0]
+FAILED tests/integration/test_v2_async_conversation.py::test_jarvis_mute_leaves_the_work_in_core_and_speaks_nothing_stale[1]
+FAILED tests/integration/test_v2_async_conversation.py::test_jarvis_mute_leaves_the_work_in_core_and_speaks_nothing_stale[2]
+FAILED tests/integration/test_v2_async_conversation.py::test_ambient_noise_during_live_does_not_keep_the_session_alive
+4 failed in 140.21s (0:02:20)
