@@ -113,3 +113,7 @@ Add a concise canonical object-viewer document or the appropriate Control Center
 
 Return the final viewer launch/view-model API to Slice 05. Keep real scene selection semantics out of this module.
 
+
+## S03 bounded amendment — cross-frame Escape (2026-10-30)
+Real Chrome evidence: native dialog Escape does not close while focus belongs to sandbox cross-origin prefab iframe. Parent cannot intercept cross-origin key events. Required Escape behavior therefore needs a minimal extension to existing shim/protocol/PrefabHost, not a second renderer or message bus. PM authorizes canonical Escape-only UI message plus optional local onEscape callback after existing active frame/source validation. Never forward arbitrary keys, text, commands or synthetic DOM keyboard events. Callback absent on ordinary scene hosts: no behavior change. Retain teardown, source/instance/generation/staged guards and bounded message shape/rate as applicable. No Core state write or Fullscreen API change. S03 may edit canonical shim/protocol/host and their tests solely for this bridge. QA tier: ui + critical boundary review of added bridge; independent spoof/stale/non-Escape tests and a small targeted mutation pass before acceptance. This bounded amendment corrects the observed requirement gap; no new public agent/model behavior.
+
