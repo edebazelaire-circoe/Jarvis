@@ -1,0 +1,25 @@
+{
+  "suite": "all",
+  "shard": "8/20",
+  "only": null,
+  "files": 53,
+  "known_failures_file": "known_failures.json",
+  "duration_seconds": 1060.8,
+  "source_revision": "97d56f1144cb721e7c5303f43ff71d291ed1d9bc",
+  "green": true,
+  "passed": 1293,
+  "failed": 2,
+  "skipped": 4,
+  "collected": 1299,
+  "exitstatus": 1,
+  "session_problems": [],
+  "unknown_failures": [],
+  "stale_known_failures": [],
+  "unseen_known_failures": [],
+  "expired_entries": [],
+  "intermittent_tolerated": [],
+  "known_failures_seen": [
+    "tests/unit/test_barehands_palette_js.py::test_the_served_page_puts_the_tools_on_the_palette_and_not_in_the_settings",
+    "tests/unit/test_tool_brain_choices.py::test_ui_projection_is_consistent_in_the_single_metadata_copy"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "suite": "all",
+  "shard": "19/20",
+  "only": null,
+  "files": 53,
+  "known_failures_file": "known_failures.json",
+  "duration_seconds": 967.3,
+  "source_revision": "97d56f1144cb721e7c5303f43ff71d291ed1d9bc",
+  "green": true,
+  "passed": 1323,
+  "failed": 3,
+  "skipped": 4,
+  "collected": 1330,
+  "exitstatus": 1,
+  "session_problems": [],
+  "unknown_failures": [],
+  "stale_known_failures": [],
+  "unseen_known_failures": [],
+  "expired_entries": [],
+  "intermittent_tolerated": [],
+  "known_failures_seen": [
+    "tests/unit/test_connections_settings_browser.py::test_a_late_response_redraws_nothing_once_the_section_is_left[close]",
+    "tests/unit/test_connections_settings_browser.py::test_a_late_response_redraws_nothing_once_the_section_is_left[section]",
+    "tests/unit/test_connections_settings_browser.py::test_add_bind_replace_delete_post_frozen_payloads_and_never_show_a_value"
+  ]
+}

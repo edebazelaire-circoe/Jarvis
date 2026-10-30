@@ -1,0 +1,22 @@
+{
+  "suite": "all",
+  "shard": "17/20",
+  "only": null,
+  "files": 53,
+  "known_failures_file": "known_failures.json",
+  "duration_seconds": 1113.8,
+  "source_revision": "97d56f1144cb721e7c5303f43ff71d291ed1d9bc",
+  "green": true,
+  "passed": 1344,
+  "failed": 0,
+  "skipped": 16,
+  "collected": 1360,
+  "exitstatus": 0,
+  "session_problems": [],
+  "unknown_failures": [],
+  "stale_known_failures": [],
+  "unseen_known_failures": [],
+  "expired_entries": [],
+  "intermittent_tolerated": [],
+  "known_failures_seen": []
+}

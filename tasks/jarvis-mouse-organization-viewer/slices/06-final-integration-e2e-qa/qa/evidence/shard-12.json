@@ -1,0 +1,26 @@
+{
+  "suite": "all",
+  "shard": "12/20",
+  "only": null,
+  "files": 53,
+  "known_failures_file": "known_failures.json",
+  "duration_seconds": 1241.9,
+  "source_revision": "97d56f1144cb721e7c5303f43ff71d291ed1d9bc",
+  "green": false,
+  "passed": 1518,
+  "failed": 3,
+  "skipped": 6,
+  "collected": 1527,
+  "exitstatus": 1,
+  "session_problems": [],
+  "unknown_failures": [
+    "tests/unit/test_scene_renderer_logic.py::test_a_gesture_on_a_selected_object_carries_the_whole_selection",
+    "tests/unit/test_scene_renderer_logic.py::test_the_dropped_place_is_pending_before_the_hand_lets_go",
+    "tests/unit/test_settings_shell_browser.py::test_open_voice_model_comparison_does_not_overflow[1366-768]"
+  ],
+  "stale_known_failures": [],
+  "unseen_known_failures": [],
+  "expired_entries": [],
+  "intermittent_tolerated": [],
+  "known_failures_seen": []
+}

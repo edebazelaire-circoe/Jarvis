@@ -22,3 +22,14 @@ Resolved I-002 rail registry drift in canonical documentation;12 shell-layer tes
 Audit correction: actual hold drop loops per-ID commits; group-drag known failure reflects real lost atomic batch behavior. S05 scope explicitly amended to fix shared commit seam + real one-command/revision browser proof; cannot park as known baseline because current product contract includes atomic multi-object geometry. S2 implements, S1 independent QA extends scenario.
 
 S05 machine-accepted by PM: integrated implementation5feebb58, freshness rework3bf96f89, independent actual Core/SQLite/HTTP/Chromium8-scenario evidencec88f7b6f and final focused3-pass rework verification4cb4724f. All blocking PM dispositions resolved. S06 convergence and full canonical sequential release gate begin; explicit Human acceptance remains pending. Optional actual provider probeb5d92265 hit weekly quota (running-to-failed observed); no successful inference claimed and no retry.
+
+
+## 2026-10-30 16:00 PM disposition: full run complete, F2 rework required
+
+All20 canonical shards finished at15:51:31 on immutable97d56f1144cb721e7c5303f43ff71d291ed1d9bc:1062 modules,25378 passed,43 failed,162 skipped (25583 collected). Manifest/source/report equality verified; raw global gate red, no session/collection/unseen/expired problems. Evidence: full-suite-summary.json and original20 reports/logs. Source freeze released.
+
+Independent actual Core/SQLite/HTTP/Chromium overlay campaign194a1246:2 passed/1 failed38.89s. Native dialog makes the fullscreen confirmation popover inert in both arrival orders. Go/Cancel are painted but inaccessible; Escape closing viewer restores them. No automatic fullscreen, scene revision/write or runtime error occurred. This is a real task blocker, not a baseline excuse. S05 acceptance reopened.
+
+Authorized bounded policy: refuse viewer admission with clear French feedback while canonical fullscreen state is armed (including local requests without ID), preserving actionable prompt. When a fullscreen request arrives during the viewer, synchronously close it through its existing owner, including provider/read cancellation and focus restoration, then let canonical controller arm its normal prompt. Active-browser-fullscreen viewer refusal remains. Never automatically request/exit fullscreen; no new overlay manager, state owner, bus or wire protocol. S2 owns implementation/docs; S1 independently verifies affected arrival orders and existing-owner contracts. Preserve original red proof. Re-run affected gates after fix, not the complete four-hour suite without cause.
+
+Remaining classification: six browser baseline comparisons, one Chrome-bootstrap-only current retry, one owned_read shutdown assertion. S1 assigned ONE uninstrumented exact-baseline whole-file backend run; earlier exact-case/pair passes and timed-out diagnostic are not proof of pre-existing failure. No daily Jarvis restart or paid model retry.

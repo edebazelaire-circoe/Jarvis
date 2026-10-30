@@ -1,0 +1,30 @@
+{
+  "suite": "all",
+  "shard": "14/20",
+  "only": null,
+  "files": 53,
+  "known_failures_file": "known_failures.json",
+  "duration_seconds": 486.1,
+  "source_revision": "97d56f1144cb721e7c5303f43ff71d291ed1d9bc",
+  "green": false,
+  "passed": 1066,
+  "failed": 6,
+  "skipped": 12,
+  "collected": 1084,
+  "exitstatus": 1,
+  "session_problems": [],
+  "unknown_failures": [
+    "tests/unit/test_capture_rail_js.py::test_la_scene_mesure_les_indicateurs_et_la_roue_comme_des_commandes",
+    "tests/unit/test_capture_rail_js.py::test_les_indicateurs_sont_au_haut_gauche_au_rang_du_centre_d_etat",
+    "tests/unit/test_variants_run_browser.py::test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run[1280x720]",
+    "tests/unit/test_variants_run_browser.py::test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run[1920x1032]",
+    "tests/unit/test_variants_run_browser.py::test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run[600x800]"
+  ],
+  "stale_known_failures": [],
+  "unseen_known_failures": [],
+  "expired_entries": [],
+  "intermittent_tolerated": [],
+  "known_failures_seen": [
+    "tests/unit/test_brain_capability_parity.py::test_every_tool_of_a_declared_server_is_documented_in_the_brain_prompt"
+  ]
+}
