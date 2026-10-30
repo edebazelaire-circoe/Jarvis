@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="16.806" timestamp="2026-10-30T13:07:15.812741+01:00" hostname="CLARICE"><testcase classname="tests.unit.test_interaction_mode_follower" name="test_mode_change_while_voice_is_idle_reaches_the_coordinator" time="5.116"><failure message="AssertionError: condition jamais atteinte">tests\unit\test_interaction_mode_follower.py:227: in test_mode_change_while_voice_is_idle_reaches_the_coordinator
+    await until(lambda: core.listening == 1)
+tests\unit\test_interaction_mode_follower.py:185: in until
+    assert loop.time() &lt; deadline, "condition jamais atteinte"
+           ^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: condition jamais atteinte</failure></testcase><testcase classname="tests.unit.test_interaction_mode_follower" name="test_legacy_architecture_refuses_presentation_visibly_once" time="3.538"><failure message="AssertionError: condition jamais atteinte">tests\unit\test_interaction_mode_follower.py:324: in test_legacy_architecture_refuses_presentation_visibly_once
+    await until(lambda: core.listening == 1 and core.snapshot_reads == 1)
+tests\unit\test_interaction_mode_follower.py:185: in until
+    assert loop.time() &lt; deadline, "condition jamais atteinte"
+           ^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: condition jamais atteinte</failure></testcase></testsuite></testsuites>

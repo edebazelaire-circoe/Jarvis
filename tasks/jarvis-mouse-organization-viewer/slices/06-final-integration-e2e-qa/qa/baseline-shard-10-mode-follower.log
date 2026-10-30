@@ -1,0 +1,20 @@
+FF                                                                       [100%]
+================================== FAILURES ===================================
+________ test_mode_change_while_voice_is_idle_reaches_the_coordinator _________
+tests\unit\test_interaction_mode_follower.py:227: in test_mode_change_while_voice_is_idle_reaches_the_coordinator
+    await until(lambda: core.listening == 1)
+tests\unit\test_interaction_mode_follower.py:185: in until
+    assert loop.time() < deadline, "condition jamais atteinte"
+           ^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: condition jamais atteinte
+_________ test_legacy_architecture_refuses_presentation_visibly_once __________
+tests\unit\test_interaction_mode_follower.py:324: in test_legacy_architecture_refuses_presentation_visibly_once
+    await until(lambda: core.listening == 1 and core.snapshot_reads == 1)
+tests\unit\test_interaction_mode_follower.py:185: in until
+    assert loop.time() < deadline, "condition jamais atteinte"
+           ^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: condition jamais atteinte
+=========================== short test summary info ===========================
+FAILED tests/unit/test_interaction_mode_follower.py::test_mode_change_while_voice_is_idle_reaches_the_coordinator
+FAILED tests/unit/test_interaction_mode_follower.py::test_legacy_architecture_refuses_presentation_visibly_once
+2 failed in 21.07s
