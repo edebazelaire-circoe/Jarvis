@@ -3,7 +3,7 @@
 Contrat : `docs/scene-selection-batch.md` §3–§5. Module pur, sans E/S.
 
 Une commande de sélection (`patch_selection`, `translate_selection`,
-`pin_selection`, `unpin_selection`, `archive_selection`) désigne ses membres
+`layout_selection`, `pin_selection`, `unpin_selection`, `archive_selection`) désigne ses membres
 par une `SceneSelection` ; le réducteur (`apply_scene_command`) la résout,
 valide chaque membre et écrit **sur le même instantané** :
 
@@ -30,7 +30,7 @@ from dataclasses import dataclass, replace
 import math
 from typing import Any, Callable
 
-from jarvis.domain._checks import check_text, check_token
+from jarvis.domain._checks import check_id, check_text, check_token
 from jarvis.domain.scene import (
     ALLOWED_SCENE_OPS,
     MAX_ANNOTATION_CHARS,
@@ -67,6 +67,7 @@ from jarvis.domain.scene import (
     signal_owners,
 )
 from jarvis.domain.scene_selection import (
+    MAX_SELECTION_IDS,
     SceneSelection,
     SelectionMode,
     SelectionRefusal,
@@ -77,7 +78,7 @@ from jarvis.domain.scene_selection import (
 
 #: Opérations qui exigent un membre placé : un id explicite sans géométrie
 #: refuse tout, un membre de filtre sans géométrie est écarté (§3.2).
-_REQUIRE_PLACED = frozenset({SceneOp.TRANSLATE_SELECTION, SceneOp.PIN_SELECTION})
+_REQUIRE_PLACED = frozenset({SceneOp.TRANSLATE_SELECTION, SceneOp.PIN_SELECTION, SceneOp.LAYOUT_SELECTION})
 #: Grille de l'écart effectif : le dixième d'unité de la page (`QUANTUM`).
 DELTA_QUANTUM = 10
 
@@ -177,6 +178,60 @@ class SceneDelta:
     def from_payload(cls, payload: object) -> SceneDelta:
         data = check_wire_keys("delta", payload, frozenset({"dx", "dy"}))
         return cls(dx=data["dx"], dy=data["dy"])
+
+
+@dataclass(frozen=True, slots=True)
+class SceneGeometryTarget:
+    """Un rectangle cible et, pour l'annulation, la géométrie qui doit encore être présente."""
+
+    object_id: str
+    geometry: SceneGeometry
+    expected_geometry: SceneGeometry | None = None
+
+    def __post_init__(self) -> None:
+        check_id("targets[].object_id", self.object_id, required=True)
+        if not isinstance(self.geometry, SceneGeometry):
+            raise TypeError("targets[].geometry must be a SceneGeometry")
+        if self.expected_geometry is not None and not isinstance(self.expected_geometry, SceneGeometry):
+            raise TypeError("targets[].expected_geometry must be a SceneGeometry")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"object_id": self.object_id, "geometry": self.geometry.to_payload(),
+                **({"expected_geometry": self.expected_geometry.to_payload()} if self.expected_geometry is not None else {})}
+
+    @classmethod
+    def from_payload(cls, payload: object) -> SceneGeometryTarget:
+        data = check_wire_keys("target", payload, frozenset({"object_id", "geometry"}), frozenset({"expected_geometry"}))
+        return cls(data["object_id"], SceneGeometry.from_payload(data["geometry"]),
+                   None if "expected_geometry" not in data else SceneGeometry.from_payload(data["expected_geometry"]))
+
+
+@dataclass(frozen=True, slots=True)
+class SceneGeometryTargets:
+    """`targets` de `layout_selection` : liste bornée, unique, comparée entièrement ou pas du tout."""
+
+    entries: tuple[SceneGeometryTarget, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.entries, tuple) or not all(isinstance(entry, SceneGeometryTarget) for entry in self.entries):
+            raise TypeError("targets must be a tuple of SceneGeometryTarget")
+        if not 1 <= len(self.entries) <= MAX_SELECTION_IDS:
+            raise ValueError(f"targets holds between 1 and {MAX_SELECTION_IDS} entries")
+        if len({entry.object_id for entry in self.entries}) != len(self.entries):
+            raise ValueError("targets must not repeat an object_id")
+        if len({entry.expected_geometry is not None for entry in self.entries}) > 1:
+            raise ValueError("expected_geometry is required for every target or none")
+
+    def to_payload(self) -> list[dict[str, Any]]:
+        return [entry.to_payload() for entry in self.entries]
+
+    @classmethod
+    def from_payload(cls, payload: object) -> SceneGeometryTargets:
+        if not isinstance(payload, list):
+            raise TypeError("targets must be a list")
+        if not 1 <= len(payload) <= MAX_SELECTION_IDS:
+            raise ValueError(f"targets holds between 1 and {MAX_SELECTION_IDS} entries")
+        return cls(tuple(SceneGeometryTarget.from_payload(entry) for entry in payload))
 
 
 # ------------------------------------------------------------------ rapport
@@ -419,6 +474,24 @@ def _plan_pin_selection(snapshot: SceneSnapshot, command: SceneCommand, resoluti
     return _plan_states(snapshot, members, _member_states(snapshot, members, plan_one, resolution.mode))
 
 
+def _plan_layout_selection(snapshot: SceneSnapshot, command: SceneCommand, resolution: SelectionResolution) -> _Plan:
+    assert isinstance(command.targets, SceneGeometryTargets)
+    targets = {entry.object_id: entry for entry in command.targets.entries}
+    members = resolution.eligible_ids
+    stale = [SelectionRefusal(object_id, SceneRefusal.GEOMETRY_CHANGED, "ids") for object_id in members
+             if targets[object_id].expected_geometry is not None
+             and snapshot.get_object(object_id).geometry != targets[object_id].expected_geometry]
+    if stale:
+        raise _MemberRefusals(SceneCommandOutcome.INVALID, stale)
+    states = _member_states(snapshot, members, _object_writer(
+        snapshot, command, lambda object_id: SceneObjectFields(geometry=targets[object_id].geometry)), resolution.mode)
+    if command.pin:
+        for object_id, after in states.items():
+            if not after.constraints.pinned_by_user:
+                states[object_id] = replace(after, constraints=replace(after.constraints, pinned_by_user=True))
+    return _plan_states(snapshot, members, states)
+
+
 def _plan_archive_selection(snapshot: SceneSnapshot, command: SceneCommand, resolution: SelectionResolution) -> _Plan:
     members = resolution.eligible_ids
     owners = signal_owners(snapshot)
@@ -433,6 +506,7 @@ def _plan_archive_selection(snapshot: SceneSnapshot, command: SceneCommand, reso
 _PLANNERS = {
     SceneOp.PATCH_SELECTION: _plan_patch_selection,
     SceneOp.TRANSLATE_SELECTION: _plan_translate_selection,
+    SceneOp.LAYOUT_SELECTION: _plan_layout_selection,
     SceneOp.PIN_SELECTION: _plan_pin_selection,
     SceneOp.UNPIN_SELECTION: _plan_pin_selection,
     SceneOp.ARCHIVE_SELECTION: _plan_archive_selection,

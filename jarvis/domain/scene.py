@@ -74,7 +74,7 @@ from jarvis.domain._checks import (
 from jarvis.domain.work_state import MAX_SOURCE_CHARS
 
 if TYPE_CHECKING:
-    from jarvis.domain.scene_batch import SceneBatchReport, SceneDelta, SelectionChanges
+    from jarvis.domain.scene_batch import SceneBatchReport, SceneDelta, SceneGeometryTargets, SelectionChanges
     from jarvis.domain.scene_selection import SceneSelection
 
 #: Version des formes sérialisées racines (instantané, commande, patch). Un
@@ -311,6 +311,7 @@ class SceneOp(StrEnum):
     #: Planifiées par `jarvis.domain.scene_batch`. `runtime` ne les a pas.
     PATCH_SELECTION = "patch_selection"
     TRANSLATE_SELECTION = "translate_selection"
+    LAYOUT_SELECTION = "layout_selection"
     PIN_SELECTION = "pin_selection"
     UNPIN_SELECTION = "unpin_selection"
     ARCHIVE_SELECTION = "archive_selection"
@@ -319,7 +320,7 @@ class SceneOp(StrEnum):
 #: Commandes de sélection : résultat porteur d'un `SceneBatchReport` (`SceneUpdate.batch`).
 SELECTION_OPS = frozenset({
     SceneOp.PATCH_SELECTION, SceneOp.TRANSLATE_SELECTION, SceneOp.PIN_SELECTION, SceneOp.UNPIN_SELECTION,
-    SceneOp.ARCHIVE_SELECTION,
+    SceneOp.ARCHIVE_SELECTION, SceneOp.LAYOUT_SELECTION,
 })
 
 #: Opérations de disposition : archiver un objet, seul ou en lot.
@@ -1231,13 +1232,14 @@ _OP_ARGUMENTS: dict[SceneOp, tuple[frozenset[str], frozenset[str]]] = {
     SceneOp.ATTACH_ARTIFACT: (frozenset({"object_id", "fields", "target_id", "relation_id"}), frozenset()),
     SceneOp.PATCH_SELECTION: (frozenset({"selection", "changes"}), frozenset()),
     SceneOp.TRANSLATE_SELECTION: (frozenset({"selection", "delta"}), frozenset({"pin"})),
+    SceneOp.LAYOUT_SELECTION: (frozenset({"selection", "targets"}), frozenset({"pin"})),
     SceneOp.PIN_SELECTION: (frozenset({"selection"}), frozenset()),
     SceneOp.UNPIN_SELECTION: (frozenset({"selection"}), frozenset()),
     SceneOp.ARCHIVE_SELECTION: (frozenset({"selection"}), frozenset()),
 }
 _COMMAND_ARGUMENTS = (
     "object_id", "fields", "geometry", "placed_by", "representation", "visibility", "relation", "relation_id", "target_id",
-    "object_ids", "selection", "changes", "delta", "pin",
+    "object_ids", "selection", "changes", "delta", "pin", "targets",
 )
 
 
@@ -1273,6 +1275,8 @@ class SceneCommand:
       membres ; `patch_selection` porte `changes` (`SelectionChanges`),
       `translate_selection` porte `delta` (`SceneDelta`, jamais `(0, 0)`) et
       `pin` (seulement `true`) ; voir `jarvis.domain.scene_batch`.
+      `layout_selection` porte `targets` (rectangles individuels, comparaison
+      facultative de toutes les géométries avant écriture) et `pin=true` facultatif.
     """
 
     op: SceneOp
@@ -1291,6 +1295,7 @@ class SceneCommand:
     changes: SelectionChanges | None = None
     delta: SceneDelta | None = None
     pin: bool | None = None
+    targets: SceneGeometryTargets | None = None
 
     def __post_init__(self) -> None:
         _check_enum("op", self.op, SceneOp)
@@ -1316,10 +1321,10 @@ class SceneCommand:
         if self.pin is not None and self.pin is not True:
             raise ValueError("pin only accepts true")
         batch_types: tuple[tuple[str, type], ...] = ()
-        if self.selection is not None or self.changes is not None or self.delta is not None:
+        if self.selection is not None or self.changes is not None or self.delta is not None or self.targets is not None:
             batch = _batch_module()
             batch_types = (("selection", batch.SceneSelection), ("changes", batch.SelectionChanges),
-                           ("delta", batch.SceneDelta))
+                           ("delta", batch.SceneDelta), ("targets", batch.SceneGeometryTargets))
         for name, expected in (
             ("fields", SceneObjectFields),
             ("geometry", SceneGeometry),
@@ -1337,6 +1342,12 @@ class SceneCommand:
             if self.placed_by is not PlacedBy.RESOLVER:
                 # Sinon l'auteur est l'acteur lui-même : rien à annoncer.
                 raise ValueError("placed_by may only announce a resolver placement")
+        if self.op is SceneOp.LAYOUT_SELECTION:
+            assert self.selection is not None and self.targets is not None
+            if self.selection.ids is None:
+                raise ValueError("layout_selection requires an explicit ids selection")
+            if set(self.selection.ids) != {target.object_id for target in self.targets.entries}:
+                raise ValueError("targets must name exactly the selection ids")
         if self.op is SceneOp.ATTACH_SIGNAL and self.fields is not None:
             if self.fields.kind not in (None, SceneObjectKind.ATTENTION):
                 raise ValueError("a signal is an attention object")
@@ -1367,7 +1378,7 @@ class SceneCommand:
             "scene command", payload, frozenset({"schema_version", "op", "actor"}), frozenset(_COMMAND_ARGUMENTS)
         )
         raw_ids = data.get("object_ids")
-        batch = _batch_module() if {"selection", "changes", "delta"} & set(data) else None
+        batch = _batch_module() if {"selection", "changes", "delta", "targets"} & set(data) else None
         return cls(
             object_ids=None if raw_ids is None else tuple(_list("object_ids", raw_ids, MAX_ARCHIVE_MANY_IDS)),
             op=parse_enum(SceneOp, data["op"], "op"),
@@ -1385,6 +1396,7 @@ class SceneCommand:
             changes=None if "changes" not in data else batch.SelectionChanges.from_payload(data["changes"]),
             delta=None if "delta" not in data else batch.SceneDelta.from_payload(data["delta"]),
             pin=data.get("pin"),
+            targets=None if "targets" not in data else batch.SceneGeometryTargets.from_payload(data["targets"]),
         )
 
 
@@ -1589,6 +1601,9 @@ class SceneRefusal(StrEnum):
     #: pas à son champ — `group` qui n'est pas un objet `group`. Toute la
     #: sélection est refusée plutôt que de rendre un ensemble vide.
     INVALID_SELECTION = "invalid_selection"
+    #: `layout_selection` : une géométrie attendue ne correspond plus ; aucun
+    #: membre n'est écrit. L'annulation ne remplace jamais une édition plus récente.
+    GEOMETRY_CHANGED = "geometry_changed"
     #: `patch_selection` : l'étiquette fusionnée ferait dépasser à la charge
     #: d'un membre `MAX_PAYLOAD_BYTES`. Toute la commande est refusée, en mode
     #: explicite comme en mode filtres (Slice 03, reprise revue) : écarter le

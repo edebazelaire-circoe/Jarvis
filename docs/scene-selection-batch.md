@@ -609,3 +609,80 @@ kept, Masquer, forme, Retirer, registry window, keyboard, Bare Hands pointer),
 | translate: offsets preserved, common delta, never-worse clamp, quantisation, pin flag, unplaced | 03 |
 | JS applier parity on selection patches; page drag = one command | 03 |
 | one MCP call → one Core command POST → one revision; no `best_effort` | 05 |
+
+## 8. Arbitrary geometry and safe geometry undo
+
+Implemented by `jarvis-mouse-organization-viewer`, Slice 01. `layout_selection`
+is an additional canonical selection operation; `patch_selection` still does
+not accept geometry. It applies different absolute rectangles to an explicit
+selection in one patch, one revision, or none. No chunking or partial apply.
+
+```json
+{
+  "schema_version": 1,
+  "op": "layout_selection",
+  "actor": "user",
+  "selection": {"ids": ["a", "b"]},
+  "targets": [
+    {"object_id": "a", "geometry": {"x": 0, "y": 0, "w": 30, "h": 20}},
+    {"object_id": "b", "geometry": {"x": 34, "y": 0, "w": 30, "h": 20}}
+  ],
+  "pin": true
+}
+```
+
+`targets` is a strict list of 1–`MAX_SELECTION_IDS` (512) unique targets,
+represented by `SceneGeometryTargets` / `SceneGeometryTarget` in
+`jarvis/domain/scene_batch.py`. Its IDs must equal the explicit selection IDs
+exactly; filters, missing/extra targets, unknown keys and malformed rectangles
+are rejected at decoding. Target list order is irrelevant: resolution, patch
+ops and batch report follow explicit selection order. Every member must still
+be active and placed; unknown, archived or unplaced members refuse everything.
+Explicit hidden members remain eligible, as for the existing selection contract.
+
+Authority is unchanged: `runtime` is refused before resolution, `brain` and
+`user` reuse `_plan_object_write` and may explicitly move pinned objects.
+Changed geometry records the actor as `placed_by`; optional `pin` accepts only
+`true` and pins every member in the same patch. Without `pin`, each member's
+existing pin is preserved. Unchanged geometry and pins produce `duplicate`
+without a revision. The ordinary `SceneBatchReport` is returned, with no
+translation `delta` or archive `cascade_ids`. Core's service lock and durable
+transaction remain the only write owner. The existing Control Center relay
+imposes `user`, journals command/count outcomes and omits large patches from
+command replies (`patch_omitted`); the page receives them through normal polling.
+No new route, persistence schema, MCP tool or independent transaction engine.
+
+For safe undo, include `expected_geometry` on **every** target (or omit it on
+every target for an unconditional layout):
+
+```json
+{"object_id":"a","geometry":{"x":5,"y":8,"w":20,"h":10},"expected_geometry":{"x":0,"y":0,"w":30,"h":20}}
+```
+
+Each current rectangle must equal its expected rectangle on the same snapshot
+used for the write. Any mismatch returns `invalid` / `geometry_changed`, with
+every stale ID in `batch.refused`, no patch and no revision. Comparisons also
+run for targets whose requested geometry is already current. Two concurrent
+compared writes from the same starting rectangle cannot both apply. Unrelated
+object changes and non-geometry field changes do not invalidate this geometry
+compare. Undo is geometry-only: it does not restore payload, visibility,
+representation, execution fields, old placement provenance or old pin state.
+The UI owns its bounded ring and may invalidate entries when a member is hidden,
+its representation changes, or the member disappears; Core still validates
+active/placed identity and authority and performs the final geometry compare.
+
+The existing `MAX_SCENE_COMMAND_BYTES` budget (65,536 bytes) still applies before
+decoding; 512 domain members do not guarantee that every wire encoding fits.
+Budget depends on ID length, geometry precision and optional comparisons.
+For `n0`–`n511` and canonical float rectangles, 512 targets use 38,273 bytes;
+512 compared targets use 66,945 bytes and are refused with HTTP 413
+`payload_too_large`. 256 compared targets use 33,409 bytes. Never split an
+oversized action. Clients should preflight UTF-8 serialized bytes (including
+Core's canonical float encoding when relayed), surface the refusal and avoid
+recording an undo that cannot be sent.
+
+Conformance: `tests/unit/test_scene_layout_selection.py` (atomicity, bounded
+wire, authority, stale compares, concurrent service writes, persistence failure,
+JS patch parity) and `tests/integration/test_scene_layout_transport.py` (real
+Core/SQLite/HTTP, Control Center, 400/403/413 and stale refusal). Existing scene
+authority, batch and command round-trip tests include the new operation.

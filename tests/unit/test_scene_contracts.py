@@ -67,7 +67,7 @@ from jarvis.domain.scene import (
     is_runtime_owned_relation,
     is_runtime_reserved_id,
 )
-from jarvis.domain.scene_batch import SceneDelta, SelectionChanges
+from jarvis.domain.scene_batch import SceneDelta, SceneGeometryTarget, SceneGeometryTargets, SelectionChanges
 from jarvis.domain.scene_selection import SceneSelection
 from jarvis.domain.work_state import WorkStatus
 
@@ -150,7 +150,7 @@ def test_closed_enums_hold_exactly_the_contract_values():
         "upsert_object", "patch_object", "set_geometry", "set_representation", "set_visibility",
         "pin", "unpin", "link", "unlink", "archive", "archive_many", "attach_signal", "attach_artifact",
         # Slice 03 (handoff jarvis-mcp-semantic-batch-inspector) : commandes de sélection.
-        "patch_selection", "translate_selection", "pin_selection", "unpin_selection", "archive_selection",
+        "patch_selection", "translate_selection", "pin_selection", "unpin_selection", "archive_selection", "layout_selection",
     }
     assert {op.value for op in PatchOpKind} == {"put_object", "archive_object", "put_relation", "delete_relation"}
     assert set(DEFAULT_LAYERS) == set(SceneObjectKind)
@@ -204,6 +204,8 @@ def matrix_command(op: SceneOp, actor: SceneActor) -> SceneCommand:
         SceneOp.PATCH_SELECTION: {"selection": SceneSelection(ids=("star-a",)),
                                   "changes": SelectionChanges(visibility=Visibility.HIDDEN)},
         SceneOp.TRANSLATE_SELECTION: {"selection": SceneSelection(ids=("star-a",)), "delta": SceneDelta(5, -5), "pin": True},
+        SceneOp.LAYOUT_SELECTION: {"selection": SceneSelection(ids=("star-a",)),
+                                   "targets": SceneGeometryTargets((SceneGeometryTarget("star-a", GEO_2),))},
         SceneOp.PIN_SELECTION: {"selection": SceneSelection(ids=("star-a",))},
         SceneOp.UNPIN_SELECTION: {"selection": SceneSelection(ids=("star-p",))},
         SceneOp.ARCHIVE_SELECTION: {"selection": SceneSelection(ids=("star-b",))},
@@ -229,6 +231,7 @@ MATRIX_PATCH_OPS = {
     SceneOp.ATTACH_ARTIFACT: [PatchOpKind.PUT_OBJECT, PatchOpKind.PUT_RELATION],
     SceneOp.PATCH_SELECTION: PUT_OBJECT,
     SceneOp.TRANSLATE_SELECTION: PUT_OBJECT,
+    SceneOp.LAYOUT_SELECTION: PUT_OBJECT,
     SceneOp.PIN_SELECTION: PUT_OBJECT,
     SceneOp.UNPIN_SELECTION: PUT_OBJECT,
     SceneOp.ARCHIVE_SELECTION: [PatchOpKind.ARCHIVE_OBJECT, PatchOpKind.DELETE_RELATION],
