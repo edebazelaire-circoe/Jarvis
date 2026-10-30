@@ -21,5 +21,7 @@
     "--basetemp=C:\\Users\\Clarice\\AppData\\Local\\Temp\\jarvis-mov-exact-baseline-_bkb9q32",
     "--junitxml=C:\\Projects\\jarvis\\mov3\\tasks\\jarvis-mouse-organization-viewer\\slices\\06-final-integration-e2e-qa\\qa\\pending-reworked-architecture.xml"
   ],
-  "child_pid": 5000
+  "child_pid": 5000,
+  "returncode": 0,
+  "ended_at": "2026-10-30T15:28:42.686217+00:00"
 }
