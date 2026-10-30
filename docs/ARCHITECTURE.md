@@ -70,6 +70,8 @@ Presentation attention path
 alert, the evidence and confidence gate, the three deduplication layers and the
 single discreet cue).
 
+The object viewer's public execution detail is a read-only composition of existing Work State, Mission History and scene artifact relations (`jarvis/runtime/control_center_agent_detail.js`, [agent-detail-viewer.md](agent-detail-viewer.md)). It exposes bounded public facts and canonical Stop/main-chat Ask descriptors; it never forwards declarations, provider traces or private reasoning, and it owns no execution lifecycle or refresh loop.
+
 ## V1 tool surface
 
 The registry intentionally exposes only:
