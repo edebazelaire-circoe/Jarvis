@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "status": "stopped",
+  "pid": 6772,
+  "started_at": "2026-10-30T09:51:00.450955+00:00",
+  "root": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\jarvis-mov-human-qa-btrq170k",
+  "worktree": "C:\\Projects\\jarvis\\mov3",
+  "duration_seconds": 1,
+  "review_url": "http://127.0.0.1:50537/",
+  "content": "QA synthétique : notes, image, agent et job contrôlés ; aucune exécution modèle.",
+  "model_requests": 0,
+  "data_retained_after_shutdown": true,
+  "ownership": "Core and UI run inside this one Python process; only owned objects are closed.",
+  "ready_at": "2026-10-30T09:51:46.879961+00:00",
+  "expires_at": "2026-10-30T09:51:47.879979+00:00",
+  "core_url": "http://127.0.0.1:50523",
+  "data_root": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\jarvis-mov-human-qa-btrq170k\\core\\data",
+  "runtime_root": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\jarvis-mov-human-qa-btrq170k\\control-runtime",
+  "project_root": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\jarvis-mov-human-qa-btrq170k",
+  "stop_reason": "bounded_duration_elapsed",
+  "stopped_at": "2026-10-30T09:51:47.942516+00:00"
+}
