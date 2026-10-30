@@ -206,3 +206,17 @@ async def test_timeouts_unsupported_pdf_reduced_motion_and_zoom(page,tmp_path):
     assert 'Aperçu PDF indisponible' in out['fallback']['text']
     assert out['zoomed']['bounds']==[640,400] and not out['zoomed']['outside']
     assert out['motion']=='none'
+
+
+async def test_selected_layout_schematic_is_decorative_bounded_and_preserves_content(page,tmp_path):
+    shots=Path(os.environ.get('JARVIS_VIEWER_SHOTS',tmp_path));shots.mkdir(parents=True,exist_ok=True)
+    out=await drive(page,[{'eval':'openSet(24)'},{'until':"viewer.snapshot().entries[0].state==='ready'"},
+        {'eval':"window.firstTile=document.querySelector('.jvov-tile');window.schemes=Object.keys(JarvisObjectViewer.LAYOUTS).map(name=>{viewer.setLayout(name,{rows:3,cols:8});const p=document.querySelector('.jvov-layout-preview');return {name,layout:p.dataset.layout,cells:p.children.length,hidden:p.getAttribute('aria-hidden'),focusable:p.querySelectorAll('button,input,[tabindex]').length}});viewer.setLayout('largeLeft')"},
+        read('schemes','schemes'),read('asymmetric',"(()=>{const p=document.querySelector('.jvov-layout-preview');return {ratio:p.children[0].getBoundingClientRect().width/p.children[1].getBoundingClientRect().width,same:firstTile===document.querySelector('.jvov-tile'),caption:p.title}})()"),
+        {'shot':str(shots/'selected-layout-desktop.png')}, {'size':[600,800]},read('narrow','__probe()'),
+        {'shot':str(shots/'selected-layout-narrow.png')},{'key':'Escape'},read('closed')])
+    assert len(out['schemes'])==10
+    assert all(s['layout']==s['name'] and 1<=s['cells']<=24 and s['hidden']=='true' and not s['focusable'] for s in out['schemes'])
+    assert out['asymmetric']['same'] and out['asymmetric']['ratio']==pytest.approx(2,abs=.2)
+    assert 'Grand à gauche' in out['asymmetric']['caption']
+    assert not out['narrow']['outside'] and not out['closed']['state']['open'] and out['closed']['focus']=='opener'

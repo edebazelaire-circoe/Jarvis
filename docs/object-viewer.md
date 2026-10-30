@@ -124,6 +124,12 @@ supports1–64 rows/columns, at most512 cells, a6×6 graphical picker with arrow
 navigation and numeric fallback for grids such as3×8. Initial custom grids
 use `openObjects(entries,{layout:'custom',grid:{rows:3,cols:8}})`.
 
+The existing labeled native selector has a compact decorative schematic of the
+selected layout alongside it. It reuses the current layout plan, includes the
+asymmetric pair proportions and samples at most 4×6 cells for large grids; its
+tooltip gives the full row/column count. It adds no focus stop, action or state
+owner. The select remains the accessible control.
+
 The shell inherits Jarvis theme tokens, dark content-led surfaces and native
 controls. Layout controls wrap at small widths; image controls remain usable
 in small cells. Reduced motion disables nonessential animation. Errors and

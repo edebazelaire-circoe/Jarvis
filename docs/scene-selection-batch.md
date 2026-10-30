@@ -57,7 +57,9 @@ shared fixtures (see *Parity*).
 > `patch_omitted`. `parse_enum` names `SceneOp` instead of listing its 18 values
 > (bounded message). Page: `groupDelta` / `groupMove` / `commitTranslation`
 > in `control_center_scene_interact.js` (parity with `group_delta` tested),
-> used by `commitGroupMove` in `control_center_scene_page.js`. Tests:
+> remain compatibility/domain-parity helpers. Current pointer commits use the
+> shared hold desk `commitMany` and compared `layout_selection` (see §6 and
+> Organization and local geometry undo below). Tests:
 > `tests/unit/test_scene_batch.py`, `tests/unit/test_scene_group_drag_js.py`,
 > selection branch of the parity generator in
 > `tests/unit/test_scene_transport_client.py`, `tests/integration/test_scene_transport.py`.
@@ -439,18 +441,14 @@ a domain rule.
   drag stays one revision instead of two to three commands per object.
 - Pinned members move (explicit command). Domain coordinate bounds (±100 000)
   hold because `B` ⊂ bounds or never-worse.
-- **Page drag (decision).** Today each carried member's drop is converted by
-  `placeOf` (`control_center_scene_page.js:2062-2074`, `:2494-2496`), which
-  "unturns" an orbiting member (`L.orbitTrack`, `control_center_scene_layout.js:899`;
-  `L.orbitUnturn`) so its stored place matches where the rotating field drew it.
-  That is per-member and breaks the common delta. **For a multi-object drag,
-  `delta` = the pointer displacement converted to scene units (`I.pxToUnits`),
-  with no per-member orbit unturn and no per-member clamp**; the preview uses the
-  same group clamp as the domain. Orbiting members therefore re-seat visibly on
-  their orbit after the drop (their stored place moved by exactly `delta`; the
-  field keeps turning them) — accepted: rigid stored offsets beat a per-member
-  correction that would silently deform the figure. **A single-object drag keeps
-  today's behaviour** (`placeOf` unturn, `orbitClamp`, `commitUserGeometry`).
+- **Current page drag (2026-10-30).** The shared hold desk owns common visual
+  displacement and orbit conversion. It commits all converted target rectangles
+  together through compared `layout_selection`, preserving the drawn gesture
+  without intermediate per-member writes. Single movement keeps its existing
+  `commitUserGeometry` path. The following September amendments describe the
+  earlier translation implementation; current page integration is specified in
+  §6 and Organization and local geometry undo below. Core/MCP translation
+  semantics above remain unchanged.
 
 - **Amendment (agent 0, after the Slice 03 runtime validation, 2026-09-25) —
   page bound vs domain bound.** Runtime QA (defect D1) showed a group pushed into
@@ -517,15 +515,13 @@ a domain rule.
   the brain can say "including N hidden" instead of promising what is visible. A transport failure is one tool error
   ("outcome unknown, re-read the scene"), never a partial count. Target tool list:
   [mcp/tool-contract.md](mcp/tool-contract.md) §6.
-- **Page (Slice 03)**: the multi-object drag commits **one**
-  `translate_selection` (`ids` = carried members with a committed geometry,
-  `delta` = the previewed common delta, `pin: true`) instead of one
-  `commitUserGeometry` per member (`control_center_scene_page.js:2491-2501`);
-  one optimistic layer, one revision, one refusal path. Unplaced carried members
-  (no committed geometry) are not sent: after the drop they **snap back** to the
-  resolver's place (logged `scene.user_drag_unplaced_skipped`), which is visible
-  and honest — the resolver owns unplaced objects (Decision 9). A single-object drag or a resize keeps its
-  current path. The Control Center proxy's `patch_omitted` relay for
+- **Page (current mouse organization/viewer integration)**: multi-object drag
+  uses shared `createHoldDesk.drop` → `commitManyGeometry` → one compared
+  `layout_selection` with `pin:true`. All optimistic members confirm together or
+  roll back together; unknown/unplaced/stale required members refuse the batch.
+  One gesture produces at most one revision. Single movement keeps its previous
+  path; resize uses one-target compared layout with local geometry undo. The
+  Control Center proxy's `patch_omitted` relay for
   `archive_many` (scene-model.md › *Bulk archive answer*) extends to selection
   commands.
 - **Wheel (Slice 06 of the wheel/dossier refactor)**: the Sélection submenu

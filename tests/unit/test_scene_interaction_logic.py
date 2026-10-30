@@ -37,6 +37,7 @@ from jarvis.domain.scene import (
 from jarvis.protocol.scene_wire import MAX_SCENE_COMMAND_BYTES
 from jarvis.runtime.control_center import SCENE_INTERACT_SCRIPT_MARKER, ControlCenter
 from tests.unit.test_scene_user_lifecycle import lifecycle_scene, with_orphan
+from tests.fakes.javascript_source import browser_dialog_calls
 
 RUNTIME = Path(__file__).resolve().parents[2] / "jarvis" / "runtime"
 CLIENT_JS = RUNTIME / "control_center_scene.js"
@@ -538,9 +539,9 @@ async def test_the_page_serves_the_interaction_logic_and_never_uses_browser_dial
     assert "root.JarvisSceneInteract=api" in html
     # L'interaction est insérée après le rendu pur et avant la page qui l'utilise.
     assert html.index("root.JarvisSceneLayout=api") < html.index("root.JarvisSceneInteract=api") < html.index("function installJarvisScene")
-    for source in (html, INTERACT_JS.read_text(encoding="utf-8"), PAGE_JS.read_text(encoding="utf-8")):
-        # Un appel, pas une définition de méthode (`confirm(id,token){`).
-        assert not re.search(r"(?<![\w.])(?:window\.)?(?:alert|confirm|prompt)\((?![^()]*\)\s*\{)", source)
+    assert not browser_dialog_calls(html,html=True)
+    for source in (INTERACT_JS.read_text(encoding="utf-8"), PAGE_JS.read_text(encoding="utf-8")):
+        assert not browser_dialog_calls(source)
     assert "function confirmDialog(" in html and "function showMenu(" in html
     assert 'role="alertdialog"' in html
 

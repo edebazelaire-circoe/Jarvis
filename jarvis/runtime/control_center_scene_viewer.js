@@ -136,7 +136,7 @@
         for(const artifact of model.artifacts){const b=button(artifact.title,()=>openArtifact(artifact.object_id));b.dataset.agentArtifact=artifact.object_id;artifacts.append(b)}
         side.append(artifacts);if(!model.artifacts.length)side.append(el('p','scv-note','Aucun artefact lié.'));
         if(model.actions.stop.reason)side.append(el('p','scv-note',model.actions.stop.reason));
-        for(const issue of model.degraded)side.append(el('p','scv-note',issue.message));
+        for(const issue of model.degraded)side.append(el('p','scv-note',issue.message==='HTTP 404'?'Une source publique complémentaire est introuvable.':issue.message));
         contentStamp=stamp;if(focusedArtifact){const replacement=[...artifacts.children].find(b=>b.dataset.agentArtifact===focusedArtifact);if(replacement)replacement.focus({preventScroll:true})}slot.scrollTop=scroll;
         }
         if(stopWait&&!['pending','running','blocked'].includes(model.status)&&model.status!=='unknown'){stopWait=null;note('État confirmé par Core : '+words[model.status]);stop.disabled=true}

@@ -54,6 +54,8 @@
 .jvov button svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .jvov-tools{display:flex;gap:12px;align-items:center;flex-wrap:wrap;flex:none}
 .jvov-tools label,.jvov-custom label{display:flex;gap:8px;align-items:center;font-size:13px}
+.jvov-layout-preview{display:grid;gap:3px;width:54px;height:34px;padding:4px;border:1px solid var(--line,#29404f);border-radius:4px;flex:none;color:var(--muted,#9bb0bd);pointer-events:none}
+.jvov-layout-preview i{display:block;min-width:0;min-height:0;background:currentColor;border-radius:1px}
 .jvov-pages{display:flex;gap:8px;align-items:center;margin-left:auto;font-size:13px}
 .jvov-custom{display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap;flex:none}
 .jvov-fields{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-top:3px}
@@ -107,7 +109,8 @@
     head.append(backButton,heading,closeButton);
     const tools=element('div','jvov-tools'),label=element('label','', 'Disposition'),select=element('select');select.setAttribute('aria-label','Disposition des documents');
     for(const [value,text] of Object.entries(LAYOUTS)){const option=element('option','',text);option.value=value;select.appendChild(option)}
-    label.appendChild(select);tools.appendChild(label);
+    const schematic=element('span','jvov-layout-preview');schematic.setAttribute('aria-hidden','true');
+    label.appendChild(select);tools.append(label,schematic);
     const pages=element('div','jvov-pages'),previous=button('Précédent','M12 4l-6 6 6 6',()=>page(-1)),pageText=element('span'),next=button('Suivant','M8 4l6 6-6 6',()=>page(1));
     pages.append(previous,pageText,next);tools.append(pages);
     const custom=element('div','jvov-custom'),picker=element('div','jvov-picker');picker.setAttribute('role','group');picker.setAttribute('aria-label','Choisir une grille, jusqu’à 6 lignes et 6 colonnes');
@@ -278,6 +281,11 @@
       screen.gridEl.style.gridTemplateRows=screen.layout==='largeTop'?'minmax(0,2fr) minmax(0,1fr)':
         'repeat('+plan.rows+',minmax('+(multi?'180px':'0')+',1fr))';
       screen.gridEl.style.height=multi?'max(100%, '+(plan.rows*180+(plan.rows-1)*16)+'px)':'100%';
+      const sampleRows=Math.min(4,plan.rows),sampleCols=Math.min(6,plan.cols);
+      schematic.dataset.layout=screen.layout;schematic.title=LAYOUTS[screen.layout]+' · '+plan.rows+' × '+plan.cols;
+      schematic.style.gridTemplateColumns=screen.layout==='largeLeft'?'2fr 1fr':'repeat('+sampleCols+',minmax(0,1fr))';
+      schematic.style.gridTemplateRows=screen.layout==='largeTop'?'2fr 1fr':'repeat('+sampleRows+',minmax(0,1fr))';
+      schematic.replaceChildren(...Array.from({length:Math.min(screen.records.length,plan.capacity,sampleRows*sampleCols)},()=>element('i')));
       screen.records.forEach((record,index)=>{const visible=index>=start&&index<end;record.tile.hidden=!visible;syncRecord(record);if(visible)startWhenVisible(record,screen)});
       rowInput.value=String(screen.grid.rows);colInput.value=String(screen.grid.cols);
       for(const item of picker.children)item.toggleAttribute('data-chosen',Number(item.dataset.rows)<=screen.grid.rows&&Number(item.dataset.cols)<=screen.grid.cols);

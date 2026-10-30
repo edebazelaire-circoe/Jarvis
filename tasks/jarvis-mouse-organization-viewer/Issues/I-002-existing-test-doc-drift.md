@@ -14,3 +14,10 @@ Resolution2026-10-30: PM added the missing canonical contained-rank row for exis
 PM traced canonical hold path beyond old menu/pointer helpers: createHoldDesk.drop currently loops handle.ids and calls injected d.commit once per member; scene page injects commitUserGeometry only. The known group-drag test therefore points to a real lost atomic behavior, not solely a stale assertion. Earlier readiness wording was incomplete. This task's atomic multi-object/user-manipulation contract requires correction in S05, not deferral as pre-existing.
 Extend the SAME shared hold commit seam to submit all eligible group target boxes once through S01's canonical atomic operation (or existing canonical translation when mathematically appropriate). No second gesture engine or manual per-object mutation loop. Preserve hold release, common movement/offsets, user pin semantics, pending/rollback and payload bounds. Unknown/stale required member refuses whole set. Actual browser+Core/SQLite scenario must show one group gesture -> one command and at most one revision, including orbit/fixed behavior. Update canonical docs/static conformance to landed seam; remove old known-failure entry only when corrected test and live behavior pass. S05 tier remains UI plus atomic integration checks; backend critical semantics already verified in S01.
 
+Resolved: S05 `80607352` restores atomic group drop through shared desk
+`commitMany`; independent Core/SQLite/browser QA accepted the final group
+scenario (one command, one revision) and refusal handling. The corrected static
+group conformance test passes. S06 removes only this resolved node from
+`tests/known_failures.json` and reconciles the current page-binding documentation;
+the existing domain/MCP `translate_selection` remains supported.
+

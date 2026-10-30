@@ -75,4 +75,8 @@ CLI Stop stays disabled with the projection's explanation. Ask appends through
 `JarvisChat.prefill` and never sends. Action errors, wait counters and retries are
 inside the overlay; no hidden global toast is their only feedback.
 
+An unadorned `HTTP 404` degraded-source message is rendered as a missing public
+source explanation. The original projection code/message and diagnostic log
+remain intact; no missing mission, status or plan is inferred.
+
 Conformance: `tests/unit/test_agent_detail_js.py`; real Core/SQLite + current Control Center routes + production JS composition: `tests/integration/test_agent_detail_projection.py`. The integration scenario shows running → terminal → persisted mission with unknown live state after sandbox Core restart. Actual renderer/click navigation and optional model-driven runs remain S05/S06 acceptance work.
