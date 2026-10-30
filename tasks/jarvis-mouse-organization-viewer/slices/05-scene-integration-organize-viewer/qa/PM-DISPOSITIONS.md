@@ -10,3 +10,7 @@
 
 Machine acceptance withheld until independent runtime and blocking rework pass. Full suite reserved S06.
 
+
+## Final PM disposition
+
+Accepted machine QA at4cb4724f. Independent actual Core/browser evidence verifies atomic drag, native Escape, stale refusal, layout/view state, public agent states, registry artifacts, Stop and Ask. All blocking findings above resolved; QA-PREFILL-01 two-Board regression and affected actual Stop/Ask passed3 tests in37.62s. No unresolved S05 blocker. S06 release gate and Human acceptance remain separate.

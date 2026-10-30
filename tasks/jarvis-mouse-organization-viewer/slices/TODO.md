@@ -15,7 +15,7 @@ These are intentionally parallel-safe at the planning level. Slice 00 must re-ch
 
 ## Convergence
 
-- [ ] `05-scene-integration-organize-viewer`
+- [x] `05-scene-integration-organize-viewer`
   - hard depends on `02` because it owns the final scene-page integration after the input refactor;
   - soft requires outputs from `01`, `03`, `04` with documented fixture/fallback seams so those branches do not serialize unnecessarily;
   - all soft seams must be reconciled before Slice 05 is approved.
