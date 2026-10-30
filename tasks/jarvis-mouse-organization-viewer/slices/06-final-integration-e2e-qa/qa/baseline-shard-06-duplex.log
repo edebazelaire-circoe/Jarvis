@@ -1,0 +1,12 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+_________ test_duplex_architecture_refuses_presentation_visibly_once __________
+tests\unit\test_presentation_turn_authority.py:701: in test_duplex_architecture_refuses_presentation_visibly_once
+    await until(lambda: core.listening == 1 and core.snapshot_reads == 1)
+tests\unit\test_interaction_mode_follower.py:185: in until
+    assert loop.time() < deadline, "condition jamais atteinte"
+           ^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: condition jamais atteinte
+=========================== short test summary info ===========================
+FAILED tests/unit/test_presentation_turn_authority.py::test_duplex_architecture_refuses_presentation_visibly_once
+1 failed in 10.89s

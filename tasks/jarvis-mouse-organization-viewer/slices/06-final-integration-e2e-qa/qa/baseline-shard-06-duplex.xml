@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="8.211" timestamp="2026-10-30T12:14:00.897777+01:00" hostname="CLARICE"><testcase classname="tests.unit.test_presentation_turn_authority" name="test_duplex_architecture_refuses_presentation_visibly_once" time="6.177"><failure message="AssertionError: condition jamais atteinte">tests\unit\test_presentation_turn_authority.py:701: in test_duplex_architecture_refuses_presentation_visibly_once
+    await until(lambda: core.listening == 1 and core.snapshot_reads == 1)
+tests\unit\test_interaction_mode_follower.py:185: in until
+    assert loop.time() &lt; deadline, "condition jamais atteinte"
+           ^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: condition jamais atteinte</failure></testcase></testsuite></testsuites>
