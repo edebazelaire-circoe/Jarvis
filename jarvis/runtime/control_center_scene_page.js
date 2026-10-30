@@ -692,13 +692,28 @@ html:not([data-jarvis-theme="cosmos"]) .scene{--sc-edge:rgba(110,231,255,.2);--s
    elles se posent d'un coup, sans la glissade de 420 ms de la composition. */
 .scene.sc-resync .sc-node{transition:none!important}
 .sc-capsule,.sc-window{cursor:grab}
-.sc-grip{position:absolute;right:3px;bottom:3px;width:13px;height:13px;display:grid;place-items:center;color:var(--sc-muted);cursor:nwse-resize;
+.sc-grip{position:absolute;z-index:2;display:grid;place-items:center;color:var(--sc-muted);
   opacity:0;transition:opacity .14s ease-out}
 .sc-grip svg{width:9px;height:9px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round}
-/* Dans une capsule, la poignée est **centrée verticalement** dans l'extrémité
-   arrondie : collée au coin bas droit, elle tombait hors de l'arrondi que
-   découpe 'overflow:hidden', et son centre n'était plus cliquable (22/09/2026). */
-.sc-capsule .sc-grip{right:5px;top:50%;bottom:auto;width:12px;height:12px;margin-top:-6px}
+.sc-grip[data-resize-sides="top"],.sc-grip[data-resize-sides="bottom"]{left:12px;right:12px;height:7px;cursor:ns-resize}
+.sc-grip[data-resize-sides="top"]{top:0}
+.sc-grip[data-resize-sides="bottom"]{bottom:0}
+.sc-grip[data-resize-sides="left"],.sc-grip[data-resize-sides="right"]{top:12px;bottom:12px;width:7px;cursor:ew-resize}
+.sc-grip[data-resize-sides="left"]{left:0}
+.sc-grip[data-resize-sides="right"]{right:0}
+.sc-grip[data-resize-sides*="-"]{width:12px;height:12px}
+.sc-grip[data-resize-sides^="top-"]{top:0}
+.sc-grip[data-resize-sides^="bottom-"]{bottom:0}
+.sc-grip[data-resize-sides$="-left"]{left:0}
+.sc-grip[data-resize-sides$="-right"]{right:0}
+.sc-grip[data-resize-sides="top-left"],.sc-grip[data-resize-sides="bottom-right"]{cursor:nwse-resize}
+.sc-grip[data-resize-sides="top-right"],.sc-grip[data-resize-sides="bottom-left"]{cursor:nesw-resize}
+/* La capsule découpe ses coins arrondis : la cible reste dans ce qui se voit. */
+.sc-capsule .sc-grip[data-resize-sides*="-"]{width:12px;height:10px}
+.sc-capsule .sc-grip[data-resize-sides$="-left"]{left:6px}
+.sc-capsule .sc-grip[data-resize-sides$="-right"]{right:6px}
+.sc-capsule .sc-grip[data-resize-sides^="top-"]{top:2px}
+.sc-capsule .sc-grip[data-resize-sides^="bottom-"]{bottom:2px}
 .sc-capsule:has(>.sc-grip){padding-right:18px}
 .sc-node:hover>.sc-grip,.sc-node:focus>.sc-grip,.sc-node.sc-selected>.sc-grip,.sc-node.sc-dragging>.sc-grip{opacity:.9}
 .sc-capsule.sc-selected,.sc-window.sc-selected{box-shadow:inset 0 0 0 1px var(--sc-ink),0 10px 28px rgba(0,0,0,.34)}
@@ -1496,6 +1511,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       root.addEventListener('pointercancel',onPointerCancel);
       root.addEventListener('lostpointercapture',onPointerCancel);
       root.addEventListener('contextmenu',onContextMenu);
+      root.addEventListener('dblclick',onDoubleClick);
     }
     (document.getElementById('app')||document.body).appendChild(root);
     watchControls();
@@ -1715,12 +1731,14 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     return pill;
   }
 
-  /* Poignée de redimensionnement (coin bas droit), capsule et fenêtre. */
-  function grip(){
-    const box=element('span','sc-grip');
-    box.setAttribute('aria-hidden','true');
-    box.appendChild(svgIcon(GRIP_PATH));
-    return box;
+  /* Huit cibles discrètes ; le clavier garde Ctrl+flèches pour la taille. */
+  function grips(){
+    return I.RESIZE_HANDLES.map(side=>{
+      const box=element('span','sc-grip');box.dataset.resizeSides=side;
+      box.setAttribute('aria-hidden','true');
+      if(side==='bottom-right')box.appendChild(svgIcon(GRIP_PATH));
+      return box;
+    });
   }
 
   function pin(){
@@ -1789,7 +1807,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       parts.push(appendSpans(element('span','sc-title'),node.titleSpans,false));
       if(node.pinned)parts.push(pin());
       const state=badge(node.exec,node.restartUnknown);if(state)parts.push(state);
-      if(I&&(node.representation==='capsule'||node.representation==='window'))parts.push(grip());
+      if(I&&(node.representation==='capsule'||node.representation==='window'))parts.push(...grips());
     }else{
       const head=element('div','sc-head');
       const dot=element('span','sc-dot');dot.appendChild(element('span','sc-ring'));
@@ -1801,7 +1819,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(slot){
         /* Tête et titre avant le cadre, poignée après : le corps est au prefab
            (`summary`/`items` ne sont que le repli de la capture et des lecteurs). */
-        PrefabHostApi.placeAround(el,slot,parts,I?[grip()]:[]);
+        PrefabHostApi.placeAround(el,slot,parts,I?grips():[]);
         return;
       }
       if(node.explains)parts.push(originButton(node.explains));
@@ -1822,7 +1840,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         for(const item of node.items)list.append(itemRow(item));
         parts.push(list);
       }
-      if(I)parts.push(grip());
+      if(I)parts.push(...grips());
     }
     el.append(...parts);
   }
@@ -2438,6 +2456,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function onKeyDown(event){
     const el=nodeElement(event.target);
     if(!el||!lastModel)return;
+    if(event.key==='Enter'&&!event.ctrlKey&&!event.metaKey&&!event.altKey&&!event.shiftKey&&!editableTarget(event.target)&&event.target===el){
+      event.preventDefault();requestOpen(el.dataset.objectId,'keyboard');return;
+    }
     if(event.key==='Escape'){
       event.preventDefault();
       if(gesture){cancelGesture();return}
@@ -2462,6 +2483,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!intent)return;
     if(intent.type==='menu'){
       event.preventDefault();kbdMenuAt=performance.now();
+      anchorSelection(el.dataset.objectId);
       openObjectMenu(el.dataset.objectId,anchorOfNode(el),el);
       return;
     }
@@ -3125,7 +3147,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     /* Objets emmenés par le geste : toute la sélection quand on prend l'un des
        siens, sinon le seul objet pris. Un redimensionnement ne concerne que
        l'objet dont on tient la poignée. */
-    const resizing=!!event.target.closest('.sc-grip')&&I.resizable(item.representation);
+    const resizeGrip=event.target.closest('.sc-grip');
+    const resizing=!!resizeGrip&&I.resizable(item.representation);
     const carried=[];
     for(const memberId of (!resizing&&selection.length>1&&selection.indexOf(id)>=0?selection:[id])){
       const record=nodes.get(memberId),memberNode=nodeOf(memberId),memberBox=drawnBox(memberId);
@@ -3161,7 +3184,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        en douceur (`desk.cancel`). */
     gesture.origin=root.getBoundingClientRect();
     gesture.handle=takeHold('mouse',carried.map(member=>member.id),
-      {mode:gesture.mode,pointer:{x:event.clientX-gesture.origin.left,y:event.clientY-gesture.origin.top}},
+      {mode:gesture.mode,sides:resizing?resizeGrip.dataset.resizeSides:null,aspectLocked:event.shiftKey,
+        pointer:{x:event.clientX-gesture.origin.left,y:event.clientY-gesture.origin.top}},
       resizing?'Redimensionnement':'Déplacement');
     if(!gesture.handle){endGesture(gesture);return}
     syncHolding();
@@ -3198,7 +3222,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     /* Le bureau reçoit le pointeur ; il refond la tenue au besoin, borne et
        montre. La poignée ne concerne que son objet ; un déplacement emmène la
        sélection d'un bloc, qui s'arrête ensemble au bord (`I.sweepMove`). */
-    desk.drag(g.handle,event.clientX-g.origin.left,event.clientY-g.origin.top);
+    desk.drag(g.handle,event.clientX-g.origin.left,event.clientY-g.origin.top,event.shiftKey);
   }
 
   function endGesture(g){
@@ -3215,8 +3239,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(g.menuOpened||!g.moved){
       /* Ni glissement ni place : l'objet figé à l'appui rejoint son tour. */
       desk.cancel(g.handle);
-      /* Clic sur l'objet déjà sélectionné : ses actions (souris et Barehands). */
-      if(!g.menuOpened&&g.wasSelected)openObjectMenu(g.id,{x:event.clientX,y:event.clientY,above:event.clientY},g.el);
+      /* La souris garde son double-clic. Le pointeur Bare Hands conserve son
+         clic sur sélection pour les actions, sans exiger un clic droit. */
+      if(!g.menuOpened&&g.wasSelected&&BH.isBareHandsPointerId(g.pointerId))openObjectMenu(g.id,{x:event.clientX,y:event.clientY,above:event.clientY},g.el);
       return;
     }
     dropGesture(g);
@@ -3282,10 +3307,33 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     event.preventDefault();
     if(performance.now()-kbdMenuAt<700)return;  // déjà ouvert par la touche Menu / Maj+F10
     if(gesture)cancelGesture();
-    select(el.dataset.objectId);
+    anchorSelection(el.dataset.objectId);
     if(document.activeElement!==el)el.focus({preventScroll:true});
     const keyboard=event.clientX===0&&event.clientY===0;
     openObjectMenu(el.dataset.objectId,keyboard?anchorOfNode(el):{x:event.clientX,y:event.clientY,above:event.clientY},el);
+  }
+
+  /* Couture d'ouverture pour S05 : aucune lecture ni mutation de la scène.
+     L'intégrateur écoute cet événement bouillonnant sur le document. */
+  function requestOpen(id,source){
+    if(!id||(nodeOf(id)||{}).ghost)return;
+    if(gesture)cancelGesture();
+    if(typeof closeMenu==='function')closeMenu(false);
+    const ids=selection.includes(id)?liveSelection():[id];
+    consoleLog('info','scene.open_requested',{object_id:id,objects:ids.length,source});
+    root.dispatchEvent(new CustomEvent('jarvis:scene-open',{bubbles:true,detail:{objectId:id,ids,source}}));
+  }
+
+  function onDoubleClick(event){
+    const el=nodeElement(event.target);
+    if(!el||editableTarget(event.target)||event.target.closest('a,button,.sc-grip,.sc-origin'))return;
+    event.preventDefault();requestOpen(el.dataset.objectId,'double-click');
+  }
+
+  function onResizeModifier(event){
+    const g=gesture;
+    if(event.key!=='Shift'||!g||g.mode!=='resize'||!g.handle)return;
+    desk.drag(g.handle,g.lastX-g.origin.left,g.lastY-g.origin.top,event.type==='keydown');
   }
 
   /* Objet sélectionné : dernier objet touché ou focalisé ; sa poignée reste
@@ -3361,12 +3409,18 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      champ, un éditeur, un panneau ou un menu, qui gardent leurs touches. */
   function onDocumentKeyDown(event){
     if(!enabled||!root||root.hidden||event.defaultPrevented||event.repeat)return;
-    if(event.ctrlKey||event.metaKey||event.altKey)return;
-    const act=event.key==='Delete'?'remove':event.key==='-'?'hide':null;
-    if(!act||!selection.length)return;
     const target=event.target;
     if(editableTarget(target))return;
     if(target!==document.body&&target!==document.documentElement&&!nodeElement(target))return;
+    if((event.ctrlKey||event.metaKey)&&!event.altKey&&!event.shiftKey&&event.key.toLowerCase()==='a'){
+      const ids=(lastModel?lastModel.nodes:[]).filter(node=>!node.ghost).map(node=>node.id);
+      event.preventDefault();applySelection(ids);
+      announce(`${ids.length} objets sélectionnés.`);
+      consoleLog('info','scene.select_all',{objects:ids.length});return;
+    }
+    if(event.ctrlKey||event.metaKey||event.altKey)return;
+    const act=event.key==='Delete'?'remove':event.key==='-'?'hide':null;
+    if(!act||!selection.length)return;
     const ids=liveSelection();
     if(!ids.length)return;
     event.preventDefault();
@@ -4750,6 +4804,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
          le navigateur le dit **au document**, plus au nœud ni à la scène. */
       if(I)document.addEventListener('lostpointercapture',onPointerCancel,true);
       window.addEventListener('blur',onWindowBlur);
+      window.addEventListener('keydown',onResizeModifier,true);
+      window.addEventListener('keyup',onResizeModifier,true);
       window.addEventListener('blur',onFrameFocus);
       loop.setVisible(document.visibilityState!=='hidden');
       const visible=document.visibilityState!=='hidden';
@@ -4771,6 +4827,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       document.removeEventListener('keydown',onDocumentKeyDown);
       document.removeEventListener('lostpointercapture',onPointerCancel,true);
       window.removeEventListener('blur',onWindowBlur);
+      window.removeEventListener('keydown',onResizeModifier,true);
+      window.removeEventListener('keyup',onResizeModifier,true);
       window.removeEventListener('blur',onFrameFocus);
       teardown();
     }

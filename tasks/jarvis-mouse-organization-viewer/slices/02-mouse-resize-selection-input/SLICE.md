@@ -111,3 +111,9 @@ Update user-facing keyboard/mouse interaction docs if they exist; otherwise add 
 
 This Slice is a hard predecessor of Slice 05 because both may touch the scene page hot path. Do not leave a second competing integration path for Slice 05 to merge manually.
 
+## PM clarification (2026-10-30)
+
+Shift held when resize starts preserves that initial ratio. If Shift changes during an existing free resize, rebase onto the currently drawn rectangle and current pointer, then lock that segment's ratio. Returning immediately to the original ratio after a free resize conflicts with the required no-jump behavior. PM approved continuous pointer behavior. Releasing Shift also rebases without geometry change.
+
+Ordinary mouse single-click selects/anchors only; selected-object actions remain available through right-click and Menu / Shift+F10. Bare Hands selected-click actions and touch/stylus long-press remain intact. This makes native double-click reachable.
+

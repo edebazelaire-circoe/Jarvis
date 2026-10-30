@@ -293,9 +293,21 @@
       const step=area?sweepMove([...members.values()].map(extentOf),want,area):want;
       for(const m of members.values())m.last={...m.last,x:m.last.x+step.dx,y:m.last.y+step.dy};
     }
-    function resizeTo(id,box){
+    function resizeTo(id,box,aspectLocked){
       const m=member(id);
-      m.last=area?sweepResize(m.last,box,area):{x:box.x,y:box.y,w:box.w,h:box.h};
+      const clipped=area?sweepResize(m.last,box,area):box;
+      if(aspectLocked){
+        /* Le premier côté qui rencontre une commande arrête tout le cadre :
+           borner les axes séparément détruirait les proportions. */
+        const from=m.last;
+        let fraction=1;
+        for(const key of ['x','y','right','bottom']){
+          const edge=(b,k)=>k==='right'?b.x+b.w:k==='bottom'?b.y+b.h:b[k];
+          const delta=edge(box,key)-edge(from,key);
+          if(Math.abs(delta)>1e-9)fraction=Math.min(fraction,Math.max(0,(edge(clipped,key)-edge(from,key))/delta));
+        }
+        m.last=Object.fromEntries(['x','y','w','h'].map(key=>[key,from[key]+(box[key]-from[key])*fraction]));
+      }else m.last={x:clipped.x,y:clipped.y,w:clipped.w,h:clipped.h};
     }
     return Object.freeze({
       ids:()=>[...members.keys()],
@@ -525,6 +537,7 @@
         handle.hold.rebase({vp,field,turn:turnFor(field),area:areaFor(vp),
           anchor:handle.pointer?{id:handle.primary,x:handle.pointer.x,y:handle.pointer.y}:null});
         if(handle.pointer)handle.origin={...handle.pointer};
+        handle.resizeStart=handle.hold.start(handle.primary);
         handle.relay.rebased(handle.hold.start(handle.primary));
         for(const id of handle.hold.ids()){
           const off=handle.hold.offset(id);
@@ -539,7 +552,8 @@
     }
     return Object.freeze({
       /* Prendre des objets. `options` : `{mode: 'move'|'resize', pointer:
-         {x, y}}` (souris, pixels de la scène). Rend la poignée de la tenue, ou
+         {x, y}, sides, aspectLocked}` (souris, pixels de la scène ; côtés
+         nommés de RESIZE_HANDLES). Rend la poignée de la tenue, ou
          null s'il n'y a rien à tenir. */
       take(source,ids,options){
         const o=options||{};
@@ -569,17 +583,30 @@
         }
         const handle={source,hold,mode:o.mode==='resize'?'resize':'move',primary:members[0].id,
           representation:members[0].representation,ids:members.map(m=>m.id),
-          pointer:o.pointer?{...o.pointer}:null,origin:o.pointer?{...o.pointer}:null,relay:createRelay(),moved:false};
+          pointer:o.pointer?{...o.pointer}:null,origin:o.pointer?{...o.pointer}:null,relay:createRelay(),moved:false,
+          sides:RESIZE_HANDLES.includes(o.sides)?o.sides:'bottom-right',aspectLocked:!!o.aspectLocked,
+          resizeStart:hold.start(members[0].id)};
         handles.add(handle);
         return handle;
       },
       /* Souris : le pointeur est en `(x, y)`, pixels de la scène. */
-      drag(handle,x,y){
+      drag(handle,x,y,aspectLocked){
         if(!handles.has(handle))return;
         refresh();
+        if(handle.mode==='resize'&&aspectLocked!==undefined&&!!aspectLocked!==handle.aspectLocked){
+          /* Maj change le plan, pas la place : nouvelle prise là où le cadre
+             et le pointeur sont affichés, comme la refonte Bare Hands. */
+          handle.resizeStart=handle.hold.drawn(handle.primary);
+          handle.origin={...handle.pointer};handle.aspectLocked=!!aspectLocked;
+          if(d.log)d.log('scene.resize_constraint',{object_id:handle.primary,locked:handle.aspectLocked});
+        }
         handle.pointer={x,y};
         const du=pxToUnits(d.viewport(),x-handle.origin.x,y-handle.origin.y);
-        if(handle.mode==='resize')handle.hold.resizeTo(handle.primary,resizeBox(handle.hold.start(handle.primary),du.dx,du.dy,handle.representation));
+        if(handle.mode==='resize'){
+          if(!du.dx&&!du.dy){show(handle);return}
+          const sides={};for(const side of handle.sides.split('-'))sides[side]=MANIPULATION_SIDES[side]==='x'?du.dx:du.dy;
+          handle.hold.resizeTo(handle.primary,resizeBySides(handle.resizeStart,sides,handle.representation,handle.aspectLocked),handle.aspectLocked);
+        }
         else handle.hold.moveBy(du);
         handle.moved=true;
         show(handle);
@@ -659,6 +686,7 @@
           if(handle.primary===id){
             handle.primary=handle.ids[0];
             handle.representation=handle.hold.representation(handle.primary);
+            handle.resizeStart=handle.hold.start(handle.primary);
           }
         }
       },
@@ -795,9 +823,9 @@
      `{left?, right?, top?, bottom?}`, chaque valeur étant le déplacement de ce
      côté le long de son axe, **en unités**. Un côté absent est une ancre.
 
-     C'est la généralisation de `resizeBox` (poignée bas-droite, coin haut
-     gauche épinglé), qui reste le chemin de la souris et ne bouge pas. */
-  function resizeBySides(start,sides,representation){
+     Souris et Bare Hands passent ici ; Maj conserve les proportions de la
+     prise courante. Sans Maj, le contrat Bare Hands reste identique. */
+  function resizeBySides(start,sides,representation,aspectLocked){
     const held=sides&&typeof sides==='object'?sides:{};
     const min=MIN_SIZE[representation]||{w:1,h:1};
     const areaW=SAFE_AREA.x1-SAFE_AREA.x0,areaH=SAFE_AREA.y1-SAFE_AREA.y0;
@@ -806,6 +834,16 @@
        de la tenue (`createHold`), les mêmes que pour la souris. */
     const x=resizeAxis(start.x,start.w,held.left,held.right,min.w,Math.min(max.w,areaW));
     const y=resizeAxis(start.y,start.h,held.top,held.bottom,min.h,Math.min(max.h,areaH));
+    if(aspectLocked){
+      const horizontal=Number.isFinite(held.left)||Number.isFinite(held.right);
+      const vertical=Number.isFinite(held.top)||Number.isFinite(held.bottom);
+      const sx=x.size/start.w,sy=y.size/start.h;
+      const wanted=horizontal&&vertical?(Math.abs(sx-1)>=Math.abs(sy-1)?sx:sy):horizontal?sx:sy;
+      const scale=clamp(wanted,Math.max(min.w/start.w,min.h/start.h),Math.min(max.w/start.w,max.h/start.h,areaW/start.w,areaH/start.h));
+      const w=quantize(start.w*scale),h=quantize(start.h*scale);
+      return {x:quantize(Number.isFinite(held.left)?start.x+start.w-w:Number.isFinite(held.right)?start.x:start.x+(start.w-w)/2),
+        y:quantize(Number.isFinite(held.top)?start.y+start.h-h:Number.isFinite(held.bottom)?start.y:start.y+(start.h-h)/2),w,h};
+    }
     return {x:quantize(x.lo),y:quantize(y.lo),w:quantize(x.size),h:quantize(y.size)};
   }
 
@@ -814,6 +852,7 @@
      la hauteur. Le moteur passe donc des côtés déjà attribués, et cette table
      ne fait que les lire. */
   const MANIPULATION_SIDES=Object.freeze({top:'y',bottom:'y',left:'x',right:'x'});
+  const RESIZE_HANDLES=Object.freeze(['top','right','bottom','left','top-left','top-right','bottom-left','bottom-right']);
 
   /* Une image de manipulation, et la **conversion d'unités de la Slice 06**.
 
@@ -1700,7 +1739,7 @@
     LONG_PRESS_MS,PENDING_MAX_MS,MAX_ARCHIVE_IDS,MAX_COMMAND_BYTES,TERMINAL,REFUSALS,TRANSPORT,
     QUANTUM,clampBox,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
     holdArea,sweepMove,sweepResize,createHold,holdSignature,createRelay,animationTurn,longPressOpensMenu,thawAnimation,easeInOut,thawLift,createHoldDesk,createFieldClock,
-    MANIPULATION_SIDES,resizeBySides,manipulateBox,rebaseManipulation,
+    MANIPULATION_SIDES,RESIZE_HANDLES,resizeBySides,manipulateBox,rebaseManipulation,
     signalOwners,cascadeOf,constellationOf,bulkSelection,chunkIds,menuModel,commands,BAND_MIN_PX,bandBox,bandStarted,bandHits,nextSelection,transportFailure,networkFailure,classifyResponse,stopOutcome,
     focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects,
     MAX_RANGER_IDS,selectionActions,durableSourceOf,rangerReport,RANGER_REQUEST_REFUSALS,

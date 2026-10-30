@@ -490,33 +490,34 @@ try{
     if(!box)throw new Error(`selecteur absent : ${selector}`);
     return box;
   };
-  const mouse=async(selector,button,modifiers=0)=>{
+  const mouse=async(selector,button,modifiers=0,clickCount=1)=>{
     const {x,y}=await center(selector);
     await send('Input.dispatchMouseEvent',{type:'mouseMoved',x,y,button:'none',modifiers});
-    await send('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button,buttons:button==='right'?2:1,clickCount:1,modifiers});
-    await send('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button,buttons:0,clickCount:1,modifiers});
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button,buttons:button==='right'?2:1,clickCount,modifiers});
+    await send('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button,buttons:0,clickCount,modifiers});
   };
-  const KEYS={Tab:9,Enter:13,Escape:27,F10:121,ContextMenu:93,' ':32,
+  const KEYS={Tab:9,Enter:13,Escape:27,Shift:16,Control:17,a:65,F10:121,ContextMenu:93,' ':32,
     End:35,Home:36,ArrowLeft:37,ArrowUp:38,ArrowRight:39,ArrowDown:40};
-  const key=async(name,shift)=>{
+  const key=async(name,shift,phase)=>{
     const code=KEYS[name]||0;
     /* `shift` : vrai = Maj ; un nombre = le masque CDP (2 = Ctrl : Ctrl+Espace, Slice 06). */
     const mods=typeof shift==='number'?shift:shift?8:0;
     const base={key:name,code:name==='ContextMenu'?'ContextMenu':name===' '?'Space':name,windowsVirtualKeyCode:code,nativeVirtualKeyCode:code,modifiers:mods};
+    if(phase){await send('Input.dispatchKeyEvent',{type:phase,...base});return}
     await send('Input.dispatchKeyEvent',{type:'rawKeyDown',...base});
     /* Entree active un bouton sur son caractere, comme un vrai clavier. */
     if(name==='Enter')await send('Input.dispatchKeyEvent',{type:'char',text:String.fromCharCode(13),unmodifiedText:String.fromCharCode(13),...base});
     await send('Input.dispatchKeyEvent',{type:'keyUp',...base});
   };
-  const drag=async(selector,[dx,dy])=>{
+  const drag=async(selector,[dx,dy,modifiers=0])=>{
     const {x,y}=await center(selector);
-    await send('Input.dispatchMouseEvent',{type:'mouseMoved',x,y,button:'none'});
-    await send('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',buttons:1,clickCount:1});
+    await send('Input.dispatchMouseEvent',{type:'mouseMoved',x,y,button:'none',modifiers});
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',buttons:1,clickCount:1,modifiers});
     for(let i=1;i<=8;i+=1){
-      await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:x+dx*i/8,y:y+dy*i/8,button:'left',buttons:1});
+      await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:x+dx*i/8,y:y+dy*i/8,button:'left',buttons:1,modifiers});
       await sleep(30);
     }
-    await send('Input.dispatchMouseEvent',{type:'mouseReleased',x:x+dx,y:y+dy,button:'left',buttons:0,clickCount:1});
+    await send('Input.dispatchMouseEvent',{type:'mouseReleased',x:x+dx,y:y+dy,button:'left',buttons:0,clickCount:1,modifiers});
   };
   await send('Page.enable');await send('Runtime.enable');
   await send('Page.addScriptToEvaluateOnNewDocument',{source:SERVER});
@@ -547,15 +548,18 @@ try{
       try{
         if(kind==='eval')results[name]=await evaluate(arg);
         else if(kind==='click'){await mouse(arg,'left');results[name]='ok'}
+        else if(kind==='dblclick'){await mouse(arg,'left');await mouse(arg,'left',0,2);results[name]='ok'}
         else if(kind==='rclick'){await mouse(arg,'right');results[name]='ok'}
         else if(kind==='ctrlclick'){await mouse(arg,'left',2);results[name]='ok'}
         else if(kind==='key'){await key(arg,typeof extra==='number'?extra:!!extra);results[name]='ok'}
+        else if(kind==='keydown'||kind==='keyup'){await key(arg,extra||0,kind==='keydown'?'rawKeyDown':'keyUp');results[name]='ok'}
         else if(kind==='drag'){await drag(arg,extra);results[name]='ok'}
         else if(kind==='dragto'){const from=await center(arg),to=await center(extra);await drag(arg,[to.x-from.x,to.y-from.y]);results[name]={from,to}}
         else if(kind==='press'||kind==='release'){const {x,y}=await center(arg);
           if(kind==='press')await send('Input.dispatchMouseEvent',{type:'mouseMoved',x,y,button:'none'});
           await send('Input.dispatchMouseEvent',{type:kind==='press'?'mousePressed':'mouseReleased',x,y,button:'left',buttons:kind==='press'?1:0,clickCount:1});results[name]='ok'}
-        else if(kind==='move'){const {x,y}=await center(arg);await send('Input.dispatchMouseEvent',{type:'mouseMoved',x,y,button:'none'});results[name]='ok'}
+        else if(kind==='move'){const {x,y}=await center(arg),options=extra&&typeof extra==='object'?extra:{modifiers:extra||0};
+          await send('Input.dispatchMouseEvent',{type:'mouseMoved',x,y,button:options.buttons?'left':'none',...options});results[name]='ok'}
         else if(kind==='tabto'){
           const stops=[];
           for(let i=0;i<(extra||40);i+=1){

@@ -61,7 +61,7 @@ let selection=[],desk=null;
 const appendSpans=(el,spans)=>{for(const s of spans||[])el.appendChild(new FakeText(s.text));return el};
 const appendBlocks=(el,blocks)=>el;
 const badge=()=>null,originButton=()=>element('button','sc-origin'),itemRow=()=>element('li');
-const pin=()=>element('span','sc-pin'),grip=()=>element('span','sc-grip');
+const pin=()=>element('span','sc-pin'),grips=()=>Array.from({length:8},()=>element('span','sc-grip'));
 const position=()=>{},markItemsThatFit=()=>{},fitBrainWindows=()=>{},updateTabStop=()=>{},restorePendingFocus=()=>{},
   setInnerTabs=()=>{},syncHolding=()=>{};
 const node=(extra)=>Object.assign({id:'obj_1',shape:'window',representation:'window',kind:'window',tone:'note',exec:'idle',
@@ -122,8 +122,7 @@ async def bundles(tmp_path):
 async def test_a_redraw_rebuilds_around_the_slot_without_detaching_the_frame(tmp_path, bundles):
     result = run_page(tmp_path, REDRAW, bundles)
     assert result["afterTitle"] == {"sameSlot": True, "slotParent": True, "sameFrame": True, "frameInSlot": True,
-                                    "writes": 1, "iframes": 1, "order": ["sc-head", "sc-wtitle", "sc-prefab-slot",
-                                                                         "sc-grip"],
+                                    "writes": 1, "iframes": 1, "order": ["sc-head", "sc-wtitle", "sc-prefab-slot", *(["sc-grip"] * 8)],
                                     "title": "Compteur renommé"}
     assert result["detached"] == [] and result["windowClass"] and result["errors"] == []
     # Les données changées : un message au cadre, pas un nouveau dessin.

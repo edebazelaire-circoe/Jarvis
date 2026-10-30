@@ -450,7 +450,7 @@ def test_the_page_wires_every_hold_and_clock_through_the_desk():
     down = body("function onPointerDown(", "function onPointerMove(")
     assert "gesture.handle=takeHold('mouse'," in down
     move = body("function onPointerMove(", "function endGesture(")
-    assert "desk.drag(g.handle,event.clientX-g.origin.left,event.clientY-g.origin.top);" in move and "takeHold(" not in move
+    assert "desk.drag(g.handle,event.clientX-g.origin.left,event.clientY-g.origin.top,event.shiftKey);" in move and "takeHold(" not in move
     up = body("function onPointerUp(", "function dropGesture(")
     assert "if(g.menuOpened||!g.moved){" in up and "desk.cancel(g.handle);" in up
     assert "desk.drop(g.handle,g.mode)" in body("function dropGesture(", "function cancelGesture(")
