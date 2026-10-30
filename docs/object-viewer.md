@@ -34,6 +34,19 @@ No viewer layout or navigation writes scene geometry. Async feedback belongs
 inside the native top-layer dialog. Presentation fullscreen or another modal
 must be closed first; the refusal is explicit.
 
+An armed fullscreen request also refuses viewer admission, with French feedback
+asking the user to choose **Passer en plein écran** or **Annuler** first. This
+uses `JarvisFullscreen.state().armed` (local arms may have a null command ID)
+and `needs_gesture`, preserving the existing actionable prompt. Conversely,
+a fullscreen request received while the viewer is open synchronously closes
+it through `JarvisScene.closeViewer()` before the canonical fullscreen owner
+captures focus or builds its prompt. Normal viewer close aborts providers and
+reads, disposes history/clocks and restores the anchor; delayed reads cannot
+reopen it. Go/Cancel then remain reachable. This coordination never requests
+or exits browser fullscreen automatically and never changes Board selection,
+geometry or revision. An already active browser fullscreen still refuses
+viewer admission.
+
 ## API
 
 ```js

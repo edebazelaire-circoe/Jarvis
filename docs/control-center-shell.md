@@ -214,6 +214,17 @@ The viewer never requests, exits or reports browser fullscreen. Its document
 and agent-detail API, lifecycle and cross-frame Escape bridge are documented
 in [object-viewer.md](object-viewer.md).
 
+Native viewer and pending fullscreen prompt are mutually exclusive. An armed
+request (`state().armed`, including local requests without IDs, or
+`needs_gesture`) refuses viewer opening with explicit French guidance. A new
+fullscreen arm closes the viewer via its existing owner before the prompt is
+created/focused. The controller's optional synchronous `beforePrompt` dependency
+is composed locally with `JarvisScene.closeViewer`; absence preserves ordinary
+controller behavior. Viewer provider/read disposal and focus restoration finish
+before prompt focus capture. No new overlay manager, event bus, fullscreen
+request/exit, or scene mutation is involved. An html popover alone cannot
+override native dialog inertness.
+
 | Rank | Surface | Sheet | Rule | Why |
 | --- | --- | --- | --- | --- |
 | 0 | `.face` | `control_center.html` | `.face` | visualizer iframe, bottom of the page |

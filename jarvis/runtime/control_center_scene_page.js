@@ -4987,6 +4987,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   window.JarvisScene=Object.freeze({
     version:2,gate,setWork,
+    // The canonical fullscreen owner calls this before creating its prompt.
+    closeViewer(){if(sceneViewer)sceneViewer.close()},
     /* Sélection de la roue (Slice 06) : les actions sur la sélection, lues par
        `control_center_input_arbitration.js` à chaque ouverture du sous-menu. */
     selectionMenu,

@@ -194,3 +194,64 @@ closed two-Board delayed-read/cancellation regression) and
 `test_control_center_chat_ui.py`: **11 passed, 34.01 s**. Previous prefill
 replacement: **1 failed, 15.53 s**, product restored exactly. `node --check`
 and `git diff --check` pass. No full suite or user runtime touched.
+
+### S05 rework: native viewer and armed fullscreen prompt (F2)
+
+Independent actual Core/Chromium evidence `194a1246` established that an html
+popover can paint above a native viewer yet remain inert. The proposed local
+reuse path `01029d2e` was audited; PM chose explicit single-intent admission
+semantics (durable amendment `4d71c078`), rather than cancelling pending intent
+or introducing another overlay/fullscreen owner.
+
+`JarvisSceneViewer.prepare` now refuses an active browser fullscreen as before,
+and also refuses `JarvisFullscreen.state().armed` or `needs_gesture`, including
+local arms whose ID is null. Existing scene error feedback/logging explains in
+French that the user must choose **Passer en plein écran** or **Annuler** first.
+The existing fullscreen arm/prompt remains actionable and unchanged.
+
+`createFullscreenController` accepts one optional synchronous dependency,
+`beforePrompt()`. Its ordinary no-callback behavior is unchanged. The installed
+page composes it with the narrow existing scene facade's new `closeViewer()`
+method. The method calls the retained viewer owner's normal `close()`; it does
+not remove DOM or toggle inert/fullscreen attributes. The callback runs before
+prompt creation, timers, focus capture or `showPopover`, so provider abort/
+dispose, history/clock disposal and anchor-focus restoration precede canonical
+prompt focus. Callback failure is logged and surfaced, throws to existing
+request handling, and cannot arm an inert prompt. No subscription/listener or
+second manager/bus is introduced, hence no additional lifecycle cleanup hook.
+No automatic browser fullscreen request/exit, scene write or selection change
+is added. Existing asynchronous loader and artifact-reader signal checks keep
+late completions from reopening a closed viewer.
+
+Canonical semantics updated in `docs/object-viewer.md`,
+`docs/control-center-shell.md` and `docs/prefabs.md`.
+
+Actual focused evidence, own temporary Core/SQLite/Control Center/Chromium,
+no response doubles/model/hardware/user runtime:
+
+- `qa/test_fullscreen_coordination.py`: **3 passed, 47.79 s**. Remote arm before
+  viewer refuses admission with visible French guidance and hit-testable Go/
+  Cancel; real Cancel works and normal viewer entry remains possible afterward.
+  Request during viewer closes it before the prompt, real Go enters browser
+  fullscreen, active fullscreen refuses viewer, canonical exit works. Local
+  no-gesture arm with null ID also refuses viewer and real Cancel works.
+- Strengthened incoming-request case: **1 passed, 15.27 s**. A transparent
+  observation of the actual provider's AbortSignal records one mount/one abort;
+  entries remain empty after async settlement, and fullscreen exit restores
+  anchor focus. Provider renderer/transport/lifecycle remain production code.
+- Every real scenario asserts unchanged actual revision/geometry/selection,
+  no POST `/api/scene/commands`, and no Runtime exceptions. Retained JSON,
+  screenshots and JUnit are in `qa/fullscreen-*`; both screenshots visually
+  inspected. They show the normal actionable prompt without the native viewer,
+  and explicit French refusal before viewer admission.
+- `test_fullscreen_js.py`, `test_object_viewer_js.py`, `test_agent_detail_js.py`:
+  **64 passed, 9.79 s**. New tests cover synchronous callback order, remote and
+  ID-less local arms, absent-callback compatibility through existing cases,
+  callback failure visibility/logging/no prompt and all armed admission forms.
+  Existing provider close/cancellation/stale/deadline behavior also passes.
+- `node --check` for the three changed product modules and `git diff --check`
+  pass. Browser fixtures closed; slot released to independent reviewer S1.
+
+The regression tests reuse the existing LiveAcceptance and Node controller
+harnesses. No full suite was repeated for this bounded rework; independent
+arrival-order review/reverification remains PM/S1's acceptance responsibility.

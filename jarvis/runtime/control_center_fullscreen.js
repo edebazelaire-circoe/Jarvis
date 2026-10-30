@@ -266,6 +266,16 @@
 
     /* Arme la demande : l'invite est dessinée tout de suite (reçu synchrone en `needs_gesture`). */
     function arm(spec,target,id){
+      // Native dialog modality makes even an html popover inert: release its
+      // existing owner synchronously before capturing focus or showing the prompt.
+      if(typeof deps.beforePrompt==='function'){
+        try{deps.beforePrompt()}
+        catch(error){
+          log('error','fullscreen.before_prompt_failed',{error:messageOf(error)});
+          notify({title:'Plein écran impossible',sub:messageOf(error),kind:'bad'});
+          throw error;
+        }
+      }
       removePrompt(false);
       const restoreFocus=doc.activeElement&&doc.activeElement!==doc.body?doc.activeElement:null;
       const totalMs=Math.round((Number(spec.arm_s)||DEFAULT_ARM_S)*1000);
@@ -703,6 +713,7 @@
     const controller=createFullscreenController({
       document,window,request,log,
       toast:typeof toast==='function'?toast:null,
+      beforePrompt(){if(typeof window.JarvisScene?.closeViewer==='function')window.JarvisScene.closeViewer()},
     });
     document.addEventListener('fullscreenchange',controller.onChange);
     document.addEventListener('fullscreenerror',controller.onError);

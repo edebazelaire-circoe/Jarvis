@@ -463,6 +463,55 @@ def test_a_local_enter_without_a_gesture_arms_instead_of_failing_silently(tmp_pa
     assert result["reports"] == ["exited", "entered"]                                    # annulation, puis entrée
 
 
+def test_before_prompt_releases_its_local_owner_synchronously_for_remote_and_idless_local_arms(tmp_path):
+    result = _node(tmp_path, """
+      const env=makeEnv(),{doc,win}=env,w=env.addWindow('obj_1');
+      const anchor=doc.createElement('button');anchor.id='anchor';doc.body.appendChild(anchor);
+      let modal=true;const seen=[];
+      const c=env.controller({beforePrompt(){seen.push({prompt:!!env.prompt(),modal});modal=false;anchor.focus()}});env.wire(c);
+      const remote=await c.handle({id:'a'.repeat(32),action:'enter',object_id:'obj_1'});
+      const remoteArmed=c.state();c.cancel();const returned=doc.activeElement.id;
+      modal=true;win.navigator.userActivation.isActive=false;
+      const local=await c.enter({object_id:'obj_1'}),localArmed=c.state();
+      const noAutomaticRequest=doc.fs.calls.length;c.cancel();
+      return {seen,remote,remoteArmed,local,localArmed,returned,noAutomaticRequest,modal};
+    """)
+    assert result["seen"] == [{"prompt": False, "modal": True}] * 2
+    assert result["remote"]["state"] == result["local"]["state"] == "needs_gesture"
+    assert result["remoteArmed"]["armed"]["id"] == "a" * 8
+    assert result["localArmed"]["armed"]["id"] is None
+    assert result["returned"] == "anchor" and not result["modal"]
+    assert result["noAutomaticRequest"] == 0
+
+
+def test_a_failing_before_prompt_is_visible_logged_and_never_arms_an_inert_prompt(tmp_path):
+    result = _node(tmp_path, """
+      const env=makeEnv();env.addWindow('obj_1');
+      const c=env.controller({beforePrompt(){throw Error('Fermeture du viewer impossible.')}});
+      let message;try{await c.handle({action:'enter',object_id:'obj_1'})}catch(error){message=error.message}
+      return {message,prompt:!!env.prompt(),armed:c.state().armed,logs:env.logs,toasts:env.doc.toasts,calls:env.doc.fs.calls.length};
+    """)
+    assert result["message"] == "Fermeture du viewer impossible."
+    assert not result["prompt"] and result["armed"] is None and result["calls"] == 0
+    assert any(row["event"] == "fullscreen.before_prompt_failed" and row["level"] == "error" for row in result["logs"])
+    assert result["toasts"][0]["sub"] == result["message"]
+
+
+def test_scene_viewer_refuses_an_armed_prompt_even_without_a_remote_command_id(tmp_path):
+    result = _node(tmp_path, """
+      const V=require(require('path').join(require('path').dirname(process.env.JARVIS_FULLSCREEN_JS),'control_center_scene_viewer.js'));
+      const messages=[];
+      for(const state of [{state:'needs_gesture',armed:{id:null}}, {state:'exited',armed:{id:null}}, {state:'needs_gesture',armed:null}]){
+        const doc={getElementById:()=>({}),fullscreenElement:null,querySelector:()=>null};
+        const viewer=V.create({document:doc,window:{JarvisFullscreen:{state:()=>state}}});
+        try{viewer.open(['doc'],'doc')}catch(error){messages.push(error.message)}
+      }
+      return messages;
+    """)
+    assert len(result) == 3
+    assert all('Répondez d’abord à la demande de plein écran' in message and 'Annuler' in message for message in result)
+
+
 def test_a_local_enter_without_the_activation_api_still_fails_cleanly(tmp_path):
     result = _node(tmp_path, SETUP + """
       delete win.navigator.userActivation;       // navigateur sans navigator.userActivation

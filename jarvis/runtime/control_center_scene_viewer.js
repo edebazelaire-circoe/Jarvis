@@ -82,6 +82,8 @@
     }
     function prepare(){
       if(doc.fullscreenElement)throw new Error('Quittez le plein écran de présentation avant d’ouvrir ce viewer.');
+      const fullscreen=(d.fullscreen||win.JarvisFullscreen)?.state();
+      if(fullscreen&&(fullscreen.armed||fullscreen.state==='needs_gesture'))throw new Error('Répondez d’abord à la demande de plein écran : « Passer en plein écran » ou « Annuler », puis ouvrez ce viewer.');
       const other=doc.querySelector('dialog[open]:not(#jvObjectViewer)');if(other)throw new Error('Fermez la boîte de dialogue ouverte avant d’ouvrir ce viewer.');
       if(d.beforeOpen)d.beforeOpen();
     }

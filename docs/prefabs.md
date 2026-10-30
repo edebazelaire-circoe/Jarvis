@@ -1509,6 +1509,18 @@ the case that needed it.
   `confirmDialog` and clicks the prompt in Chrome. The armed state
   is `needs_gesture`; it always has a deadline (default 30 s, 3 to 120 s), and
   the server re-checks it on every state read in case the page died.
+- **Native viewer coordination.** Unlike the older custom body-inert dialogs,
+  a native modal makes even the html fullscreen popover inert. Viewer admission
+  therefore refuses an existing arm (including a local arm with no ID), with
+  French guidance to accept or cancel the fullscreen request first. When a
+  request arrives during the viewer, the controller's optional synchronous
+  `beforePrompt` dependency calls the existing `JarvisScene.closeViewer()` owner
+  before building the prompt or capturing return focus. That normal close
+  aborts/disposes providers and reads, then restores anchor focus. Callback
+  absence keeps ordinary controller behavior; callback failure is logged and
+  surfaced, and no prompt is armed by that attempt. Go/Cancel remain the
+  canonical controls; the coordination never requests/exits fullscreen itself
+  or writes scene state. Active browser fullscreen still refuses viewer opening.
 - **`fullscreenchange` is the truth.** `entered` exists only when the browser
   fires it; `exited` likewise (Escape included, with no application code).
   On exit the page restores focus to the element that had it, removes its
