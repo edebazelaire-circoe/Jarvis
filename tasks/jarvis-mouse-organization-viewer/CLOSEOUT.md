@@ -1,6 +1,6 @@
 # Mouse, organization and viewer - integration review
 
-Status: S00-S06 machine QA accepted. Ready for Human review; the task remains in current pending explicit acceptance. The isolated preview URL/expiry will be recorded below after launch verification.
+Status: S00-S06 machine QA accepted. Ready for Human review; the task remains in current pending explicit acceptance. The verified demonstration preview is available below until 18:45 Paris on October30.
 
 Worktree: `C:/Projects/jarvis/mov`, branch `task/jarvis-mouse-organization-viewer`, based on refreshed main `c0858a8000e2ca23b57231edb8f46c643080ad07`. The daily checkout and its live Jarvis were not changed or restarted. The supplied Drive folder was reverified in `current` on October30; no main merge/push, archive move, branch deletion or handoff deletion has happened.
 
@@ -49,12 +49,14 @@ Canonical documentation updated: `docs/ARCHITECTURE.md`, `docs/scene-model.md`, 
 - PDF has an explicit unavailable-provider state and canonical Open PDF fallback; no new PDF engine. Native image/text state is retained; canonical PrefabHost pause can recreate an opaque iframe and reset its internal state.
 - Stop applies to cancellable live Core jobs. There is no canonical individual CLI-child Stop; its disabled explanation is intentional. No future plan or progress percentage is invented when not published.
 - The actual configured Claude CLI attempt was refused by its weekly quota (cost 0). Public running-to-failed state was observed, but **successful model inference is unverified**. No retry, substitution or fabricated success. See S05 real-execution/trace-analysis evidence.
-- Undo is local,20 entries / 120 seconds, with Board/scene/epoch/representation/geometry freshness checks. The 64 KiB command limit prevails over the 512-object structural maximum; there is no partial chunking.
+- Undo is local, 20 entries / 120 seconds, with Board/scene/epoch/representation/geometry freshness checks. The 64 KiB command limit prevails over the 512-object structural maximum; there is no partial chunking.
 - Physical screen reader, camera/Bare Hands hardware, macOS Cmd and multi-monitor permission interactions were not physically tested on this Windows workstation. Their automated neighbors and the new keyboard/motion/focus paths have the evidence described above. Optional paid/hardware/Remotion tests were skipped according to their existing opt-ins.
 
 ## Human review and lifecycle
 
-Machine QA is accepted. A separate, clearly labeled demonstration sandbox will be started with its own data/ports and bounded two-hour lifetime. No model request or daily runtime is used. The observed URL/PID/expiry will be recorded here before asking for review.
+**Demonstration preview: [http://127.0.0.1:60371/](http://127.0.0.1:60371/)**, available until **2026-10-30 18:45 Paris** (17:45:47 UTC). Synthetic notes/image/agent facts and a controlled job, own temporary Core/SQLite/runtime/ports; no model request or daily runtime. Actual Python PID `3904` (hidden venv launcher20876), ready 15:45:47 UTC; explicit 7200-second lifetime, owned cleanup and retained temporary data. Live manifest: `C:\Users\Clarice\AppData\Local\Temp\jarvis-mov-human-review-6e3bcc60aef34b3782159797e44697d5\manifest.json`. The URL expires; a later review requires a fresh sandbox.
+
+Launch revision `d73a13bc`, stable product tree `f43cb45fa92b4489171a0f60ffa96eda744a35c9`. Final preview verification: HTTP200, all six expected feature/coordination exports served, seven real scene nodes, native document opened/closed through actual Chrome, zero Runtime errors and zero scene command POSTs. Both preview screenshots were visually inspected. [Observed manifest and preflight summary](slices/06-final-integration-e2e-qa/qa/preview-review.json), [Board](slices/06-final-integration-e2e-qa/qa/preview-board.png), [viewer](slices/06-final-integration-e2e-qa/qa/preview-viewer.png).
 
 Human judgement: complete a representative mouse/keyboard Board session: select objects; resize edges/corners with Shift; organize and undo; compare documents/layouts; inspect agent detail/Stop/Ask. Judge interaction comfort and coherence. Launch/persistence/stale-state/action correctness are machine QA responsibilities, not delegated to the reviewer.
 

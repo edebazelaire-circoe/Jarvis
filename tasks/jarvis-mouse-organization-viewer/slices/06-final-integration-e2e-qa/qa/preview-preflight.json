@@ -1,0 +1,608 @@
+{
+  "reads": {
+    "before": {
+      "scene": {
+        "enabled": true,
+        "mode": "shared",
+        "role": "leader",
+        "leader": {
+          "held": true,
+          "mode": "lock"
+        },
+        "loop": "polling",
+        "revision": 20,
+        "nodes": 7,
+        "commits": {
+          "sent": 0,
+          "applied": 0,
+          "duplicate": 0,
+          "refused": 0,
+          "invalid": 0,
+          "retried": 0,
+          "failed": 0,
+          "pending": 0
+        },
+        "stats": {
+          "snapshots": 1,
+          "polls": 1,
+          "catchUps": 0,
+          "resyncs": 0,
+          "retries": 0,
+          "errors": 0,
+          "received": 0,
+          "broadcasts": 1
+        },
+        "health": {
+          "level": "ok",
+          "code": null,
+          "message": "",
+          "since": null,
+          "retryAt": null
+        },
+        "resolved": 0,
+        "pending": 0,
+        "actions": {
+          "moves": 0,
+          "resizes": 0,
+          "representations": 0,
+          "visibility": 0,
+          "pins": 0,
+          "archives": 0,
+          "bulkArchives": 0,
+          "stops": 0,
+          "menus": 0,
+          "refused": 0,
+          "failed": 0,
+          "rolledBack": 0
+        },
+        "gesture": null,
+        "selected": null,
+        "selection": [],
+        "stopping": [],
+        "jobCancelTimeoutS": 24,
+        "captures": {
+          "offered": 0,
+          "declined": 0,
+          "rendered": 0,
+          "sent": 0,
+          "refused": 0,
+          "abandoned": 0,
+          "expired": 0,
+          "failed": 0
+        },
+        "barehands": [],
+        "holding": [],
+        "viewer": {
+          "open": false
+        },
+        "undo": 0,
+        "geometryBusy": false,
+        "tabStops": 1,
+        "animated": 0
+      },
+      "objects": [
+        "qa-note-a",
+        "qa-note-b",
+        "qa-note-c",
+        "qa-image",
+        "claude:qa-parent",
+        "claude:qa-child",
+        "job:e8e1ea43-9a59-4050-b102-c012d0063e72"
+      ]
+    },
+    "opened": {
+      "open": true,
+      "depth": 1,
+      "kind": "objects",
+      "layout": "auto",
+      "page": 0,
+      "entries": [
+        {
+          "id": "qa-note-a",
+          "state": "ready",
+          "code": null,
+          "visible": true,
+          "paused": false,
+          "image": null
+        }
+      ]
+    },
+    "after": {
+      "enabled": true,
+      "mode": "shared",
+      "role": "leader",
+      "leader": {
+        "held": true,
+        "mode": "lock"
+      },
+      "loop": "polling",
+      "revision": 20,
+      "nodes": 7,
+      "commits": {
+        "sent": 0,
+        "applied": 0,
+        "duplicate": 0,
+        "refused": 0,
+        "invalid": 0,
+        "retried": 0,
+        "failed": 0,
+        "pending": 0
+      },
+      "stats": {
+        "snapshots": 1,
+        "polls": 1,
+        "catchUps": 0,
+        "resyncs": 0,
+        "retries": 0,
+        "errors": 0,
+        "received": 0,
+        "broadcasts": 1
+      },
+      "health": {
+        "level": "ok",
+        "code": null,
+        "message": "",
+        "since": null,
+        "retryAt": null
+      },
+      "resolved": 0,
+      "pending": 0,
+      "actions": {
+        "moves": 0,
+        "resizes": 0,
+        "representations": 0,
+        "visibility": 0,
+        "pins": 0,
+        "archives": 0,
+        "bulkArchives": 0,
+        "stops": 0,
+        "menus": 0,
+        "refused": 0,
+        "failed": 0,
+        "rolledBack": 0
+      },
+      "gesture": null,
+      "selected": "qa-note-a",
+      "selection": [
+        "qa-note-a"
+      ],
+      "stopping": [],
+      "jobCancelTimeoutS": 24,
+      "captures": {
+        "offered": 0,
+        "declined": 0,
+        "rendered": 0,
+        "sent": 0,
+        "refused": 0,
+        "abandoned": 0,
+        "expired": 0,
+        "failed": 0
+      },
+      "barehands": [],
+      "holding": [],
+      "viewer": {
+        "open": false,
+        "depth": 0,
+        "kind": null,
+        "layout": null,
+        "page": null,
+        "entries": []
+      },
+      "undo": 0,
+      "geometryBusy": false,
+      "tabStops": 1,
+      "animated": 0
+    }
+  },
+  "errors": [],
+  "logs": [
+    {
+      "type": "info",
+      "text": "[shell] shell.installed {\"controls\":13}"
+    },
+    {
+      "type": "info",
+      "text": "[barehands] barehands.hud_installed {\"seam\":[\"hud\"]}"
+    },
+    {
+      "type": "info",
+      "text": "[barehands] barehands.palette_installed {\"tools\":[\"pointer\",\"pan\",\"select\"],\"seam\":[\"palette\"]}"
+    },
+    {
+      "type": "info",
+      "text": "[barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}"
+    },
+    {
+      "type": "info",
+      "text": "[capture] capture_rail.installed {\"views\":\"control_center_capture_wheel.js\"}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.installed {\"host\":\"toolWheel\"}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.registered {\"slot\":\"capture\",\"secondary\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[capture] capture_views.installed {\"host\":\"recIndicators\",\"category\":\"capture\",\"items\":[\"screenshot\",\"video\",\"audio\"]}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.registered {\"slot\":\"jarvis\",\"secondary\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.registered {\"slot\":\"settings\",\"secondary\":false}"
+    },
+    {
+      "type": "info",
+      "text": "[jarvis] jarvis_wheel.installed {\"categories\":[\"jarvis\",\"settings\"]}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.status {\"slot\":\"selection\",\"tone\":null,\"text\":\"Souris\",\"checked\":null}"
+    },
+    {
+      "type": "info",
+      "text": "[input_arbitration] selection.projected {\"method\":\"mouse\",\"tone\":null,\"lifecycle\":\"off\",\"starting\":false}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.registered {\"slot\":\"selection\",\"secondary\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[input_arbitration] input_arbitration.installed {\"distancePx\":48,\"netPx\":24,\"windowMs\":400,\"cooldownMs\":1500}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.registered {\"slot\":\"dossier\",\"secondary\":false}"
+    },
+    {
+      "type": "info",
+      "text": "[dossier] dossier.installed {\"page\":\"dsrmsj2ba0f3a\"}"
+    },
+    {
+      "type": "info",
+      "text": "[boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}"
+    },
+    {
+      "type": "info",
+      "text": "[attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[presentation-rail] installed {}"
+    },
+    {
+      "type": "info",
+      "text": "[studio-inspector] installed {\"dock\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[workspace] workspace.installed {}"
+    },
+    {
+      "type": "info",
+      "text": "[prefabs] prefabs.installed {}"
+    },
+    {
+      "type": "info",
+      "text": "[chat] chat.installed {\"panel\":\"chatPanel\",\"shared\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[board-drop] board_drop.installed {\"layer\":\"boardDrop\",\"tray\":\"boardDropTray\"}"
+    },
+    {
+      "type": "info",
+      "text": "[screenshot_preview] installed {\"host\":\"screenshotPreview\",\"dismiss_ms\":6000}"
+    },
+    {
+      "type": "info",
+      "text": "[launcher] launcher.installed {\"visible\":4,\"more\":7}"
+    },
+    {
+      "type": "info",
+      "text": "[capture] capture_rail.status_received {\"open\":0}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.status {\"slot\":\"jarvis\",\"tone\":null,\"text\":\"voix hors ligne\",\"checked\":null}"
+    },
+    {
+      "type": "info",
+      "text": "[jarvis] jarvis_wheel.facts {\"read\":\"ok\",\"hint\":\"F9 · VOICE HORS LIGNE\"}"
+    },
+    {
+      "type": "info",
+      "text": "[settings] support_mode.state {\"enabled\":false,\"problem\":null}"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.enabled Object"
+    },
+    {
+      "type": "info",
+      "text": "[barehands] profil de calibration relu aucune mesure"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.role Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.loop_started Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.snapshot_loaded Object"
+    },
+    {
+      "type": "info",
+      "text": "[presentation-rail] workspace_items {\"board_id\":\"default\",\"count\":1}"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.role_registry_loaded Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.open_requested Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.opened Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.entry_loading Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.detail_opened Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.objects_opened Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.entry_loading Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.entry_ready Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.selection_backing Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.closed Object"
+    }
+  ],
+  "requests": [
+    {
+      "id": "0F601B778B67F3BCA1686E03242137D4",
+      "method": "GET",
+      "path": "/",
+      "body": null
+    },
+    {
+      "id": "34900.2",
+      "method": "GET",
+      "path": "/api/captures/status",
+      "body": null
+    },
+    {
+      "id": "34900.3",
+      "method": "GET",
+      "path": "/api/fullscreen/commands",
+      "body": null
+    },
+    {
+      "id": "34900.4",
+      "method": "GET",
+      "path": "/api/presentation-studio/explorer/commands",
+      "body": null
+    },
+    {
+      "id": "34900.5",
+      "method": "GET",
+      "path": "/api/presentation-studio/playback",
+      "body": null
+    },
+    {
+      "id": "34900.6",
+      "method": "GET",
+      "path": "/api/shortcuts",
+      "body": null
+    },
+    {
+      "id": "34900.7",
+      "method": "GET",
+      "path": "/api/status",
+      "body": null
+    },
+    {
+      "id": "34900.8",
+      "method": "GET",
+      "path": "/api/status",
+      "body": null
+    },
+    {
+      "id": "34900.9",
+      "method": "GET",
+      "path": "/api/barehands",
+      "body": null
+    },
+    {
+      "id": "34900.10",
+      "method": "GET",
+      "path": "/api/barehands/profile",
+      "body": null
+    },
+    {
+      "id": "34900.11",
+      "method": "GET",
+      "path": "/favicon.ico",
+      "body": null
+    },
+    {
+      "id": "34900.12",
+      "method": "GET",
+      "path": "/api/presentation-studio/rail",
+      "body": null
+    },
+    {
+      "id": "34900.13",
+      "method": "GET",
+      "path": "/api/workspace/artifacts",
+      "body": null
+    },
+    {
+      "id": "34900.14",
+      "method": "GET",
+      "path": "/api/agent/tasks",
+      "body": null
+    },
+    {
+      "id": "34900.15",
+      "method": "GET",
+      "path": "/api/work",
+      "body": null
+    },
+    {
+      "id": "34900.16",
+      "method": "GET",
+      "path": "/api/scene",
+      "body": null
+    },
+    {
+      "id": "34900.17",
+      "method": "GET",
+      "path": "/api/scene/patches",
+      "body": null
+    },
+    {
+      "id": "34900.19",
+      "method": "GET",
+      "path": "/api/subagent-roles",
+      "body": null
+    },
+    {
+      "id": "34900.20",
+      "method": "GET",
+      "path": "/api/missions/qa-mission",
+      "body": null
+    },
+    {
+      "id": "34900.21",
+      "method": "GET",
+      "path": "/api/artifacts/jart_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "body": null
+    },
+    {
+      "id": "34900.22",
+      "method": "GET",
+      "path": "/api/workspace/boards/default/dossier/backing",
+      "body": null
+    }
+  ],
+  "responses": [
+    {
+      "id": "0F601B778B67F3BCA1686E03242137D4",
+      "status": 200,
+      "path": "/"
+    },
+    {
+      "id": "34900.2",
+      "status": 200,
+      "path": "/api/captures/status"
+    },
+    {
+      "id": "34900.5",
+      "status": 200,
+      "path": "/api/presentation-studio/playback"
+    },
+    {
+      "id": "34900.6",
+      "status": 200,
+      "path": "/api/shortcuts"
+    },
+    {
+      "id": "34900.7",
+      "status": 200,
+      "path": "/api/status"
+    },
+    {
+      "id": "34900.9",
+      "status": 200,
+      "path": "/api/barehands"
+    },
+    {
+      "id": "34900.10",
+      "status": 200,
+      "path": "/api/barehands/profile"
+    },
+    {
+      "id": "34900.11",
+      "status": 404,
+      "path": "/favicon.ico"
+    },
+    {
+      "id": "34900.8",
+      "status": 200,
+      "path": "/api/status"
+    },
+    {
+      "id": "34900.14",
+      "status": 200,
+      "path": "/api/agent/tasks"
+    },
+    {
+      "id": "34900.15",
+      "status": 200,
+      "path": "/api/work"
+    },
+    {
+      "id": "34900.16",
+      "status": 200,
+      "path": "/api/scene"
+    },
+    {
+      "id": "34900.12",
+      "status": 200,
+      "path": "/api/presentation-studio/rail"
+    },
+    {
+      "id": "34900.13",
+      "status": 200,
+      "path": "/api/workspace/artifacts"
+    },
+    {
+      "id": "34900.19",
+      "status": 200,
+      "path": "/api/subagent-roles"
+    },
+    {
+      "id": "34900.20",
+      "status": 200,
+      "path": "/api/missions/qa-mission"
+    },
+    {
+      "id": "34900.21",
+      "status": 200,
+      "path": "/api/artifacts/jart_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "id": "34900.22",
+      "status": 200,
+      "path": "/api/workspace/boards/default/dossier/backing"
+    }
+  ]
+}
