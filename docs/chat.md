@@ -6,6 +6,17 @@ The Chat is a projection of [conversation events](conversation-events.md) plus a
 text ingress on the existing `brain-turns` route; it is not a second transcript,
 a second Brain pipeline or a voice bridge.
 
+The canonical `JarvisChat.prefill({text,target?,signal?})` seam opens the current
+Board chat and appends text after any existing draft, separated by two newlines.
+It retains attachments, persists through the normal draft owner, and never sends
+a turn or switches Voice. It returns `{ok:true,conversation_id}` or a readable
+`{ok:false,code,message}` for unavailable chat, changed Board, cancellation or the
+8,192-character combined-draft limit. An unsuccessful append leaves the draft
+untouched. The agent viewer uses this seam for **Poser une question**, closes only
+after success and then focuses the normal composer. Existing Voice lock/send
+rules remain authoritative. `test_chat_prefill_browser.py` exercises append,
+overflow, abort and the absence of turn/Voice writes in a real browser.
+
 Handoff `tasks/jarvis-unified-chat-and-board-drop/` (design record:
 `docs/06-resolved-architecture.md` of that handoff). This page is **Level 3**:
 the normative contract (written before the code, Level 2 at Slice 01), its

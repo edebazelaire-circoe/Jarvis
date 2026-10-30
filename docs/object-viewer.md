@@ -7,6 +7,33 @@ viewer and returns with the same selection and geometry when it closes.
 Scene selection/open bindings are owned by the integration Slice, not this
 module. Source: `jarvis/runtime/control_center_object_viewer.js`.
 
+## Scene bindings
+
+`control_center_scene_viewer.js` composes this shell with existing Artifact
+metadata, scene markdown/item helpers, sandboxed `JarvisPrefabHost` preview and
+the public agent reader. The scene page loads these modules directly; there is
+no production fixture adapter. Enter, double-click and **Ouvrir / Voir** use the
+same dispatch. An agent/job anchor opens its detail alone. A document/artifact
+anchor opens compatible selected documents, with an accessible count of skipped
+members. Single mouse click selects; right-click or the keyboard context key
+opens actions. Closing restores focus to the current anchor when it exists and
+preserves scene selection.
+
+Registry references are checked against returned Artifact identity. Images use
+the canonical payload URL and native viewer zoom/pan. Registry text is the
+existing extracted-text preview (16,000 characters maximum); truncation is stated.
+Plain summaries/items use existing safe markdown blocks. PDF uses the shell's
+explicit source-link fallback. Prefab preview binds focused-frame Escape to
+viewer close; canonical host pause may reconstruct the iframe on return.
+
+Metadata resolution has at most four readers; each document failure becomes a
+readable fallback. Shell cancellation/deadline/retry applies to the initial
+loader. Agent artifact navigation has a ten-second deadline, pushes a real shell
+history entry, and returns through **Retour** to retained native agent DOM.
+No viewer layout or navigation writes scene geometry. Async feedback belongs
+inside the native top-layer dialog. Presentation fullscreen or another modal
+must be closed first; the refusal is explicit.
+
 ## API
 
 ```js

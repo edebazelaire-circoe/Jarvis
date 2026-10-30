@@ -197,6 +197,18 @@ const SERVER=`(()=>{
         setTimeout(()=>release([put]),50);
         return json(200,{outcome:'applied',revision:S.revision});
       }
+      if(command.op==='layout_selection'){
+        if(S.refuse?.layout_selection)return json(200,{outcome:'invalid',reason:S.refuse.layout_selection,revision:S.revision});
+        const entries=command.targets||[],members=entries.map(t=>S.objects.find(o=>o.object_id===t.object_id));
+        if(members.some(m=>!m||!m.geometry))return json(200,{outcome:'invalid',reason:'unknown_object',revision:S.revision});
+        const stale=entries.some((t,i)=>t.expected_geometry&&JSON.stringify(t.expected_geometry)!==JSON.stringify(members[i].geometry));
+        if(stale)return json(200,{outcome:'invalid',reason:'geometry_changed',revision:S.revision});
+        const ops=[];entries.forEach((t,i)=>{const m=members[i];if(JSON.stringify(m.geometry)===JSON.stringify(t.geometry)&&(!command.pin||m.constraints.pinned_by_user))return;
+          m.geometry=t.geometry;m.constraints={...m.constraints,placed_by:'user',...(command.pin?{pinned_by_user:true}:{})};ops.push({op:'put_object',object:m})});
+        if(!ops.length)return json(200,{outcome:'duplicate',revision:S.revision});
+        S.revision++;setTimeout(()=>release([{schema_version:1,revision:S.revision,ops}]),50);
+        return json(200,{outcome:'applied',revision:S.revision,patch_omitted:true});
+      }
       if(command.op==='set_visibility'&&target){
         target.visibility=command.visibility;S.revision+=1;
         const put={schema_version:1,revision:S.revision,ops:[{op:'put_object',object:target}]};
@@ -504,7 +516,9 @@ try{
     const mods=typeof shift==='number'?shift:shift?8:0;
     const base={key:name,code:name==='ContextMenu'?'ContextMenu':name===' '?'Space':name,windowsVirtualKeyCode:code,nativeVirtualKeyCode:code,modifiers:mods};
     if(phase){await send('Input.dispatchKeyEvent',{type:phase,...base});return}
-    await send('Input.dispatchKeyEvent',{type:'rawKeyDown',...base});
+    // Native dialog CloseWatcher handles keyDown Escape (rawKeyDown is only
+    // sufficient for the page's custom keyboard listeners).
+    await send('Input.dispatchKeyEvent',{type:name==='Escape'?'keyDown':'rawKeyDown',...base});
     /* Entree active un bouton sur son caractere, comme un vrai clavier. */
     if(name==='Enter')await send('Input.dispatchKeyEvent',{type:'char',text:String.fromCharCode(13),unmodifiedText:String.fromCharCode(13),...base});
     await send('Input.dispatchKeyEvent',{type:'keyUp',...base});

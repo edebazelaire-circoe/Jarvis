@@ -666,3 +666,23 @@ def test_a_new_place_stops_a_running_thaw(tmp_path):
     for row in result:
         assert row["running"] and row["lifted"], row
         assert row["gap"] <= 0.01 and not row["anim"] and row["left"], row
+
+
+def test_group_drop_calls_atomic_seam_once_before_releasing_and_releases_on_throw(tmp_path):
+    result=run_desk(tmp_path,r"""
+      const vp=L.viewport(1920,1080),members=OBJECTS.slice(0,2),singles=[],batches=[];
+      let fail=false,desk;
+      desk=I.createHoldDesk({layout:L,now:()=>0,viewport:()=>vp,field:()=>null,fieldFor:()=>null,controls:()=>[],
+        node:id=>{const m=members.find(m=>m.id===id);return {box:m.box,representation:m.representation}},
+        view:{hold(){},freeze(){},preview(){},stopThaw(){}},
+        commit:(...args)=>singles.push(args),commitMany:targets=>{batches.push({targets,held:desk.heldIds()});if(fail)throw Error('refused');return Promise.resolve({ok:true})}});
+      const h=desk.take('mouse',['p','c'],{pointer:{x:0,y:0}});desk.drag(h,18,12);
+      const sent=desk.drop(h,'move');await sent[0][1];const released=desk.heldIds();
+      fail=true;const other=desk.take('mouse',['p','c'],{pointer:{x:0,y:0}});desk.drag(other,10,10);
+      let threw=false;try{desk.drop(other,'move')}catch(e){threw=true}
+      return {singles,batches,sent:sent.length,released,threw,afterThrow:desk.heldIds()};
+    """)
+    assert result['singles']==[] and result['sent']==1 and len(result['batches'])==2
+    assert len(result['batches'][0]['targets'])==2 and set(result['batches'][0]['held'])=={'p','c'}
+    assert all('before' in t and 'representation' in t for t in result['batches'][0]['targets'])
+    assert result['released']==result['afterThrow']==[] and result['threw']

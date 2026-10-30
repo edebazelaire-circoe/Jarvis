@@ -983,7 +983,7 @@
       stopLoop();leaveFeed();
     }
     function open(options){
-      if(S.open)return;
+      if(S.open){if(!(options&&options.noFocus))el.input.focus();return}
       /* Un seul panneau latéral : `#panel` (closePanel nous ferme aussi : sans effet ici) et l'inspecteur du Studio. */
       try{if(typeof root.closePanel==='function')root.closePanel()}catch(error){log('close_panel_failed',{error:String(error)},'warn')}
       try{const insp=root.JarvisStudioInspector&&root.JarvisStudioInspector.instance;if(insp&&typeof insp.close==='function')insp.close()}
@@ -1000,6 +1000,23 @@
       resume();
       if(!(options&&options.noFocus))el.input.focus();
       log('opened',{conversation_id:model.conversationId});
+    }
+    /* Public target-question seam: preserve the current draft/attachments and
+       channel. A draft is never a send, nor permission to stop Voice. */
+    async function prefill(spec){
+      const value=spec&&spec.text;
+      if(typeof value!=='string'||!value||value.length>MAX_TEXT)return {ok:false,code:'chat_prefill_invalid',message:'Brouillon à ajouter invalide.'};
+      const board=()=>root.JarvisBoardsControl&&root.JarvisBoardsControl.activeId?root.JarvisBoardsControl.activeId():null;
+      const initialBoard=board();open({noFocus:true});
+      if(!model.conversationId)await readState();
+      if(spec.signal&&spec.signal.aborted)return {ok:false,code:'cancelled',message:'Ouverture du brouillon annulée.'};
+      if(board()!==initialBoard)return {ok:false,code:'chat_scope_changed',message:'Le Board a changé : aucun texte n’a été ajouté.'};
+      if(!model.conversationId||S.stateError)return {ok:false,code:'chat_not_ready',message:'Le chat n’est pas encore disponible. Réessayez après sa lecture.'};
+      const before=el.input.value,combined=before+(before?'\n\n':'')+value;
+      if(combined.length>MAX_TEXT)return {ok:false,code:'chat_draft_full',message:'Votre brouillon est conservé mais trop long pour ajouter cette question. Raccourcissez-le puis réessayez.'};
+      el.input.value=combined;draftEdited();el.input.setSelectionRange(combined.length,combined.length);
+      log('prefilled',{conversation_id:model.conversationId,added_chars:value.length,kept_draft:!!before,target_source:spec.target&&spec.target.source||null});
+      return {ok:true,conversation_id:model.conversationId};
     }
     function close(options){
       if(!S.open)return;
@@ -1068,7 +1085,7 @@
       log('installed',{panel:DOM.panel,shared:canShare()});
     }
 
-    return {install,open,close,attachExisting,toggle:()=>S.open?close({restoreFocus:true}):open(),isOpen:()=>S.open,
+    return {install,open,close,prefill,attachExisting,toggle:()=>S.open?close({restoreFocus:true}):open(),isOpen:()=>S.open,
       snapshot:()=>({open:S.open,conversation_id:model.conversationId,cursor:S.feed.cursor,feed:{phase:S.feed.phase,role:S.feed.role,
         hydrated:S.feed.hydrated,error:S.feed.error,leading:S.feed.leading,heldRows:Model.storedRows(model).length},
         attachments:Model.attachmentView(S.att,model.conversationId),sentNames:[...S.sentNames.keys()],state:S.state,serverLock:S.serverLock,switch:{...S.switch},sending:S.sending,
@@ -1078,6 +1095,7 @@
 
   const api={DOM,ROUTES,DEFAULTS,config,MAX_TEXT,composerView,uuid4,createChat,instance:null,
     open:o=>api.instance&&api.instance.open(o),close:o=>api.instance&&api.instance.close(o),
+    prefill:spec=>api.instance?api.instance.prefill(spec):Promise.resolve({ok:false,code:'chat_unavailable',message:'Le chat est indisponible.'}),
     /* Slice 05 (orbital-ui) : joindre un Artifact déjà chez Core ; `{ok:false, code:'chat_unavailable'}` sans panneau. */
     attachExisting:spec=>api.instance?api.instance.attachExisting(spec):{ok:false,code:'chat_unavailable'},
     isOpen:()=>!!(api.instance&&api.instance.isOpen())};

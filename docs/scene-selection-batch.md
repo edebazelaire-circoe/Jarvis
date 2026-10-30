@@ -686,3 +686,43 @@ wire, authority, stale compares, concurrent service writes, persistence failure,
 JS patch parity) and `tests/integration/test_scene_layout_transport.py` (real
 Core/SQLite/HTTP, Control Center, 400/403/413 and stale refusal). Existing scene
 authority, batch and command round-trip tests include the new operation.
+
+## Organization and local geometry undo
+
+Right-click a selected member to keep the group and choose **Organiser**. The
+menu offers row, column, automatic/custom grid, six alignments, horizontal/vertical
+distribution (three members minimum), and matching width/height/size. Matching
+dimensions requires only windows/capsules; mixed selections explain this in the
+menu. Custom grid has a 6×6 graphical picker and numeric rows/columns
+(1–64 each, at most 512 cells; 3×8 is supported).
+
+`JarvisSceneOrganize.plan` orders actual drawn boxes with existing spatial
+ordering, preserves the group's bounding-box centre when packing, uses a
+three-unit gap and clamps the complete result by common translation to the
+visible safe area. Oversized arrangements are refused whole. The existing hold
+desk freezes visual orbit, previews targets and uses `holdPlace` for stored
+geometry. A successful action sends one compared `layout_selection` with
+`pin:true`. Forward and reverse encodings are preflighted against 65,536 bytes,
+including canonical Python float overhead.
+
+Group pointer movement also uses the shared desk's `commitMany` seam: all placed
+members are converted with the same hold/orbit snapshot, then one compared
+`layout_selection` pins them together. A refusal removes every optimistic layer.
+Single-object movement retains its existing path. The earlier source assertion
+against the former inline `commitTranslation` branch exposed a real regression
+after the hold-desk extraction; S05 restores atomic group writes through the
+shared desk rather than introducing another group pointer path.
+
+**Ctrl/Cmd+Z** or **Annuler la disposition** reverses recent organization and
+resize geometry, outside text editors/panels. This local ring holds at most 20
+transactions for two minutes and clears on Board/scene/epoch changes or disable.
+Current visible representation and geometry must still match; Core's exact
+expected-geometry comparison remains authoritative against races. A stale entry
+is discarded with a readable refusal. Undo preserves pin, payload, representation
+and other fields. Movement keeps its existing semantics and is outside this ring.
+Waiting/cancellation is visible on the Board; cancelling stops waiting and never
+promises that an already admitted command was reverted.
+
+Conformance: `test_scene_organize_js.py`, `test_scene_convergence_browser.py` and
+`test_mouse_resize_browser.py` cover deterministic targets, canonical reducer,
+budget, stale history, menu/keyboard/pointer paths and enabled orbit.

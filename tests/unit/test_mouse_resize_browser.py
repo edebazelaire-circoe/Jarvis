@@ -47,7 +47,8 @@ def test_all_eight_mouse_handles_resize_windows_and_capsules(tmp_path):
             assert after["w"] > before["w"] if ("left" in side or "right" in side) else after["h"] > before["h"]
             assert step["results"][label + "after"]["holding"] == []
     initial = len(step["results"]["jobj_wtopbefore"]["bodies"])
-    assert len([b for b in step["bodies"][initial:] if b["path"] == "/api/scene/commands" and b["body"].get("op") == "set_geometry"]) == 16
+    commands=[b['body'] for b in step['bodies'][initial:] if b['path']=='/api/scene/commands' and b['body'].get('op')=='layout_selection']
+    assert len(commands)==16 and all(len(c['targets'])==1 for c in commands)
     assert not [c for c in step["console"] if c["type"] in ("error", "exception")]
 
 
@@ -59,7 +60,9 @@ def test_right_click_keyboard_menu_select_all_and_open_intents(tmp_path):
         ["rclick", "context", _node("jobj_w"), 150], ["eval", "kept", _state(), 0],
         ["key", "close", "Escape", 150], ["key", "keyboardMenu", "ContextMenu", 150], ["eval", "keyboardKept", _state(), 0],
         ["key", "close2", "Escape", 150], ["key", "enter", "Enter", 150], ["eval", "opened", "structuredClone(__opens)", 0],
+        ["key", "closeViewer", "Escape", 150],
         ["dblclick", "double", _node("jobj_w"), 150], ["eval", "doubleOpened", "structuredClone(__opens)", 0],
+        ["key", "closeViewer2", "Escape", 150],
         ["rclick", "other", _node("jobj_p"), 150], ["eval", "replaced", _state(), 0], ["key", "close3", "Escape", 150],
         ["key", "all", "a", 150, 2], ["eval", "selectedAll", _state(), 0],
         ["eval", "edit", "const t=document.createElement('input');t.id='mouseTestEdit';t.value='texte';document.body.append(t);t.focus();true", 0],

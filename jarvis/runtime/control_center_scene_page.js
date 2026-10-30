@@ -553,6 +553,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCor
   if(!L||!Client)return;
   /* Interactions (Slice 08). Absentes : la scène se dessine sans geste. */
   const I=window.JarvisSceneInteract||null;
+  const Organize=window.JarvisSceneOrganize||null;
   /* Capture visuelle (Slice 09, partie 2). Absente : aucune demande n'est servie. */
   const Capture=window.JarvisSceneCapture||null;
   /* Réglages d'affichage de l'utilisateur (Slice 12). Absents : les valeurs de
@@ -1003,6 +1004,9 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
 /* La puce sort du flux (QA S08 P3) : une ligne meta renvoyée à la ligne s'aligne sur le texte (24 px), pas sous la puce. */
 .sc-note::before{content:'';position:absolute;left:10px;top:10px;width:6px;height:6px;border-radius:50%;background:var(--sc-muted)}
 .sc-note-main{min-width:0;flex:1 1 140px;overflow-wrap:anywhere}
+.sc-status.sc-organize-status{top:18px;bottom:auto;left:50%;transform:translateX(-50%);max-width:min(700px,90vw)}
+.sc-organize-status .sc-note{pointer-events:auto}
+.sc-organize-status .sc-note::before{background:none;border:1.5px dashed currentColor;animation:sc-spin 1.2s linear infinite}
 .sc-note-meta{flex:none;color:var(--sc-muted);font-variant-numeric:tabular-nums}
 /* Indicateur actionnable (Slice 08) : scène pleine → archivage (les masqués sont dans la roue › Sélection depuis la Slice 06 de la refonte roue/dossier). */
 button.sc-note{pointer-events:auto;border:0;font:inherit;font-size:10px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;text-align:left}
@@ -1076,6 +1080,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      et c'est très bien ainsi. Le rectangle et le Ctrl-clic, eux, en tiennent
      plusieurs (demande du 19/09/2026). */
   let selection=[],band=null;
+  const geometryUndo=Organize?Organize.createHistory():null;
+  let geometryBusy=false,geometryAbort=null,sceneViewer=null,geometryContext=null;
   /* Sélection au clavier ouverte par Ctrl+Espace (Slice 06) : le focus ne la remplace plus. */
   let keySelecting=false;
   /* Vrai le temps d'un `focus()` posé par la page après un retrait : le focus
@@ -1504,6 +1510,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     root.addEventListener('focusout',onFocusOut);
     root.addEventListener('scroll',onScroll,true);
     root.addEventListener('click',onInnerClick);
+    root.addEventListener('jarvis:scene-open',onSceneOpen);
     if(I){
       root.addEventListener('pointerdown',onPointerDown);
       root.addEventListener('pointermove',onPointerMove);
@@ -2703,7 +2710,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      fenêtre ou le champ changent, l'enregistrement. La page ne lui fournit que
      le DOM (`view`) et les mesures. */
   const desk=I?I.createHoldDesk({layout:L,now:()=>Date.now(),field:()=>lastField,fieldFor,viewport:viewportNow,
-    controls:controlRects,node:holdTarget,shown:shownOffset,commit:commitUserGeometry,
+    controls:controlRects,node:holdTarget,shown:shownOffset,commit:commitUserGeometry,commitMany:commitManyGeometry,
     log:(event,data)=>consoleLog('info',event,data),
     view:{
       hold:holdNode,
@@ -2838,10 +2845,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   /* `POST /api/scene/commands` (acteur `user` posé par le Control Center), depuis
      n'importe quel onglet : les gestes ne dépendent pas du meneur. Le texte
      brut d'un échec ne va qu'à la console. */
-  async function sendCommand(command){
+  async function sendCommand(command,options={}){
     let result;
     try{
-      const response=await requestJson('/api/scene/commands',{method:'POST',body:command,timeoutMs:15000});
+      const response=await requestJson('/api/scene/commands',{method:'POST',body:command,timeoutMs:15000,...options});
       result=I.classifyResponse(response.status,response.body);
     }catch(error){
       result={ok:false,outcome:'failed',reason:'',revision:null,...I.networkFailure(error)};
@@ -2880,10 +2887,24 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      géométrie ne s'épingle pas : position, épingle, puis position de nouveau
      (sans effet, `duplicate`, si personne n'a bougé l'objet entre-temps).
      Échec : les deux étapes reviennent (désépinglage si l'objet ne l'était pas). */
+  async function commitManyGeometry(members,kind){
+    try{
+      if(!Organize)throw new Error('Le module de disposition est indisponible.');
+      const state=viewState();
+      for(const member of members){const item=state&&state.objects.get(member.id);
+        if(!item||item.visibility!=='visible'||item.representation!==member.representation)throw new Error('Un objet du groupe a changé : reprenez le déplacement.');}
+      actionStats.moves+=members.length;
+      return await commitAtomicGeometry(members.map(m=>({id:m.id,before:m.before,after:m.box,representation:m.representation})),false,'Déplacement du groupe');
+    }catch(error){geometryError('Déplacement du groupe',error);return {ok:false}}
+  }
+
   async function commitUserGeometry(id,box,kind){
     if(kind==='resize'){actionStats.resizes++;userSized.add(id)}else actionStats.moves++;
     const item=lastState&&lastState.objects.get(id);
     if(!item)return;
+    if(kind==='resize'&&item.geometry&&Organize){
+      return commitAtomicGeometry([{id,before:{...item.geometry},after:{...box},representation:item.representation}],true,'Redimensionnement');
+    }
     const wasPinned=!!(item.constraints&&item.constraints.pinned_by_user);
     const placed=!!item.geometry;
     const action=kind==='resize'?'Redimensionnement':'Déplacement';
@@ -2898,6 +2919,86 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     }
     prunePending();
     consoleLog('info',kind==='resize'?'scene.user_resized':'scene.user_moved',{object_id:id,steps:outcome.steps.join('+'),revision:outcome.revision});
+  }
+
+  function geometryError(action,error){
+    consoleLog('warn','scene.geometry_refused',{action,code:error&&error.code||'layout_unavailable'});
+    announce(String(error.message||error));notify({title:action+' impossible',sub:String(error.message||error),kind:'warn'});
+  }
+
+  function syncGeometryContext(state){
+    const context=state?JSON.stringify([activeBoardId(),state.scene_id,state.epoch]):null;
+    if(geometryContext!==context){
+      if(geometryUndo)geometryUndo.clear();if(geometryAbort)geometryAbort.abort();
+      geometryContext=context;
+    }
+  }
+
+  async function commitAtomicGeometry(targets,record,action,pin=true){
+    if(geometryBusy)throw new Error('Une disposition est déjà en cours. Attendez son résultat.');
+    Organize.checkBudget(targets);
+    // Explicit user dimensions must survive the incumbent brain-window auto-fit.
+    for(const target of targets)if(target.representation==='window')userSized.add(target.id);
+    const state=lastState,board=activeBoardId(),tokens=targets.map(t=>[t.id,pending.begin(t.id,{geometry:t.after,...(pin?{pinned:true}:{})},Date.now())]);
+    const command=Organize.command(targets,pin),controller=new AbortController(),started=Date.now();geometryAbort=controller;geometryBusy=true;
+    const note=element('div','sc-status sc-organize-status'),cancel=element('button','sc-note'),label=element('span','sc-note-main');
+    cancel.type='button';cancel.dataset.geometryCancel='';cancel.append(label);cancel.addEventListener('click',()=>controller.abort());note.append(cancel);root.append(note);
+    const tick=()=>label.textContent=`${action} en cours · ${Math.floor((Date.now()-started)/1000)} s · annuler l’attente`;
+    tick();const clock=window.setInterval(tick,500);pendingChanged();
+    consoleLog('info','scene.geometry_started',{action,objects:targets.length,op:command.op});
+    try{
+      const result=await sendCommand(command,{signal:controller.signal});
+      if(!result.ok){for(const [id,token] of tokens)pending.rollback(id,token);pendingChanged();reportRefusal(action,targets[0].id,result);return result}
+      if(lastState?.scene_id!==state.scene_id||lastState?.epoch!==state.epoch||activeBoardId()!==board){
+        for(const [id,token] of tokens)pending.rollback(id,token);pendingChanged();return result;
+      }
+      for(const [id,token] of tokens)pending.confirm(id,token,result.revision);
+      if(record&&geometryUndo)geometryUndo.record({scene_id:state.scene_id,epoch:state.epoch,board_id:board,targets});
+      prunePending();announce(`${action} appliquée à ${targets.length} objet(s).`);
+      consoleLog('info','scene.geometry_applied',{action,objects:targets.length,revision:result.revision});return result;
+    }catch(error){for(const [id,token] of tokens)pending.rollback(id,token);pendingChanged();throw error}
+    finally{geometryBusy=false;geometryAbort=null;window.clearInterval(clock);note.remove()}
+  }
+
+  async function organizeGeometry(action,ids,grid){
+    if(!Organize||!desk)throw new Error('L’organisation est indisponible.');
+    if(geometryBusy||pending.size())throw new Error('Attendez la confirmation des modifications en cours.');
+    const state=viewState(),members=ids.map(id=>state&&state.objects.get(id));
+    if(members.some(item=>!item||!item.geometry||item.visibility!=='visible'))throw new Error('Tous les objets doivent être visibles et placés.');
+    if(ids.some(id=>barehandsHeld.has(id)))throw new Error('Lâchez les objets tenus à mains nues avant de les organiser.');
+    const handle=takeHold('organize',ids,{},'Disposition');if(!handle)return;
+    try{
+      const vp=viewportNow(),boxes=ids.map(id=>({id,box:handle.hold.start(id),representation:state.objects.get(id).representation}));
+      const planned=Organize.plan(boxes,action,{...grid,scale:vp.scale,viewport:vp,area:I.holdArea(vp,controlRects())});
+      for(const target of planned)desk.to(handle,target.id,target.box,'resize');
+      if(planned.some(target=>!Organize.same(handle.hold.drawn(target.id),target.box)))throw new Error('La disposition rencontre une commande de la page. Choisissez une disposition plus compacte.');
+      const turn=L.orbitTurnAt(Date.now(),lastField),targets=planned.map(target=>({id:target.id,representation:target.representation,
+        before:{...state.objects.get(target.id).geometry},after:handle.hold.place(target.id,turn)}));
+      const sent=commitAtomicGeometry(targets,true,Organize.ACTIONS[action]);desk.finish(handle);syncHolding();await sent;
+    }catch(error){desk.cancel(handle);throw error}
+  }
+
+  async function undoGeometry(){
+    if(!geometryUndo||!Organize)return;
+    if(geometryBusy||pending.size())throw new Error('Attendez la confirmation des modifications en cours.');
+    const next=geometryUndo.take(viewState(),activeBoardId());if(!next){announce('Aucune disposition récente à annuler.');return}
+    const targets=next.entry.targets.map(t=>({...t,before:t.after,after:t.before}));
+    await commitAtomicGeometry(targets,false,'Annulation',false);
+  }
+
+  function getSceneViewer(){
+    if(sceneViewer)return sceneViewer;
+    if(!window.JarvisSceneViewer)throw new Error('Le viewer est indisponible.');
+    sceneViewer=window.JarvisSceneViewer.create({document,window,layout:L,scene:viewState,fetchJson:getJson,
+      sendJson:(path,body,options)=>requestJson(path,{...options,method:'POST',body}),log:consoleLog,appendBlocks,
+      cancelDeadlineMs:()=>Math.max(1000,(jobCancelTimeoutS||20)*1000),focusElement:id=>(nodes.get(id)||{}).el,
+      beforeOpen(){if(gesture)cancelGesture();if(keyEdit)cancelKeyEdit();if(band)cancelBand();if(typeof closeMenu==='function')closeMenu(false);if(typeof closePanel==='function')closePanel()}});
+    return sceneViewer;
+  }
+
+  function onSceneOpen(event){
+    const detail=event.detail||{};
+    try{getSceneViewer().open(detail.ids||[detail.objectId],detail.objectId)}catch(error){geometryError('Ouverture',error)}
   }
 
   /* --------------------------------- cadres tenus à mains nues (Bare Hands, Slice 06)
@@ -3122,6 +3223,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   function onPointerDown(event){
     if(event.button!==0||!enabled)return;
+    if(geometryBusy)return;
     const el=nodeElement(event.target);
     /* Le vide n'arrive jamais ici : la scène laisse passer les clics partout
        sauf sur ses objets (`pointer-events`), donc le rectangle de sélection
@@ -3382,7 +3484,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     /* La roue (Slice 06) agit **sur** la sélection : l'atteindre — souris, ou
        pointeur synthétique de Bare Hands — ne la défait pas. */
     if(target&&(target.closest('#sceneLayer .sc-node')||target.closest('#ctxMenu')||target.closest('#confirmBack')
-      ||target.closest('#toolWheel')))return;
+      ||target.closest('#toolWheel')||target.closest('#jvObjectViewer')||target.closest('.sc-organize-status')))return;
     /* Ctrl ou Maj tenu : l'utilisateur agrandit sa sélection, il ne la jette pas. */
     if(event.ctrlKey||event.metaKey||event.shiftKey)return;
     select(null);
@@ -3412,6 +3514,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const target=event.target;
     if(editableTarget(target))return;
     if(target!==document.body&&target!==document.documentElement&&!nodeElement(target))return;
+    if((event.ctrlKey||event.metaKey)&&!event.altKey&&!event.shiftKey&&event.key.toLowerCase()==='z'){
+      event.preventDefault();undoGeometry().catch(error=>geometryError('Annulation',error));return;
+    }
     if((event.ctrlKey||event.metaKey)&&!event.altKey&&!event.shiftKey&&event.key.toLowerCase()==='a'){
       const ids=(lastModel?lastModel.nodes:[]).filter(node=>!node.ghost).map(node=>node.id);
       event.preventDefault();applySelection(ids);
@@ -3503,12 +3608,50 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       }});
       return;
     }
+    const ids=selection.includes(id)?liveSelection():[id];
+    const open={act:'view',label:'Ouvrir / Voir',key:'Entrée'},undo={act:'geometry-undo',label:'Annuler la disposition',key:'Ctrl+Z',disabled:!geometryUndo||!geometryUndo.size()};
+    if(ids.length>1){
+      const items=[open,{act:'organize',label:'Organiser…'},undo,'-',
+        {act:'ranger',label:'Ranger dans le Dossier'},{act:'hide',label:'Masquer la sélection'},
+        {act:'rep:window',label:'Afficher en fenêtres'},{act:'rep:capsule',label:'Afficher en capsules'},
+        {act:'remove',label:'Retirer du Board…'}];
+      actionStats.menus++;
+      showMenu({title:`${ids.length} objets sélectionnés`,items,pos,origin,run:act=>{
+        if(act==='view'){try{getSceneViewer().open(ids,id)}catch(error){geometryError('Ouverture',error)}return}
+        if(act==='organize')return openOrganizationMenu(ids,pos,origin);
+        if(act==='geometry-undo')return undoGeometry().catch(error=>geometryError('Annulation',error));
+        runSelectionAction(act,ids,{source:'context'}).catch(error=>actionFailed('Action de sélection',id,error));
+      }});return;
+    }
     const model=I.menuModel(state,id,{title:titleOf(id),finished:lastState?I.bulkSelection(lastState).objects:0,
       orphans:lastState?L.orphanArtifacts(lastState).length:0});
     if(!model)return;
     actionStats.menus++;
-    showMenu({title:model.title,items:model.items,pos,origin,run:act=>{
+    showMenu({title:model.title,items:[open,undo,'-',...model.items],pos,origin,run:act=>{
+      if(act==='view'){try{getSceneViewer().open([id],id)}catch(error){geometryError('Ouverture',error)}return}
+      if(act==='geometry-undo')return undoGeometry().catch(error=>geometryError('Annulation',error));
       runObjectAction(act,id).catch(error=>actionFailed('Action',id,error));
+    }});
+  }
+
+  function openOrganizationMenu(ids,pos,origin,section){
+    const rows=section==='align'?['left','center','right','top','middle','bottom']:section==='distribute'?['distributeX','distributeY']:section==='size'?['width','height','size']:['row','column','grid','custom'];
+    const mixed=ids.some(id=>!I.resizable((viewState().objects.get(id)||{}).representation));
+    const items=rows.map(action=>({act:'layout:'+action,label:Organize.ACTIONS[action],
+      disabled:geometryBusy||(section==='size'&&mixed)||(section==='distribute'&&ids.length<3)}));
+    if(!section)items.push('-', {act:'layout-align',label:'Aligner…'}, {act:'layout-distribute',label:'Distribuer…',disabled:ids.length<3},
+      {act:'layout-size',label:mixed?'Même taille · fenêtres/capsules requises':'Même taille…',disabled:mixed});
+    else items.push('-',{act:'organize',label:'Retour aux dispositions'});
+    showMenu({title:`Organiser ${ids.length} objets`,items,pos,origin,run:act=>{
+      if(act==='organize')return openOrganizationMenu(ids,pos,origin);
+      if(act==='layout-align')return openOrganizationMenu(ids,pos,origin,'align');
+      if(act==='layout-distribute')return openOrganizationMenu(ids,pos,origin,'distribute');
+      if(act==='layout-size')return openOrganizationMenu(ids,pos,origin,'size');
+      if(act==='layout:custom'){
+        try{getSceneViewer().grid(ids,size=>organizeGeometry('custom',ids,size).catch(error=>geometryError('Disposition',error)),ids[ids.length-1])}
+        catch(error){geometryError('Grille',error)}return;
+      }
+      if(act.startsWith('layout:'))organizeGeometry(act.slice(7),ids).catch(error=>geometryError('Disposition',error));
     }});
   }
 
@@ -4685,6 +4828,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   function onLoopUpdate(view){
     if(!enabled)return;
+    syncGeometryContext(view.state);
     lastView=view;
     if(view.state!==lastState){
       lastState=view.state;
@@ -4813,6 +4957,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(visible)decideRole().then(start);else{if(!shared)loop.setRole('solo');else loop.setRole('follower');start()}
     }else{
       consoleLog('info','scene.disabled',{});
+      if(sceneViewer)sceneViewer.close();if(geometryAbort)geometryAbort.abort();if(geometryUndo)geometryUndo.clear();
       visibilityToken++;
       loop.setEnabled(false);
       committer.update(null);
@@ -4859,7 +5004,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         health:lastView?lastView.health:null,resolved:layout&&layoutState===viewState()?layout.resolved.length:0,
         pending:pending?pending.size():0,actions:{...actionStats},gesture:gesture?{id:gesture.id,mode:gesture.mode,moved:gesture.moved,threshold:gesture.threshold}:null,
         selected:selectedId,selection:[...selection],stopping:[...stopping.keys()],jobCancelTimeoutS,captures:capturer?capturer.stats():null,
-        barehands:[...barehandsHeld.keys()],holding:desk?desk.heldIds():[],
+        barehands:[...barehandsHeld.keys()],holding:desk?desk.heldIds():[],viewer:sceneViewer?sceneViewer.snapshot():{open:false},undo:geometryUndo?geometryUndo.size():0,geometryBusy,
         tabStops:root?root.querySelectorAll('[tabindex="0"]').length:0,animated:root?root.querySelectorAll('.sc-anim').length:0};
     },
   });

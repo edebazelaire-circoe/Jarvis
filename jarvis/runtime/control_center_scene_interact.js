@@ -635,14 +635,22 @@
          objets se posent sans animation. Rend `[[id, promesse]]`. */
       drop(handle,kind){
         if(!handles.delete(handle))return [];
-        const turn=turnFor(d.field()),sent=[];
-        for(const id of kind==='resize'?[handle.primary]:handle.ids){
-          const box=handle.hold.place(id,turn);
-          if(sameBox(box,handle.hold.origin(id)))continue;
-          sent.push([id,d.commit(id,box,kind==='resize'?'resize':'move')]);
-        }
-        for(const id of handle.ids)release(id,false);
+        const sent=[],ids=kind==='resize'?[handle.primary]:handle.ids;
+        try{
+          const turn=turnFor(d.field()),targets=ids.map(id=>({id,box:handle.hold.place(id,turn),before:handle.hold.origin(id),representation:handle.hold.representation(id)}));
+          if(ids.length>1&&typeof d.commitMany==='function'){
+            if(targets.some(t=>!sameBox(t.box,t.before)))sent.push([handle.primary,d.commitMany(targets,kind==='resize'?'resize':'move')]);
+          }else for(const target of targets){
+            if(!sameBox(target.box,target.before))sent.push([target.id,d.commit(target.id,target.box,kind==='resize'?'resize':'move')]);
+          }
+        }finally{for(const id of handle.ids)release(id,false)}
         return sent;
+      },
+      /* La page a envoyé un layout atomique externe : poser sans déclencher
+         les commits individuels de `drop`. La conversion reste `hold.place`. */
+      finish(handle){
+        if(!handles.delete(handle))return;
+        for(const id of handle.ids)release(id,false);
       },
       /* Abandonner sans rien enregistrer : les objets rejoindront leur tour en
          douceur à leur prochaine pose (`positioned`). */
@@ -1405,6 +1413,7 @@
     op_not_allowed:'action non permise',
     revision_exhausted:'la scène ne peut plus changer',
     invalid_selection:'la sélection ne désigne pas un groupe',
+    geometry_changed:'un objet a changé depuis cette disposition : les modifications récentes sont conservées',
   });
 
   /* Échecs de transport dans les mots de l'utilisateur, comme le classement

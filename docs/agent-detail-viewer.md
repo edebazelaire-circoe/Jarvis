@@ -63,4 +63,16 @@ A new load supersedes the prior one. Cancelled/superseded loads resolve `null`; 
 
 The reader owns no timer-based refresh loop. S05 refreshes only while the overlay is open using the existing bounded UI cadence, displays motion + a live counter + cancel/retry, and calls `cancel()` on close/navigation.
 
+The scene integration refreshes every five seconds while visible, pauses and
+cancels reads on history navigation, and reloads on return. A 500 ms display clock
+uses canonical `taskElapsed` for known times and updates wait counters. The DOM
+exposes `.scv-agent[data-status]`, `[data-agent-status]`, buttons
+`[data-agent-action="stop|ask|retry"]` and `[data-agent-artifact="sceneObjectId"]`.
+Stop sends the descriptor through the existing JSON command reader (ten-second
+request deadline), displays `stopOutcome`'s actual result, then waits only up to
+the configured job cancellation deadline for a Core-confirmed terminal status.
+CLI Stop stays disabled with the projection's explanation. Ask appends through
+`JarvisChat.prefill` and never sends. Action errors, wait counters and retries are
+inside the overlay; no hidden global toast is their only feedback.
+
 Conformance: `tests/unit/test_agent_detail_js.py`; real Core/SQLite + current Control Center routes + production JS composition: `tests/integration/test_agent_detail_projection.py`. The integration scenario shows running → terminal → persisted mission with unknown live state after sandbox Core restart. Actual renderer/click navigation and optional model-driven runs remain S05/S06 acceptance work.

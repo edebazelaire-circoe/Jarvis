@@ -1,4 +1,4 @@
-"""Glisser de plusieurs objets : une commande `translate_selection` (Slice 03, handoff jarvis-mcp-semantic-batch-inspector).
+"""Group geometry: domain translation helpers and final shared-desk page wiring.
 
 Contrat : `docs/scene-selection-batch.md` §5.2 et §6. Prouvé avec node sur le
 fichier même que la page reçoit (`control_center_scene_interact.js`) :
@@ -7,14 +7,13 @@ fichier même que la page reçoit (`control_center_scene_interact.js`) :
 - `groupMove` garde les écarts enregistrés, écarte les non placés ;
 - `commitTranslation` poste **une** commande pour N membres emmenés, pose une
   couche optimiste par membre placé, confirme tout ou défait tout ;
-- la page passe par ce chemin pour un glisser de groupe, et garde
-  `commitUserGeometry` pour un seul objet.
+- Production S05 uses shared desk `commitMany` and one compared
+  `layout_selection`; single movement keeps `commitUserGeometry`.
 """
 
 from __future__ import annotations
 
 import random
-import re
 
 from jarvis.domain.scene import SceneGeometry
 from jarvis.domain.scene_batch import group_clamp
@@ -125,18 +124,11 @@ def test_a_refused_group_move_rolls_every_layer_back_and_nothing_moving_sends_no
 def test_the_page_commits_a_group_drag_through_one_command_and_a_single_drag_unchanged():
     page = PAGE_JS.read_text(encoding="utf-8")
     up = page[page.index("function onPointerUp(event){"):page.index("function cancelGesture(){")]
-    group = up[up.index("if(g.mode==='move'&&g.carried.length>1){"):up.index("const sent=[];")]
-    assert "commitGroupMove(g.move)" in group and "commitUserGeometry" not in group and "placeOf" not in group
-    # Un seul objet : le chemin d'avant, dé-tour de l'orbite compris.
-    single = up[up.index("const sent=[];"):]
-    assert "placeOf(member.preview,member.node)" in single and "commitUserGeometry(member.id,box,g.mode)" in single
-    commit = page[page.index("async function commitGroupMove(move){"):page.index("cadres tenus à mains nues")]
-    assert re.search(r"I\.commitTranslation\(\{move,send:sendCommand,pending", commit)
-    assert "scene.user_drag_unplaced_skipped" in commit and "reportRefusal(" in commit
-    move = page[page.index("function onPointerMove(event){"):page.index("function endGesture(g){")]
-    assert "I.groupMove(" in move and "representation:member.representation" in move  # le tour de chacun borne l'écart
-    # Refus : le fautif nommé par Core, pas le premier objet emmené.
-    assert "batch.refused[0]" in commit and "first_ids:move.ids.slice(0,5)" in commit
+    assert 'desk.drop(g.handle,g.mode)' in up
+    assert 'commit:commitUserGeometry,commitMany:commitManyGeometry' in page
+    commit=page[page.index('async function commitManyGeometry('):page.index('async function commitUserGeometry(')]
+    assert 'commitAtomicGeometry(' in commit and 'before:m.before,after:m.box' in commit
+    assert 'geometryError(' in commit
 
 
 def test_a_group_pushed_into_a_corner_keeps_every_orbiting_member_on_screen(tmp_path):

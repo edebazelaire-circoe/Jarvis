@@ -751,6 +751,14 @@ REMOTION_FRAME_SCRIPT_FILE = "control_center_remotion_frame.js"
 REMOTION_FRAME_SCRIPT_MARKER = "/*__CONTROL_CENTER_REMOTION_FRAME_JS__*/"
 SCENE_PAGE_SCRIPT_FILE = "control_center_scene_page.js"
 SCENE_PAGE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_PAGE_JS__*/"
+SCENE_ORGANIZE_SCRIPT_FILE = "control_center_scene_organize.js"
+SCENE_ORGANIZE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_ORGANIZE_JS__*/"
+OBJECT_VIEWER_SCRIPT_FILE = "control_center_object_viewer.js"
+OBJECT_VIEWER_SCRIPT_MARKER = "/*__CONTROL_CENTER_OBJECT_VIEWER_JS__*/"
+AGENT_DETAIL_SCRIPT_FILE = "control_center_agent_detail.js"
+AGENT_DETAIL_SCRIPT_MARKER = "/*__CONTROL_CENTER_AGENT_DETAIL_JS__*/"
+SCENE_VIEWER_SCRIPT_FILE = "control_center_scene_viewer.js"
+SCENE_VIEWER_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_VIEWER_JS__*/"
 #: Interactions de l'utilisateur (Slice 08) : géométrie, menu, archivage
 #: groupé, affichage optimiste (`window.JarvisSceneInteract`, logique pure).
 SCENE_INTERACT_SCRIPT_FILE = "control_center_scene_interact.js"
@@ -2793,9 +2801,12 @@ class ControlCenter:
         html = html.replace(
             PREFAB_HOST_SCRIPT_MARKER, page.with_name(PREFAB_HOST_SCRIPT_FILE).read_text(encoding="utf-8")
         )
-        html = html.replace(
-            SCENE_PAGE_SCRIPT_MARKER, page.with_name(SCENE_PAGE_SCRIPT_FILE).read_text(encoding="utf-8")
-        )
+        for marker, name in ((SCENE_ORGANIZE_SCRIPT_MARKER, SCENE_ORGANIZE_SCRIPT_FILE),
+                             (OBJECT_VIEWER_SCRIPT_MARKER, OBJECT_VIEWER_SCRIPT_FILE),
+                             (AGENT_DETAIL_SCRIPT_MARKER, AGENT_DETAIL_SCRIPT_FILE),
+                             (SCENE_VIEWER_SCRIPT_MARKER, SCENE_VIEWER_SCRIPT_FILE),
+                             (SCENE_PAGE_SCRIPT_MARKER, SCENE_PAGE_SCRIPT_FILE)):
+            html = html.replace(marker, page.with_name(name).read_text(encoding="utf-8"))
         html = html.replace(
             SCENE_SETTINGS_SCRIPT_MARKER, page.with_name(SCENE_SETTINGS_SCRIPT_FILE).read_text(encoding="utf-8")
         )
