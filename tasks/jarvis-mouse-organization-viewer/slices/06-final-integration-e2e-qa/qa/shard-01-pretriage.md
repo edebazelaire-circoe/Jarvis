@@ -77,3 +77,29 @@ Preserve stdout/stderr and JUnit. Compare each baseline failing line/cause with
 the two current shard tracebacks; report mismatches instead of assuming them.
 No product fix, blanket ignore, known-failure entry or full-suite rerun is
 authorized by these notes. PM owns final classification and next actions.
+
+## Exact-baseline reproduction completed under explicit PM exception
+
+After the initial read-only pretriage, PM authorized exactly these two pure
+source assertions during the gate (no Chrome/server/model, no broader suite).
+The prepared command above was executed with cwd `C:/Projects/jarvis/movb`,
+whose HEAD was verified as `c0858a8000e2ca23b57231edb8f46c643080ad07`.
+
+Result: **2 failed in 31.50 s**, process exit 1. JUnit: 2 tests, 2 failures,
+0 errors, 0 skipped. Evidence:
+[raw output](baseline-shard-01-unknowns.log),
+[JUnit](baseline-shard-01-unknowns.xml).
+
+Both exact baseline failure locations/conditions match the completed root
+shard:
+
+| Node | Baseline and current observed condition |
+| --- | --- |
+| timeline dock test | line 165, exact `.dock{...right:...}` CSS assertion; source uses `left` |
+| presentation speech-kind test | line 1185, AST call-site table equality; same ACK inventory mismatch described above |
+
+Recommendation to PM: classify both observed failures as proven pre-existing
+and unrelated to this feature. The evidence does not decide whether each
+baseline contract should later be corrected in code or tests, and does not turn
+the red canonical shard verdict green. No known-failure list, product file or
+root HEAD was changed. The remaining gate continues unchanged at `97d56f11`.

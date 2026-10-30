@@ -1,0 +1,15 @@
+FF                                                                       [100%]
+================================== FAILURES ===================================
+_______ test_the_cosmos_theme_knows_every_dock_tool_and_moves_the_pills _______
+tests\unit\test_control_center_timeline_ui.py:165: in test_the_cosmos_theme_knows_every_dock_tool_and_moves_the_pills
+    assert ".dock{position:absolute;z-index:32;right:var(--shell-gutter);top:var(--shell-gutter);display:flex;gap:6px}" in html
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+_ test_aucun_site_de_production_ne_laisse_le_modele_nommer_sa_nature_de_parole _
+tests\unit\test_presentation_response_policy.py:1185: in test_aucun_site_de_production_ne_laisse_le_modele_nommer_sa_nature_de_parole
+    assert {name: sorted(values) for name, values in found.items()} == {
+E   AssertionError
+=========================== short test summary info ===========================
+FAILED tests/unit/test_control_center_timeline_ui.py::test_the_cosmos_theme_knows_every_dock_tool_and_moves_the_pills
+FAILED tests/unit/test_presentation_response_policy.py::test_aucun_site_de_production_ne_laisse_le_modele_nommer_sa_nature_de_parole
+2 failed in 31.50s
