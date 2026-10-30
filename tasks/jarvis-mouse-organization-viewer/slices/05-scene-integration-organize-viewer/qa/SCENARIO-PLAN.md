@@ -43,6 +43,13 @@ real app rendered7 seeded scene nodes; no browser
 exceptions and no page scene mutation. `live-preflight.json` is evidence for
 infrastructure only, not acceptance of unintegrated S05 code.
 
+One separate opt-in real-model request was attempted through an isolated Core
+job and the production public agent-detail reader. Claude reported
+`claude-sonnet-5-5` but refused at the account's weekly quota, with cost$0.
+Actual Work State changed running→failed; no successful model response is
+claimed. See `trace-analysis.md` and `real-execution.json`. The deterministic
+browser harness itself still makes no model calls.
+
 Broader deterministic action matrix, mixed nonresizable dimensions,
 custom-grid numeric3×8, orbit-enabled placement, focus/editable shortcut
 boundaries and failure-path review remain final integration checks once code
