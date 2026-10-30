@@ -8,7 +8,7 @@
 
 - [x] `01-atomic-layout-and-undo-contract`
 - [x] `02-mouse-resize-selection-input`
-- [ ] `03-multi-object-viewer-shell`
+- [x] `03-multi-object-viewer-shell`
 - [x] `04-agent-viewer-projection`
 
 These are intentionally parallel-safe at the planning level. Slice 00 must re-check real HEAD/file ownership before dispatch.
