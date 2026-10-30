@@ -21,7 +21,8 @@ These are intentionally parallel-safe at the planning level. Slice 00 must re-ch
   - soft requires outputs from `01`, `03`, `04` with documented fixture/fallback seams so those branches do not serialize unnecessarily;
   - all soft seams must be reconciled before Slice 05 is approved.
 
-- [ ] `06-final-integration-e2e-qa`
+- [x] `06-final-integration-e2e-qa`
+  - machine QA accepted 2026-10-30; original full-suite reds/dispositions retained, final corrections independently verified. Task remains in current awaiting explicit Human acceptance.
   - hard depends on `01`, `03`, `04`, `05`;
   - only this Slice runs the complete repository unit/integration/E2E suite.
 

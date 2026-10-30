@@ -2,7 +2,7 @@
   "baseline": "c0858a8000e2ca23b57231edb8f46c643080ad07",
   "reviewed_product_source": "dc0c50361a4f1ba6327723af8a356fd23fc6d4cf",
   "jarvis_tree": "f43cb45fa92b4489171a0f60ffa96eda744a35c9",
-  "tests_tree": "780772c4fd8baf4496c50ff31c6d7981885dabd5",
+  "tests_tree": "20e3893aedf9911a0948f3c693128c94b4d2e43e",
   "docs_tree": "99847c9e2dea93f359faa9d461f4c7e1941af1a2",
   "changed_files_sha256": {
     "docs/ARCHITECTURE.md": "0812ed3d90b1c5298188ba0c3694b8987a90b282dab9255005987635c9987459",
@@ -58,11 +58,10 @@
     "tests/unit/test_scene_organize_js.py": "75477ef6604ea5376dc728ae1cb6cb3ab7e67102cc0a9afc7374a64a4e8ee5eb",
     "tests/unit/test_scene_prefab_page_js.py": "a30d5d96981063a8806782111adef175ae154d9613d1f4a530c40b59a016a928",
     "tests/unit/test_scene_renderer_logic.py": "f9a6952b0abbb07a8ae39c4bb2e4d9c832b9dfb0638c490f0e915f94e999c39d",
+    "tests/unit/test_scene_task_graph_browser.py": "0debe74b6c108a541593a9eb39ee41b5e88f868802052fdf1cb5c81530241d41",
     "tests/unit/test_scene_viewer_provider_browser.py": "eebfebb29e8701c826cc5693c8e3b64b4771c5452a04d185cc6c6091770602ee"
   },
   "evidence": "Full canonical run at97d56f11; subsequent test-only corrections canonical117pass;14-line F2 product delta canonical39pass, author and independent actual-Core browser proofs; final static verifier pass. Historical raw gate remains red.",
-  "verification_pending": [
-    "Independent two Settings readiness cases",
-    "Dense-graph current click diagnosis"
-  ]
+  "pm_machine_verdict": "accepted; Human acceptance pending; original global gate red retained",
+  "additional_targeted_checks": "Settings readiness2pass56.29s; graph corrected1case/3scenarios pass19.67s, no product changes."
 }
