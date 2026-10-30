@@ -14,3 +14,11 @@ Exact lifecycle: remote folder current; final Human acceptance pending. No merge
 - Modifier clarification: initial Shift locks gesture-start aspect; toggling mid-gesture rebases current drawn box and locks its ratio for the next segment, preserving pointer continuity.
 - Organization must respect visual orbit/field transform: `drawnBox(id)` returns current layout placement; stored geometry is not necessarily where the object is drawn. Existing hold desk and `JarvisSceneLayout.holdStart/holdPlace` own conversion/freeze/rebase. Use these seams for visual ordering/anchor and commit conversion, no second inverse-transform math. Final runtime must include orbit enabled as well as fixed fixture layouts, so one group does not jump when organized.
 
+
+## Convergence guardrails from source/runtime review
+- Native dialog is a top-layer surface: visible async errors/loading/counters/action outcomes belong inside it; global toasts/confirmation can be behind it.
+- S03 optional PrefabHost.onEscape must be bound for iframe providers so actual focused sandbox frames can close viewer. S03 bridge owns validation; no manual window message listener in S05.
+- PrefabHost.pause intentionally tears down iframe under canonical LRU policy; provider internals may reset on resume. Native text/markdown view DOM can preserve scrolling. Do not add a new suspension engine or claim opaque iframe state survives teardown.
+- Canonical chat prefill should preserve an existing draft (append/explicit handling), never auto-send or silently switch Voice channel. Open current chat, retain normal lock/refusal behavior and target identity.
+- Stop result is request/actual outcome, not an assumed terminal status. Reuse existing stop semantics; show pending motion/counter/deadline and true refusal inside viewer.
+- Dimension-matching actions must respect nonresizable representations; disable/explain unsupported mixed selections rather than silently mutating meaningless displayed sizes.
