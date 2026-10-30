@@ -1,0 +1,8 @@
+{
+  "harness": "C:\\Projects\\jarvis\\mov3\\tests\\unit\\_status_centre_browser.mjs",
+  "harness_sha256": "47b89001f2ed83065e6c7756bac775070e45474f5757e1f0598a5cea719df2ce",
+  "node_returncode": 0,
+  "stderr": "",
+  "extra_cdp_calls": 0,
+  "harness_or_plan_modified_by_plugin": false
+}
