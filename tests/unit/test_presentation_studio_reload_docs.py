@@ -127,14 +127,22 @@ def test_every_module_the_page_names_exists():
         assert name in section and (ROOT / "jarvis" / "core" / name).is_file()
 
 
-def test_the_protocol_a_frame_speaks_did_not_gain_a_message():
-    """Slice 06 decision: no snapshot/restore pair. The exported surface of the protocol module is pinned, so adding a message
-    type is a visible change that has to update this list and the page."""
+def test_the_frame_protocol_keeps_the_reload_boundary_with_only_the_reviewed_escape_notice():
+    """Hot reload adds no snapshot/restore pair. S03's separate local UI bridge adds only fieldless Escape.
+
+    Pin both exact surfaces and payload fields; docs/prefabs.md owns this amendment.
+    Behavioral guards remain in test_prefab_protocol_js.py and test_prefab_escape_bridge.py.
+    """
 
     protocol = (RUNTIME / "control_center_prefab_protocol.js").read_text(encoding="utf-8")
     assert "const HOST_TYPES=Object.freeze(['init','update','teardown','event_result'])" in protocol
-    assert "const FRAME_TYPES=Object.freeze(['ready','event','resize','open_url','error'])" in protocol
+    assert "const FRAME_TYPES=Object.freeze(['ready','event','resize','open_url','error','escape'])" in protocol
+    assert "const FRAME_FIELDS=Object.freeze({ready:[],event:['name','payload'],resize:['height'],open_url:['url'],error:['message'],escape:[]})" in protocol
     assert "const SANDBOX='allow-scripts'" in protocol and "snapshot" not in protocol.lower()
+    prefabs = page("prefabs.md")
+    assert 'no fields: exact `{jv:1,type:"escape"}`' in prefabs
+    assert "optional local UI callback only" in prefabs
+    assert "`tests/unit/test_prefab_escape_bridge.py`" in prefabs
 
 
 def test_the_qa_1_decisions_are_stated_in_the_contract():
