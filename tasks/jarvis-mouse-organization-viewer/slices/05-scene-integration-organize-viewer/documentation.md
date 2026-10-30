@@ -6,3 +6,10 @@ Environment: work only in assigned isolated worktree, use C:/Projects/jarvis/jar
 
 Exact lifecycle: remote folder current; final Human acceptance pending. No merge to main/push main/cleanup local handoff.
 
+## Published predecessor seams (verify final IMPLEMENTATION.md at dispatch)
+- S02 emits bubbling document event `jarvis:scene-open`, detail `{objectId, ids, source:'keyboard'|'double-click'}`. No scene writes. Normal mouse single-click no longer opens context actions; Bare Hands selected-click retained. Enter and double-click ignore interactive descendants.
+- S01 selected wire: `layout_selection`, `selection:{ids:[...]}`, `targets:[{object_id,geometry,expected_geometry?}]`, optional `pin:true`. Every target compared or none. Stale `geometry_changed` refuses whole batch. Geometry-only undo preserves current pin and nongeometry fields.
+- Wire64KiB remains authoritative over domain512 targets. Even short IDs may exceed budget for512 compared targets. Preflight UTF-8 JSON byte length (TextEncoder), report oversize without chunking/partial writes, never silently record an undo that cannot be sent. Typical24-target compare fits.
+- Canonical Stop route is POST `/api/jobs/cancel` with `{source,external_id}`; only source job supported, CLI children must have disabled/explained Stop.
+- Modifier clarification: initial Shift locks gesture-start aspect; toggling mid-gesture rebases current drawn box and locks its ratio for the next segment, preserving pointer continuity.
+
