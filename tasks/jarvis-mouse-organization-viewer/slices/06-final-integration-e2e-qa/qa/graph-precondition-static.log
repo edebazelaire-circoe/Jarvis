@@ -1,0 +1,3 @@
+Python compile passed; only target function and its first 200% plan changed.
+All original assertion predicates and WAIT_BOARD unchanged; exactly two new precondition assertions.
+Both local JS expressions passed Node --check; no browser or runtime executed.

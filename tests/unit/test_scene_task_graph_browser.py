@@ -410,9 +410,34 @@ def _overlap(a: dict, b: dict) -> float:
 
 
 def test_a_dense_graph_at_200_percent_and_in_forced_colours_stays_usable(tmp_path):
+    # This scenario measures the graph, not coexistence with the unrelated
+    # presentation panel. Use its normal close control; never hide DOM/styles
+    # or freeze the orbit to manufacture a reachable relation mark.
+    fold_rail = """(()=>{
+      const rail=document.getElementById('presentationRail');
+      if(rail&&!rail.hidden){
+        const close=rail.querySelector('button[aria-label="Replier le rail des présentations"]');
+        if(!close)throw new Error('Commande canonique de repli du rail absente.');
+        close.click();
+      }
+      return {present:!!rail,hidden:!!rail&&rail.hidden,visible:window.JarvisPresentationRail?.state().visible};
+    })()"""
+    mark_hit = """(()=>{
+      const mark=document.querySelector('.sc-relmark[data-relation-id="rel_comm"]');
+      const r=mark&&mark.getBoundingClientRect(),x=r?r.left+r.width/2:null,y=r?r.top+r.height/2:null;
+      const hit=r?document.elementFromPoint(x,y):null;
+      return {ready:document.readyState==='complete',present:!!mark,visible:!!mark&&mark.checkVisibility(),
+        center:{x,y},viewport:{width:innerWidth,height:innerHeight},
+        rect:r?{l:r.left,t:r.top,r:r.right,b:r.bottom,w:r.width,h:r.height}:null,
+        inside:!!r&&r.width>0&&r.height>0&&x>=0&&y>=0&&x<innerWidth&&y<innerHeight,
+        hit:!!mark&&!!hit&&mark.contains(hit),
+        target:hit?{tag:hit.tagName,id:hit.id,relation:hit.closest('.sc-relmark')?.dataset.relationId||null}:null};
+    })()"""
     steps = _drive(tmp_path, [
         {"width": 720, "height": 450, "scale": 2, "seed": _seed(dense=30), "actions": [
+            ["eval", "folded_rail", fold_rail, 50],
             ["eval", "read", READ, 50], *_shot("08-dense-200pct"),
+            ["eval", "mark_hit", mark_hit, 1],
             ["click", "open", '.sc-relmark[data-relation-id="rel_comm"]', 100],
             ["eval", "waitBoard", WAIT_BOARD, 50],
             ["eval", "board", BOARD, 50], *_shot("09-dense-200pct-board")]},
@@ -424,6 +449,10 @@ def test_a_dense_graph_at_200_percent_and_in_forced_colours_stays_usable(tmp_pat
             ["eval", "read", READ, 50], *_shot("02-roles-relations-cosmos")]},
     ])
     dense, forced, cosmos = (s["results"] for s in steps)
+    folded = dense["folded_rail"]
+    assert folded["present"] and folded["hidden"] and folded["visible"] is False, folded
+    hit = dense["mark_hit"]
+    assert hit["ready"] and hit["present"] and hit["visible"] and hit["inside"] and hit["hit"], hit
     marks = dense["read"]["marks"]
     assert len(marks) > 25
     inside = [m for m in marks if m["l"] >= 0 and m["t"] >= 0 and m["r"] <= dense["read"]["vw"] and m["b"] <= dense["read"]["vh"]]
