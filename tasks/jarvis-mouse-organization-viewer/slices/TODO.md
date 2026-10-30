@@ -1,4 +1,4 @@
-﻿# Slice Execution Plan
+# Slice Execution Plan
 
 ## Gate
 

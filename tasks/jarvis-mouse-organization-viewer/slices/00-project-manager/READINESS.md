@@ -1,4 +1,4 @@
-﻿# Slice 00 — READY (2026-10-30)
+# Slice 00 — READY (2026-10-30)
 
 Baseline: origin/main c0858a8000e2ca23b57231edb8f46c643080ad07 after git fetch. Main checkout remains untouched. Dedicated integration worktree C:/Projects/jarvis/mov; branch task/jarvis-mouse-organization-viewer.
 
