@@ -1,0 +1,96 @@
+{
+  "baseline": "c0858a80",
+  "current_commit": "dc0c5036",
+  "product_tree": "f43cb45fa92b4489171a0f60ffa96eda744a35c9",
+  "source_comparisons": [
+    {
+      "segment": "tests/unit/test_architecture_agents_settings_browser.py",
+      "equal": true,
+      "sha256": "692ab673e4d24662d603703b885e2a4115cbe351b2c4d194dbe5059dfea62b50"
+    },
+    {
+      "segment": "tests/unit/test_wake_word_settings_browser.py",
+      "equal": true,
+      "sha256": "ece4b4518bcdcbb86f4e69151d963d62077f64e06ecf5df2a15229a41bf31ea1"
+    },
+    {
+      "segment": "tests/unit/_wake_word_settings_browser.mjs",
+      "equal": true,
+      "sha256": "dff97aed6e0bfce03d6ddd102ea9271429b7b6cb66d91044069ae1bea3cef5ed"
+    },
+    {
+      "segment": "jarvis/runtime/control_center_settings_registry.js",
+      "equal": true,
+      "sha256": "1ae3ebdbc63a696b4f7bccebd4a4173194788a85cd32e580dfd628d798a8a50b"
+    },
+    {
+      "segment": "jarvis/runtime/control_center_settings_ui.js",
+      "equal": true,
+      "sha256": "4dd35b7f838b19216f1d1943ebb6322215a99a035c3fc75af2b5ec18efd3c49a"
+    },
+    {
+      "segment": "jarvis/runtime/control_center_personalization.js",
+      "equal": true,
+      "sha256": "b48b85dea39def204f60b9df3e20ec47b7a4416037d8f9d4acec1af37bbacfc1"
+    },
+    {
+      "segment": "jarvis/runtime/control_center_architecture_settings.js",
+      "equal": true,
+      "sha256": "7b79ab780ddeae875994c5a12372d6852c1c70139f34bfdd513fc27a6a24180a"
+    },
+    {
+      "segment": "jarvis/runtime/control_center_brain_config_panel.js",
+      "equal": true,
+      "sha256": "d186d245dbc9459d973155131eef8b75689b4170fd18c4e5f6924778e4f41095"
+    },
+    {
+      "segment": "jarvis/runtime/control_center_subagents_settings.js",
+      "equal": true,
+      "sha256": "a12841a608347fecaccac246425a192433301f894a7489ffc0a03a0a0ba17a64"
+    },
+    {
+      "segment": "jarvis/runtime/cli_catalog.py",
+      "equal": true,
+      "sha256": "fe3e762efae3cec6a38f9c8feb248b11659979a7cc254597119208c2a3b5bf38"
+    },
+    {
+      "segment": "jarvis/runtime/agent_settings.py",
+      "equal": true,
+      "sha256": "8553de516660668b463b5c25c06313329dae3b04f297bcf3b327fb1f88022cfa"
+    },
+    {
+      "segment": "jarvis/runtime/architecture_graph_routes.py",
+      "equal": true,
+      "sha256": "3378561912d11df0e2db37e73efb68fbc3e5031f8dc974a61518b84596b68520"
+    },
+    {
+      "segment": "Entire raw control_center.html after removing exactly four new injection-marker lines",
+      "equal": true,
+      "sha256": "5d6eb0c6fc5178d0ebfb5ec7dc7b90e34b2a0f005fab6ef5dad6bdbf6887791b"
+    },
+    {
+      "segment": "ControlCenter.cli_agents method",
+      "equal": true,
+      "sha256": "7ed258ea9d8751cfd0845abe0916ce4fd877bc6432d7253bb5ace76a320eebe0"
+    }
+  ],
+  "added_injected_source": [
+    {
+      "file": "jarvis/runtime/control_center_scene_organize.js",
+      "utf8_bytes": 7344
+    },
+    {
+      "file": "jarvis/runtime/control_center_object_viewer.js",
+      "utf8_bytes": 30466
+    },
+    {
+      "file": "jarvis/runtime/control_center_agent_detail.js",
+      "utf8_bytes": 14683
+    },
+    {
+      "file": "jarvis/runtime/control_center_scene_viewer.js",
+      "utf8_bytes": 20890
+    }
+  ],
+  "added_injected_source_bytes": 73383
+}
