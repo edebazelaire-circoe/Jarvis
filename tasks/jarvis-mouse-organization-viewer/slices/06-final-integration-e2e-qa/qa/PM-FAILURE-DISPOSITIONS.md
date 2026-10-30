@@ -85,3 +85,26 @@ Scope limits: the trace excludes fixture setup and worker threads; it is not all
 S05 rework1340ca56 integrated asdc0c5036:14 product lines in canonical fullscreen controller composition, Scene.closeViewer facade and viewer.prepare. Optional synchronous beforePrompt closes through the existing viewer owner before focus/prompt capture; absent callback preserves controller behavior; callback failure logs/surfaces and does not arm. Armed/needs_gesture admission refuses even an ID-less local request. No new event listener/bus/manager/fullscreen state/API call. ObjectViewer close lifecycle is reused unchanged.
 
 PM inspected actual diff, three canonical documentation updates and both desktop screenshots. Author evidence:3 actual Core/browser scenarios47.79s plus stronger provider AbortSignal/late reopening/focus check1pass15.27s;64 focused pure/Node checks9.79s. Root canonical whole controller file gate ondc0c5036:39passed7.0s, green with no skips/session issues. Final static scripts/verify_release.py exited0, Release verification passed. Product/docs/tests git diff --check clean. Independent S1 arrival-order/ordinary-overlay revalidation remains required before accepting F2.
+
+
+## F2 final PM acceptance
+
+Independent S1 actual Core/SQLite/HTTP/Chromium revalidation ondc0c5036 product:3 passed28.18s. Armed admission refusal includes explicit French feedback; actual Go enters fullscreen and existing active-state admission refuses; exit is canonical. Request received during viewer closes through owner before prompt; prompt hit=true/focusOnGo=true, actual Cancel succeeds, viewer can reopen then Escape/focus restore. Ordinary Settings/panel/nonmodal Studio behavior and state remain correct. Original red proof retained alongside distinct -reworked evidence. PM separately inspected author screenshots and candidate code. Author signal probe additionally verifies1mount/1abort and no asynchronous reopening/scene writes.
+
+PM accepts the bounded F2 correction and re-accepts S05 machine QA. Human acceptance still pending. No need to repeat the complete suite for14 reviewed product lines after39 canonical controller checks plus independent affected runtime scenarios passed; residual baseline classification is the remaining S06 work.
+
+
+## Existing known-list causes and canonical intermittent retry
+
+The18 actual listed failures retain the canonical dated registry, not newly suppressed tests. Observed App exception is its old settings stub missing data_root. Actual brain-prompt difference is ui_intent_publish; actual presentation_library metadata assertion is the unchanged registry choice. The six MCP catalog cases have independently identical actual catalogs across baseline/current. Three Bare Hands practice/palette tests retain their prior baseline evidence (I-003); shared gesture/hold/keyboard/prefab cases passed in the complete run. Connections3 and settings-message destination1 fail on existing renamed/missing Settings selectors; those Settings owners/registries are unchanged, and the new viewer is not opened by those paths. Reduced motion identifies old Boards buttons only; separate new-viewer actual motion evidence applies to this feature.
+
+Source policy scanner offenders are exactly identical baseline/current:4 file/needle records, all in unchanged model_family.py/role_routing.py/routing.py (known-source-policy-comparison.json). The modified scene domain files add no provider model ID.
+
+The canonical memory-context intermittent entry initially failed during30s initialization readiness, NOT a measured recall p50 violation. Its normal automatic isolated retry passed33.33s; index sync21.31s and recall p50~36ms/p95~45ms. The existing canonical runner therefore tolerates it by its exact intermittent node ID; do not misreport its observed initial cause as the registry's old p50 condition. Memory implementation/test/initialization paths are unchanged by MOV. Original red and retry output retained; no model call or new ignore.
+
+
+## Actual late browser comparisons
+
+Exact c0858a80 Variants recording-chip parameters1280x720,1920x1032,600x800:3 failed39.63s, all same line338 under-controls overlap with Plein ecran/Fermer Variantes. This is the same actual geometric assertion as the full run, not startup. Relevant unchanged capture/variants/shell owners and original prior source audit bound its cause. PM accepts these3 as proven pre-existing/unrelated; no product/test ignore added. Later run continuity/Stop assertions remain unreached in these failed cases and are not claimed passed.
+
+Exact baseline architecture navigation2 passed60.06s; one exact current batch also2 passed56.34s. The broad failures are therefore NOT labeled reproduced baseline failures or resolved by pass alone. Additional source/execution-path audit will inform their scoped PM disposition. Dense graph baseline1passed38.25s; its one current run remains pending. Current settings bootstrap parameter remains pending. Preserve all original red and actual comparison artifacts.

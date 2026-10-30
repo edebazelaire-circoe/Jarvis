@@ -15,8 +15,8 @@ These are intentionally parallel-safe at the planning level. Slice 00 must re-ch
 
 ## Convergence
 
-- [ ] `05-scene-integration-organize-viewer`
-  - reopened 2026-10-30: observed native-dialog/fullscreen request coordination defect F2; existing-owner correction and independent runtime revalidation required.
+- [x] `05-scene-integration-organize-viewer`
+  - F2 rework accepted 2026-10-30: existing-owner coordination dc0c5036; independent actual-Core/Chrome3 passed28.18s. Human task acceptance remains pending.
   - hard depends on `02` because it owns the final scene-page integration after the input refactor;
   - soft requires outputs from `01`, `03`, `04` with documented fixture/fallback seams so those branches do not serialize unnecessarily;
   - all soft seams must be reconciled before Slice 05 is approved.
