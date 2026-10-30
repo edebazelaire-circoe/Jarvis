@@ -1,0 +1,2 @@
+Compile passed; exactly two test functions changed; every original assertion predicate preserved; OPEN unchanged; two local settleMs=1 plans.
+Node --check of assembled TOUR expression passed; JavaScript was parsed, not executed.

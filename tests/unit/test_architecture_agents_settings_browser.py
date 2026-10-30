@@ -36,6 +36,15 @@ OPEN = [
     wait("!!document.querySelector('[data-architecture-page] [data-arch-node=core]')", 15000),
 ]
 
+# These two conformance cases need the page's actual boot/registered owners,
+# rather than a DOM button that can exist before its click binding. Other
+# cases retain OPEN; the shared driver and its timeouts remain unchanged.
+READY_OPEN = [
+    wait("document.readyState==='complete'&&!!window.JarvisSettingsRegistry?.page"
+         "&&!!window.JarvisPersonalization&&!!document.getElementById('openSettings')"),
+    *OPEN[1:],
+]
+
 #: Contrôles interdits sur la page (D19, D20) : personnalité, CLI technique, ancien choix Auto / Dupliqué, catalogue brut.
 FORBIDDEN = ("#f_cli_cmd,#f_cli_perm,#reprobe,input[name=clicagent],#f_cli_model,[data-delegation-mode],"
              "[data-behavior-field],#agentCatalog,#routingAdvanced")
@@ -53,7 +62,13 @@ TOUR = ("(async()=>{const FORBIDDEN_LABELS=" + FORBIDDEN_LABELS + ";" + """
     ...[...document.querySelectorAll('#modalContent :is(select,input,textarea,[role=radiogroup],[role=switch])')].map(e=>e.getAttribute('aria-label')||'')]
     .map(t=>(t||'').trim()).filter(t=>FORBIDDEN_LABELS.test(t));
   for(const id of ['architecture','subagents','agent_behavior','runtime_cli','work_methods']){
-    selectTab(id);await pause(id==='architecture'||id==='subagents'?1500:400);
+    selectTab(id);
+    if(id==='runtime_cli'){
+      // CLI detection is asynchronous. Use the existing standard wait budget,
+      // not a fixed sleep; on timeout the original assertions see real state.
+      const deadline=Date.now()+5000;
+      while(Date.now()<deadline&&!(SET.section==='runtime_cli'&&SET.clis&&q('#f_cli_cmd')&&q('#f_cli_perm')))await pause(30);
+    }else await pause(id==='architecture'||id==='subagents'?1500:400);
     out.sections[id]={category:SET.category,section:SET.section,footer:getComputedStyle(q('#modalSave')).display!=='none',
       forbidden:[...document.querySelectorAll('#modalContent :is(FORBIDDEN)')].map(e=>e.id||e.name||e.className),forbiddenLabels:labels(),
       cmd:!!q('#f_cli_cmd'),perm:!!q('#f_cli_perm'),mode:!!q('[data-delegation-mode]'),catalog:!!q('#agentCatalogDisclosure'),
@@ -79,7 +94,8 @@ def assert_waits(step: dict) -> None:
 
 
 async def test_two_tabs_destinations_and_legacy_ids(served):
-    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [*OPEN, eval_(TOUR, "tour")]}])
+    out = await drive(served.url, [{"width": 1440, "height": 900, "settleMs": 1,
+                                  "actions": [*READY_OPEN, eval_(TOUR, "tour")]}])
     assert_waits(out["steps"][0])
     tour = got(out["steps"][0], "tour")
     cats = tour["categories"]
@@ -95,7 +111,7 @@ async def test_two_tabs_destinations_and_legacy_ids(served):
         assert s[page]["forbidden"] == [] and s[page]["forbiddenLabels"] == [], s[page]
     assert s["architecture"]["canvas"] and s["subagents"]["roles"]
     rt = s["runtime_cli"]
-    assert rt["category"] == "advanced_diagnostics" and rt["footer"] and rt["cmd"] and rt["perm"]
+    assert rt["category"] == "advanced_diagnostics" and rt["footer"] and rt["cmd"] and rt["perm"], rt
     assert rt["mode"] and rt["routing"] and rt["catalog"]
     assert s["agent_behavior"]["category"] == "voice_audio" and s["agent_behavior"]["behavior"] == 2
     assert tour["legacy"] == {
@@ -128,7 +144,7 @@ async def test_architecture_canvas_and_core_window_work_together_then_subagents_
     folder = shots()
     shot = (lambda name: [{"a": "shot", "path": str(folder / name)}]) if folder else (lambda name: [])
     actions = [
-        *OPEN, *shot("architecture-canvas.png"),
+        *READY_OPEN, *shot("architecture-canvas.png"),
         eval_(SPAWN, "spawn_before"),
         *OPEN_CORE, *shot("architecture-core-window.png"),
         eval_(GEOMETRY, "geometry"), eval_(IN_PANEL, "focus_in"),
@@ -145,7 +161,7 @@ async def test_architecture_canvas_and_core_window_work_together_then_subagents_
         wait("!!document.querySelector('[data-sar-route]')", 15000), *shot("subagents-tab.png"),
         eval_("[!!document.querySelector('[data-sar-route]'),SET.section,ARCH.view===null&&ARCH.panel===null]", "subagents"),
     ]
-    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": actions}])
+    out = await drive(served.url, [{"width": 1440, "height": 900, "settleMs": 1, "actions": actions}])
     step = out["steps"][0]
     assert_waits(step)
     assert got(step, "spawn_before") == [True, "governed"]
