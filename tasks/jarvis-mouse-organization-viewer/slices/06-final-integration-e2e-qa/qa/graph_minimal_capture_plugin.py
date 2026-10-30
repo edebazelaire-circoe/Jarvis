@@ -7,12 +7,8 @@ from pathlib import Path
 import pytest
 
 
-@pytest.fixture(autouse=True)
-def graph_minimal_capture(request,monkeypatch,tmp_path):
-    if request.node.name!='test_a_dense_graph_at_200_percent_and_in_forced_colours_stays_usable':
-        yield
-        return
-    from tests.unit import test_status_centre_browser as driver
+def instrument_harness(driver,copied):
+    """Reuse the existing center/event engine; only retain observations."""
     repo=Path(driver.__file__).resolve().parents[2]
     source=driver.HARNESS.read_text(encoding='utf-8')
     original_hash=hashlib.sha256(source.encode()).hexdigest()
@@ -42,8 +38,18 @@ def graph_minimal_capture(request,monkeypatch,tmp_path):
     needle="acks:window.__sc.acks})`);"
     assert source.count(needle)==1
     source=source.replace(needle,"acks:window.__sc.acks,graphMinimal:window.__graphMinimal||null})`);")
-    copied=tmp_path/'graph-minimal-harness.mjs'
     copied.write_text(source,encoding='utf-8')
+    return original_hash
+
+
+@pytest.fixture(autouse=True)
+def graph_minimal_capture(request,monkeypatch,tmp_path):
+    if request.node.name!='test_a_dense_graph_at_200_percent_and_in_forced_colours_stays_usable':
+        yield
+        return
+    from tests.unit import test_status_centre_browser as driver
+    copied=tmp_path/'graph-minimal-harness.mjs'
+    original_hash=instrument_harness(driver,copied)
     destination=Path(os.environ['JARVIS_GRAPH_MINIMAL_RAW'])
     metadata=destination.with_suffix('.metadata.json')
     original_run=driver.subprocess.run
