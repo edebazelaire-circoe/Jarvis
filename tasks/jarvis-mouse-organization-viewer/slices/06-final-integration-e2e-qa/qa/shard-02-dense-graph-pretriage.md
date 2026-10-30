@@ -63,3 +63,71 @@ $env:JARVIS_S09_EVIDENCE_DIR='C:/Projects/jarvis/mov5/tasks/jarvis-mouse-organiz
 
 This command has **not** been run. No global ignore, known-failure list entry or
 product correction is proposed before actual evidence. PM owns disposition.
+
+## Completed shard evidence and exact failed phase
+
+Root shard 02 completed with **1,305 passed, 2 failed, 21 skipped**, exit 1.
+The app settings-stub `data_root` failure is already listed/known. The dense
+graph node remains an unclassified potential regression and blocking pending
+disproof. Its actual traceback is line 438, `board["open"]`, raising TypeError
+because the captured board is `None`.
+
+Thus preceding mark-count, viewport-share and overlap assertions passed; this
+failure is specifically that the relation board DOM never exists after the
+physical click and bounded wait. It is not the overlap assertion hypothesized
+as one possible discriminator above. `BOARD` returns None only when
+`document.getElementById('relationBoard')` is absent. The relation reader creates
+that panel synchronously in `open()` before starting HTTP reads, so an ordinary
+slow/failed relation fetch would leave a panel/loading/error, not this None.
+
+## Full scene-page pointer/click path inspected
+
+The event path was traced beyond unchanged graph modules:
+
+1. `applyMarks` creates actual button elements under `.sc-relmarks`, a sibling
+   layer outside `.sc-node`. It sets `data-relation-id`, keeps them mounted and
+   attaches delegated `onMarkClick` to the marks container. This path is unchanged.
+2. `nodeElement(target)` finds only closest `.sc-node`. A correctly targeted
+   mark/button or its SVG is outside a scene node. Scene `onPointerDown` therefore
+   returns before gesture creation. The new S05 `geometryBusy` guard only returns
+   earlier and there is no geometry command in this scenario.
+3. `onDocumentBandDown`/`bandCandidate` were checked: actual `button` targets
+   are excluded from band selection. Document selection clearing can run, but its
+   only task change adds viewer/status exemptions; it does not prevent or stop
+   the mark's event. These checks do not create a relation panel themselves.
+4. The S02 eight resize grips are emitted only for window/capsule
+   representations. All 38 fixture objects are point agents, so no new grip target
+   is added over this graph. Existing mark-layer rank, point hover/focus rank and
+   mark pointer-events styles are unchanged. No viewer/dialog was opened, and its
+   lazy styles/controls do not overlay this scenario.
+5. New normal-click/menu behavior is inside scene-node gesture pointerup; context
+   selection is on contextmenu, viewer opening on double-click/Enter, and aspect
+   behavior on resize/Shift. None directly handles a correctly targeted ordinary
+   click on a relation button. The harness's ordinary clickCount remains 1.
+6. Unchanged `onMarkClick` prevents default (not propagation), derives the selected
+   mark IDs and calls the existing `JarvisRelationBoard.open`. Missing module or
+   synchronous failure is logged. The test checks console errors only after its
+   board assertion, so this failure does **not** establish that the console was
+   clean. The full gate log does not retain the returned step console/actions.
+
+This tracing finds no direct introduced handler interception of a correctly
+targeted mark; it does not prove the real click hit that mark. Chromium evidence
+is required before ruling out an introduced hit/stack/timing effect.
+
+## Concrete unresolved hit-test discriminator
+
+The Node harness resolves the mark's current bounding-rectangle centre, then
+sends mouseMoved, mousePressed and mouseReleased at those coordinates. It never
+checks `elementFromPoint`, the eventual event target or whether that specific
+mark is inside the viewport. The test permits up to 20% of marks outside the
+viewport and does not separately prove `rel_comm` is one of the inside marks.
+Marks also reflow every second while orbiting; hovered/focused point rank can
+exceed the mark layer. These are existing potential click-miss mechanisms, not
+established explanations for this run.
+
+When PM allocates a bounded browser check, retain the exact baseline outcome
+and, if the scenario needs diagnosis, its selected mark rectangle/viewport,
+element at the click point, pointer/click targets and errors. A passing baseline
+at another wall-clock phase alone cannot prove this failure unrelated. Do not
+change product code or weaken the test merely because source paths look stable.
+Baseline Chrome is still **not executed** and the blocking status remains.
