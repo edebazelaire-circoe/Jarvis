@@ -1,6 +1,6 @@
 # S06 PM failure dispositions
 
-Complete suite is still running at exact integrated revision `97d56f11`. The canonical runner's original red outcomes remain evidence; no ignore or synthetic green verdict is introduced. Human acceptance remains pending.
+All20 shards completed on exact revision97d56f11. The original red outcomes remain evidence; no ignore or synthetic green verdict is introduced. See the final dated dispositions below; older checkpoints are historical. Human acceptance remains pending.
 
 | Observed failure | Evidence | PM disposition |
 |---|---|---|
@@ -62,3 +62,10 @@ Independent actual Core/SQLite/HTTP/Chromium overlay campaign194a1246:2 passed/1
 Authorized bounded policy: refuse viewer admission with clear French feedback while canonical fullscreen state is armed (including local requests without ID), preserving actionable prompt. When a fullscreen request arrives during the viewer, synchronously close it through its existing owner, including provider/read cancellation and focus restoration, then let canonical controller arm its normal prompt. Active-browser-fullscreen viewer refusal remains. Never automatically request/exit fullscreen; no new overlay manager, state owner, bus or wire protocol. S2 owns implementation/docs; S1 independently verifies affected arrival orders and existing-owner contracts. Preserve original red proof. Re-run affected gates after fix, not the complete four-hour suite without cause.
 
 Remaining classification: six browser baseline comparisons, one Chrome-bootstrap-only current retry, one owned_read shutdown assertion. S1 assigned ONE uninstrumented exact-baseline whole-file backend run; earlier exact-case/pair passes and timed-out diagnostic are not proof of pre-existing failure. No daily Jarvis restart or paid model retry.
+
+
+## Corrective conformance gate completed
+
+At integration4ad30d43 the existing canonical runner executed the four whole affected files: test_scene_renderer_logic.py, test_scene_hold_desk.py, test_presentation_studio_reload_docs.py, test_presentation_studio_reload_host_js.py. Result117 passed,0 failed,0 skipped in27.8s; green, no stale/unseen/session issues. Original43-failure full-run evidence remains unchanged. This resolves exactly the four intentional-contract assertion failures, not the unrelated outstanding UI/backend cases. JSON/log in evidence/corrective-conformance-gate.*.
+
+Fresh fetch16:07 Paris: origin/main remains exactc0858a80; no reconciliation delta. Product/docs/tests whitespace is checked separately from imported handoff Markdown hard breaks and raw JUnit evidence, whose historical formatting is retained.

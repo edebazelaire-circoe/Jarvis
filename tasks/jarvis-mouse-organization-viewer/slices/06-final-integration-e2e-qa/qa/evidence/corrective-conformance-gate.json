@@ -1,0 +1,27 @@
+{
+  "suite": "all",
+  "shard": null,
+  "only": [
+    "test_scene_renderer_logic.py",
+    "test_scene_hold_desk.py",
+    "test_presentation_studio_reload_docs.py",
+    "test_presentation_studio_reload_host_js.py"
+  ],
+  "files": 4,
+  "known_failures_file": "known_failures.json",
+  "duration_seconds": 27.8,
+  "source_revision": "4ad30d43341b0f16cd96c983b63b2cfc64791194",
+  "green": true,
+  "passed": 117,
+  "failed": 0,
+  "skipped": 0,
+  "collected": 117,
+  "exitstatus": 0,
+  "session_problems": [],
+  "unknown_failures": [],
+  "stale_known_failures": [],
+  "unseen_known_failures": [],
+  "expired_entries": [],
+  "intermittent_tolerated": [],
+  "known_failures_seen": []
+}

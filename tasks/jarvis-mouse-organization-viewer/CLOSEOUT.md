@@ -1,6 +1,6 @@
 # Mouse, organization and viewer — closeout in progress
 
-Status: implementation S01–S05 machine-accepted; S06 full release gate is running. Human acceptance remains pending. This report will be finalized with observed release outcomes and the isolated preview URL before requesting review.
+Status: S01-S04 accepted; S05 reopened for observed fullscreen/viewer coordination defect F2. All20 S06 shards finished; corrective validation and baseline comparisons remain. Human acceptance is pending.
 
 The work lives in `C:/Projects/jarvis/mov`, branch `task/jarvis-mouse-organization-viewer`, based on refreshed `origin/main c0858a8000e2ca23b57231edb8f46c643080ad07`. The daily checkout and live Jarvis were not changed or restarted. The supplied Drive folder is verified in `current`; no main merge, archive move, branch deletion or handoff deletion has happened.
 
