@@ -1,0 +1,4435 @@
+{
+  "original_harness_sha256": "32ce5ae3672d860b4c441559333ae9aa9dfb302a43010a252ce8e291726dc196",
+  "copied_harness": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\jarvis-mov-graph-click-ehf1rbr7\\graph-click-harness.mjs",
+  "scope": "One current 720x450/scale2 prefix, same seed/center/CDP click/settles; passive early capture plus one sample eval; timing perturbation possible",
+  "result": [
+    {
+      "graphClickProbe": {
+        "events": [
+          {
+            "phase": "sample-before-move",
+            "at": 3808.900000035763,
+            "x": 441.6198425292969,
+            "y": 190.6999969482422,
+            "target": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "hit": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "markRect": {
+              "x": 429.6198425292969,
+              "y": 181.6999969482422,
+              "width": 24,
+              "height": 18,
+              "top": 181.6999969482422,
+              "right": 453.6198425292969,
+              "bottom": 199.6999969482422,
+              "left": 429.6198425292969
+            },
+            "ancestors": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+                "relation": "rel_comm",
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "",
+                "cls": "sc-relmarks sc-relmarks-compact",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "sceneLayer",
+                "cls": "scene sc-roles-compact sc-ready",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "app",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "BODY",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "HTML",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              }
+            ],
+            "panels": [
+              {
+                "selector": "#presentationRail",
+                "visible": true,
+                "rect": {
+                  "x": 448,
+                  "y": 0,
+                  "width": 272,
+                  "height": 450,
+                  "top": 0,
+                  "right": 720,
+                  "bottom": 450,
+                  "left": 448
+                },
+                "z": "30",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#chatPanel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#panel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#jvStudioInspector",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "34",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#settingsHub",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "auto",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#overlay",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "60",
+                "pointerEvents": "auto"
+              }
+            ],
+            "viewport": {
+              "width": 720,
+              "height": 450
+            },
+            "markStyle": {
+              "z": "auto",
+              "pointerEvents": "auto",
+              "transform": "matrix(1, 0, 0, 1, 441.62, 190.7)"
+            },
+            "nodeStyle": null,
+            "nodes": 38,
+            "points": 38,
+            "grips": 0,
+            "viewer": {
+              "open": false
+            },
+            "focus": {
+              "tag": "BODY",
+              "id": "",
+              "cls": "",
+              "relation": null,
+              "object": null
+            }
+          },
+          {
+            "phase": "capture:pointermove",
+            "at": 3816.199999988079,
+            "x": 441.6198425292969,
+            "y": 190.6999969482422,
+            "target": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "hit": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "markRect": {
+              "x": 429.6198425292969,
+              "y": 181.6999969482422,
+              "width": 24,
+              "height": 18,
+              "top": 181.6999969482422,
+              "right": 453.6198425292969,
+              "bottom": 199.6999969482422,
+              "left": 429.6198425292969
+            },
+            "ancestors": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+                "relation": "rel_comm",
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "",
+                "cls": "sc-relmarks sc-relmarks-compact",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "sceneLayer",
+                "cls": "scene sc-roles-compact sc-ready",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "app",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "BODY",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "HTML",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              }
+            ],
+            "panels": [
+              {
+                "selector": "#presentationRail",
+                "visible": true,
+                "rect": {
+                  "x": 448,
+                  "y": 0,
+                  "width": 272,
+                  "height": 450,
+                  "top": 0,
+                  "right": 720,
+                  "bottom": 450,
+                  "left": 448
+                },
+                "z": "30",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#chatPanel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#panel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#jvStudioInspector",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "34",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#settingsHub",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "auto",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#overlay",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "60",
+                "pointerEvents": "auto"
+              }
+            ],
+            "viewport": {
+              "width": 720,
+              "height": 450
+            },
+            "markStyle": {
+              "z": "auto",
+              "pointerEvents": "auto",
+              "transform": "matrix(1, 0, 0, 1, 441.62, 190.7)"
+            },
+            "nodeStyle": null,
+            "nodes": 38,
+            "points": 38,
+            "grips": 0,
+            "viewer": {
+              "open": false
+            },
+            "focus": {
+              "tag": "BODY",
+              "id": "",
+              "cls": "",
+              "relation": null,
+              "object": null
+            }
+          },
+          {
+            "phase": "after:pointermove",
+            "at": 3816.600000023842,
+            "x": 441.6198425292969,
+            "y": 190.6999969482422,
+            "target": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "hit": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "markRect": {
+              "x": 429.6198425292969,
+              "y": 181.6999969482422,
+              "width": 24,
+              "height": 18,
+              "top": 181.6999969482422,
+              "right": 453.6198425292969,
+              "bottom": 199.6999969482422,
+              "left": 429.6198425292969
+            },
+            "ancestors": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+                "relation": "rel_comm",
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "",
+                "cls": "sc-relmarks sc-relmarks-compact",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "sceneLayer",
+                "cls": "scene sc-roles-compact sc-ready",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "app",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "BODY",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "HTML",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              }
+            ],
+            "panels": [
+              {
+                "selector": "#presentationRail",
+                "visible": true,
+                "rect": {
+                  "x": 448,
+                  "y": 0,
+                  "width": 272,
+                  "height": 450,
+                  "top": 0,
+                  "right": 720,
+                  "bottom": 450,
+                  "left": 448
+                },
+                "z": "30",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#chatPanel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#panel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#jvStudioInspector",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "34",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#settingsHub",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "auto",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#overlay",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "60",
+                "pointerEvents": "auto"
+              }
+            ],
+            "viewport": {
+              "width": 720,
+              "height": 450
+            },
+            "markStyle": {
+              "z": "auto",
+              "pointerEvents": "auto",
+              "transform": "matrix(1, 0, 0, 1, 441.62, 190.7)"
+            },
+            "nodeStyle": null,
+            "nodes": 38,
+            "points": 38,
+            "grips": 0,
+            "viewer": {
+              "open": false
+            },
+            "focus": {
+              "tag": "BODY",
+              "id": "",
+              "cls": "",
+              "relation": null,
+              "object": null
+            }
+          },
+          {
+            "phase": "capture:mousemove",
+            "at": 3817.300000011921,
+            "x": 441,
+            "y": 190,
+            "target": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "hit": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "markRect": {
+              "x": 429.6198425292969,
+              "y": 181.6999969482422,
+              "width": 24,
+              "height": 18,
+              "top": 181.6999969482422,
+              "right": 453.6198425292969,
+              "bottom": 199.6999969482422,
+              "left": 429.6198425292969
+            },
+            "ancestors": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+                "relation": "rel_comm",
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "",
+                "cls": "sc-relmarks sc-relmarks-compact",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "sceneLayer",
+                "cls": "scene sc-roles-compact sc-ready",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "app",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "BODY",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "HTML",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              }
+            ],
+            "panels": [
+              {
+                "selector": "#presentationRail",
+                "visible": true,
+                "rect": {
+                  "x": 448,
+                  "y": 0,
+                  "width": 272,
+                  "height": 450,
+                  "top": 0,
+                  "right": 720,
+                  "bottom": 450,
+                  "left": 448
+                },
+                "z": "30",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#chatPanel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#panel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#jvStudioInspector",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "34",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#settingsHub",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "auto",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#overlay",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "60",
+                "pointerEvents": "auto"
+              }
+            ],
+            "viewport": {
+              "width": 720,
+              "height": 450
+            },
+            "markStyle": {
+              "z": "auto",
+              "pointerEvents": "auto",
+              "transform": "matrix(1, 0, 0, 1, 441.62, 190.7)"
+            },
+            "nodeStyle": null,
+            "nodes": 38,
+            "points": 38,
+            "grips": 0,
+            "viewer": {
+              "open": false
+            },
+            "focus": {
+              "tag": "BODY",
+              "id": "",
+              "cls": "",
+              "relation": null,
+              "object": null
+            }
+          },
+          {
+            "phase": "after:mousemove",
+            "at": 3817.900000035763,
+            "x": 441,
+            "y": 190,
+            "target": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "hit": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "markRect": {
+              "x": 429.6198425292969,
+              "y": 181.6999969482422,
+              "width": 24,
+              "height": 18,
+              "top": 181.6999969482422,
+              "right": 453.6198425292969,
+              "bottom": 199.6999969482422,
+              "left": 429.6198425292969
+            },
+            "ancestors": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+                "relation": "rel_comm",
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "",
+                "cls": "sc-relmarks sc-relmarks-compact",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "sceneLayer",
+                "cls": "scene sc-roles-compact sc-ready",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "app",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "BODY",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "HTML",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              }
+            ],
+            "panels": [
+              {
+                "selector": "#presentationRail",
+                "visible": true,
+                "rect": {
+                  "x": 448,
+                  "y": 0,
+                  "width": 272,
+                  "height": 450,
+                  "top": 0,
+                  "right": 720,
+                  "bottom": 450,
+                  "left": 448
+                },
+                "z": "30",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#chatPanel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#panel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#jvStudioInspector",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "34",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#settingsHub",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "auto",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#overlay",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "60",
+                "pointerEvents": "auto"
+              }
+            ],
+            "viewport": {
+              "width": 720,
+              "height": 450
+            },
+            "markStyle": {
+              "z": "auto",
+              "pointerEvents": "auto",
+              "transform": "matrix(1, 0, 0, 1, 441.62, 190.7)"
+            },
+            "nodeStyle": null,
+            "nodes": 38,
+            "points": 38,
+            "grips": 0,
+            "viewer": {
+              "open": false
+            },
+            "focus": {
+              "tag": "BODY",
+              "id": "",
+              "cls": "",
+              "relation": null,
+              "object": null
+            }
+          },
+          {
+            "phase": "capture:pointerdown",
+            "at": 4064,
+            "x": 441.6198425292969,
+            "y": 190.6999969482422,
+            "target": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "hit": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "markRect": {
+              "x": 429.659912109375,
+              "y": 181.6999969482422,
+              "width": 24,
+              "height": 18,
+              "top": 181.6999969482422,
+              "right": 453.659912109375,
+              "bottom": 199.6999969482422,
+              "left": 429.659912109375
+            },
+            "ancestors": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+                "relation": "rel_comm",
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "",
+                "cls": "sc-relmarks sc-relmarks-compact",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "sceneLayer",
+                "cls": "scene sc-roles-compact sc-ready",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "app",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "BODY",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "HTML",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              }
+            ],
+            "panels": [
+              {
+                "selector": "#presentationRail",
+                "visible": true,
+                "rect": {
+                  "x": 448,
+                  "y": 0,
+                  "width": 272,
+                  "height": 450,
+                  "top": 0,
+                  "right": 720,
+                  "bottom": 450,
+                  "left": 448
+                },
+                "z": "30",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#chatPanel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#panel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#jvStudioInspector",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "34",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#settingsHub",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "auto",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#overlay",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "60",
+                "pointerEvents": "auto"
+              }
+            ],
+            "viewport": {
+              "width": 720,
+              "height": 450
+            },
+            "markStyle": {
+              "z": "auto",
+              "pointerEvents": "auto",
+              "transform": "matrix(1, 0, 0, 1, 441.66, 190.7)"
+            },
+            "nodeStyle": null,
+            "nodes": 38,
+            "points": 38,
+            "grips": 0,
+            "viewer": {
+              "open": false
+            },
+            "focus": {
+              "tag": "BODY",
+              "id": "",
+              "cls": "",
+              "relation": null,
+              "object": null
+            }
+          },
+          {
+            "phase": "after:pointerdown",
+            "at": 4064.400000035763,
+            "x": 441.6198425292969,
+            "y": 190.6999969482422,
+            "target": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "hit": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "markRect": {
+              "x": 429.659912109375,
+              "y": 181.6999969482422,
+              "width": 24,
+              "height": 18,
+              "top": 181.6999969482422,
+              "right": 453.659912109375,
+              "bottom": 199.6999969482422,
+              "left": 429.659912109375
+            },
+            "ancestors": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+                "relation": "rel_comm",
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "",
+                "cls": "sc-relmarks sc-relmarks-compact",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "sceneLayer",
+                "cls": "scene sc-roles-compact sc-ready",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "app",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "BODY",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "HTML",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              }
+            ],
+            "panels": [
+              {
+                "selector": "#presentationRail",
+                "visible": true,
+                "rect": {
+                  "x": 448,
+                  "y": 0,
+                  "width": 272,
+                  "height": 450,
+                  "top": 0,
+                  "right": 720,
+                  "bottom": 450,
+                  "left": 448
+                },
+                "z": "30",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#chatPanel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#panel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#jvStudioInspector",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "34",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#settingsHub",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "auto",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#overlay",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "60",
+                "pointerEvents": "auto"
+              }
+            ],
+            "viewport": {
+              "width": 720,
+              "height": 450
+            },
+            "markStyle": {
+              "z": "auto",
+              "pointerEvents": "auto",
+              "transform": "matrix(1, 0, 0, 1, 441.66, 190.7)"
+            },
+            "nodeStyle": null,
+            "nodes": 38,
+            "points": 38,
+            "grips": 0,
+            "viewer": {
+              "open": false
+            },
+            "focus": {
+              "tag": "BODY",
+              "id": "",
+              "cls": "",
+              "relation": null,
+              "object": null
+            }
+          },
+          {
+            "phase": "capture:mousedown",
+            "at": 4065.199999988079,
+            "x": 441,
+            "y": 190,
+            "target": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "hit": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "markRect": {
+              "x": 429.659912109375,
+              "y": 181.6999969482422,
+              "width": 24,
+              "height": 18,
+              "top": 181.6999969482422,
+              "right": 453.659912109375,
+              "bottom": 199.6999969482422,
+              "left": 429.659912109375
+            },
+            "ancestors": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+                "relation": "rel_comm",
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "",
+                "cls": "sc-relmarks sc-relmarks-compact",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "sceneLayer",
+                "cls": "scene sc-roles-compact sc-ready",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "app",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "BODY",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "HTML",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              }
+            ],
+            "panels": [
+              {
+                "selector": "#presentationRail",
+                "visible": true,
+                "rect": {
+                  "x": 448,
+                  "y": 0,
+                  "width": 272,
+                  "height": 450,
+                  "top": 0,
+                  "right": 720,
+                  "bottom": 450,
+                  "left": 448
+                },
+                "z": "30",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#chatPanel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#panel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#jvStudioInspector",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "34",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#settingsHub",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "auto",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#overlay",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "60",
+                "pointerEvents": "auto"
+              }
+            ],
+            "viewport": {
+              "width": 720,
+              "height": 450
+            },
+            "markStyle": {
+              "z": "auto",
+              "pointerEvents": "auto",
+              "transform": "matrix(1, 0, 0, 1, 441.66, 190.7)"
+            },
+            "nodeStyle": null,
+            "nodes": 38,
+            "points": 38,
+            "grips": 0,
+            "viewer": {
+              "open": false
+            },
+            "focus": {
+              "tag": "BODY",
+              "id": "",
+              "cls": "",
+              "relation": null,
+              "object": null
+            }
+          },
+          {
+            "phase": "after:mousedown",
+            "at": 4065.5,
+            "x": 441,
+            "y": 190,
+            "target": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "hit": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "markRect": {
+              "x": 429.659912109375,
+              "y": 181.6999969482422,
+              "width": 24,
+              "height": 18,
+              "top": 181.6999969482422,
+              "right": 453.659912109375,
+              "bottom": 199.6999969482422,
+              "left": 429.659912109375
+            },
+            "ancestors": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+                "relation": "rel_comm",
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "",
+                "cls": "sc-relmarks sc-relmarks-compact",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "sceneLayer",
+                "cls": "scene sc-roles-compact sc-ready",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "app",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "BODY",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "HTML",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              }
+            ],
+            "panels": [
+              {
+                "selector": "#presentationRail",
+                "visible": true,
+                "rect": {
+                  "x": 448,
+                  "y": 0,
+                  "width": 272,
+                  "height": 450,
+                  "top": 0,
+                  "right": 720,
+                  "bottom": 450,
+                  "left": 448
+                },
+                "z": "30",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#chatPanel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#panel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#jvStudioInspector",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "34",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#settingsHub",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "auto",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#overlay",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "60",
+                "pointerEvents": "auto"
+              }
+            ],
+            "viewport": {
+              "width": 720,
+              "height": 450
+            },
+            "markStyle": {
+              "z": "auto",
+              "pointerEvents": "auto",
+              "transform": "matrix(1, 0, 0, 1, 441.66, 190.7)"
+            },
+            "nodeStyle": null,
+            "nodes": 38,
+            "points": 38,
+            "grips": 0,
+            "viewer": {
+              "open": false
+            },
+            "focus": {
+              "tag": "BODY",
+              "id": "",
+              "cls": "",
+              "relation": null,
+              "object": null
+            }
+          },
+          {
+            "phase": "capture:pointerup",
+            "at": 4074.199999988079,
+            "x": 441.6198425292969,
+            "y": 190.6999969482422,
+            "target": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "hit": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "markRect": {
+              "x": 429.7398376464844,
+              "y": 181.6999969482422,
+              "width": 24,
+              "height": 18,
+              "top": 181.6999969482422,
+              "right": 453.7398376464844,
+              "bottom": 199.6999969482422,
+              "left": 429.7398376464844
+            },
+            "ancestors": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+                "relation": "rel_comm",
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "",
+                "cls": "sc-relmarks sc-relmarks-compact",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "sceneLayer",
+                "cls": "scene sc-roles-compact sc-ready",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "app",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "BODY",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "HTML",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              }
+            ],
+            "panels": [
+              {
+                "selector": "#presentationRail",
+                "visible": true,
+                "rect": {
+                  "x": 448,
+                  "y": 0,
+                  "width": 272,
+                  "height": 450,
+                  "top": 0,
+                  "right": 720,
+                  "bottom": 450,
+                  "left": 448
+                },
+                "z": "30",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#chatPanel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#panel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#jvStudioInspector",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "34",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#settingsHub",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "auto",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#overlay",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "60",
+                "pointerEvents": "auto"
+              }
+            ],
+            "viewport": {
+              "width": 720,
+              "height": 450
+            },
+            "markStyle": {
+              "z": "auto",
+              "pointerEvents": "auto",
+              "transform": "matrix(1, 0, 0, 1, 441.74, 190.7)"
+            },
+            "nodeStyle": null,
+            "nodes": 38,
+            "points": 38,
+            "grips": 0,
+            "viewer": {
+              "open": false
+            },
+            "focus": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            }
+          },
+          {
+            "phase": "after:pointerup",
+            "at": 4074.600000023842,
+            "x": 441.6198425292969,
+            "y": 190.6999969482422,
+            "target": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "hit": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "markRect": {
+              "x": 429.7398376464844,
+              "y": 181.6999969482422,
+              "width": 24,
+              "height": 18,
+              "top": 181.6999969482422,
+              "right": 453.7398376464844,
+              "bottom": 199.6999969482422,
+              "left": 429.7398376464844
+            },
+            "ancestors": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+                "relation": "rel_comm",
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "",
+                "cls": "sc-relmarks sc-relmarks-compact",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "sceneLayer",
+                "cls": "scene sc-roles-compact sc-ready",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "app",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "BODY",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "HTML",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              }
+            ],
+            "panels": [
+              {
+                "selector": "#presentationRail",
+                "visible": true,
+                "rect": {
+                  "x": 448,
+                  "y": 0,
+                  "width": 272,
+                  "height": 450,
+                  "top": 0,
+                  "right": 720,
+                  "bottom": 450,
+                  "left": 448
+                },
+                "z": "30",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#chatPanel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#panel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#jvStudioInspector",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "34",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#settingsHub",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "auto",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#overlay",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "60",
+                "pointerEvents": "auto"
+              }
+            ],
+            "viewport": {
+              "width": 720,
+              "height": 450
+            },
+            "markStyle": {
+              "z": "auto",
+              "pointerEvents": "auto",
+              "transform": "matrix(1, 0, 0, 1, 441.74, 190.7)"
+            },
+            "nodeStyle": null,
+            "nodes": 38,
+            "points": 38,
+            "grips": 0,
+            "viewer": {
+              "open": false
+            },
+            "focus": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            }
+          },
+          {
+            "phase": "capture:mouseup",
+            "at": 4075.100000023842,
+            "x": 441,
+            "y": 190,
+            "target": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "hit": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "markRect": {
+              "x": 429.7398376464844,
+              "y": 181.6999969482422,
+              "width": 24,
+              "height": 18,
+              "top": 181.6999969482422,
+              "right": 453.7398376464844,
+              "bottom": 199.6999969482422,
+              "left": 429.7398376464844
+            },
+            "ancestors": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+                "relation": "rel_comm",
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "",
+                "cls": "sc-relmarks sc-relmarks-compact",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "sceneLayer",
+                "cls": "scene sc-roles-compact sc-ready",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "app",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "BODY",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "HTML",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              }
+            ],
+            "panels": [
+              {
+                "selector": "#presentationRail",
+                "visible": true,
+                "rect": {
+                  "x": 448,
+                  "y": 0,
+                  "width": 272,
+                  "height": 450,
+                  "top": 0,
+                  "right": 720,
+                  "bottom": 450,
+                  "left": 448
+                },
+                "z": "30",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#chatPanel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#panel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#jvStudioInspector",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "34",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#settingsHub",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "auto",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#overlay",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "60",
+                "pointerEvents": "auto"
+              }
+            ],
+            "viewport": {
+              "width": 720,
+              "height": 450
+            },
+            "markStyle": {
+              "z": "auto",
+              "pointerEvents": "auto",
+              "transform": "matrix(1, 0, 0, 1, 441.74, 190.7)"
+            },
+            "nodeStyle": null,
+            "nodes": 38,
+            "points": 38,
+            "grips": 0,
+            "viewer": {
+              "open": false
+            },
+            "focus": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            }
+          },
+          {
+            "phase": "after:mouseup",
+            "at": 4075.300000011921,
+            "x": 441,
+            "y": 190,
+            "target": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "hit": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "markRect": {
+              "x": 429.7398376464844,
+              "y": 181.6999969482422,
+              "width": 24,
+              "height": 18,
+              "top": 181.6999969482422,
+              "right": 453.7398376464844,
+              "bottom": 199.6999969482422,
+              "left": 429.7398376464844
+            },
+            "ancestors": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+                "relation": "rel_comm",
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "",
+                "cls": "sc-relmarks sc-relmarks-compact",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "sceneLayer",
+                "cls": "scene sc-roles-compact sc-ready",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "app",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "BODY",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "HTML",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              }
+            ],
+            "panels": [
+              {
+                "selector": "#presentationRail",
+                "visible": true,
+                "rect": {
+                  "x": 448,
+                  "y": 0,
+                  "width": 272,
+                  "height": 450,
+                  "top": 0,
+                  "right": 720,
+                  "bottom": 450,
+                  "left": 448
+                },
+                "z": "30",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#chatPanel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#panel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#jvStudioInspector",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "34",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#settingsHub",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "auto",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#overlay",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "60",
+                "pointerEvents": "auto"
+              }
+            ],
+            "viewport": {
+              "width": 720,
+              "height": 450
+            },
+            "markStyle": {
+              "z": "auto",
+              "pointerEvents": "auto",
+              "transform": "matrix(1, 0, 0, 1, 441.74, 190.7)"
+            },
+            "nodeStyle": null,
+            "nodes": 38,
+            "points": 38,
+            "grips": 0,
+            "viewer": {
+              "open": false
+            },
+            "focus": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            }
+          },
+          {
+            "phase": "capture:click",
+            "at": 4075.5,
+            "x": 441,
+            "y": 190,
+            "target": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "hit": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "markRect": {
+              "x": 429.7398376464844,
+              "y": 181.6999969482422,
+              "width": 24,
+              "height": 18,
+              "top": 181.6999969482422,
+              "right": 453.7398376464844,
+              "bottom": 199.6999969482422,
+              "left": 429.7398376464844
+            },
+            "ancestors": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+                "relation": "rel_comm",
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "",
+                "cls": "sc-relmarks sc-relmarks-compact",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "sceneLayer",
+                "cls": "scene sc-roles-compact sc-ready",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "app",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "BODY",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "HTML",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              }
+            ],
+            "panels": [
+              {
+                "selector": "#presentationRail",
+                "visible": true,
+                "rect": {
+                  "x": 448,
+                  "y": 0,
+                  "width": 272,
+                  "height": 450,
+                  "top": 0,
+                  "right": 720,
+                  "bottom": 450,
+                  "left": 448
+                },
+                "z": "30",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#chatPanel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#panel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#jvStudioInspector",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "34",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#settingsHub",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "auto",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#overlay",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "60",
+                "pointerEvents": "auto"
+              }
+            ],
+            "viewport": {
+              "width": 720,
+              "height": 450
+            },
+            "markStyle": {
+              "z": "auto",
+              "pointerEvents": "auto",
+              "transform": "matrix(1, 0, 0, 1, 441.74, 190.7)"
+            },
+            "nodeStyle": null,
+            "nodes": 38,
+            "points": 38,
+            "grips": 0,
+            "viewer": {
+              "open": false
+            },
+            "focus": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            }
+          },
+          {
+            "phase": "after:click",
+            "at": 4075.900000035763,
+            "x": 441,
+            "y": 190,
+            "target": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "hit": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            },
+            "markRect": {
+              "x": 429.7398376464844,
+              "y": 181.6999969482422,
+              "width": 24,
+              "height": 18,
+              "top": 181.6999969482422,
+              "right": 453.7398376464844,
+              "bottom": 199.6999969482422,
+              "left": 429.7398376464844
+            },
+            "ancestors": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+                "relation": "rel_comm",
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "",
+                "cls": "sc-relmarks sc-relmarks-compact",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "sceneLayer",
+                "cls": "scene sc-roles-compact sc-ready",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "DIV",
+                "id": "app",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "BODY",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              },
+              {
+                "tag": "HTML",
+                "id": "",
+                "cls": "",
+                "relation": null,
+                "object": null
+              }
+            ],
+            "panels": [
+              {
+                "selector": "#presentationRail",
+                "visible": true,
+                "rect": {
+                  "x": 448,
+                  "y": 0,
+                  "width": 272,
+                  "height": 450,
+                  "top": 0,
+                  "right": 720,
+                  "bottom": 450,
+                  "left": 448
+                },
+                "z": "30",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#chatPanel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#panel",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "33",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#jvStudioInspector",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "34",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#settingsHub",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "auto",
+                "pointerEvents": "auto"
+              },
+              {
+                "selector": "#overlay",
+                "visible": false,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 0,
+                  "height": 0,
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "z": "60",
+                "pointerEvents": "auto"
+              }
+            ],
+            "viewport": {
+              "width": 720,
+              "height": 450
+            },
+            "markStyle": {
+              "z": "auto",
+              "pointerEvents": "auto",
+              "transform": "matrix(1, 0, 0, 1, 441.74, 190.7)"
+            },
+            "nodeStyle": null,
+            "nodes": 38,
+            "points": 38,
+            "grips": 0,
+            "viewer": {
+              "open": false
+            },
+            "focus": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "relation": "rel_comm",
+              "object": null
+            }
+          }
+        ],
+        "record": {}
+      },
+      "results": {
+        "read": {
+          "orbit": {
+            "nodes": {
+              "lead": true,
+              "dev_a": true,
+              "dev_b": true,
+              "dev_c": true,
+              "web": true,
+              "doc": false,
+              "qa": false,
+              "next": false,
+              "dn0": false,
+              "dn1": false,
+              "dn2": false,
+              "dn3": false,
+              "dn4": false,
+              "dn5": false,
+              "dn6": false,
+              "dn7": false,
+              "dn8": false,
+              "dn9": false,
+              "dn10": false,
+              "dn11": false,
+              "dn12": false,
+              "dn13": true,
+              "dn14": true,
+              "dn15": true,
+              "dn16": true,
+              "dn17": false,
+              "dn18": false,
+              "dn19": false,
+              "dn20": false,
+              "dn21": false,
+              "dn22": true,
+              "dn23": true,
+              "dn24": true,
+              "dn25": true,
+              "dn26": true,
+              "dn27": true,
+              "dn28": false,
+              "dn29": false
+            },
+            "marks": {
+              "rel_q_dn3": false,
+              "rel_q_dn9": false,
+              "rel_c_dn1": false,
+              "rel_c_dn5": false,
+              "rel_q_dn6": false,
+              "rel_c_dn7": false,
+              "rel_c_dn3": false,
+              "rel_c_dn9": false,
+              "rel_dlg_dn8": false,
+              "rel_dlg_dn4": false,
+              "rel_dlg_dn0": false,
+              "rel_c_dn11": false,
+              "rel_q_dn18": false,
+              "rel_c_dn19": false,
+              "rel_c_dn17": false,
+              "rel_q_dn27": false,
+              "rel_dlg_dn16": false,
+              "rel_q_dn12": false,
+              "rel_dlg_dn12": false,
+              "rel_c_dn27": false,
+              "rel_c_dn13": false,
+              "rel_q_dn21": false,
+              "rel_q_dn15": false,
+              "rel_dlg_dn28": false,
+              "rel_dlg_dn20": false,
+              "rel_c_dn29": false,
+              "rel_comm": false,
+              "rel_dlg_dn24": false,
+              "rel_c_dn15": false,
+              "rel_c_dn21": false,
+              "rel_c_dn25": false,
+              "rel_dlg_doc": false,
+              "rel_q_dn24": false,
+              "rel_hof": false,
+              "rel_c_dn23": false,
+              "rel_adv": false,
+              "rel_qa": false
+            }
+          },
+          "nodes": 38,
+          "roles": {
+            "lead": {
+              "label": "Comparer trois bases · sous-agent · rôle Direction de recherche · responsable de la mission · origine général · en cours · tâche en cours, 37 sous-agents",
+              "badge": "DIR",
+              "owner": true,
+              "flag": true,
+              "glyph": true,
+              "extra": "· général",
+              "accent": "var(--role-accent-indigo)",
+              "color": "rgb(152, 163, 255)",
+              "hasRole": true
+            },
+            "dev_a": {
+              "label": "Prototype Postgres · sous-agent · rôle Développement · en cours",
+              "badge": "DEV",
+              "owner": false,
+              "flag": false,
+              "glyph": true,
+              "extra": "",
+              "accent": "var(--role-accent-amber)",
+              "color": "rgb(255, 197, 97)",
+              "hasRole": true
+            },
+            "web": {
+              "label": "Benchmarks publiés · sous-agent · rôle Recherche web · en cours",
+              "badge": "WEB",
+              "owner": false,
+              "flag": false,
+              "glyph": true,
+              "extra": "",
+              "accent": "var(--role-accent-sky)",
+              "color": "rgb(116, 198, 255)",
+              "hasRole": true
+            },
+            "doc": {
+              "label": "Documentation officielle · sous-agent · rôle Recherche documentaire · responsable de la mission · origine général · en cours",
+              "badge": "DOC",
+              "owner": true,
+              "flag": true,
+              "glyph": true,
+              "extra": "· général",
+              "accent": "var(--role-accent-teal)",
+              "color": "rgb(79, 214, 200)",
+              "hasRole": true
+            },
+            "qa": {
+              "label": "Relecture du prototype · sous-agent · rôle Contrôle qualité · en cours",
+              "badge": "QA",
+              "owner": false,
+              "flag": false,
+              "glyph": true,
+              "extra": "",
+              "accent": "var(--role-accent-lime)",
+              "color": "rgb(184, 232, 114)",
+              "hasRole": true
+            },
+            "next": {
+              "label": "Synthèse finale · sous-agent · rôle Direction de recherche · en cours",
+              "badge": "DIR",
+              "owner": false,
+              "flag": false,
+              "glyph": true,
+              "extra": "",
+              "accent": "var(--role-accent-indigo)",
+              "color": "rgb(152, 163, 255)",
+              "hasRole": true
+            }
+          },
+          "lines": [
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-adversary sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "6.4px",
+              "stroke": "rgb(255, 127, 99)"
+            },
+            {
+              "cls": "sc-link sc-link-adversary-gap sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "2.4px",
+              "stroke": "rgb(5, 12, 18)"
+            },
+            {
+              "cls": "sc-link sc-link-adversary sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "6.4px",
+              "stroke": "rgb(255, 127, 99)"
+            },
+            {
+              "cls": "sc-link sc-link-adversary-gap sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "2.4px",
+              "stroke": "rgb(5, 12, 18)"
+            },
+            {
+              "cls": "sc-link sc-link-adversary sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "6.4px",
+              "stroke": "rgb(255, 127, 99)"
+            },
+            {
+              "cls": "sc-link sc-link-adversary-gap sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "2.4px",
+              "stroke": "rgb(5, 12, 18)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-qa sc-rel sc-rel-open",
+              "dash": "7px, 4px",
+              "marker": "url(\"#sc-mk-qa\")",
+              "width": "1.6px",
+              "stroke": "rgb(200, 234, 110)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-delegation sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "url(\"#sc-mk-delegation\")",
+              "width": "1.5px",
+              "stroke": "rgb(169, 195, 212)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-delegation sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "url(\"#sc-mk-delegation\")",
+              "width": "1.5px",
+              "stroke": "rgb(169, 195, 212)"
+            },
+            {
+              "cls": "sc-link sc-link-qa sc-rel sc-rel-open",
+              "dash": "7px, 4px",
+              "marker": "url(\"#sc-mk-qa\")",
+              "width": "1.6px",
+              "stroke": "rgb(200, 234, 110)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-qa sc-rel sc-rel-open",
+              "dash": "7px, 4px",
+              "marker": "url(\"#sc-mk-qa\")",
+              "width": "1.6px",
+              "stroke": "rgb(200, 234, 110)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-delegation sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "url(\"#sc-mk-delegation\")",
+              "width": "1.5px",
+              "stroke": "rgb(169, 195, 212)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-qa sc-rel sc-rel-closed",
+              "dash": "7px, 4px",
+              "marker": "url(\"#sc-mk-qa\")",
+              "width": "1.6px",
+              "stroke": "rgb(200, 234, 110)"
+            },
+            {
+              "cls": "sc-link sc-link-handoff sc-rel sc-rel-closed",
+              "dash": "0.1px, 6.5px",
+              "marker": "url(\"#sc-mk-handoff\")",
+              "width": "3.2px",
+              "stroke": "rgb(201, 166, 255)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-delegation sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "url(\"#sc-mk-delegation\")",
+              "width": "1.5px",
+              "stroke": "rgb(169, 195, 212)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-qa sc-rel sc-rel-open",
+              "dash": "7px, 4px",
+              "marker": "url(\"#sc-mk-qa\")",
+              "width": "1.6px",
+              "stroke": "rgb(200, 234, 110)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-delegation sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "url(\"#sc-mk-delegation\")",
+              "width": "1.5px",
+              "stroke": "rgb(169, 195, 212)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-qa sc-rel sc-rel-open",
+              "dash": "7px, 4px",
+              "marker": "url(\"#sc-mk-qa\")",
+              "width": "1.6px",
+              "stroke": "rgb(200, 234, 110)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-delegation sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "url(\"#sc-mk-delegation\")",
+              "width": "1.5px",
+              "stroke": "rgb(169, 195, 212)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-qa sc-rel sc-rel-open",
+              "dash": "7px, 4px",
+              "marker": "url(\"#sc-mk-qa\")",
+              "width": "1.6px",
+              "stroke": "rgb(200, 234, 110)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-delegation sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "url(\"#sc-mk-delegation\")",
+              "width": "1.5px",
+              "stroke": "rgb(169, 195, 212)"
+            },
+            {
+              "cls": "sc-link sc-link-qa sc-rel sc-rel-open",
+              "dash": "7px, 4px",
+              "marker": "url(\"#sc-mk-qa\")",
+              "width": "1.6px",
+              "stroke": "rgb(200, 234, 110)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-qa sc-rel sc-rel-open",
+              "dash": "7px, 4px",
+              "marker": "url(\"#sc-mk-qa\")",
+              "width": "1.6px",
+              "stroke": "rgb(200, 234, 110)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-delegation sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "url(\"#sc-mk-delegation\")",
+              "width": "1.5px",
+              "stroke": "rgb(169, 195, 212)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            },
+            {
+              "cls": "sc-link sc-link-qa sc-rel sc-rel-open",
+              "dash": "7px, 4px",
+              "marker": "url(\"#sc-mk-qa\")",
+              "width": "1.6px",
+              "stroke": "rgb(200, 234, 110)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-delegation sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "url(\"#sc-mk-delegation\")",
+              "width": "1.5px",
+              "stroke": "rgb(169, 195, 212)"
+            },
+            {
+              "cls": "sc-link sc-link-parent_of sc-link-task",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "color(srgb 0.86 0.46 0.94 / 0.7)"
+            },
+            {
+              "cls": "sc-link sc-link-communication sc-rel sc-rel-open",
+              "dash": "none",
+              "marker": "none",
+              "width": "1.4px",
+              "stroke": "rgb(95, 214, 232)"
+            }
+          ],
+          "marks": [
+            {
+              "id": "rel_q_dn3",
+              "kind": "qa",
+              "cls": "sc-relmark sc-relmark-qa sc-rel-open",
+              "label": "Contrôle qualité : Contrôle qualité « Recherche 3 » relit Développement « Recherche 2 » · en cours · ouvrir le détail et les messages",
+              "tab": 0,
+              "radius": "6px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 218.10000610351562,
+              "t": 23.299999237060547,
+              "r": 236.10000610351562,
+              "b": 41.29999923706055,
+              "glyph": 124
+            },
+            {
+              "id": "rel_q_dn9",
+              "kind": "qa",
+              "cls": "sc-relmark sc-relmark-qa sc-rel-open",
+              "label": "Contrôle qualité : Conceptualisation « Recherche 9 » relit Contrôle qualité « Recherche 8 » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "6px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 653.7000122070312,
+              "t": 23.299999237060547,
+              "r": 671.7000122070312,
+              "b": 41.29999923706055,
+              "glyph": 124
+            },
+            {
+              "id": "rel_c_dn1",
+              "kind": "communication",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "label": "Échange entre agents : Recherche documentaire « Recherche 1 » échange avec Recherche web « Recherche 0 » · en cours · ouvrir le tableau des messages",
+              "tab": -1,
+              "radius": "13px 13px 13px 3px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 24,
+              "h": 18,
+              "l": 28.099998474121094,
+              "t": 42.79999923706055,
+              "r": 52.099998474121094,
+              "b": 60.79999923706055,
+              "glyph": 101
+            },
+            {
+              "id": "rel_c_dn5",
+              "kind": "communication",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "label": "Échange entre agents : Recherche web « Recherche 5 » échange avec Conceptualisation « Recherche 4 » · en cours · ouvrir le tableau des messages",
+              "tab": -1,
+              "radius": "13px 13px 13px 3px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 24,
+              "h": 18,
+              "l": 316.1000061035156,
+              "t": 42.79999923706055,
+              "r": 340.1000061035156,
+              "b": 60.79999923706055,
+              "glyph": 101
+            },
+            {
+              "id": "rel_q_dn6",
+              "kind": "qa",
+              "cls": "sc-relmark sc-relmark-qa sc-rel-open",
+              "label": "Contrôle qualité : Recherche documentaire « Recherche 6 » relit Recherche web « Recherche 5 » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "6px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 391.1000061035156,
+              "t": 42.79999923706055,
+              "r": 409.1000061035156,
+              "b": 60.79999923706055,
+              "glyph": 124
+            },
+            {
+              "id": "rel_c_dn7",
+              "kind": "communication",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "label": "Échange entre agents : Développement « Recherche 7 » échange avec Recherche documentaire « Recherche 6 » · en cours · ouvrir le tableau des messages",
+              "tab": -1,
+              "radius": "13px 13px 13px 3px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 24,
+              "h": 18,
+              "l": 460.1000061035156,
+              "t": 42.79999923706055,
+              "r": 484.1000061035156,
+              "b": 60.79999923706055,
+              "glyph": 101
+            },
+            {
+              "id": "rel_c_dn3",
+              "kind": "communication",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "label": "Échange entre agents : Contrôle qualité « Recherche 3 » échange avec Développement « Recherche 2 » · en cours · ouvrir le tableau des messages",
+              "tab": -1,
+              "radius": "13px 13px 13px 3px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 24,
+              "h": 17.999996185302734,
+              "l": 176.5,
+              "t": 47.70000076293945,
+              "r": 200.5,
+              "b": 65.69999694824219,
+              "glyph": 101
+            },
+            {
+              "id": "rel_c_dn9",
+              "kind": "communication",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "label": "Échange entre agents : Conceptualisation « Recherche 9 » échange avec Contrôle qualité « Recherche 8 » · en cours · ouvrir le tableau des messages",
+              "tab": -1,
+              "radius": "13px 13px 13px 3px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 24,
+              "h": 18,
+              "l": 612.9000244140625,
+              "t": 62.30000305175781,
+              "r": 636.9000244140625,
+              "b": 80.30000305175781,
+              "glyph": 101
+            },
+            {
+              "id": "rel_dlg_dn8",
+              "kind": "delegation",
+              "cls": "sc-relmark sc-relmark-delegation sc-rel-open",
+              "label": "Délégation : Direction de recherche « Comparer trois bases » délègue à Contrôle qualité « Recherche 8 » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "50%",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 411.0186462402344,
+              "t": 83.99372863769531,
+              "r": 429.0186462402344,
+              "b": 101.99372863769531,
+              "glyph": 132
+            },
+            {
+              "id": "rel_dlg_dn4",
+              "kind": "delegation",
+              "cls": "sc-relmark sc-relmark-delegation sc-rel-open",
+              "label": "Délégation : Direction de recherche « Comparer trois bases » délègue à Conceptualisation « Recherche 4 » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "50%",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 278.43377685546875,
+              "t": 80.76325225830078,
+              "r": 296.43377685546875,
+              "b": 98.76325225830078,
+              "glyph": 132
+            },
+            {
+              "id": "rel_dlg_dn0",
+              "kind": "delegation",
+              "cls": "sc-relmark sc-relmark-delegation sc-rel-open",
+              "label": "Délégation : Direction de recherche « Comparer trois bases » délègue à Recherche web « Recherche 0 » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "50%",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 122.62603759765625,
+              "t": 90.30000305175781,
+              "r": 140.62603759765625,
+              "b": 108.30000305175781,
+              "glyph": 132
+            },
+            {
+              "id": "rel_c_dn11",
+              "kind": "communication",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "label": "Échange entre agents : Recherche documentaire « Recherche 11 » échange avec Recherche web « Recherche 10 » · en cours · ouvrir le tableau des messages",
+              "tab": -1,
+              "radius": "13px 13px 13px 3px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 24,
+              "h": 18,
+              "l": 28.099998474121094,
+              "t": 110.30000305175781,
+              "r": 52.099998474121094,
+              "b": 128.3000030517578,
+              "glyph": 101
+            },
+            {
+              "id": "rel_q_dn18",
+              "kind": "qa",
+              "cls": "sc-relmark sc-relmark-qa sc-rel-open",
+              "label": "Contrôle qualité : Contrôle qualité « Recherche 18 » relit Développement « Recherche 17 » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "6px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 539.5,
+              "t": 110.30000305175781,
+              "r": 557.5,
+              "b": 128.3000030517578,
+              "glyph": 124
+            },
+            {
+              "id": "rel_c_dn19",
+              "kind": "communication",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "label": "Échange entre agents : Conceptualisation « Recherche 19 » échange avec Contrôle qualité « Recherche 18 » · en cours · ouvrir le tableau des messages",
+              "tab": -1,
+              "radius": "13px 13px 13px 3px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 24,
+              "h": 18,
+              "l": 604.0999755859375,
+              "t": 110.30000305175781,
+              "r": 628.0999755859375,
+              "b": 128.3000030517578,
+              "glyph": 101
+            },
+            {
+              "id": "rel_c_dn17",
+              "kind": "communication",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "label": "Échange entre agents : Développement « Recherche 17 » échange avec Recherche documentaire « Recherche 16 » · en cours · ouvrir le tableau des messages",
+              "tab": -1,
+              "radius": "13px 13px 13px 3px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 24,
+              "h": 18,
+              "l": 402.5196533203125,
+              "t": 121.83102416992188,
+              "r": 426.5196533203125,
+              "b": 139.83102416992188,
+              "glyph": 101
+            },
+            {
+              "id": "rel_q_dn27",
+              "kind": "qa",
+              "cls": "sc-relmark sc-relmark-qa sc-rel-open",
+              "label": "Contrôle qualité : Développement « Recherche 27 » relit Recherche documentaire « Recherche 26 » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "6px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 375.0453796386719,
+              "t": 126.49565124511719,
+              "r": 393.0453796386719,
+              "b": 144.4956512451172,
+              "glyph": 124
+            },
+            {
+              "id": "rel_dlg_dn16",
+              "kind": "delegation",
+              "cls": "sc-relmark sc-relmark-delegation sc-rel-open",
+              "label": "Délégation : Direction de recherche « Comparer trois bases » délègue à Recherche documentaire « Recherche 16 » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "50%",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 274.0560302734375,
+              "t": 120.68280029296875,
+              "r": 292.0560302734375,
+              "b": 138.68280029296875,
+              "glyph": 132
+            },
+            {
+              "id": "rel_q_dn12",
+              "kind": "qa",
+              "cls": "sc-relmark sc-relmark-qa sc-rel-open",
+              "label": "Contrôle qualité : Développement « Recherche 12 » relit Recherche documentaire « Recherche 11 » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "6px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 115.28475952148438,
+              "t": 126.30000305175781,
+              "r": 133.28475952148438,
+              "b": 144.3000030517578,
+              "glyph": 124
+            },
+            {
+              "id": "rel_dlg_dn12",
+              "kind": "delegation",
+              "cls": "sc-relmark sc-relmark-delegation sc-rel-open",
+              "label": "Délégation : Direction de recherche « Comparer trois bases » délègue à Développement « Recherche 12 » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "50%",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 165.8577423095703,
+              "t": 133.498779296875,
+              "r": 183.8577423095703,
+              "b": 151.498779296875,
+              "glyph": 132
+            },
+            {
+              "id": "rel_c_dn27",
+              "kind": "communication",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "label": "Échange entre agents : Développement « Recherche 27 » échange avec Recherche documentaire « Recherche 26 » · en cours · ouvrir le tableau des messages",
+              "tab": -1,
+              "radius": "13px 13px 13px 3px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 24,
+              "h": 18,
+              "l": 391.38079833984375,
+              "t": 142.9001007080078,
+              "r": 415.38079833984375,
+              "b": 160.9001007080078,
+              "glyph": 101
+            },
+            {
+              "id": "rel_c_dn13",
+              "kind": "communication",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "label": "Échange entre agents : Contrôle qualité « Recherche 13 » échange avec Développement « Recherche 12 » · en cours · ouvrir le tableau des messages",
+              "tab": -1,
+              "radius": "13px 13px 13px 3px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 24,
+              "h": 18,
+              "l": 134.050048828125,
+              "t": 176.7318115234375,
+              "r": 158.050048828125,
+              "b": 194.7318115234375,
+              "glyph": 101
+            },
+            {
+              "id": "rel_q_dn21",
+              "kind": "qa",
+              "cls": "sc-relmark sc-relmark-qa sc-rel-open",
+              "label": "Contrôle qualité : Recherche documentaire « Recherche 21 » relit Recherche web « Recherche 20 » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "6px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 77.69999694824219,
+              "t": 158.3000030517578,
+              "r": 95.69999694824219,
+              "b": 176.3000030517578,
+              "glyph": 124
+            },
+            {
+              "id": "rel_q_dn15",
+              "kind": "qa",
+              "cls": "sc-relmark sc-relmark-qa sc-rel-open",
+              "label": "Contrôle qualité : Recherche web « Recherche 15 » relit Conceptualisation « Recherche 14 » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "6px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 210.77272033691406,
+              "t": 159.40184020996094,
+              "r": 228.77272033691406,
+              "b": 177.40184020996094,
+              "glyph": 124
+            },
+            {
+              "id": "rel_dlg_dn28",
+              "kind": "delegation",
+              "cls": "sc-relmark sc-relmark-delegation sc-rel-open",
+              "label": "Délégation : Direction de recherche « Comparer trois bases » délègue à Contrôle qualité « Recherche 28 » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "50%",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 409.89373779296875,
+              "t": 161.90802001953125,
+              "r": 427.89373779296875,
+              "b": 179.90802001953125,
+              "glyph": 132
+            },
+            {
+              "id": "rel_dlg_dn20",
+              "kind": "delegation",
+              "cls": "sc-relmark sc-relmark-delegation sc-rel-open",
+              "label": "Délégation : Direction de recherche « Comparer trois bases » délègue à Recherche web « Recherche 20 » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "50%",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 113.34126281738281,
+              "t": 175.0336151123047,
+              "r": 131.3412628173828,
+              "b": 193.0336151123047,
+              "glyph": 132
+            },
+            {
+              "id": "rel_c_dn29",
+              "kind": "communication",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "label": "Échange entre agents : Conceptualisation « Recherche 29 » échange avec Contrôle qualité « Recherche 28 » · en cours · ouvrir le tableau des messages",
+              "tab": -1,
+              "radius": "13px 13px 13px 3px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 24,
+              "h": 18,
+              "l": 604.0999755859375,
+              "t": 177.8000030517578,
+              "r": 628.0999755859375,
+              "b": 195.8000030517578,
+              "glyph": 101
+            },
+            {
+              "id": "rel_comm",
+              "kind": "communication",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "label": "Échange entre agents : entre Direction de recherche « Comparer trois bases », Recherche web « Benchmarks publiés », Recherche documentaire « Documentation officielle » · en cours · ouvrir le tableau des messages",
+              "tab": -1,
+              "radius": "13px 13px 13px 3px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 24,
+              "h": 18,
+              "l": 427.78692626953125,
+              "t": 181.77578735351562,
+              "r": 451.78692626953125,
+              "b": 199.77578735351562,
+              "glyph": 101
+            },
+            {
+              "id": "rel_dlg_dn24",
+              "kind": "delegation",
+              "cls": "sc-relmark sc-relmark-delegation sc-rel-open",
+              "label": "Délégation : Direction de recherche « Comparer trois bases » délègue à Conceptualisation « Recherche 24 » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "50%",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 255.76828002929688,
+              "t": 182.8087158203125,
+              "r": 273.7682800292969,
+              "b": 200.8087158203125,
+              "glyph": 132
+            },
+            {
+              "id": "rel_c_dn15",
+              "kind": "communication",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "label": "Échange entre agents : Recherche web « Recherche 15 » échange avec Conceptualisation « Recherche 14 » · en cours · ouvrir le tableau des messages",
+              "tab": -1,
+              "radius": "13px 13px 13px 3px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 24,
+              "h": 18,
+              "l": 208.59373474121094,
+              "t": 182.60061645507812,
+              "r": 232.59373474121094,
+              "b": 200.60061645507812,
+              "glyph": 101
+            },
+            {
+              "id": "rel_c_dn21",
+              "kind": "communication",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "label": "Échange entre agents : Recherche documentaire « Recherche 21 » échange avec Recherche web « Recherche 20 » · en cours · ouvrir le tableau des messages",
+              "tab": -1,
+              "radius": "13px 13px 13px 3px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 24,
+              "h": 18,
+              "l": 36.900001525878906,
+              "t": 197.3000030517578,
+              "r": 60.900001525878906,
+              "b": 215.3000030517578,
+              "glyph": 101
+            },
+            {
+              "id": "rel_c_dn25",
+              "kind": "communication",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "label": "Échange entre agents : Recherche web « Recherche 25 » échange avec Conceptualisation « Recherche 24 » · en cours · ouvrir le tableau des messages",
+              "tab": -1,
+              "radius": "13px 13px 13px 3px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 24,
+              "h": 18,
+              "l": 295.2310791015625,
+              "t": 198.3906707763672,
+              "r": 319.2310791015625,
+              "b": 216.3906707763672,
+              "glyph": 101
+            },
+            {
+              "id": "rel_dlg_doc",
+              "kind": "delegation",
+              "cls": "sc-relmark sc-relmark-delegation sc-rel-open",
+              "label": "Délégation : Direction de recherche « Comparer trois bases » délègue à Recherche documentaire « Documentation officielle » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "50%",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 417.90496826171875,
+              "t": 220.9813690185547,
+              "r": 435.90496826171875,
+              "b": 238.9813690185547,
+              "glyph": 132
+            },
+            {
+              "id": "rel_q_dn24",
+              "kind": "qa",
+              "cls": "sc-relmark sc-relmark-qa sc-rel-open",
+              "label": "Contrôle qualité : Conceptualisation « Recherche 24 » relit Contrôle qualité « Recherche 23 » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "6px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 254.80191040039062,
+              "t": 234.25714111328125,
+              "r": 272.8019104003906,
+              "b": 252.25714111328125,
+              "glyph": 124
+            },
+            {
+              "id": "rel_hof",
+              "kind": "handoff",
+              "cls": "sc-relmark sc-relmark-handoff sc-rel-closed",
+              "label": "Relais : Direction de recherche « Comparer trois bases » passe le relais à Direction de recherche « Synthèse finale » · close, transmis · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "12px",
+              "border": "solid",
+              "closedMark": "\"✓\"",
+              "w": 24,
+              "h": 18,
+              "l": 359.7062072753906,
+              "t": 259.18011474609375,
+              "r": 383.7062072753906,
+              "b": 277.18011474609375,
+              "glyph": 63
+            },
+            {
+              "id": "rel_c_dn23",
+              "kind": "communication",
+              "cls": "sc-relmark sc-relmark-communication sc-rel-open",
+              "label": "Échange entre agents : Contrôle qualité « Recherche 23 » échange avec Développement « Recherche 22 » · en cours · ouvrir le tableau des messages",
+              "tab": -1,
+              "radius": "13px 13px 13px 3px",
+              "border": "solid",
+              "closedMark": "none",
+              "w": 24,
+              "h": 18,
+              "l": 208.37396240234375,
+              "t": 270.12237548828125,
+              "r": 232.37396240234375,
+              "b": 288.12237548828125,
+              "glyph": 101
+            },
+            {
+              "id": "rel_adv",
+              "kind": "adversary",
+              "cls": "sc-relmark sc-relmark-adversary sc-rel-open",
+              "label": "Confrontation : entre Développement « Prototype Postgres », Développement « Prototype SQLite », Développement « Prototype MySQL » · en cours · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "5px",
+              "border": "double",
+              "closedMark": "none",
+              "w": 18,
+              "h": 18,
+              "l": 386.2447509765625,
+              "t": 287.7198791503906,
+              "r": 404.2447509765625,
+              "b": 305.7198791503906,
+              "glyph": 206
+            },
+            {
+              "id": "rel_qa",
+              "kind": "qa",
+              "cls": "sc-relmark sc-relmark-qa sc-rel-closed",
+              "label": "Contrôle qualité : Contrôle qualité « Relecture du prototype » relit Développement « Prototype Postgres » · close, remarques · ouvrir le détail et les messages",
+              "tab": -1,
+              "radius": "6px",
+              "border": "solid",
+              "closedMark": "\"✓\"",
+              "w": 18,
+              "h": 18,
+              "l": 169.67640686035156,
+              "t": 333.90313720703125,
+              "r": 187.67640686035156,
+              "b": 351.90313720703125,
+              "glyph": 124
+            }
+          ],
+          "vw": 720,
+          "vh": 450
+        },
+        "before": "C:\\Projects\\jarvis\\mov3\\tasks\\jarvis-mouse-organization-viewer\\slices\\06-final-integration-e2e-qa\\qa\\graph-click-before.png",
+        "open": "ok",
+        "waitBoard": 0,
+        "board": {
+          "hidden": false,
+          "open": true,
+          "kind": "communication",
+          "relation": "rel_comm",
+          "title": "Tableau · Échange entre agents",
+          "text": "RELATION\n\nSe répartir les sources sans doublon\n\nÉtat\nen cours\nMission\nChoisir une base de données pour le projet\nOrigine\ngénéral\nÉtat de la mission\nouverte\nPARTICIPANTS (3)\nDIR\nDirection de recherche « Comparer trois bases »\nmembre · responsable de la mission · en cours\nWEB\nRecherche web « Benchmarks publiés »\nmembre · en cours\nDOC\nRecherche documentaire « Documentation officielle »\nmembre · responsable de la mission · en cours\nMESSAGES (4)\nWEB\nProposition\nRecherche web « Benchmarks publiés »\n20/10 16:02\n\nJe prends les benchmarks TPC publiés depuis 2024.\n\nDOC\nMessage\nRecherche documentaire « Documentation officielle »\n20/10 16:02\n\nJe couvre les limites documentées (verrous, tailles).\n\nDIR\nDécision\nDirection de recherche « Comparer trois bases »\n20/10 16:02\n\nGardez Postgres et SQLite ; MySQL seulement si le coût diffère.\n\nWEB\nCritique\nRecherche web « Benchmarks publiés »\n20/10 16:02\n\n<img src=x onerror=\"window.__xss=1\"><b>gras</b> & « guillemets »",
+          "messages": [
+            "Je prends les benchmarks TPC publiés depuis 2024.",
+            "Je couvre les limites documentées (verrous, tailles).",
+            "Gardez Postgres et SQLite ; MySQL seulement si le coût diffère.",
+            "<img src=x onerror=\"window.__xss=1\"><b>gras</b> & « guillemets »"
+          ],
+          "tabs": [
+            0,
+            -1,
+            -1,
+            -1
+          ],
+          "focus": "relationBoardTitle",
+          "imgs": 0,
+          "xss": false,
+          "error": false,
+          "state": "",
+          "empty": "",
+          "rect": {
+            "l": 202,
+            "t": 64,
+            "r": 702,
+            "b": 382
+          }
+        },
+        "after": "C:\\Projects\\jarvis\\mov3\\tasks\\jarvis-mouse-organization-viewer\\slices\\06-final-integration-e2e-qa\\qa\\graph-click-after.png"
+      },
+      "console": [
+        {
+          "type": "info",
+          "text": "[capture] capture_rail.installed {\"views\":\"control_center_capture_wheel.js\"}"
+        },
+        {
+          "type": "info",
+          "text": "[capture] capture_views.installed {\"host\":\"recIndicators\",\"category\":\"capture\",\"items\":[\"screenshot\",\"video\",\"audio\"]}"
+        },
+        {
+          "type": "info",
+          "text": "[capture] capture_rail.status_received {\"open\":0}"
+        },
+        {
+          "type": "info",
+          "text": "[scène] scene.enabled Object"
+        },
+        {
+          "type": "info",
+          "text": "[scène] scene.role Object"
+        },
+        {
+          "type": "info",
+          "text": "[scène] scene.loop_started Object"
+        },
+        {
+          "type": "info",
+          "text": "[scène] scene.snapshot_loaded Object"
+        },
+        {
+          "type": "info",
+          "text": "[capture] capture_rail.installed {\"views\":\"control_center_capture_wheel.js\"}"
+        },
+        {
+          "type": "info",
+          "text": "[capture] capture_views.installed {\"host\":\"recIndicators\",\"category\":\"capture\",\"items\":[\"screenshot\",\"video\",\"audio\"]}"
+        },
+        {
+          "type": "info",
+          "text": "[capture] capture_rail.status_received {\"open\":0}"
+        },
+        {
+          "type": "info",
+          "text": "[scène] scene.enabled Object"
+        },
+        {
+          "type": "info",
+          "text": "[scène] scene.role Object"
+        },
+        {
+          "type": "info",
+          "text": "[scène] scene.loop_started Object"
+        },
+        {
+          "type": "info",
+          "text": "[scène] scene.snapshot_loaded Object"
+        },
+        {
+          "type": "info",
+          "text": "[scène] scene.role_registry_loaded Object"
+        },
+        {
+          "type": "info",
+          "text": "[scène] scene.relation_board_requested Object"
+        }
+      ],
+      "calls": [
+        "GET /api/fullscreen/commands",
+        "GET /api/presentation-studio/explorer/commands",
+        "GET /api/presentation-studio/playback",
+        "GET /api/shortcuts",
+        "GET /api/barehands",
+        "GET /api/barehands/profile",
+        "GET /api/presentation-studio/rail",
+        "GET /api/workspace/artifacts",
+        "GET /api/scene",
+        "GET /api/scene/patches",
+        "GET /api/subagent-roles",
+        "GET /api/missions/mis_root",
+        "GET /api/missions/mis_sub",
+        "GET /api/fullscreen/commands",
+        "POST /api/presentation-studio/rail/display-state",
+        "GET /api/presentation-studio/explorer/commands",
+        "GET /api/fullscreen/commands",
+        "GET /api/presentation-studio/explorer/commands",
+        "GET /api/presentation-studio/rail",
+        "GET /api/fullscreen/commands",
+        "GET /api/presentation-studio/explorer/commands",
+        "GET /api/missions/relations/rel_comm",
+        "GET /api/missions/mis_root",
+        "GET /api/presentation-studio/rail"
+      ],
+      "bodies": [
+        {
+          "path": "/api/presentation-studio/rail/display-state",
+          "body": {
+            "rail_visible": true,
+            "variants_open": false,
+            "presentation_id": null,
+            "applied_seq": null
+          }
+        }
+      ],
+      "acks": []
+    }
+  ]
+}

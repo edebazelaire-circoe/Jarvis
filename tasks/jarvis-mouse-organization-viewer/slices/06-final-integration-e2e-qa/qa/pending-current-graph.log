@@ -1,0 +1,19 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+____ test_a_dense_graph_at_200_percent_and_in_forced_colours_stays_usable _____
+tests\unit\test_scene_task_graph_browser.py:438: in test_a_dense_graph_at_200_percent_and_in_forced_colours_stays_usable
+    assert board["open"] and board["rect"]["l"] >= 0 and board["rect"]["r"] <= dense["read"]["vw"] + 0.5
+           ^^^^^^^^^^^^^
+E   TypeError: 'NoneType' object is not subscriptable
+        board      = None
+        cosmos     = {'read': {'orbit': {'nodes': {'lead': True, 'dev_a': True, 'dev_b': True, 'dev_c': True, ...}, 'marks': {'rel_adv': Fa...zation-viewer\\slices\\06-final-integration-e2e-qa\\qa\\pending-current-graph-captures\\02-roles-relations-cosmos.png'}
+        dense      = {'read': {'orbit': {'nodes': {'lead': True, 'dev_a': True, 'dev_b': True, 'dev_c': True, ...}, 'marks': {'rel_q_dn3': ...nal-integration-e2e-qa\\qa\\pending-current-graph-captures\\08-dense-200pct.png', 'open': 'ok', 'waitBoard': 8053, ...}
+        forced     = {'read': {'orbit': {'nodes': {'lead': True, 'dev_a': True, 'dev_b': True, 'dev_c': True, ...}, 'marks': {'rel_adv': Fa...e-organization-viewer\\slices\\06-final-integration-e2e-qa\\qa\\pending-current-graph-captures\\10-forced-colours.png'}
+        inside     = [{'id': 'rel_q_dn3', 'kind': 'qa', 'cls': 'sc-relmark sc-relmark-qa sc-rel-open', 'label': 'Contrôle qualité : Contrôl...herche 7 » échange avec Recherche documentaire « Recherche 6 » · en cours · ouvrir le tableau des messages', ...}, ...]
+        marks      = [{'id': 'rel_q_dn3', 'kind': 'qa', 'cls': 'sc-relmark sc-relmark-qa sc-rel-open', 'label': 'Contrôle qualité : Contrôl...herche 7 » échange avec Recherche documentaire « Recherche 6 » · en cours · ouvrir le tableau des messages', ...}, ...]
+        pairs      = [(0.01885619693159781, 'rel_dlg_dn16', 'rel_hof'), (0.0, 'rel_qa', 'rel_q_dn27'), (0.0, 'rel_qa', 'rel_q_dn15'), (0.0, 'rel_qa', 'rel_hof'), (0.0, 'rel_qa', 'rel_dlg_doc'), (0.0, 'rel_qa', 'rel_dlg_dn24'), ...]
+        steps      = [{'results': {'read': {'orbit': {'nodes': {'lead': True, 'dev_a': True, 'dev_b': True, 'dev_c': True, ...}, 'marks': {...y-state', 'body': {'rail_visible': True, 'variants_open': False, 'presentation_id': None, 'applied_seq': None}}], ...}]
+        tmp_path   = WindowsPath('C:/Users/Clarice/AppData/Local/Temp/jarvis-mov-exact-baseline-9up1q05m/test_a_dense_graph_at_200_perc0')
+=========================== short test summary info ===========================
+FAILED tests/unit/test_scene_task_graph_browser.py::test_a_dense_graph_at_200_percent_and_in_forced_colours_stays_usable
+1 failed in 28.97s

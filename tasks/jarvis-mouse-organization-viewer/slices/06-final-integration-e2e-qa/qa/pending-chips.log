@@ -1,0 +1,31 @@
+FFF                                                                      [100%]
+================================== FAILURES ===================================
+_ test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run[1280x720] _
+tests\unit\test_variants_run_browser.py:338: in test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run
+    assert rec["under"] == [], ("une puce couvre une commande du Studio", rec["under"])
+E   AssertionError: ('une puce couvre une commande du Studio', ['Plein écran', 'Fermer Variantes'])
+E   assert ['Plein écran...er Variantes'] == []
+E     
+E     Left contains 2 more items, first extra item: 'Plein écran'
+E     Use -v to get more diff
+_ test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run[1920x1032] _
+tests\unit\test_variants_run_browser.py:338: in test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run
+    assert rec["under"] == [], ("une puce couvre une commande du Studio", rec["under"])
+E   AssertionError: ('une puce couvre une commande du Studio', ['Plein écran', 'Fermer Variantes'])
+E   assert ['Plein écran...er Variantes'] == []
+E     
+E     Left contains 2 more items, first extra item: 'Plein écran'
+E     Use -v to get more diff
+_ test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run[600x800] _
+tests\unit\test_variants_run_browser.py:338: in test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run
+    assert rec["under"] == [], ("une puce couvre une commande du Studio", rec["under"])
+E   AssertionError: ('une puce couvre une commande du Studio', ['Plein écran', 'Fermer Variantes'])
+E   assert ['Plein écran...er Variantes'] == []
+E     
+E     Left contains 2 more items, first extra item: 'Plein écran'
+E     Use -v to get more diff
+=========================== short test summary info ===========================
+FAILED tests/unit/test_variants_run_browser.py::test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run[1280x720]
+FAILED tests/unit/test_variants_run_browser.py::test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run[1920x1032]
+FAILED tests/unit/test_variants_run_browser.py::test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run[600x800]
+3 failed in 39.63s

@@ -1,0 +1,26 @@
+{
+  "group": "current-graph",
+  "revision": "a0f7105c8cf85067674ac551f48aedda68d64a63",
+  "cases": [
+    "tests/unit/test_scene_task_graph_browser.py::test_a_dense_graph_at_200_percent_and_in_forced_colours_stays_usable"
+  ],
+  "scratch": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\jarvis-mov-exact-baseline-9up1q05m",
+  "started_at": "2026-10-30T15:17:06.736348+00:00",
+  "runner_pid": 34196,
+  "command": [
+    "C:\\Projects\\jarvis\\jarvis\\.venv\\Scripts\\python.exe",
+    "-m",
+    "pytest",
+    "--tb=short",
+    "-p",
+    "no:cacheprovider",
+    "-q",
+    "tests/unit/test_scene_task_graph_browser.py::test_a_dense_graph_at_200_percent_and_in_forced_colours_stays_usable",
+    "--basetemp=C:\\Users\\Clarice\\AppData\\Local\\Temp\\jarvis-mov-exact-baseline-9up1q05m",
+    "--junitxml=C:\\Projects\\jarvis\\mov3\\tasks\\jarvis-mouse-organization-viewer\\slices\\06-final-integration-e2e-qa\\qa\\pending-current-graph.xml",
+    "--showlocals"
+  ],
+  "child_pid": 27628,
+  "returncode": 1,
+  "ended_at": "2026-10-30T15:17:37.024485+00:00"
+}

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="3" time="39.626" timestamp="2026-10-30T16:14:57.871866+01:00" hostname="CLARICE"><testcase classname="tests.unit.test_variants_run_browser" name="test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run[1280x720]" time="11.920"><failure message="AssertionError: ('une puce couvre une commande du Studio', ['Plein écran', 'Fermer Variantes'])&#10;assert ['Plein écran...er Variantes'] == []&#10;  &#10;  Left contains 2 more items, first extra item: 'Plein écran'&#10;  Use -v to get more diff">tests\unit\test_variants_run_browser.py:338: in test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run
+    assert rec["under"] == [], ("une puce couvre une commande du Studio", rec["under"])
+E   AssertionError: ('une puce couvre une commande du Studio', ['Plein écran', 'Fermer Variantes'])
+E   assert ['Plein écran...er Variantes'] == []
+E     
+E     Left contains 2 more items, first extra item: 'Plein écran'
+E     Use -v to get more diff</failure></testcase><testcase classname="tests.unit.test_variants_run_browser" name="test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run[1920x1032]" time="10.585"><failure message="AssertionError: ('une puce couvre une commande du Studio', ['Plein écran', 'Fermer Variantes'])&#10;assert ['Plein écran...er Variantes'] == []&#10;  &#10;  Left contains 2 more items, first extra item: 'Plein écran'&#10;  Use -v to get more diff">tests\unit\test_variants_run_browser.py:338: in test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run
+    assert rec["under"] == [], ("une puce couvre une commande du Studio", rec["under"])
+E   AssertionError: ('une puce couvre une commande du Studio', ['Plein écran', 'Fermer Variantes'])
+E   assert ['Plein écran...er Variantes'] == []
+E     
+E     Left contains 2 more items, first extra item: 'Plein écran'
+E     Use -v to get more diff</failure></testcase><testcase classname="tests.unit.test_variants_run_browser" name="test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run[600x800]" time="10.226"><failure message="AssertionError: ('une puce couvre une commande du Studio', ['Plein écran', 'Fermer Variantes'])&#10;assert ['Plein écran...er Variantes'] == []&#10;  &#10;  Left contains 2 more items, first extra item: 'Plein écran'&#10;  Use -v to get more diff">tests\unit\test_variants_run_browser.py:338: in test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run
+    assert rec["under"] == [], ("une puce couvre une commande du Studio", rec["under"])
+E   AssertionError: ('une puce couvre une commande du Studio', ['Plein écran', 'Fermer Variantes'])
+E   assert ['Plein écran...er Variantes'] == []
+E     
+E     Left contains 2 more items, first extra item: 'Plein écran'
+E     Use -v to get more diff</failure></testcase></testsuite></testsuites>
