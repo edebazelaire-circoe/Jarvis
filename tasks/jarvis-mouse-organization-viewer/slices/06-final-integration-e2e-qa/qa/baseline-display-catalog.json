@@ -1,0 +1,65 @@
+{
+  "revision": "c0858a8000e2ca23b57231edb8f46c643080ad07",
+  "tool_count": 21,
+  "names": [
+    "scene_inspect",
+    "scene_query",
+    "scene_get",
+    "scene_create_object",
+    "scene_update_object",
+    "scene_update_many",
+    "scene_move",
+    "scene_archive",
+    "scene_purge_archived",
+    "scene_pin",
+    "scene_link",
+    "scene_unlink",
+    "scene_add_artifact",
+    "scene_capture",
+    "prefab_search",
+    "prefab_get",
+    "prefab_validate",
+    "prefab_save",
+    "prefab_edit_base",
+    "ui_intent_publish",
+    "prefab_events"
+  ],
+  "context_bytes": 40015,
+  "model_visible": {
+    "bytes": 41094,
+    "sha256": "71fd26fc10de209c95b979c5be93416da686122ab832cb8386211371278b9dc9"
+  },
+  "full_tools_list": {
+    "bytes": 60863,
+    "sha256": "edf57314b69baea791612b72a9f1097e8f22eceb185438fb3ebcf9625a1ba4d1"
+  },
+  "descriptors": {
+    "bytes": 119132,
+    "sha256": "5d8df7b47f35ac3408c81b75f1c3f4792ceef555a98307b1041d3800b8420894"
+  },
+  "text_output_schemas": {
+    "bytes": 12391,
+    "sha256": "06c9d07248ff0ab80dbb2a6791825c7d76b9d502a6e9592107f420baddd7ac54"
+  },
+  "layout_selection_advertised": false,
+  "scene_ops": [
+    "upsert_object",
+    "patch_object",
+    "set_geometry",
+    "set_representation",
+    "set_visibility",
+    "pin",
+    "unpin",
+    "link",
+    "unlink",
+    "archive",
+    "archive_many",
+    "attach_signal",
+    "attach_artifact",
+    "patch_selection",
+    "translate_selection",
+    "pin_selection",
+    "unpin_selection",
+    "archive_selection"
+  ]
+}
