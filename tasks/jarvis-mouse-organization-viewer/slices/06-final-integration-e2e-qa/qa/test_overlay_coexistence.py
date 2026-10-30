@@ -25,6 +25,7 @@ SURFACES = """(()=>{
   return {viewer:!!dialog?.open,fullscreen:document.fullscreenElement?.dataset.objectId||document.fullscreenElement?.id||null,
     state:JarvisFullscreen.state(),focus:document.activeElement?.id||document.activeElement?.dataset.objectId||document.activeElement?.tagName,
     focusInViewer:!!dialog?.contains(document.activeElement),panel:document.querySelector('#panel')?.classList.contains('open'),
+    focusOnPromptGo:!!document.activeElement?.matches('#jvFullscreenPrompt .jvfs-go'),
     settings:document.querySelector('#overlay')?.classList.contains('open'),studio:inspector?.view(),
     prompt:p?{popover:p.matches(':popover-open'),parentIsHtml:p.parentElement===document.documentElement,
       hit:hit(p.querySelector('.jvfs-go')),cancelHit:hit(p.querySelector('.jvfs-cancel')),inert:p.inert,
@@ -50,26 +51,30 @@ def save(name,result):
     (QA/(name+'.json')).write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
 
 
-async def test_armed_fullscreen_then_viewer_close_keeps_actionable_prompt_and_fullscreen_owner(stack):
+async def test_armed_fullscreen_refuses_viewer_then_canonical_enter_exit_works(stack):
     out=await stack.browser([
-        {'until':'JarvisScene.inspect().nodes>=7&&!!window.JarvisFullscreen'},state('before'),
+        {'until':'JarvisScene.inspect().nodes>=7&&!!window.JarvisFullscreen'},
+        {'click':node(NOTE)},state('before'),
         request_fullscreen('request'),{'until':"JarvisFullscreen.state().state==='needs_gesture'"},surface('armed'),
-        {'click':node(NOTE),'count':2},{'until':"document.querySelector('#jvObjectViewer')?.open===true"},surface('during'),
-        {'click':'#jvObjectViewer [data-action=close]'},surface('closed'),
-        {'shot':str(QA/'fullscreen-prompt-after-viewer.png')},
+        {'click':node(NOTE),'count':2},surface('refused'),
+        {'read':'feedback','expr':"document.querySelector('#toasts')?.textContent||''"},
+        {'shot':str(QA/'fullscreen-viewer-admission-refused-reworked.png')},
         {'click':'#jvFullscreenPrompt .jvfs-go'},
         {'until':'document.fullscreenElement!==null'},surface('entered'),
         # The supported scene dblclick must not layer the viewer over active browser fullscreen.
         {'click':node(NOTE),'count':2},surface('open_refused_in_fullscreen'),
-        {'eval':'JarvisFullscreen.exit()'},{'until':'document.fullscreenElement===null'},surface('exited'),state('after'),
-    ]);save('fullscreen-armed-before-viewer',out)
+        {'eval':'JarvisFullscreen.exit()'},{'until':'document.fullscreenElement===null'},surface('exited'),
+        {'click':node(NOTE),'count':2},{'until':"document.querySelector('#jvObjectViewer')?.open===true"},
+        {'key':'Escape'},surface('ordinary_open_after_exit'),state('after'),
+    ]);save('fullscreen-armed-before-viewer-reworked',out)
     assert not out['errors'],out['errors']
     r=out['reads'];assert r['request']['status']==200 and r['request']['body']['state']=='needs_gesture'
-    assert r['during']['viewer'] and r['during']['fullscreen'] is None
-    assert not r['closed']['viewer'] and r['closed']['prompt']['hit']
+    assert not r['refused']['viewer'] and r['refused']['fullscreen'] is None
+    assert r['refused']['prompt']['hit'] and 'demande de plein écran' in r['feedback']
     assert r['entered']['fullscreen']==NOTE and not r['entered']['viewer']
     assert not r['open_refused_in_fullscreen']['viewer'] and r['open_refused_in_fullscreen']['fullscreen']==NOTE
     assert r['exited']['fullscreen'] is None
+    assert not r['ordinary_open_after_exit']['viewer'] and r['ordinary_open_after_exit']['focus']==NOTE
     assert r['before']['revision']==r['after']['revision']
 
 
@@ -78,17 +83,19 @@ async def test_request_during_native_viewer_has_reachable_prompt_and_escape_focu
         {'until':'JarvisScene.inspect().nodes>=7&&!!window.JarvisFullscreen'},state('before'),
         {'click':node(NOTE),'count':2},{'until':"document.querySelector('#jvObjectViewer')?.open===true"},
         request_fullscreen('request'),{'until':"JarvisFullscreen.state().state==='needs_gesture'"},surface('during'),
-        {'shot':str(QA/'fullscreen-prompt-during-viewer.png')},
+        {'shot':str(QA/'fullscreen-prompt-during-viewer-reworked.png')},
         # Actual CDP click distinguishes top-layer paint from modal inertness.
         {'click':'#jvFullscreenPrompt .jvfs-cancel'},surface('after_cancel_click'),
+        {'click':node(NOTE),'count':2},{'until':"document.querySelector('#jvObjectViewer')?.open===true"},
         {'key':'Escape'},surface('after_escape'),
         # Bounded cleanup through owned production APIs if either surface remains.
         {'eval':"if(document.querySelector('#jvObjectViewer')?.open)document.querySelector('#jvObjectViewer [data-action=close]').click();JarvisFullscreen.cancel()"},
         surface('closed'),state('after'),
-    ]);save('fullscreen-request-during-viewer',out)
+    ]);save('fullscreen-request-during-viewer-reworked',out)
     assert not out['errors'],out['errors']
     r=out['reads'];assert r['request']['status']==200 and r['request']['body']['state']=='needs_gesture'
-    assert r['during']['fullscreen'] is None and r['during']['viewer']
+    assert r['during']['fullscreen'] is None and not r['during']['viewer']
+    assert r['during']['focusOnPromptGo']
     assert r['during']['prompt']['hit'] and r['during']['prompt']['cancelHit'],r['during']
     assert r['after_cancel_click']['state']['armed'] is None,r['after_cancel_click']
     assert not r['after_escape']['viewer'] and r['after_escape']['fullscreen'] is None,r['after_escape']
@@ -114,7 +121,7 @@ async def test_ordinary_panels_settings_and_nonmodal_studio_keep_modal_focus_bou
         {'eval':"document.querySelector('#jvStudioInspector button')?.focus()"},surface('studio_focus_attempt'),
         {'key':'Escape'},surface('studio_after'),
         {'eval':'JarvisStudioInspector.instance.close()'},state('after'),
-    ]);save('ordinary-panels-settings-studio-viewer',out)
+    ]);save('ordinary-panels-settings-studio-viewer-reworked',out)
     assert not out['errors'],out['errors']
     r=out['reads'];assert r['ordinary_panel']['viewer'] and not r['ordinary_panel']['panel']
     assert not r['ordinary_closed']['viewer'] and r['ordinary_closed']['focus']==NOTE

@@ -1,0 +1,1232 @@
+{
+  "reads": {
+    "before": {
+      "snapshot": {
+        "schema_version": 1,
+        "scene_id": "aa75da36-85f0-4598-a422-38d3a5ca63c8",
+        "revision": 20,
+        "objects": [
+          {
+            "object_id": "qa-note-a",
+            "kind": "artifact",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": -65,
+              "y": -18,
+              "w": 30,
+              "h": 20
+            },
+            "layer": 120,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Compte rendu",
+              "summary": "Texte public de QA 0",
+              "items": [],
+              "registry_artifact_id": "jart_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          },
+          {
+            "object_id": "qa-note-b",
+            "kind": "window",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": -10,
+              "y": -3,
+              "w": 34,
+              "h": 24
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Hypothèses",
+              "summary": "Texte public de QA 1",
+              "items": []
+            }
+          },
+          {
+            "object_id": "qa-note-c",
+            "kind": "window",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": 45,
+              "y": 12,
+              "w": 38,
+              "h": 28
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Sources",
+              "summary": "Texte public de QA 2",
+              "items": []
+            }
+          },
+          {
+            "object_id": "qa-image",
+            "kind": "window",
+            "category": "image",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": 40,
+              "y": -40,
+              "w": 26,
+              "h": 20
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Image réelle du registre",
+              "summary": "",
+              "items": [],
+              "registry_artifact_id": "jart_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          },
+          {
+            "object_id": "claude:qa-parent",
+            "kind": "agent",
+            "category": "agent",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -70,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "claude",
+              "external_id": "qa-parent",
+              "work_id": null
+            },
+            "payload": {
+              "title": "Comparer les documents",
+              "summary": "Deux sources concordent.",
+              "items": []
+            },
+            "role_ref": {
+              "role_id": "coder",
+              "instance_id": "ainst_c7788e9779234b99ad590a6bf0493910",
+              "mission_id": "qa-mission",
+              "mission_owner": true
+            }
+          },
+          {
+            "object_id": "claude:qa-child",
+            "kind": "agent",
+            "category": "agent",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -45,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "claude",
+              "external_id": "qa-child",
+              "work_id": null
+            },
+            "payload": {
+              "title": "Vérifier une source",
+              "summary": "",
+              "items": []
+            }
+          },
+          {
+            "object_id": "job:cd9aebda-94c6-4f39-94dd-752be61cbbc5",
+            "kind": "job",
+            "category": "job",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -20,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "job",
+              "external_id": "cd9aebda-94c6-4f39-94dd-752be61cbbc5",
+              "work_id": null
+            },
+            "payload": {
+              "title": "demo",
+              "summary": "",
+              "items": []
+            }
+          }
+        ],
+        "relations": [
+          {
+            "relation_id": "parent_of!claude:qa-child",
+            "kind": "parent_of",
+            "from_id": "claude:qa-parent",
+            "to_id": "claude:qa-child",
+            "layer": 50
+          },
+          {
+            "relation_id": "qa-produced",
+            "kind": "explains",
+            "from_id": "qa-note-a",
+            "to_id": "claude:qa-parent",
+            "layer": 50
+          }
+        ],
+        "archived_ids": []
+      },
+      "revision": 20,
+      "job_status": "running",
+      "job_id": "cd9aebda-94c6-4f39-94dd-752be61cbbc5",
+      "agent_id": "claude:qa-parent",
+      "note_ids": [
+        "qa-note-a",
+        "qa-note-b",
+        "qa-note-c"
+      ]
+    },
+    "request": {
+      "status": 200,
+      "body": {
+        "state": "needs_gesture",
+        "code": null,
+        "reason": null,
+        "display_selection": "not_requested",
+        "object_id": "qa-note-a",
+        "id": "8cBwsWpF",
+        "command": "enter",
+        "deliveries": 1,
+        "duration_ms": 24,
+        "explanation": "La demande est armée : une invite est affichée à l'écran et attend UN clic de l'utilisateur (le navigateur interdit le plein écran sans geste). Ne dis pas que c'est en plein écran ; dis à l'utilisateur de cliquer sur « Passer en plein écran ».",
+        "armed_for_s": 60,
+        "snapshot": {
+          "state": "needs_gesture",
+          "object_id": "qa-note-a",
+          "id": "8cBwsWpF",
+          "code": null,
+          "reason": null,
+          "display_selection": "not_requested",
+          "explanation": "La demande est armée : une invite est affichée à l'écran et attend UN clic de l'utilisateur (le navigateur interdit le plein écran sans geste). Ne dis pas que c'est en plein écran ; dis à l'utilisateur de cliquer sur « Passer en plein écran »."
+        }
+      }
+    },
+    "during": {
+      "viewer": false,
+      "fullscreen": null,
+      "state": {
+        "state": "needs_gesture",
+        "objectId": "qa-note-a",
+        "armed": {
+          "id": "8cBwsWpF",
+          "remainingMs": 59977
+        },
+        "displaySelection": "not_requested",
+        "supported": true
+      },
+      "focus": "BUTTON",
+      "focusInViewer": false,
+      "panel": false,
+      "focusOnPromptGo": true,
+      "settings": false,
+      "studio": {
+        "open": false,
+        "available": true,
+        "hiddenReason": null,
+        "presentation_id": null,
+        "variant_id": null,
+        "revision": null,
+        "scene_id": null,
+        "tab": "content",
+        "controls": [],
+        "reloading": null,
+        "history": null,
+        "art": {
+          "state": "idle",
+          "revision": null
+        },
+        "loading": false,
+        "fatal": null,
+        "pendingDrafts": []
+      },
+      "prompt": {
+        "popover": true,
+        "parentIsHtml": true,
+        "hit": true,
+        "cancelHit": true,
+        "inert": false,
+        "rect": {
+          "x": 460,
+          "y": 18,
+          "width": 520,
+          "height": 154.515625,
+          "top": 18,
+          "right": 980,
+          "bottom": 172.515625,
+          "left": 460
+        },
+        "text": "Plein écran demandéJARVIS veut afficher Compte rendu en plein écran. Le navigateur exige un clic de votre part : Échap permet de quitter à tout moment.Passer en plein écranAnnuler60 s"
+      }
+    },
+    "after_cancel_click": {
+      "viewer": false,
+      "fullscreen": null,
+      "state": {
+        "state": "exited",
+        "objectId": null,
+        "armed": null,
+        "displaySelection": "not_requested",
+        "supported": true
+      },
+      "focus": "qa-note-a",
+      "focusInViewer": false,
+      "panel": false,
+      "focusOnPromptGo": false,
+      "settings": false,
+      "studio": {
+        "open": false,
+        "available": true,
+        "hiddenReason": null,
+        "presentation_id": null,
+        "variant_id": null,
+        "revision": null,
+        "scene_id": null,
+        "tab": "content",
+        "controls": [],
+        "reloading": null,
+        "history": null,
+        "art": {
+          "state": "idle",
+          "revision": null
+        },
+        "loading": false,
+        "fatal": null,
+        "pendingDrafts": []
+      },
+      "prompt": null
+    },
+    "after_escape": {
+      "viewer": false,
+      "fullscreen": null,
+      "state": {
+        "state": "exited",
+        "objectId": null,
+        "armed": null,
+        "displaySelection": "not_requested",
+        "supported": true
+      },
+      "focus": "qa-note-a",
+      "focusInViewer": false,
+      "panel": false,
+      "focusOnPromptGo": false,
+      "settings": false,
+      "studio": {
+        "open": false,
+        "available": true,
+        "hiddenReason": null,
+        "presentation_id": null,
+        "variant_id": null,
+        "revision": null,
+        "scene_id": null,
+        "tab": "content",
+        "controls": [],
+        "reloading": null,
+        "history": null,
+        "art": {
+          "state": "idle",
+          "revision": null
+        },
+        "loading": false,
+        "fatal": null,
+        "pendingDrafts": []
+      },
+      "prompt": null
+    },
+    "closed": {
+      "viewer": false,
+      "fullscreen": null,
+      "state": {
+        "state": "exited",
+        "objectId": null,
+        "armed": null,
+        "displaySelection": "not_requested",
+        "supported": true
+      },
+      "focus": "qa-note-a",
+      "focusInViewer": false,
+      "panel": false,
+      "focusOnPromptGo": false,
+      "settings": false,
+      "studio": {
+        "open": false,
+        "available": true,
+        "hiddenReason": null,
+        "presentation_id": null,
+        "variant_id": null,
+        "revision": null,
+        "scene_id": null,
+        "tab": "content",
+        "controls": [],
+        "reloading": null,
+        "history": null,
+        "art": {
+          "state": "idle",
+          "revision": null
+        },
+        "loading": false,
+        "fatal": null,
+        "pendingDrafts": []
+      },
+      "prompt": null
+    },
+    "after": {
+      "snapshot": {
+        "schema_version": 1,
+        "scene_id": "aa75da36-85f0-4598-a422-38d3a5ca63c8",
+        "revision": 20,
+        "objects": [
+          {
+            "object_id": "qa-note-a",
+            "kind": "artifact",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": -65,
+              "y": -18,
+              "w": 30,
+              "h": 20
+            },
+            "layer": 120,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Compte rendu",
+              "summary": "Texte public de QA 0",
+              "items": [],
+              "registry_artifact_id": "jart_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          },
+          {
+            "object_id": "qa-note-b",
+            "kind": "window",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": -10,
+              "y": -3,
+              "w": 34,
+              "h": 24
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Hypothèses",
+              "summary": "Texte public de QA 1",
+              "items": []
+            }
+          },
+          {
+            "object_id": "qa-note-c",
+            "kind": "window",
+            "category": "note",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": 45,
+              "y": 12,
+              "w": 38,
+              "h": 28
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Sources",
+              "summary": "Texte public de QA 2",
+              "items": []
+            }
+          },
+          {
+            "object_id": "qa-image",
+            "kind": "window",
+            "category": "image",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "user",
+            "exec_state": "unknown",
+            "representation": "window",
+            "geometry": {
+              "x": 40,
+              "y": -40,
+              "w": 26,
+              "h": 20
+            },
+            "layer": 220,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": null,
+            "payload": {
+              "title": "Image réelle du registre",
+              "summary": "",
+              "items": [],
+              "registry_artifact_id": "jart_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          },
+          {
+            "object_id": "claude:qa-parent",
+            "kind": "agent",
+            "category": "agent",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -70,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "claude",
+              "external_id": "qa-parent",
+              "work_id": null
+            },
+            "payload": {
+              "title": "Comparer les documents",
+              "summary": "Deux sources concordent.",
+              "items": []
+            },
+            "role_ref": {
+              "role_id": "coder",
+              "instance_id": "ainst_c7788e9779234b99ad590a6bf0493910",
+              "mission_id": "qa-mission",
+              "mission_owner": true
+            }
+          },
+          {
+            "object_id": "claude:qa-child",
+            "kind": "agent",
+            "category": "agent",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -45,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "claude",
+              "external_id": "qa-child",
+              "work_id": null
+            },
+            "payload": {
+              "title": "Vérifier une source",
+              "summary": "",
+              "items": []
+            }
+          },
+          {
+            "object_id": "job:cd9aebda-94c6-4f39-94dd-752be61cbbc5",
+            "kind": "job",
+            "category": "job",
+            "constraints": {
+              "placed_by": "user",
+              "pinned_by_user": true
+            },
+            "origin": "runtime",
+            "exec_state": "running",
+            "representation": "point",
+            "geometry": {
+              "x": -20,
+              "y": 60,
+              "w": 6,
+              "h": 6
+            },
+            "layer": 100,
+            "order": 0,
+            "visibility": "visible",
+            "disposition": "active",
+            "work_ref": {
+              "source": "job",
+              "external_id": "cd9aebda-94c6-4f39-94dd-752be61cbbc5",
+              "work_id": null
+            },
+            "payload": {
+              "title": "demo",
+              "summary": "",
+              "items": []
+            }
+          }
+        ],
+        "relations": [
+          {
+            "relation_id": "parent_of!claude:qa-child",
+            "kind": "parent_of",
+            "from_id": "claude:qa-parent",
+            "to_id": "claude:qa-child",
+            "layer": 50
+          },
+          {
+            "relation_id": "qa-produced",
+            "kind": "explains",
+            "from_id": "qa-note-a",
+            "to_id": "claude:qa-parent",
+            "layer": 50
+          }
+        ],
+        "archived_ids": []
+      },
+      "revision": 20,
+      "job_status": "running",
+      "job_id": "cd9aebda-94c6-4f39-94dd-752be61cbbc5",
+      "agent_id": "claude:qa-parent",
+      "note_ids": [
+        "qa-note-a",
+        "qa-note-b",
+        "qa-note-c"
+      ]
+    }
+  },
+  "errors": [],
+  "logs": [
+    {
+      "type": "info",
+      "text": "[shell] shell.installed {\"controls\":13}"
+    },
+    {
+      "type": "info",
+      "text": "[barehands] barehands.hud_installed {\"seam\":[\"hud\"]}"
+    },
+    {
+      "type": "info",
+      "text": "[barehands] barehands.palette_installed {\"tools\":[\"pointer\",\"pan\",\"select\"],\"seam\":[\"palette\"]}"
+    },
+    {
+      "type": "info",
+      "text": "[barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}"
+    },
+    {
+      "type": "info",
+      "text": "[capture] capture_rail.installed {\"views\":\"control_center_capture_wheel.js\"}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.installed {\"host\":\"toolWheel\"}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.registered {\"slot\":\"capture\",\"secondary\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[capture] capture_views.installed {\"host\":\"recIndicators\",\"category\":\"capture\",\"items\":[\"screenshot\",\"video\",\"audio\"]}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.registered {\"slot\":\"jarvis\",\"secondary\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.registered {\"slot\":\"settings\",\"secondary\":false}"
+    },
+    {
+      "type": "info",
+      "text": "[jarvis] jarvis_wheel.installed {\"categories\":[\"jarvis\",\"settings\"]}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.status {\"slot\":\"selection\",\"tone\":null,\"text\":\"Souris\",\"checked\":null}"
+    },
+    {
+      "type": "info",
+      "text": "[input_arbitration] selection.projected {\"method\":\"mouse\",\"tone\":null,\"lifecycle\":\"off\",\"starting\":false}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.registered {\"slot\":\"selection\",\"secondary\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[input_arbitration] input_arbitration.installed {\"distancePx\":48,\"netPx\":24,\"windowMs\":400,\"cooldownMs\":1500}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.registered {\"slot\":\"dossier\",\"secondary\":false}"
+    },
+    {
+      "type": "info",
+      "text": "[dossier] dossier.installed {\"page\":\"dsrlcadlnpi1e\"}"
+    },
+    {
+      "type": "info",
+      "text": "[boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}"
+    },
+    {
+      "type": "info",
+      "text": "[attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[presentation-rail] installed {}"
+    },
+    {
+      "type": "info",
+      "text": "[studio-inspector] installed {\"dock\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[workspace] workspace.installed {}"
+    },
+    {
+      "type": "info",
+      "text": "[prefabs] prefabs.installed {}"
+    },
+    {
+      "type": "info",
+      "text": "[chat] chat.installed {\"panel\":\"chatPanel\",\"shared\":true}"
+    },
+    {
+      "type": "info",
+      "text": "[board-drop] board_drop.installed {\"layer\":\"boardDrop\",\"tray\":\"boardDropTray\"}"
+    },
+    {
+      "type": "info",
+      "text": "[screenshot_preview] installed {\"host\":\"screenshotPreview\",\"dismiss_ms\":6000}"
+    },
+    {
+      "type": "info",
+      "text": "[launcher] launcher.installed {\"visible\":4,\"more\":7}"
+    },
+    {
+      "type": "info",
+      "text": "[capture] capture_rail.status_received {\"open\":0}"
+    },
+    {
+      "type": "info",
+      "text": "[tool_wheel] tool_wheel.status {\"slot\":\"jarvis\",\"tone\":null,\"text\":\"voix hors ligne\",\"checked\":null}"
+    },
+    {
+      "type": "info",
+      "text": "[jarvis] jarvis_wheel.facts {\"read\":\"ok\",\"hint\":\"F9 · VOICE HORS LIGNE\"}"
+    },
+    {
+      "type": "info",
+      "text": "[settings] support_mode.state {\"enabled\":false,\"problem\":null}"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.enabled Object"
+    },
+    {
+      "type": "info",
+      "text": "[barehands] profil de calibration relu aucune mesure"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.role Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.loop_started Object"
+    },
+    {
+      "type": "info",
+      "text": "[presentation-rail] workspace_items {\"board_id\":\"default\",\"count\":1}"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.snapshot_loaded Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.role_registry_loaded Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.open_requested Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.opened Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.entry_loading Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.detail_opened Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.objects_opened Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.entry_loading Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.entry_ready Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.closed Object"
+    },
+    {
+      "type": "info",
+      "text": "[fullscreen] fullscreen.state_changed {\"from\":\"exited\",\"to\":\"needs_gesture\",\"event\":\"request_enter\"}"
+    },
+    {
+      "type": "info",
+      "text": "[fullscreen] fullscreen.armed {\"id\":\"8cBwsWpF\",\"object_id\":\"qa-note-a\",\"display\":\"current\",\"arm_s\":60}"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.selection_backing Object"
+    },
+    {
+      "type": "info",
+      "text": "[fullscreen] fullscreen.state_changed {\"from\":\"needs_gesture\",\"to\":\"exited\",\"event\":\"cancel\"}"
+    },
+    {
+      "type": "info",
+      "text": "[fullscreen] fullscreen.arm_cancelled {\"id\":\"8cBwsWpF\",\"reason\":\"Annulé par l'utilisateur.\"}"
+    },
+    {
+      "type": "info",
+      "text": "[scène] scene.open_requested Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.opened Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.entry_loading Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.detail_opened Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.objects_opened Object"
+    },
+    {
+      "type": "info",
+      "text": "[scène] viewer.closed Object"
+    }
+  ],
+  "requests": [
+    {
+      "id": "47E4A4F08027B1E8354CFC5D0888DA8C",
+      "method": "GET",
+      "path": "/",
+      "body": null
+    },
+    {
+      "id": "4424.2",
+      "method": "GET",
+      "path": "/api/captures/status",
+      "body": null
+    },
+    {
+      "id": "4424.3",
+      "method": "GET",
+      "path": "/api/fullscreen/commands",
+      "body": null
+    },
+    {
+      "id": "4424.4",
+      "method": "GET",
+      "path": "/api/presentation-studio/explorer/commands",
+      "body": null
+    },
+    {
+      "id": "4424.5",
+      "method": "GET",
+      "path": "/api/presentation-studio/playback",
+      "body": null
+    },
+    {
+      "id": "4424.6",
+      "method": "GET",
+      "path": "/api/shortcuts",
+      "body": null
+    },
+    {
+      "id": "4424.7",
+      "method": "GET",
+      "path": "/api/status",
+      "body": null
+    },
+    {
+      "id": "4424.8",
+      "method": "GET",
+      "path": "/api/status",
+      "body": null
+    },
+    {
+      "id": "4424.9",
+      "method": "GET",
+      "path": "/api/barehands",
+      "body": null
+    },
+    {
+      "id": "4424.10",
+      "method": "GET",
+      "path": "/api/barehands/profile",
+      "body": null
+    },
+    {
+      "id": "4424.11",
+      "method": "GET",
+      "path": "/api/presentation-studio/rail",
+      "body": null
+    },
+    {
+      "id": "4424.12",
+      "method": "GET",
+      "path": "/api/workspace/artifacts",
+      "body": null
+    },
+    {
+      "id": "4424.13",
+      "method": "GET",
+      "path": "/api/agent/tasks",
+      "body": null
+    },
+    {
+      "id": "4424.14",
+      "method": "GET",
+      "path": "/api/work",
+      "body": null
+    },
+    {
+      "id": "4424.15",
+      "method": "GET",
+      "path": "/favicon.ico",
+      "body": null
+    },
+    {
+      "id": "4424.16",
+      "method": "GET",
+      "path": "/api/scene",
+      "body": null
+    },
+    {
+      "id": "4424.18",
+      "method": "GET",
+      "path": "/api/scene/patches",
+      "body": null
+    },
+    {
+      "id": "4424.19",
+      "method": "GET",
+      "path": "/api/subagent-roles",
+      "body": null
+    },
+    {
+      "id": "4424.20",
+      "method": "GET",
+      "path": "/api/missions/qa-mission",
+      "body": null
+    },
+    {
+      "id": "4424.21",
+      "method": "GET",
+      "path": "/qa/state",
+      "body": null
+    },
+    {
+      "id": "4424.22",
+      "method": "GET",
+      "path": "/api/artifacts/jart_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "body": null
+    },
+    {
+      "id": "4424.23",
+      "method": "POST",
+      "path": "/api/fullscreen/commands",
+      "body": "{\"action\": \"enter\", \"object_id\": \"qa-note-a\", \"display\": \"current\", \"keys\": \"none\", \"arm_s\": 60}"
+    },
+    {
+      "id": "4424.24",
+      "method": "POST",
+      "path": "/api/fullscreen/commands/8cBwsWpFAFJ6-18SMGIRRwihysBPj6m7",
+      "body": "{\"state\":\"needs_gesture\",\"display_selection\":\"not_requested\",\"object_id\":\"qa-note-a\"}"
+    },
+    {
+      "id": "4424.25",
+      "method": "GET",
+      "path": "/api/fullscreen/commands",
+      "body": null
+    },
+    {
+      "id": "4424.26",
+      "method": "GET",
+      "path": "/api/workspace/boards/default/dossier/backing",
+      "body": null
+    },
+    {
+      "id": "4424.27",
+      "method": "POST",
+      "path": "/api/fullscreen/state",
+      "body": "{\"state\":\"exited\",\"display_selection\":\"not_requested\",\"id\":\"8cBwsWpF\",\"code\":\"fullscreen_cancelled\",\"reason\":\"Annulé par l'utilisateur.\"}"
+    },
+    {
+      "id": "4424.28",
+      "method": "GET",
+      "path": "/api/artifacts/jart_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "body": null
+    },
+    {
+      "id": "4424.29",
+      "method": "GET",
+      "path": "/qa/state",
+      "body": null
+    }
+  ],
+  "responses": [
+    {
+      "id": "47E4A4F08027B1E8354CFC5D0888DA8C",
+      "status": 200,
+      "path": "/"
+    },
+    {
+      "id": "4424.2",
+      "status": 200,
+      "path": "/api/captures/status"
+    },
+    {
+      "id": "4424.5",
+      "status": 200,
+      "path": "/api/presentation-studio/playback"
+    },
+    {
+      "id": "4424.6",
+      "status": 200,
+      "path": "/api/shortcuts"
+    },
+    {
+      "id": "4424.7",
+      "status": 200,
+      "path": "/api/status"
+    },
+    {
+      "id": "4424.9",
+      "status": 200,
+      "path": "/api/barehands"
+    },
+    {
+      "id": "4424.10",
+      "status": 200,
+      "path": "/api/barehands/profile"
+    },
+    {
+      "id": "4424.8",
+      "status": 200,
+      "path": "/api/status"
+    },
+    {
+      "id": "4424.13",
+      "status": 200,
+      "path": "/api/agent/tasks"
+    },
+    {
+      "id": "4424.15",
+      "status": 404,
+      "path": "/favicon.ico"
+    },
+    {
+      "id": "4424.14",
+      "status": 200,
+      "path": "/api/work"
+    },
+    {
+      "id": "4424.11",
+      "status": 200,
+      "path": "/api/presentation-studio/rail"
+    },
+    {
+      "id": "4424.12",
+      "status": 200,
+      "path": "/api/workspace/artifacts"
+    },
+    {
+      "id": "4424.16",
+      "status": 200,
+      "path": "/api/scene"
+    },
+    {
+      "id": "4424.19",
+      "status": 200,
+      "path": "/api/subagent-roles"
+    },
+    {
+      "id": "4424.21",
+      "status": 200,
+      "path": "/qa/state"
+    },
+    {
+      "id": "4424.20",
+      "status": 200,
+      "path": "/api/missions/qa-mission"
+    },
+    {
+      "id": "4424.22",
+      "status": 200,
+      "path": "/api/artifacts/jart_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "id": "4424.3",
+      "status": 200,
+      "path": "/api/fullscreen/commands"
+    },
+    {
+      "id": "4424.24",
+      "status": 200,
+      "path": "/api/fullscreen/commands/8cBwsWpFAFJ6-18SMGIRRwihysBPj6m7"
+    },
+    {
+      "id": "4424.23",
+      "status": 200,
+      "path": "/api/fullscreen/commands"
+    },
+    {
+      "id": "4424.26",
+      "status": 200,
+      "path": "/api/workspace/boards/default/dossier/backing"
+    },
+    {
+      "id": "4424.27",
+      "status": 200,
+      "path": "/api/fullscreen/state"
+    },
+    {
+      "id": "4424.25",
+      "status": 200,
+      "path": "/api/fullscreen/commands"
+    },
+    {
+      "id": "4424.28",
+      "status": 200,
+      "path": "/api/artifacts/jart_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "id": "4424.29",
+      "status": 200,
+      "path": "/qa/state"
+    }
+  ]
+}
