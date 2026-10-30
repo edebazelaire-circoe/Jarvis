@@ -3,7 +3,8 @@
 `createPrefabHost` par node (faux DOM, horloge manuelle, paquets du vrai catalogue). Prouve : UN rapport par generation
 (`mounted` seulement apres la stabilisation, `failed` a la premiere erreur, quelle qu'en soit l'origine), des compteurs par
 objet qui survivent a un remontage de version, aucune fuite apres des rechargements repetes, et que ni le bac a sable ni
-le protocole `jv:1` n'ont bouge. La preuve dans un vrai Chrome est `test_presentation_studio_reload_browser.py`.
+le protocole de rechargement `jv:1` n'ont bouge, hors du pont UI Escape sans champ ajoute par S03.
+La preuve dans un vrai Chrome est `test_presentation_studio_reload_browser.py`.
 """
 
 from __future__ import annotations
@@ -181,20 +182,29 @@ async def test_two_hundred_version_reloads_of_one_scene_leave_no_frame_listener_
     assert result["outcomes"] == 100 and result["docIframes"] == 1
 
 
-async def test_the_sandbox_and_the_protocol_are_exactly_what_they_were(tmp_path, bundles):
+async def test_reload_preserves_sandbox_and_protocol_with_only_the_fieldless_escape_bridge(tmp_path, bundles):
+    """docs/prefabs.md: hot reload adds no message; S03's reviewed local UI bridge adds only fieldless Escape.
+
+    Full focused/source/lifecycle/rate behavior stays in test_prefab_escape_bridge.py.
+    """
     result = _node(tmp_path, r"""
       const b=mk();const s=b.slot();
       b.host.mount(s,instance('obj_1'));await flush();
       const f=b.frameOf(s);
       const P=require(PATHS.protocol);
       return {sandbox:f.getAttribute('sandbox'),allow:f.getAttribute('allow'),allowfs:f.hasAttribute('allowfullscreen'),
-              host:P.HOST_TYPES||null,frame:P.FRAME_TYPES||null,keys:Object.keys(P).sort(),csp:P.CSP};
+              host:P.HOST_TYPES,frame:P.FRAME_TYPES,keys:Object.keys(P).sort(),csp:P.CSP,
+              escape:P.parseFrameMessage({jv:1,type:'escape'}),
+              rejected:[{jv:1,type:'escape',key:'Escape'},{jv:1,type:'escape',payload:{}},
+                {jv:1,type:'key',key:'Escape'},{jv:2,type:'escape'}].map(P.parseFrameMessage)};
     """, bundles)
     assert result["sandbox"] == "allow-scripts" and result["allow"] is None and result["allowfs"] is False
-    assert result["host"] is None or result["host"] == ["init", "update", "teardown", "event_result"]
-    # no new message type for the frame to speak or to hear: no snapshot, no state export, nothing named after the reload
+    assert result["host"] == ["init", "update", "teardown", "event_result"]
+    # No snapshot, state export or reload pair; only the separately reviewed local Escape notice.
     assert "snapshot" not in " ".join(result["keys"]).lower() and "reload" not in " ".join(result["keys"]).lower()
-    assert result["frame"] is None or result["frame"] == ["ready", "event", "resize", "open_url", "error"]
+    assert result["frame"] == ["ready", "event", "resize", "open_url", "error", "escape"]
+    assert result["escape"] == {"ok": True, "message": {"type": "escape"}}
+    assert all(not notice["ok"] for notice in result["rejected"])
     assert "default-src 'none'" in result["csp"] and "connect" not in result["csp"]
 
 
