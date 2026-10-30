@@ -163,6 +163,12 @@ had a choice.
 
 ## UI seams
 
+The transient object viewer (`runtime/control_center_object_viewer.js`,
+[object-viewer.md](object-viewer.md)) owns a native in-app modal and comparison
+layouts, while canonical content providers own rendering. It never writes
+scene geometry or browser fullscreen state. Its Escape-only prefab callback
+is local UI, guarded by the existing frame boundary ([prefabs.md](prefabs.md)).
+
 ### ai-visualizer
 
 Read-only consumer of files under the runtime signal directory. It receives no board session token from the launcher.

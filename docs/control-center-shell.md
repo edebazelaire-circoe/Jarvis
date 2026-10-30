@@ -201,6 +201,19 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 
 ### Page layers
 
+The object viewer (`#jvObjectViewer`, `control_center_object_viewer.js`) uses
+the browser's **native modal dialog top layer**, not a CSS page rank. It has
+no `z-index` and therefore no numeric row or HTML rank-mirror entry. Its
+viewport shell and `::backdrop` are owned by that module in both themes;
+native modality makes the Board inert and contains focus, including provider
+iframes. Viewer controls and failures stay inside the dialog: ordinary page
+toasts/confirmation layers are behind it. Scene integration must close menus
+and other modal flows before opening it, avoid simultaneous Settings/Studio
+dialogs, and keep actual browser fullscreen under `JarvisFullscreen` ownership.
+The viewer never requests, exits or reports browser fullscreen. Its document
+and agent-detail API, lifecycle and cross-frame Escape bridge are documented
+in [object-viewer.md](object-viewer.md).
+
 | Rank | Surface | Sheet | Rule | Why |
 | --- | --- | --- | --- | --- |
 | 0 | `.face` | `control_center.html` | `.face` | visualizer iframe, bottom of the page |
