@@ -1,3 +1,19 @@
+# Current execution checkpoint (supersedes historical notes below)
+
+Full canonical run FINISHED: all20 shards, exact source97d56f1144cb721e7c5303f43ff71d291ed1d9bc,1062 modules,25378 passed43failed162skipped. Exec5996 is CLOSED; never restart/poll it. Raw red reports retained, summary equality validated. Source freeze released.
+
+Root integration mov branch task/jarvis-mouse-organization-viewer currently47621d56 plus small PM QA evidence staged later. All queued S1/S2 commits through43f5187e and S1f97a7928 integrated. Corrective four-file canonical conformance gate117passed27.8s. Product docs/tests whitespace clear; historical imported handoff Markdown/JUnit formatting preserved. Fresh main unchangedc0858a80.
+
+F2 observed native dialog/fullscreen prompt collision is returned to S05, acceptance reopened. S2/mov5 implementing existing-owner beforePrompt/closeViewer coordination and armed-admission refusal. Author actual browser3passed47.79s, strengthening provider cancellation/focus before candidate. S1 owns independent affected revalidation, then pending exactbaseline six-browser comparison (densegraph1, architecturesettings2, variantschips3) and current bootstrap-only settings1366x768 retry, coordinated Chrome slot only one at a time. Max2children+root, daily Jarvis untouched.
+
+Owned-read original broad failure is accepted by PM as unrelated existing shutdown behavior by bounded causal/source exclusion (NOT exact baseline failure reproduced). Baseline wholefile34pass17.73s, all earlier isolated/pair passes retained. Root diagnostic47621d56 has positive-controlled exact testcall tracing:12595 call events,21 test lines,ZERO domain scene line/call events; independent S1 reviewed path/limits. PM-FAILURE-DISPOSITIONS has explicit final decision. No more repetitions or delay injection.
+
+Remaining: integrate candidate/independent QA; finish six browser baseline comparisons and infrastructure parameter; update all final dispositions and CLOSEOUT/TODO/LOG; fresh final diff/static checks appropriate to new JS; launch explicit7200-second isolated preview via preview.py unique tempmanifest/hidden Start-Process; verify observedURL and7nodes, record PID/expiry. Then request required Human acceptance. No merge/mainpush/Drive done/delete before it. Actual configured model quota refused, successful inference unverified; no retries.
+
+---
+
+# Historical checkpoints (retain as history, not live instructions)
+
 # Execution checkpoint — 2026-10-30 12:06 Europe/Paris
 
 This is a durable resume checkpoint, not a completion claim.
