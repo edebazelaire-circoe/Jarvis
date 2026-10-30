@@ -1,0 +1,7 @@
+Production load_known: valid schema; 28 -> 24 entries.
+Exact four obsolete failing entries removed; all other entries and metadata preserved.
+Existing reduced-motion entry retained unchanged.
+Removed: tests/unit/test_control_center_shell_browser.py::test_one_geometry_and_one_rank_set_for_both_themes[size0]
+Removed: tests/unit/test_control_center_shell_browser.py::test_one_geometry_and_one_rank_set_for_both_themes[size1]
+Removed: tests/unit/test_control_center_shell_browser.py::test_one_geometry_and_one_rank_set_for_both_themes[size2]
+Removed: tests/unit/test_control_center_shell_browser.py::test_one_geometry_and_one_rank_set_for_both_themes[size3]
