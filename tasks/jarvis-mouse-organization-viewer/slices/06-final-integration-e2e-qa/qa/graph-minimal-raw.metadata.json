@@ -1,0 +1,10 @@
+{
+  "original_harness_sha256": "32ce5ae3672d860b4c441559333ae9aa9dfb302a43010a252ce8e291726dc196",
+  "copied_harness": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\jarvis-mov-graph-minimal-mbzq93h8\\test_a_dense_graph_at_200_perc0\\graph-minimal-harness.mjs",
+  "node_returncode": 0,
+  "stderr": "",
+  "extra_cdp_calls": 0,
+  "event_sequence_changed": false,
+  "test_assertions_changed": false,
+  "scope": "Observation in existing center evaluate and final server read only; no freeze/DOM mutation/retried click"
+}

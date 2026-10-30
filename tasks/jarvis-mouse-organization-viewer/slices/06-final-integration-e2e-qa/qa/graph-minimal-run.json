@@ -1,0 +1,23 @@
+{
+  "revision": "3975c6ea1c9bb4329dc1a2e978e1120cec657461",
+  "started_at": "2026-10-30T15:30:04.454423+00:00",
+  "command": [
+    "C:\\Projects\\jarvis\\jarvis\\.venv\\Scripts\\python.exe",
+    "-m",
+    "pytest",
+    "--tb=short",
+    "-p",
+    "no:cacheprovider",
+    "-p",
+    "graph_minimal_capture_plugin",
+    "-q",
+    "tests/unit/test_scene_task_graph_browser.py::test_a_dense_graph_at_200_percent_and_in_forced_colours_stays_usable",
+    "--basetemp=C:\\Users\\Clarice\\AppData\\Local\\Temp\\jarvis-mov-graph-minimal-mbzq93h8",
+    "--junitxml=C:\\Projects\\jarvis\\mov3\\tasks\\jarvis-mouse-organization-viewer\\slices\\06-final-integration-e2e-qa\\qa\\graph-minimal.xml"
+  ],
+  "runner_pid": 7508,
+  "scratch": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\jarvis-mov-graph-minimal-mbzq93h8",
+  "child_pid": 2580,
+  "returncode": 0,
+  "ended_at": "2026-10-30T15:30:25.727008+00:00"
+}
