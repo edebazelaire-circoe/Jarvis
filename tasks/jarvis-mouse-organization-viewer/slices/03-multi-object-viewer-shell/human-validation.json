@@ -1,8 +1,0 @@
-{
-  "checks": [
-    {
-      "id": "HV-VIEWER-001",
-      "description": "After machine QA, compare five images, switch layouts including custom grid, zoom/pan an image, scroll a document, close the overlay, and confirm the visual density/spacing matches the intended calm dark Jarvis inspection surface."
-    }
-  ]
-}

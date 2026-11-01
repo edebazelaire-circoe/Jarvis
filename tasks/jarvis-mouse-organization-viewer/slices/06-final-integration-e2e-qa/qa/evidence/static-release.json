@@ -1,7 +1,0 @@
-{
-    "completed_at":  "2026-10-30T11:08:14.9505170+01:00",
-    "exit_code":  0,
-    "command":  "python scripts/verify_release.py",
-    "result":  "Release verification passed.",
-    "source_revision":  "83bd54800f90ed2d68fc3edd96266209a3f03ae0"
-}

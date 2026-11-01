@@ -1,5 +1,0 @@
-..                                                                       [100%]
-============================= slowest 2 durations =============================
-0.42s call     tests/unit/test_back_brain_tasks.py::test_persistent_storage_read_failure_preserves_owner_and_bounds_stop[owned_read]
-0.31s setup    tests/unit/test_back_brain_tasks.py::test_work_projection_failure_never_orphans_authoritative_job[True]
-2 passed in 4.27s

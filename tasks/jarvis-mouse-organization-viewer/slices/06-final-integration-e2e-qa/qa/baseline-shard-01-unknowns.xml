@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="31.467" timestamp="2026-10-30T11:17:40.227699+01:00" hostname="CLARICE"><testcase classname="tests.unit.test_control_center_timeline_ui" name="test_the_cosmos_theme_knows_every_dock_tool_and_moves_the_pills" time="0.264"><failure message="AssertionError">tests\unit\test_control_center_timeline_ui.py:165: in test_the_cosmos_theme_knows_every_dock_tool_and_moves_the_pills
-    assert ".dock{position:absolute;z-index:32;right:var(--shell-gutter);top:var(--shell-gutter);display:flex;gap:6px}" in html
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-E   AssertionError</failure></testcase><testcase classname="tests.unit.test_presentation_response_policy" name="test_aucun_site_de_production_ne_laisse_le_modele_nommer_sa_nature_de_parole" time="13.622"><failure message="AssertionError">tests\unit\test_presentation_response_policy.py:1185: in test_aucun_site_de_production_ne_laisse_le_modele_nommer_sa_nature_de_parole
-    assert {name: sorted(values) for name, values in found.items()} == {
-E   AssertionError</failure></testcase></testsuite></testsuites>

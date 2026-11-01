@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="6.802" timestamp="2026-10-30T14:22:15.562153+01:00" hostname="CLARICE"><testcase classname="tests.unit.test_capture_rail_js" name="test_la_scene_mesure_les_indicateurs_et_la_roue_comme_des_commandes" time="2.840"><failure message="AssertionError">tests\unit\test_capture_rail_js.py:401: in test_la_scene_mesure_les_indicateurs_et_la_roue_comme_des_commandes
-    assert "selector:'#recIndicators',zone:'top-left'" in shell
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-E   AssertionError</failure></testcase><testcase classname="tests.unit.test_capture_rail_js" name="test_les_indicateurs_sont_au_haut_gauche_au_rang_du_centre_d_etat" time="0.020"><failure message="AssertionError">tests\unit\test_capture_rail_js.py:409: in test_les_indicateurs_sont_au_haut_gauche_au_rang_du_centre_d_etat
-    assert re.search(r"#recIndicators\{position:absolute;z-index:40;left:var\(--shell-gutter\);top:var\(--shell-gutter\);", html)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-E   AssertionError</failure></testcase></testsuite></testsuites>

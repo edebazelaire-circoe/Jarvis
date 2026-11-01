@@ -1,7 +1,0 @@
-{
-  "scope": "Exact owned_read call phase; domain scene modules only; op and targets-is-None only, no content",
-  "commands": [],
-  "lines": {},
-  "previous_trace_restored": true,
-  "timing_claim": false
-}

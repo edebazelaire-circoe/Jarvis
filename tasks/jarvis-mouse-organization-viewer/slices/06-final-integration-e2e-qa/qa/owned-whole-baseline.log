@@ -1,8 +1,0 @@
-..................................                                       [100%]
-============================= slowest 5 durations =============================
-0.70s call     tests/unit/test_back_brain_tasks.py::test_capacity_sixteen_refuses_without_partial_source_reservation
-0.61s call     tests/unit/test_back_brain_tasks.py::test_cancel_unknown_keeps_owner_slot_and_core_open_until_retry
-0.48s call     tests/unit/test_back_brain_tasks.py::test_persistent_storage_read_failure_preserves_owner_and_bounds_stop[owned_read]
-0.47s call     tests/unit/test_back_brain_tasks.py::test_persistent_transition_failure_keeps_owner_and_stop_bounded_until_recovery
-0.43s call     tests/unit/test_back_brain_tasks.py::test_persistent_storage_read_failure_preserves_owner_and_bounds_stop[stop_listing]
-34 passed in 17.73s
