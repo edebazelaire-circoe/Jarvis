@@ -1,6 +1,6 @@
 # Mouse, organization and viewer - integration review
 
-Status: S00-S06 machine QA accepted. Ready for Human review; the task remains in current pending explicit acceptance. The verified demonstration preview is available below until 18:45 Paris on October30.
+Status: S00-S06 machine QA accepted; Human acceptance and main integration/push authorized on 2026-11-01: "ok met ca a jour dans le main et push". Drive moved from current to done and metadata readback verified. The October30 preview expired and stopped normally. Main integration/push is being performed; this report and its evidence remain in Git history before lifecycle handoff cleanup.
 
 Worktree: `C:/Projects/jarvis/mov`, branch `task/jarvis-mouse-organization-viewer`, based on refreshed main `c0858a8000e2ca23b57231edb8f46c643080ad07`. The daily checkout and its live Jarvis were not changed or restarted. The supplied Drive folder was reverified in `current` on October30; no main merge/push, archive move, branch deletion or handoff deletion has happened.
 
@@ -61,3 +61,8 @@ Launch revision `d73a13bc`, stable product tree `f43cb45fa92b4489171a0f60ffa96ed
 Human judgement: complete a representative mouse/keyboard Board session: select objects; resize edges/corners with Shift; organize and undo; compare documents/layouts; inspect agent detail/Stop/Ask. Judge interaction comfort and coherence. Launch/persistence/stale-state/action correctness are machine QA responsibilities, not delegated to the reviewer.
 
 No main integration or Drive completion is authorized yet. The handle-task skill requires explicit Human acceptance. After future integration and updating the daily checkout, the user's Core/Control Center will need a normal restart to load the new Python/JavaScript; no daily restart has been performed.
+
+
+## Human acceptance and closure - 2026-11-01
+
+The user explicitly accepted the reviewed outcome and requested main update and push. Fresh origin/main remains c0858a80, with zero divergence from the accepted task ancestry. All55 accepted file hashes and product tree f43cb45fa92b4489171a0f60ffa96eda744a35c9 are unchanged. Main daily checkout is clean; fast-forward integration requires no conflict resolution or new product code. Existing QA limits/global-red dispositions remain accepted and are not relabeled green. Drive folder1BnUal4E5b9ra3nFTqSWtK5GEFL_ygTJG moved to done16yBLZRVOEbfDAN_CRh5722bkN46IUmo7 and parents verified. Only after this verification is the local handoff removed. Evidence is preserved in this acceptance commit and its ancestors. The temporary demonstration self-stopped; no daily service is restarted by this operation.
